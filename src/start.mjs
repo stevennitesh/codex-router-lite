@@ -35,6 +35,7 @@ import {
 } from "./proxy-environment.mjs";
 import { antigravityOAuthStatus } from "./antigravity-oauth-status.mjs";
 import { cursorTunnelRunSpec } from "./cursor-cloudflare-tunnel.mjs";
+import { installedSwitchyardLaunch } from "./switchyard-runtime.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever
@@ -297,6 +298,10 @@ async function main() {
   const devinForwarder = devinCliRouted
     ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "devin-cli-forwarder.mjs")])
     : undefined;
+  const switchyardLaunch = installedSwitchyardLaunch();
+  const switchyard = switchyardLaunch
+    ? run(switchyardLaunch.binary, switchyardLaunch.args)
+    : undefined;
   await Promise.all([
     waitForHealth(
       "OAuth forwarder",
@@ -347,6 +352,18 @@ async function main() {
           30_000,
           undefined,
           devinForwarder,
+        ),
+      ]
+      : []),
+    ...(switchyard
+      ? [
+        waitForHealth(
+          "Switchyard",
+          switchyardLaunch.healthUrl,
+          {},
+          30_000,
+          undefined,
+          switchyard,
         ),
       ]
       : []),
@@ -446,6 +463,7 @@ async function main() {
     // that never spawned it adds no entry, so this cannot end anyone else's
     // session.
     ...(devinForwarder ? [waitForExit(devinForwarder, "Devin CLI forwarder")] : []),
+    ...(switchyard ? [waitForExit(switchyard, "Switchyard")] : []),
     ...(cursorEdge ? [waitForExit(cursorEdge, "Cursor public edge")] : []),
     ...(cursorTunnel ? [waitForExit(cursorTunnel, "Cursor named tunnel")] : []),
     superviseGateway({

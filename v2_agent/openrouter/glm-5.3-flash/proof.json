@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "provider": "openrouter",
+  "model": "z-ai/glm-5.3-flash",
+  "slug": "openrouter/glm-5.3-flash",
+  "status": "accepted",
+  "officialSources": [
+    "https://openrouter.ai/z-ai/glm-5.3-flash",
+    "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
+  ],
+  "testedAt": "2026-08-26T10:26:00.376Z",
+  "routerVersion": "0.5.1",
+  "checks": {
+    "streaming": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-08-26T10:24:05.461Z"
+    },
+    "toolCall": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-08-26T10:24:05.461Z"
+    },
+    "encryptedRelay": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-08-26T10:25:23.059Z"
+    },
+    "markerReturn": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-08-26T10:25:23.059Z"
+    },
+    "sameThreadFollowUp": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-08-26T10:26:00.376Z"
+    }
+  }
+}

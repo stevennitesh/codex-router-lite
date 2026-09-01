@@ -10,6 +10,7 @@ import {
   providerModelEndpoint,
 } from "./openai-endpoint-policy.mjs";
 import { instructionOverlayExists } from "./instruction-overlays.mjs";
+import { instructionProfileExists } from "./instruction-profiles.mjs";
 import { SOURCE_ROOT } from "./paths.mjs";
 import { officialModelDisplayName, readUserModels } from "./user-models.mjs";
 import { curatableRequestProfile, requestProfileKnown } from "./request-profiles.mjs";
@@ -336,6 +337,12 @@ function loadRegistry() {
         fail(`provider ${provider.id} has an invalid planNote`);
       }
       if (
+        provider.explicitSelection !== undefined &&
+        typeof provider.explicitSelection !== "boolean"
+      ) {
+        fail(`provider ${provider.id} has an invalid explicitSelection flag`);
+      }
+      if (
         provider.protocol !== undefined &&
         !["openai", "anthropic", "openai-responses"].includes(provider.protocol)
       ) {
@@ -531,6 +538,49 @@ function endpointProblem(model, provider) {
   return undefined;
 }
 
+const OPENROUTER_PROVIDER_POLICY_FIELDS = new Set([
+  "order",
+  "only",
+  "allow_fallbacks",
+  "require_parameters",
+]);
+
+function openRouterProviderPolicyProblem(model) {
+  const policy = model.openRouterProviderPolicy;
+  if (policy === undefined) return undefined;
+  if (model.provider !== "openrouter") {
+    return `model ${model.slug} may set openRouterProviderPolicy only on OpenRouter`;
+  }
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    return `model ${model.slug} has an invalid openRouterProviderPolicy`;
+  }
+  for (const field of Object.keys(policy)) {
+    if (!OPENROUTER_PROVIDER_POLICY_FIELDS.has(field)) {
+      return `model ${model.slug} openRouterProviderPolicy has unsupported field ${field}`;
+    }
+  }
+  for (const field of ["order", "only"]) {
+    const values = policy[field];
+    if (
+      !Array.isArray(values) ||
+      values.length === 0 ||
+      values.some((value) => typeof value !== "string" || !value.trim()) ||
+      new Set(values).size !== values.length
+    ) {
+      return `model ${model.slug} openRouterProviderPolicy.${field} must be a non-empty unique string array`;
+    }
+  }
+  if (policy.order.some((provider) => !policy.only.includes(provider))) {
+    return `model ${model.slug} openRouterProviderPolicy.order must be contained in only`;
+  }
+  for (const field of ["allow_fallbacks", "require_parameters"]) {
+    if (typeof policy[field] !== "boolean") {
+      return `model ${model.slug} openRouterProviderPolicy.${field} must be a boolean`;
+    }
+  }
+  return undefined;
+}
+
 // The endpoint the registry declares is data; the endpoint the router resolves
 // has to be provider-shaped so the existing base-URL and credential chains
 // accept it. Identity is derived here rather than read from the fragment.
@@ -591,9 +641,14 @@ function modelProblem(model, providers, slugs, gatewayModels) {
   if (model.instructionOverlay !== undefined && !instructionOverlayExists(model.instructionOverlay)) {
     return `model ${model.slug} has an invalid instructionOverlay`;
   }
+  if (model.instructionProfile !== undefined && !instructionProfileExists(model.instructionProfile)) {
+    return `model ${model.slug} has an invalid instructionProfile`;
+  }
   if (model.requestProfile !== undefined && !requestProfileKnown(model.requestProfile)) {
     return `model ${model.slug} has an invalid requestProfile`;
   }
+  const openRouterPolicy = openRouterProviderPolicyProblem(model);
+  if (openRouterPolicy) return openRouterPolicy;
   if (model.supportedEndpoints !== undefined) {
     let supported;
     try {
@@ -808,11 +863,6 @@ function modelProblem(model, providers, slugs, gatewayModels) {
 }
 
 const STATIC_MODEL_SLUG_ALIASES = new Map([
-  // Z.ai revealed the OpenCode Go Ox Alpha preview as GLM-5.3-Flash. The
-  // provider withdrew ox-alpha-free when it published the named model, so
-  // preserve existing picker and caller state on the new live route.
-  ["opencode-go/ox-alpha", "opencode-go/glm-5.3-flash"],
-  ["opencode-go/ox-alpha-free", "opencode-go/glm-5.3-flash"],
   // OpenCode moved Grok 4.5 from Chat Completions to Responses. Keep the old
   // public slug routable while catalog publication carries picker state to
   // the protocol-namespaced replacement.

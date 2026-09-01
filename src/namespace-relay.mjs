@@ -855,7 +855,7 @@ export function repairToolSchemaRoot(
   // Flattened namespace children deliberately carry both inputSchema (the
   // client-native declaration) and parameters (the Chat Completions alias).
   // Repair both: choosing inputSchema first would leave the provider-facing
-  // parameters recursive on Ox even though the Responses branch was fixed.
+  // parameters recursive on the legacy X Preview route even though the Responses branch was fixed.
   for (const field of ["parameters", "inputSchema"]) {
     if (tool?.[field] === undefined) continue;
     const schema = repair(tool[field]);

@@ -209,6 +209,58 @@ test("routed models can borrow native behavior instructions without inheriting c
   assert.equal(model.use_responses_lite, false);
 });
 
+test("Switchyard inherits the native Codex request and compaction contract", () => {
+  const behaviorTemplate = {
+    ...template,
+    slug: "gpt-5.6-sol",
+    base_instructions: "You are Codex, an agent based on GPT-5.6. NATIVE_BEHAVIOR",
+    model_messages: {
+      instructions_template: "You are Codex, an agent based on GPT-5.6. NATIVE_TEMPLATE",
+    },
+    input_modalities: ["text", "image"],
+    context_window: 272000,
+    max_context_window: 872000,
+    auto_compact_token_limit: 244800,
+    supports_reasoning_summaries: true,
+    default_reasoning_summary: "none",
+    support_verbosity: true,
+    default_verbosity: "low",
+    supports_search_tool: true,
+    supports_image_detail_original: true,
+    supports_parallel_tool_calls: true,
+    use_responses_lite: true,
+    tool_mode: "code_mode_only",
+    include_skills_usage_instructions: false,
+  };
+  const model = routedModel(template, {
+    ...grok,
+    slug: "switchyard/auto",
+    displayName: "Switchyard Auto",
+    requestProfile: "switchyard-native",
+    inputModalities: ["text"],
+  }, behaviorTemplate);
+
+  assert.equal(model.base_instructions, behaviorTemplate.base_instructions);
+  assert.equal(model.model_messages, behaviorTemplate.model_messages);
+  assert.deepEqual(model.input_modalities, ["text", "image"]);
+  assert.equal(model.context_window, 272000);
+  assert.equal(model.max_context_window, 872000);
+  assert.equal(model.auto_compact_token_limit, 244800);
+  assert.equal(model.supports_reasoning_summaries, true);
+  assert.equal(model.default_reasoning_summary, "none");
+  assert.equal(model.support_verbosity, true);
+  assert.equal(model.default_verbosity, "low");
+  assert.equal(model.supports_search_tool, true);
+  assert.equal(model.supports_image_detail_original, true);
+  assert.equal(model.supports_parallel_tool_calls, true);
+  assert.equal(model.use_responses_lite, true);
+  assert.equal(model.tool_mode, "code_mode_only");
+  assert.equal(model.include_skills_usage_instructions, false);
+  assert.equal(model.slug, "switchyard/auto");
+  assert.equal(model.display_name, "Switchyard Auto");
+  assert.deepEqual(model.supported_reasoning_levels, grok.reasoningLevels);
+});
+
 test("routed behavior identity rewriting consumes versioned native GPT names", () => {
   const behaviorTemplate = {
     ...template,
@@ -237,6 +289,28 @@ test("routed models can opt into a concise execution overlay", () => {
   assert.match(model.base_instructions, /without narrating each routine tool step/);
   assert.match(model.model_messages.instructions_template, /Routed execution discipline/);
   assert.doesNotMatch(plain.base_instructions, /Routed execution discipline/);
+});
+
+test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract", () => {
+  const behaviorTemplate = {
+    ...template,
+    base_instructions: "You are Codex, an agent based on GPT-5.6-Sol. NATIVE",
+    model_messages: {
+      instructions_template: "You are Codex, an agent based on GPT-5.6-Sol. NATIVE",
+      instructions_variables: { personality_default: "" },
+    },
+  };
+  const model = routedModel(template, {
+    ...grok,
+    displayName: "GLM-5.3-Flash (OpenRouter)",
+    instructionProfile: "glm-5.3-flash-codex",
+  }, behaviorTemplate);
+
+  assert.match(model.base_instructions, /running on GLM-5\.3-Flash through OpenRouter/);
+  assert.equal(model.model_messages.instructions_template, model.base_instructions);
+  assert.doesNotMatch(model.base_instructions, /GPT-5/);
+  assert.doesNotMatch(model.base_instructions, /Ox/);
+  assert.deepEqual(model.model_messages.instructions_variables, { personality_default: "" });
 });
 
 test("efficient routed execution keeps persistent tool output bounded", () => {

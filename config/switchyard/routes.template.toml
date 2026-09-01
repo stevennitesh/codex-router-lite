@@ -1,0 +1,116 @@
+schema_version = 1
+
+[llm_clients.codex_router]
+format = "openai_responses"
+base_url = "__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__"
+forward_auth = true
+max_retries = 2
+
+[targets.luna_high]
+id = "gpt-5.6-luna"
+routing_id = "switchyard/luna-high"
+llm_client = "codex_router"
+body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }
+remove_body_fields = ["max_output_tokens"]
+
+[targets.luna_max]
+id = "gpt-5.6-luna"
+routing_id = "switchyard/luna-max"
+llm_client = "codex_router"
+body_overrides = { store = false, stream = true, reasoning = { effort = "max" } }
+remove_body_fields = ["max_output_tokens"]
+
+[targets.sol_medium]
+id = "gpt-5.6-sol"
+routing_id = "switchyard/sol-medium"
+llm_client = "codex_router"
+body_overrides = { store = false, stream = true, reasoning = { effort = "medium" } }
+remove_body_fields = ["max_output_tokens"]
+
+[targets.sol_high]
+id = "gpt-5.6-sol"
+routing_id = "switchyard/sol-high"
+llm_client = "codex_router"
+body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }
+remove_body_fields = ["max_output_tokens"]
+
+[targets.sol_xhigh]
+id = "gpt-5.6-sol"
+routing_id = "switchyard/sol-xhigh"
+llm_client = "codex_router"
+body_overrides = { store = false, stream = true, reasoning = { effort = "xhigh" } }
+remove_body_fields = ["max_output_tokens"]
+
+[routes.auto]
+id = "gpt-5.6-sol"
+type = "llm_classifier"
+mode = "custom"
+classifier_target = "luna_high"
+targets = ["luna_high", "luna_max", "sol_medium", "sol_high", "sol_xhigh"]
+default_target = "sol_medium"
+classify_trigger = "user_turn"
+recent_turn_window = 4
+max_output_tokens = 600
+context_window = 1050000
+tool_calling = true
+reasoning = true
+prompt = """
+Choose the lowest-cost target likely to complete the user's whole request correctly in one run.
+Judge the full trajectory, including discovery, tool use, verification, and recovery risk. Do not
+choose a cheap opening step when the task will predictably need a stronger model later.
+
+Choose luna_high for closed, low-risk work with an explicit procedure and cheap verification:
+lookup, formatting, classification, file discovery, log filtering, concise summaries, and very
+small mechanical edits with already-settled behavior.
+
+Choose luna_max for substantial or difficult work that is tightly specified and strongly
+verifiable. Good fits include bounded implementation, test repair, mechanical refactors, and
+well-scoped debugging when the owner, desired behavior, and proof are clear. Prefer this over Sol
+when execution depth is the main challenge and ambiguity is low.
+
+Choose sol_medium when judgment matters more than brute execution: ambiguous requirements,
+unfamiliar code, weak or expensive verification, conflicting evidence, cross-module synthesis,
+or a meaningful chance that a locally plausible answer is globally wrong. This is the safe
+default when classification is uncertain.
+
+Choose sol_high for hard diagnosis, unresolved architecture or domain meaning, consequential
+migrations or reviews, subtle concurrency/state behavior, security-sensitive changes, or tasks
+where failure creates material rework or risk.
+
+Choose sol_xhigh only for exceptional quality-first work: high-assurance review, critical
+security/correctness, recovery after a strong attempt already failed, or several independently
+difficult constraints that must all hold. Do not use it merely because a task is long.
+
+Return only JSON that matches the supplied schema.
+"""
+response_schema = '''
+{
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "enum": ["luna_high", "luna_max", "sol_medium", "sol_high", "sol_xhigh"]
+        }
+      },
+      "required": ["target"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["decision"],
+  "additionalProperties": false
+}
+'''
+
+[routes.auto.policy]
+type = "target_selector"
+selector = "/decision/target"
+
+[routes.smoke]
+id = "switchyard-smoke"
+type = "noop"
+context_window = 1050000
+tool_calling = true
+reasoning = true

@@ -74,6 +74,7 @@ test("provider selection keeps backward compatibility and can hide the final pro
       "local",
       "opencode-free",
       "opencode-free-responses",
+      "switchyard",
     ]);
     assert.deepEqual(defaultProviderIds(), ["lmstudio", "local"]);
     delete process.env.KIMI_API_KEY;
@@ -87,6 +88,7 @@ test("provider selection keeps backward compatibility and can hide the final pro
       "local",
       "opencode-free",
       "opencode-free-responses",
+      "switchyard",
     ]);
     assert.deepEqual(defaultProviderIds(), ["deepseek", "lmstudio", "local"]);
 

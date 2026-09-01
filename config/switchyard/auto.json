@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "slug": "switchyard/auto",
+      "gatewayModel": "switchyard-auto",
+      "upstreamModel": "gpt-5.6-sol",
+      "provider": "switchyard",
+      "listed": true,
+      "displayName": "Switchyard Auto",
+      "description": "Automatically routes each turn across Luna high/max and Sol medium/high/xhigh using a Luna High classifier.",
+      "priority": 80,
+      "defaultEffort": "medium",
+      "reasoningLevels": [
+        {
+          "effort": "low",
+          "description": "Accepted for picker compatibility; Switchyard selects the target effort"
+        },
+        {
+          "effort": "medium",
+          "description": "Accepted for picker compatibility; Switchyard selects the target effort"
+        },
+        {
+          "effort": "high",
+          "description": "Accepted for picker compatibility; Switchyard selects the target effort"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Accepted for picker compatibility; Switchyard selects the target effort"
+        },
+        {
+          "effort": "max",
+          "description": "Accepted for picker compatibility; Switchyard selects the target effort"
+        }
+      ],
+      "contextWindow": 272000,
+      "autoCompact": 244800,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "requestProfile": "switchyard-native",
+      "behaviorTemplate": "gpt-5.6-sol",
+      "multiAgentVersion": "v2",
+      "compHash": "switchyard-auto-v5"
+    }
+  ]
+}

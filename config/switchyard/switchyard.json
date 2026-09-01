@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "switchyard",
+      "displayName": "Switchyard",
+      "kind": "openai-compatible",
+      "ownedBy": "switchyard",
+      "protocol": "openai-responses",
+      "baseUrl": "http://127.0.0.1:4000/v1",
+      "baseUrlEnv": "CODEX_ROUTER_SWITCHYARD_BASE_URL",
+      "keyless": true,
+      "explicitSelection": true,
+      "planNote": "Runs on this machine and classifies each turn across the configured native Luna and Sol targets. Codex Router starts and supervises the installed runtime while this provider is enabled."
+    }
+  ]
+}

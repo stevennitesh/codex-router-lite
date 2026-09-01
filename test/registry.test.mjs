@@ -188,6 +188,7 @@ test("provider registry exposes configured API and OAuth model families", () => 
       "qwen-plan/qwen3.8-flash",
       "qwen-plan/qwen3.8-max-preview",
       "qwen-plan/qwen3.8-max",
+      "switchyard/auto",
       "venice/glm-5.3",
       "xiaomi-mimo/mimo-v2.5-pro",
       "xiaomi-mimo/mimo-v2.5",
@@ -775,16 +776,16 @@ test("GLM-5.3 on OpenCode Go carries the 1M GLM-5.3 window, not GLM-5.1's 200K",
   assert.equal(model?.searchTool, undefined);
 });
 
-test("GLM-5.3-Flash replaces OpenCode Go's withdrawn Ox Alpha route", () => {
+test("GLM-5.3-Flash is the only OpenCode Go Flash identity", () => {
   const model = MODEL_BY_SLUG.get("opencode-go/glm-5.3-flash");
   assert.equal(model?.upstreamModel, "glm-5.3-flash");
   assert.equal(model?.contextWindow, 1_000_000);
   assert.equal(model?.autoCompact, 400_000);
   assert.ok(model.contextWindow - model.autoCompact >= 131_072);
   assert.deepEqual(model?.inputModalities, ["text", "image"]);
-  assert.equal(MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha"), model.slug);
-  assert.equal(MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha-free"), model.slug);
-  assert.equal(MODEL_BY_SLUG.get("opencode-go/ox-alpha"), model);
+  assert.equal(MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha"), false);
+  assert.equal(MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha-free"), false);
+  assert.equal(MODEL_BY_SLUG.has("opencode-go/ox-alpha"), false);
 });
 
 test("OpenCode Go routes retain upstream windows instead of the generic fallback", () => {
@@ -1089,6 +1090,41 @@ test("instruction overlays must name a shipped overlay", async () => {
     );
     assert.equal(result.status, 1);
     assert.match(result.stderr, /invalid instructionOverlay/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("instruction profiles and OpenRouter provider policies fail closed", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const nodePath = (await import("node:path")).default;
+  const { spawnSync } = await import("node:child_process");
+  const dir = mkdtempSync(nodePath.join(tmpdir(), "registry-glm-policy-test-"));
+  const load = (mutate, name) => {
+    const document = readRegistryDocument("config");
+    mutate(document);
+    const registryPath = nodePath.join(dir, name);
+    writeFileSync(registryPath, JSON.stringify(document));
+    return spawnSync(
+      process.execPath,
+      ["-e", "import('./src/model-registry.mjs').catch((e)=>{console.error(e.message);process.exit(1);})"],
+      { encoding: "utf8", env: { ...process.env, MODEL_ROUTER_REGISTRY: registryPath } },
+    );
+  };
+  try {
+    const profile = load((document) => {
+      document.models[0].instructionProfile = "no-such-profile";
+    }, "profile.json");
+    assert.equal(profile.status, 1);
+    assert.match(profile.stderr, /invalid instructionProfile/);
+
+    const policy = load((document) => {
+      const model = document.models.find((candidate) => candidate.slug === "openrouter/glm-5.3-flash");
+      model.openRouterProviderPolicy.order = ["outside-allowlist"];
+    }, "policy.json");
+    assert.equal(policy.status, 1);
+    assert.match(policy.stderr, /order must be contained in only/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1687,14 +1723,8 @@ test("opencode's DeepSeek models never receive a forced tool_choice", () => {
     MODEL_SLUG_ALIASES.get("opencode-go/grok-4.5"),
     "opencode-go-responses/grok-4.5",
   );
-  assert.equal(
-    MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha"),
-    "opencode-go/glm-5.3-flash",
-  );
-  assert.equal(
-    MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha-free"),
-    "opencode-go/glm-5.3-flash",
-  );
+  assert.equal(MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha"), false);
+  assert.equal(MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha-free"), false);
   assert.equal(MODEL_BY_SLUG.get("opencode-go/grok-4.5"), goGrok);
 });
 

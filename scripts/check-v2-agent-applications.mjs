@@ -103,8 +103,12 @@ function readJson(file) {
 
 function checkPass(check, label) {
   if (!check || check.outcome !== "pass") fail(`${label} must record outcome: "pass"`);
-  if (!Number.isInteger(check.status) || check.status < 200 || check.status > 299) {
-    fail(`${label} must record a successful HTTP status`);
+  const httpSuccess =
+    Number.isInteger(check.status) && check.status >= 200 && check.status <= 299;
+  const completedClientCancel =
+    check.status === 0 && check.completion === "codex-task-complete";
+  if (!httpSuccess && !completedClientCancel) {
+    fail(`${label} must record a successful HTTP status or verified Codex task completion`);
   }
   if (!strictIsoInstant(check.observedAt)) {
     fail(`${label} must record an ISO observedAt timestamp`);

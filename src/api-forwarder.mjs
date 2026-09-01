@@ -949,27 +949,35 @@ function normalizeBody(buffer, contentType, route) {
     delete payload.reasoning_effort;
     payload.thinking = { type: "adaptive" };
     payload.reasoning_split = true;
-  } else if (model.requestProfile === "ox-alpha") {
-    // Ox Alpha's named GLM-5.3-Flash successor always thinks, and both
-    // checked-in routes using this legacy-named profile validate
-    // reasoning_effort against the rungs the model accepts -- an off-ladder value comes
-    // back as HTTP 400 "This model always engages in thinking and cannot be
-    // disabled" rather than being ignored. Both accept low/high/max. Codex can
-    // send any rung it knows: an installation older than 0.143 has no `max` in its enum at all,
-    // so the catalog clamps this model's default down to `xhigh` and that is
-    // what arrives here. Clamping onto the entry's own declared ladder is what
-    // keeps both of those cases off the 400.
-    if (payload.reasoning_effort !== undefined) {
+  } else if (model.requestProfile === "glm-5.3-flash") {
+    // GLM-5.3-Flash always thinks and accepts only low/high/max. Codex has a
+    // wider ladder and can send the effort in either the nested Responses
+    // object or the flat Chat Completions field, so collapse both spellings
+    // onto the route's declared ladder and send one unambiguous value.
+    const requestedEffort = payload.reasoning?.effort ?? payload.reasoning_effort;
+    if (requestedEffort !== undefined) {
       const effort = declaredEffort(
-        payload.reasoning_effort,
+        requestedEffort,
         (model.reasoningLevels || []).map((level) => level.effort),
       );
       if (effort) payload.reasoning_effort = effort;
       else delete payload.reasoning_effort;
     }
-    // Absent means the upstream's own default, which is the top rung. The
-    // routes document no `thinking` switch, and thinking cannot be turned off.
+    payload.messages = restoreGlmReasoningContent(payload.messages);
+    delete payload.reasoning;
     delete payload.thinking;
+
+    // These controls belong to native OpenAI Responses models. OpenRouter's
+    // GLM route does not advertise them, and require_parameters would either
+    // reject every endpoint or let a provider ignore them silently.
+    delete payload.parallel_tool_calls;
+    delete payload.prompt_cache_key;
+    delete payload.prompt_cache_retention;
+    delete payload.safety_identifier;
+    delete payload.service_tier;
+    delete payload.store;
+    delete payload.truncation;
+    delete payload.web_search_options;
   } else if (model.requestProfile === "auto-tool-choice") {
     // Some models call tools happily under "auto" but reject being forced to,
     // the way DeepSeek and Qwen do in thinking mode. Their vendor profiles
@@ -992,6 +1000,18 @@ function normalizeBody(buffer, contentType, route) {
     if (payload.tool_choice !== undefined && payload.tool_choice !== "none") {
       payload.tool_choice = "auto";
     }
+  }
+  if (model.openRouterProviderPolicy) {
+    // This is a checked-in route contract, not a caller preference. The
+    // selected providers are the endpoints that currently expose the full
+    // none/auto/required/named-function tool-choice set and at least 1M
+    // context. Replacing the object prevents a caller field from silently
+    // routing a certified Codex turn through an auto-only endpoint.
+    payload.provider = {
+      ...model.openRouterProviderPolicy,
+      order: [...model.openRouterProviderPolicy.order],
+      only: [...model.openRouterProviderPolicy.only],
+    };
   }
   // The provider still answers protocol, auth profile, and identity; the
   // endpoint answers where the request goes and what authenticates it. For

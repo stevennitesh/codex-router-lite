@@ -3193,6 +3193,139 @@ test("API forwarder replaces an image a text-only model cannot read", async () =
   }
 });
 
+test("Switchyard preserves native requests and leaves compaction on the native backend", async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "switchyard-routing-state-"));
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["switchyard"] })}\n`,
+    { mode: 0o600 },
+  );
+  const switchyardRequests = [];
+  const switchyard = await mockServer(async (request, response) => {
+    const requestBody = await bodyJson(request);
+    switchyardRequests.push({
+      url: request.url,
+      headers: request.headers,
+      body: requestBody,
+    });
+    if (requestBody.stream) {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(
+        'data: {"type":"response.output_text.delta","delta":"switchyard-stream"}\n\n' +
+        'data: {"type":"response.completed","response":{"id":"switchyard-stream","output":[]}}\n\n' +
+        "data: [DONE]\n\n",
+      );
+      return;
+    }
+    json(response, 200, { id: "switchyard-response", output: [] });
+  });
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    nativeRequests.push({
+      url: request.url,
+      headers: request.headers,
+      body: await bodyJson(request),
+    });
+    json(response, 200, { id: "native-compaction", output: [] });
+  });
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push({ url: request.url, body: await bodyJson(request) });
+    json(response, 200, { id: "unexpected-gateway", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    CODEX_ROUTER_SHOW_ALL_MODELS: "0",
+    CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: "Bearer CHATGPT_SESSION_TOKEN",
+    "ChatGPT-Account-Id": "account-id",
+    "Content-Type": "application/json",
+  };
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const input = [{
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_text", text: `route me ${"x".repeat(20_000)}` },
+        { type: "input_image", image_url: "data:image/png;base64,AAAA", detail: "original" },
+      ],
+    }];
+    const tools = [
+      { type: "function", name: "mcp__example__read", description: "Read", parameters: { type: "object" } },
+      { type: "custom", name: "apply_patch", description: "Patch", format: { type: "text" } },
+      { type: "web_search", search_context_size: "medium" },
+    ];
+    const nativeControls = {
+      text: { verbosity: "low" },
+      parallel_tool_calls: true,
+      tool_choice: "auto",
+      include: ["reasoning.encrypted_content"],
+    };
+    const turn = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "switchyard/auto",
+        input,
+        tools,
+        reasoning: { effort: "xhigh" },
+        ...nativeControls,
+        stream: false,
+      }),
+    });
+    assert.equal(turn.status, 200);
+    assert.equal(switchyardRequests.length, 1);
+    assert.equal(switchyardRequests[0].url, "/v1/responses");
+    assert.equal(switchyardRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+    assert.equal(switchyardRequests[0].headers["chatgpt-account-id"], "account-id");
+    assert.equal(switchyardRequests[0].headers["content-encoding"], undefined);
+    assert.equal(switchyardRequests[0].body.model, "gpt-5.6-sol");
+    assert.deepEqual(switchyardRequests[0].body.input, input);
+    assert.deepEqual(switchyardRequests[0].body.tools, tools);
+    assert.deepEqual(switchyardRequests[0].body.reasoning, { effort: "xhigh" });
+    for (const [field, value] of Object.entries(nativeControls)) {
+      assert.deepEqual(switchyardRequests[0].body[field], value);
+    }
+    assert.equal(gatewayRequests.length, 0);
+
+    const streamed = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "switchyard/auto", input, stream: true }),
+    });
+    assert.equal(streamed.status, 200);
+    assert.match(await streamed.text(), /switchyard-stream/);
+    assert.equal(switchyardRequests.length, 2);
+
+    const compact = await fetch(`${routerBase(routerPort)}/responses/compact`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "switchyard/auto", input }),
+    });
+    assert.equal(compact.status, 200);
+    assert.equal(switchyardRequests.length, 2);
+    assert.equal(nativeRequests.length, 1);
+    assert.equal(nativeRequests[0].url, "/backend-api/codex/responses/compact");
+    assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    await closeServer(native.server);
+    await closeServer(switchyard.server);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("API forwarder keeps images for DeepSeek V4 Flash Vision Exp", async () => {
   const upstreamRequests = [];
   const upstream = await mockServer(async (request, response) => {
@@ -10575,9 +10708,9 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
   const forwarder = run("api-forwarder.mjs", {
     CODEX_ROUTER_API_PORT: String(forwarderPort),
     OPENCODE_GO_BASE_URL: `http://127.0.0.1:${upstream.port}`,
-    OPENCODE_API_KEY: "TEST_OPENCODE_OX_KEY",
+    OPENCODE_API_KEY: "TEST_OPENCODE_GLM_KEY",
     OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.port}`,
-    OPENROUTER_API_KEY: "TEST_OPENROUTER_OX_KEY",
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_GLM_KEY",
     CODEX_ROUTER_QUIET: "1",
   });
 
@@ -10587,19 +10720,19 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
     });
     for (const [gatewayModel, upstreamModel, credential, sentEffort, expectedEffort] of [
       // The three rungs the upstream names.
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "low", "low"],
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "high", "high"],
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "max", "max"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "low", "low"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "high", "high"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "max", "max"],
       // The pre-0.143 Codex enum tops out at xhigh; it must not reach upstream.
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "xhigh", "max"],
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "ultra", "max"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "xhigh", "max"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "ultra", "max"],
       // Rungs the route does not publish take the nearest one at or below.
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "medium", "low"],
-      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_OX_KEY", "minimal", "low"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "medium", "low"],
+      ["opencode-go-glm-5-3-flash", "glm-5.3-flash", "TEST_OPENCODE_GLM_KEY", "minimal", "low"],
       // The OpenRouter Flash route carries the same measured ladder and must
       // repair the pre-0.143 xhigh catalog clamp too.
-      ["openrouter-glm-5-3-flash", "z-ai/glm-5.3-flash", "TEST_OPENROUTER_OX_KEY", "xhigh", "max"],
-      ["openrouter-glm-5-3-flash", "z-ai/glm-5.3-flash", "TEST_OPENROUTER_OX_KEY", "medium", "low"],
+      ["openrouter-glm-5-3-flash", "z-ai/glm-5.3-flash", "TEST_OPENROUTER_GLM_KEY", "xhigh", "max"],
+      ["openrouter-glm-5-3-flash", "z-ai/glm-5.3-flash", "TEST_OPENROUTER_GLM_KEY", "medium", "low"],
     ]) {
       const response = await fetch(
         `http://127.0.0.1:${forwarderPort}/v1/chat/completions`,
@@ -10663,6 +10796,61 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
       });
       assert.equal(upstreamRequests.at(-1).body.tool_choice, "required");
     }
+
+    // The OpenRouter route owns a full-tool provider set and removes native
+    // OpenAI controls the GLM endpoint does not implement.
+    await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${INTERNAL_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash",
+        reasoning: { effort: "high", context: "native-only" },
+        thinking: { type: "enabled" },
+        parallel_tool_calls: true,
+        prompt_cache_retention: "24h",
+        service_tier: "priority",
+        store: true,
+        tool_choice: { type: "function", function: { name: "read_file" } },
+        messages: [
+          { role: "user", content: "test" },
+          {
+            role: "assistant",
+            content: [
+              { type: "thinking", text: "provider-native reasoning" },
+              { type: "text", text: "visible answer" },
+            ],
+          },
+          { role: "user", content: "follow up" },
+        ],
+      }),
+    });
+    const openRouter = upstreamRequests.at(-1).body;
+    assert.equal(openRouter.reasoning_effort, "high");
+    for (const field of [
+      "reasoning",
+      "thinking",
+      "parallel_tool_calls",
+      "prompt_cache_retention",
+      "service_tier",
+      "store",
+    ]) {
+      assert.equal(openRouter[field], undefined, field);
+    }
+    assert.deepEqual(openRouter.tool_choice, {
+      type: "function",
+      function: { name: "read_file" },
+    });
+    assert.equal(openRouter.messages[1].reasoning_content, "provider-native reasoning");
+    assert.deepEqual(openRouter.messages[1].content, [{ type: "text", text: "visible answer" }]);
+    assert.deepEqual(openRouter.provider, {
+      order: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
+      only: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
+      allow_fallbacks: true,
+      require_parameters: true,
+    });
   } finally {
     await stopChild(forwarder);
     await closeServer(upstream.server);

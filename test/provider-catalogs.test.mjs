@@ -11,8 +11,8 @@ import {
 
 test("every selectable provider remains a canonical UI family", () => {
   const canonical = [...PROVIDERS.values()].filter((provider) => !provider.variantOf);
-  assert.equal(canonical.length, 41);
-  assert.equal(PROVIDERS.size, 46);
+  assert.equal(canonical.length, 42);
+  assert.equal(PROVIDERS.size, 47);
 });
 
 test("catalog capability comes from backend provider definitions", () => {
@@ -24,6 +24,7 @@ test("catalog capability comes from backend provider definitions", () => {
   assert.equal(providerCatalogKind(PROVIDERS.get("lmstudio")), undefined);
   assert.equal(providerCatalogKind(PROVIDERS.get("chatgpt-web")), "models-endpoint");
   assert.equal(providerCatalogKind(PROVIDERS.get("custom")), undefined);
+  assert.equal(providerCatalogKind(PROVIDERS.get("switchyard")), undefined);
 });
 
 test("shared credentials expose distinct catalogs without duplicate protocol rows", () => {

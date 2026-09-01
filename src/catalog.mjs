@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { protectPrivateFile } from "./file-security.mjs";
 import { isManagedCodexBaseUrl } from "./caller-auth.mjs";
 import { applyInstructionOverlay } from "./instruction-overlays.mjs";
+import { instructionProfile } from "./instruction-profiles.mjs";
 import {
   ANNOUNCED_MODELS_PATH,
   CODEX_PROVIDER_MODE_PATH,
@@ -552,6 +553,8 @@ function normalizeNativeModel(model) {
 }
 
 export function routedModel(template, model, behaviorTemplate = template) {
+  const nativeRequestProfile = model.requestProfile === "switchyard-native";
+  const catalogTemplate = nativeRequestProfile ? behaviorTemplate : template;
   const behaviorModelMessages =
     behaviorTemplate?.model_messages &&
     typeof behaviorTemplate.model_messages === "object" &&
@@ -567,10 +570,13 @@ export function routedModel(template, model, behaviorTemplate = template) {
           derivedBehaviorInstructions.trim()
         ? derivedBehaviorInstructions
         : template.base_instructions;
+  const profiledInstructions = instructionProfile(model.instructionProfile);
   const next = {
-    ...template,
-    base_instructions: behaviorInstructions,
-    model_messages: behaviorModelMessages,
+    ...catalogTemplate,
+    base_instructions: profiledInstructions || behaviorInstructions,
+    model_messages: profiledInstructions
+      ? { ...behaviorModelMessages, instructions_template: profiledInstructions }
+      : behaviorModelMessages,
     slug: model.slug,
     display_name: model.displayName,
     description: model.description,
@@ -579,11 +585,19 @@ export function routedModel(template, model, behaviorTemplate = template) {
     supported_in_api: true,
     default_reasoning_level: model.defaultEffort,
     supported_reasoning_levels: model.reasoningLevels,
-    context_window: model.contextWindow,
-    max_context_window: model.contextWindow,
+    context_window: nativeRequestProfile
+      ? behaviorTemplate.context_window || model.contextWindow
+      : model.contextWindow,
+    max_context_window: nativeRequestProfile
+      ? behaviorTemplate.max_context_window || model.contextWindow
+      : model.contextWindow,
     effective_context_window_percent: 95,
-    auto_compact_token_limit: model.autoCompact,
-    input_modalities: model.inputModalities,
+    auto_compact_token_limit: nativeRequestProfile
+      ? behaviorTemplate.auto_compact_token_limit ?? model.autoCompact
+      : model.autoCompact,
+    input_modalities: nativeRequestProfile
+      ? behaviorTemplate.input_modalities || model.inputModalities
+      : model.inputModalities,
     comp_hash: model.compHash,
     additional_speed_tiers: [],
     service_tiers: Array.isArray(model.serviceTiers)
@@ -615,13 +629,20 @@ export function routedModel(template, model, behaviorTemplate = template) {
           migration_markdown: model.upgradeTo.markdown.trim(),
         }
       : null,
-    supports_reasoning_summaries: model.supportsReasoningSummaries === true,
-    default_reasoning_summary:
-      model.supportsReasoningSummaries === true
+    supports_reasoning_summaries: nativeRequestProfile
+      ? behaviorTemplate.supports_reasoning_summaries === true
+      : model.supportsReasoningSummaries === true,
+    default_reasoning_summary: nativeRequestProfile
+      ? behaviorTemplate.default_reasoning_summary || "none"
+      : model.supportsReasoningSummaries === true
         ? model.defaultReasoningSummary || "auto"
         : "none",
-    support_verbosity: false,
-    default_verbosity: null,
+    support_verbosity: nativeRequestProfile
+      ? behaviorTemplate.support_verbosity === true
+      : false,
+    default_verbosity: nativeRequestProfile
+      ? behaviorTemplate.default_verbosity || null
+      : null,
     // Capability toggles come from the registry entry, never from the native
     // template: an absent flag keeps the conservative default so a routed
     // model only advertises what its slug's gateway path actually verified.
@@ -629,18 +650,30 @@ export function routedModel(template, model, behaviorTemplate = template) {
     // executed by the provider backend; standalone search is executed by
     // Codex and its result is replayed through the routed conversation. An
     // absent declaration remains the conservative default.
-    supports_search_tool: routedModelSearchAvailable(model),
-    supports_image_detail_original: model.supportsImageDetailOriginal === true,
+    supports_search_tool: nativeRequestProfile
+      ? behaviorTemplate.supports_search_tool === true
+      : routedModelSearchAvailable(model),
+    supports_image_detail_original: nativeRequestProfile
+      ? behaviorTemplate.supports_image_detail_original === true
+      : model.supportsImageDetailOriginal === true,
     // A routed model must never inherit a native template's capability. Codex
     // now requires the key, and `false` is both schema-valid and conservative
     // until this exact provider/model route declares support.
-    supports_parallel_tool_calls: model.supportsParallelToolCalls === true,
-    use_responses_lite: false,
+    supports_parallel_tool_calls: nativeRequestProfile
+      ? behaviorTemplate.supports_parallel_tool_calls === true
+      : model.supportsParallelToolCalls === true,
+    use_responses_lite: nativeRequestProfile
+      ? behaviorTemplate.use_responses_lite === true
+      : false,
     // Codex only knows one ApplyPatchToolType variant. The native template
     // carries "freeform", but upstreams that reject OpenAI custom tools (Meta
     // Responses, for example) must opt out explicitly; null is the only value
     // that suppresses the tool without making the catalog unparseable.
-    apply_patch_tool_type: model.supportsApplyPatchTool === false ? null : "freeform",
+    apply_patch_tool_type: nativeRequestProfile
+      ? behaviorTemplate.apply_patch_tool_type ?? "freeform"
+      : model.supportsApplyPatchTool === false
+        ? null
+        : "freeform",
     // Codex v2 collaboration only exposes spawn_agent model overrides whose
     // catalog entry advertises the same backend version as the parent. Models
     // opt in after their tool and encrypted-payload relay paths are verified.
@@ -649,7 +682,7 @@ export function routedModel(template, model, behaviorTemplate = template) {
   // Native GPT-5.6 templates may carry this transport/tool-mode switch. It is
   // not a routed capability and must stay out even when that native entry is
   // also the conservative fallback template.
-  delete next.tool_mode;
+  if (!nativeRequestProfile) delete next.tool_mode;
   // ClinePass strips these unsupported request controls, so Codex must not offer them.
   if (model.requestProfile === "clinepass") {
     delete next.default_reasoning_level;
@@ -661,13 +694,13 @@ export function routedModel(template, model, behaviorTemplate = template) {
   if (Array.isArray(model.experimentalSupportedTools)) {
     next.experimental_supported_tools = [...model.experimentalSupportedTools];
   }
-  if (typeof next.base_instructions === "string") {
+  if (typeof next.base_instructions === "string" && !nativeRequestProfile) {
     next.base_instructions = applyInstructionOverlay(
       rewriteIdentity(next.base_instructions, model),
       model.instructionOverlay,
     );
   }
-  if (next.model_messages) {
+  if (next.model_messages && !nativeRequestProfile) {
     next.model_messages = rewriteModelMessages(next.model_messages, model);
     if (typeof next.model_messages?.instructions_template === "string") {
       next.model_messages.instructions_template = applyInstructionOverlay(
@@ -870,7 +903,13 @@ export function promoteNativeMultiAgent(models, settings, hidden = new Set()) {
 
 function behaviorTemplateFor(nativeModels, model, fallback) {
   if (!model.behaviorTemplate) return fallback;
-  return nativeModels.find((candidate) => candidate.slug === model.behaviorTemplate) || fallback;
+  const matched = nativeModels.find((candidate) => candidate.slug === model.behaviorTemplate);
+  if (!matched) {
+    throw new Error(
+      `Routed model ${model.slug} requires missing behavior template ${model.behaviorTemplate}.`,
+    );
+  }
+  return matched;
 }
 
 export function buildMergedCatalog(native, routedModelsList, { includeNative = true } = {}) {

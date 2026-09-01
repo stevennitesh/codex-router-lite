@@ -302,18 +302,9 @@ test("registry merges valid user models and skips collisions", async () => {
     registry.MODEL_SLUG_ALIASES.get("opencode-go/grok-4.5"),
     "opencode-go-responses/grok-4.5",
   );
-  assert.equal(
-    registry.MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha"),
-    "opencode-go/glm-5.3-flash",
-  );
-  assert.equal(
-    registry.MODEL_SLUG_ALIASES.get("opencode-go/ox-alpha-free"),
-    "opencode-go/glm-5.3-flash",
-  );
-  assert.equal(
-    registry.MODEL_BY_SLUG.get("opencode-go/ox-alpha"),
-    registry.MODEL_BY_SLUG.get("opencode-go/glm-5.3-flash"),
-  );
+  assert.equal(registry.MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha"), false);
+  assert.equal(registry.MODEL_SLUG_ALIASES.has("opencode-go/ox-alpha-free"), false);
+  assert.equal(registry.MODEL_BY_SLUG.has("opencode-go/ox-alpha"), false);
   assert.equal(
     registry.MODEL_BY_SLUG.get("opencode-go/grok-4.5").provider,
     "opencode-go-responses",

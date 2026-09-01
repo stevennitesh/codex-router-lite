@@ -66,6 +66,27 @@ test("an accepted application requires all native collaboration evidence", () =>
   }]);
 });
 
+test("an accepted native check may pair client-cancel metering with Codex task completion", () => {
+  const root = temporaryRoot("v2-agent-completed-cancel-test-");
+  const proof = acceptedProof();
+  proof.checks.toolCall = {
+    outcome: "pass",
+    status: 0,
+    completion: "codex-task-complete",
+    observedAt: proof.testedAt,
+  };
+  application(root, proof);
+  assert.equal(validateV2AgentApplications(root, { models: ACCEPTED_MODELS })[0].status, "accepted");
+
+  delete proof.checks.toolCall.completion;
+  const unverified = temporaryRoot("v2-agent-unverified-cancel-test-");
+  application(unverified, proof);
+  assert.throws(
+    () => validateV2AgentApplications(unverified, { models: ACCEPTED_MODELS }),
+    /verified Codex task completion/,
+  );
+});
+
 test("a draft may be submitted before live evidence exists", () => {
   const root = temporaryRoot("v2-agent-draft-test-");
   application(root, {

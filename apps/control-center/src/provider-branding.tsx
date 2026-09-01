@@ -187,7 +187,7 @@ export function brandForModel(model: BrandableModel): ProviderBrand {
   if (/\bnemotron\b/.test(identity)) return BRANDS.nvidia;
   if (/\bornith(?:-|\b)/.test(identity)) return BRANDS.deepreinforce;
   // Anonymous preview models, matched last so a maker's own mark always wins.
-  if (/\b(?:ox alpha|ox-alpha|fugu|inkling)\b/.test(identity) || /x-preview/.test(identity)) {
+  if (/\b(?:fugu|inkling)\b/.test(identity) || /x-preview/.test(identity)) {
     return BRANDS.stealth;
   }
   return brandForProvider(model.provider);

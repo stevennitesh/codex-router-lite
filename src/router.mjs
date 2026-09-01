@@ -71,6 +71,7 @@ import {
   MODEL_BY_SLUG,
   RUNTIME_PROVIDERS,
   providerForModel,
+  resolveProviderBaseUrl,
 } from "./model-registry.mjs";
 import { createHealthCache } from "./health-cache.mjs";
 import { discoveryDisabled } from "./discovery-mode.mjs";
@@ -863,8 +864,8 @@ function assertRoutedSearchContract(route, builtSearchMode, contract) {
   throw unsupportedSearchContractError(route?.slug);
 }
 
-// The documented Zen Free pair has two different wire contracts: Ox uses Chat
-// Completions and Muse Contributor Free uses Responses. Their observed strict
+// The documented Zen Free pair has two different wire contracts: the legacy
+// X Preview route uses Chat Completions and Muse Contributor Free uses Responses. Their observed strict
 // tool/input limitations do not establish a contract for paid Zen, Go, or any
 // other free model, so keep this compatibility boundary exact.
 function needsZenFreeToolCompatibility(route) {
@@ -936,6 +937,17 @@ function zenFreeCompatibleInput(input, route) {
 function nativeTarget(pathname, search = "") {
   const withoutV1 = pathname.replace(/^\/v1(?=\/|$)/, "");
   return `${NATIVE_BASE}${withoutV1}${search}`;
+}
+
+function isSwitchyardRoute(route) {
+  return route?.requestProfile === "switchyard-native";
+}
+
+function switchyardTarget(route, pathname) {
+  const provider = providerForModel(route);
+  const baseUrl = resolveProviderBaseUrl(provider).baseUrl;
+  const routePath = String(pathname || "/responses").replace(/^\/v1(?=\/)/, "");
+  return `${baseUrl}${routePath}`;
 }
 
 // Provider-level query_params are applied by Codex to every request sent to
@@ -2941,7 +2953,9 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
   // preserved-thinking contract needs reasoning kept structurally separate so
   // the API forwarder can restore it as `reasoning_content` before Z.ai.
   carryReasoningThroughInput(input, {
-    nativeThinking: chatCompletionsProvider && route.requestProfile === "glm-thinking",
+    nativeThinking:
+      chatCompletionsProvider &&
+      ["glm-thinking", "glm-5.3-flash"].includes(route.requestProfile),
   });
   // Models marked requiresTrailingUserTurn reject requests ending with a model
   // turn. Pop trailing assistant messages, reasoning, or subagent outputs.
@@ -3531,8 +3545,9 @@ async function handleResponses(request, response, requestUrl) {
     const compactV2 =
       Array.isArray(payload.input) &&
       payload.input.at(-1)?.type === "compaction_trigger";
+    const switchyard = isSwitchyardRoute(route);
 
-    if (route && !directResponses && (compactV1 || compactV2)) {
+    if (route && !directResponses && !switchyard && (compactV1 || compactV2)) {
       const compaction = await handleRoutedCompaction(
         request,
         response,
@@ -3606,7 +3621,7 @@ async function handleResponses(request, response, requestUrl) {
       target = directResponsesTarget(provider, requestUrl.pathname, requestUrl.search);
       headers = directResponsesHeaders(request.headers);
       routedBody = directResponsesBody(payload, route);
-    } else if (route) {
+    } else if (route && !switchyard) {
       // Resolve the selected route's search contract once, before encrypted
       // handoff normalization or any other external work. A later failover may
       // not reintroduce ambient search that this route never advertised.
@@ -3711,8 +3726,12 @@ async function handleResponses(request, response, requestUrl) {
       // before the turn leaves. Everything the operator reads keeps the slug
       // they picked: `requestedModel` is untouched, so activity, usage, and
       // the log still name the model the picker showed.
-      const variantBase = nativeContextVariantBase(native.model);
-      if (variantBase) native.model = variantBase;
+      if (switchyard) {
+        native.model = route.upstreamModel;
+      } else {
+        const variantBase = nativeContextVariantBase(native.model);
+        if (variantBase) native.model = variantBase;
+      }
       normalizeNativePromptCacheCompatibility(native);
       if (Array.isArray(payload.input)) {
         native.input = normalizeNativeInput(payload.input, {
@@ -3748,12 +3767,14 @@ async function handleResponses(request, response, requestUrl) {
       if (substitutedCaller) {
         normalizeNativeForSubstitutedCaller(native, { compact: compactV1 });
       }
-      target = nativeTarget(requestUrl.pathname);
+      target = switchyard && !compactV1 && !compactV2
+        ? switchyardTarget(route, requestUrl.pathname)
+        : nativeTarget(requestUrl.pathname);
       headers = nativeHeaders(request);
-      routedBody = await compressedNativeBody(
-        Buffer.from(JSON.stringify(native), "utf8"),
-        headers,
-      );
+      const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
+      routedBody = switchyard && !compactV1 && !compactV2
+        ? nativeBody
+        : await compressedNativeBody(nativeBody, headers);
     }
 
     // `routedBody` is a fully materialized Buffer -- plain JSON, or the zstd
@@ -3766,7 +3787,7 @@ async function handleResponses(request, response, requestUrl) {
     // live capability contract as every fallback. This catches unsupported
     // search history and sidecar changes after normalization before any
     // provider-bound bytes leave the router.
-    if (route && !directResponses) {
+    if (route && !directResponses && !switchyard) {
       assertRoutedSearchContract(route, builtSearchMode, searchContract);
     }
     let { response: upstream, retries } = await fetchWithRetry(

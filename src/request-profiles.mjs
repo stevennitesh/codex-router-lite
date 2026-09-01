@@ -9,6 +9,7 @@ export const REQUEST_PROFILES = Object.freeze([
   "codex-encrypted-schema",
   "deepseek-nonthinking",
   "deepseek-thinking",
+  "glm-5.3-flash",
   "glm-thinking",
   "hy4-reasoning",
   "kimi-k3",
@@ -18,9 +19,9 @@ export const REQUEST_PROFILES = Object.freeze([
   "ollama-cloud-auto-tool-choice",
   "ollama-cloud-glm-5-3",
   "ollama-cloud-glm-5-3-flash",
-  "ox-alpha",
   "qwen-plan",
   "qwen38-community",
+  "switchyard-native",
   "xai-reasoning",
 ]);
 

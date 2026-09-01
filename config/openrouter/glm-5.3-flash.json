@@ -8,7 +8,7 @@
       "provider": "openrouter",
       "listed": true,
       "displayName": "GLM-5.3-Flash (OpenRouter)",
-      "description": "GLM-5.3-Flash through OpenRouter. The 1M-context route uses the model's low/high/max reasoning ladder.",
+      "description": "GLM-5.3-Flash through OpenRouter with full Codex tool-choice routing and the model's low/high/max reasoning ladder.",
       "priority": 102,
       "defaultEffort": "max",
       "reasoningLevels": [
@@ -25,13 +25,41 @@
           "description": "Maximum reasoning depth"
         }
       ],
-      "contextWindow": 1000000,
-      "autoCompact": 400000,
+      "contextWindow": 1048576,
+      "autoCompact": 900000,
       "inputModalities": [
-        "text"
+        "text",
+        "image"
       ],
-      "requestProfile": "ox-alpha",
-      "compHash": "openrouter-glm-5-3-flash-v2"
+      "requestProfile": "glm-5.3-flash",
+      "behaviorTemplate": "gpt-5.6-sol",
+      "instructionProfile": "glm-5.3-flash-codex",
+      "multiAgentVersion": "v2",
+      "openRouterProviderPolicy": {
+        "order": [
+          "deepinfra",
+          "morph",
+          "digitalocean",
+          "phala",
+          "cloudflare",
+          "venice",
+          "wafer",
+          "fireworks"
+        ],
+        "only": [
+          "deepinfra",
+          "morph",
+          "digitalocean",
+          "phala",
+          "cloudflare",
+          "venice",
+          "wafer",
+          "fireworks"
+        ],
+        "allow_fallbacks": true,
+        "require_parameters": true
+      },
+      "compHash": "openrouter-glm-5-3-flash-v4"
     }
   ]
 }

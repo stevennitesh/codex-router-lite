@@ -1,0 +1,11 @@
+name = "switchyard_worker"
+description = "Automatically routed worker using Switchyard across Luna and Sol targets."
+model_provider = "codex-router"
+model = "switchyard/auto"
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Complete only the bounded assignment from the parent and do not delegate it further.
+Treat read-only work as read-only. For implementation work, preserve unrelated changes and do not commit, push, publish, or modify external systems unless the assignment explicitly authorizes it.
+Return a concise handoff with the result, verification evidence, changed files, and any material uncertainty or blocker.
+"""

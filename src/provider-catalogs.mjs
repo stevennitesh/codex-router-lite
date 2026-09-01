@@ -6,14 +6,14 @@ import { forgetProviderCatalogCaches } from "./model-catalog-cache.mjs";
 // inventories have their own richer UI and per-model containers have no
 // single endpoint to ask. Devin is the narrow OAuth exception: its official
 // CLI session exposes the account's Cascade model configuration.
-const LOCAL_INVENTORY_PROVIDERS = new Set(["local", "lmstudio"]);
+const NO_GENERIC_CATALOG_PROVIDERS = new Set(["local", "lmstudio", "switchyard"]);
 
 export function providerCatalogKind(provider) {
   if (provider?.id === "devin-cli") return "devin";
   if (
     provider?.kind === "openai-compatible"
     && !provider.perModelEndpoint
-    && !LOCAL_INVENTORY_PROVIDERS.has(provider.id)
+    && !NO_GENERIC_CATALOG_PROVIDERS.has(provider.id)
   ) return "models-endpoint";
   return undefined;
 }

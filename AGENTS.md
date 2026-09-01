@@ -1313,77 +1313,29 @@ point a credential-free provider at a model somebody would be billed for.
 naming rule that changes without notice, so neither ships that subset: discovery
 filters the provider's live `/models` response and the user curates locally.
 
-## Ox Alpha became GLM-5.3-Flash on OpenCode Go
+## GLM-5.3-Flash routes
 
-Z.ai revealed the OpenCode Go Ox Alpha preview as GLM-5.3-Flash. OpenCode Go
-withdrew `ox-alpha-free` and now publishes `glm-5.3-flash` on Chat Completions.
-The checked-in route is `opencode-go/glm-5.3-flash`; the old public slug
-`opencode-go/ox-alpha` is a static migration alias so existing picker state and
-callers move to the live route instead of reaching a withdrawn upstream ID. The
-older curation slug `opencode-go/ox-alpha-free` is an alias to the same target.
-OpenCode Go publishes a 1,000,000-token context and 131,072-token output limit
-for the named route. Store the provider limit rather than the base model's
-1,048,576 architectural maximum. The ordinary 0.85 compaction ratio is not
-safe for this route in Codex: large live multimodal histories repeatedly
-returned empty completions before that point. Compact conservatively at 400,000
-while retaining the provider's advertised context as catalog metadata. This
-does not bypass provider moderation; a rejected remote compaction remains a
-provider limitation, not a router or stream crash.
+GLM-5.3-Flash is a named model. Checked-in routes must use that identity in
+slugs, upstream IDs, request profiles, prompts, tests, and documentation. Do
+not publish preview-name aliases or migration routes.
 
-No checked-in route preserves the preview under the Ox Alpha name. OpenCode
-Free, OpenRouter, and Nous Research withdrew their preview ids. Direct
-exact-route probes then rejected `stealth/ox-alpha` on Command Code as
-`model_unavailable` on basic, streaming, forced-tool, stateless tool-result,
-and compact requests. The available Venice account returned its HTTP 402
-billing gate on all five surfaces before `stealth-ox-alpha` could be
-wire-certified. Exact probes disable cooldown, response-verdict, and compaction
-failover, so neither result can be a healthy alternate answering in disguise.
-The repository therefore ships neither preset.
+The model always thinks and accepts only `low`, `high`, and `max` reasoning
+efforts. The `glm-5.3-flash` request profile clamps Codex's wider ladder onto
+those values and keeps reasoning separate from visible assistant text across
+tool turns. Direct Z.ai routes continue to use `glm-thinking` because that API
+owns a different thinking-control parameter.
 
-Command Code and Venice discovery still preserve the provider catalog for
-explicit operator curation. That is not compatibility certification: a local
-entry can fail when the catalog is stale or the account cannot reach inference.
-In particular, Venice curation retains the provider-advertised effort metadata;
-the repository does not replace it with a cross-provider inference for a route
-it could not execute.
+OpenCode Go advertises 1,000,000 context but has returned empty completions on
+large multimodal histories, so its route compacts at 400,000. OpenRouter uses
+1,048,576 context and compacts at 900,000, matching the successful long-context
+history recorded for this model. Its checked-in provider policy restricts
+requests to at least 1M-context endpoints with the full tool-choice set. Keep
+that policy in model configuration and validate it at the forwarder boundary.
 
-The named GLM-5.3-Flash routes on OpenCode Go, OpenRouter, Z.ai API, and Z.ai
-Coding did pass direct basic, streaming, forced-tool, stateless tool-result,
-and compact probes. Their recorded effort ladder is `low`/`high`/`max`, and it is the
-**model's** ladder rather than a generic reseller default. The model always
-thinks, and its upstream refuses an off-ladder rung by name:
-
-```
-HTTP 400 — [1210] This model always engages in thinking and cannot be
-disabled; please use low, high, or max
-```
-
-The ladder also collides with the effort clamp in `src/catalog.mjs`. Codex
-gained the `max` variant in 0.143.0, so on anything older the catalog rewrites
-this model's default down to `xhigh` — a rung every route refuses. The
-legacy-named `ox-alpha` request profile in `src/api-forwarder.mjs` closes that
-loop for the OpenCode Go and OpenRouter named routes: it clamps whatever Codex
-sent onto the rungs the registry entry declares, so `xhigh` and `ultra` land on
-`max`, while `medium` and `minimal` land on `low`. An absent effort stays absent
-so the upstream default applies, and undocumented `thinking` is stripped. Z.ai
-Coding uses its own `glm-thinking` profile. These named routes advertise a
-1,000,000-token window, compact at the directly proved conservative 400,000
-threshold, and preserve forced `tool_choice: "required"`.
-
-`ollama-cloud/glm-5.3-flash` is checked in as candidate registry metadata with a
-model-scoped request profile that clamps both flat and nested reasoning effort
-onto the same `low`/`high`/`max` ladder. It must not be called certified until
-the public slug passes the router-level exact-route suite for basic, streaming,
-forced-tool, stateless tool-result, and compact requests with failover disabled.
-
-`ollama-cloud/glm-5.3` is also checked in as candidate registry metadata on the
-same low/high/max ladder and the sibling `ollama-cloud-glm-5-3` clamp profile,
-advertising 1,000,000 context and an 880,000 conservative compact threshold
-matching the existing Ollama Cloud GLM-5.2 policy. It requires its own run of
-the router-level exact-route suite before it is called certified. That
-threshold is not a provider-measured boundary. It is text-only: GLM-5.3's
-multimodal variant is GLM-5.3-Flash, so the full-size route declares `text`
-modality instead of inheriting Flash's image path.
+The OpenRouter route uses the current Sol behavior template for Codex message
+structure and a concise GLM-specific instruction profile for the actual base
+prompt. Do not copy GPT-only request controls or the full Sol base prompt into
+the GLM profile.
 
 ## A provider whose models each name their own endpoint
 

@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { switchyardLaunch } from "../src/switchyard-runtime.mjs";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("Switchyard supervision starts only after an explicit provider selection", () => {
+  assert.equal(switchyardLaunch({ selected: false }), undefined);
+});
+
+test("Switchyard supervision derives one loopback process and health contract", () => {
+  const stateDir = path.join("C:\\fixture", "codex-router");
+  const launch = switchyardLaunch({
+    selected: true,
+    stateDir,
+    platform: "win32",
+    env: {
+      CODEX_HOME: "C:\\fixture",
+      CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://127.0.0.1:4888/v1",
+    },
+    exists: () => true,
+  });
+  assert.equal(launch.binary, path.join("C:\\fixture", "switchyard", "switchyard-server.exe"));
+  assert.equal(launch.config, path.join("C:\\fixture", "switchyard", "routes.toml"));
+  assert.equal(launch.healthUrl, "http://127.0.0.1:4888/health");
+  assert.deepEqual(launch.args.slice(0, 6), [
+    "--config",
+    launch.config,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "4888",
+  ]);
+  assert.equal(launch.args.at(-1), path.join("C:\\fixture", "switchyard", "routing.jsonl"));
+});
+
+test("Switchyard supervision refuses a selected provider with no installed runtime", () => {
+  assert.throws(
+    () => switchyardLaunch({
+      selected: true,
+      stateDir: "/fixture/codex-router",
+      platform: "linux",
+      env: { CODEX_HOME: "/fixture" },
+      exists: () => false,
+    }),
+    /server is missing/,
+  );
+});
+
+test("Switchyard source lock pins the canonical compatibility patch", () => {
+  const configRoot = path.join(root, "config", "switchyard");
+  const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
+  const patchBytes = readFileSync(path.join(configRoot, lock.patch));
+  assert.match(lock.commit, /^[a-f0-9]{40}$/u);
+  assert.equal(createHash("sha256").update(patchBytes).digest("hex"), lock.patchSha256);
+  assert.match(patchBytes.toString("utf8"), /merge_override_value/);
+});

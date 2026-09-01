@@ -1,0 +1,518 @@
+warning: in the working copy of 'crates/libsy-llm-client/src/client.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/switchyard-runner/src/config.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/reference/toml_schema.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
+index 9f47828..e6d7aa1 100644
+--- a/crates/libsy-llm-client/src/client.rs
++++ b/crates/libsy-llm-client/src/client.rs
+@@ -62,6 +62,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+ #[derive(Clone, Debug)]
+ pub struct ModelConfig {
+     model_name: ModelId,
++    upstream_model: ModelId,
++    body_overrides: BTreeMap<String, Value>,
++    body_removals: Vec<String>,
+     default_backend: Backend,
+     other_backends: Option<Vec<Backend>>,
+ }
+@@ -74,12 +77,36 @@ impl ModelConfig {
+         default_backend: Backend,
+         other_backends: Option<Vec<Backend>>,
+     ) -> Self {
++        let model_name = model_name.into();
+         Self {
+-            model_name: model_name.into(),
++            upstream_model: model_name.clone(),
++            model_name,
++            body_overrides: BTreeMap::new(),
++            body_removals: Vec::new(),
+             default_backend,
+             other_backends,
+         }
+     }
++
++    /// Sends `upstream_model` to the provider while retaining `model_name` as
++    /// the local routing identity.
++    pub fn with_upstream_model(mut self, upstream_model: impl Into<ModelId>) -> Self {
++        self.upstream_model = upstream_model.into();
++        self
++    }
++
++    /// Recursively merges target-owned outbound request values after caller
++    /// values and backend defaults have been applied.
++    pub fn with_body_overrides(mut self, body_overrides: BTreeMap<String, Value>) -> Self {
++        self.body_overrides = body_overrides;
++        self
++    }
++
++    /// Removes top-level outbound request fields after overrides are applied.
++    pub fn with_body_removals(mut self, body_removals: Vec<String>) -> Self {
++        self.body_removals = body_removals;
++        self
++    }
+ }
+ 
+ /// A model-bearing provider operation outside the normal completion endpoint.
+@@ -162,16 +189,9 @@ impl TranslatingLlmClient {
+     /// format matches, otherwise a matching entry in `other_backends`; `None` when
+     /// the model is unknown or has no backend for `format`.
+     pub fn backend_for(&self, model: &ModelId, format: WireFormat) -> Option<&Backend> {
+-        self.model_to_config.get(model).and_then(|config| {
+-            if config.default_backend.wire_format() == format {
+-                Some(&config.default_backend)
+-            } else {
+-                config
+-                    .other_backends
+-                    .as_ref()
+-                    .and_then(|backends| backends.iter().find(|b| b.wire_format() == format))
+-            }
+-        })
++        self.model_to_config
++            .get(model)
++            .and_then(|config| backend_for_config(config, format))
+     }
+ 
+     /// Whether `model` has a backend for `operation`.
+@@ -190,24 +210,30 @@ impl TranslatingLlmClient {
+         operation: AuxiliaryOperation,
+     ) -> Result<Value> {
+         let wire_format = operation.wire_format();
+-        let backend =
+-            self.backend_for(model, wire_format)
++        let config =
++            self.model_to_config
++                .get(model)
+                 .ok_or_else(|| LlmClientError::Configuration {
+                     message: format!("model {model} has no backend for {operation:?}"),
+                 })?;
++        let backend = backend_for_config(config, wire_format).ok_or_else(|| {
++            LlmClientError::Configuration {
++                message: format!("model {model} has no backend for {operation:?}"),
++            }
++        })?;
+         let Request {
+             mut llm_request,
+             metadata,
+             ..
+         } = request;
+-        llm_request.model = Some(model.to_string());
++        llm_request.model = Some(config.upstream_model.to_string());
+         let http_response = self
+             .send_encoded(
+                 backend,
+                 wire_format,
+                 llm_request,
+                 metadata.as_ref(),
+-                model,
++                config,
+                 UpstreamEndpoint::Auxiliary(operation),
+             )
+             .await?;
+@@ -237,9 +263,10 @@ impl TranslatingLlmClient {
+         wire_format: WireFormat,
+         llm_request: LlmRequest,
+         metadata: Option<&Metadata>,
+-        model: &ModelId,
++        model_config: &ModelConfig,
+         endpoint: UpstreamEndpoint,
+     ) -> Result<EncodedResponse> {
++        let model = &model_config.upstream_model;
+         let mut body = encode_request(&llm_request, wire_format)
+             .map_err(|error| LlmClientError::RequestEncoding(error.to_string()))?;
+         // `encode_request` round-trips a preserved same-format body verbatim,
+@@ -253,6 +280,8 @@ impl TranslatingLlmClient {
+             strip_unsigned_thinking_blocks(&mut body);
+         }
+         merge_extra_body(&mut body, backend.extra_body());
++        apply_body_overrides(&mut body, &model_config.body_overrides);
++        apply_body_removals(&mut body, &model_config.body_removals);
+         if matches!(backend, Backend::Anthropic(_)) {
+             enable_anthropic_prompt_caching(&mut body);
+         }
+@@ -431,22 +460,20 @@ impl TranslatingLlmClient {
+             .ok_or_else(|| LlmClientError::InvalidRequest {
+                 message: "no model given".to_string(),
+             })?;
+-        llm_request.model = Some(model_id.to_string());
+-
+         let orig_format = metadata.as_ref().and_then(|m| m.wire_format);
+-        let wire_format = orig_format.unwrap_or(
++        let config =
+             self.model_to_config
+                 .get(&model_id)
+-                .map(|config| config.default_backend.wire_format())
+                 .ok_or_else(|| LlmClientError::Configuration {
+                     message: format!("no backend configured for model {model_id:?}"),
+-                })?,
+-        );
+-        let backend = self.backend_for(&model_id, wire_format).ok_or_else(|| {
++                })?;
++        let wire_format = orig_format.unwrap_or(config.default_backend.wire_format());
++        let backend = backend_for_config(config, wire_format).ok_or_else(|| {
+             LlmClientError::Configuration {
+                 message: format!("model {model_id:?} has no backend for format {wire_format}"),
+             }
+         })?;
++        llm_request.model = Some(config.upstream_model.to_string());
+ 
+         let http_response = self
+             .send_encoded(
+@@ -454,7 +481,7 @@ impl TranslatingLlmClient {
+                 wire_format,
+                 llm_request,
+                 metadata.as_ref(),
+-                &model_id,
++                config,
+                 UpstreamEndpoint::Completion,
+             )
+             .await?;
+@@ -581,6 +608,18 @@ impl TranslatingLlmClient {
+     }
+ }
+ 
++fn backend_for_config(config: &ModelConfig, format: WireFormat) -> Option<&Backend> {
++    if config.default_backend.wire_format() == format {
++        Some(&config.default_backend)
++    } else {
++        config.other_backends.as_ref().and_then(|backends| {
++            backends
++                .iter()
++                .find(|backend| backend.wire_format() == format)
++        })
++    }
++}
++
+ #[async_trait]
+ impl RoutedLlmClient for TranslatingLlmClient {
+     async fn call(&self, request: Request) -> Result<Response> {
+@@ -829,6 +868,47 @@ fn merge_extra_body(body: &mut Value, extra_body: &BTreeMap<String, Value>) {
+     }
+ }
+ 
++// Recursively applies target-owned values after caller fields and defaults.
++// Object siblings survive, so overriding `reasoning.effort` does not erase a
++// native caller's `reasoning.context`, summary controls, or future fields.
++fn apply_body_overrides(body: &mut Value, body_overrides: &BTreeMap<String, Value>) {
++    let Value::Object(object) = body else {
++        return;
++    };
++    for (key, value) in body_overrides {
++        match object.get_mut(key) {
++            Some(existing) => merge_override_value(existing, value),
++            None => {
++                object.insert(key.clone(), value.clone());
++            }
++        }
++    }
++}
++
++fn merge_override_value(target: &mut Value, override_value: &Value) {
++    if let (Value::Object(target), Value::Object(overrides)) = (&mut *target, override_value) {
++        for (key, value) in overrides {
++            match target.get_mut(key) {
++                Some(existing) => merge_override_value(existing, value),
++                None => {
++                    target.insert(key.clone(), value.clone());
++                }
++            }
++        }
++    } else {
++        *target = override_value.clone();
++    }
++}
++
++fn apply_body_removals(body: &mut Value, body_removals: &[String]) {
++    let Value::Object(object) = body else {
++        return;
++    };
++    for key in body_removals {
++        object.remove(key);
++    }
++}
++
+ // Anthropic and Bedrock both cap a request at four blocks carrying
+ // `cache_control`, counting tools, system blocks and message blocks together.
+ const MAX_CACHE_CONTROL_BLOCKS: usize = 4;
+@@ -1457,6 +1537,73 @@ mod tests {
+         Ok(())
+     }
+ 
++    #[tokio::test]
++    async fn routing_alias_preserves_nested_reasoning_siblings_and_owns_effort()
++    -> std::result::Result<(), Box<dyn Error + Sync + Send + 'static>> {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/v1/chat/completions"))
++            .and(wiremock::matchers::body_partial_json(json!({
++                "model": "gpt-5.6-luna",
++                "reasoning": {
++                    "effort": "max",
++                    "context": "preserved-context",
++                    "summary": "auto"
++                }
++            })))
++            .respond_with(|request: &wiremock::Request| {
++                let body: Value = serde_json::from_slice(&request.body).unwrap();
++                if body.get("max_output_tokens").is_some() {
++                    return ResponseTemplate::new(400);
++                }
++                ResponseTemplate::new(200).set_body_json(json!({
++                    "id": "1",
++                    "model": "gpt-5.6-luna",
++                    "choices": [{
++                        "index": 0,
++                        "message": {"role": "assistant", "content": "ok"},
++                        "finish_reason": "stop"
++                    }],
++                    "usage": {}
++                }))
++            })
++            .mount(&server)
++            .await;
++
++        let model = ModelConfig::new(
++            "switchyard/luna-max",
++            Backend::OpenAiChat(config(&format!("{}/v1", server.uri()))),
++            None,
++        )
++        .with_upstream_model("gpt-5.6-luna")
++        .with_body_overrides(BTreeMap::from([(
++            "reasoning".to_string(),
++            json!({"effort": "max"}),
++        )]))
++        .with_body_removals(vec!["max_output_tokens".to_string()]);
++        let client = TranslatingLlmClient::new(&[model])?;
++        let raw = json!({
++            "model": "switchyard-auto",
++            "messages": [{"role": "user", "content": "hi"}],
++            "reasoning": {
++                "effort": "medium",
++                "context": "preserved-context",
++                "summary": "auto"
++            },
++            "max_output_tokens": 600
++        });
++
++        client
++            .call_rewrite_model_raw(
++                raw,
++                None,
++                Some(&ModelId::from("switchyard/luna-max")),
++                WireFormat::OpenAiChat,
++            )
++            .await?;
++        Ok(())
++    }
++
+     // A weak OpenAI-format tier emits thinking blocks with no signature. Replaying
+     // them to Anthropic is rejected (Bedrock reports it as a SigV4 mismatch), so
+     // the Anthropic leg must drop them while keeping signed ones.
+diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
+index 4b211ae..0dad01c 100644
+--- a/crates/switchyard-runner/src/config.rs
++++ b/crates/switchyard-runner/src/config.rs
+@@ -136,7 +136,7 @@ impl DeploymentConfig {
+         let client = self.llm_clients.get(&target.llm_client)?;
+         Some(DecisionTarget {
+             target: name.to_string(),
+-            model: target.id.clone(),
++            model: target.routing_id().clone(),
+             format: client.format.wire_format(),
+             base_url: client.base_url.as_str().to_string(),
+             extra_body: target.extra_body.clone(),
+@@ -155,10 +155,32 @@ impl DeploymentConfig {
+         for (target_name, target) in &self.targets {
+             validate_value("target name", target_name)?;
+             validate_value(&format!("target {target_name} id"), &target.id)?;
+-            if !seen_client_model_ids.insert((target.llm_client.as_str(), target.id.as_str())) {
++            validate_value(
++                &format!("target {target_name} routing_id"),
++                target.routing_id(),
++            )?;
++            for field in &target.body_removals {
++                validate_value(
++                    &format!("target {target_name} remove_body_fields entry"),
++                    field,
++                )?;
++            }
++            if target.body_overrides.contains_key("model") {
++                return Err(RunnerError::configuration(format!(
++                    "target {target_name} body_overrides cannot set model; use id instead"
++                )));
++            }
++            if target.body_removals.iter().any(|field| field == "model") {
++                return Err(RunnerError::configuration(format!(
++                    "target {target_name} body_removals cannot remove model; use id instead"
++                )));
++            }
++            if !seen_client_model_ids
++                .insert((target.llm_client.as_str(), target.routing_id().as_str()))
++            {
+                 tracing::warn!(
+-                    "target {target_name} reuses model id {} on llm client {}; only one target per id is kept and the other is dropped. Give each target a unique model id, or point both routes at one target.",
+-                    target.id,
++                    "target {target_name} reuses routing id {} on llm client {}; only one target per routing id is kept and the other is dropped. Give each target a unique routing_id, or point both routes at one target.",
++                    target.routing_id(),
+                     target.llm_client
+                 );
+             }
+@@ -237,11 +259,16 @@ impl DeploymentConfig {
+                 .ok_or_else(|| {
+                     RunnerError::configuration("validated llm client was not initialized")
+                 })?;
+-            model_configs.push(ModelConfig::new(
+-                target.id.clone(),
+-                build_backend(&target.llm_client, client_config, &target.extra_body)?,
+-                None,
+-            ));
++            model_configs.push(
++                ModelConfig::new(
++                    target.routing_id().clone(),
++                    build_backend(&target.llm_client, client_config, &target.extra_body)?,
++                    None,
++                )
++                .with_upstream_model(target.id.clone())
++                .with_body_overrides(target.body_overrides.clone())
++                .with_body_removals(target.body_removals.clone()),
++            );
+         }
+ 
+         let mut clients = BTreeMap::new();
+@@ -258,7 +285,7 @@ impl DeploymentConfig {
+     fn build_targets(&self) -> BTreeMap<String, ModelId> {
+         self.targets
+             .iter()
+-            .map(|(name, config)| (name.clone(), config.id.clone()))
++            .map(|(name, config)| (name.clone(), config.routing_id().clone()))
+             .collect()
+     }
+ 
+@@ -293,7 +320,7 @@ impl DeploymentConfig {
+                 caller_auth = Some(target_auth);
+             }
+             let client: Arc<dyn RoutedLlmClient> = client.clone();
+-            by_model.insert(target.id.clone(), client);
++            by_model.insert(target.routing_id().clone(), client);
+         }
+         Ok((ClientRouter::new(by_model), caller_auth))
+     }
+@@ -350,9 +377,9 @@ impl DeploymentConfig {
+         let target = self.targets.get(name)?;
+         let client = clients.get(&target.llm_client)?;
+         client
+-            .supports_auxiliary(&target.id, operation)
++            .supports_auxiliary(target.routing_id(), operation)
+             .then(|| AuxiliaryTarget {
+-                model: target.id.clone(),
++                model: target.routing_id().clone(),
+                 client: client.clone(),
+             })
+     }
+@@ -416,9 +443,20 @@ struct LlmClientConfig {
+ #[serde(deny_unknown_fields)]
+ struct TargetConfig {
+     id: ModelId,
++    routing_id: Option<ModelId>,
+     llm_client: String,
+     #[serde(default)]
+     extra_body: BTreeMap<String, Value>,
++    #[serde(default)]
++    body_overrides: BTreeMap<String, Value>,
++    #[serde(default, rename = "remove_body_fields")]
++    body_removals: Vec<String>,
++}
++
++impl TargetConfig {
++    fn routing_id(&self) -> &ModelId {
++        self.routing_id.as_ref().unwrap_or(&self.id)
++    }
+ }
+ 
+ #[derive(Clone, Copy, Debug, Deserialize)]
+@@ -1199,6 +1237,70 @@ target = "azure"
+         Ok(())
+     }
+ 
++    #[test]
++    fn routing_ids_allow_effort_variants_of_one_upstream_model() -> RunnerResult<()> {
++        const CONFIG: &str = r#"
++schema_version = 1
++
++[llm_clients.responses]
++format = "openai_responses"
++base_url = "https://example.test/v1"
++
++[targets.luna_high]
++id = "gpt-5.6-luna"
++routing_id = "switchyard/luna-high"
++llm_client = "responses"
++body_overrides = { reasoning = { effort = "high" } }
++remove_body_fields = ["max_output_tokens"]
++
++[targets.luna_max]
++id = "gpt-5.6-luna"
++routing_id = "switchyard/luna-max"
++llm_client = "responses"
++body_overrides = { reasoning = { effort = "max" } }
++
++[routes.random]
++id = "switchyard/effort-router"
++type = "random"
++targets = ["luna_high", "luna_max"]
++"#;
++
++        let config: DeploymentConfig = toml::from_str(CONFIG).map_err(|error| {
++            RunnerError::configuration(format!("failed to parse config: {error}"))
++        })?;
++        let targets = config.build_targets();
++        assert_eq!(targets["luna_high"], "switchyard/luna-high");
++        assert_eq!(targets["luna_max"], "switchyard/luna-max");
++        assert_eq!(
++            config.targets["luna_max"].body_overrides["reasoning"]["effort"],
++            "max"
++        );
++        assert_eq!(
++            config.targets["luna_high"].body_removals,
++            ["max_output_tokens"]
++        );
++
++        config.build()?;
++        Ok(())
++    }
++
++    #[test]
++    fn target_body_mutations_cannot_change_the_model_field() {
++        let override_model = VALID_CONFIG.replacen(
++            "llm_client = \"primary\"",
++            "llm_client = \"primary\"\nbody_overrides = { model = \"other\" }",
++            1,
++        );
++        assert!(runner_from_toml(&override_model).is_err());
++
++        let remove_model = VALID_CONFIG.replacen(
++            "llm_client = \"primary\"",
++            "llm_client = \"primary\"\nremove_body_fields = [\"model\"]",
++            1,
++        );
++        assert!(runner_from_toml(&remove_model).is_err());
++    }
++
+     #[test]
+     fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
+         let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
+diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
+index 966edd9..fd6cb86 100644
+--- a/docs/reference/toml_schema.md
++++ b/docs/reference/toml_schema.md
+@@ -87,8 +87,11 @@ calls an upstream.
+ | Key | Required | Default | Meaning |
+ |---|:---:|---|---|
+ | `id` | Yes | — | Exact model ID sent upstream. |
++| `routing_id` | No | `id` | Unique local identity used by routing and observability. Set this when multiple targets send the same upstream model with different options. |
+ | `llm_client` | Yes | — | Key under `[llm_clients]`. |
+ | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
++| `body_overrides` | No | `{}` | Values recursively merged after caller fields and `extra_body` defaults. Nested object siblings are preserved. Cannot set `model`; use `id`. |
++| `remove_body_fields` | No | `[]` | Top-level request fields removed after defaults and overrides. Cannot remove `model`. |
+ 
+ ## `[routes.<name>]`
+ 

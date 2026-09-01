@@ -201,7 +201,6 @@ const CURATION_ROUTES = Object.freeze({
       "nvidia/nemotron-3-ultra-550b-a55b",
       "poolside/laguna-s-2.1-free",
       "sakana/fugu-ultra",
-      "stealth/ox-alpha",
       "stepfun/Step-3.7-Flash",
       "tencent/hy3-paid",
       "tencent/hy4-preview",

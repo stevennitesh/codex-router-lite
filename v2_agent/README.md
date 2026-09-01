@@ -28,6 +28,12 @@ account that can spend the route's quota:
 Do not infer any of this from a model name, a successful ordinary chat turn,
 or a vendor's generic claim that its API supports tools.
 
+A native Codex tool loop may meter transport status `0` after Codex has already
+accepted the function call or final item and closed the stream. An accepted
+application may use that status only when the same rollout records
+`task_complete`; record `completion: "codex-task-complete"` beside the status.
+A cancelled request without that completion evidence fails the gate.
+
 ## Submit an application
 
 1. Copy `_template/` to `v2_agent/<provider>/<slug-model>/`; both directory
