@@ -74,6 +74,83 @@ function candidates() {
   return codexCandidatePaths();
 }
 
+function parsedCodexVersion(value) {
+  const match = /(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(
+    String(value || ""),
+  );
+  if (!match) return undefined;
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4]?.split(".") || [],
+  };
+}
+
+function comparePrerelease(left, right) {
+  if (left.length === 0 && right.length === 0) return 0;
+  if (left.length === 0) return 1;
+  if (right.length === 0) return -1;
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] === undefined) return -1;
+    if (right[index] === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(left[index]);
+    const rightNumeric = /^\d+$/.test(right[index]);
+    if (leftNumeric && rightNumeric) {
+      const delta = Number(left[index]) - Number(right[index]);
+      if (delta !== 0) return Math.sign(delta);
+      continue;
+    }
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    const delta = left[index].localeCompare(right[index]);
+    if (delta !== 0) return Math.sign(delta);
+  }
+  return 0;
+}
+
+export function compareCodexVersions(left, right) {
+  const parsedLeft = parsedCodexVersion(left);
+  const parsedRight = parsedCodexVersion(right);
+  if (!parsedLeft && !parsedRight) return 0;
+  if (!parsedLeft) return -1;
+  if (!parsedRight) return 1;
+  for (let index = 0; index < parsedLeft.core.length; index += 1) {
+    const delta = parsedLeft.core[index] - parsedRight.core[index];
+    if (delta !== 0) return Math.sign(delta);
+  }
+  return comparePrerelease(parsedLeft.prerelease, parsedRight.prerelease);
+}
+
+function codexBinaryVersion(binary) {
+  try {
+    const target = spawnableCommand(binary, ["--version"]);
+    return execFileSync(target.command, target.args, {
+      ...target.options,
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+export function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersion) {
+  const existing = [...new Set(candidatePaths)]
+    .filter((candidate) => candidate && existsSync(candidate) && !isShimFile(candidate));
+  if (existing.length === 0) return undefined;
+  let selected = existing[0];
+  let selectedVersion = versionFor(selected);
+  for (const candidate of existing.slice(1)) {
+    const candidateVersion = versionFor(candidate);
+    if (compareCodexVersions(candidateVersion, selectedVersion) > 0) {
+      selected = candidate;
+      selectedVersion = candidateVersion;
+    }
+  }
+  return selected;
+}
+
 // The router must never resolve `codex` to the shim it installs in front of it.
 //
 // The shim's job is to guarantee the router is listening before Codex starts,
@@ -86,18 +163,24 @@ function candidates() {
 // candidate below *and* a directory `chooseShimDirectory` may install into,
 // because it restricts itself to the home directory.
 export function findCodexBinary() {
-  const direct = candidates().find(
-    (candidate) => existsSync(candidate) && !isShimFile(candidate),
-  );
-  if (direct) return direct;
-  // Never the raw first line of the finder: on Windows that is the
-  // extensionless npm shim, which Node cannot spawn. See spawnable-command.mjs.
+  // Explicit operator choices outrank discovery, even when another installed
+  // build is newer. They are configuration, not candidates.
+  const explicit = [
+    process.env.CODEX_BIN,
+    process.env.CODEX_INSTALL_DIR &&
+      path.join(
+        process.env.CODEX_INSTALL_DIR,
+        process.platform === "win32" ? "codex.exe" : "codex",
+      ),
+  ].find((candidate) => candidate && existsSync(candidate) && !isShimFile(candidate));
+  if (explicit) return explicit;
+
+  // Never use installation-path order as a version signal. The Windows
+  // desktop app and a standalone CLI can coexist, and the older standalone
+  // path used to win even while the app was running a newer harness.
   const found = commandOnPath("codex");
-  if (found && !isShimFile(found)) return found;
-  // The finder landed on our own shim, so walk past it to the real Codex the
-  // shim itself execs. When there is none, report none: handing back the shim
-  // would rebuild the loop this filter exists to break.
-  return resolveRealCodex()?.file;
+  const pathCandidate = found && !isShimFile(found) ? found : resolveRealCodex()?.file;
+  return newestCodexBinary([...candidates(), pathCandidate]);
 }
 
 export function requireCodexBinary() {

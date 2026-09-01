@@ -533,7 +533,25 @@ function rewriteModelMessages(messages, model) {
 
 const NATIVE_PARALLEL_TOOL_CALL_COMPAT = new Map([["gpt-5.2", true]]);
 
-function normalizeNativeModel(model) {
+function owns(object, field) {
+  return Object.prototype.hasOwnProperty.call(object || {}, field);
+}
+
+function modernNativeCatalog(models) {
+  return models.some(
+    (model) =>
+      owns(model, "include_plugin_usage_instructions") ||
+      owns(model, "node_repl_disabled") ||
+      owns(model?.model_messages, "token_budget") ||
+      owns(model?.model_messages, "multi_agent"),
+  );
+}
+
+export function normalizeNativeModel(model, { modern = false } = {}) {
+  // Codex 0.151 moved these decisions into model-specific tool planning and
+  // stopped emitting the legacy booleans. Preserve that absence. Writing
+  // `false` changes behavior; it is not a harmless schema default.
+  if (modern) return { ...model };
   const supportsParallelToolCalls =
     typeof model.supports_parallel_tool_calls === "boolean"
       ? model.supports_parallel_tool_calls
@@ -586,20 +604,28 @@ export function routedModel(template, model, behaviorTemplate = template) {
     default_reasoning_level: model.defaultEffort,
     supported_reasoning_levels: model.reasoningLevels,
     context_window: nativeRequestProfile
-      ? behaviorTemplate.context_window || model.contextWindow
+      ? owns(behaviorTemplate, "context_window")
+        ? behaviorTemplate.context_window
+        : model.contextWindow
       : model.contextWindow,
     max_context_window: nativeRequestProfile
-      ? behaviorTemplate.max_context_window || model.contextWindow
+      ? owns(behaviorTemplate, "max_context_window")
+        ? behaviorTemplate.max_context_window
+        : model.contextWindow
       : model.contextWindow,
     effective_context_window_percent: 95,
     auto_compact_token_limit: nativeRequestProfile
-      ? behaviorTemplate.auto_compact_token_limit ?? model.autoCompact
+      ? behaviorTemplate.auto_compact_token_limit
       : model.autoCompact,
     input_modalities: nativeRequestProfile
-      ? behaviorTemplate.input_modalities || model.inputModalities
+      ? owns(behaviorTemplate, "input_modalities")
+        ? behaviorTemplate.input_modalities
+        : model.inputModalities
       : model.inputModalities,
     comp_hash: model.compHash,
-    additional_speed_tiers: [],
+    additional_speed_tiers: Array.isArray(model.additionalSpeedTiers)
+      ? model.additionalSpeedTiers.map((tier) => tier.trim())
+      : [],
     service_tiers: Array.isArray(model.serviceTiers)
       ? model.serviceTiers.map((tier) => ({
           id: tier.id.trim(),
@@ -683,6 +709,26 @@ export function routedModel(template, model, behaviorTemplate = template) {
   // not a routed capability and must stay out even when that native entry is
   // also the conservative fallback template.
   if (!nativeRequestProfile) delete next.tool_mode;
+  if (nativeRequestProfile) {
+    // Optional native capabilities are tri-state in current Codex catalogs.
+    // Keep a field absent when the behavior template omits it instead of
+    // converting absence into a false or fallback capability claim.
+    for (const field of [
+      "supports_reasoning_summaries",
+      "auto_compact_token_limit",
+      "default_reasoning_summary",
+      "support_verbosity",
+      "default_verbosity",
+      "supports_search_tool",
+      "supports_image_detail_original",
+      "supports_parallel_tool_calls",
+      "use_responses_lite",
+      "apply_patch_tool_type",
+      "tool_mode",
+    ]) {
+      if (!owns(behaviorTemplate, field)) delete next[field];
+    }
+  }
   // ClinePass strips these unsupported request controls, so Codex must not offer them.
   if (model.requestProfile === "clinepass") {
     delete next.default_reasoning_level;
@@ -920,9 +966,13 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
   if (!template) {
     throw new Error("Native model catalog is empty.");
   }
+  const modern = modernNativeCatalog(native.models);
   const models = new Map(
     includeNative
-      ? native.models.map((model) => [model.slug, normalizeNativeModel(model)])
+      ? native.models.map((model) => [
+          model.slug,
+          normalizeNativeModel(model, { modern }),
+        ])
       : [],
   );
   for (const model of routedPickerPriorities(native.models, routedModelsList)) {

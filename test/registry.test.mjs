@@ -1302,6 +1302,37 @@ test("serviceTiers require unique non-empty ids and names", async () => {
   }
 });
 
+test("additionalSpeedTiers require unique non-empty ids", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const nodePath = (await import("node:path")).default;
+  const { spawnSync } = await import("node:child_process");
+  const dir = mkdtempSync(nodePath.join(tmpdir(), "registry-speed-tiers-test-"));
+  const load = (additionalSpeedTiers) => {
+    const registry = readRegistryDocument("config");
+    registry.models = [
+      { ...registry.models[0], additionalSpeedTiers },
+      ...registry.models.slice(1),
+    ];
+    const registryPath = nodePath.join(dir, "providers.json");
+    writeFileSync(registryPath, JSON.stringify(registry));
+    return spawnSync(
+      process.execPath,
+      ["-e", "import('./src/model-registry.mjs').catch((e)=>{console.error(e.message);process.exit(1);})"],
+      { encoding: "utf8", env: { ...process.env, MODEL_ROUTER_REGISTRY: registryPath } },
+    );
+  };
+  try {
+    assert.match(load([]).stderr, /invalid additionalSpeedTiers/);
+    assert.match(load(["fast", "fast"]).stderr, /invalid additionalSpeedTiers/);
+    assert.match(load(["fast", " fast "]).stderr, /invalid additionalSpeedTiers/);
+    const valid = load(["fast"]);
+    assert.equal(valid.status, 0, valid.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("isFree is a boolean model tag", async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

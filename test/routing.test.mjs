@@ -3269,6 +3269,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       parallel_tool_calls: true,
       tool_choice: "auto",
       include: ["reasoning.encrypted_content"],
+      service_tier: "priority",
     };
     const turn = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",

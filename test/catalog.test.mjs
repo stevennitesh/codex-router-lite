@@ -216,21 +216,24 @@ test("Switchyard inherits the native Codex request and compaction contract", () 
     base_instructions: "You are Codex, an agent based on GPT-5.6. NATIVE_BEHAVIOR",
     model_messages: {
       instructions_template: "You are Codex, an agent based on GPT-5.6. NATIVE_TEMPLATE",
+      collaboration_modes: { default: "native collaboration" },
+      permissions: { guidance: "native permissions" },
+      multi_agent: { guidance: "native multi-agent" },
+      token_budget: { reminder_threshold_tokens: 6144 },
     },
     input_modalities: ["text", "image"],
     context_window: 272000,
     max_context_window: 872000,
-    auto_compact_token_limit: 244800,
-    supports_reasoning_summaries: true,
-    default_reasoning_summary: "none",
     support_verbosity: true,
     default_verbosity: "low",
     supports_search_tool: true,
     supports_image_detail_original: true,
-    supports_parallel_tool_calls: true,
     use_responses_lite: true,
     tool_mode: "code_mode_only",
     include_skills_usage_instructions: false,
+    include_plugin_usage_instructions: true,
+    node_repl_auto_review_required: false,
+    node_repl_disabled: false,
   };
   const model = routedModel(template, {
     ...grok,
@@ -238,6 +241,10 @@ test("Switchyard inherits the native Codex request and compaction contract", () 
     displayName: "Switchyard Auto",
     requestProfile: "switchyard-native",
     inputModalities: ["text"],
+    serviceTiers: [
+      { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+    ],
+    additionalSpeedTiers: ["fast"],
   }, behaviorTemplate);
 
   assert.equal(model.base_instructions, behaviorTemplate.base_instructions);
@@ -245,17 +252,24 @@ test("Switchyard inherits the native Codex request and compaction contract", () 
   assert.deepEqual(model.input_modalities, ["text", "image"]);
   assert.equal(model.context_window, 272000);
   assert.equal(model.max_context_window, 872000);
-  assert.equal(model.auto_compact_token_limit, 244800);
-  assert.equal(model.supports_reasoning_summaries, true);
-  assert.equal(model.default_reasoning_summary, "none");
+  assert.equal("auto_compact_token_limit" in model, false);
+  assert.equal("supports_reasoning_summaries" in model, false);
+  assert.equal("default_reasoning_summary" in model, false);
   assert.equal(model.support_verbosity, true);
   assert.equal(model.default_verbosity, "low");
   assert.equal(model.supports_search_tool, true);
   assert.equal(model.supports_image_detail_original, true);
-  assert.equal(model.supports_parallel_tool_calls, true);
+  assert.equal("supports_parallel_tool_calls" in model, false);
   assert.equal(model.use_responses_lite, true);
   assert.equal(model.tool_mode, "code_mode_only");
   assert.equal(model.include_skills_usage_instructions, false);
+  assert.equal(model.include_plugin_usage_instructions, true);
+  assert.equal(model.node_repl_auto_review_required, false);
+  assert.equal(model.node_repl_disabled, false);
+  assert.deepEqual(model.service_tiers, [
+    { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+  ]);
+  assert.deepEqual(model.additional_speed_tiers, ["fast"]);
   assert.equal(model.slug, "switchyard/auto");
   assert.equal(model.display_name, "Switchyard Auto");
   assert.deepEqual(model.supported_reasoning_levels, grok.reasoningLevels);
@@ -298,6 +312,9 @@ test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract",
     model_messages: {
       instructions_template: "You are Codex, an agent based on GPT-5.6-Sol. NATIVE",
       instructions_variables: { personality_default: "" },
+      collaboration_modes: { default: "native collaboration" },
+      multi_agent: { guidance: "native multi-agent" },
+      token_budget: { reminder_threshold_tokens: 6144 },
     },
   };
   const model = routedModel(template, {
@@ -311,6 +328,15 @@ test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract",
   assert.doesNotMatch(model.base_instructions, /GPT-5/);
   assert.doesNotMatch(model.base_instructions, /Ox/);
   assert.deepEqual(model.model_messages.instructions_variables, { personality_default: "" });
+  assert.deepEqual(model.model_messages.collaboration_modes, {
+    default: "native collaboration",
+  });
+  assert.deepEqual(model.model_messages.multi_agent, {
+    guidance: "native multi-agent",
+  });
+  assert.deepEqual(model.model_messages.token_budget, {
+    reminder_threshold_tokens: 6144,
+  });
 });
 
 test("efficient routed execution keeps persistent tool output bounded", () => {
@@ -453,6 +479,7 @@ test("routed service tiers are explicit and never inherit a paid default", () =>
 
   const tiered = routedModel(template, {
     ...grok,
+    additionalSpeedTiers: [" fast "],
     serviceTiers: [
       { id: " priority ", name: " Fast ", description: " Guaranteed throughput. " },
     ],
@@ -460,6 +487,7 @@ test("routed service tiers are explicit and never inherit a paid default", () =>
   assert.deepEqual(tiered.service_tiers, [
     { id: "priority", name: "Fast", description: "Guaranteed throughput." },
   ]);
+  assert.deepEqual(tiered.additional_speed_tiers, ["fast"]);
   assert.equal(tiered.default_service_tier, null);
 });
 
@@ -608,6 +636,32 @@ test("native gpt-5.2 stays parseable by older Codex catalog readers", () => {
   delete native52.supports_parallel_tool_calls;
   const merged = buildMergedCatalog({ models: [native52] }, []);
   assert.equal(merged[0].supports_parallel_tool_calls, true);
+});
+
+test("modern native catalogs preserve absent legacy capability flags", () => {
+  const current = {
+    ...template,
+    slug: "gpt-5.6-sol",
+    include_plugin_usage_instructions: true,
+    node_repl_disabled: false,
+    model_messages: {
+      ...template.model_messages,
+      multi_agent: { guidance: "native multi-agent" },
+      token_budget: { reminder_threshold_tokens: 6144 },
+    },
+  };
+  delete current.supports_parallel_tool_calls;
+  delete current.supports_reasoning_summaries;
+
+  const merged = buildMergedCatalog({ models: [current] }, []);
+  assert.equal("supports_parallel_tool_calls" in merged[0], false);
+  assert.equal("supports_reasoning_summaries" in merged[0], false);
+  assert.deepEqual(merged[0].model_messages.token_budget, {
+    reminder_threshold_tokens: 6144,
+  });
+  assert.deepEqual(merged[0].model_messages.multi_agent, {
+    guidance: "native multi-agent",
+  });
 });
 
 test("merged catalog resolves a routed behavior template without inheriting its capabilities", () => {

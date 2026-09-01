@@ -773,6 +773,21 @@ function modelProblem(model, providers, slugs, gatewayModels) {
       return `model ${model.slug} has duplicate serviceTiers`;
     }
   }
+  if (model.additionalSpeedTiers !== undefined) {
+    const tiers = Array.isArray(model.additionalSpeedTiers)
+      ? model.additionalSpeedTiers.map((tier) =>
+          typeof tier === "string" ? tier.trim() : tier,
+        )
+      : [];
+    if (
+      !Array.isArray(model.additionalSpeedTiers) ||
+      tiers.length === 0 ||
+      tiers.some((tier) => typeof tier !== "string" || !tier) ||
+      new Set(tiers).size !== tiers.length
+    ) {
+      return `model ${model.slug} has invalid additionalSpeedTiers`;
+    }
+  }
   if (
     model.defaultReasoningSummary !== undefined &&
     !["auto", "concise", "detailed"].includes(model.defaultReasoningSummary)

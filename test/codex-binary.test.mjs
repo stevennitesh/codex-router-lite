@@ -5,9 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  compareCodexVersions,
   codexCandidatePaths,
   findCodexBinary,
   linuxDesktopAppBundledCodex,
+  newestCodexBinary,
   preferSpawnablePath,
   spawnableCommand,
 } from "../src/codex-binary.mjs";
@@ -58,6 +60,32 @@ test("ignores blank lines in finder output", () => {
 test("returns undefined for empty finder output", () => {
   assert.equal(preferSpawnablePath([], "win32"), undefined);
   assert.equal(preferSpawnablePath(["", "   "], "darwin"), undefined);
+});
+
+test("Codex versions compare stable releases and prereleases semantically", () => {
+  assert.equal(compareCodexVersions("codex-cli 0.152.0", "codex-cli 0.151.0-alpha.7.2"), 1);
+  assert.equal(compareCodexVersions("0.151.0", "0.151.0-alpha.7.2"), 1);
+  assert.equal(compareCodexVersions("0.151.0-alpha.7.10", "0.151.0-alpha.7.2"), 1);
+  assert.equal(compareCodexVersions(undefined, "0.151.0"), -1);
+});
+
+test("newest Codex selection follows the installed version, not path order", () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-version-select-"));
+  const standalone = path.join(testRoot, "Programs", "Codex", "codex.exe");
+  const desktop = path.join(testRoot, "OpenAI", "Codex", "bin", "hash", "codex.exe");
+  mkdirSync(path.dirname(standalone), { recursive: true });
+  mkdirSync(path.dirname(desktop), { recursive: true });
+  writeFileSync(standalone, "");
+  writeFileSync(desktop, "");
+  const versions = new Map([
+    [standalone, "codex-cli 0.144.0"],
+    [desktop, "codex-cli 0.151.0-alpha.7.2"],
+  ]);
+  try {
+    assert.equal(newestCodexBinary([standalone, desktop], (file) => versions.get(file)), desktop);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
 });
 
 test("prefers the Linux desktop app's bundled CLI over a standalone CLI", () => {

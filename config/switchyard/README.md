@@ -79,11 +79,12 @@ the native model behind the public route. Router also skips routed-agent input
 normalization for the Switchyard profile because the selected native model receives
 the original Codex request after Switchyard chooses the target.
 
-The public `switchyard/auto` catalog entry derives its context and automatic
-compaction limit from the current native Sol behavior template whenever Router
-publishes the catalog. The numbers therefore follow the installed Codex catalog
-instead of being frozen in this integration. The values in `auto.json` are only
-fail-closed fallbacks for a malformed native entry. Switchyard's internal routes
+The public `switchyard/auto` catalog entry derives its context and compaction
+contract from the current native Sol behavior template whenever Router publishes
+the catalog. Current Codex omits `auto_compact_token_limit` and instead supplies
+token-budget and context-reset controls in `model_messages`; Router preserves that
+absence and those controls. The context values therefore follow the installed Codex
+catalog instead of being frozen in this integration. Switchyard's internal routes
 may retain their larger model context windows; those limits do not control when
 the Codex client compacts its task history.
 
@@ -102,8 +103,10 @@ do not require the named role.
 The local Router endpoint currently has no WebSocket relay. Current Codex builds
 may attempt the upgrade and then fall back to the supported HTTP Responses stream. This is a
 transport latency/logging difference, not a request-shape or agent-behavior change.
-Fast service-tier selection is intentionally not advertised because Switchyard's
-classifier and target clients have not been certified to preserve that opt-in tier.
+The `priority` Fast service tier is advertised and passed through because every Sol
+and Luna target supports it. The Sol-only `ultrafast` tier stays hidden; advertising
+it on the routed root would send an unsupported tier whenever the classifier chooses
+Luna. Codex subagents can inherit the common Fast tier from the root.
 
 Codex may send zstd-compressed native requests. The local Switchyard hop receives
 plain JSON because Switchyard currently accepts JSON bodies, not Codex's zstd
@@ -165,6 +168,16 @@ cargo test -p switchyard-llm-client -p switchyard-runner
 cargo build --release -p switchyard-server
 Pop-Location
 ```
+
+Before deployment, verify that Router can build a custom catalog from the target
+Codex binary and that the same binary can parse it:
+
+```powershell
+node scripts/check-codex-catalog-compat.mjs "C:\path\to\codex.exe"
+```
+
+The check uses a temporary catalog and does not change the active Codex or Router
+configuration.
 
 Validate the new binary with the active route configuration before replacement.
 After a guarded replacement, verify Router health, Switchyard `/health`, the merged
