@@ -166,7 +166,7 @@ $buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]:
 $routerRoot = "C:\Users\steve\AppData\Local\codex-router"
 $patchPath = Join-Path $routerRoot "config\switchyard\patches\switchyard-codex-compat.patch"
 git clone https://github.com/NVIDIA-NeMo/Switchyard.git $buildRoot
-git -C $buildRoot checkout --detach 477ad1feb2b4ca231c98aa644110914b51f0dfac
+git -C $buildRoot checkout --detach bb011ca452c2274ea10c4a4cc55264e54abf0a62
 git -C $buildRoot apply --check $patchPath
 git -C $buildRoot apply $patchPath
 Push-Location $buildRoot
@@ -197,7 +197,7 @@ catalog, and one routed smoke request. Delete the disposable checkout afterward.
 The currently installed binary may predate this source lock until the next
 guarded restart. `SOURCE_COMMIT` records the deployed binary; `source.lock`
 records the reproducible candidate built from upstream commit
-`477ad1feb2b4ca231c98aa644110914b51f0dfac` and the canonical patch in this
+`bb011ca452c2274ea10c4a4cc55264e54abf0a62` and the canonical patch in this
 directory.
 
 Keep only the active binary, active `routes.toml`, `SOURCE_COMMIT`, routing history,

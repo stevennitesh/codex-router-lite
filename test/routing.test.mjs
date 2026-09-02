@@ -4519,6 +4519,7 @@ test("API forwarder never replays embeddings through a provider API-key pool", a
       env: {
         ...process.env,
         MODEL_ROUTER_TARGET: "codex",
+        CODEX_HOME: path.join(stateDir, "codex-home"),
         MODEL_ROUTER_STATE_DIR: stateDir,
         MODEL_ROUTER_PROVIDER_CREDENTIAL_STORE: credentialStorePath,
         MODEL_ROUTER_API_KEY_POOL_PATH: poolStatePath,
