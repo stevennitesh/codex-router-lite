@@ -1319,7 +1319,14 @@ test("malformed switch state retains durable rollback evidence and fails closed"
   writeFileSync(switchPath, '{"version":1,"phase":', { mode: 0o600 });
 
   await assert.rejects(
-    requestChatGPTProfileSwitch("auto", { switchPath }),
+    requestChatGPTProfileSwitch("auto", {
+      switchPath,
+      filePath: path.join(root, "pool.json"),
+      homesDir: path.join(root, "accounts"),
+      primaryHome: path.join(root, "primary"),
+      platform: "darwin",
+      processList: "",
+    }),
     /could not be read as JSON/i,
   );
   assert.equal(existsSync(evidencePath), true);
@@ -1331,7 +1338,14 @@ test("malformed switch state retains durable rollback evidence and fails closed"
     phase: "future-phase",
   }), { mode: 0o600 });
   await assert.rejects(
-    requestChatGPTProfileSwitch("auto", { switchPath }),
+    requestChatGPTProfileSwitch("auto", {
+      switchPath,
+      filePath: path.join(root, "pool.json"),
+      homesDir: path.join(root, "accounts"),
+      primaryHome: path.join(root, "primary"),
+      platform: "darwin",
+      processList: "",
+    }),
     /phase is invalid/i,
   );
   assert.equal(existsSync(evidencePath), true);
@@ -1403,7 +1417,11 @@ test("profile detection fails closed across desktop process names", () => {
   assert.equal(codexDesktopRunning({ platform: "linux", processListReader: () => { throw new Error("ps unavailable"); } }), true);
 });
 
-test("profile switching rejects symlinked login files before mutating the active profile", async () => {
+test("profile switching rejects symlinked login files before mutating the active profile", {
+  skip: process.platform === "win32"
+    ? "unprivileged Windows fixtures cannot create symlinks"
+    : false,
+}, async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "codex-profile-symlink-"));
   const primaryHome = path.join(root, "primary");
   const homesDir = path.join(root, "accounts");
@@ -1432,7 +1450,14 @@ test("a catalog refresh failure restores the previous auth and catalog atomicall
   const homesDir = path.join(root, "accounts");
   const filePath = path.join(root, "pool.json");
   const switchPath = path.join(root, "switch.json");
-  const modelsCachePath = path.join(root, "models_cache.json");
+  const catalog = {
+    modelsCachePath: path.join(root, "models_cache.json"),
+    nativeCatalogPath: path.join(root, "native-models.json"),
+    mergedCatalogPath: path.join(root, "merged-models.json"),
+    nativeAliasPath: path.join(root, "native-aliases.json"),
+    announcedModelsPath: path.join(root, "announced-models.json"),
+  };
+  const { modelsCachePath } = catalog;
   mkdirSync(primaryHome, { recursive: true });
   const first = createChatGPTSubscriptionAccount({ filePath, homesDir });
   const second = createChatGPTSubscriptionAccount({ filePath, homesDir });
@@ -1450,7 +1475,7 @@ test("a catalog refresh failure restores the previous auth and catalog atomicall
   writeFileSync(secondCatalog, '{"account":"second"}', { mode: 0o600 });
   await assert.rejects(
     requestChatGPTProfileSwitch(second.id, {
-      filePath, homesDir, primaryHome, switchPath, platform: "darwin", processList: "", modelsCachePath,
+      filePath, homesDir, primaryHome, switchPath, platform: "darwin", processList: "", ...catalog,
       refreshCatalog: () => { throw new Error("simulated catalog crash"); },
     }),
     /simulated catalog crash/,
@@ -1622,7 +1647,14 @@ test("an interrupted switch rolls back durable auth and catalog before retrying"
   const homesDir = path.join(root, "accounts");
   const filePath = path.join(root, "pool.json");
   const switchPath = path.join(root, "switch.json");
-  const modelsCachePath = path.join(root, "models_cache.json");
+  const catalog = {
+    modelsCachePath: path.join(root, "models_cache.json"),
+    nativeCatalogPath: path.join(root, "native-models.json"),
+    mergedCatalogPath: path.join(root, "merged-models.json"),
+    nativeAliasPath: path.join(root, "native-aliases.json"),
+    announcedModelsPath: path.join(root, "announced-models.json"),
+  };
+  const { modelsCachePath } = catalog;
   mkdirSync(primaryHome, { recursive: true });
   const first = createChatGPTSubscriptionAccount({ filePath, homesDir });
   const second = createChatGPTSubscriptionAccount({ filePath, homesDir });
@@ -1645,7 +1677,12 @@ test("an interrupted switch rolls back durable auth and catalog before retrying"
     await requestChatGPTProfileSwitch(${JSON.stringify(second.id)}, {
       filePath: ${JSON.stringify(filePath)}, homesDir: ${JSON.stringify(homesDir)},
       primaryHome: ${JSON.stringify(primaryHome)}, switchPath: ${JSON.stringify(switchPath)},
-      platform: "darwin", processList: "", modelsCachePath: ${JSON.stringify(modelsCachePath)},
+      platform: "darwin", processList: "",
+      modelsCachePath: ${JSON.stringify(catalog.modelsCachePath)},
+      nativeCatalogPath: ${JSON.stringify(catalog.nativeCatalogPath)},
+      mergedCatalogPath: ${JSON.stringify(catalog.mergedCatalogPath)},
+      nativeAliasPath: ${JSON.stringify(catalog.nativeAliasPath)},
+      announcedModelsPath: ${JSON.stringify(catalog.announcedModelsPath)},
       staleMs: 2000, waitMs: 5000,
       refreshCatalog: () => process.kill(process.pid, "SIGKILL"),
     });
@@ -1672,7 +1709,7 @@ test("an interrupted switch rolls back durable auth and catalog before retrying"
     switchPath,
     platform: "darwin",
     processList: "",
-    modelsCachePath,
+    ...catalog,
     staleMs: 2000,
     waitMs: 5000,
     refreshCatalog: () => {},
