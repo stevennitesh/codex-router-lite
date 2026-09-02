@@ -92,6 +92,7 @@ import {
 } from "./search-capability.mjs";
 import {
   canonicalProviderId,
+  providerRuntimeAvailable,
   readProviderSelection,
   selectedConfiguredListedModels,
 } from "./provider-selection.mjs";
@@ -1268,7 +1269,11 @@ async function healthPayload() {
 // reference produces the promised 503 instead of being mislabeled as hidden.
 function routeProviderEnabled(providerId) {
   const provider = RUNTIME_PROVIDERS.get(providerId);
-  return provider?.generic === true || readProviderSelection().includes(providerId);
+  if (provider?.generic === true) return true;
+  if (!readProviderSelection().includes(providerId)) return false;
+  // Unlike API-key providers, Switchyard is the upstream process itself. A
+  // stale selection must not admit a route after that process disappears.
+  return providerRuntimeAvailable(providerId);
 }
 
 function messageItem(text) {

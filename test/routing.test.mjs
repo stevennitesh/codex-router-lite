@@ -3195,6 +3195,10 @@ test("API forwarder replaces an image a text-only model cannot read", async () =
 
 test("Switchyard preserves native requests and leaves compaction on the native backend", async () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "switchyard-routing-state-"));
+  const switchyardRoot = path.join(stateDir, "switchyard-runtime");
+  mkdirSync(switchyardRoot, { recursive: true });
+  writeFileSync(path.join(switchyardRoot, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
+  writeFileSync(path.join(switchyardRoot, "routes.toml"), "# fixture\n");
   writeFileSync(
     path.join(stateDir, "enabled-providers.json"),
     `${JSON.stringify({ version: 1, providers: ["switchyard"] })}\n`,
@@ -3244,6 +3248,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_STATE_DIR: stateDir,
     CODEX_ROUTER_SHOW_ALL_MODELS: "0",
+    CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
     CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
@@ -10795,12 +10800,9 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
     });
     assert.equal(upstreamRequests.at(-1).body.reasoning_effort, undefined);
 
-    // Forcing a tool choice was observed on each certified route, so the
-    // profile must not quietly downgrade it the way thinking-only providers do.
-    for (const gatewayModel of [
-      "opencode-go-glm-5-3-flash",
-      "openrouter-glm-5-3-flash",
-    ]) {
+    // OpenCode Go honors forcing; the pinned Novita endpoint calls offered
+    // tools but rejects required and named-function selection.
+    for (const gatewayModel of ["opencode-go-glm-5-3-flash"]) {
       await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
         method: "POST",
         headers: {
@@ -10816,8 +10818,18 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
       });
       assert.equal(upstreamRequests.at(-1).body.tool_choice, "required");
     }
+    await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${INTERNAL_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash",
+        tool_choice: "required",
+        messages: [{ role: "user", content: "test" }],
+      }),
+    });
+    assert.equal(upstreamRequests.at(-1).body.tool_choice, "auto");
 
-    // The OpenRouter route owns a full-tool provider set and removes native
+    // The OpenRouter route owns the Novita provider binding and removes native
     // OpenAI controls the GLM endpoint does not implement.
     await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
       method: "POST",
@@ -10859,10 +10871,7 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
     ]) {
       assert.equal(openRouter[field], undefined, field);
     }
-    assert.deepEqual(openRouter.tool_choice, {
-      type: "function",
-      function: { name: "read_file" },
-    });
+    assert.equal(openRouter.tool_choice, "auto");
     assert.equal(openRouter.messages[1].reasoning_content, "provider-native reasoning");
     assert.deepEqual(openRouter.messages[1].content, [{ type: "text", text: "visible answer" }]);
     assert.deepEqual(openRouter.provider, {

@@ -566,50 +566,14 @@ function rewriteModelMessages(messages, model) {
   return next;
 }
 
-const NATIVE_PARALLEL_TOOL_CALL_COMPAT = new Map([["gpt-5.2", true]]);
-
 function owns(object, field) {
   return Object.prototype.hasOwnProperty.call(object || {}, field);
-}
-
-function modernNativeCatalog(models) {
-  return models.some(
-    (model) =>
-      owns(model, "include_plugin_usage_instructions") ||
-      owns(model, "node_repl_disabled") ||
-      owns(model?.model_messages, "token_budget") ||
-      owns(model?.model_messages, "multi_agent"),
-  );
-}
-
-export function normalizeNativeModel(model, { modern = false } = {}) {
-  // Codex 0.151 moved these decisions into model-specific tool planning and
-  // stopped emitting the legacy booleans. Preserve that absence. Writing
-  // `false` changes behavior; it is not a harmless schema default.
-  if (modern) return { ...model };
-  const supportsParallelToolCalls =
-    typeof model.supports_parallel_tool_calls === "boolean"
-      ? model.supports_parallel_tool_calls
-      : NATIVE_PARALLEL_TOOL_CALL_COMPAT.get(String(model.slug)) ?? false;
-  return {
-    ...model,
-    // Recent Codex clients require this field on every catalog entry. An
-    // absent native declaration is not evidence that parallel calls work, so
-    // make the conservative answer explicit instead of leaving the catalog
-    // unparsable.
-    supports_parallel_tool_calls: supportsParallelToolCalls,
-    supports_reasoning_summaries:
-      typeof model.supports_reasoning_summaries === "boolean"
-        ? model.supports_reasoning_summaries
-        : false,
-  };
 }
 
 export function routedModel(
   template,
   model,
   behaviorTemplate = template,
-  { modern = false } = {},
 ) {
   const nativeRequestProfile = model.requestProfile === "switchyard-native";
   const catalogTemplate = nativeRequestProfile ? behaviorTemplate : template;
@@ -695,17 +659,9 @@ export function routedModel(
           migration_markdown: model.upgradeTo.markdown.trim(),
         }
       : null,
-    ...(modern
-      ? {
-          supports_reasoning_summary_parameter: nativeRequestProfile
-            ? behaviorTemplate.supports_reasoning_summary_parameter !== false
-            : model.supportsReasoningSummaries === true,
-        }
-      : {
-          supports_reasoning_summaries: nativeRequestProfile
-            ? behaviorTemplate.supports_reasoning_summaries === true
-            : model.supportsReasoningSummaries === true,
-        }),
+    supports_reasoning_summary_parameter: nativeRequestProfile
+      ? behaviorTemplate.supports_reasoning_summary_parameter !== false
+      : model.supportsReasoningSummaries === true,
     default_reasoning_summary: nativeRequestProfile
       ? behaviorTemplate.default_reasoning_summary || "none"
       : model.supportsReasoningSummaries === true
@@ -730,16 +686,6 @@ export function routedModel(
     supports_image_detail_original: nativeRequestProfile
       ? behaviorTemplate.supports_image_detail_original === true
       : model.supportsImageDetailOriginal === true,
-    // A routed model must never inherit a native template's capability. Codex
-    // now requires the key, and `false` is both schema-valid and conservative
-    // until this exact provider/model route declares support.
-    ...(!modern
-      ? {
-          supports_parallel_tool_calls: nativeRequestProfile
-            ? behaviorTemplate.supports_parallel_tool_calls === true
-            : model.supportsParallelToolCalls === true,
-        }
-      : {}),
     use_responses_lite: nativeRequestProfile
       ? behaviorTemplate.use_responses_lite === true
       : false,
@@ -766,16 +712,13 @@ export function routedModel(
     // Keep a field absent when the behavior template omits it instead of
     // converting absence into a false or fallback capability claim.
     for (const field of [
-      modern
-        ? "supports_reasoning_summary_parameter"
-        : "supports_reasoning_summaries",
+      "supports_reasoning_summary_parameter",
       "auto_compact_token_limit",
       "default_reasoning_summary",
       "support_verbosity",
       "default_verbosity",
       "supports_search_tool",
       "supports_image_detail_original",
-      "supports_parallel_tool_calls",
       "use_responses_lite",
       "apply_patch_tool_type",
       "tool_mode",
@@ -1027,18 +970,18 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
   if (!template) {
     throw new Error("Native model catalog is empty.");
   }
-  const modern = modernNativeCatalog(native.models);
   const models = new Map(
     includeNative
       ? native.models.map((model) => [
           model.slug,
-          normalizeNativeModel(model, { modern }),
+          // Native entries are owned by the current bundled Codex catalog.
+          { ...model },
         ])
       : [],
   );
   for (const model of routedPickerPriorities(native.models, routedModelsList)) {
     const behaviorTemplate = behaviorTemplateFor(native.models, model, template);
-    models.set(model.slug, routedModel(template, model, behaviorTemplate, { modern }));
+    models.set(model.slug, routedModel(template, model, behaviorTemplate));
   }
   return sortCatalogModels(models.values());
 }
@@ -1055,7 +998,6 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
 // function keeps the same rule for the login-free path instead of trusting its
 // caller to pre-filter, so no future call site can publish dead slots again.
 export function buildLoginFreeCatalog(native, routedModelsList) {
-  const modern = modernNativeCatalog(native.models);
   const configured = new Set(configuredProviderIds());
   const usableModels = routedModelsList.filter(
     (model) => !model.provider || configured.has(model.provider),
@@ -1071,7 +1013,6 @@ export function buildLoginFreeCatalog(native, routedModelsList) {
         nativeModel,
         model,
         behaviorTemplateFor(native.models, model, nativeModel),
-        { modern },
       ),
       slug: nativeModel.slug,
       priority: nativeModel.priority,

@@ -30,6 +30,12 @@ export function switchyardRuntimeStatus({
   };
 }
 
+export function switchyardSelectedForStartup(selection) {
+  return selection?.explicit === true &&
+    Array.isArray(selection.providers) &&
+    selection.providers.includes("switchyard");
+}
+
 export function switchyardLaunch({
   selected,
   stateDir = STATE_DIR,

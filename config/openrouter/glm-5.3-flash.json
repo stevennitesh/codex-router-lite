@@ -8,7 +8,7 @@
       "provider": "openrouter",
       "listed": true,
       "displayName": "GLM-5.3-Flash (OpenRouter, NovitaAI)",
-      "description": "GLM-5.3-Flash on NovitaAI through OpenRouter with full Codex tool-choice routing and the model's low/high/max reasoning ladder.",
+      "description": "GLM-5.3-Flash on NovitaAI through OpenRouter with Codex tool calling and the model's low/high/max reasoning ladder.",
       "priority": 102,
       "defaultEffort": "max",
       "reasoningLevels": [
@@ -45,7 +45,7 @@
         "allow_fallbacks": false,
         "require_parameters": true
       },
-      "compHash": "openrouter-glm-5-3-flash-novita-v5"
+      "compHash": "openrouter-glm-5-3-flash-novita-v6"
     }
   ]
 }

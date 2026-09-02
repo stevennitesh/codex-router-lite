@@ -130,6 +130,11 @@ export function configuredProviderIds() {
   return configured;
 }
 
+export function providerRuntimeAvailable(providerId, { switchyardStatus } = {}) {
+  if (canonicalProviderId(providerId) !== "switchyard") return true;
+  return (switchyardStatus || switchyardRuntimeStatus()).ready === true;
+}
+
 // `configuredProviderIds()` answers whether a provider can authenticate. The
 // installer also needs a narrower answer: which configured providers may be
 // enabled when the operator did not name any. Anonymous providers can

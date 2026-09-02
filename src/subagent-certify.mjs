@@ -141,13 +141,37 @@ export function newMarker(prefix = "CRV") {
 export function readDelegation(events, { agentName, marker }) {
   let childStarted = false;
   let markerReturned = false;
+  const callIds = new Set();
+  let anonymousCallStarted = false;
   for (const event of Array.isArray(events) ? events : []) {
-    const text = typeof event === "string" ? event : JSON.stringify(event ?? "");
-    if (!text) continue;
-    if (!childStarted && text.includes(agentName)) childStarted = true;
-    if (childStarted && marker && text.includes(marker)) markerReturned = true;
+    const item = event?.item;
+    if (event?.type === "item.started" && item?.type === "agent_call" && item.agent_type === agentName) {
+      childStarted = true;
+      if (item.id) callIds.add(String(item.id));
+      else anonymousCallStarted = true;
+      continue;
+    }
+    if (event?.type !== "item.completed" || item?.type !== "agent_call") continue;
+    const belongsToChild =
+      item.agent_type === agentName ||
+      (item.id && callIds.has(String(item.id))) ||
+      (!item.id && anonymousCallStarted);
+    if (belongsToChild && marker && JSON.stringify(item.output ?? "").includes(marker)) {
+      markerReturned = true;
+    }
   }
   return { childStarted, markerReturned };
+}
+
+export function completedTurn(events) {
+  return Array.isArray(events) && events.some((event) => event?.type === "turn.completed");
+}
+
+export function startedThreadId(events) {
+  const started = (Array.isArray(events) ? events : []).find(
+    (event) => event?.type === "thread.started" && typeof event.thread_id === "string",
+  );
+  return started?.thread_id;
 }
 
 // Codex refuses to spawn a non-OpenAI child while the parent is signed in with
@@ -207,6 +231,26 @@ export function responseOutputItems(body) {
     }
   }
   return items;
+}
+
+export function completedResponseWithText(body) {
+  for (const line of String(body || "").split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      const event = JSON.parse(data);
+      if (event?.type !== "response.completed") continue;
+      const output = Array.isArray(event.response?.output) ? event.response.output : [];
+      return output.some((item) =>
+        item?.type === "message" && Array.isArray(item.content) &&
+        item.content.some((part) => part?.type === "output_text" && String(part.text || "").length > 0),
+      );
+    } catch {
+      // Ignore malformed event lines.
+    }
+  }
+  return false;
 }
 
 function runCodex(args, { codexBin, codexHome, timeoutMs, cwd }) {
@@ -312,9 +356,9 @@ async function runHttpChecks({ slug, baseUrl, secret, timeoutMs }) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
-    results.streaming = response.ok && text.includes("data:")
+    results.streaming = response.ok && completedResponseWithText(text)
       ? pass(response.status)
-      : httpOutcome(response.status, `streamed turn returned HTTP ${response.status}`);
+      : httpOutcome(response.status, `streamed turn did not complete with text (HTTP ${response.status})`);
   } catch (error) {
     // A request that never got an answer -- an abort, a timeout, a socket the
     // router closed while restarting -- proved nothing about the route. Only a
@@ -478,7 +522,8 @@ async function runDelegationChecks({
       marker,
     });
     const refusal = accountRefusal(firstEvents);
-    results.encryptedRelay = firstDelegation.childStarted
+    const firstCompleted = first.code === 0 && !first.timedOut && completedTurn(firstEvents);
+    results.encryptedRelay = firstDelegation.childStarted && firstCompleted
       ? pass(200)
       : refusal
         ? deferred(undefined, refusal)
@@ -486,20 +531,27 @@ async function runDelegationChecks({
         // running out of time, not the route refusing to host a child.
         : first.timedOut
           ? deferred(undefined, "the parent did not finish delegating before the timeout")
-          : fail("no child ran on this route");
-    if (!firstDelegation.childStarted) return { results, agentName: definition.agentName };
+          : firstDelegation.childStarted
+            ? fail("the child started but the parent turn did not complete")
+            : fail("no child ran on this route");
+    if (!firstDelegation.childStarted || !firstCompleted) return { results, agentName: definition.agentName };
 
     results.markerReturn = firstDelegation.markerReturned
       ? pass(200)
       : fail("the child ran but did not return the marker");
     if (!firstDelegation.markerReturned) return { results, agentName: definition.agentName };
 
+    const threadId = startedThreadId(firstEvents);
+    if (!threadId) {
+      results.sameThreadFollowUp = fail("the first turn did not report its thread id");
+      return { results, agentName: definition.agentName };
+    }
+
     const followUpMarker = newMarker("CRV2");
     const second = await runCodex(
       [
         "exec",
         "resume",
-        "--last",
         "--ignore-user-config",
         "--ignore-rules",
         "--skip-git-repo-check",
@@ -513,15 +565,18 @@ async function runDelegationChecks({
         ...config,
         "--cd",
         workDir,
+        threadId,
         `Ask the same ${definition.agentName} agent, in this same thread, to reply with exactly ${followUpMarker}.`,
       ],
       { codexBin, codexHome, timeoutMs, cwd: workDir },
     );
-    const secondDelegation = readDelegation(parseEventLines(second.stdout), {
+    const secondEvents = parseEventLines(second.stdout);
+    const secondDelegation = readDelegation(secondEvents, {
       agentName: definition.agentName,
       marker: followUpMarker,
     });
-    results.sameThreadFollowUp = secondDelegation.markerReturned
+    results.sameThreadFollowUp = second.code === 0 && !second.timedOut &&
+      completedTurn(secondEvents) && secondDelegation.markerReturned
       ? pass(200)
       : fail("the child did not answer a second turn in the same thread");
     return { results, agentName: definition.agentName };

@@ -376,14 +376,14 @@ test("routed models are native v2 spawn-agent model overrides", () => {
 test("routed models advertise reasoning summaries only when the registry opts in", () => {
   // Default stays off: external models must not claim summary support untested.
   const plain = routedModel(template, grok);
-  assert.equal(plain.supports_reasoning_summaries, false);
+  assert.equal(plain.supports_reasoning_summary_parameter, false);
   assert.equal(plain.default_reasoning_summary, "none");
   const summarized = routedModel(template, {
     ...grok,
     supportsReasoningSummaries: true,
     defaultReasoningSummary: "auto",
   });
-  assert.equal(summarized.supports_reasoning_summaries, true);
+  assert.equal(summarized.supports_reasoning_summary_parameter, true);
   assert.equal(summarized.default_reasoning_summary, "auto");
 });
 
@@ -460,7 +460,7 @@ test("routed models advertise original image detail only when the registry opts 
 
 test("routed models can explicitly narrow inherited tool capabilities", () => {
   const plain = routedModel(template, grok);
-  assert.equal(plain.supports_parallel_tool_calls, false);
+  assert.equal("supports_parallel_tool_calls" in plain, false);
   assert.deepEqual(plain.experimental_supported_tools, []);
 
   const narrowed = routedModel(template, {
@@ -468,7 +468,7 @@ test("routed models can explicitly narrow inherited tool capabilities", () => {
     supportsParallelToolCalls: false,
     experimentalSupportedTools: [],
   });
-  assert.equal(narrowed.supports_parallel_tool_calls, false);
+  assert.equal("supports_parallel_tool_calls" in narrowed, false);
   assert.deepEqual(narrowed.experimental_supported_tools, []);
 });
 
@@ -586,7 +586,7 @@ test("merged catalog preserves native GPT identity while rewriting routed models
   const merged = buildMergedCatalog({ models: [template] }, [grok]);
   const bySlug = new Map(merged.map((model) => [model.slug, model]));
   assert.match(bySlug.get("gpt-5.5").base_instructions, /based on GPT-5/);
-  assert.equal(bySlug.get("gpt-5.5").supports_reasoning_summaries, false);
+  assert.equal("supports_reasoning_summaries" in bySlug.get("gpt-5.5"), false);
   assert.match(bySlug.get("grok-oauth/grok-4.5").base_instructions, /based on Grok 4\.5/);
   assert.doesNotMatch(bySlug.get("grok-oauth/grok-4.5").base_instructions, /GPT-5/);
 });
@@ -631,14 +631,7 @@ test("merged catalog gives native models first and keeps routed providers contig
   );
 });
 
-test("native gpt-5.2 stays parseable by older Codex catalog readers", () => {
-  const native52 = { ...template, slug: "gpt-5.2" };
-  delete native52.supports_parallel_tool_calls;
-  const merged = buildMergedCatalog({ models: [native52] }, []);
-  assert.equal(merged[0].supports_parallel_tool_calls, true);
-});
-
-test("modern native catalogs preserve absent legacy capability flags", () => {
+test("current native catalogs preserve their capability shape exactly", () => {
   const current = {
     ...template,
     slug: "gpt-5.6-sol",
@@ -664,7 +657,7 @@ test("modern native catalogs preserve absent legacy capability flags", () => {
   });
 });
 
-test("modern routed catalogs emit current reasoning-summary metadata only", () => {
+test("current routed catalogs emit current reasoning-summary metadata only", () => {
   const current = {
     ...template,
     slug: "gpt-5.6-sol",
@@ -741,15 +734,6 @@ test("merged catalog does not inherit native tool mode from a fallback template"
 
   assert.equal(routed.tool_mode, undefined);
   assert.equal(routed.use_responses_lite, false);
-});
-
-test("merged catalog preserves an explicit native reasoning summary capability", () => {
-  const native = {
-    ...template,
-    supports_reasoning_summaries: true,
-  };
-  const merged = buildMergedCatalog({ models: [native] }, []);
-  assert.equal(merged[0].supports_reasoning_summaries, true);
 });
 
 test("login-free catalogs contain only authenticated external models", () => {

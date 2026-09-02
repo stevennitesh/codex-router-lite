@@ -9,12 +9,16 @@ import {
   installedSwitchyardLaunch,
   switchyardLaunch,
   switchyardRuntimeStatus,
+  switchyardSelectedForStartup,
 } from "../src/switchyard-runtime.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Switchyard supervision starts only after an explicit provider selection", () => {
   assert.equal(switchyardLaunch({ selected: false }), undefined);
+  assert.equal(switchyardSelectedForStartup({ explicit: false, providers: ["switchyard"] }), false);
+  assert.equal(switchyardSelectedForStartup({ explicit: true, providers: ["openrouter"] }), false);
+  assert.equal(switchyardSelectedForStartup({ explicit: true, providers: ["switchyard"] }), true);
 });
 
 test("Switchyard supervision derives one loopback process and health contract", () => {

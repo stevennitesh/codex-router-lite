@@ -978,6 +978,16 @@ function normalizeBody(buffer, contentType, route) {
     delete payload.store;
     delete payload.truncation;
     delete payload.web_search_options;
+    // NovitaAI accepts offered tools but the certified endpoint rejects both
+    // forced modes. Preserve "none" and downgrade required/named selection to
+    // the strongest mode this exact route implements.
+    if (
+      model.openRouterProviderPolicy &&
+      payload.tool_choice !== undefined &&
+      payload.tool_choice !== "none"
+    ) {
+      payload.tool_choice = "auto";
+    }
   } else if (model.requestProfile === "auto-tool-choice") {
     // Some models call tools happily under "auto" but reject being forced to,
     // the way DeepSeek and Qwen do in thinking mode. Their vendor profiles
@@ -1003,10 +1013,9 @@ function normalizeBody(buffer, contentType, route) {
   }
   if (model.openRouterProviderPolicy) {
     // This is a checked-in route contract, not a caller preference. The
-    // selected providers are the endpoints that currently expose the full
-    // none/auto/required/named-function tool-choice set and at least 1M
-    // context. Replacing the object prevents a caller field from silently
-    // routing a certified Codex turn through an auto-only endpoint.
+    // selected providers are the endpoints certified for this route and at
+    // least 1M context. Replacing the object prevents a caller field from
+    // silently routing a certified Codex turn through another endpoint.
     payload.provider = {
       ...model.openRouterProviderPolicy,
       order: [...model.openRouterProviderPolicy.order],

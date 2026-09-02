@@ -181,13 +181,12 @@ Before deployment, verify that Router can build a custom catalog from the target
 Codex binary and that the same binary can parse it:
 
 ```powershell
-node scripts/check-codex-catalog-compat.mjs "C:\path\to\desktop-codex.exe" "C:\path\to\current-codex.exe"
+node scripts/check-codex-catalog-compat.mjs "C:\path\to\desktop-codex.exe"
 ```
 
-With more than one binary, the check builds a catalog from each native schema and
-parses every catalog with every supplied binary. It also checks the current nested
-model-message controls and routed capability fields. The check uses temporary
-catalogs and does not change the active Codex or Router configuration.
+The check validates the current nested model-message controls and routed
+capability fields. It uses a temporary catalog and does not change the active
+Codex or Router configuration.
 
 Validate the new binary with the active route configuration before replacement.
 After a guarded replacement, verify Router health, Switchyard `/health`, the merged

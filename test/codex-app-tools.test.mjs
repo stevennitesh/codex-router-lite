@@ -44,7 +44,95 @@ function fullAppToolNames(namespace) {
   return names;
 }
 
-test("snapshot covers the full native app toolset (threads, automations, navigation)", () => {
+function appTool(name) {
+  return CODEX_APP_TOOLS
+    .find((entry) => entry.name === "codex_app")
+    ?.tools.find((tool) => tool.name === name);
+}
+
+const CURRENT_CODEX_APP_TOOLS = [
+  "automation_update",
+  "capture_screen_context",
+  "consume_usage_reset",
+  "create_sidebar_section",
+  "create_thread",
+  "delete_sidebar_section",
+  "end_realtime_voice_call",
+  "fork_thread",
+  "get_handoff_status",
+  "get_usage_limits",
+  "handoff_thread",
+  "list_archived_threads",
+  "list_projects",
+  "list_threads",
+  "load_workspace_dependencies",
+  "move_project_to_sidebar_section",
+  "move_thread_to_sidebar_section",
+  "navigate_to_codex_page",
+  "open_in_codex",
+  "read_thread",
+  "read_thread_terminal",
+  "rename_sidebar_section",
+  "reorder_section",
+  "reorder_sidebar_projects",
+  "reorder_sidebar_sections",
+  "send_message_to_thread",
+  "set_thread_archived",
+  "set_thread_title",
+  "share_thread",
+  "wait_threads",
+].sort();
+
+test("snapshot exactly matches the current native codex_app tool inventory", () => {
+  assert.deepEqual(fullAppToolNames("codex_app").sort(), CURRENT_CODEX_APP_TOOLS);
+  for (const name of CURRENT_CODEX_APP_TOOLS) {
+    assert.ok(CODEX_APP_TOOL_NAMES.has(name), `snapshot must carry ${name}`);
+  }
+  assert.equal(CODEX_APP_TOOL_NAMES.has("set_thread_pinned"), false);
+});
+
+test("snapshot carries current task, sidebar, and routed-model contracts", () => {
+  const createThread = appTool("create_thread");
+  assert.match(createThread.description, /user-visible message/);
+  const project = createThread.inputSchema.properties.target.anyOf.find(
+    (target) => target.properties.type.enum.includes("project"),
+  );
+  const worktree = project.properties.environment.anyOf.find(
+    (environment) => environment.properties.type.enum.includes("worktree"),
+  );
+  const branch = worktree.properties.startingState.anyOf.find(
+    (state) => state.properties.type.enum.includes("branch"),
+  );
+  assert.deepEqual(branch.properties.onMissing.enum, ["error", "create-branch"]);
+
+  const modelDescription = createThread.inputSchema.properties.model.description;
+  for (const name of [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "switchyard/auto",
+    "openrouter/glm-5.3-flash",
+  ]) {
+    assert.match(modelDescription, new RegExp(name.replaceAll(".", "\\.")));
+  }
+  assert.doesNotMatch(modelDescription, /opencode-go/);
+
+  const moveThread = appTool("move_thread_to_sidebar_section");
+  assert.ok(moveThread.inputSchema.required.includes("sectionId"));
+  assert.deepEqual(
+    moveThread.inputSchema.properties.sectionId.anyOf.map((schema) => schema.type),
+    ["string", "null"],
+  );
+
+  const sendMessage = appTool("send_message_to_thread");
+  assert.match(sendMessage.description, /user-visible message/);
+  assert.match(
+    sendMessage.inputSchema.properties.model.description,
+    /openrouter\/glm-5\.3-flash/,
+  );
+});
+
+test("snapshot keeps the established thread, automation, and navigation tools", () => {
   for (const name of [
     "create_thread",
     "list_threads",
@@ -52,7 +140,6 @@ test("snapshot covers the full native app toolset (threads, automations, navigat
     "fork_thread",
     "set_thread_title",
     "set_thread_archived",
-    "set_thread_pinned",
     "send_message_to_thread",
     "handoff_thread",
     "wait_threads",

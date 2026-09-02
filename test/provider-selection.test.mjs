@@ -24,6 +24,7 @@ const {
   defaultProviderIds,
   disableProvider,
   enableProvider,
+  providerRuntimeAvailable,
   providerSelectionStatus,
   readProviderSelection,
   readProviderSelectionDetail,
@@ -35,6 +36,12 @@ const {
 const { PROVIDER_SELECTION_PATH } = await import("../src/paths.mjs");
 const { privateFileIsProtected } = await import("../src/file-security.mjs");
 const { addEnvironmentCredentialToPool } = await import("../src/provider-api-key-control.mjs");
+
+test("a stale Switchyard selection cannot admit a missing runtime", () => {
+  assert.equal(providerRuntimeAvailable("switchyard", { switchyardStatus: { ready: false } }), false);
+  assert.equal(providerRuntimeAvailable("switchyard", { switchyardStatus: { ready: true } }), true);
+  assert.equal(providerRuntimeAvailable("openrouter", { switchyardStatus: { ready: false } }), true);
+});
 
 // Write the selection file behind the API so a test can stage the exact state a
 // newer checkout, or a corrupt write, leaves behind for an older running build.

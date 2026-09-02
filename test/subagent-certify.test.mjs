@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import {
   CHECK_LABELS,
   checksComplete,
+  completedResponseWithText,
+  completedTurn,
   firstFailure,
   newMarker,
   parseEventLines,
@@ -15,6 +17,7 @@ import {
   recordApplicationEvidence,
   responseOutputItems,
   runDeferred,
+  startedThreadId,
 } from "../src/subagent-certify.mjs";
 import { VERIFICATION_CHECKS } from "../src/subagent-proofs.mjs";
 
@@ -131,6 +134,16 @@ test("a parent echoing the marker itself does not count as delegation", () => {
   assert.equal(result.markerReturned, false);
 });
 
+test("parent prose cannot spoof a child lifecycle event", () => {
+  const marker = "CRV-ABC123";
+  const agentName = "router_openrouter_glm_5_3_flash";
+  const result = readDelegation([
+    { type: "item.completed", item: { type: "agent_message", text: `I did not spawn ${agentName}, but I can repeat ${marker}` } },
+    { type: "turn.completed" },
+  ], { agentName, marker });
+  assert.deepEqual(result, { childStarted: false, markerReturned: false });
+});
+
 test("a child that starts and answers is a delegation", () => {
   const marker = "CRV-ABC123";
   const agentName = "router_deepseek_deepseek_v4_flash";
@@ -167,6 +180,26 @@ test("event parsing survives interleaved non-JSON output", () => {
   assert.equal(events[0].type, "turn.started");
   assert.equal(typeof events[1], "string");
   assert.equal(events[2].type, "turn.completed");
+});
+
+test("delegation completion and resume identity require typed terminal events", () => {
+  const events = [
+    { type: "thread.started", thread_id: "thread-123" },
+    { type: "turn.completed" },
+  ];
+  assert.equal(startedThreadId(events), "thread-123");
+  assert.equal(completedTurn(events), true);
+  assert.equal(completedTurn([{ type: "item.completed" }]), false);
+});
+
+test("streaming proof requires response.completed with visible text", () => {
+  const completed = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { output: [{ type: "message", content: [{ type: "output_text", text: "ready" }] }] },
+  })}\n\ndata: [DONE]\n`;
+  assert.equal(completedResponseWithText(completed), true);
+  assert.equal(completedResponseWithText('data: {"type":"response.output_text.delta","delta":"ready"}\n'), false);
+  assert.equal(completedResponseWithText('data: {"type":"response.completed","response":{"output":[]}}\n'), false);
 });
 
 test("tool evidence is read from buffered JSON and Responses event streams", () => {

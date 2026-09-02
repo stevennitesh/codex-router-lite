@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -584,6 +585,9 @@ test("both model-router launchers expose subagent certification", () => {
   assert.match(dispatcher, /\bagents\|subagents\|media\b/);
   const command = readScript("bin", "subagents");
   assert.match(command, /src\/control\.mjs" subagents "\$@"/);
+  if (process.platform !== "win32") {
+    assert.notEqual(statSync(path.join(root, "bin", "subagents")).mode & 0o111, 0);
+  }
 });
 
 test("both bootstrap installers refuse on tracked edits only", () => {

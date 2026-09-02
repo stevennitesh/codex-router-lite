@@ -8,10 +8,10 @@ import { buildMergedCatalog } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/model-registry.mjs";
 import { spawnableCommand } from "../src/codex-binary.mjs";
 
-const binaries = process.argv.slice(2);
-if (binaries.length === 0) {
+const binary = process.argv[2];
+if (!binary || process.argv.length > 3) {
   console.error(
-    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CODEX [PATH_TO_OTHER_CODEX ...]",
+    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX",
   );
   process.exit(2);
 }
@@ -66,53 +66,40 @@ function buildCandidate(binary) {
       );
     }
   }
-  const modern = native.models.some(
-    (model) => Object.prototype.hasOwnProperty.call(model?.model_messages || {}, "token_budget"),
-  );
-  if (modern) {
-    assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
-    assert.equal("supports_reasoning_summaries" in builtGlm, false);
-    assert.equal("supports_parallel_tool_calls" in builtGlm, false);
-  }
+  assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
+  assert.equal("supports_reasoning_summaries" in builtGlm, false);
+  assert.equal("supports_parallel_tool_calls" in builtGlm, false);
   assert.deepEqual(builtGlm.experimental_supported_tools, []);
   assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
   return { binary, version, catalog };
 }
 
-const candidates = binaries.map(buildCandidate);
-for (const source of candidates) {
-  for (const parser of candidates) {
-    const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
-    const catalogPath = path.join(temporaryHome, "merged-models.json");
-    try {
-      writeFileSync(catalogPath, `${JSON.stringify(source.catalog)}\n`, { mode: 0o600 });
-      const parsed = JSON.parse(
-        runCodex(
-          parser.binary,
-          ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
-          { env: { ...process.env, CODEX_HOME: temporaryHome } },
-        ),
-      );
-      const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
-      for (const model of routed) {
-        if (!bySlug.has(model.slug)) {
-          throw new Error(
-            `${parser.version} did not parse ${model.slug} from ${source.version}'s catalog`,
-          );
-        }
-      }
-      const switchyard = bySlug.get("switchyard/auto");
-      if (Object.prototype.hasOwnProperty.call(switchyard, "auto_compact_token_limit")) {
-        throw new Error(
-          `${parser.version} did not preserve native compaction from ${source.version}`,
-        );
-      }
-      process.stdout.write(
-        `${parser.version} parsed ${source.catalog.models.length} models built from ` +
-          `${source.version}; GLM and Switchyard compatibility passed\n`,
-      );
-    } finally {
-      rmSync(temporaryHome, { recursive: true, force: true });
+const source = buildCandidate(binary);
+const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
+const catalogPath = path.join(temporaryHome, "merged-models.json");
+try {
+  writeFileSync(catalogPath, `${JSON.stringify(source.catalog)}\n`, { mode: 0o600 });
+  const parsed = JSON.parse(
+    runCodex(
+      source.binary,
+      ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
+      { env: { ...process.env, CODEX_HOME: temporaryHome } },
+    ),
+  );
+  const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
+  for (const model of routed) {
+    if (!bySlug.has(model.slug)) {
+      throw new Error(`${source.version} did not parse routed catalog entry ${model.slug}`);
     }
   }
+  const switchyard = bySlug.get("switchyard/auto");
+  if (Object.prototype.hasOwnProperty.call(switchyard, "auto_compact_token_limit")) {
+    throw new Error(`${source.version} did not preserve Switchyard native compaction`);
+  }
+  process.stdout.write(
+    `${source.version} parsed ${source.catalog.models.length} current-schema models; ` +
+      "GLM and Switchyard compatibility passed\n",
+  );
+} finally {
+  rmSync(temporaryHome, { recursive: true, force: true });
 }

@@ -40,7 +40,7 @@ test("every checked-in GLM-5.3-Flash route records its static metadata", () => {
   }
 });
 
-test("OpenRouter GLM owns its Codex prompt and full-tool provider policy", () => {
+test("OpenRouter GLM owns its Codex prompt and Novita provider policy", () => {
   const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
   assert.equal(model.behaviorTemplate, "gpt-5.6-sol");
   assert.equal(model.instructionProfile, "glm-5.3-flash-codex");

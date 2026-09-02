@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
 // request carrying the client's namespace toolset must reach the (mock)
@@ -1377,7 +1378,11 @@ test("non-Groq routes preserve the full expanded and discovered tool surface", a
   });
   assert.equal(result.gatewayBodies.length, 1);
   const outgoing = result.gatewayBodies[0];
-  assert.equal(outgoing.tools.length, 149);
+  const deferredAppToolCount = CODEX_APP_TOOLS.reduce(
+    (count, namespace) => count + (namespace.tools?.length || 0),
+    0,
+  );
+  assert.equal(outgoing.tools.length, 110 + 20 + 1 + deferredAppToolCount);
   const names = new Set(outgoing.tools.map((tool) => tool.name));
   assert.ok(names.has("codex_app__create_thread"));
   assert.ok(names.has("plugin_management__uninstall_plugin"));
