@@ -57,7 +57,10 @@ function largeClientSurface({
 test("Groq defers only injected app definitions without requiring tool_search", () => {
   const client = largeClientSurface();
   const normallyExpanded = flattenNamespaceTools(mergeCodexAppTools(client).tools);
-  assert.equal(normallyExpanded.tools.length, 129, "regression fixture reproduces issue #449");
+  assert.ok(
+    normallyExpanded.tools.length > GROQ_MAX_TOOLS,
+    "regression fixture reproduces issue #449",
+  );
 
   const routed = chatProviderToolSurface(client, "groq");
   const clientFlattened = flattenNamespaceTools(client);
@@ -334,7 +337,7 @@ test("non-Groq providers preserve the normally expanded tool surface", () => {
   const client = largeClientSurface();
   const expected = flattenNamespaceTools(mergeCodexAppTools(client).tools);
   const routed = chatProviderToolSurface(client, "openrouter");
-  assert.equal(routed.tools.length, 129);
+  assert.equal(routed.tools.length, expected.tools.length);
   assert.equal(
     JSON.stringify(routed.tools),
     JSON.stringify(expected.tools),

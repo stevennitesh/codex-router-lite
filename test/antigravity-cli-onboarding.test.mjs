@@ -208,8 +208,11 @@ test("installation docs publish the operator-client login and explicit probe", (
   }
 });
 
-test("the installation agent contract forbids vendor credential reuse and impersonation", () => {
-  const contents = readFileSync(path.join(root, "AGENTS.md"), "utf8");
+test("the provider runbook forbids vendor credential reuse and impersonation", () => {
+  const contents = readFileSync(
+    path.join(root, "docs", "agents", "router-maintenance.md"),
+    "utf8",
+  );
   assert.match(contents, /operator-owned Google OAuth client/i);
   assert.match(contents, /never read or reuse the official `agy`\/IDE credential\s+store/i);
   assert.match(contents, /OS-assigned port/i);

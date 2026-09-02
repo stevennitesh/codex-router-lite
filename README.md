@@ -404,6 +404,22 @@ grok login --oauth
 > official `agy` identity or credential store. Do not use the old
 > `your-integration-client-secret` placeholder: it cannot work.
 
+> [!IMPORTANT]
+> **The Cloud project behind your OAuth client must be allowlisted for
+> `cloudcode-pa.googleapis.com`, and most projects are not.** The bootstrap call
+> is billed to the project that owns the calling OAuth client, so an
+> operator-owned client bills your project rather than Google's. That service is
+> a private API: binding it needs the producer-side
+> `servicemanagement.services.bind` permission, so `gcloud services enable`
+> fails even for the project owner, and it has no API Library entry to enable
+> through the console.
+>
+> Sign-in still succeeds; the live probe is what fails, with
+> `PERMISSION_DENIED` / `SERVICE_DISABLED`. If your project is not allowlisted,
+> **this provider cannot currently be used** — there is no operator-side
+> workaround, and no configuration in this repository changes it. See
+> [#566](https://github.com/duolahypercho/codex-router/issues/566).
+
 Create a Google OAuth **Desktop app** client in a Google Cloud project you own:
 
 1. In Google Cloud Console, open **APIs & Services > OAuth consent screen** and
@@ -1321,6 +1337,20 @@ and are not available while signed out. The equivalent local control command is
 `./bin/control auth-mode on` or `./bin/control auth-mode off`; when using the
 command directly, restart Codex yourself.
 
+### Native ChatGPT account switching
+
+Codex Router can keep multiple ChatGPT subscription logins in isolated
+profiles. Select an account in Control Center; the selection is
+applied to native Codex after Codex is closed and restarted. The previous
+login remains saved, and switching never removes another account's session.
+
+Each account keeps its own native model catalog and routed overlay. Usage is
+read from up to eight saved, usable accounts' isolated `CODEX_HOME`
+directories, prioritizing the selected account and using the weekly
+window when available and the monthly window otherwise. This is an explicit
+switch-only feature: it does not perform automatic quota or round-robin
+routing. See [the account switching guide](docs/CHATGPT-ACCOUNT-MODES.md) for
+the safety and token-refresh details.
 ### Use ChatGPT Web models through Codex Router
 
 Codex Router can use the account-gated browser models exposed by

@@ -1,6 +1,6 @@
 // Snapshot of the Codex app's native app-side tool definitions.
 // Source: the live Codex Desktop tool registry on 2026-09-02, paired with
-// codex-cli 0.152.1. Keep this inventory synchronized with the current app
+// codex-cli 0.153.0-alpha.5. Keep this inventory synchronized with the current app
 // surface; client-provided definitions still win when the app sends them.
 // The app registers these tools with deferLoading and executes the calls
 // natively; the router relays the definitions to routed providers that
@@ -880,7 +880,7 @@ export const CODEX_APP_TOOLS =
             },
             "model": {
               "type": "string",
-              "description": "Codex threads only. Do not specify a model unless the user explicitly requests a specific model. Otherwise omit this field so the new thread uses the user's configured default model. Omit for ChatGPT Work cloud threads. Models and supported reasoning efforts on the calling host: gpt-5.6-sol (Latest frontier agentic coding model.; supported reasoning efforts: low, medium, high, xhigh, max, ultra), gpt-5.6-terra (Balanced agentic coding model for everyday work.; supported reasoning efforts: low, medium, high, xhigh, max, ultra), gpt-5.6-luna (Fast and affordable agentic coding model.; supported reasoning efforts: low, medium, high, xhigh, max), gpt-5.5 (Frontier model for complex coding, research, and real-world work.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.4 (Strong model for everyday coding.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.4-mini (Small, fast, and cost-efficient model for simpler coding tasks.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.3-codex-spark (Ultra-fast coding model.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.2 (Optimized for professional work and long-running agents.; supported reasoning efforts: low, medium, high, xhigh), switchyard/auto (Automatically routes each turn across Luna high/max and Sol medium/high/xhigh using a Luna High classifier.; supported reasoning efforts: low, medium, high, xhigh, max), openrouter/glm-5.3-flash (GLM-5.3-Flash on NovitaAI through OpenRouter with full Codex tool-choice routing and the model's low/high/max reasoning ladder.; supported reasoning efforts: low, high, max). A different destination host's model availability and reasoning combinations are validated when the tool runs."
+              "description": "Codex threads only. Do not specify a model unless the user explicitly requests a specific model. Otherwise omit this field so the new thread uses the user's configured default model. Omit for ChatGPT Work cloud threads. Model availability and supported reasoning combinations are validated on the destination host when the tool runs."
             },
             "thinking": {
               "type": "string",
@@ -1034,7 +1034,7 @@ export const CODEX_APP_TOOLS =
             },
             "model": {
               "type": "string",
-              "description": "Optional model override. Models and supported reasoning efforts on the calling host: gpt-5.6-sol (Latest frontier agentic coding model.; supported reasoning efforts: low, medium, high, xhigh, max, ultra), gpt-5.6-terra (Balanced agentic coding model for everyday work.; supported reasoning efforts: low, medium, high, xhigh, max, ultra), gpt-5.6-luna (Fast and affordable agentic coding model.; supported reasoning efforts: low, medium, high, xhigh, max), gpt-5.5 (Frontier model for complex coding, research, and real-world work.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.4 (Strong model for everyday coding.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.4-mini (Small, fast, and cost-efficient model for simpler coding tasks.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.3-codex-spark (Ultra-fast coding model.; supported reasoning efforts: low, medium, high, xhigh), gpt-5.2 (Optimized for professional work and long-running agents.; supported reasoning efforts: low, medium, high, xhigh), switchyard/auto (Automatically routes each turn across Luna high/max and Sol medium/high/xhigh using a Luna High classifier.; supported reasoning efforts: low, medium, high, xhigh, max), openrouter/glm-5.3-flash (GLM-5.3-Flash on NovitaAI through OpenRouter with full Codex tool-choice routing and the model's low/high/max reasoning ladder.; supported reasoning efforts: low, high, max)."
+              "description": "Optional model override. Omit it to keep the target task's current model. Model availability and supported reasoning combinations are validated on the target host when the tool runs."
             },
             "thinking": {
               "type": "string",
@@ -1350,6 +1350,29 @@ export const CODEX_APP_TOOLS =
           },
           "required": [
             "archived"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "set_thread_pinned",
+        "description": "Pin or unpin a Codex thread in the background.",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "threadId": {
+              "type": "string",
+              "description": "Codex thread id returned by list_threads."
+            },
+            "pinned": {
+              "type": "boolean",
+              "description": "Whether the thread should be pinned."
+            }
+          },
+          "required": [
+            "threadId",
+            "pinned"
           ]
         }
       },

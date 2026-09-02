@@ -78,6 +78,7 @@ const CURRENT_CODEX_APP_TOOLS = [
   "reorder_sidebar_sections",
   "send_message_to_thread",
   "set_thread_archived",
+  "set_thread_pinned",
   "set_thread_title",
   "share_thread",
   "wait_threads",
@@ -88,7 +89,7 @@ test("snapshot exactly matches the current native codex_app tool inventory", () 
   for (const name of CURRENT_CODEX_APP_TOOLS) {
     assert.ok(CODEX_APP_TOOL_NAMES.has(name), `snapshot must carry ${name}`);
   }
-  assert.equal(CODEX_APP_TOOL_NAMES.has("set_thread_pinned"), false);
+  assert.equal(CODEX_APP_TOOL_NAMES.has("set_thread_pinned"), true);
 });
 
 test("snapshot carries current task, sidebar, and routed-model contracts", () => {
@@ -106,16 +107,8 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
   assert.deepEqual(branch.properties.onMissing.enum, ["error", "create-branch"]);
 
   const modelDescription = createThread.inputSchema.properties.model.description;
-  for (const name of [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "switchyard/auto",
-    "openrouter/glm-5.3-flash",
-  ]) {
-    assert.match(modelDescription, new RegExp(name.replaceAll(".", "\\.")));
-  }
-  assert.doesNotMatch(modelDescription, /opencode-go/);
+  assert.match(modelDescription, /validated on the destination host/);
+  assert.doesNotMatch(modelDescription, /gpt-5|switchyard|openrouter/);
 
   const moveThread = appTool("move_thread_to_sidebar_section");
   assert.ok(moveThread.inputSchema.required.includes("sectionId"));
@@ -128,8 +121,13 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
   assert.match(sendMessage.description, /user-visible message/);
   assert.match(
     sendMessage.inputSchema.properties.model.description,
-    /openrouter\/glm-5\.3-flash/,
+    /validated on the target host/,
   );
+
+  const setPinned = appTool("set_thread_pinned");
+  assert.deepEqual(setPinned.inputSchema.required, ["threadId", "pinned"]);
+  assert.equal(setPinned.inputSchema.properties.threadId.type, "string");
+  assert.equal(setPinned.inputSchema.properties.pinned.type, "boolean");
 });
 
 test("snapshot keeps the established thread, automation, and navigation tools", () => {
