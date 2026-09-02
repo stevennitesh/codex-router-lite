@@ -74,7 +74,6 @@ test("provider selection keeps backward compatibility and can hide the final pro
       "local",
       "opencode-free",
       "opencode-free-responses",
-      "switchyard",
     ]);
     assert.deepEqual(defaultProviderIds(), ["lmstudio", "local"]);
     delete process.env.KIMI_API_KEY;
@@ -88,9 +87,22 @@ test("provider selection keeps backward compatibility and can hide the final pro
       "local",
       "opencode-free",
       "opencode-free-responses",
-      "switchyard",
     ]);
     assert.deepEqual(defaultProviderIds(), ["deepseek", "lmstudio", "local"]);
+
+    assert.throws(() => enableProvider("switchyard"), /runtime is installed/);
+    const switchyardRoot = path.join(process.env.CODEX_HOME, "switchyard");
+    mkdirSync(switchyardRoot, { recursive: true });
+    writeFileSync(
+      path.join(
+        switchyardRoot,
+        process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server",
+      ),
+      "fixture",
+    );
+    writeFileSync(path.join(switchyardRoot, "routes.toml"), "schema_version = 1\n");
+    assert.ok(configuredProviderIds().includes("switchyard"));
+    assert.ok(enableProvider("switchyard").includes("switchyard"));
 
     writeProviderSelection(["chatgpt-oauth"]);
     assert.deepEqual(readProviderSelection(), ["grok-oauth"]);

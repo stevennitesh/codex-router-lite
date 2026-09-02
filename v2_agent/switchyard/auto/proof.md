@@ -5,12 +5,16 @@
 - Routed slug: `switchyard/auto`
 - Registry upstream model ID: `gpt-5.6-sol`
 - Provider: locally installed NVIDIA NeMo Switchyard
-- Router version: `0.4.0-beta.4`
-- Test completed: `2026-08-26T12:42:45.381Z`
+- Prior Router version: `0.4.0-beta.4`
+- Current application status: draft; new candidate recertification pending
 
 Switchyard may select Luna high/max or Sol medium/high/xhigh for an ordinary
 turn. `gpt-5.6-sol` is the public route's registry identity, not a claim that
 every certified child turn used Sol.
+
+The observations below were collected against the previous deployed
+Switchyard binary. They remain useful regression evidence, but they do not
+certify the current upstream commit and compatibility patch.
 
 ## Evidence
 
@@ -33,4 +37,6 @@ same child, then require that child to read an unknown temporary file marker wit
 a real tool call. Verify the function call and output in the child rollout, both
 task-complete events, Switchyard routing records, and Router metering. Do not
 record prompts, decrypted payloads, credentials, caller capabilities, or response
-bodies in repository evidence.
+bodies in repository evidence. Before accepting the application, record the
+deployed upstream commit, compatibility-patch SHA-256, binary SHA-256, Router
+commit, and generated-route SHA-256 in the redacted proof.

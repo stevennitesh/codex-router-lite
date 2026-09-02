@@ -461,7 +461,7 @@ test("routed models advertise original image detail only when the registry opts 
 test("routed models can explicitly narrow inherited tool capabilities", () => {
   const plain = routedModel(template, grok);
   assert.equal(plain.supports_parallel_tool_calls, false);
-  assert.equal("experimental_supported_tools" in plain, false);
+  assert.deepEqual(plain.experimental_supported_tools, []);
 
   const narrowed = routedModel(template, {
     ...grok,
@@ -662,6 +662,27 @@ test("modern native catalogs preserve absent legacy capability flags", () => {
   assert.deepEqual(merged[0].model_messages.multi_agent, {
     guidance: "native multi-agent",
   });
+});
+
+test("modern routed catalogs emit current reasoning-summary metadata only", () => {
+  const current = {
+    ...template,
+    slug: "gpt-5.6-sol",
+    include_plugin_usage_instructions: true,
+    model_messages: {
+      ...template.model_messages,
+      token_budget: { enabled: false },
+    },
+  };
+  delete current.supports_parallel_tool_calls;
+  delete current.supports_reasoning_summaries;
+
+  const merged = buildMergedCatalog({ models: [current] }, [grok]);
+  const routed = merged.find((model) => model.slug === grok.slug);
+  assert.equal(routed.supports_reasoning_summary_parameter, false);
+  assert.equal("supports_reasoning_summaries" in routed, false);
+  assert.equal("supports_parallel_tool_calls" in routed, false);
+  assert.deepEqual(routed.experimental_supported_tools, []);
 });
 
 test("merged catalog resolves a routed behavior template without inheriting its capabilities", () => {
@@ -1062,6 +1083,45 @@ test("native catalog merge never loses non-empty bundled metadata", () => {
     ).visibility,
     "list",
   );
+});
+
+test("native catalog merge backfills missing nested model-message keys only", () => {
+  const merged = mergeNativeModel(
+    {
+      slug: "gpt-5.6-sol",
+      model_messages: {
+        token_budget: {
+          reminder_threshold_tokens: 6144,
+          messages: [],
+        },
+        multi_agent: null,
+      },
+    },
+    {
+      slug: "gpt-5.6-sol",
+      model_messages: {
+        token_budget: {
+          enabled: false,
+          use_history_notes_extension: false,
+          reminder_threshold_tokens: 8192,
+          messages: ["bundled reminder"],
+        },
+        multi_agent: { guidance: "bundled guidance" },
+        tools: { guidance: "bundled tools" },
+      },
+    },
+  );
+
+  assert.deepEqual(merged.model_messages, {
+    token_budget: {
+      enabled: false,
+      use_history_notes_extension: false,
+      reminder_threshold_tokens: 6144,
+      messages: [],
+    },
+    multi_agent: null,
+    tools: { guidance: "bundled tools" },
+  });
 });
 
 test("bundled backfill is an allowlist, not every empty account field", () => {
@@ -1480,6 +1540,66 @@ test(
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-flash-vision-exp",
       ]);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "the GLM cutover carries picker visibility without retaining an Ox route",
+  { timeout: 30_000 },
+  () => {
+    const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-glm-picker-migration-"));
+    const stateDir = path.join(codexHome, "router-state");
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(codexHome, "config.toml"), 'model = "gpt-5.6-sol"\n');
+    writeFileSync(
+      path.join(stateDir, "enabled-providers.json"),
+      `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
+    );
+    writeFileSync(path.join(stateDir, "openrouter-api-key.secret"), "test-key\n", {
+      mode: 0o600,
+    });
+    writeFileSync(
+      path.join(stateDir, "model-picker.json"),
+      `${JSON.stringify({
+        version: 1,
+        hidden: [],
+        visible: ["openrouter/ox-alpha"],
+        seeded: ["openrouter/ox-alpha"],
+      })}\n`,
+    );
+
+    try {
+      const catalog = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "src", "catalog.mjs"), "--refresh-native"],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CODEX_BIN: writeCatalogCodexStub(codexHome),
+            CODEX_HOME: codexHome,
+            CODEX_ROUTER_STATE_DIR: stateDir,
+            MODEL_ROUTER_STATE_DIR: stateDir,
+            MODEL_ROUTER_TARGET: "codex",
+          },
+        },
+      );
+      assert.equal(catalog.status, 0, catalog.stderr);
+
+      const picker = JSON.parse(readFileSync(path.join(stateDir, "model-picker.json"), "utf8"));
+      assert.deepEqual(picker.visible, ["openrouter/glm-5.3-flash"]);
+      assert.ok(picker.seeded.includes("openrouter/glm-5.3-flash"));
+      assert.equal(picker.seeded.includes("openrouter/ox-alpha"), false);
+      const merged = JSON.parse(readFileSync(path.join(stateDir, "merged-models.json"), "utf8"));
+      assert.equal(
+        merged.models.find((model) => model.slug === "openrouter/glm-5.3-flash")?.visibility,
+        "list",
+      );
+      assert.equal(merged.models.some((model) => model.slug === "openrouter/ox-alpha"), false);
     } finally {
       rmSync(codexHome, { recursive: true, force: true });
     }

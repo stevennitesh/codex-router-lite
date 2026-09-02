@@ -1,8 +1,5 @@
-warning: in the working copy of 'crates/libsy-llm-client/src/client.rs', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'crates/switchyard-runner/src/config.rs', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'docs/reference/toml_schema.md', LF will be replaced by CRLF the next time Git touches it
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 9f47828..e6d7aa1 100644
+index 9f47828a..e6d7aa17 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -62,6 +62,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -307,8 +304,196 @@ index 9f47828..e6d7aa1 100644
      // A weak OpenAI-format tier emits thinking blocks with no signature. Replaying
      // them to Anthropic is rejected (Bedrock reports it as a SigV4 mismatch), so
      // the Anthropic leg must drop them while keeping signed ones.
+diff --git a/crates/libsy/src/algorithms/composite.rs b/crates/libsy/src/algorithms/composite.rs
+index 9d191644..a7f6e516 100644
+--- a/crates/libsy/src/algorithms/composite.rs
++++ b/crates/libsy/src/algorithms/composite.rs
+@@ -44,7 +44,7 @@ impl TierSetter {
+     /// judge call sits between here and [`retain`](Self::retain). The later wins.
+     fn is_due(&self, identity: Option<&RoutingIdentity>, request: &Request) -> bool {
+         match self.trigger {
+-            ClassifyTrigger::UserTurn => has_new_user_turn(&request.llm_request.messages),
++            ClassifyTrigger::UserTurn => has_new_user_turn(request),
+             // Unkeyed requests cannot be told apart, so every one is a new session.
+             ClassifyTrigger::NewSession => {
+                 identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
+diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
+index 599e9f9e..600bea52 100644
+--- a/crates/libsy/src/algorithms/llm_class.rs
++++ b/crates/libsy/src/algorithms/llm_class.rs
+@@ -1290,6 +1290,52 @@ mod tests {
+         ))
+     }
+
++    #[test]
++    fn classifier_keeps_only_the_common_fast_service_tier() -> Result<()> {
++        let judge = capability_judge(None)?;
++        for (requested, expected) in [
++            (Some("priority"), Some("priority")),
++            (Some("ultrafast"), None),
++            (None, None),
++        ] {
++            let mut request = Request {
++                llm_request: text_request(Some("auto".to_string()), "classify this"),
++                raw_request: None,
++                metadata: None,
++            };
++            if let Some(requested) = requested {
++                request.llm_request.extensions.fields.insert(
++                    "service_tier".to_string(),
++                    Value::String(requested.to_string()),
++                );
++            }
++            request
++                .llm_request
++                .extensions
++                .fields
++                .insert("unrelated".to_string(), Value::Bool(true));
++
++            let built = judge.build_request(&State::default(), &request);
++            assert_eq!(
++                built
++                    .llm_request
++                    .extensions
++                    .fields
++                    .get("service_tier")
++                    .and_then(Value::as_str),
++                expected
++            );
++            assert!(
++                !built
++                    .llm_request
++                    .extensions
++                    .fields
++                    .contains_key("unrelated")
++            );
++        }
++        Ok(())
++    }
++
+     fn judged_contents(recent_turn_window: usize) -> Result<Vec<String>> {
+         let judge = capability_judge(Some(recent_turn_window))?;
+         let request = Request {
+diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
+index 7c696aa4..f2ad0bb6 100644
+--- a/crates/libsy/src/algorithms/util/affinity.rs
++++ b/crates/libsy/src/algorithms/util/affinity.rs
+@@ -57,8 +57,36 @@ fn is_user_turn(message: &Message) -> bool {
+             .all(|block| matches!(block, ContentBlock::ToolResult(_)))
+ }
+
+-pub(crate) fn has_new_user_turn(messages: &[Message]) -> bool {
+-    messages.last().is_some_and(is_user_turn)
++const RESPONSES_TOOL_OUTPUT_TYPES: &[&str] = &[
++    "function_call_output",
++    "custom_tool_call_output",
++    "computer_call_output",
++    "local_shell_call_output",
++    "tool_search_output",
++];
++
++fn raw_responses_has_new_user_turn(request: &Request) -> Option<bool> {
++    let input = request.raw_request.as_ref()?.get("input")?;
++    if input.is_string() {
++        return Some(true);
++    }
++    let item = input.as_array()?.last()?.as_object()?;
++    let item_type = item.get("type")?.as_str()?;
++    if RESPONSES_TOOL_OUTPUT_TYPES.contains(&item_type) {
++        return Some(false);
++    }
++    (item_type == "message")
++        .then(|| item.get("role").and_then(serde_json::Value::as_str) == Some("user"))
++}
++
++pub(crate) fn has_new_user_turn(request: &Request) -> bool {
++    raw_responses_has_new_user_turn(request).unwrap_or_else(|| {
++        request
++            .llm_request
++            .messages
++            .last()
++            .is_some_and(is_user_turn)
++    })
+ }
+
+ /// Retains a model per request identity and forces it on later matching requests.
+@@ -239,7 +267,7 @@ where
+         };
+         // Abstaining rather than clearing keeps this read path free of writes, so the judge
+         // decides the turn whatever order concurrent latches land in.
+-        if self.release_on_user_turn && has_new_user_turn(&request.llm_request.messages) {
++        if self.release_on_user_turn && has_new_user_turn(request) {
+             return Ok((Classification::Scores(Vec::new()), None));
+         }
+         let assigned = self.assignments.lock().get(&key).cloned();
+@@ -836,6 +864,39 @@ mod tests {
+         Ok(())
+     }
+
++    #[tokio::test]
++    async fn codex_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
++        let router = AffinityRouter::new().with_release_on_user_turn();
++        let mut state = ();
++        let metadata = session("session-1", "agent-a");
++        let mut opening = task_request(Some(metadata.clone()), "apply the patch", None);
++        retain(&router, &mut state, &mut opening, "weak").await?;
++
++        for item_type in RESPONSES_TOOL_OUTPUT_TYPES {
++            // The Responses decoder historically represented unfamiliar Codex
++            // outputs as user text. The raw discriminator is authoritative and
++            // must keep that representation from releasing the route mid-loop.
++            let mut continued = task_request(
++                Some(metadata.clone()),
++                "apply the patch",
++                Some("provider-shaped tool output"),
++            );
++            continued.raw_request = Some(serde_json::json!({
++                "model": "switchyard/auto",
++                "input": [{"type": item_type, "call_id": "call-1", "output": "done"}]
++            }));
++            assert_eq!(
++                scores(&router, &mut state, &mut continued)
++                    .await?
++                    .first()
++                    .map(|score| score.target.as_str()),
++                Some("weak"),
++                "{item_type} released the retained target"
++            );
++        }
++        Ok(())
++    }
++
+     #[tokio::test]
+     async fn latch_only_retains_matching_models() -> Result<(), BoxErr> {
+         let router = AffinityRouter::new().with_latch_only(["strong"]);
+diff --git a/crates/libsy/src/algorithms/util/llm_judge.rs b/crates/libsy/src/algorithms/util/llm_judge.rs
+index 0210bda2..9b9b56c2 100644
+--- a/crates/libsy/src/algorithms/util/llm_judge.rs
++++ b/crates/libsy/src/algorithms/util/llm_judge.rs
+@@ -157,6 +157,13 @@ where
+
+     fn build_request(&self, state: &State, request: &Request) -> Request {
+         let messages = self.input.build_messages(state, request);
++        let mut extensions = request.llm_request.extensions.clone();
++        // Fast is the only service tier common to every target in the Codex
++        // route. Preserve it for the hidden classifier call, but do not copy
++        // provider-specific fields or Sol-only ultrafast service.
++        extensions
++            .fields
++            .retain(|key, value| key == "service_tier" && value.as_str() == Some("priority"));
+         Request {
+             llm_request: LlmRequest {
+                 model: request.llm_request.model.clone(),
+@@ -170,6 +177,7 @@ where
+                     max_output_tokens: Some(self.runtime.max_output_tokens),
+                     response_format: Some(self.contract.response_format().clone()),
+                 },
++                extensions,
+                 ..LlmRequest::default()
+             },
+             raw_request: None,
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 4b211ae..0dad01c 100644
+index 4b211ae8..0dad01cc 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -136,7 +136,7 @@ impl DeploymentConfig {
@@ -501,7 +686,7 @@ index 4b211ae..0dad01c 100644
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 966edd9..fd6cb86 100644
+index 966edd97..fd6cb86a 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -87,8 +87,11 @@ calls an upstream.

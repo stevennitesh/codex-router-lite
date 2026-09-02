@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,8 @@ import {
   newMarker,
   parseEventLines,
   readDelegation,
+  recordApplicationEvidence,
+  responseOutputItems,
   runDeferred,
 } from "../src/subagent-certify.mjs";
 import { VERIFICATION_CHECKS } from "../src/subagent-proofs.mjs";
@@ -34,6 +37,66 @@ test("a run is complete only when all five checks passed", () => {
     assert.equal(firstFailure(partial).check, name);
     assert.equal(firstFailure(partial).label, CHECK_LABELS[name]);
   }
+});
+
+test("a complete run updates only bounded application evidence", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "subagent-application-writer-"));
+  const applicationRoot = path.join(root, "v2_agent");
+  const proofPath = path.join(applicationRoot, "switchyard", "auto", "proof.json");
+  mkdirSync(path.dirname(proofPath), { recursive: true });
+  const binding = {
+    upstreamCommit: "1".repeat(40),
+    patchSha256: "2".repeat(64),
+    binarySha256: "3".repeat(64),
+    routerCommit: "4".repeat(40),
+    routesSha256: "5".repeat(64),
+  };
+  writeFileSync(proofPath, JSON.stringify({
+    version: 1,
+    provider: "switchyard",
+    model: "gpt-5.6-sol",
+    slug: "switchyard/auto",
+    status: "rejected",
+    officialSources: ["https://github.com/NVIDIA-NeMo/Switchyard"],
+    runtimeBinding: binding,
+    checks: {},
+  }));
+  const checks = {};
+  for (const name of VERIFICATION_CHECKS) {
+    checks[name] = {
+      outcome: "pass",
+      status: 200,
+      observedAt: "2026-09-01T12:00:00.000Z",
+      prompt: "must not persist",
+    };
+  }
+  try {
+    const result = recordApplicationEvidence(
+      "switchyard/auto",
+      { checks, routerVersion: "0.5.1", at: "2026-09-01T12:01:00.000Z" },
+      { applicationsRoot: applicationRoot },
+    );
+    assert.equal(result.endsWith("v2_agent/switchyard/auto/proof.json"), true);
+    const proof = JSON.parse(readFileSync(proofPath, "utf8"));
+    assert.equal(proof.status, "draft");
+    assert.equal(proof.routerVersion, "0.5.1");
+    assert.equal(proof.testedAt, "2026-09-01T12:01:00.000Z");
+    assert.deepEqual(proof.runtimeBinding, binding);
+    assert.equal(proof.checks.streaming.prompt, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the application writer rejects partial evidence", () => {
+  assert.throws(
+    () => recordApplicationEvidence(
+      "switchyard/auto",
+      { checks: { streaming: { outcome: "pass" } }, routerVersion: "0.5.1" },
+      { applicationsRoot: path.join(os.tmpdir(), "not-used") },
+    ),
+    /incomplete v2 evidence/,
+  );
 });
 
 test("the first failure is reported in reviewer order", () => {
@@ -106,6 +169,31 @@ test("event parsing survives interleaved non-JSON output", () => {
   assert.equal(events[2].type, "turn.completed");
 });
 
+test("tool evidence is read from buffered JSON and Responses event streams", () => {
+  const call = { type: "function_call", name: "codex_router_probe", arguments: '{"token":"ok"}' };
+  assert.deepEqual(responseOutputItems(JSON.stringify({ output: [call] })), [call]);
+  const stream = [
+    "event: response.output_item.done",
+    `data: ${JSON.stringify({ type: "response.output_item.done", item: call })}`,
+    "",
+    "event: response.completed",
+    `data: ${JSON.stringify({ type: "response.completed", response: { output: [call] } })}`,
+    "",
+    "data: [DONE]",
+  ].join("\n");
+  assert.equal(responseOutputItems(stream).some((item) => item.name === "codex_router_probe"), true);
+});
+
+test("the streamed tool probe checks the completed call, not its empty added event", () => {
+  const source = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "subagent-certify.mjs"),
+    "utf8",
+  );
+  assert.match(source, /const calls = responseOutputItems\(responseBody\)/);
+  assert.match(source, /calls\.find\(\(candidate\) =>/);
+  assert.match(source, /JSON\.parse\(candidate\.arguments/);
+});
+
 test("the checks call the endpoint the router actually serves", async () => {
   // A 404 from `chat/completions` was reported to the operator as "this model
   // cannot run subagents". The caller endpoint speaks Responses and takes the
@@ -119,8 +207,12 @@ test("the checks call the endpoint the router actually serves", async () => {
   assert.doesNotMatch(source, /fetch\([^)]*chat\/completions/);
   assert.doesNotMatch(source, /`\$\{baseUrl\}\/chat\/completions`/);
   assert.match(source, /authorization: `Bearer \$\{secret\}`/);
-  // Responses puts the forced call in `output`, not in a chat `message`.
-  assert.match(source, /\(payload\?\.output \|\| \[\]\)\.find\(\(item\) => item\?\.type === "function_call"\)/);
+  // Switchyard terminates on Codex's native Responses contract, whose input is
+  // always an item list. A string is accepted by some routed providers but is
+  // rejected by the native backend before the model can answer.
+  assert.equal(source.match(/input: \[\{\s*role: "user"/g)?.length, 2);
+  // Responses puts the forced call in output items, not in a chat `message`.
+  assert.match(source, /const calls = responseOutputItems\(responseBody\)/);
   // Forced first, because that is the strongest evidence; the fallback to an
   // offered call is covered by its own test below.
   assert.match(source, /toolProbe\(\{ type: "function", name: "codex_router_probe" \}\)/);

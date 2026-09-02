@@ -45,7 +45,12 @@ variants of the same native model safely. The patch adds:
 - `body_overrides`, recursively merged after caller fields so the selected
   target owns `reasoning.effort`, `store`, and `stream` without erasing native
   reasoning siblings such as context and summary controls; and
-- `remove_body_fields`, applied last to strip fields rejected by the upstream.
+- `remove_body_fields`, applied last to strip fields rejected by the upstream;
+- raw Responses item inspection for Codex tool outputs, so custom, computer,
+  shell, and tool-search continuations retain the selected target instead of
+  being mistaken for a new user turn; and
+- forwarding of the common `priority` service tier to the hidden classifier
+  request as well as the selected serving request.
 
 Every configured target enforces `store = false` and `stream = true` and removes
 `max_output_tokens`. The ChatGPT subscription Responses backend requires this
@@ -64,12 +69,13 @@ The full classifier prompt and schema live in `routes.template.toml`.
 
 ## V2 subagents
 
-`switchyard/auto` is certified for Codex multi-agent v2. The accepted application
-lives at `v2_agent/switchyard/auto/`. Certification covered a fresh encrypted
-child spawn, an exact marker return, a second task on the same child, and a forced
-filesystem tool call whose marker was unknown to the model. Keep v1 available as
-the fallback for routes without an accepted application; do not demote this route
-unless a reproduced regression invalidates the certificate.
+`switchyard/auto` currently advertises Codex multi-agent v1. Its earlier v2
+application lives at `v2_agent/switchyard/auto/`, but it is a draft for the new
+runtime candidate because the accepted observations predate the pinned upstream
+commit and compatibility patch. After deployment, rerun the exact-route encrypted
+child, marker, continuation, and forced-tool checks and bind the proof to the
+deployed source, patch, binary, Router commit, and route hashes before promoting
+the catalog entry back to v2.
 
 ## Compaction and request compatibility
 
@@ -81,12 +87,14 @@ the original Codex request after Switchyard chooses the target.
 
 The public `switchyard/auto` catalog entry derives its context and compaction
 contract from the current native Sol behavior template whenever Router publishes
-the catalog. Current Codex omits `auto_compact_token_limit` and instead supplies
-token-budget and context-reset controls in `model_messages`; Router preserves that
-absence and those controls. The context values therefore follow the installed Codex
-catalog instead of being frozen in this integration. Switchyard's internal routes
-may retain their larger model context windows; those limits do not control when
-the Codex client compacts its task history.
+the catalog. When `auto_compact_token_limit` is absent, Codex derives its native
+threshold as 90 percent of the resolved context window. Router preserves that
+absence. It separately preserves the token-budget and context-reset controls in
+`model_messages`; those controls do not set the automatic compaction threshold.
+The context values therefore follow the installed Codex catalog instead of being
+frozen in this integration. Switchyard's internal routes may retain their larger
+model context windows; those limits do not control when the Codex client compacts
+its task history.
 
 The Codex-facing entry also inherits the request contract of its native Sol behavior
 template: native instructions and model messages, image input, web search, verbosity,
@@ -173,11 +181,13 @@ Before deployment, verify that Router can build a custom catalog from the target
 Codex binary and that the same binary can parse it:
 
 ```powershell
-node scripts/check-codex-catalog-compat.mjs "C:\path\to\codex.exe"
+node scripts/check-codex-catalog-compat.mjs "C:\path\to\desktop-codex.exe" "C:\path\to\current-codex.exe"
 ```
 
-The check uses a temporary catalog and does not change the active Codex or Router
-configuration.
+With more than one binary, the check builds a catalog from each native schema and
+parses every catalog with every supplied binary. It also checks the current nested
+model-message controls and routed capability fields. The check uses temporary
+catalogs and does not change the active Codex or Router configuration.
 
 Validate the new binary with the active route configuration before replacement.
 After a guarded replacement, verify Router health, Switchyard `/health`, the merged

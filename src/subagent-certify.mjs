@@ -80,6 +80,52 @@ export function checksComplete(checks) {
   return VERIFICATION_CHECKS.every((name) => checks?.[name]?.outcome === "pass");
 }
 
+// Copy only the bounded result metadata into the checked-in application. The
+// live run handles prompts, response bodies and credentials; none of those
+// belong in durable evidence. Existing route identity, sources, and exact
+// provider/runtime bindings are preserved for review rather than inferred from
+// the current machine.
+export function recordApplicationEvidence(
+  slug,
+  { checks, routerVersion, at = new Date().toISOString() },
+  { applicationsRoot = path.join(REPO_ROOT, "v2_agent") } = {},
+) {
+  const parts = String(slug || "").split("/");
+  if (parts.length !== 2 || parts.some((part) => !/^[a-z0-9][a-z0-9._-]*$/i.test(part))) {
+    throw new Error(`Invalid v2 application slug: ${slug}`);
+  }
+  if (!checksComplete(checks)) {
+    throw new Error(`Refusing to record incomplete v2 evidence for ${slug}`);
+  }
+  const applicationPath = path.join(applicationsRoot, ...parts, "proof.json");
+  if (!existsSync(applicationPath)) {
+    throw new Error(`Missing v2 application for ${slug}: ${applicationPath}`);
+  }
+  const existing = JSON.parse(readFileSync(applicationPath, "utf8"));
+  const recordedChecks = {};
+  for (const name of VERIFICATION_CHECKS) {
+    const check = checks[name];
+    recordedChecks[name] = {
+      outcome: "pass",
+      ...(Number.isInteger(check.status) ? { status: check.status } : {}),
+      ...(check.completion === "codex-task-complete" ? { completion: check.completion } : {}),
+      observedAt: check.observedAt,
+    };
+  }
+  const application = {
+    ...existing,
+    status: "draft",
+    testedAt: at,
+    routerVersion,
+    checks: recordedChecks,
+  };
+  writeFileSync(applicationPath, `${JSON.stringify(application, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  return path.relative(REPO_ROOT, applicationPath).replaceAll(path.sep, "/");
+}
+
 // A marker is generated per run and never reused. A route that echoes a
 // previous run's marker, or that a cached transcript happens to contain,
 // must not be able to pass on that.
@@ -132,6 +178,35 @@ export function parseEventLines(stdout) {
         return line;
       }
     });
+}
+
+// Responses providers may return one JSON document or an SSE event stream.
+// Switchyard preserves Codex's streaming transport even for this small probe,
+// so looking only for payload.output silently discards a valid function call.
+export function responseOutputItems(body) {
+  const items = [];
+  const collect = (payload) => {
+    if (Array.isArray(payload?.output)) items.push(...payload.output);
+    if (Array.isArray(payload?.response?.output)) items.push(...payload.response.output);
+    if (payload?.item && typeof payload.item === "object") items.push(payload.item);
+  };
+  try {
+    collect(JSON.parse(String(body || "")));
+    return items;
+  } catch {
+    // Fall through to the event stream parser.
+  }
+  for (const line of String(body || "").split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      collect(JSON.parse(data));
+    } catch {
+      // A malformed or non-JSON event cannot contain a Responses output item.
+    }
+  }
+  return items;
 }
 
 function runCodex(args, { codexBin, codexHome, timeoutMs, cwd }) {
@@ -227,7 +302,10 @@ async function runHttpChecks({ slug, baseUrl, secret, timeoutMs }) {
       headers,
       body: JSON.stringify({
         model: slug,
-        input: "Reply with the single word: ready",
+        input: [{
+          role: "user",
+          content: [{ type: "input_text", text: "Reply with the single word: ready" }],
+        }],
         stream: true,
         max_output_tokens: 64,
       }),
@@ -257,7 +335,13 @@ async function runHttpChecks({ slug, baseUrl, secret, timeoutMs }) {
       headers,
       body: JSON.stringify({
         model: slug,
-        input: 'Call codex_router_probe with token "ok". Use the tool; do not answer in prose.',
+        input: [{
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: 'Call codex_router_probe with token "ok". Use the tool; do not answer in prose.',
+          }],
+        }],
         max_output_tokens: 512,
         tools: [
           {
@@ -276,19 +360,21 @@ async function runHttpChecks({ slug, baseUrl, secret, timeoutMs }) {
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const payload = await response.json().catch(() => undefined);
-    const call = (payload?.output || []).find((item) => item?.type === "function_call");
-    let argumentsValid = false;
-    try {
-      argumentsValid = typeof JSON.parse(call?.arguments ?? "").token === "string";
-    } catch {
-      argumentsValid = false;
-    }
+    const responseBody = await response.text();
+    const calls = responseOutputItems(responseBody)
+      .filter((item) => item?.type === "function_call" && item?.name === "codex_router_probe");
+    const call = calls.find((candidate) => {
+      try {
+        return typeof JSON.parse(candidate.arguments ?? "").token === "string";
+      } catch {
+        return false;
+      }
+    });
     return {
       status: response.status,
-      ok: response.ok && call?.name === "codex_router_probe" && argumentsValid,
-      sawCall: Boolean(call),
-      detail: String(payload?.error?.message || "").slice(0, 300),
+      ok: response.ok && Boolean(call),
+      sawCall: calls.length > 0,
+      detail: "",
     };
   };
 

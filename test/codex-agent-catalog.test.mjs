@@ -16,6 +16,23 @@ const kimi = {
   displayName: "Kimi K3 (OAuth)",
 };
 
+const legacyOxWorker = [
+  'name = "ox_worker"',
+  'description = "General-purpose Ox Alpha worker for bounded codebase reading, review, implementation, and verification."',
+  'model_provider = "codex-router"',
+  'model = "openrouter/ox-alpha"',
+  'model_reasoning_effort = "high"',
+  'model_context_window = 1048576',
+  'model_reasoning_summary = "none"',
+  'sandbox_mode = "workspace-write"',
+  'developer_instructions = """',
+  "Complete only the bounded assignment from the parent and do not delegate it further.",
+  "Treat read-only work as read-only. For implementation work, preserve unrelated changes and do not commit, push, publish, or modify external systems unless the assignment explicitly authorizes it.",
+  "Return a concise handoff with the result, verification evidence, changed files, and any material uncertainty or blocker.",
+  '"""',
+  "",
+].join("\n");
+
 test("routed agent definitions select the router provider and exact model slug", () => {
   const definition = routedAgentDefinition(kimi);
   assert.equal(definition.agentName, "router_kimi_oauth_k3");
@@ -94,6 +111,28 @@ test("agent sync leaves definitions it does not manage alone", () => {
   const { removed } = syncRoutedCodexAgents([], agentsDir);
   assert.deepEqual(removed, ["router-model-kimi-oauth-k3.toml"]);
   assert.deepEqual(readdirSync(agentsDir), ["reviewer.toml"]);
+});
+
+test("agent sync removes only the exact retired Ox worker definition", () => {
+  const agentsDir = mkdtempSync(path.join(os.tmpdir(), "codex-router-agents-"));
+  writeFileSync(path.join(agentsDir, "ox_worker.toml"), legacyOxWorker.replace(/\n/g, "\r\n"));
+  assert.deepEqual(routedCodexAgentStatus([], agentsDir).extra, ["ox_worker.toml"]);
+
+  const { removed } = syncRoutedCodexAgents([], agentsDir);
+  assert.deepEqual(removed, ["ox_worker.toml"]);
+  assert.deepEqual(readdirSync(agentsDir), []);
+});
+
+test("agent sync preserves a user-modified Ox-named worker", () => {
+  const agentsDir = mkdtempSync(path.join(os.tmpdir(), "codex-router-agents-"));
+  writeFileSync(
+    path.join(agentsDir, "ox_worker.toml"),
+    legacyOxWorker.replace('model = "openrouter/ox-alpha"', 'model = "user/custom"'),
+  );
+
+  const { removed } = syncRoutedCodexAgents([], agentsDir);
+  assert.deepEqual(removed, []);
+  assert.deepEqual(readdirSync(agentsDir), ["ox_worker.toml"]);
 });
 
 test("agent status reports a definition left behind by an older install", () => {

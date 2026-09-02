@@ -39,6 +39,7 @@ import {
 } from "./npm-global-install.mjs";
 import { ensureNodeDependencies } from "./node-dependency-install.mjs";
 import { commandOnPath, spawnableCommand } from "./spawnable-command.mjs";
+import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 
 const SIGN_IN_CLIS = Object.freeze({
   "kimi-oauth": {
@@ -179,7 +180,12 @@ export function providerOnboardingSnapshot() {
           ...(catalogSources.length ? { catalogSources } : {}),
         };
       }
-      const configured = providerNeedsNoKey(provider)
+      const switchyardRuntime = provider.id === "switchyard"
+        ? switchyardRuntimeStatus()
+        : undefined;
+      const configured = switchyardRuntime
+        ? switchyardRuntime.ready
+        : providerNeedsNoKey(provider)
         ? true
         : effectiveProviderCredentialStatus(provider, {
             persistent: true,
@@ -196,6 +202,14 @@ export function providerOnboardingSnapshot() {
         // Carried to the tray so the plan requirement is visible at the
         // moment someone decides to connect, not after Codex 403s.
         ...(provider.planNote ? { planNote: provider.planNote } : {}),
+        ...(switchyardRuntime && !switchyardRuntime.ready
+          ? {
+              action: "blocked",
+              blockedNote:
+                `Install the Switchyard runtime before enabling this provider. Missing: ` +
+                switchyardRuntime.missing.join(", "),
+            }
+          : {}),
       };
       // A container has no key field of its own. Saying so is the whole card:
       // an "Add Key" button here would store a secret nothing ever reads.

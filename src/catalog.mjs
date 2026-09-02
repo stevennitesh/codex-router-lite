@@ -79,6 +79,10 @@ function validNativeCatalog(parsed) {
 // `{{ ... }}` token can never reach a model's system prompt.
 const INSTRUCTION_PLACEHOLDER = /\{\{\s*([\w.-]+)\s*\}\}/g;
 
+const RETIRED_PICKER_MIGRATIONS = Object.freeze([
+  { from: "openrouter/ox-alpha", to: "openrouter/glm-5.3-flash" },
+]);
+
 export function deriveBaseInstructions(modelMessages) {
   const template = modelMessages?.instructions_template;
   if (typeof template !== "string") return undefined;
@@ -155,8 +159,27 @@ const BUNDLED_BACKFILL_FIELDS = Object.freeze([
   "input_modalities",
   "experimental_supported_tools",
   "include_apps_usage_instructions",
-  "model_messages",
 ]);
+
+function deepBackfillNativeMetadata(accountValue, bundledValue) {
+  if (
+    !accountValue ||
+    typeof accountValue !== "object" ||
+    Array.isArray(accountValue) ||
+    !bundledValue ||
+    typeof bundledValue !== "object" ||
+    Array.isArray(bundledValue)
+  ) {
+    return accountValue;
+  }
+  const merged = { ...bundledValue };
+  for (const [key, value] of Object.entries(accountValue)) {
+    merged[key] = Object.prototype.hasOwnProperty.call(bundledValue, key)
+      ? deepBackfillNativeMetadata(value, bundledValue[key])
+      : value;
+  }
+  return merged;
+}
 
 // The account catalog may use an older schema and publish empty fields for
 // capabilities already present in the current binary. Preserve the non-empty
@@ -174,6 +197,18 @@ export function mergeNativeModel(accountModel, bundledModel) {
     ) {
       merged[field] = value;
     }
+  }
+  // Account caches can lag the binary by one model-message schema revision.
+  // Backfill only missing object properties. Explicit nulls, empty strings,
+  // arrays, and scalar values remain account-owned because current Codex gives
+  // several of them meaning distinct from an absent property.
+  if (!owns(accountModel, "model_messages")) {
+    merged.model_messages = bundledModel.model_messages;
+  } else {
+    merged.model_messages = deepBackfillNativeMetadata(
+      accountModel.model_messages,
+      bundledModel.model_messages,
+    );
   }
   return merged;
 }
@@ -570,7 +605,12 @@ export function normalizeNativeModel(model, { modern = false } = {}) {
   };
 }
 
-export function routedModel(template, model, behaviorTemplate = template) {
+export function routedModel(
+  template,
+  model,
+  behaviorTemplate = template,
+  { modern = false } = {},
+) {
   const nativeRequestProfile = model.requestProfile === "switchyard-native";
   const catalogTemplate = nativeRequestProfile ? behaviorTemplate : template;
   const behaviorModelMessages =
@@ -655,9 +695,17 @@ export function routedModel(template, model, behaviorTemplate = template) {
           migration_markdown: model.upgradeTo.markdown.trim(),
         }
       : null,
-    supports_reasoning_summaries: nativeRequestProfile
-      ? behaviorTemplate.supports_reasoning_summaries === true
-      : model.supportsReasoningSummaries === true,
+    ...(modern
+      ? {
+          supports_reasoning_summary_parameter: nativeRequestProfile
+            ? behaviorTemplate.supports_reasoning_summary_parameter !== false
+            : model.supportsReasoningSummaries === true,
+        }
+      : {
+          supports_reasoning_summaries: nativeRequestProfile
+            ? behaviorTemplate.supports_reasoning_summaries === true
+            : model.supportsReasoningSummaries === true,
+        }),
     default_reasoning_summary: nativeRequestProfile
       ? behaviorTemplate.default_reasoning_summary || "none"
       : model.supportsReasoningSummaries === true
@@ -685,9 +733,13 @@ export function routedModel(template, model, behaviorTemplate = template) {
     // A routed model must never inherit a native template's capability. Codex
     // now requires the key, and `false` is both schema-valid and conservative
     // until this exact provider/model route declares support.
-    supports_parallel_tool_calls: nativeRequestProfile
-      ? behaviorTemplate.supports_parallel_tool_calls === true
-      : model.supportsParallelToolCalls === true,
+    ...(!modern
+      ? {
+          supports_parallel_tool_calls: nativeRequestProfile
+            ? behaviorTemplate.supports_parallel_tool_calls === true
+            : model.supportsParallelToolCalls === true,
+        }
+      : {}),
     use_responses_lite: nativeRequestProfile
       ? behaviorTemplate.use_responses_lite === true
       : false,
@@ -714,7 +766,9 @@ export function routedModel(template, model, behaviorTemplate = template) {
     // Keep a field absent when the behavior template omits it instead of
     // converting absence into a false or fallback capability claim.
     for (const field of [
-      "supports_reasoning_summaries",
+      modern
+        ? "supports_reasoning_summary_parameter"
+        : "supports_reasoning_summaries",
       "auto_compact_token_limit",
       "default_reasoning_summary",
       "support_verbosity",
@@ -737,8 +791,15 @@ export function routedModel(template, model, behaviorTemplate = template) {
   // A few OpenAI-compatible upstreams reject tool scheduling the native
   // template advertises. Registry entries opt out explicitly so the picker
   // never offers a custom or parallel tool the provider backend will 400.
-  if (Array.isArray(model.experimentalSupportedTools)) {
-    next.experimental_supported_tools = [...model.experimentalSupportedTools];
+  if (!nativeRequestProfile) {
+    // External routes own their tool and orchestration metadata. A later Sol
+    // catalog may enable a native-only experimental tool or child effort; it
+    // must not leak into GLM or another provider merely because that route uses
+    // Sol as its behavioral template.
+    next.experimental_supported_tools = Array.isArray(model.experimentalSupportedTools)
+      ? [...model.experimentalSupportedTools]
+      : [];
+    delete next.multi_agent_reasoning_effort;
   }
   if (typeof next.base_instructions === "string" && !nativeRequestProfile) {
     next.base_instructions = applyInstructionOverlay(
@@ -977,7 +1038,7 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
   );
   for (const model of routedPickerPriorities(native.models, routedModelsList)) {
     const behaviorTemplate = behaviorTemplateFor(native.models, model, template);
-    models.set(model.slug, routedModel(template, model, behaviorTemplate));
+    models.set(model.slug, routedModel(template, model, behaviorTemplate, { modern }));
   }
   return sortCatalogModels(models.values());
 }
@@ -994,6 +1055,7 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
 // function keeps the same rule for the login-free path instead of trusting its
 // caller to pre-filter, so no future call site can publish dead slots again.
 export function buildLoginFreeCatalog(native, routedModelsList) {
+  const modern = modernNativeCatalog(native.models);
   const configured = new Set(configuredProviderIds());
   const usableModels = routedModelsList.filter(
     (model) => !model.provider || configured.has(model.provider),
@@ -1009,6 +1071,7 @@ export function buildLoginFreeCatalog(native, routedModelsList) {
         nativeModel,
         model,
         behaviorTemplateFor(native.models, model, nativeModel),
+        { modern },
       ),
       slug: nativeModel.slug,
       priority: nativeModel.priority,
@@ -1060,7 +1123,10 @@ function main() {
   // context variants are deliberately not offered to it: they have never been
   // visible by default under either set of semantics.
   migrateModelVisibility(
-    [...MODEL_SLUG_ALIASES].map(([from, to]) => ({ from, to })),
+    [
+      ...[...MODEL_SLUG_ALIASES].map(([from, to]) => ({ from, to })),
+      ...RETIRED_PICKER_MIGRATIONS,
+    ],
   );
   migrateLegacyVisibleModels(routedSeedSlugs);
   seedModelsHidden([...NATIVE_CONTEXT_VARIANT_SLUGS, ...routedSeedSlugs]);

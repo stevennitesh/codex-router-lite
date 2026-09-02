@@ -17,6 +17,8 @@ const REQUIRED_CHECKS = Object.freeze([
 const APPLICATION_STATUSES = new Set(["draft", "accepted", "rejected"]);
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]*$/i;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const GIT_COMMIT = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
 const RESERVED_SOURCE_HOST =
   /(?:^|\.)(?:example\.(?:com|net|org)|example|invalid|localhost|test)$/i;
 // These six routes were already repository-certified before the application
@@ -93,6 +95,43 @@ function routeIdentity({ slug, provider, upstreamModel }) {
   return JSON.stringify([slug, provider, upstreamModel]);
 }
 
+function checkRouteBinding(proof, location, route) {
+  const endpointProviders = route.openRouterProviderPolicy?.only;
+  if (route.provider === "openrouter" && Array.isArray(endpointProviders) && endpointProviders.length) {
+    if (
+      endpointProviders.length !== 1 ||
+      route.openRouterProviderPolicy.allow_fallbacks !== false ||
+      proof.endpointProvider !== endpointProviders[0]
+    ) {
+      fail(
+        `${location}: accepted OpenRouter proof must name the route's one fail-closed endpointProvider`,
+      );
+    }
+  }
+  if (route.provider !== "switchyard") return;
+
+  const binding = proof.runtimeBinding;
+  const sourceLock = readJson(path.join(ROOT, "config", "switchyard", "source.lock"));
+  if (
+    !binding ||
+    !GIT_COMMIT.test(binding.upstreamCommit) ||
+    !GIT_COMMIT.test(binding.routerCommit) ||
+    !SHA256.test(binding.patchSha256) ||
+    !SHA256.test(binding.binarySha256) ||
+    !SHA256.test(binding.routesSha256)
+  ) {
+    fail(
+      `${location}: accepted Switchyard proof must bind upstream, patch, binary, Router, and routes`,
+    );
+  }
+  if (
+    binding.upstreamCommit.toLowerCase() !== String(sourceLock.commit).toLowerCase() ||
+    binding.patchSha256.toLowerCase() !== String(sourceLock.patchSha256).toLowerCase()
+  ) {
+    fail(`${location}: Switchyard proof does not match the pinned source and patch`);
+  }
+}
+
 function readJson(file) {
   try {
     return JSON.parse(readFileSync(file, "utf8"));
@@ -138,6 +177,7 @@ function checkAcceptedProof(proof, location, models) {
   if (route.multiAgentVersion !== "v2") {
     fail(`${location}: accepted application requires the exact registry route to declare multiAgentVersion v2`);
   }
+  checkRouteBinding(proof, location, route);
 }
 
 export function validateV2AgentApplications(

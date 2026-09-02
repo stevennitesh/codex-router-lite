@@ -43,6 +43,11 @@ A cancelled request without that completion evidence fails the gate.
 2. Record stable metadata and redacted outcome summaries in `proof.md` and
    `proof.json`. Do not commit API keys, bearer capabilities, raw prompts,
    decrypted payloads, or provider response bodies.
+   An OpenRouter route pinned with `provider.only` must record the exact
+   `endpointProvider`. A locally patched Switchyard route must also record a
+   `runtimeBinding` containing the deployed upstream commit, patch SHA-256,
+   binary SHA-256, Router commit, and generated-routes SHA-256. Accepted proofs
+   are rejected when those source and patch identities drift.
 3. Leave `status` as `draft` until all five checks have passed. Set it to
    `accepted` only in the PR that also sets the exact registry route's
    `multiAgentVersion` to `"v2"`.

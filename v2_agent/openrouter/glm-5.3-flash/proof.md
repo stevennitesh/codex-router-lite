@@ -4,40 +4,32 @@
 
 - Routed slug: `openrouter/glm-5.3-flash`
 - Upstream model ID: `z-ai/glm-5.3-flash`
-- Provider: OpenRouter
+- Provider: OpenRouter, pinned to NovitaAI
 - Router version: `0.5.1`
-- Capability test completed: `2026-08-26T10:26:00.376Z`
+- Current application status: accepted
 
-This application transfers the accepted v2 capability evidence from the
-provider's former preview identity to its disclosed canonical identity. The old
-slug is not retained as an alias or compatibility route. OpenRouter now
-identifies the same served model as `z-ai/glm-5.3-flash`; the cutover adds an
-exact-slug request bridge and fail-closed provider policy without changing the
-model that executed the recorded child turns.
+The old slug is not retained as an alias or compatibility route. The current
+route uses the canonical `z-ai/glm-5.3-flash` identity and a fail-closed
+OpenRouter policy restricted to NovitaAI. All observations below came from
+that exact route after the credential refresh.
 
 ## Evidence
 
 | Check | Result | Redacted summary |
 | --- | --- | --- |
-| Canonical identity | pass | OpenRouter's model and endpoint records now publish the former preview as `z-ai/glm-5.3-flash`, with the same 1,048,576-token context family and tool-capable endpoints. |
-| Streaming Responses | pass | Before disclosure, the same OpenRouter-served model streamed text and a completion event with HTTP 200 at `2026-08-26T10:24:05.461Z`. |
-| Forced function call | pass | The same capability probe returned the requested function name and valid JSON arguments with HTTP 200 at `2026-08-26T10:24:05.461Z`. Current bridge tests preserve named tool choice and constrain routing to endpoints that support the full parameter set. |
-| Encrypted relay | pass | A native Codex parent created a fresh child on this OpenRouter-served model; the child received the encrypted delegated task and completed with HTTP 200. |
-| Marker-return spawn | pass | The fresh child returned the first exact certification marker at `2026-08-26T10:25:23.059Z`. |
-| Same-thread follow-up | pass | The existing child received a second task and returned the second exact marker at `2026-08-26T10:26:00.376Z`. |
+| Canonical identity | pass | OpenRouter publishes `z-ai/glm-5.3-flash`; endpoint `7e1222fc-b9ab-4299-b75a-dd80e1ccd206` identifies NovitaAI, and the shipped policy restricts the route to provider slug `novita` with fallback disabled. |
+| Streaming Responses | pass | The exact route streamed a response and completion with HTTP 200 at `2026-09-02T00:24:34.026Z`. |
+| Function call | pass | The endpoint declined forced selection, then returned the offered `codex_router_probe` call with valid JSON arguments and HTTP 200. Codex does not force tool choice in ordinary turns. |
+| Encrypted relay | pass | The Codex desktop parent created a fresh child on `openrouter/glm-5.3-flash` at high effort. |
+| Marker-return spawn | pass | The fresh child returned the exact first marker at `2026-09-02T00:25:20.938Z`. |
+| Same-thread follow-up | pass | The same child returned the exact second marker at `2026-09-02T00:25:51.641Z`. |
 
 ## Limits and reviewer reproduction
 
-The accepted child evidence predates the provider's public canonical rename;
-it is continuity evidence for the same model, not a claim that the old slug is
-still supported. The current route additionally has deterministic bridge tests
-for exact model rewriting, thinking replay, named tool choice, unsupported
-native-field removal, and provider selection. A live canonical probe attempted
-during the cutover received HTTP 401 from the configured credential, so no new
-success timestamp was substituted into this record.
-
-After the guarded restart, reproduce with a working OpenRouter credential: run
-the exact route's stream/tool probe, spawn one fresh GLM-5.3-Flash child with an
-exact marker, and send a second marker task to the same child. Do not record
+The standalone `codex exec` parent cannot launch a routed child while signed in
+with a ChatGPT account. That is a CLI account-policy refusal, not a route
+failure. The encrypted relay, marker return, and same-child follow-up were
+therefore reproduced through the Codex desktop app's native v2 orchestration
+path, which is the path this route ships for. Repository evidence contains no
 prompts, decrypted payloads, credentials, caller capabilities, or response
-bodies in repository evidence.
+bodies.

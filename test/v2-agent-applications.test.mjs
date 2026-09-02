@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -12,6 +13,9 @@ import path from "node:path";
 import test, { after } from "node:test";
 
 const { validateV2AgentApplications } = await import("../scripts/check-v2-agent-applications.mjs");
+const SWITCHYARD_SOURCE_LOCK = JSON.parse(
+  readFileSync(new URL("../config/switchyard/source.lock", import.meta.url), "utf8"),
+);
 
 const fixtureRoots = new Set();
 
@@ -158,6 +162,61 @@ test("accepted proof identity must match one exact v2 registry route", () => {
     }),
     /does not match an exact registry route/,
   );
+});
+
+test("accepted OpenRouter proofs bind the fail-closed endpoint provider", () => {
+  const root = temporaryRoot("v2-agent-openrouter-endpoint-test-");
+  const proof = acceptedProof();
+  proof.provider = "openrouter";
+  proof.model = "z-ai/glm-5.3-flash";
+  proof.slug = "openrouter/glm-5.3-flash";
+  const models = [{
+    slug: proof.slug,
+    provider: proof.provider,
+    upstreamModel: proof.model,
+    multiAgentVersion: "v2",
+    openRouterProviderPolicy: { only: ["novita"], allow_fallbacks: false },
+  }];
+  application(root, proof);
+  assert.throws(
+    () => validateV2AgentApplications(root, { models }),
+    /fail-closed endpointProvider/,
+  );
+
+  proof.endpointProvider = "novita";
+  const bound = temporaryRoot("v2-agent-openrouter-endpoint-bound-test-");
+  application(bound, proof);
+  assert.equal(validateV2AgentApplications(bound, { models })[0].status, "accepted");
+});
+
+test("accepted Switchyard proofs bind the exact deployed candidate", () => {
+  const root = temporaryRoot("v2-agent-switchyard-binding-test-");
+  const proof = acceptedProof();
+  proof.provider = "switchyard";
+  proof.model = "gpt-5.6-sol";
+  proof.slug = "switchyard/auto";
+  const models = [{
+    slug: proof.slug,
+    provider: proof.provider,
+    upstreamModel: proof.model,
+    multiAgentVersion: "v2",
+  }];
+  application(root, proof);
+  assert.throws(
+    () => validateV2AgentApplications(root, { models }),
+    /bind upstream, patch, binary, Router, and routes/,
+  );
+
+  proof.runtimeBinding = {
+    upstreamCommit: SWITCHYARD_SOURCE_LOCK.commit,
+    patchSha256: SWITCHYARD_SOURCE_LOCK.patchSha256,
+    binarySha256: "1".repeat(64),
+    routerCommit: "2".repeat(40),
+    routesSha256: "3".repeat(64),
+  };
+  const bound = temporaryRoot("v2-agent-switchyard-binding-bound-test-");
+  application(bound, proof);
+  assert.equal(validateV2AgentApplications(bound, { models })[0].status, "accepted");
 });
 
 test("accepted applications fail closed on legacy versions, v1 routes, and unknown checks", () => {

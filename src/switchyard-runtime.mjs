@@ -2,8 +2,33 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { PROVIDERS, resolveProviderBaseUrl } from "./model-registry.mjs";
-import { PROVIDER_SELECTION_PATH, STATE_DIR } from "./paths.mjs";
-import { readProviderSelection } from "./provider-selection.mjs";
+import { STATE_DIR } from "./paths.mjs";
+
+export function switchyardRuntimeStatus({
+  stateDir = STATE_DIR,
+  env = process.env,
+  platform = process.platform,
+  exists = existsSync,
+} = {}) {
+  const codexHome = env.CODEX_HOME || path.dirname(stateDir);
+  const runtimeRoot = env.CODEX_ROUTER_SWITCHYARD_ROOT || path.join(codexHome, "switchyard");
+  const binary = env.CODEX_ROUTER_SWITCHYARD_BIN || path.join(
+    runtimeRoot,
+    platform === "win32" ? "switchyard-server.exe" : "switchyard-server",
+  );
+  const config = env.CODEX_ROUTER_SWITCHYARD_CONFIG || path.join(runtimeRoot, "routes.toml");
+  const missing = [
+    ...(!exists(binary) ? [binary] : []),
+    ...(!exists(config) ? [config] : []),
+  ];
+  return {
+    ready: missing.length === 0,
+    runtimeRoot,
+    binary,
+    config,
+    missing,
+  };
+}
 
 export function switchyardLaunch({
   selected,
@@ -13,19 +38,13 @@ export function switchyardLaunch({
   exists = existsSync,
 } = {}) {
   if (!selected) return undefined;
-  const codexHome = env.CODEX_HOME || path.dirname(stateDir);
-  const runtimeRoot = env.CODEX_ROUTER_SWITCHYARD_ROOT || path.join(codexHome, "switchyard");
-  const binary = env.CODEX_ROUTER_SWITCHYARD_BIN || path.join(
-    runtimeRoot,
-    platform === "win32" ? "switchyard-server.exe" : "switchyard-server",
-  );
-  const config = env.CODEX_ROUTER_SWITCHYARD_CONFIG || path.join(runtimeRoot, "routes.toml");
-  if (!exists(binary)) {
-    throw new Error(`Switchyard is enabled but its server is missing at ${binary}.`);
+  const status = switchyardRuntimeStatus({ stateDir, env, platform, exists });
+  if (!status.ready) {
+    throw new Error(
+      `Switchyard is enabled but its runtime is incomplete; missing ${status.missing.join(", ")}.`,
+    );
   }
-  if (!exists(config)) {
-    throw new Error(`Switchyard is enabled but its route config is missing at ${config}.`);
-  }
+  const { binary, config, runtimeRoot } = status;
   const provider = PROVIDERS.get("switchyard");
   const baseUrl = new URL(resolveProviderBaseUrl(provider, env).baseUrl);
   const host = baseUrl.hostname.replace(/^\[|\]$/g, "");
@@ -48,8 +67,19 @@ export function switchyardLaunch({
   };
 }
 
-export function installedSwitchyardLaunch() {
-  const selected = existsSync(PROVIDER_SELECTION_PATH) &&
-    readProviderSelection().includes("switchyard");
-  return switchyardLaunch({ selected });
+export function installedSwitchyardLaunch({
+  selected,
+  warn = console.error,
+  runtimeOptions = {},
+} = {}) {
+  if (!selected) return undefined;
+  const status = switchyardRuntimeStatus(runtimeOptions);
+  if (!status.ready) {
+    warn(
+      `[model-router] Switchyard is selected but unavailable; continuing without it. ` +
+        `Missing: ${status.missing.join(", ")}`,
+    );
+    return undefined;
+  }
+  return switchyardLaunch({ selected: true, ...runtimeOptions });
 }

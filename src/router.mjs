@@ -3830,7 +3830,12 @@ async function handleResponses(request, response, requestUrl) {
         bodyText: failedBodyText,
         retryAfterSeconds: Number(upstream.headers.get("retry-after")),
       });
-      if (verdict.swap && !exactRouteProbe) {
+      // Switchyard already owns target selection and retries inside its local
+      // route. Its request deliberately bypasses Router's external-provider
+      // normalization, so the generic failover state is unavailable here and
+      // a cross-provider swap would also change the model behind the operator's
+      // explicit Switchyard choice.
+      if (verdict.swap && !exactRouteProbe && !switchyard) {
         // Believe the provider about when it will be back before trying anyone
         // else, so the next turn skips it instead of paying for the same
         // rejection again.

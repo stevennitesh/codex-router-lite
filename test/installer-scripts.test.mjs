@@ -571,6 +571,21 @@ test("Windows exposes signed-routing and the shared refresh transaction", () => 
   assert.match(posix, /exec node .*src\/refresh-catalog\.mjs" "\$@"/);
 });
 
+test("both model-router launchers expose subagent certification", () => {
+  const windows = readScript("codex-router.ps1");
+  const branches = windowsSwitchBranches(windows);
+  assert.match(windows, /"subagents"/);
+  assert.match(
+    branches.get("subagents"),
+    /control\.mjs"\s+\(@\("subagents"\)\s*\+\s*\$Arguments\)/,
+  );
+
+  const dispatcher = readScript("bin", "model-router");
+  assert.match(dispatcher, /\bagents\|subagents\|media\b/);
+  const command = readScript("bin", "subagents");
+  assert.match(command, /src\/control\.mjs" subagents "\$@"/);
+});
+
 test("both bootstrap installers refuse on tracked edits only", () => {
   // Run without -CheckoutInstall / from a pipe, these are the curl|sh and
   // irm|iex self-update paths. They reimplement requireReplaceableCheckout()

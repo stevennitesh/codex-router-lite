@@ -28,6 +28,7 @@ import {
   effectiveProviderCredentialStatus,
   providerApiKeyAuthoritySnapshot,
 } from "./provider-api-key-routing.mjs";
+import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 
 const RETIRED_PROVIDER_ALIASES = new Map([["chatgpt-oauth", "grok-oauth"]]);
 
@@ -111,6 +112,8 @@ export function configuredProviderIds() {
       } else if (provider.id === "devin-cli" && devinCliStatus().configured) {
         configured.push(provider.id);
       }
+    } else if (provider.id === "switchyard") {
+      if (switchyardRuntimeStatus().ready) configured.push(provider.id);
     } else if (providerNeedsNoKey(provider)) {
       // Nothing to configure: local providers run on this machine, while
       // anonymous providers authenticate by the provider's free-model policy.
@@ -231,6 +234,14 @@ export function writeProviderSelection(values) {
 // Enable/disable act on the whole variant family: toggling opencode-go (or any
 // of its protocol variants) shows or hides every model that key can serve.
 export function enableProvider(providerId) {
+  if (canonicalProviderId(providerId) === "switchyard") {
+    const runtime = switchyardRuntimeStatus();
+    if (!runtime.ready) {
+      throw new Error(
+        `Switchyard cannot be enabled until its runtime is installed. Missing: ${runtime.missing.join(", ")}`,
+      );
+    }
+  }
   const current = existsSync(PROVIDER_SELECTION_PATH)
     ? readProviderSelection()
     : defaultProviderIds();

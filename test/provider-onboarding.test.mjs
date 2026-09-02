@@ -164,6 +164,9 @@ test("provider onboarding reports install, login, and API key actions without se
     assert.equal(byId["github-copilot"].credentialLabel, "GitHub token");
     assert.equal("credentialLabel" in byId["deepseek"], false);
     assert.equal(byId.clinepass.action, "add-key");
+    assert.equal(byId.switchyard.configured, false);
+    assert.equal(byId.switchyard.action, "blocked");
+    assert.match(byId.switchyard.blockedNote, /Install the Switchyard runtime/);
     assert.equal(byId.chutes.action, "add-key");
     for (const id of ["opencode-free", "kilo-free"]) {
       assert.equal(byId[id].kind, "anonymous");

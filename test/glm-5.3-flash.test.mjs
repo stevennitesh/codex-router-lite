@@ -47,9 +47,9 @@ test("OpenRouter GLM owns its Codex prompt and full-tool provider policy", () =>
   assert.equal(model.supportsParallelToolCalls, undefined);
   assert.equal(model.multiAgentVersion, "v2");
   assert.deepEqual(model.openRouterProviderPolicy, {
-    order: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
-    only: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
-    allow_fallbacks: true,
+    order: ["novita"],
+    only: ["novita"],
+    allow_fallbacks: false,
     require_parameters: true,
   });
 });

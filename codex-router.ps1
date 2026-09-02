@@ -16,7 +16,7 @@ $Commands = @(
   "setup", "install", "doctor", "status", "providers", "provider-key", "caller-key", "key-pool", "search-sidecar", "enable",
   "disable", "chatgpt-session", "skills", "uninstall", "update", "rollback", "support-bundle",
   "smoke-test", "start", "stop", "test-model", "discover-models", "local-mlx",
-  "signed-routing", "refresh-catalog", "media", "tray", "panel", "companion"
+  "signed-routing", "subagents", "refresh-catalog", "media", "tray", "panel", "companion"
 )
 if ($Command -notin $Commands) {
   throw "Unknown command '$Command'. Choose: $($Commands -join ', ')."
@@ -909,6 +909,9 @@ switch ($Command) {
   }
   "signed-routing" {
     Invoke-RouterNode "src\control.mjs" (@("signed-routing") + $Arguments)
+  }
+  "subagents" {
+    Invoke-RouterNode "src\control.mjs" (@("subagents") + $Arguments)
   }
   "refresh-catalog" { Invoke-RouterNode "src\refresh-catalog.mjs" $Arguments }
   "support-bundle" { Invoke-RouterNode "src\support-bundle.mjs" $Arguments }

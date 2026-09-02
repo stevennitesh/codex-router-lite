@@ -3208,6 +3208,12 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       headers: request.headers,
       body: requestBody,
     });
+    if (JSON.stringify(requestBody.input).includes("SWITCHYARD_429")) {
+      json(response, 429, {
+        error: { message: "switchyard target is rate limited", type: "rate_limit_error" },
+      });
+      return;
+    }
     if (requestBody.stream) {
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.end(
@@ -3307,13 +3313,26 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.match(await streamed.text(), /switchyard-stream/);
     assert.equal(switchyardRequests.length, 2);
 
+    const rateLimited = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "switchyard/auto",
+        input: [{ type: "message", role: "user", content: "SWITCHYARD_429" }],
+      }),
+    });
+    assert.equal(rateLimited.status, 429);
+    assert.match(await rateLimited.text(), /switchyard target is rate limited/);
+    assert.equal(switchyardRequests.length, 3);
+    assert.equal(gatewayRequests.length, 0);
+
     const compact = await fetch(`${routerBase(routerPort)}/responses/compact`, {
       method: "POST",
       headers,
       body: JSON.stringify({ model: "switchyard/auto", input }),
     });
     assert.equal(compact.status, 200);
-    assert.equal(switchyardRequests.length, 2);
+    assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 1);
     assert.equal(nativeRequests[0].url, "/backend-api/codex/responses/compact");
     assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
@@ -10847,9 +10866,9 @@ test("API forwarder clamps proven Flash routes onto the ladder the model accepts
     assert.equal(openRouter.messages[1].reasoning_content, "provider-native reasoning");
     assert.deepEqual(openRouter.messages[1].content, [{ type: "text", text: "visible answer" }]);
     assert.deepEqual(openRouter.provider, {
-      order: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
-      only: ["deepinfra", "morph", "digitalocean", "phala", "cloudflare", "venice", "wafer", "fireworks"],
-      allow_fallbacks: true,
+      order: ["novita"],
+      only: ["novita"],
+      allow_fallbacks: false,
       require_parameters: true,
     });
   } finally {

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -7,13 +8,15 @@ import { buildMergedCatalog } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/model-registry.mjs";
 import { spawnableCommand } from "../src/codex-binary.mjs";
 
-const binary = process.argv[2];
-if (!binary) {
-  console.error("Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CODEX");
+const binaries = process.argv.slice(2);
+if (binaries.length === 0) {
+  console.error(
+    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CODEX [PATH_TO_OTHER_CODEX ...]",
+  );
   process.exit(2);
 }
 
-function runCodex(args, options = {}) {
+function runCodex(binary, args, options = {}) {
   const target = spawnableCommand(binary, args);
   const result = spawnSync(target.command, target.args, {
     ...target.options,
@@ -27,54 +30,89 @@ function runCodex(args, options = {}) {
   return result.stdout;
 }
 
-const version = runCodex(["--version"]).trim();
-const native = JSON.parse(runCodex(["debug", "models", "--bundled"]));
 const routed = ["openrouter/glm-5.3-flash", "switchyard/auto"].map((slug) => {
   const model = MODEL_BY_SLUG.get(slug);
   if (!model) throw new Error(`Missing checked-in route ${slug}`);
   return model;
 });
-const catalog = { models: buildMergedCatalog(native, routed) };
-const builtSwitchyard = catalog.models.find((model) => model.slug === "switchyard/auto");
-if (Object.prototype.hasOwnProperty.call(builtSwitchyard, "auto_compact_token_limit")) {
-  throw new Error(`${version} source catalog did not retain Switchyard native compaction`);
-}
-if (
-  !builtSwitchyard.model_messages?.token_budget ||
-  !Object.prototype.hasOwnProperty.call(builtSwitchyard.model_messages, "multi_agent")
-) {
-  throw new Error(`${version} source catalog did not retain current native model-message controls`);
-}
-const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
-const catalogPath = path.join(temporaryHome, "merged-models.json");
 
-try {
-  writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, { mode: 0o600 });
-  const parsed = JSON.parse(
-    runCodex(
-      ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
-      { env: { ...process.env, CODEX_HOME: temporaryHome } },
-    ),
+function buildCandidate(binary) {
+  const version = runCodex(binary, ["--version"]).trim();
+  const native = JSON.parse(runCodex(binary, ["debug", "models", "--bundled"]));
+  const catalog = { models: buildMergedCatalog(native, routed) };
+  const builtSwitchyard = catalog.models.find((model) => model.slug === "switchyard/auto");
+  const builtGlm = catalog.models.find((model) => model.slug === "openrouter/glm-5.3-flash");
+  const nativeSol = native.models.find((model) => model.slug === "gpt-5.6-sol");
+
+  if (Object.prototype.hasOwnProperty.call(builtSwitchyard, "auto_compact_token_limit")) {
+    throw new Error(`${version} source catalog did not retain Switchyard native compaction`);
+  }
+  assert.deepEqual(
+    builtSwitchyard.model_messages,
+    nativeSol.model_messages,
+    `${version} lost native Sol model_messages`,
   );
-  const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
-  for (const model of routed) {
-    if (!bySlug.has(model.slug)) {
-      throw new Error(`${version} did not parse routed catalog entry ${model.slug}`);
+  for (const field of [
+    "include_apps_usage_instructions",
+    "include_plugin_usage_instructions",
+    "node_repl_auto_review_required",
+    "node_repl_disabled",
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(nativeSol, field)) {
+      assert.deepEqual(
+        builtSwitchyard[field],
+        nativeSol[field],
+        `${version} lost native Sol ${field}`,
+      );
     }
   }
-  const switchyard = bySlug.get("switchyard/auto");
-  if (Object.prototype.hasOwnProperty.call(switchyard, "auto_compact_token_limit")) {
-    throw new Error(`${version} did not preserve Switchyard native compaction`);
-  }
-  if (!switchyard.model_messages?.token_budget) {
-    throw new Error(
-      `${version} did not preserve current native model-message controls ` +
-        `(parsed keys: ${Object.keys(switchyard.model_messages || {}).join(",") || "none"})`,
-    );
-  }
-  process.stdout.write(
-    `${version} parsed ${catalog.models.length} models; GLM and Switchyard compatibility passed\n`,
+  const modern = native.models.some(
+    (model) => Object.prototype.hasOwnProperty.call(model?.model_messages || {}, "token_budget"),
   );
-} finally {
-  rmSync(temporaryHome, { recursive: true, force: true });
+  if (modern) {
+    assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
+    assert.equal("supports_reasoning_summaries" in builtGlm, false);
+    assert.equal("supports_parallel_tool_calls" in builtGlm, false);
+  }
+  assert.deepEqual(builtGlm.experimental_supported_tools, []);
+  assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
+  return { binary, version, catalog };
+}
+
+const candidates = binaries.map(buildCandidate);
+for (const source of candidates) {
+  for (const parser of candidates) {
+    const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
+    const catalogPath = path.join(temporaryHome, "merged-models.json");
+    try {
+      writeFileSync(catalogPath, `${JSON.stringify(source.catalog)}\n`, { mode: 0o600 });
+      const parsed = JSON.parse(
+        runCodex(
+          parser.binary,
+          ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
+          { env: { ...process.env, CODEX_HOME: temporaryHome } },
+        ),
+      );
+      const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
+      for (const model of routed) {
+        if (!bySlug.has(model.slug)) {
+          throw new Error(
+            `${parser.version} did not parse ${model.slug} from ${source.version}'s catalog`,
+          );
+        }
+      }
+      const switchyard = bySlug.get("switchyard/auto");
+      if (Object.prototype.hasOwnProperty.call(switchyard, "auto_compact_token_limit")) {
+        throw new Error(
+          `${parser.version} did not preserve native compaction from ${source.version}`,
+        );
+      }
+      process.stdout.write(
+        `${parser.version} parsed ${source.catalog.models.length} models built from ` +
+          `${source.version}; GLM and Switchyard compatibility passed\n`,
+      );
+    } finally {
+      rmSync(temporaryHome, { recursive: true, force: true });
+    }
+  }
 }

@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { switchyardLaunch } from "../src/switchyard-runtime.mjs";
+import {
+  installedSwitchyardLaunch,
+  switchyardLaunch,
+  switchyardRuntimeStatus,
+} from "../src/switchyard-runtime.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -48,8 +52,39 @@ test("Switchyard supervision refuses a selected provider with no installed runti
       env: { CODEX_HOME: "/fixture" },
       exists: () => false,
     }),
-    /server is missing/,
+    /runtime is incomplete/,
   );
+});
+
+test("Switchyard runtime status names every missing deployment artifact", () => {
+  const status = switchyardRuntimeStatus({
+    stateDir: "/fixture/codex-router",
+    platform: "linux",
+    env: { CODEX_HOME: "/fixture" },
+    exists: () => false,
+  });
+  assert.equal(status.ready, false);
+  assert.deepEqual(status.missing, [
+    path.join("/fixture", "switchyard", "switchyard-server"),
+    path.join("/fixture", "switchyard", "routes.toml"),
+  ]);
+});
+
+test("installed Switchyard launch fails open when an old selection outlives its runtime", () => {
+  const warnings = [];
+  const launch = installedSwitchyardLaunch({
+    selected: true,
+    warn: (message) => warnings.push(message),
+    runtimeOptions: {
+      stateDir: "/fixture/codex-router",
+      platform: "linux",
+      env: { CODEX_HOME: "/fixture" },
+      exists: () => false,
+    },
+  });
+  assert.equal(launch, undefined);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /continuing without it/);
 });
 
 test("Switchyard source lock pins the canonical compatibility patch", () => {

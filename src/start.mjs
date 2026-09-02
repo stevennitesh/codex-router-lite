@@ -36,6 +36,7 @@ import {
 import { antigravityOAuthStatus } from "./antigravity-oauth-status.mjs";
 import { cursorTunnelRunSpec } from "./cursor-cloudflare-tunnel.mjs";
 import { installedSwitchyardLaunch } from "./switchyard-runtime.mjs";
+import { readProviderSelection } from "./provider-selection.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever
@@ -298,7 +299,9 @@ async function main() {
   const devinForwarder = devinCliRouted
     ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "devin-cli-forwarder.mjs")])
     : undefined;
-  const switchyardLaunch = installedSwitchyardLaunch();
+  const switchyardLaunch = installedSwitchyardLaunch({
+    selected: readProviderSelection().includes("switchyard"),
+  });
   const switchyard = switchyardLaunch
     ? run(switchyardLaunch.binary, switchyardLaunch.args)
     : undefined;

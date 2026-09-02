@@ -7,6 +7,14 @@
   "officialSources": [],
   "testedAt": "",
   "routerVersion": "",
+  "endpointProvider": "",
+  "runtimeBinding": {
+    "upstreamCommit": "",
+    "patchSha256": "",
+    "binarySha256": "",
+    "routerCommit": "",
+    "routesSha256": ""
+  },
   "checks": {
     "streaming": { "outcome": "pending" },
     "toolCall": { "outcome": "pending" },

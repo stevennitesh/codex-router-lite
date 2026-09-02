@@ -30,9 +30,44 @@ function tomlString(value) {
 // directory is the user's own and is never read or removed here.
 const MANAGED_AGENT_FILE = /^router-model-[a-z0-9-]+\.toml$/;
 
+const RETIRED_MANAGED_AGENTS = new Map([
+  [
+    "ox_worker.toml",
+    [
+      'name = "ox_worker"',
+      'description = "General-purpose Ox Alpha worker for bounded codebase reading, review, implementation, and verification."',
+      'model_provider = "codex-router"',
+      'model = "openrouter/ox-alpha"',
+      'model_reasoning_effort = "high"',
+      'model_context_window = 1048576',
+      'model_reasoning_summary = "none"',
+      'sandbox_mode = "workspace-write"',
+      'developer_instructions = """',
+      "Complete only the bounded assignment from the parent and do not delegate it further.",
+      "Treat read-only work as read-only. For implementation work, preserve unrelated changes and do not commit, push, publish, or modify external systems unless the assignment explicitly authorizes it.",
+      "Return a concise handoff with the result, verification evidence, changed files, and any material uncertainty or blocker.",
+      '"""',
+      "",
+    ].join("\n"),
+  ],
+]);
+
+function normalizedAgentContents(contents) {
+  return String(contents).replace(/\r\n/g, "\n");
+}
+
 function managedAgentFiles(agentsDir) {
   try {
-    return readdirSync(agentsDir).filter((entry) => MANAGED_AGENT_FILE.test(entry));
+    return readdirSync(agentsDir).filter((entry) => {
+      if (MANAGED_AGENT_FILE.test(entry)) return true;
+      const retired = RETIRED_MANAGED_AGENTS.get(entry);
+      if (!retired) return false;
+      try {
+        return normalizedAgentContents(readFileSync(path.join(agentsDir, entry), "utf8")) === retired;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return [];
   }
