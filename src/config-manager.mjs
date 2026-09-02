@@ -319,6 +319,9 @@ function withoutManagedMultiAgentV2(input) {
 function hasModernMultiAgentConfig(input) {
   const lines = input.split("\n");
   if (lines.some((line) => /^\s*features\.multi_agent_v2\s*=/.test(line))) return true;
+  if (lines.some((line) => /^\s*\[features\.multi_agent_v2\]\s*(?:#.*)?$/.test(line))) {
+    return true;
+  }
   if (lines.some((line) => /^\s*\[agents\.[^\]]+\]\s*(?:#.*)?$/.test(line))) return true;
   const featuresHeader = lines.findIndex((line) =>
     /^\s*\[features\]\s*(?:#.*)?$/.test(line),

@@ -480,6 +480,39 @@ enabled = true
     rmSync(codexHome, { recursive: true, force: true });
   }
 });
+
+test("the app-owned multi_agent_v2 table replaces the router-managed scalar", () => {
+  const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-v2-native-table-"));
+  const configPath = path.join(codexHome, "config.toml");
+  const original = `[features.multi_agent_v2]
+enabled = true
+max_concurrent_threads_per_session = 7
+
+[features]
+memories = true
+# BEGIN codex-router-multi-agent-v2-managed
+multi_agent_v2 = { enabled = true, max_concurrent_threads_per_session = 6 }
+# END codex-router-multi-agent-v2-managed
+`;
+  writeFileSync(configPath, original, { mode: 0o600 });
+
+  try {
+    run("enable", codexHome);
+    const enabled = readFileSync(configPath, "utf8");
+    assert.match(enabled, /^\[features\.multi_agent_v2\]$/m);
+    assert.match(enabled, /^max_concurrent_threads_per_session = 7$/m);
+    assert.doesNotMatch(enabled, /codex-router-multi-agent-v2-managed/);
+    assert.doesNotMatch(enabled, /^multi_agent_v2\s*=/m);
+
+    run("disable", codexHome);
+    const restored = readFileSync(configPath, "utf8");
+    assert.match(restored, /^\[features\.multi_agent_v2\]$/m);
+    assert.match(restored, /^max_concurrent_threads_per_session = 7$/m);
+  } finally {
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
 test("the managed multi_agent_v2 line tells the parent to interrupt finished children", () => {
   const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-v2-hint-"));
   const configPath = path.join(codexHome, "config.toml");
