@@ -66,6 +66,7 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
+  assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
   assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
   assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /if \(-not \$activationStarted\)/);

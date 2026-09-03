@@ -208,7 +208,7 @@ if ($LASTEXITCODE -ne 0) { throw "Switchyard candidate dry-run failed." }
 
 & node (Join-Path $repoRoot "src\config-manager.mjs") validate-enable | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Codex configuration cannot accept the Router candidate." }
-Assert-RouterHealth $repoRoot $expectedRollbackCommit
+Assert-RouterHealth $rollbackRouterRoot $expectedRollbackCommit
 Assert-SwitchyardHealth
 if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candidate-*").Count) {
   throw "A Switchyard candidate staging directory already exists."
