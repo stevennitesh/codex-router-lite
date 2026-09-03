@@ -10,7 +10,12 @@ max_retries = 2
 id = "gpt-5.6-luna"
 routing_id = "switchyard/luna-high"
 llm_client = "codex_router"
-body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }
+# The hidden classifier request is synthesized without the caller's reasoning
+# object, while Codex's Responses-Lite header requires all-turn context and
+# disables parallel tool calls. This target doubles as the classifier, so own
+# those required values here instead of letting its 400 silently degrade the
+# route to the default target.
+body_overrides = { store = false, stream = true, parallel_tool_calls = false, reasoning = { effort = "high", context = "all_turns" } }
 remove_body_fields = ["max_output_tokens"]
 
 [targets.luna_max]
