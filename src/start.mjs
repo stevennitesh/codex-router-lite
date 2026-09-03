@@ -20,7 +20,6 @@ import { gatewaySupervisorLimits, superviseGateway } from "./gateway-supervisor.
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
-import { dependencyRepairHint } from "./dependency-repair.mjs";
 import { clearServiceProcessState, writeServiceProcessState } from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
@@ -60,7 +59,7 @@ if (Object.keys(restoredProxy).length > 0) {
   );
 }
 
-const dependencyFix = dependencyRepairHint();
+const dependencyFix = "Run `./install.ps1 -CheckoutInstall -ForceDeps`";
 
 const litellm =
   process.env.MODEL_ROUTER_LITELLM_BIN ||

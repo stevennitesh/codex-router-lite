@@ -3,7 +3,6 @@ import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { isShimFile, resolveRealCodex } from "./codex-shim.mjs";
 import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
 
 const discoveryDisabled = () => false;
@@ -114,7 +113,7 @@ function codexBinaryVersion(binary) {
 
 export function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersion) {
   const existing = [...new Set(candidatePaths)]
-    .filter((candidate) => candidate && existsSync(candidate) && !isShimFile(candidate));
+    .filter((candidate) => candidate && existsSync(candidate));
   if (existing.length === 0) return undefined;
   let selected = existing[0];
   let selectedVersion = versionFor(selected);
@@ -128,32 +127,20 @@ export function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersio
   return selected;
 }
 
-// The router must never resolve `codex` to the shim it installs in front of it.
-//
-// The shim's job is to guarantee the router is listening before Codex starts,
-// so it runs `control service start` when it finds the router down. Reaching it
-// from inside the router turns that into a loop: the tray polls
-// `control account` every 30 seconds, that spawns Codex through this function,
-// and the shim revives the router the tray just stopped -- forever.
-//
-// Both resolution paths need the filter, not just PATH. `~/.local/bin` is a
-// candidate below *and* a directory `chooseShimDirectory` may install into,
-// because it restricts itself to the home directory.
 export function findCodexBinary() {
   // Explicit operator choices outrank discovery, even when another installed
   // build is newer. They are configuration, not candidates.
   const explicit = [
     process.env.CODEX_BIN,
     process.env.CODEX_INSTALL_DIR && path.join(process.env.CODEX_INSTALL_DIR, "codex.exe"),
-  ].find((candidate) => candidate && existsSync(candidate) && !isShimFile(candidate));
+  ].find((candidate) => candidate && existsSync(candidate));
   if (explicit) return explicit;
 
   // Never use installation-path order as a version signal. The Windows
   // desktop app and a standalone CLI can coexist, and the older standalone
   // path used to win even while the app was running a newer harness.
   const found = commandOnPath("codex");
-  const pathCandidate = found && !isShimFile(found) ? found : resolveRealCodex()?.file;
-  return newestCodexBinary([...candidates(), pathCandidate]);
+  return newestCodexBinary([...candidates(), found]);
 }
 
 export function requireCodexBinary() {

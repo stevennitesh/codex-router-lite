@@ -6,10 +6,8 @@ import test from "node:test";
 
 import {
   NamespaceToolCallTransform,
-  agentMessagesAsUserMessages,
   bridgeCustomTools,
   buildNamespaceLookups,
-  downgradeOriginalImageDetail,
   flattenNamespacedHistory,
   flattenNamespaceTools,
   flattenToolChoice,
@@ -17,8 +15,6 @@ import {
   recoverPreflattenedMcpTools,
   rewriteNamespaceFunctionCall,
   rewriteNamespaceResponsePayload,
-  repairToolSchemaRoots,
-  stripSearchContentTypes,
   ToolSearchHistoryCapacityError,
 } from "../src/namespace-relay.mjs";
 import { CODEX_APP_TOOLS, mergeCodexAppTools } from "../src/codex-app-tools.mjs";

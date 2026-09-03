@@ -120,6 +120,61 @@ function Update-DeployManifest([string[]]$CurrentFiles) {
   }
 }
 
+function Copy-ManagedFiles([string]$FromRoot, [string]$ToRoot, [string[]]$Files) {
+  foreach ($RelativePath in $Files) {
+    $SourceFile = Join-Path $FromRoot $RelativePath
+    $TargetFile = Join-Path $ToRoot $RelativePath
+    $TargetDirectory = Split-Path -Parent $TargetFile
+    if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
+      New-Item -ItemType Directory -Force -Path $TargetDirectory | Out-Null
+    }
+    Copy-Item -LiteralPath $SourceFile -Destination $TargetFile -Force
+  }
+}
+
+function Get-Sha256([string]$Path) {
+  $Stream = [IO.File]::OpenRead($Path)
+  try {
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+      return ([BitConverter]::ToString($Hasher.ComputeHash($Stream))).Replace("-", "")
+    } finally {
+      $Hasher.Dispose()
+    }
+  } finally {
+    $Stream.Dispose()
+  }
+}
+
+function Assert-StagedFiles([string]$StageRoot, [string[]]$Files) {
+  foreach ($RelativePath in $Files) {
+    $SourceHash = Get-Sha256 (Join-Path $sourceDir $RelativePath)
+    $StageHash = Get-Sha256 (Join-Path $StageRoot $RelativePath)
+    if ($SourceHash -ne $StageHash) {
+      throw "Staged candidate verification failed for $RelativePath."
+    }
+  }
+}
+
+function Restore-ManagedFiles(
+  [string]$BackupRoot,
+  [string[]]$ManagedFiles,
+  [Collections.Generic.HashSet[string]]$PreviouslyExisting
+) {
+  foreach ($RelativePath in $ManagedFiles) {
+    $TargetFile = Resolve-ManagedTargetFile $RelativePath
+    if ($PreviouslyExisting.Contains($RelativePath)) {
+      $TargetDirectory = Split-Path -Parent $TargetFile
+      if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $TargetDirectory | Out-Null
+      }
+      Copy-Item -LiteralPath (Join-Path $BackupRoot $RelativePath) -Destination $TargetFile -Force
+    } elseif (Test-Path -LiteralPath $TargetFile -PathType Leaf) {
+      Remove-Item -LiteralPath $TargetFile -Force
+    }
+  }
+}
+
 if ((Test-NestedDirectory $sourceDir $installDir) -or
     (Test-NestedDirectory $installDir $sourceDir)) {
   throw "Source and install directories must be separate and neither may contain the other."
@@ -136,33 +191,79 @@ Write-Host "        to $installDir"
 
 if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
   $CurrentDeployFiles = @(Get-DeploySourceFiles)
-  foreach ($RelativePath in $CurrentDeployFiles) {
-    $SourceFile = Join-Path $sourceDir $RelativePath
-    $TargetFile = Resolve-ManagedTargetFile $RelativePath
-    $TargetDirectory = Split-Path -Parent $TargetFile
-    if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
-      New-Item -ItemType Directory -Force -Path $TargetDirectory | Out-Null
-    }
-    Copy-Item -LiteralPath $SourceFile -Destination $TargetFile -Force
-  }
-  Update-DeployManifest $CurrentDeployFiles
-
-  Push-Location $installDir
+  $PreviousDeployFiles = @(Read-DeployManifest)
+  $ManagedFiles = @($CurrentDeployFiles + $PreviousDeployFiles | Sort-Object -Unique)
+  $PreviouslyExisting = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  $TemporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "codex-router-deploy-$([Guid]::NewGuid().ToString('N'))"
+  $StageRoot = Join-Path $TemporaryRoot "stage"
+  $BackupRoot = Join-Path $TemporaryRoot "backup"
+  $ManifestExisted = Test-Path -LiteralPath $DeployManifestPath -PathType Leaf
+  $KeepBackup = $false
   try {
-    # This is the supported update transaction: dependency fingerprints,
-    # generated catalogs, Codex configuration, manifest, service health, and
-    # managed skills stay in one path. It reads the current provider selection
-    # rather than replacing it.
-    & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
-    if (-not $?) { throw "The installed Codex Router update failed." }
+    New-Item -ItemType Directory -Force -Path $StageRoot, $BackupRoot | Out-Null
+    Copy-ManagedFiles $sourceDir $StageRoot $CurrentDeployFiles
+    Assert-StagedFiles $StageRoot $CurrentDeployFiles
 
-    & node (Join-Path $installDir "src\doctor.mjs")
-    $DoctorExitCode = $LASTEXITCODE
-    if ($DoctorExitCode -ne 0) {
-      throw "Codex Router doctor failed with exit code $DoctorExitCode."
+    foreach ($RelativePath in $ManagedFiles) {
+      $TargetFile = Resolve-ManagedTargetFile $RelativePath
+      if (Test-Path -LiteralPath $TargetFile -PathType Leaf) {
+        [void]$PreviouslyExisting.Add($RelativePath)
+        Copy-ManagedFiles $installDir $BackupRoot @($RelativePath)
+      }
     }
+    if ($ManifestExisted) {
+      Copy-Item -LiteralPath $DeployManifestPath -Destination (Join-Path $BackupRoot $DeployManifestName) -Force
+    }
+
+    try {
+      Copy-ManagedFiles $StageRoot $installDir $CurrentDeployFiles
+      Update-DeployManifest $CurrentDeployFiles
+
+      Push-Location $installDir
+      try {
+        # This is the supported update transaction: dependency fingerprints,
+        # generated catalogs, Codex configuration, manifest, service health,
+        # and managed skills stay in one path. It reads the current provider
+        # selection rather than replacing it.
+        & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
+        if (-not $?) { throw "The installed Codex Router update failed." }
+
+        & node (Join-Path $installDir "src\doctor.mjs")
+        $DoctorExitCode = $LASTEXITCODE
+        if ($DoctorExitCode -ne 0) {
+          throw "Codex Router doctor failed with exit code $DoctorExitCode."
+        }
+      } finally {
+        Pop-Location
+      }
+    } catch {
+      $DeployError = $_
+      try {
+        Restore-ManagedFiles $BackupRoot $ManagedFiles $PreviouslyExisting
+        if ($ManifestExisted) {
+          Copy-Item -LiteralPath (Join-Path $BackupRoot $DeployManifestName) -Destination $DeployManifestPath -Force
+        } elseif (Test-Path -LiteralPath $DeployManifestPath -PathType Leaf) {
+          Remove-Item -LiteralPath $DeployManifestPath -Force
+        }
+        Push-Location $installDir
+        try {
+          & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
+          if (-not $?) { throw "The previous Codex Router generation could not be restarted." }
+          & node (Join-Path $installDir "src\doctor.mjs")
+          if ($LASTEXITCODE -ne 0) { throw "The restored Codex Router generation failed doctor." }
+        } finally {
+          Pop-Location
+        }
+      } catch {
+        $KeepBackup = $true
+        throw "Deployment failed ($($DeployError.Exception.Message)) and rollback failed ($($_.Exception.Message)). The backup remains at $BackupRoot."
+      }
+      throw "Deployment failed; the previous healthy generation was restored: $($DeployError.Exception.Message)"
+    }
+    Write-Host "Codex Router published, installed, and verified."
   } finally {
-    Pop-Location
+    if (-not $KeepBackup -and (Test-Path -LiteralPath $TemporaryRoot)) {
+      Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force
+    }
   }
-  Write-Host "Codex Router published, installed, and verified."
 }

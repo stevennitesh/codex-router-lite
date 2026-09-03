@@ -78,7 +78,6 @@ const CURRENT_CODEX_APP_TOOLS = [
   "reorder_sidebar_sections",
   "send_message_to_thread",
   "set_thread_archived",
-  "set_thread_pinned",
   "set_thread_title",
   "share_thread",
   "wait_threads",
@@ -89,7 +88,7 @@ test("snapshot exactly matches the current native codex_app tool inventory", () 
   for (const name of CURRENT_CODEX_APP_TOOLS) {
     assert.ok(CODEX_APP_TOOL_NAMES.has(name), `snapshot must carry ${name}`);
   }
-  assert.equal(CODEX_APP_TOOL_NAMES.has("set_thread_pinned"), true);
+  assert.equal(CODEX_APP_TOOL_NAMES.size, CURRENT_CODEX_APP_TOOLS.length);
 });
 
 test("snapshot carries current task, sidebar, and routed-model contracts", () => {
@@ -124,10 +123,6 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
     /validated on the target host/,
   );
 
-  const setPinned = appTool("set_thread_pinned");
-  assert.deepEqual(setPinned.inputSchema.required, ["threadId", "pinned"]);
-  assert.equal(setPinned.inputSchema.properties.threadId.type, "string");
-  assert.equal(setPinned.inputSchema.properties.pinned.type, "boolean");
 });
 
 test("snapshot keeps the established thread, automation, and navigation tools", () => {
@@ -169,12 +164,6 @@ test("merge fills the deferred app tools into the reduced client namespace", () 
   assert.ok(names.includes("load_workspace_dependencies"));
   assert.ok(names.includes("navigate_to_codex_page"));
   assert.ok(names.includes("read_thread_terminal"));
-  // The plugin_management namespace is appended with its own tool.
-  const pluginMgmt = tools.find(
-    (tool) => tool?.type === "namespace" && tool.name === "plugin_management",
-  );
-  assert.ok(pluginMgmt, "plugin_management namespace present after merge");
-  assert.ok(pluginMgmt.tools.some((fn) => fn.name === "uninstall_plugin"));
   // Non-app tools are untouched.
   assert.ok(tools.some((tool) => tool.name === "exec_command"));
   assert.ok(
@@ -200,33 +189,16 @@ test("merge appends the full app namespaces when the client omits them", () => {
       `appended codex_app must include ${name}`,
     );
   }
-  assert.ok(
-    tools.some(
-      (tool) =>
-        tool?.type === "namespace" &&
-        tool.name === "plugin_management" &&
-        tool.tools.some((fn) => fn.name === "uninstall_plugin"),
-    ),
-    "plugin_management appended when absent",
-  );
 });
 
 test("merge leaves a full client namespace intact (client definitions win)", () => {
   const clientTools = clientRoutedTools();
-  const { tools, merged } = mergeCodexAppTools([
-    ...clientTools,
-    {
-      type: "namespace",
-      name: "plugin_management",
-      tools: [{ type: "function", name: "uninstall_plugin" }],
-    },
-  ]);
+  const { tools, merged } = mergeCodexAppTools(clientTools);
   assert.equal(merged, true);
-  const pluginMgmt = tools.find(
-    (tool) => tool?.type === "namespace" && tool.name === "plugin_management",
+  const codexApp = tools.find(
+    (tool) => tool?.type === "namespace" && tool.name === "codex_app",
   );
-  assert.ok(pluginMgmt, "plugin_management namespace present after merge");
-  assert.ok(pluginMgmt.tools.some((fn) => fn.name === "uninstall_plugin"));
+  assert.equal(codexApp.tools.length, CURRENT_CODEX_APP_TOOLS.length);
 });
 
 test("splitFlatCodexAppName parses flattened names only", () => {

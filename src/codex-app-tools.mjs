@@ -1,5 +1,5 @@
 // Snapshot of the Codex app's native app-side tool definitions.
-// Source: the live Codex Desktop tool registry on 2026-09-02, paired with
+// Source: the live Codex Desktop tool registry on 2026-09-03, paired with
 // codex-cli 0.153.0-alpha.5. Keep this inventory synchronized with the current app
 // surface; client-provided definitions still win when the app sends them.
 // The app registers these tools with deferLoading and executes the calls
@@ -1355,29 +1355,6 @@ export const CODEX_APP_TOOLS =
       },
       {
         "type": "function",
-        "name": "set_thread_pinned",
-        "description": "Pin or unpin a Codex thread in the background.",
-        "inputSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "threadId": {
-              "type": "string",
-              "description": "Codex thread id returned by list_threads."
-            },
-            "pinned": {
-              "type": "boolean",
-              "description": "Whether the thread should be pinned."
-            }
-          },
-          "required": [
-            "threadId",
-            "pinned"
-          ]
-        }
-      },
-      {
-        "type": "function",
         "name": "set_thread_title",
         "description": "Rename a Codex thread in the background.",
         "inputSchema": {
@@ -1396,31 +1373,6 @@ export const CODEX_APP_TOOLS =
           "required": [
             "title"
           ]
-        }
-      }
-    ]
-  },
-  {
-    "type": "namespace",
-    "name": "plugin_management",
-    "description": "Tools provided by the Plugin Management app in Codex.",
-    "tools": [
-      {
-        "type": "function",
-        "name": "uninstall_plugin",
-        "description": "Uninstall an installed Codex plugin when the user explicitly asks to uninstall or remove it. The explicit request is authorization; do not ask for another confirmation. If the result is ambiguous, ask the user to choose an exact plugin ID before retrying. Do not use this tool for ChatGPT apps, status, or permission questions.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "plugin": {
-              "type": "string",
-              "description": "The plugin's user-facing name or exact plugin ID."
-            }
-          },
-          "required": [
-            "plugin"
-          ],
-          "additionalProperties": false
         }
       }
     ]

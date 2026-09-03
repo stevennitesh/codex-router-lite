@@ -50,7 +50,9 @@ A maintenance update must use the guarded transaction:
 .\restart-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
 
-Do not stop the service separately. The restart command owns readiness checks and rollback.
+Do not stop the service separately. The restart command owns the stop/start and
+readiness boundary for the files already installed. Deployment owns file
+replacement and rollback.
 
 ## How it works
 

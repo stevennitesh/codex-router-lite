@@ -39,7 +39,11 @@ The scheduled task and process must agree on launcher path, arguments, source ro
 
 ## Update
 
-`maintenance/windows-package.json` is the complete installed file list. `deploy-codex-router.ps1` copies only those files and removes only files recorded by the previous deployment manifest.
+`maintenance/windows-package.json` is the complete installed file list.
+`deploy-codex-router.ps1` stages and hash-checks exactly those files, snapshots
+the previous managed generation, and removes only files recorded by the prior
+deployment manifest. If install or Doctor fails, it restores, reinstalls, and
+checks the previous generation before returning the candidate failure.
 
 Use the guarded update transaction:
 
