@@ -46,9 +46,9 @@ export function stateOwnershipMessage(operation, status) {
     `  owner:   ${status.owner}`,
     `  current: ${status.current}`,
     "Writing generated state from a second checkout makes Codex advertise",
-    "models the running gateway cannot route. Run `./bin/model-router codex",
-    "doctor --fix` from this checkout; when the recorded owner is available,",
-    "repair runs there without changing ownership. To deliberately transfer",
+    "models the running gateway cannot route. Run `.\\model-router.ps1 codex",
+    "doctor` from the recorded owner checkout, then reinstall from there to",
+    "repair without changing ownership. To deliberately transfer",
     `ownership to this checkout, reinstall from here or set ${OVERRIDE_ENV}=1.`,
   ].join("\n");
 }

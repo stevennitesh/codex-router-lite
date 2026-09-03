@@ -129,8 +129,8 @@ export function serviceProxyOptInProblem(recorded = recordedProxyEnvironment()) 
       "Node use them, so the router connects directly and will time out on a " +
       "network that requires the proxy",
     remedy:
-      "Reinstall with the opt-in: NODE_USE_ENV_PROXY=1 ./bin/doctor --fix  " +
-      "(or clear it deliberately with NODE_USE_ENV_PROXY=0).",
+      "Set NODE_USE_ENV_PROXY=1, then run .\\install.ps1 -Target codex -ForceDeps. " +
+      "Set it to 0 to clear the opt-in.",
   };
 }
 

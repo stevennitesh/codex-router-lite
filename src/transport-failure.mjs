@@ -100,7 +100,7 @@ const PROXY_HINT =
 // that mean "this network cannot reach the internet" mean "a process this
 // install owns is not running" when the host is local. Advising a proxy there
 // sends the operator to reconfigure a network that is working perfectly.
-const LOCAL_HINT = " That is one of this install's own processes, not the network: run ./bin/doctor --fix.";
+const LOCAL_HINT = " That is one of this install's own processes, not the network; run .\\install.ps1 -Target codex.";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
 

@@ -1,6 +1,5 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-  [string]$RepoDir = "E:\GitHub\code\codex-router",
   [string]$InstallDir = $(
     if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
     else { Join-Path $HOME ".local\share\codex-router" }
@@ -9,13 +8,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
-$preferredRepoDir = [IO.Path]::GetFullPath($RepoDir)
-$sourceDir = if (Test-Path -LiteralPath (Join-Path $scriptDir "src\start.mjs") -PathType Leaf) {
-  $scriptDir
-} elseif (Test-Path -LiteralPath (Join-Path $preferredRepoDir "src\start.mjs") -PathType Leaf) {
-  $preferredRepoDir
-} else {
-  throw "Router source not found next to this script ($scriptDir) or at configured repository path $preferredRepoDir."
+$sourceDir = $scriptDir
+if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "src\start.mjs") -PathType Leaf)) {
+  throw "Router source not found next to this script: $sourceDir."
 }
 $installDir = [IO.Path]::GetFullPath($InstallDir)
 $DeployManifestName = ".codex-router-deploy-manifest.json"

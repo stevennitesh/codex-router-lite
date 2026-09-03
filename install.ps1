@@ -10,7 +10,6 @@ param(
   # Discards tracked edits in the managed checkout so the update can proceed.
   # Deliberately never touches untracked files -- see Reset-ManagedCheckout.
   [switch]$Force,
-  [string]$RepoDir = "E:\GitHub\code\codex-router",
   [string]$InstallDir = $(
     if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
     else { Join-Path $HOME ".local\share\codex-router" }
@@ -105,7 +104,6 @@ Assert-WindowsProcessContainmentCapability
 
 $ScriptDirectory = $PSScriptRoot
 if (-not $ScriptDirectory) { $ScriptDirectory = (Get-Location).Path }
-$PreferredRepository = [IO.Path]::GetFullPath($RepoDir)
 
 if (-not $CheckoutInstall) {
   Assert-Command "git" "Install Git for Windows from https://git-scm.com/download/win."
@@ -113,8 +111,6 @@ if (-not $CheckoutInstall) {
 
   if (Test-RouterCheckout $ScriptDirectory) {
     $Repository = $ScriptDirectory
-  } elseif (Test-RouterCheckout $PreferredRepository) {
-    $Repository = $PreferredRepository
   } else {
     if (Test-Path (Join-Path $InstallDir ".git")) {
       if (-not (Test-RouterCheckout $InstallDir)) {
@@ -239,8 +235,7 @@ try {
   }
 
   # Every update re-runs this installer, so the dependency steps are skipped
-  # when their inputs are unchanged; -ForceDeps (used by doctor --fix) rebuilds
-  # them.
+  # when their inputs are unchanged; -ForceDeps rebuilds them explicitly.
   function Get-InstallStep([string]$Step) {
     if ($ForceDeps) { return "run" }
     try {

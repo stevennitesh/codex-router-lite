@@ -55,6 +55,34 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
   }
 });
 
+test("Windows entrypoints never fall back to a developer checkout", () => {
+  for (const name of [
+    "install.ps1",
+    "deploy-codex-router.ps1",
+    "restart-codex-router.ps1",
+    "model-router.ps1",
+  ]) {
+    const source = readScript(name);
+    assert.doesNotMatch(source, /E:\\GitHub\\code\\codex-router/iu);
+    assert.doesNotMatch(source, /\$RepoDir\b/u);
+  }
+});
+
+test("operator repair guidance names supported Windows commands", () => {
+  for (const name of [
+    "src/caller-auth.mjs",
+    "src/config-manager.mjs",
+    "src/proxy-environment.mjs",
+    "src/router.mjs",
+    "src/start.mjs",
+    "src/state-owner.mjs",
+    "src/transport-failure.mjs",
+  ]) {
+    const source = readScript(name);
+    assert.doesNotMatch(source, /\.\/bin\/|doctor --fix/u);
+  }
+});
+
 test("the Switchyard deployment owns preflight, activation, and exact rollback", () => {
   const source = readScript("maintenance/deploy-switchyard-candidate.ps1");
   for (const name of [

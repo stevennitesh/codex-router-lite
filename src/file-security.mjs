@@ -48,8 +48,8 @@ function powershellPrivateScript() {
     // GetAccessControl about the file's existing (possibly non-canonical)
     // DACL. SetAccessRuleProtection on a bare object never canonicalizes a
     // broken inherited/permission mix, so a file whose DACL is already
-    // corrupt — the exact drift an install or doctor --fix must be able to
-    // repair — cannot make this throw. The pre-existing DACL is replaced
+    // corrupt, which the installer must be able to repair, cannot make this
+    // throw. The pre-existing DACL is replaced
     // outright instead of being edited toward compliance.
     // Only the DACL is persisted, not owner or group: persisting those
     // sections demands WRITE_OWNER, which Windows grants to nobody but the

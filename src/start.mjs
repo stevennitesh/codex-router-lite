@@ -104,10 +104,10 @@ if (usesBundledVenv) {
   }
 }
 if (!existsSync(INTERNAL_SECRET_PATH)) {
-  throw new Error(`Internal service key is missing; run ./bin/install.`);
+  throw new Error("Internal service key is missing; run .\\install.ps1 -Target codex.");
 }
 if (!existsSync(CALLER_SECRET_PATH)) {
-  throw new Error(`Router caller key is missing; run ./bin/install.`);
+  throw new Error("Router caller key is missing; run .\\install.ps1 -Target codex.");
 }
 const internalKey = readFileSync(INTERNAL_SECRET_PATH, "utf8").trim();
 if (!internalKey) throw new Error("Internal service key is empty.");

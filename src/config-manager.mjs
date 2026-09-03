@@ -62,7 +62,7 @@ export function managedMultiAgentV2FeatureLine() {
 
 function configuredRouterBaseUrl() {
   if (!existsSync(CALLER_SECRET_PATH)) {
-    throw new Error("The local router caller key is missing; run ./bin/doctor --fix.");
+    throw new Error("The local router caller key is missing; run .\\install.ps1 -Target codex.");
   }
   assertCallerSecret(readFileSync(CALLER_SECRET_PATH, "utf8").trim());
   return loopback(PORTS.router, "/v1");

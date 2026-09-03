@@ -14,7 +14,7 @@ export function validCallerSecret(value) {
 
 export function assertCallerSecret(value) {
   if (!validCallerSecret(value)) {
-    throw new Error("The local router caller key is missing or invalid; run ./bin/doctor --fix.");
+    throw new Error("The local router caller key is missing or invalid; run .\\install.ps1 -Target codex.");
   }
   return value;
 }

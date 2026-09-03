@@ -2556,7 +2556,7 @@ async function handleResponses(request, response, requestUrl) {
         error: {
           type: "provider_not_enabled",
           provider: registeredRoute.provider,
-          message: `Provider ${registeredRoute.provider} is hidden. Run ./bin/providers enable ${registeredRoute.provider}.`,
+          message: `Provider ${registeredRoute.provider} is hidden. Run .\\model-router.ps1 codex providers enable ${registeredRoute.provider}.`,
         },
       });
       return;
@@ -3469,7 +3469,7 @@ async function handleEmbeddings(request, response, requestUrl) {
           type: "provider_not_enabled",
           code: "provider_not_enabled",
           provider: route.provider,
-          message: `Provider ${route.provider} is hidden. Run ./bin/providers enable ${route.provider}.`,
+          message: `Provider ${route.provider} is hidden. Run .\\model-router.ps1 codex providers enable ${route.provider}.`,
         },
       });
       return;
