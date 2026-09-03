@@ -7,18 +7,7 @@
       "kind": "openai-compatible",
       "ownedBy": "openrouter",
       "baseUrl": "https://openrouter.ai/api/v1",
-      "baseUrlEnv": "OPENROUTER_API_BASE_URL",
-      "credential": {
-        "environment": [
-          "OPENROUTER_API_KEY"
-        ],
-        "file": "openrouter-api-key.secret",
-        "legacyFiles": [],
-        "keychainServices": [
-          "codex-router-openrouter"
-        ],
-        "prompt": "OpenRouter API key"
-      }
+      "baseUrlEnv": "OPENROUTER_API_BASE_URL"
     }
   ]
 }

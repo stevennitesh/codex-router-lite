@@ -74,13 +74,9 @@ if (!existsSync(litellm)) {
   throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
 }
 
-// A launcher file that exists on disk is not proof the venv works: an
-// interpreter home pointing at a cleared temporary directory (macOS wipes
-// /private/tmp, and an installer that recorded a temporary Python as the venv
-// home leaves `.venv/bin/python` dangling) makes every spawn fail with ENOENT
-// while the launcher itself is still present. Probe the interpreter
-// explicitly so a broken venv fails here with a readable message and a fix
-// path instead of feeding launchd's restart loop an unreadable crash.
+// A launcher file that exists on disk is not proof the venv works. Probe the
+// interpreter explicitly so a broken venv fails here with a readable message
+// and a fix path instead of entering a service restart loop.
 // The probe applies only to the bundled venv: a custom launcher
 // (MODEL_ROUTER_LITELLM_BIN or a codex-target alias) may deliberately ship
 // without the bundled `.venv`, and CI exercises startup with

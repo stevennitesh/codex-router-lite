@@ -1016,11 +1016,8 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
   const pickerState = modelPickerSnapshot();
   const visibleModels = new Set(pickerState.visible);
   const multiAgentSettings = readMultiAgentSettings();
-  // Settings can disable a certified route. A v2 claim itself comes from one
-  // of exactly two places: the checked-in registry route, or a completed local
-  // verification of that same route -- all five v2_agent checks passing in one
-  // run on this build. The older diagnostic records stay diagnostic: neither a
-  // compatibility probe nor an observed child turn may manufacture the claim.
+  // Settings can filter certified routes. The checked-in registry is the only
+  // source of a v2 claim.
   const allMultiAgentModels = applyMultiAgentCapabilities(
     selectedModels,
     multiAgentSettings,

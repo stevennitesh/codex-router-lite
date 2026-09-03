@@ -25,6 +25,14 @@ function requireRoute(slug) {
   return MODEL_BY_SLUG.get(slug);
 }
 
+function requireCertifiedRoute(slug) {
+  const route = requireRoute(slug);
+  if (route.multiAgentVersion !== "v2") {
+    throw new Error(`${slug} is not certified for subagents v2.`);
+  }
+  return route;
+}
+
 function print(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -62,7 +70,7 @@ async function main() {
     } else if (["all", "selected", "proven"].includes(action)) {
       print(setMultiAgentMode(action));
     } else if (action === "on" || action === "off") {
-      requireRoute(value);
+      requireCertifiedRoute(value);
       print(setMultiAgentModel(value, action === "on"));
     } else if (action === "effort") {
       requireRoute(value);

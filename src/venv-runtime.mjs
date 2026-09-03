@@ -1,9 +1,6 @@
-// The LiteLLM virtual environment can be broken while every file it needs
-// still exists: an interpreter home pointing at a cleared temporary directory
-// (macOS wipes /private/tmp, and an installer that recorded a temporary
-// Python as the venv home leaves `.venv/bin/python` dangling) keeps the
-// launcher on disk but makes every spawn fail with a bare ENOENT. Probing the
-// interpreter turns that silent failure into a checkable, fixable state.
+// A LiteLLM virtual environment can retain its launcher while its interpreter
+// is unusable. Probing the interpreter turns a bare spawn failure into a
+// checkable, fixable state.
 import { spawnSync } from "node:child_process";
 
 // Returns undefined when the interpreter runs, or a human-readable reason it

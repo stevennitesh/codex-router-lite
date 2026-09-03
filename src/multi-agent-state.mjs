@@ -6,16 +6,10 @@ import path from "node:path";
 
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
-import { applySubagentProofs, subagentProofSnapshot } from "./subagent-proofs.mjs";
-import { VERSION } from "./version.mjs";
 
 export const MULTI_AGENT_STATE_PATH =
   process.env.MODEL_ROUTER_MULTI_AGENT_STATE ||
   path.join(STATE_DIR, "multi-agent-settings.json");
-// Legacy all-on/all-off switch from the first dynamic-subagent release.
-export const MULTI_AGENT_ALL_PATH =
-  process.env.MODEL_ROUTER_MULTI_AGENT_ALL ||
-  path.join(STATE_DIR, "multi-agent-all.json");
 
 export const SUBAGENT_MODES = Object.freeze(["all", "selected", "proven"]);
 
@@ -23,22 +17,8 @@ function defaultSettings() {
   return { version: 2, mode: "proven", enabled: [], disabled: [] };
 }
 
-function legacySettings() {
-  if (!existsSync(MULTI_AGENT_ALL_PATH)) return undefined;
-  try {
-    const parsed = JSON.parse(readFileSync(MULTI_AGENT_ALL_PATH, "utf8"));
-    if (parsed?.version === 1 && typeof parsed.enabled === "boolean") {
-      return { ...defaultSettings(), mode: parsed.enabled ? "all" : "proven" };
-    }
-  } catch {
-    // Corrupt legacy state is ignored; the conservative default is safer.
-  }
-  return undefined;
-}
-
-// Local selection controls which proven models remain available as subagents.
-// Capability comes only from the registry's native collaboration proof; local
-// state must never manufacture a v2 claim for an unverified model.
+// Local selection filters routes already certified in the checked-in registry.
+// It cannot manufacture a v2 claim for an unverified model.
 export function readMultiAgentSettings() {
   if (existsSync(MULTI_AGENT_STATE_PATH)) {
     try {
@@ -52,14 +32,10 @@ export function readMultiAgentSettings() {
         return parsed;
       }
     } catch {
-      // Fall through to the legacy switch, then the conservative default.
+      // Invalid local state cannot expand capability; use the safe default.
     }
   }
-  return legacySettings() || defaultSettings();
-}
-
-export function readAllMultiAgent() {
-  return readMultiAgentSettings().mode === "all";
+  return defaultSettings();
 }
 
 export function subagentSettingsSnapshot() {
@@ -68,10 +44,6 @@ export function subagentSettingsSnapshot() {
     ...settings,
     all: settings.mode === "all",
     path: MULTI_AGENT_STATE_PATH,
-    // Machine-local certification evidence, keyed by slug: checking /
-    // candidate / failed (with the failure reason). It explains why an
-    // unknown model is awaiting review, but cannot manufacture a v2 claim.
-    proofs: subagentProofSnapshot(),
     // Per-model reasoning depth applied only to child turns. Empty when the
     // operator has never set one, which is the common case.
     efforts: subagentEfforts(),
@@ -190,70 +162,34 @@ export function replaceMultiAgentState({ mode, enabled = [], disabled = [], effo
   return subagentSettingsSnapshot();
 }
 
-// The three supported subagent selection modes:
-// `proven` ships only what the registry verified, `selected` adds the routes
-// the operator explicitly turned on, and `all` advertises every non-hidden
-// route "regardless of whether it works".
-//
-// Only these lines promote, and only from an explicit choice the operator made
-// and can see in `subagents status`. A machine-local probe still promotes
-// nothing on its own -- that distinction is the whole point of the guard in
-// subagent-proofs.mjs, and it is not weakened by honouring a deliberate
-// selection here.
+// `proven` and `all` keep every certified route unless it is disabled.
+// `selected` keeps only certified routes the operator explicitly enabled.
 export function applyMultiAgentSettings(models, settings, hidden = new Set()) {
   const disabled = new Set(settings.disabled || []);
   const enabled = new Set(settings.enabled || []);
   const mode = settings.mode || "proven";
   return models.map((model) => {
     const slug = String(model.slug || "");
-    // An explicit `off` beats every mode, including `all`.
-    if (hidden.has(model.slug) || disabled.has(slug)) {
+    if (
+      model.multiAgentVersion === "v2" &&
+      (hidden.has(slug) || disabled.has(slug) || (mode === "selected" && !enabled.has(slug)))
+    ) {
       return { ...model, multiAgentVersion: "v1" };
-    }
-    if (model.multiAgentVersion === "v2") return model;
-    if (mode === "all" || (mode === "selected" && enabled.has(slug))) {
-      return { ...model, multiAgentVersion: "v2", subagentSelectedByOperator: true };
     }
     return model;
   });
 }
 
-// Resolve the effective v2 claims once so catalog publication, managed agent
-// definitions, and doctor checks cannot disagree. Two things can make a route
-// v2: a checked-in registry entry, or a completed local verification of that
-// exact route. The diagnostic proof statuses still promote nothing.
-//
-// `routerVersion` defaults here rather than at each call site: a verification
-// describes one build's relay behaviour, and a caller that forgot to pass it
-// would silently carry that evidence across an upgrade.
-export function applyMultiAgentCapabilities(
-  models,
-  settings,
-  { hidden = new Set(), proofs = subagentProofSnapshot(), routerVersion = VERSION } = {},
-) {
+export function applyMultiAgentCapabilities(models, settings, { hidden = new Set() } = {}) {
   const configured = settings || readMultiAgentSettings();
-  return applySubagentProofs(
-    applyMultiAgentSettings(models, configured, hidden),
-    proofs,
-    { hidden, disabled: configured.disabled, routerVersion },
-  );
+  return applyMultiAgentSettings(models, configured, hidden);
 }
 
-// Models the user has not switched off as a subagent.
-//
-// Only the explicit "off" is honoured here. A model the settings never mention
-// keeps the definition it has always had, so an install that has chosen
-// nothing keeps every model callable by name the way it does today.
+// Return the certified routes that remain after local filtering.
 export function subagentEligibleModels(models, settings) {
   const disabled = new Set(settings?.disabled || []);
   return models.filter(
     (model) =>
       model.multiAgentVersion === "v2" && !disabled.has(String(model.slug)),
   );
-}
-
-// Compatibility helper for the original shell switch.
-export function writeAllMultiAgent(enabled) {
-  setMultiAgentMode(enabled ? "all" : "proven");
-  return enabled;
 }

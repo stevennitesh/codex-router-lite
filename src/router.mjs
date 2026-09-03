@@ -115,14 +115,6 @@ import {
 import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
 import { collaborationToolAvailable, pendingInterruptTargets } from "./subagent-completion.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
-import {
-  awaitingSpawnProof,
-  recordSpawnFailure,
-  recordSpawnObserved,
-  spawnProofRevocable,
-  subagentProofSnapshot,
-} from "./subagent-proofs.mjs";
-import { forgetChildSpawn, observeChildTurn } from "./subagent-turns.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
 import {
   rankSubagentCandidates,
@@ -131,7 +123,6 @@ import {
 } from "./subagent-routing.mjs";
 import {
   activityMetadataFromHeaders,
-  threadIdFromHeaders,
 } from "./codex-session-names.mjs";
 import { gatewayErrorStatus, translateGatewayError } from "./error-translation.mjs";
 import { describeTransportFailure } from "./transport-failure.mjs";
@@ -2202,73 +2193,6 @@ function requireCodexTransport(request, response) {
   return true;
 }
 
-// Older releases advertised a locally probed route as experimental and then
-// refined that record from `x-openai-subagent` traffic. Keep observing only
-// those historical experimental records so upgrades preserve useful evidence,
-// but never treat the result as catalog authority: local traffic can neither
-// promote nor demote the exact checked-in registry certificate. A 400/422 is
-// useful negative application evidence; transient failures prove nothing. A
-// clean 200 proves only one HTTP turn completed, not that a delegated task did.
-
-function observeSubagentOutcome(request, route, status, options = {}) {
-  if (!route) return;
-  try {
-    if (!request.headers["x-openai-subagent"]) return;
-    const proofs = subagentProofSnapshot();
-    if (!spawnProofRevocable(route.slug, proofs)) return;
-    const spawnId = threadIdFromHeaders(request.headers);
-    const settle = (reason, detail = { status }) => {
-      recordSpawnFailure(route.slug, { reason, ...detail });
-      forgetChildSpawn(spawnId);
-      console.error(
-        `[codex-router] legacy subagent evidence rejected: ${route.slug} ${reason}; ` +
-          "the route still requires a reviewed repository v2 certificate",
-      );
-    };
-    if (status === 400 || status === 422) {
-      settle(
-        `child turn rejected with HTTP ${status}` +
-          (proofs[route.slug]?.status === "proven"
-            ? ", revoking the child role it had already served"
-            : ""),
-      );
-      return;
-    }
-    if (status !== 200 || options.emptyCompletion) return;
-    if (awaitingSpawnProof(route.slug, proofs)) {
-      recordSpawnObserved(route.slug, { status });
-      console.error(
-        `[codex-router] legacy subagent evidence observed: ${route.slug} served one child HTTP turn; ` +
-          "this remains diagnostic and is not a repository v2 certificate",
-      );
-    }
-    const spawn = observeChildTurn({
-      spawnId,
-      slug: route.slug,
-      autoCompact: route.autoCompact,
-      event: {
-        status,
-        inputTokens: options.usage?.inputTokens,
-        estimatedInputTokens: options.estimatedInputTokens,
-        emptyCompletionRetried: options.emptyCompletionRetried,
-        progressOnlyRetried: options.progressOnlyRetried === true,
-      },
-    });
-    if (!spawn?.exceeded) return;
-    settle(
-      `one child spawn ran ${spawn.turns} turns and produced ${spawn.newInputTokens} new input ` +
-        `tokens without converging, past the ${spawn.budget}-token ceiling this model's own ` +
-        "auto-compact budget sets",
-      // Deliberately no `status`: every turn of this spawn answered 200, and
-      // recording one of them as the failure would read as a rejection that
-      // never happened. The counts are the evidence.
-      { turns: spawn.turns, newInputTokens: spawn.newInputTokens },
-    );
-  } catch {
-    // Observation is bookkeeping; it must never fail the turn it watched.
-  }
-}
-
 // Everything about a routed request that depends on which model is serving it.
 //
 // Extracted so it can run more than once for a single turn: a turn whose
@@ -2373,10 +2297,8 @@ async function prepareRoutedRequest({
 }
 
 // The models this turn could be moved to, best first. Deliberately computed
-// only after a failure is already known: `selectedConfiguredListedModels()`
-// probes every provider's credential synchronously and spawns
-// `/usr/bin/security` per keychain service on macOS, which would cost every
-// healthy turn about 250ms of blocked event loop for nothing.
+// only after a failure is already known because healthy turns do not need
+// provider discovery or failover ranking.
 // The local answer an idle install gives instead of native forwarding. With
 // discovery disabled the native path is impossible by construction -- the
 // session fallback never reads auth.json -- so traffic that would leave for
@@ -2697,8 +2619,6 @@ async function handleResponses(request, response, requestUrl) {
           retryAfterSeconds: retrySeconds,
         }),
       );
-
-      observeSubagentOutcome(request, route, upstream.status);
       finalStatus = translatedStatus;
       activityStatus = translatedStatus;
       usageRecorded = true;
@@ -3044,17 +2964,6 @@ async function handleResponses(request, response, requestUrl) {
     // is already gone) and only rejects for an upstream that actually failed.
     // A cancel is not a router failure, so it meters as 0 rather than the
     // committed 200 that the client never finished reading.
-
-    // The same usage this turn just metered, and the same two disqualifiers
-    // context-window-drift.mjs applies to it: a substituted estimate and a
-    // retry-doubled count are not measurements of what the child sent.
-    observeSubagentOutcome(request, route, finalStatus, {
-      emptyCompletion,
-      usage,
-      estimatedInputTokens,
-      emptyCompletionRetried,
-      progressOnlyRetried: usage?.progressOnlyRetried === true,
-    });
     usageRecorded = true;
     activityStatus = finalStatus;
     if (!QUIET) {

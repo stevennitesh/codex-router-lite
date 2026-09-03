@@ -1,8 +1,11 @@
 # Subagents v2 certification
 
-Read this only when changing exact-route subagent eligibility, encrypted relay, proof records, or `multiAgentVersion`.
+Read this only when changing exact-route subagent eligibility, encrypted relay, certification records, or `multiAgentVersion`.
 
 A route is spawnable only when its published model has `multiAgentVersion: "v2"`. Certification belongs to one exact public slug and its current provider, upstream model, request profile, endpoint policy, Router behavior, and Codex execution path.
+
+Local subagent settings may hide or select among certified routes. They cannot
+promote a v1 route or replace a checked-in application.
 
 The retained routes are:
 
@@ -27,9 +30,8 @@ authority. The Markdown file records reviewer-facing evidence and limitations.
 `scripts/check-v2-agent-applications.mjs` validates both files and rejects a v2
 declaration without an accepted exact-route application.
 
-Machine-local runtime evidence is separate. `src/subagent-proofs.mjs` reads and
-writes those records, and `src/subagent-routing.mjs` selects only exact eligible
-routes.
+`src/subagent-routing.mjs` selects only exact eligible routes. Runtime
+observations are diagnostics; they do not create or revoke certification.
 
 ## When to refresh proof
 
