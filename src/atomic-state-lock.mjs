@@ -108,7 +108,3 @@ export function withAtomicStateLock(target, operation, options) {
     release();
   }
 }
-
-export function atomicStateLockPath(target) {
-  return lockPath(target);
-}

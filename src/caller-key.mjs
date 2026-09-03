@@ -237,15 +237,6 @@ async function recoverPendingCallerKeyRotationUnlocked({
   return { recovered: true, committed: false };
 }
 
-export async function recoverPendingCallerKeyRotation(options = {}) {
-  const secretPath = options.secretPath || CALLER_SECRET_PATH;
-  const withServiceLock = callerServiceLock(secretPath, options.withServiceLock);
-  return withServiceLock(() => recoverPendingCallerKeyRotationUnlocked({
-    ...options,
-    secretPath,
-  }));
-}
-
 export async function runCallerKeyRotation({
   readClientStatuses = () => readManagedClientStatuses(),
   readServiceStatus = () => readRouterServiceStatus(),

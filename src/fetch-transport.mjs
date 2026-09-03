@@ -4,8 +4,8 @@ import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 
 // Node 26's bundled fetch negotiates HTTP/2 by default. A live router process
 // observed its pooled session remain destroyed after ERR_HTTP2_INVALID_SESSION,
-// so every later native Codex request failed until launchd restarted the whole
-// service. Codex uses streaming Responses over ordinary HTTPS and does not
+// so every later native Codex request failed until the service restarted.
+// Codex uses streaming Responses over ordinary HTTPS and does not
 // require HTTP/2; an HTTP/1.1-only dispatcher removes that poisoned-session
 // state while retaining keep-alive connection reuse.
 //
@@ -83,15 +83,4 @@ export function loopbackProbeDispatcher() {
 
 export function loopbackProbeFetch(url, init = {}, dispatcher = loopbackProbeDispatcher()) {
   return undiciFetch(url, { ...init, dispatcher });
-}
-
-// Re-entry surfaces carry the caller capability in their loopback URL. Unlike
-// health probes, that hop must never honor an environment proxy: doing so can
-// disclose the local capability to a corporate or user-configured proxy. Keep
-// one direct HTTP/1.1 pool for those authenticated same-machine requests.
-let sharedDirectLoopbackDispatcher;
-
-export function directLoopbackFetch(url, init = {}) {
-  sharedDirectLoopbackDispatcher ??= new Agent(fetchDispatcherOptions());
-  return undiciFetch(url, { ...init, dispatcher: sharedDirectLoopbackDispatcher });
 }

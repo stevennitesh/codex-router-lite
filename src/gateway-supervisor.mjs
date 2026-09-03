@@ -6,8 +6,7 @@
 //
 // Before this module, `start.mjs` raced every child's exit and tore the whole
 // service down when any of them died, so a gateway crash took the router and
-// all three forwarders with it. The OS supervisor (launchd KeepAlive, systemd
-// Restart=always, Task Scheduler) does bring the service back, but it brings
+// its provider forwarder with it. Task Scheduler does bring the service back, but it brings
 // back *everything*: the router's in-memory state is discarded and the gateway
 // pays a cold Python import that start.mjs itself allows up to five minutes
 // for. For that whole window clients get a refused connection -- "Connection

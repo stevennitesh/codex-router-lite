@@ -19,10 +19,6 @@ const OVERLAYS = {
 - If an MCP read reports an unknown server or invalid URI, do not repeat the same invalid call for other local paths. Return to the available filesystem tools. Keep using read_mcp_resource for valid resources returned by MCP discovery.`,
 };
 
-export function instructionOverlayExists(name) {
-  return typeof name === "string" && Object.hasOwn(OVERLAYS, name);
-}
-
 export function applyInstructionOverlay(text, name) {
   if (typeof text !== "string" || !name) return text;
   const overlay = OVERLAYS[name];

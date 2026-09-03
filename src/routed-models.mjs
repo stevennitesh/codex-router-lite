@@ -74,10 +74,6 @@ export function providerForModel(model) {
   return provider;
 }
 
-export function providerNeedsNoKey(provider) {
-  return provider?.keyless === true;
-}
-
 export function resolveProviderBaseUrl(provider, env = process.env) {
   if (!provider) throw new Error("Routed provider is required.");
   const configured = provider.baseUrlEnv ? String(env[provider.baseUrlEnv] || "").trim() : "";
@@ -87,8 +83,4 @@ export function resolveProviderBaseUrl(provider, env = process.env) {
   const loopback = host === "localhost" || host === "::1" || /^127(?:\.|$)/u.test(host);
   const refusedOverride = provider.id === "switchyard" && configured !== "" && !loopback;
   return { baseUrl: refusedOverride ? provider.baseUrl : parsed.href.replace(/\/$/u, ""), refusedOverride };
-}
-
-export function endpointForModel(model) {
-  return resolveProviderBaseUrl(providerForModel(model)).baseUrl;
 }

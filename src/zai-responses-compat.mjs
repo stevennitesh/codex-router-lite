@@ -290,11 +290,10 @@ export class ZaiResponsesCompatTransform extends Transform {
 }
 
 export function zaiResponsesCompatTransform(providerId, contentType = "", routeSlug = "") {
-  const provider = String(providerId);
-  const needsRepair =
-    ["zai-api", "zai-coding"].includes(provider) ||
-    (provider === "openrouter" && routeSlug === "openrouter/glm-5.3-flash");
-  if (!needsRepair) return undefined;
+  if (
+    String(providerId) !== "openrouter" ||
+    routeSlug !== "openrouter/glm-5.3-flash"
+  ) return undefined;
   if (!String(contentType).toLowerCase().includes("text/event-stream")) return undefined;
   return new ZaiResponsesCompatTransform();
 }

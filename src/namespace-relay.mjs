@@ -6,11 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { jsonNumberIsStableForRewrite } from "./json-number-rewrite.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 import { coerceFunctionCallArguments } from "./tool-arguments.mjs";
-import {
-  inlineForeignRefs,
-  nonRecursiveToolSchema,
-  providerToolSchema,
-} from "./tool-schema-root.mjs";
+import { providerToolSchema } from "./tool-schema-root.mjs";
 import {
   buildInterruptAgentCall,
   filterAlreadyInterrupted,
@@ -63,10 +59,6 @@ const SPECIAL_FUNCTION_REFERENCES = new WeakSet();
 
 const TOOL_SEARCH_FUNCTION_NAME = "tool_search";
 const CUSTOM_TOOL_INPUT_PROPERTY = "input";
-
-export function toolSearchRelayAvailable(namespaces) {
-  return TOOL_SEARCH_RELAYS.has(namespaces);
-}
 
 function providerFunctionName(tool) {
   return tool?.name ?? tool?.function?.name;
@@ -267,9 +259,9 @@ export function bridgedCustomToolDescription(tool) {
   return sections.length ? sections.join("\n\n") : undefined;
 }
 
-// OpenCode accepts ordinary JSON-schema function tools but rejects OpenAI's
-// freeform `type: "custom"` definition. Codex exposes apply_patch only in that
-// native form. Present the same raw-patch contract as one required string
+// LiteLLM's Chat Completions bridge accepts ordinary JSON-schema functions,
+// not OpenAI's freeform `type: "custom"` definition. Codex exposes apply_patch
+// in that native form. Present the same raw-patch contract as one required string
 // property, translate matching history and a forced native custom choice, and
 // retain a request-local reverse map so the response path can restore the exact
 // custom-tool shape Codex executes. An unrelated function or native namespace
@@ -792,78 +784,16 @@ function jsonArgumentsAreUnambiguous(value, { allowEmpty = false } = {}) {
   return jsonIsUnambiguousForRewrite(value);
 }
 
-// Repair one tool's parameter root, or return it untouched. Providers reject a
-// union or nullable-object root by name -- xAI, DeepSeek V4, and the
-// opencode-go Responses surface all do -- and none of them care whether the
-// tool arrived inside a namespace. `providerToolSchema` returns anything it
-// does not recognize by identity, so an ordinary root costs one call and no
-// copy.
-export function repairToolSchemaRoot(
-  tool,
-  { nonRecursive = false, inlineForeignRefs: inlineRefs = false } = {},
-) {
-  // Moonshot alone rejects a `$ref` that does not point into `#/$defs/` or one
-  // that carries sibling keywords, so only the route that asks for it pays the
-  // inlining -- every other provider keeps the exact wire payload it has today.
-  // The normalizer returns a clean schema by identity, so an ordinary toolset
-  // is not copied.
-  const relaySchema = (schema) => {
-    const repaired = providerToolSchema(schema);
-    return inlineRefs ? inlineForeignRefs(repaired) : repaired;
-  };
-
-  // Preserve the established shared-provider behavior byte-for-byte. Native
-  // namespace traversal and inputSchema rewriting belong only to the OpenCode
-  // compatibility pass below; other providers keep the original root repair.
-  if (!nonRecursive) {
-    const parameters = tool?.function?.parameters ?? tool?.parameters;
-    if (parameters === undefined) return tool;
-    const repaired = relaySchema(parameters);
-    if (repaired === parameters) return tool;
-    return tool.function
-      ? { ...tool, function: { ...tool.function, parameters: repaired } }
-      : { ...tool, parameters: repaired };
-  }
-
-  if (tool?.type === "namespace" && Array.isArray(tool.tools)) {
-    let changed = false;
-    const children = tool.tools.map((child) => {
-      const repaired = repairToolSchemaRoot(child, {
-        nonRecursive,
-        inlineForeignRefs: inlineRefs,
-      });
-      if (repaired !== child) changed = true;
-      return repaired;
-    });
-    return changed ? { ...tool, tools: children } : tool;
-  }
-
-  let repairedTool = tool;
-  let changed = false;
-  const repair = (schema) => nonRecursiveToolSchema(relaySchema(schema));
-
-  if (tool?.function?.parameters !== undefined) {
-    const parameters = repair(tool.function.parameters);
-    if (parameters !== tool.function.parameters) {
-      repairedTool = {
-        ...repairedTool,
-        function: { ...repairedTool.function, parameters },
-      };
-      changed = true;
-    }
-  }
-  // Flattened namespace children deliberately carry both inputSchema (the
-  // client-native declaration) and parameters (the Chat Completions alias).
-  // Repair both: choosing inputSchema first would leave the provider-facing
-  // parameters recursive on the legacy X Preview route even though the Responses branch was fixed.
-  for (const field of ["parameters", "inputSchema"]) {
-    if (tool?.[field] === undefined) continue;
-    const schema = repair(tool[field]);
-    if (schema === tool[field]) continue;
-    repairedTool = { ...repairedTool, [field]: schema };
-    changed = true;
-  }
-  return changed ? repairedTool : tool;
+// Repair the parameter roots needed by the GLM bridge. An ordinary root keeps
+// its identity and costs no copy.
+export function repairToolSchemaRoot(tool) {
+  const parameters = tool?.function?.parameters ?? tool?.parameters;
+  if (parameters === undefined) return tool;
+  const repaired = providerToolSchema(parameters);
+  if (repaired === parameters) return tool;
+  return tool.function
+    ? { ...tool, function: { ...tool.function, parameters: repaired } }
+    : { ...tool, parameters: repaired };
 }
 
 function flattenNamespaceChild(namespace, fn, providerName) {
@@ -937,9 +867,8 @@ export function flattenNamespaceTools(
         // client's native representation and responses-native routes retain
         // it untouched.
         //
-        // Strict upstreams (Moonshot/Kimi, the xAI CLI proxy) reject the whole
-        // request -- not the one tool -- over a union-rooted parameter schema or
-        // an enum literal that contradicts its declared type. Codex's own
+        // The GLM bridge rejects the whole request over a union-rooted
+        // parameter schema or an enum literal that contradicts its type. Codex's
         // `codex_app__automation_update` ships a `oneOf` root, so a session that
         // never touches automations still dies on its first message. Normalize
         // only the provider-facing copy; `inputSchema` stays exactly as the
@@ -962,14 +891,8 @@ export function flattenNamespaceTools(
       }
       continue;
     }
-    // A plain function tool needs the same repair as a namespaced one. The
-    // rejections are the provider's, not the namespace's: DeepSeek V4 Flash and
-    // Pro both 400 a `type: ["object","null"]` root with "schema must be a JSON
-    // Schema of 'type: \"object\"'", and xAI rejects a union root the same way,
-    // whether the tool arrived inside a namespace or on its own. Repairing only
-    // the flattened children left every client-declared tool to fail on the
-    // provider that objects. `providerToolSchema` returns anything it does not
-    // recognize unchanged, so a tool with an ordinary root is not copied.
+    // Plain functions need the same root repair as namespaced functions.
+    // `providerToolSchema` returns an ordinary root unchanged.
     let repaired = repairToolSchemaRoot(tool);
     const name = tool?.type === "function" ? providerFunctionName(repaired) : undefined;
     if (typeof name === "string" && name) {

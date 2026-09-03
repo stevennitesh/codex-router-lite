@@ -150,8 +150,8 @@ export function normalizeTokenUsage(value) {
       : undefined);
   if (totalTokens === undefined) return undefined;
   // Providers that do prefix caching report the shared prefix they did not
-  // have to re-process. DeepSeek-style APIs name it prompt_cache_hit_tokens;
-  // OpenAI-compatible shapes carry it in input_tokens_details /
+  // have to re-process. Compatible shapes use prompt_cache_hit_tokens or
+  // input_tokens_details /
   // prompt_tokens_details.cached_tokens. The router forwards it for
   // diagnostics so the meter can show whether caching is actually happening.
   const cachedInputTokens = tokenCount(

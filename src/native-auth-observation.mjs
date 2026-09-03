@@ -13,47 +13,34 @@ let cachedDesktop;
 let cachedDesktopAt = 0;
 let observationTail = Promise.resolve();
 
-function processIdentities(platform, listing) {
-  if (platform === "win32") {
-    return String(listing || "")
-      .split(/\r?\n/)
-      .map((line) => /^([^\t]+)\t(\d+)\t(.+)$/.exec(line))
-      .filter((match) => match && /^(?:ChatGPT|Codex)$/i.test(match[1]))
-      .map((match) => `${match[2]}|${match[3]}`);
-  }
-  const pattern = platform === "darwin"
-    ? /\/(?:ChatGPT|Codex)\.app\/Contents\/MacOS\/(?:ChatGPT|Codex)(?:\s|$)/
-    : /(?:^|[\/])(?:ChatGPT|Codex)(?:[- ]desktop|\.AppImage)(?:\s|$)/i;
+function processIdentities(listing) {
   return String(listing || "")
     .split(/\r?\n/)
-    .map((line) => /^\s*(\d+)\s+(.{24})\s+(\S+)\s+(.+)$/.exec(line))
-    .filter((match) => match && pattern.test(match[4]))
-    .map((match) => `${match[2]}|${match[1]}|${match[3]}`);
+    .map((line) => /^([^\t]+)\t(\d+)\t(.+)$/.exec(line))
+    .filter((match) => match && /^(?:ChatGPT|Codex)$/i.test(match[1]))
+    .map((match) => `${match[2]}|${match[3]}`);
 }
 
-function processCommand(platform) {
-  if (platform === "win32") {
-    const script = [
-      "$ErrorActionPreference = 'SilentlyContinue'",
-      "Get-Process -Name ChatGPT,Codex | ForEach-Object {",
-      "  try {",
-      '    [Console]::Out.WriteLine(("{0}`t{1}`t{2}" -f $_.ProcessName, $_.StartTime.ToUniversalTime().Ticks, $_.Path))',
-      "  } catch {}",
-      "}",
-    ].join("\n");
-    return ["powershell.exe", [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      script,
-    ]];
-  }
-  return ["ps", ["-axo", "pid=,lstart=,comm=,args="]];
+function processCommand() {
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    "Get-Process -Name ChatGPT,Codex | ForEach-Object {",
+    "  try {",
+    '    [Console]::Out.WriteLine(("{0}`t{1}`t{2}" -f $_.ProcessName, $_.StartTime.ToUniversalTime().Ticks, $_.Path))',
+    "  } catch {}",
+    "}",
+  ].join("\n");
+  return ["powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ]];
 }
 
-function processListing(platform) {
-  const [command, args] = processCommand(platform);
+function processListing() {
+  const [command, args] = processCommand();
   return execFileSync(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -62,8 +49,8 @@ function processListing(platform) {
   });
 }
 
-function processListingAsync(platform) {
-  const [command, args] = processCommand(platform);
+function processListingAsync() {
+  const [command, args] = processCommand();
   return new Promise((resolve, reject) => {
     execFile(command, args, {
     encoding: "utf8",
@@ -77,12 +64,9 @@ function processListingAsync(platform) {
   });
 }
 
-function desktopFromListing(platform, listing) {
-  const identities = processIdentities(platform, listing)
-    .filter((identity) => !(
-      platform === "win32" &&
-      /\\OpenAI\\Codex\\bin\\[^\\]+\\codex\.exe$/i.test(identity)
-    ))
+function desktopFromListing(listing) {
+  const identities = processIdentities(listing)
+    .filter((identity) => !/\\OpenAI\\Codex\\bin\\[^\\]+\\codex\.exe$/i.test(identity))
     .sort((left, right) => identityStart(left) - identityStart(right));
   return identities.length === 0
     ? { running: false, generation: undefined }
@@ -95,39 +79,27 @@ function desktopFromListing(platform, listing) {
 function identityStart(identity) {
   const value = String(identity || "");
   const windows = /^(\d+)\|/.exec(value);
-  if (windows) return Number(windows[1]);
-  const parsed = Date.parse(value.slice(0, 24));
-  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  return windows ? Number(windows[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 export function codexDesktopState(options = {}) {
   const {
-    platform = process.platform,
     processList,
     processListReader = processListing,
     forceRefresh = false,
     now = Date.now(),
   } = options;
   const cacheable = processList === undefined &&
-    processListReader === processListing &&
-    platform === process.platform;
+    processListReader === processListing;
   if (
     cacheable &&
     !forceRefresh &&
     cachedDesktop &&
     now - cachedDesktopAt < DESKTOP_CACHE_MS
   ) return cachedDesktop;
-  if (!["darwin", "win32", "linux", "freebsd"].includes(platform)) {
-    const desktop = { running: true, generation: undefined };
-    if (cacheable) {
-      cachedDesktop = desktop;
-      cachedDesktopAt = now;
-    }
-    return desktop;
-  }
   try {
-    const listing = processList === undefined ? processListReader(platform) : processList;
-    const desktop = desktopFromListing(platform, listing);
+    const listing = processList === undefined ? processListReader() : processList;
+    const desktop = desktopFromListing(listing);
     if (cacheable) {
       cachedDesktop = desktop;
       cachedDesktopAt = now;
@@ -147,29 +119,24 @@ export function codexDesktopState(options = {}) {
 
 export async function codexDesktopStateAsync(options = {}) {
   const {
-    platform = process.platform,
     processList,
     processListReaderAsync = processListingAsync,
     forceRefresh = false,
     now = Date.now(),
   } = options;
   const cacheable = processList === undefined &&
-    processListReaderAsync === processListingAsync &&
-    platform === process.platform;
+    processListReaderAsync === processListingAsync;
   if (
     cacheable &&
     !forceRefresh &&
     cachedDesktop &&
     now - cachedDesktopAt < DESKTOP_CACHE_MS
   ) return cachedDesktop;
-  if (!["darwin", "win32", "linux", "freebsd"].includes(platform)) {
-    return { running: true, generation: undefined };
-  }
   try {
     const listing = processList === undefined
-      ? await processListReaderAsync(platform)
+      ? await processListReaderAsync()
       : processList;
-    const desktop = desktopFromListing(platform, listing);
+    const desktop = desktopFromListing(listing);
     if (cacheable) {
       cachedDesktop = desktop;
       cachedDesktopAt = now;

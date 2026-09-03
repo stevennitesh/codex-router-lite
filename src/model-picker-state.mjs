@@ -123,10 +123,7 @@ function setModelsVisible(slugs, visible) {
   return writePickerState({ hidden, visible: visibleSet, seeded });
 }
 
-// Applies a shipped default to models the operator has never decided, and only
-// to those. Used by the catalog build for entries that must arrive switched off
-// (`src/native-context-variants.mjs`): they cost more per turn than the model
-// they shadow, so an update must never turn one on by itself.
+// Applies the opt-in default to routed models the operator has never decided.
 //
 // Idempotent, and silent when there is nothing to record -- this runs on every
 // catalog rebuild, and rewriting the operator's picker state to say nothing new

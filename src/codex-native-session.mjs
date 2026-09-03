@@ -52,12 +52,6 @@ export function nativeSessionSharingEnabled() {
   return consentMarkerEnabled();
 }
 
-// Kept as an API alias for callers and integrations written against the first
-// version of this feature. The behavior is now explicit sharing consent.
-export function nativeSessionFallbackEnabled() {
-  return nativeSessionSharingEnabled();
-}
-
 // The `exp` claim, in epoch milliseconds. Only the claim is read; the token
 // itself is never returned, logged, or compared. A token with no readable exp
 // is treated as usable -- refusing to send something that might be perfectly

@@ -172,12 +172,6 @@ function sessionNames(indexPath) {
   }
 }
 
-export function sessionNameFromHeaders(headers, { indexPath = SESSION_INDEX_PATH } = {}) {
-  const id = threadIdFromHeaders(headers);
-  if (!id) return undefined;
-  return sessionNames(indexPath).get(id.toLowerCase());
-}
-
 export function activityMetadataFromHeaders(
   headers,
   { indexPath = SESSION_INDEX_PATH, sessionsPath = SESSIONS_PATH } = {},

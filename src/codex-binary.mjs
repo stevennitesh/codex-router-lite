@@ -216,7 +216,3 @@ export function codexAuthStatus() {
     };
   }
 }
-
-export function codexIsAuthenticated() {
-  return codexAuthStatus().authenticated;
-}

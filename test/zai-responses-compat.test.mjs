@@ -72,8 +72,6 @@ test("leaves an already valid message stream byte-identical", async () => {
 });
 
 test("compatibility factory is scoped to proven malformed Responses routes", () => {
-  assert.ok(zaiResponsesCompatTransform("zai-coding", "text/event-stream"));
-  assert.ok(zaiResponsesCompatTransform("zai-api", "text/event-stream; charset=utf-8"));
   assert.ok(
     zaiResponsesCompatTransform(
       "openrouter",
@@ -87,7 +85,14 @@ test("compatibility factory is scoped to proven malformed Responses routes", () 
     undefined,
   );
   assert.equal(zaiResponsesCompatTransform("openai", "text/event-stream"), undefined);
-  assert.equal(zaiResponsesCompatTransform("zai-coding", "application/json"), undefined);
+  assert.equal(
+    zaiResponsesCompatTransform(
+      "openrouter",
+      "application/json",
+      "openrouter/glm-5.3-flash",
+    ),
+    undefined,
+  );
 });
 
 test("repairs a message-only LiteLLM stream without shifting its zero output index", async () => {

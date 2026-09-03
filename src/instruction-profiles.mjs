@@ -14,10 +14,6 @@ const PROFILES = Object.freeze({
   "glm-5.3-flash-codex": GLM_53_FLASH_CODEX,
 });
 
-export function instructionProfileExists(name) {
-  return typeof name === "string" && Object.hasOwn(PROFILES, name);
-}
-
 export function instructionProfile(name) {
   return typeof name === "string" ? PROFILES[name] : undefined;
 }

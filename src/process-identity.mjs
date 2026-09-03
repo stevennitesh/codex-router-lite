@@ -7,8 +7,7 @@ const WINDOWS_PROCESS_PROBE_TIMEOUT_MS = 5_000;
 // inherited it. Pair the PID with the process's start time and executable, and
 // require both to match before acting on it.
 //
-// Extracted from ollama-runtime.mjs when the harness web server needed the same
-// guarantee. Nothing here is specific to either program.
+// Service shutdown uses this check before signaling a recorded process.
 export function processStartIdentity(
   pid,
   { spawn = spawnSync, platform = process.platform } = {},
@@ -96,13 +95,3 @@ export function processCommandLine(
 // True when the recorded state still describes a live process this router
 // started. Everything that stops or signals a managed process goes through
 // this, so a server somebody else is running is never touched.
-export function stateOwnsProcess(state, { identity = processStartIdentity } = {}) {
-  return Boolean(
-    state?.managed &&
-      Number.isSafeInteger(state.pid) &&
-      state.pid > 0 &&
-      typeof state.processIdentity === "string" &&
-      state.processIdentity.length > 0 &&
-      identity(state.pid) === state.processIdentity,
-  );
-}

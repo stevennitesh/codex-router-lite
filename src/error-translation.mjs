@@ -57,9 +57,8 @@ export function extractUpstreamDetail(bodyText) {
   return message.length > DETAIL_LIMIT ? message.slice(0, DETAIL_LIMIT) : message;
 }
 
-// Providers report exhausted usage under many statuses (OpenAI 429
-// insufficient_quota, DeepSeek 402, xAI 403, Anthropic 400), so the body has
-// to be checked before the status mapping — a quota 429 must not advise
+// Providers report exhausted usage under several statuses, so the body has
+// to be checked before the status mapping. A quota 429 must not advise
 // "retry", and a no-credits 403 must not blame credentials.
 const QUOTA_PATTERNS = [
   /insufficient[_\s]quota/i,
@@ -67,8 +66,7 @@ const QUOTA_PATTERNS = [
   /insufficient (?:balance|credits?)/i,
   /credit balance is too low/i,
   /(?:no|any|out of) credits/i,
-  // Both word orders occur in the wild: "usage limit reached" (zai) and
-  // "reached your usage limit" (Kimi).
+  // Both common word orders are accepted.
   /usage limit(?:s)? (?:reached|exceeded|hit)/i,
   /reached your (?:usage|monthly|daily) limit/i,
   /(?:monthly|daily|plan) usage limit/i,
@@ -78,8 +76,7 @@ const QUOTA_PATTERNS = [
   /quota (?:exceeded|exhausted|will be refreshed)/i,
   /\barrears\b/i,
   /balance (?:is )?(?:too low|not enough|insufficient)/i,
-  // Chinese-market providers (Alibaba, SiliconFlow, zai, Moonshot) report
-  // exhausted balance or quota in Chinese.
+  // OpenRouter may relay untranslated balance or quota errors.
   /余额不足/,
   /欠费/,
   /额度(?:不足|已用完)/,
@@ -171,14 +168,6 @@ export function gatewayErrorStatus({ status, bodyText }) {
 // balance or plan limit, which time or a top-up fixes), or undefined for
 // everything else, including every 5xx: the origin ran, and what it said about
 // quota is not evidence about the caller's.
-export function upstreamFailureKind({ status, bodyText }) {
-  if (!(Number(status) < 500)) return undefined;
-  const detail = extractUpstreamDetail(bodyText);
-  if (isPlanEntitlement(detail)) return "entitlement";
-  if (isOutOfUsage(detail, parseUpstreamError(bodyText).type)) return "out_of_usage";
-  return undefined;
-}
-
 function describeFailure({
   status,
   detail,

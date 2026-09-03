@@ -92,12 +92,3 @@ export function refreshCodexCallerCapabilityContents(contents, nextBase, { port,
   next = replaceMarkedBase(next, CODEX_SIGNED_BEGIN, CODEX_SIGNED_END, nextBase, port, legacyPort);
   return next;
 }
-
-export function refreshCodexCallerCapabilityState(state, nextBase, { port, legacyPort } = {}) {
-  if (!state || typeof state !== "object") return state;
-  if (!("managedBaseUrl" in state)) return { ...state };
-  if (!managedCodexBase(state.managedBaseUrl, port, legacyPort) || !isManagedCodexBaseUrl(nextBase, port)) {
-    throw new Error("Codex managed provider state contains an invalid router URL.");
-  }
-  return { ...state, managedBaseUrl: nextBase };
-}

@@ -251,11 +251,8 @@ function chunkHasChatContent(data) {
 // Liveness is proof the upstream is generating without being output the client
 // can act on. Reasoning is the canonical case, and it is why liveness exists as
 // a separate verdict: on a reasoning model the gap between the first reasoning
-// delta and the first output token is seconds to minutes, and holding that gap
-// is what turns a healthy turn into a frozen screen. Measured against
-// deepseek-v4-pro, the hold moved the client's first byte from 517 ms to
-// 30,638 ms — the byte/time budget, not the model, decided when the caller saw
-// anything. Liveness ends the hold. It deliberately does not count as content,
+// delta and the first output token can be long. Holding that gap makes a healthy
+// turn look frozen. Liveness ends the hold. It does not count as content,
 // so the emptiness verdict below is unchanged: a turn that streams only
 // reasoning and then completes with nothing is still classified empty, it just
 // can no longer be repaired invisibly.
@@ -283,8 +280,7 @@ function isLivenessEvent(eventType, data) {
   return choices.some((choice) => {
     const delta = choice?.delta ?? choice?.message;
     if (!delta || typeof delta !== "object") return false;
-    // `reasoning_content` is DeepSeek's field; `reasoning` is what several
-    // OpenAI-compatible resellers relay instead.
+    // Accept both reasoning field spellings emitted by compatible gateways.
     const reasoning = delta.reasoning_content ?? delta.reasoning;
     return typeof reasoning === "string" && reasoning.length > 0;
   });

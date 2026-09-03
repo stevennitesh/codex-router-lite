@@ -146,22 +146,6 @@ export function setSubagentEffort(slug, effort) {
   return subagentSettingsSnapshot();
 }
 
-export function replaceMultiAgentState({ mode, enabled = [], disabled = [], efforts }) {
-  if (!SUBAGENT_MODES.includes(mode)) {
-    throw new Error(`Unknown subagent mode "${mode}". Choose: ${SUBAGENT_MODES.join(", ")}`);
-  }
-  const carried = efforts === undefined ? readMultiAgentSettings().efforts : efforts;
-  const next = {
-    version: 2,
-    mode,
-    enabled: [...new Set(enabled)].sort(),
-    disabled: [...new Set(disabled)].sort(),
-    ...(carried && Object.keys(carried).length ? { efforts: carried } : {}),
-  };
-  writeSettings(next);
-  return subagentSettingsSnapshot();
-}
-
 // `proven` and `all` keep every certified route unless it is disabled.
 // `selected` keeps only certified routes the operator explicitly enabled.
 export function applyMultiAgentSettings(models, settings, hidden = new Set()) {

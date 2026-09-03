@@ -47,7 +47,6 @@ import {
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
 
-const configuredProviderIds = () => ["openrouter", "switchyard"];
 const discoveryDisabled = () => true;
 const routedModelSearchAvailable = () => false;
 const selectedConfiguredListedModels = () => LISTED_MODELS;

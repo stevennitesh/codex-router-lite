@@ -30,8 +30,8 @@ authority. The Markdown file records reviewer-facing evidence and limitations.
 `scripts/check-v2-agent-applications.mjs` validates both files and rejects a v2
 declaration without an accepted exact-route application.
 
-`src/subagent-routing.mjs` selects only exact eligible routes. Runtime
-observations are diagnostics; they do not create or revoke certification.
+Catalog publication exposes only exact eligible routes. Runtime observations
+are diagnostics; they do not create or revoke certification.
 
 ## When to refresh proof
 

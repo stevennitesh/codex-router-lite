@@ -117,23 +117,6 @@ export function recordedProxyEnvironment(manifestPath = INSTALL_MANIFEST_PATH) {
 //
 // This reports the state rather than assuming intent: proxy variables that are
 // deliberately ignored are a defensible setup, just never an obvious one.
-export function serviceProxyOptInProblem(recorded = recordedProxyEnvironment()) {
-  if (!recorded) return undefined;
-  const proxy = recorded.https_proxy ?? recorded.HTTPS_PROXY
-    ?? recorded.http_proxy ?? recorded.HTTP_PROXY;
-  if (!proxy) return undefined;
-  if (environmentProxyOptedIn(recorded, [])) return undefined;
-  return {
-    detail:
-      "the background service carries proxy variables but not the opt-in that lets " +
-      "Node use them, so the router connects directly and will time out on a " +
-      "network that requires the proxy",
-    remedy:
-      "Set NODE_USE_ENV_PROXY=1, then run .\\install.ps1 -Target codex -ForceDeps. " +
-      "Set it to 0 to clear the opt-in.",
-  };
-}
-
 // `@` before the first `/` is userinfo; after it, it is part of a path and
 // must be left alone. Proxy variables also hold bare `host:port` values and
 // comma-separated bypass lists, so this deliberately does not go through URL
@@ -181,7 +164,7 @@ export function serviceProxyEnvironment(
     if (environment[name] !== undefined) values[name] = environment[name];
   }
   // A command-line flag is not automatically present in the environment of a
-  // later launchd/systemd/Task Scheduler invocation. Persist the equivalent
+  // later Task Scheduler invocation. Persist the equivalent
   // environment opt-in so the service and every Node child retain the same
   // decision after the installer exits. A positive CLI/NODE_OPTIONS opt-in
   // wins over NODE_USE_ENV_PROXY=0, matching Node's precedence.
@@ -205,11 +188,9 @@ export function serviceProxyEnvironment(
 // The proxy environment a router process should adopt when its own is silent.
 //
 // `serviceProxyEnvironment` keeps the proxy alive across restarts by writing it
-// into the service definition, which covers every launchd/systemd/Task
-// Scheduler start. Nothing covers a router started any other way: `bin/start`
-// run from a terminal, a debugging foreground run, or -- the case that cost a
-// real installation -- a `stop; start` pair issued from a shell that a desktop
-// app spawned with no proxy variables at all. Such a process inherits the
+// into the service definition, which covers every Task Scheduler start.
+// Nothing covers a router started another way, such as a foreground debugging
+// run from a terminal. Such a process inherits the
 // caller's environment, finds no opt-in, dials every upstream directly, and
 // times out on a network that requires the proxy. The 502 surfaces far from
 // the cause and names an opt-in the operator can prove is already set, because

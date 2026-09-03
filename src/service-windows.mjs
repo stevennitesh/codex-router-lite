@@ -30,12 +30,6 @@ import {
 } from "./service-write-guard.mjs";
 import { windowsScheduledTaskState } from "./windows-task-state.mjs";
 
-// Only this platform's own module can reach this machine's Task Scheduler.
-// Cross-platform render tests execute this module on POSIX with executable
-// stubs, so those calls must remain live; a real Windows test process must
-// never mutate the developer's scheduler.
-const HOST_MANAGED = process.platform === "win32";
-
 const effectivePlatform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
 const command = process.argv[2] || "status";
 const renderCommands = new Set(["render", "render-launcher", "render-task"]);
@@ -126,7 +120,7 @@ function launcher() {
 function schtasks(args, options = {}) {
   // Queries are intentionally not skipped: status must report whether the
   // named task exists. Callers mark only service-manager mutations below.
-  if (options.mutating && skipServiceManagerCall({ hostManaged: HOST_MANAGED })) {
+  if (options.mutating && skipServiceManagerCall()) {
     return "";
   }
   return execFileSync("schtasks.exe", args, {
@@ -323,7 +317,7 @@ function installTask() {
   // PowerShell is a second Task Scheduler path, independent of schtasks().
   // Keep it behind the same mutation guard so tests cannot register or replace
   // the user's real task.
-  if (skipServiceManagerCall({ hostManaged: HOST_MANAGED })) return;
+  if (skipServiceManagerCall()) return;
   const { execute, argument } = taskAction();
   const script = [
     // The action strings travel through the environment so that the quotes
@@ -419,7 +413,7 @@ function managedPortStillListening(state) {
   // netstat is a machine-wide probe. It is not needed to exercise fixture
   // service lifecycle code and can observe unrelated listeners, so keep it
   // out of real Windows test runs.
-  if (skipServiceManagerCall({ hostManaged: HOST_MANAGED })) return false;
+  if (skipServiceManagerCall()) return false;
   try {
     const output = execFileSync("netstat.exe", ["-ano", "-p", "tcp"], {
       encoding: "utf8",
@@ -449,7 +443,7 @@ function stopOwnedServiceTree() {
   // This path can issue taskkill and then poll process/port state for 15s.
   // Under test, the service-manager mutation was skipped, so there is no
   // owned tree to stop and no reason to touch the host or wait on it.
-  if (skipServiceManagerCall({ hostManaged: HOST_MANAGED })) return;
+  if (skipServiceManagerCall()) return;
   const state = readServiceProcessState();
   if (!state || state.pid === process.pid || !serviceProcessOwns(state, { platform: effectivePlatform })) {
     return;
@@ -488,7 +482,7 @@ function endTask() {
   // Do not poll after a skipped `/End`: taskState is a truthful read, but in a
   // test there was no mutation to wait for and a missing PowerShell can spend
   // the full timeout.
-  const managerSkipped = skipServiceManagerCall({ hostManaged: HOST_MANAGED });
+  const managerSkipped = skipServiceManagerCall();
   if (managerSkipped) return;
   try {
     schtasks(["/End", "/TN", taskName], { quiet: true, mutating: true });

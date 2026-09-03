@@ -3,10 +3,10 @@
 // separate failures come out of that gap, and both used to be re-implemented
 // (or forgotten) at every call site:
 //
-//   1. `where.exe grok` on an npm global install lists the extensionless POSIX
+//   1. `where.exe codex` on an npm global install lists the extensionless POSIX
 //      shim before the batch shim that works:
-//        ...\npm\grok       <- sh script, listed first, NOT spawnable
-//        ...\npm\grok.cmd   <- the batch shim Windows can run
+//        ...\npm\codex       <- sh script, listed first, NOT spawnable
+//        ...\npm\codex.cmd   <- the batch shim Windows can run
 //      Taking the first line hands Node a file it cannot execute.
 //
 //   2. A .cmd/.bat shim is a batch script, so Windows needs cmd.exe to run it.
@@ -94,7 +94,7 @@ export function assertSpawnablePath(binary) {
   if (PATH_ILLEGAL_ON_WINDOWS.test(String(binary))) {
     throw new Error(
       "Refusing to run a Windows path containing characters no file name may hold. " +
-        "Check CODEX_BIN, GROK_CLI, or whatever set this command path.",
+        "Check CODEX_BIN or the setting that supplied this command path.",
     );
   }
   return binary;

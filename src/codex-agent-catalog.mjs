@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -9,10 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import {
-  privateFileIsProtected,
-  protectPrivateFile,
-} from "./file-security.mjs";
+import { protectPrivateFile } from "./file-security.mjs";
 import { CODEX_AGENTS_DIR } from "./paths.mjs";
 
 export function safeIdentifier(value, separator) {
@@ -168,53 +164,4 @@ export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
     }
     throw error;
   }
-}
-
-export function routedCodexAgentStatus(models, agentsDir = CODEX_AGENTS_DIR) {
-  const status = {
-    expected: models.length,
-    current: 0,
-    missing: [],
-    stale: [],
-    unprotected: [],
-    extra: [],
-  };
-  const expectedFiles = new Set();
-  for (const model of models) {
-    const definition = routedAgentDefinition(model);
-    const target = path.join(agentsDir, definition.fileName);
-    expectedFiles.add(definition.fileName);
-    if (!existsSync(target)) {
-      status.missing.push(model.slug);
-      continue;
-    }
-    let contents;
-    try {
-      contents = readFileSync(target, "utf8");
-    } catch {
-      status.stale.push(model.slug);
-      continue;
-    }
-    if (contents !== definition.contents) {
-      status.stale.push(model.slug);
-      continue;
-    }
-    if (!privateFileIsProtected(target)) {
-      status.unprotected.push(model.slug);
-      continue;
-    }
-    status.current += 1;
-  }
-  status.extra = managedAgentFiles(agentsDir).filter((entry) => !expectedFiles.has(entry));
-  return {
-    ...status,
-    // A leftover definition is as much a drift as a missing one: it keeps a
-    // model spawnable that the settings no longer allow. An install with every
-    // model switched off is a valid state, so an empty set stays ok.
-    ok:
-      status.current === status.expected &&
-      status.stale.length === 0 &&
-      status.unprotected.length === 0 &&
-      status.extra.length === 0,
-  };
 }

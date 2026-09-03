@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
@@ -13,10 +13,6 @@ export function apiProvider(providerId) {
 export function primaryCredentialPath(provider = apiProvider("openrouter")) {
   if (provider?.id !== "openrouter") throw new Error("Only the OpenRouter credential is supported.");
   return path.join(STATE_DIR, "openrouter-api-key.secret");
-}
-
-export function credentialPaths(provider) {
-  return [primaryCredentialPath(provider)];
 }
 
 function fileCredential(provider) {
@@ -47,10 +43,6 @@ export function credentialSetupHint() {
   return ".\\model-router.ps1 codex provider-key openrouter set";
 }
 
-export function credentialLabel() {
-  return "API key";
-}
-
 export function credentialStatus(providerOrId = "openrouter", options = {}) {
   const resolved = resolveProviderCredential(providerOrId, options);
   return {
@@ -71,23 +63,4 @@ export function writeProviderCredential(providerOrId, value) {
   writePrivateFile(target, `${secret}\n`, { directoryMode: 0o700 });
   protectPrivateFile(target);
   return target;
-}
-
-export function removeProviderCredential(providerOrId = "openrouter") {
-  const provider = typeof providerOrId === "string" ? apiProvider(providerOrId) : providerOrId;
-  const target = primaryCredentialPath(provider);
-  try {
-    unlinkSync(target);
-    return true;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-export function credentialFileMode(providerOrId = "openrouter") {
-  const provider = typeof providerOrId === "string" ? apiProvider(providerOrId) : providerOrId;
-  const target = primaryCredentialPath(provider);
-  if (!existsSync(target)) return undefined;
-  return lstatSync(target).mode & 0o777;
 }

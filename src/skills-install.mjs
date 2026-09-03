@@ -982,69 +982,12 @@ function revokeExternalSkillsUnlocked(codexHome, names, { quiet = false } = {}) 
 // Compare the installed pack against the checkout. Returns the names of
 // skills whose installed content differs from the source (missing, changed,
 // or extra files). The root ownership marker alone is ignored.
-export function installedSkillsFresh(codexHome) {
-  const sourceRoot = skillsSource();
-  if (!existsSync(sourceRoot)) return { fresh: true, stale: [] };
-  const stale = [];
-  for (const name of packSkillNames()) {
-    if (!sameDirContent(path.join(sourceRoot, name), path.join(codexSkillsDir(codexHome), name))) {
-      stale.push(name);
-    }
-  }
-  return { fresh: stale.length === 0, stale };
-}
-
 function sameDirContent(source, target) {
   const sourceDigest = directoryDigest(source);
   const targetDigest = directoryDigest(target, {
     ignoreRootEntries: [MARKER],
   });
   return Boolean(sourceDigest) && sourceDigest === targetDigest;
-}
-
-export function skillPackStatus(codexHome) {
-  const pack = packSkillNames();
-  const ownership = readOwnership(codexHome);
-  const managed = Object.keys(ownership.skills)
-    .filter((name) => ownershipEvidence(codexHome, name, ownership).owned)
-    .sort();
-  const managedSet = new Set(managed);
-  const external = pack
-    .filter(
-      (name) =>
-        !managedSet.has(name) && externalEvidence(codexHome, name, ownership).approved,
-    )
-    .sort();
-  const externalSet = new Set(external);
-  const missing = pack.filter((name) => !managedSet.has(name) && !externalSet.has(name));
-  const collisions = pack.filter(
-    (name) =>
-      lstat(path.join(codexSkillsDir(codexHome), name)) &&
-      !managedSet.has(name) &&
-      !externalSet.has(name),
-  );
-  const staleOwnership = Object.keys(ownership.skills)
-    .filter((name) => !managedSet.has(name) || !pack.includes(name))
-    .sort();
-  const staleExternal = Object.keys(ownership.external)
-    .filter((name) => !externalSet.has(name) || !pack.includes(name))
-    .sort();
-  const stale = managed.filter(
-    (name) =>
-      pack.includes(name) &&
-      !sameDirContent(path.join(skillsSource(), name), path.join(codexSkillsDir(codexHome), name)),
-  );
-  return {
-    pack,
-    managed,
-    external,
-    missing,
-    collisions,
-    stale,
-    staleOwnership,
-    staleExternal,
-    ownershipStateValid: ownership.valid,
-  };
 }
 
 function installSkillsUnlocked(

@@ -1,6 +1,5 @@
-// Codex tool schemas use integer/u64 fields. Some routed models (Grok in
-// particular) emit whole numbers as JSON floats (`20000.0`). Serde then
-// rejects the call before the tool runs.
+// Codex tool schemas use integer/u64 fields. GLM can emit whole numbers as JSON
+// floats (`20000.0`). Serde then rejects the call before the tool runs.
 //
 // JSON.parse cannot see the difference between 20000 and 20000.0, so this
 // rewrites number tokens in the raw argument string.

@@ -52,7 +52,6 @@ import {
   canonicalProviderId,
   providerRuntimeAvailable,
   readProviderSelection,
-  selectedConfiguredListedModels,
 } from "./provider-selection.mjs";
 import {
   applyKeepAliveTimeouts,
@@ -77,10 +76,7 @@ import {
   EmptyCompletionTerminalGuard,
   isEmptyCompletionPreludeLimitError,
 } from "./empty-completion-guard.mjs";
-import {
-  ZaiResponsesCompatTransform,
-  zaiResponsesCompatTransform,
-} from "./zai-responses-compat.mjs";
+import { zaiResponsesCompatTransform } from "./zai-responses-compat.mjs";
 import {
   MERGED_CATALOG_PATH,
   NATIVE_CATALOG_PATH,
@@ -97,7 +93,6 @@ import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
 } from "./native-auth-observation.mjs";
-import { readNativeRedirect } from "./native-redirect.mjs";
 import {
   estimateInputTokens,
   mergeTokenUsage,
@@ -113,14 +108,9 @@ import {
   recoverPreflattenedMcpTools,
 } from "./namespace-relay.mjs";
 import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
-import { collaborationToolAvailable, pendingInterruptTargets } from "./subagent-completion.mjs";
+import { pendingInterruptTargets } from "./subagent-completion.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
-import {
-  rankSubagentCandidates,
-  subagentEligibility,
-  subagentFallbackPlan,
-} from "./subagent-routing.mjs";
 import {
   activityMetadataFromHeaders,
 } from "./codex-session-names.mjs";
@@ -135,12 +125,6 @@ import {
   HEADERLESS_SSE_SNIFF_BYTES,
   HEADERLESS_SSE_SNIFF_MS,
 } from "./sse-prefix.mjs";
-import { readHiddenModels } from "./model-picker-state.mjs";
-import { ageToolResults } from "./tool-result-aging.mjs";
-import {
-  nativeToolResultAgingEnabled,
-  toolResultAgingEnabled,
-} from "./tool-result-aging-state.mjs";
 import { VERSION } from "./version.mjs";
 import {
   nativeSessionHeaders,
@@ -1515,8 +1499,7 @@ async function normalizeRoutedAgentInput(request, input, signal) {
   return output;
 }
 
-// DeepSeek thinking mode rejects a turn whose assistant message carries no
-// reasoning_content. LiteLLM's Responses->chat translation drops `reasoning`
+// LiteLLM's Responses-to-chat translation drops `reasoning`
 // input items entirely (`_transform_responses_api_input_item_to_chat_completion_message`
 // returns nothing for an item whose `content` is null, which is the shape
 // Codex stores), so the reasoning text never reaches the provider at all.
@@ -1528,9 +1511,7 @@ async function normalizeRoutedAgentInput(request, input, signal) {
 // This used to carry the reasoning solely into a following `function_call` or
 // an empty assistant filler, which is the shape of a tool loop -- so a turn
 // that answers in prose lost its reasoning, and the provider refused the
-// *next* request for a reasoning_content it had never been given. A subagent
-// always ends that way, which is why spawning one failed every time and an
-// ordinary tool loop did not (#256).
+// next request because its reasoning history is missing.
 function carryReasoningThroughInput(input, { nativeThinking = false } = {}) {
   if (!Array.isArray(input) || input.length < 2) return;
   for (let index = 0; index < input.length - 1; index += 1) {
@@ -1607,8 +1588,7 @@ function reasoningItemText(item) {
   }
   const content = item.content;
   if (typeof content === "string" && content) return content;
-  // Some thinking providers (DeepSeek among them) return reasoning with
-  // `content` as an array of output_text parts rather than a summary string.
+  // Reasoning may use an array of output_text parts rather than a summary string.
   // Without this, the reasoning never reaches the chat history and the
   // following tool-call turn 400s for missing `reasoning_content`.
   if (Array.isArray(content)) {
@@ -1884,12 +1864,12 @@ async function summarizeWith(
   request,
   payload,
   route,
-  aged,
+  input,
   prepared,
   signal,
   { searchContract } = {},
 ) {
-  const providerInput = normalizeProviderAppToolOutputs(aged.input);
+  const providerInput = normalizeProviderAppToolOutputs(input);
   const body = {
     ...payload,
     model: route.gatewayModel,
@@ -1952,18 +1932,9 @@ async function summarize(request, payload, route, signal) {
   // costs nothing extra here.
   const normalized = await normalizeRoutedAgentInput(request, originalInput, signal);
   const searchContract = routedSearchContract(searchSnapshot, normalized);
-  // Evidence is extracted before tool-result aging rewrites old output bytes.
   // The summarizer may select source IDs, but only this deterministic pass can
   // decide which source types and machine outcomes enter a kcr2 checkpoint.
   const prepared = prepareCompaction(normalized);
-  const agingEnabled = toolResultAgingEnabled();
-  const aged = ageToolResults(normalized, {
-    enabled: agingEnabled,
-    // The client has already decided this conversation needs compaction. Dense
-    // RTK-style shaping gives its summarizer more distinct evidence without
-    // changing ordinary turns, and every shaped result keeps the exact rerun path.
-    denseShaping: agingEnabled,
-  });
 
   const attempts = [route];
   const failed = [];
@@ -1979,7 +1950,7 @@ async function summarize(request, payload, route, signal) {
       request,
       payload,
       attemptRoute,
-      aged,
+      normalized,
       prepared,
       signal,
       { searchContract },
@@ -1999,7 +1970,6 @@ async function summarize(request, payload, route, signal) {
           ok: false,
           status: 502,
           payload: { error: { message: "Compact response is too large." } },
-          toolResultAging: aged.stats,
         };
       }
       throw error;
@@ -2009,7 +1979,6 @@ async function summarize(request, payload, route, signal) {
         ok: false,
         status: 502,
         payload: { error: { message: "Compact response is too large." } },
-        toolResultAging: aged.stats,
       };
     }
     const parsed = JSON.parse(bytes.toString("utf8"));
@@ -2033,7 +2002,6 @@ async function summarize(request, payload, route, signal) {
         checkpoint: finalizeCheckpoint(answer, prepared),
         input: originalInput,
         usage,
-        toolResultAging: aged.stats,
         route: attemptRoute,
         failed,
       };
@@ -2051,7 +2019,6 @@ async function summarize(request, payload, route, signal) {
       status: sent.upstream.status,
       payload: parsed,
       usage,
-      toolResultAging: aged.stats,
       route: attemptRoute,
     };
     return { ...last, failed };
@@ -2125,7 +2092,6 @@ async function handleRoutedCompaction(
     return {
       status: result.status,
       usage: result.usage,
-      toolResultAging: result.toolResultAging,
       ...served,
     };
   }
@@ -2143,7 +2109,6 @@ async function handleRoutedCompaction(
     return {
       status: 200,
       usage: result.usage,
-      toolResultAging: result.toolResultAging,
       ...served,
     };
   }
@@ -2151,7 +2116,6 @@ async function handleRoutedCompaction(
   return {
     status: 200,
     usage: result.usage,
-    toolResultAging: result.toolResultAging,
     ...served,
   };
 }
@@ -2210,13 +2174,13 @@ function requireCodexTransport(request, response) {
 //     responses-native second pass would find the reasoning already gone.
 //
 // Both are avoided the same way: nothing here writes to `payload` or to
-// `agedInput`. The tool list is a local, and the input array is copied before
+// `normalizedInput`. The tool list is local, and the input array is copied before
 // anything rewrites it.
-async function buildRoutedRequest({ request, payload, route, agedInput }) {
+async function buildRoutedRequest({ request, payload, route, normalizedInput }) {
   const searchCompatibility = routedSearchCompatibility(payload, route);
   payload = searchCompatibility.payload;
   const provider = providerForModel(route);
-  const compatibleInput = normalizeProviderAppToolOutputs(agedInput);
+  const compatibleInput = normalizeProviderAppToolOutputs(normalizedInput);
   const input = Array.isArray(compatibleInput) ? [...compatibleInput] : compatibleInput;
 
   // LiteLLM converts this route to Chat Completions. Preserve GLM reasoning
@@ -2270,30 +2234,19 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
   };
 }
 
-// Normalize once and age from that pristine input for every route that may
-// actually serve the turn. Ordinary turns compact only consumed old results;
-// the client owns context-pressure detection and whole-history compaction.
+// Build each routed request from the same normalized input.
 async function prepareRoutedRequest({
   request,
   payload,
   route,
   normalizedInput,
-  agingEnabled,
 }) {
-  const aged = ageToolResults(normalizedInput, {
-    enabled: agingEnabled,
-  });
-  const built = await buildRoutedRequest({
+  return buildRoutedRequest({
     request,
     payload,
     route,
-    agedInput: aged.input,
+    normalizedInput,
   });
-  return {
-    ...built,
-    agedInput: aged.input,
-    toolResultAging: aged.stats,
-  };
 }
 
 // The models this turn could be moved to, best first. Deliberately computed
@@ -2336,7 +2289,6 @@ async function handleResponses(request, response, requestUrl) {
   let retryUsage;
   let usage;
   let estimatedInputTokens;
-  let toolResultAging;
   let pendingInterrupts = [];
   let emptyCompletion = false;
   let emptyCompletionRetried = false;
@@ -2361,19 +2313,7 @@ async function handleResponses(request, response, requestUrl) {
     let payload = await parseBodyAsync(body);
     controller.signal.throwIfAborted();
     requestedModel = typeof payload.model === "string" ? payload.model : "";
-    let registeredRoute = MODEL_BY_SLUG.get(requestedModel);
-    // An unregistered model on this endpoint is native GPT traffic -- Codex's
-    // background agent sessions arrive here hardwired to a native slug no
-    // matter which model the user picked. With the redirect opted in, send
-    // them to the configured routed model; a target that is unknown or whose
-    // provider is hidden leaves the turn native rather than trading a quota
-    // failure for a routing error.
-    if (!registeredRoute && requestedModel) {
-      const redirect = MODEL_BY_SLUG.get(readNativeRedirect());
-      if (redirect && routeProviderEnabled(redirect.provider)) {
-        registeredRoute = redirect;
-      }
-    }
+    const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
     route = registeredRoute && routeProviderEnabled(registeredRoute.provider)
       ? registeredRoute
       : undefined;
@@ -2442,8 +2382,6 @@ async function handleResponses(request, response, requestUrl) {
     let flattenedNamespaces = new Map();
     // Normalize encrypted child payloads once before building the provider request.
     let normalizedInput;
-    let agingEnabled = false;
-    let agedInput;
     let searchContract;
     if (route && !switchyard) {
       // Resolve the selected route's search contract before encrypted handoff
@@ -2456,16 +2394,12 @@ async function handleResponses(request, response, requestUrl) {
         controller.signal,
       );
       searchContract = routedSearchContract(searchSnapshot, normalizedInput);
-      agingEnabled = toolResultAgingEnabled();
       const built = await prepareRoutedRequest({
         request,
         payload,
         route,
         normalizedInput,
-        agingEnabled,
       });
-      toolResultAging = built.toolResultAging;
-      agedInput = built.agedInput;
       namespacesFlattened = built.namespacesFlattened;
       flattenedNamespaces = built.flattenedNamespaces;
       pendingInterrupts = built.pendingInterrupts;
@@ -2479,13 +2413,8 @@ async function handleResponses(request, response, requestUrl) {
         callerKey: CALLER_KEY,
         internalKey: INTERNAL_KEY,
       });
-      // An extended-window variant is the model it was derived from, published
-      // under a second slug so the picker can offer a different context
-      // window (`src/native-context-variants.mjs`). chatgpt.com has never
-      // heard of that slug, so it is translated back here -- the last point
-      // before the turn leaves. Everything the operator reads keeps the slug
-      // they picked: `requestedModel` is untouched, so activity, usage, and
-      // the log still name the model the picker showed.
+      // Switchyard's public route maps to the native model selected by its
+      // local runtime. Native GPT requests keep their original model.
       if (switchyard) {
         native.model = route.upstreamModel;
       }
@@ -2498,18 +2427,6 @@ async function handleResponses(request, response, requestUrl) {
           statelessReasoning: substitutedCaller,
           dropUnstoredReasoningReferences: substitutedCaller && !compactV1,
         });
-        // Native turns leave here as stateless full conversations (the
-        // previous_response_id below is stripped), so an old tool result costs
-        // its full size on every turn of this path too. Compaction turns are
-        // exempt: compactV1 keeps its chaining, and a summary should read the
-        // true content rather than a receipt.
-        if (!compactV1 && !compactV2) {
-          const aged = ageToolResults(native.input, {
-            enabled: nativeToolResultAgingEnabled(),
-          });
-          native.input = aged.input;
-          toolResultAging = aged.stats;
-        }
       }
       // SF and other native multi-agent parents hit this path (model_provider
       // openai). They have the same Working-badge bug, so inventory the tools
@@ -2634,9 +2551,8 @@ async function handleResponses(request, response, requestUrl) {
     //
     // A routed provider that answers a large prompt with `input_tokens: 0` is
     // reporting something that cannot be true, and Codex reads exactly that
-    // number to decide when to compact -- opencode's Go endpoint did it for a
-    // whole model family and sessions ran past the context window and died
-    // (#95). The estimate below is offered only for those responses; the
+    // number to decide when to compact. The estimate below is offered only for
+    // those responses; the
     // predicate is structural (this request, these bytes, an explicit zero),
     // so it cannot fire on a provider that reports correctly and it disables
     // itself the moment the upstream starts reporting again.
@@ -2649,18 +2565,9 @@ async function handleResponses(request, response, requestUrl) {
             : undefined,
       });
       const transforms = [usageObserver];
-      let envelopeCompat = route
+      const envelopeCompat = route
         ? zaiResponsesCompatTransform(route.provider, contentType, route.slug)
         : undefined;
-      // LiteLLM Responses streams from GLM-5.3 can start assistant text after
-      // reasoning without its message envelope. Keep that repair route-scoped.
-      if (
-        !envelopeCompat &&
-        route?.provider === "zai-coding" &&
-        String(contentType).toLowerCase().includes("text/event-stream")
-      ) {
-        envelopeCompat = new ZaiResponsesCompatTransform();
-      }
       if (envelopeCompat) transforms.push(envelopeCompat);
       // Restore flattened namespace calls for routed chat-completions providers,
       // and inject missing finished-child interrupts for both routed and native
@@ -2973,10 +2880,6 @@ async function handleResponses(request, response, requestUrl) {
         `[codex-router] model=${route?.slug || requestedModel || "unknown"} provider=${route?.provider || "openai"} status=${finalStatus}${
           upstreamRetries ? ` retries=${upstreamRetries}` : ""
         }${estimatedInputTokens ? ` estimated-input-tokens=${estimatedInputTokens}` : ""}${
-          toolResultAging?.toolResultBytesSaved
-            ? ` aged-tool-results=${toolResultAging.toolResultsAged} saved-tool-bytes=${toolResultAging.toolResultBytesSaved}`
-            : ""
-        }${
           emptyCompletionRetried ? " empty-completion-retried=true" : ""
         }${
           emptyCompletionUnrepairable ? " empty-completion-unrepairable=true" : ""

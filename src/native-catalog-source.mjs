@@ -210,17 +210,6 @@ export function prepareNativeCatalogSourceFromConfig() {
   return { created: true, source };
 }
 
-export function activateNativeCatalogSource() {
-  const source = readNativeCatalogSource();
-  if (!source) throw new Error("Native catalog source state is missing.");
-  if (!readNativeCatalogFile(source.path)) {
-    throw new Error(`Configured native model catalog is unavailable or invalid: ${source.path}`);
-  }
-  if (source.status !== "active") {
-    writeNativeCatalogSource({ ...source, status: "active" });
-  }
-}
-
 export function clearNativeCatalogSource(options = {}) {
   const source = readNativeCatalogSource();
   if (!source || (options.pendingOnly && source.status !== "pending")) return false;

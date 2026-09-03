@@ -272,8 +272,8 @@ async function main() {
       "--port",
       String(PORTS.gateway),
     ]);
-  // LiteLLM cold starts can take minutes when launchd starves the job under
-  // system load; killing it mid-import restarts the import from scratch and
+  // LiteLLM cold starts can take minutes under heavy system load. Killing it
+  // mid-import restarts the import from scratch and
   // the service loops forever, so wait long enough for a starved import.
   const gatewayHealthy = (child) =>
     waitForHealth(

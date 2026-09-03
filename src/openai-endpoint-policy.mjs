@@ -37,9 +37,7 @@ export function providerModelEndpoint(provider) {
 
 export function supportsOpenAIModelEndpoint(route, { model, provider } = {}) {
   if (!ENDPOINTS.has(route)) return false;
-  // Messages-native providers do not expose OpenAI endpoint contracts. A
-  // hand-edited model declaration must not turn Anthropic's /v1 base into an
-  // embeddings base merely because both happen to carry JSON.
+  // A hand-edited provider declaration cannot create an endpoint contract.
   if (providerModelEndpoint(provider) === undefined) return false;
   const declared = normalizeSupportedEndpoints(model?.supportedEndpoints);
   if (declared !== undefined) return declared.includes(route);
