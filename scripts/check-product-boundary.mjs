@@ -24,9 +24,12 @@ const retainedConfig = [
   "config/switchyard/switchyard.json",
 ];
 const forbiddenPaths = [
+  /^\.github\/ISSUE_TEMPLATE\//u,
+  /^\.github\/workflows\/release\.yml$/u,
   /^docs-site\//u,
   /^bin\//u,
   /^hooks\//u,
+  /^src\/compat\//u,
   /^docs\/research\//u,
   /^maintenance\/retained-/u,
   /^scripts\/(?:capture-|run-retained-tests|aging-|live-test-|measure-)/u,

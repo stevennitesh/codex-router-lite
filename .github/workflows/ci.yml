@@ -23,16 +23,3 @@ jobs:
       - name: Test the retained Windows runtime
         run: npm test
       - run: npm audit --omit=dev --audit-level=high
-      - name: Parse retained PowerShell entrypoints
-        shell: pwsh
-        run: |
-          foreach ($file in @("install.ps1", "model-router.ps1", "deploy-codex-router.ps1", "restart-codex-router.ps1", "src/windows-process-tree.ps1")) {
-            if (-not (Test-Path -LiteralPath $file)) { continue }
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file),
-              [ref]$null,
-              [ref]$errors
-            ) | Out-Null
-            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
-          }

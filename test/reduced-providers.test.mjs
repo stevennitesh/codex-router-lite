@@ -64,11 +64,6 @@ test("checked-in routed config contains only GLM and Switchyard", () => {
     "config/switchyard/auto.json",
     "config/switchyard/switchyard.json",
   ]);
-  assert.equal(
-    readdirSync(path.join(root, "src", "compat"), { recursive: true })
-      .filter((entry) => String(entry).endsWith(".mjs")).length,
-    0,
-  );
 });
 
 test("LiteLLM owns only the OpenRouter GLM hop", () => {
