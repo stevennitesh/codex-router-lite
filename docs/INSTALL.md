@@ -39,19 +39,39 @@ The scheduled task and process must agree on launcher path, arguments, source ro
 
 ## Update
 
+Check for or apply a published Router Lite update from `origin/main`:
+
+```powershell
+.\model-router.ps1 codex update check
+.\model-router.ps1 codex update
+```
+
+The updater accepts this Router Lite repository as `origin`, fast-forwards only
+when the remote is ahead, and runs the installer. It refuses diverged history
+and restores the previous revision if installation fails. The read-only
+`upstream` remote is research input and is never an update target.
+
+After a Codex app, Codex CLI, Router upstream, or Switchyard upstream change,
+run the compatibility refresh from the source repository:
+
+```powershell
+.\maintenance\refresh-compatibility-state.ps1
+```
+
 `maintenance/windows-package.json` is the complete installed file list.
 `deploy-codex-router.ps1` stages and hash-checks exactly those files, snapshots
 the previous managed generation, and removes only files recorded by the prior
 deployment manifest. If install or Doctor fails, it restores, reinstalls, and
 checks the previous generation before returning the candidate failure.
 
-Use the guarded update transaction:
+Deploy edited source from the current checkout with:
 
 ```powershell
 .\deploy-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
 
-or, within the installed tree:
+Restart the existing installed files only when a configuration or provider
+selection change requires it:
 
 ```powershell
 .\restart-codex-router.ps1 -InstallDir <installed-router-directory>

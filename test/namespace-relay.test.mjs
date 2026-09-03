@@ -161,11 +161,25 @@ test("flattenNamespaceTools flattens every namespace, including MCP ones", () =>
 });
 
 test("full inventory survives merge + flatten with nothing dropped", () => {
+  const asyncUserInput = {
+    type: "function",
+    name: "request_user_input_async",
+    description: "Ask questions without ending the turn.",
+    parameters: {
+      type: "object",
+      properties: {
+        questions: { type: "array", items: { type: "object" } },
+      },
+      required: ["questions"],
+      additionalProperties: false,
+    },
+  };
   const inventory = [
     ...clientRoutedTools(),
     { type: "function", name: "write_stdin" },
     { type: "function", name: "update_plan" },
     { type: "function", name: "request_user_input" },
+    asyncUserInput,
     { type: "function", name: "apply_patch" },
     { type: "function", name: "web_search" },
   ];
@@ -175,9 +189,23 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
   assert.equal(flattened, true);
   const names = tools.map((tool) => tool.name);
   // Nothing standard dropped.
-  for (const name of ["exec_command", "write_stdin", "update_plan", "apply_patch", "view_image", "web_search"]) {
+  for (const name of [
+    "exec_command",
+    "write_stdin",
+    "update_plan",
+    "request_user_input",
+    "request_user_input_async",
+    "apply_patch",
+    "view_image",
+    "web_search",
+  ]) {
     assert.ok(names.includes(name), `${name} must survive`);
   }
+  assert.deepEqual(
+    tools.find((tool) => tool.name === "request_user_input_async"),
+    asyncUserInput,
+    "the catalog-gated async input schema must pass through unchanged",
+  );
   // Agent tools present (flattened).
   for (const name of ["collaboration__spawn_agent", "collaboration__wait_agent"]) {
     assert.ok(names.includes(name), `${name} must survive`);
@@ -233,6 +261,15 @@ test("response transform restores flattened calls to the native namespace shape"
         arguments: "{}",
       },
     },
+    {
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        name: "request_user_input_async",
+        call_id: "call_5",
+        arguments: '{"questions":[]}',
+      },
+    },
   ].map((event) => `data: ${JSON.stringify(event)}\n\n`);
   const transform = new NamespaceToolCallTransform(namespaces);
   const output = await collect(Readable.from(events).pipe(transform));
@@ -244,6 +281,8 @@ test("response transform restores flattened calls to the native namespace shape"
   assert.match(output, /"namespace":"mcp__node_repl"/);
   assert.match(output, /"name":"fetch_issue"/);
   assert.match(output, /"namespace":"mcp__codex_apps__github"/);
+  assert.match(output, /"name":"request_user_input_async"/);
+  assert.doesNotMatch(output, /"name":"request_user_input_async","namespace"/);
   assert.doesNotMatch(output, /collaboration__spawn_agent|codex_app__create_thread|mcp__node_repl__js/);
 });
 

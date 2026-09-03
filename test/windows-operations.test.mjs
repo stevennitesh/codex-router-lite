@@ -22,9 +22,11 @@ import {
   skipServiceManagerCall,
 } from "../src/service-write-guard.mjs";
 import {
+  classifyUpdateRelation,
   currentCheckoutInstaller,
   installationNeedsRefresh,
   parseArguments,
+  recognizedRepositoryUrl,
 } from "../src/update.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +39,7 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "restart-codex-router.ps1",
     "model-router.ps1",
     "maintenance/deploy-switchyard-candidate.ps1",
+    "maintenance/refresh-compatibility-state.ps1",
     "src/windows-process-tree.ps1",
   ]) {
     const target = path.join(root, name).replaceAll("'", "''");
@@ -109,6 +112,22 @@ test("Windows install and update retain one guarded service generation", () => {
     command: parseArguments(["rollback"]).command,
     force: true,
   });
+});
+
+test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {
+  assert.equal(recognizedRepositoryUrl("https://github.com/stevennitesh/codex-router-lite.git"), true);
+  assert.equal(recognizedRepositoryUrl("git@github.com:stevennitesh/codex-router-lite.git"), true);
+  assert.equal(recognizedRepositoryUrl("https://github.com/duolahypercho/codex-router.git"), false);
+  assert.equal(recognizedRepositoryUrl("https://example.test/custom.git", "https://example.test/custom.git"), true);
+});
+
+test("self-update distinguishes remote updates from local unpublished work", () => {
+  const ancestry = new Set(["old:new", "old:local"]);
+  const isAncestor = (left, right) => ancestry.has(`${left}:${right}`);
+  assert.equal(classifyUpdateRelation("same", "same", isAncestor), "synchronized");
+  assert.equal(classifyUpdateRelation("old", "new", isAncestor), "remote-ahead");
+  assert.equal(classifyUpdateRelation("local", "old", isAncestor), "local-ahead");
+  assert.equal(classifyUpdateRelation("left", "right", isAncestor), "diverged");
 });
 
 test("task identity and the test write guard fail closed", () => {

@@ -1,13 +1,19 @@
 // Snapshot of the Codex app's native app-side tool definitions.
 // Source: the live Codex Desktop tool registry on 2026-09-03, paired with
-// codex-cli 0.153.0-alpha.5. Keep this inventory synchronized with the current app
-// surface; client-provided definitions still win when the app sends them.
+// Windows app 26.901.2854.0 and codex-cli 0.153.0. Keep this inventory
+// synchronized with the current app surface; client-provided definitions still
+// win when the app sends them.
 // The app registers these tools with deferLoading and executes the calls
 // natively; the router relays the definitions to routed providers that
 // would otherwise never see them, and restores the namespace on the way back.
 
 export const CODEX_APP_NAMESPACE = "codex_app";
 export const CODEX_APP_TOOL_DELIMITER = "__";
+export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
+  capturedAt: "2026-09-03",
+  windowsAppVersion: "26.901.2854.0",
+  codexVersion: "codex-cli 0.153.0",
+});
 
 // The full app toolset as the client offers it to native models.
 export const CODEX_APP_TOOLS =

@@ -14,6 +14,16 @@ function git(args, options = {}) {
   return typeof output === "string" ? output.trim() : "";
 }
 
+export function recognizedRepositoryUrl(origin, configured = process.env.CODEX_ROUTER_REPOSITORY_URL) {
+  const allowed = new Set([
+    configured,
+    "https://github.com/stevennitesh/codex-router-lite",
+    "https://github.com/stevennitesh/codex-router-lite.git",
+    "git@github.com:stevennitesh/codex-router-lite.git",
+  ].filter(Boolean));
+  return allowed.has(origin);
+}
+
 function requireManagedCheckout() {
   if (!existsSync(path.join(SOURCE_ROOT, ".git"))) {
     throw new Error(
@@ -21,14 +31,7 @@ function requireManagedCheckout() {
     );
   }
   const origin = git(["remote", "get-url", "origin"]);
-  const configured = process.env.CODEX_ROUTER_REPOSITORY_URL;
-  const allowed = new Set([
-    configured,
-    "https://github.com/duolahypercho/codex-router",
-    "https://github.com/duolahypercho/codex-router.git",
-    "git@github.com:duolahypercho/codex-router.git",
-  ].filter(Boolean));
-  if (!allowed.has(origin)) {
+  if (!recognizedRepositoryUrl(origin)) {
     throw new Error(`The origin remote is not a recognized Codex Router repository: ${origin}`);
   }
 }
@@ -125,6 +128,25 @@ function revisionExists(revision) {
   }
 }
 
+function revisionIsAncestor(ancestor, descendant) {
+  const result = spawnSync(
+    "git",
+    ["-C", SOURCE_ROOT, "merge-base", "--is-ancestor", ancestor, descendant],
+    { stdio: "ignore", windowsHide: true },
+  );
+  if (result.error) throw result.error;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`Unable to compare Git revisions ${ancestor} and ${descendant}.`);
+}
+
+export function classifyUpdateRelation(current, available, isAncestor) {
+  if (current === available) return "synchronized";
+  if (isAncestor(current, available)) return "remote-ahead";
+  if (isAncestor(available, current)) return "local-ahead";
+  return "diverged";
+}
+
 function restoreRevision(revision) {
   git(["switch", "--detach", revision], { inherit: true });
   installCurrentCheckout();
@@ -135,7 +157,18 @@ export function checkForUpdate() {
   git(["fetch", "--quiet", "origin", "main"]);
   const current = git(["rev-parse", "HEAD"]);
   const available = git(["rev-parse", "origin/main"]);
-  return { current, available, updateAvailable: current !== available };
+  const relation = classifyUpdateRelation(current, available, revisionIsAncestor);
+  if (relation === "diverged") {
+    throw new Error(
+      "The managed main branch has diverged from origin/main; refusing an automatic update.",
+    );
+  }
+  return {
+    current,
+    available,
+    relation,
+    updateAvailable: relation === "remote-ahead",
+  };
 }
 
 export function installationNeedsRefresh(manifest, revision) {

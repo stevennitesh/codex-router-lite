@@ -37,3 +37,16 @@ test("Windows start uses the managed service and keeps foreground explicit", () 
   assert.match(dispatcher, /--foreground/);
   assert.match(dispatcher, /src\\foreground-start\.mjs/);
 });
+
+test("the compatibility refresh stays read-only", () => {
+  const refresh = readFileSync(
+    path.join(root, "maintenance", "refresh-compatibility-state.ps1"),
+    "utf8",
+  );
+  assert.match(refresh, /check-codex-catalog-compat\.mjs/);
+  assert.match(refresh, /src\/doctor\.mjs/);
+  assert.match(refresh, /@\("run", "check"\)/);
+  assert.match(refresh, /@\("test"\)/);
+  assert.doesNotMatch(refresh, /service\.mjs.*(?:install|start|stop|restart)/);
+  assert.doesNotMatch(refresh, /provider-key|caller-key|codex exec/);
+});

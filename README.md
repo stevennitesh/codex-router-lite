@@ -44,15 +44,19 @@ Check the installation:
 .\model-router.ps1 codex doctor
 ```
 
-A maintenance update must use the guarded transaction:
+A source checkout update from the Router Lite repository uses the guarded
+self-update and installer transaction:
 
 ```powershell
-.\restart-codex-router.ps1 -InstallDir <installed-router-directory>
+.\model-router.ps1 codex update check
+.\model-router.ps1 codex update
 ```
 
-Do not stop the service separately. The restart command owns the stop/start and
-readiness boundary for the files already installed. Deployment owns file
-replacement and rollback.
+To deploy edited source from the current checkout, use
+`.\deploy-codex-router.ps1 -InstallDir <installed-router-directory>`. Use
+`.\restart-codex-router.ps1 -InstallDir <installed-router-directory>` only to
+restart the files already installed. Do not stop the service separately.
+Deployment owns file replacement and rollback.
 
 ## How it works
 
@@ -77,6 +81,18 @@ npm run check
 npm test
 npm audit --omit=dev --audit-level=high
 ```
+
+After a Windows Codex app, Codex CLI, Router upstream, or Switchyard upstream
+update, refresh the complete maintenance state with one read-only command:
+
+```powershell
+.\maintenance\refresh-compatibility-state.ps1
+```
+
+The command does not restart Router or spend provider quota. A reported app
+tool mismatch still requires one ordinary Windows app turn to compare the live
+tool registry. A Switchyard upstream change still requires review and a pinned
+rebuild rather than an automatic merge.
 
 `npm test` is the normal retained-product suite. It directly covers native Codex, GLM, Switchyard, app functions, namespace restoration, encrypted subagent relay, v2 promotion, and Windows lifecycle behavior.
 

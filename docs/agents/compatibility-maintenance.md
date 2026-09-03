@@ -4,14 +4,34 @@ Use this guide for installed Codex drift, Windows Codex app behavior, OpenRouter
 
 ## Refresh current authority
 
-Before editing:
+From the repository root, run the read-only refresh first:
 
-1. Read `git status --short`, the active branch, `HEAD`, and `git remote -v`.
-2. Fetch `origin` and each relevant upstream without merging.
-3. Resolve the Codex executable used by the current Windows app or shell. Record `codex --version`.
-4. Run `node scripts/check-codex-catalog-compat.mjs <codex-executable>`.
-5. Read `.\model-router.ps1 codex status` and `.\model-router.ps1 codex doctor` without changing the service.
-6. Confirm whether the user authorized source edits, dependency changes, deployment, restart, commit, and push. These are separate permissions.
+```powershell
+.\maintenance\refresh-compatibility-state.ps1
+```
+
+It fetches repository heads, resolves and signature-checks the current Windows
+Codex build, compares it with the checked-in app-tool snapshot, checks the
+current native catalog, reads Router health, runs the retained suite, and
+reports Switchyard upstream drift. It does not edit files, consume provider
+quota, or restart the service. Use `-SkipFetch` only when offline and
+`-SkipTests` only for a quick diagnostic that will not support a compatibility
+claim.
+
+Before editing, confirm the report accounts for:
+
+1. The working tree, active branch, `HEAD`, `origin/main`, and `upstream/main`.
+2. The Windows package, resolved executable, signature, and `codex --version`.
+3. Native catalog parsing and the app-tool snapshot's paired build.
+4. Router health and the retained product checks.
+5. The locked and current Switchyard upstream commits when that route applies.
+6. Whether the user authorized source edits, dependency changes, deployment,
+   restart, commit, and push. These are separate permissions.
+
+An app-tool snapshot version mismatch is a required manual branch, not an
+automatic failure. Inspect the official Codex release notes and diff, capture
+the live tool registry from an ordinary Windows app turn, then update the
+snapshot and its narrow relay regression only when the contract changed.
 
 Never copy a versioned Codex app path into source. Never print keys, bearer tokens, account IDs, capability values, or unredacted protected metadata.
 

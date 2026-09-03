@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODEX_APP_TOOL_SNAPSHOT,
   CODEX_APP_TOOL_NAMES,
   CODEX_APP_TOOLS,
   mergeCodexAppTools,
   splitFlatCodexAppName,
 } from "../src/codex-app-tools.mjs";
+
+test("the app tool snapshot records its paired Windows and Codex builds", () => {
+  assert.match(CODEX_APP_TOOL_SNAPSHOT.windowsAppVersion, /^\d+(?:\.\d+){3}$/u);
+  assert.match(CODEX_APP_TOOL_SNAPSHOT.codexVersion, /^codex-cli \d+\.\d+\.\d+/u);
+  assert.match(CODEX_APP_TOOL_SNAPSHOT.capturedAt, /^\d{4}-\d{2}-\d{2}$/u);
+});
 
 // The reduced codex_app namespace the client actually sends on routed requests
 // (captured live: load_workspace_dependencies, navigate_to_codex_page,
