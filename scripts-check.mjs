@@ -20,6 +20,10 @@ for (const directory of directories) {
   }
 }
 
+execFileSync(process.execPath, [path.join(root, "src", "install-plan.mjs"), "verify-lock"], {
+  stdio: "inherit",
+});
+
 execFileSync(process.execPath, [path.join(root, "scripts", "check-product-boundary.mjs")], {
   stdio: "inherit",
 });

@@ -35,8 +35,6 @@ const {
 } = await import("../src/codex-native-session.mjs");
 const { NATIVE_SESSION_CONSENT_PATH } = await import("../src/paths.mjs");
 
-const { nativeClientModels } = await import("../src/native-client-models.mjs");
-
 const ACCESS = "sk-test-access-token";
 const ACCOUNT = "acct-0123456789";
 const API_KEY = "sk-test-codex-api-key";
@@ -211,12 +209,6 @@ test("an unrecognized consent marker fails closed", () => {
   assert.equal(nativeSessionAvailable(), false);
   writeFileSync(NATIVE_SESSION_CONSENT_PATH, '{"version":99,"sharing":"enabled"}\n', "utf8");
   assert.equal(nativeSessionAvailable(), false);
-});
-
-test("an empty or malformed native catalog publishes nothing", () => {
-  assert.deepEqual(nativeClientModels(undefined), []);
-  assert.deepEqual(nativeClientModels([]), []);
-  assert.deepEqual(nativeClientModels([{ display_name: "no slug" }]), []);
 });
 
 // The bug this file exists to prevent a repeat of: the first version of the

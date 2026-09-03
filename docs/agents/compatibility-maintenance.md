@@ -67,6 +67,21 @@ For a compatibility failure, preserve a sanitized event sequence and identify th
 
 Do not enable fallback or add another OpenRouter model as an outage response. A new provider or model is a separate product decision.
 
+### Python dependency lock
+
+Load this branch only when changing the LiteLLM or FastAPI pins. Update
+`PYTHON_REQUIREMENTS` in `src/install-plan.mjs` and `requirements/python.in`
+together, then regenerate the compiled lock from the repository root:
+
+```powershell
+uv pip compile --universal --generate-hashes --python-version 3.10 --output-file requirements/python.txt requirements/python.in
+```
+
+Run `npm run check` afterward. It rejects mismatched direct pins, a lock without
+the required compile flags or hashes, and installer commands that bypass the
+lock. Booting the gateway remains required before accepting a dependency
+upgrade; a successful resolution alone does not prove runtime compatibility.
+
 ## Root-cause rule
 
 Fix the first owner that violates its contract. A compatibility transform is justified only when the upstream wire behavior cannot be changed here. It needs an exact scope predicate and a regression that fails without it. Delete transforms that current retained routes do not use.

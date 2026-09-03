@@ -295,7 +295,8 @@ try {
     # pins in src/install-plan.mjs. Hash checking makes every wheel and sdist
     # in that tree verify against the lock before it is executed; without it
     # only the two top-level packages were pinned and the rest was whatever
-    # PyPI resolved that day. Regenerate with bin/lock-python, never by hand.
+    # PyPI resolved that day. Regenerate with the documented uv command, never
+    # by editing the compiled lock.
     & uv pip install --python $Python --require-hashes -r requirements/python.txt
     if ($LASTEXITCODE -ne 0) { throw "LiteLLM installation failed." }
     & node src/install-plan.mjs record python-deps

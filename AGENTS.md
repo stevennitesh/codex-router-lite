@@ -42,12 +42,11 @@ migration systems are outside the product and must not return.
   record or ADR it points to.
 - Load [`docs/agents/engineering-contract.md`](docs/agents/engineering-contract.md)
   only when an invoked engineering skill requires shared design judgment.
-- Generated media or scratch work: follow `Generated media and scratch output`.
 
 ## Commands
 
 - JavaScript syntax, product-boundary enforcement, and v2 application
-  validation: `npm run check`.
+  validation, including the Python dependency lock: `npm run check`.
 - Retained-product suite: `npm test`.
 
 ## Common implementation contract

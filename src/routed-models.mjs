@@ -11,6 +11,10 @@ const CONFIG_FILES = Object.freeze([
 ]);
 const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
 const EXPECTED_MODELS = new Set(["openrouter/glm-5.3-flash", "switchyard/auto"]);
+const EXPECTED_REQUEST_PROFILES = new Map([
+  ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
+  ["switchyard/auto", "switchyard-native"],
+]);
 
 function load(relativePath) {
   return JSON.parse(readFileSync(path.join(ROOT, relativePath), "utf8"));
@@ -39,6 +43,9 @@ for (const model of modelRecords) {
   if (!EXPECTED_PROVIDERS.has(model.provider)) {
     throw new Error(`Routed model ${model.slug} names unsupported provider ${model.provider}.`);
   }
+  if (model.requestProfile !== EXPECTED_REQUEST_PROFILES.get(model.slug)) {
+    throw new Error(`Routed model ${model.slug} has unsupported request profile ${model.requestProfile}.`);
+  }
 }
 
 const openRouter = modelRecords.find((model) => model.slug === "openrouter/glm-5.3-flash");
@@ -55,14 +62,11 @@ if (
 
 export const PROVIDERS = new Map(providerRecords.map((provider) => [provider.id, Object.freeze(provider)]));
 export const RUNTIME_PROVIDERS = PROVIDERS;
-export const RUNTIME_PROVIDER_WARNINGS = Object.freeze([]);
 export const CHECKED_IN_MODELS = Object.freeze(modelRecords.map((model) => Object.freeze(model)));
 export const MODELS = CHECKED_IN_MODELS;
 export const LISTED_MODELS = Object.freeze(MODELS.filter((model) => model.listed));
-export const API_MODELS = Object.freeze(MODELS);
 export const MODEL_BY_SLUG = new Map(MODELS.map((model) => [model.slug, model]));
 export const MODEL_BY_GATEWAY_ID = new Map(MODELS.map((model) => [model.gatewayModel, model]));
-export const MODEL_SLUG_ALIASES = new Map();
 
 export function providerForModel(model) {
   const provider = PROVIDERS.get(model?.provider);

@@ -778,12 +778,9 @@ function routedHeaders() {
 
 function routedSearchCompatibility(payload, route) {
   const searchMode = routedModelSearchMode(route);
-  const provider = providerForModel(route);
-  // Generic endpoints and the GLM Flash profile have no provider-owned hosted
-  // search contract. Other checked-in routes may intentionally preserve raw
-  // provider-specific search fields even when Codex does not advertise them.
-  const stripsUnsupportedSearch =
-    provider?.generic === true || route.requestProfile === "glm-5.3-flash";
+  // GLM Flash has no provider-owned hosted-search contract. Switchyard may
+  // preserve native search fields even when Codex does not advertise them.
+  const stripsUnsupportedSearch = route.requestProfile === "glm-5.3-flash";
   const compatiblePayload = !stripsUnsupportedSearch || searchMode !== undefined
     ? payload
     : stripUnsupportedHostedSearch(payload, { model: route.slug });
@@ -1124,9 +1121,7 @@ async function probeService(url) {
 async function healthPayload() {
   const enabled = new Set(readProviderSelection());
   const apiEnabled = [...RUNTIME_PROVIDERS.values()].some(
-    (provider) => provider.kind === "openai-compatible" && (
-      provider.generic === true || enabled.has(provider.id)
-    ),
+    (provider) => provider.kind === "openai-compatible" && enabled.has(provider.id),
   );
   const [api, gateway, switchyard] = await Promise.all([
     apiEnabled ? serviceHealth(API_HEALTH) : { reachable: true, enabled: false },
@@ -1163,15 +1158,10 @@ async function healthPayload() {
   };
 }
 
-// Generic providers are enabled by their own explicit descriptor and never
-// enter the built-in provider-selection document. The runtime registry
-// contains only descriptors whose enabled flag is true, so presence there is
-// the generic equivalent of a selected built-in provider. Credential
+// A retained route is visible only while its provider is selected. Credential
 // readiness remains the API forwarder's boundary, where an unavailable bound
 // reference produces the promised 503 instead of being mislabeled as hidden.
 function routeProviderEnabled(providerId) {
-  const provider = RUNTIME_PROVIDERS.get(providerId);
-  if (provider?.generic === true) return true;
   if (!readProviderSelection().includes(providerId)) return false;
   // Unlike API-key providers, Switchyard is the upstream process itself. A
   // stale selection must not admit a route after that process disappears.
@@ -2794,10 +2784,7 @@ async function handleResponses(request, response, requestUrl) {
           // Already drained above; a second `.text()` yields "".
           bodyText: failedBodyText ?? "",
           modelName: route.displayName || route.slug,
-          providerName:
-            provider?.transport === "ollama"
-              ? "Ollama"
-              : provider?.ownedBy || provider?.displayName || route.provider,
+          providerName: provider?.ownedBy || provider?.displayName || route.provider,
           providerKind: provider?.kind,
           providerAuthMode: provider?.authMode,
           retryAfterSeconds: retrySeconds,

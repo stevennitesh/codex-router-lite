@@ -380,6 +380,19 @@ function main(argv) {
     process.stdout.write(`${PYTHON_REQUIREMENTS.join("\n")}\n`);
     return 0;
   }
+  if (command === "verify-lock") {
+    const problems = [
+      ...pythonLockDrift(),
+      ...installerRequirementDrift().map(
+        (script) => `${script} must contain exactly two hash-checked Python lock installs`,
+      ),
+    ];
+    if (problems.length) {
+      throw new Error(`Python dependency lock verification failed:\n- ${problems.join("\n- ")}`);
+    }
+    process.stdout.write("Python dependency lock verified\n");
+    return 0;
+  }
   // `venv-home-ok` — 0/1 whether the recorded venv interpreter home still
   // exists. The installers use this to decide whether a *present* venv must
   // be cleared and recreated: `status python-deps` already returns "run" for
@@ -398,7 +411,7 @@ function main(argv) {
   }
   console.error(
     "Usage: install-plan.mjs status|record <node-deps|python-deps> | requirements | " +
-      "venv-home-ok | python-install-command <uv|pip> [windows]",
+      "verify-lock | venv-home-ok | python-install-command <uv|pip> [windows]",
   );
   return 2;
 }

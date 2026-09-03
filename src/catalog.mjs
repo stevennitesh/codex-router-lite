@@ -718,11 +718,6 @@ export function routedModel(
       if (!owns(behaviorTemplate, field)) delete next[field];
     }
   }
-  // ClinePass strips these unsupported request controls, so Codex must not offer them.
-  if (model.requestProfile === "clinepass") {
-    delete next.default_reasoning_level;
-    delete next.supported_reasoning_levels;
-  }
   // A few OpenAI-compatible upstreams reject tool scheduling the native
   // template advertises. Registry entries opt out explicitly so the picker
   // never offers a custom or parallel tool the provider backend will 400.

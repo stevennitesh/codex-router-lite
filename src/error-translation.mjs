@@ -113,12 +113,10 @@ function isOutOfUsage(detail, errorType) {
   return QUOTA_PATTERNS.some((pattern) => pattern.test(detail));
 }
 
-// Ollama's MLX runner returns this deterministic request-size failure as an
-// HTTP 500, and LiteLLM currently wraps it as APIConnectionError. Left as a
-// server error, Codex retries for minutes and eventually replaces the useful
-// cause with its generic high-demand message. The wording is emitted by
-// Ollama's runner after it has rendered and tokenized the complete chat
-// template, so it is authoritative context evidence even though the status is
+// Some upstreams return deterministic request-size failures as HTTP 500, and
+// LiteLLM may wrap them as APIConnectionError. Left as server errors, Codex
+// retries and can replace the useful cause with a generic high-demand message.
+// These messages are authoritative context evidence even when the status is
 // not.
 const CONTEXT_LENGTH_PATTERNS = [
   /input length \((\d+) tokens\) exceeds the model's maximum context length \((\d+) tokens\)/i,

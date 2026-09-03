@@ -30,7 +30,9 @@ const forbiddenPaths = [
   /^docs\/research\//u,
   /^maintenance\/retained-/u,
   /^scripts\/(?:capture-|run-retained-tests|aging-|live-test-|measure-)/u,
-  /^src\/(?:deepseek-tool-message-compat|direct-image-policy|login-free-|native-alias|native-context-variants|route-failure-policy|usage-events)\.mjs$/u,
+  /^scripts\/(?:verify-python-lock\.py|verify-skill-injection\.mjs)$/u,
+  /^src\/(?:deepseek-tool-message-compat|direct-image-policy|login-free-|native-alias|native-client-models|native-context-variants|request-profiles|route-failure-policy|usage-events)\.mjs$/u,
+  /^docs\/(?:DEVELOPMENT|HOW-IT-WORKS)\.md$/u,
   /^skills\/codex-router-media\//u,
 ];
 
