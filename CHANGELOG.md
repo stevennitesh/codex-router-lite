@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Switchyard is now an explicit, supervised local routing provider.** The
+  `switchyard/auto` route is published only when the pinned runtime is complete
+  and selected. Router owns the loopback-only authenticated hop, starts the
+  child in the same service generation, aggregates its health, and fails closed
+  if the child exits. The upstream commit, canonical compatibility patch, Rust
+  toolchain, route template, and deployed hashes are reproducible; deployment
+  uses a guarded rollback-owning transaction rather than a standalone stop.
+
 - Retry handling now honors both legal `Retry-After` forms, keeps an absent
   header distinct from an explicit zero, and avoids misleading `0s` advice.
 - Provider cooldowns now keep separately billed OpenCode Go and Zen allowances

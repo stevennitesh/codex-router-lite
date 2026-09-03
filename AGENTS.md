@@ -8,31 +8,37 @@ you are performing.
 
 - Inspect `git status`, the active branch, and the configured runtime paths.
   Preserve unrelated user changes.
-- Read the matching section of
-  [`docs/agents/router-maintenance.md`](docs/agents/router-maintenance.md) before
-  changing installation, providers, models, credentials, catalogs, relays,
-  service behavior, or client integration.
-- For Switchyard source, routing, rebuilds, or deployment, also read
-  [`config/switchyard/README.md`](config/switchyard/README.md). Its checked-in
-  patch, route template, and `source.lock` are authoritative; the installed
-  runtime is generated output.
+- Load only the branch-specific guide named below. Do not preload every
+  maintenance document.
 
 ## Route to the detailed runbook
 
-- Codex, DeepSeek Harness, Gemini CLI, Cursor, Claude Code, or OpenClaw setup:
-  read the corresponding outcome, procedure, and write-boundary sections.
+- Codex, DeepSeek Harness, Gemini CLI, Cursor, Claude Code, OpenClaw, API/OAuth
+  relay, response translation, or retry work:
+  read the corresponding outcome, procedure, and write-boundary sections in
+  [`docs/agents/router-maintenance.md`](docs/agents/router-maintenance.md).
 - Model, provider, context-window, vision, embeddings, anonymous endpoint, or
-  local-model work: read `Requests to install or expose more models` and the
-  provider-specific section involved.
-- GLM-5.3-Flash work: read `GLM-5.3-Flash routes` and `Routed subagent regression
-  prevention`.
-- Service, gateway, update, rollback, or installer work: read the lifecycle and
-  installation sections before operating on a live runtime.
+  local-model work: read `Requests to install or expose more models` and only
+  the provider-specific section involved in that runbook.
+- Codex native catalog, app functions/tools, namespace relay, installed-version
+  drift, Windows Codex app, OpenRouter, or GLM-5.3-Flash work: read
+  [`docs/agents/compatibility-maintenance.md`](docs/agents/compatibility-maintenance.md).
+- Switchyard source, routes, rebuilds, startup, health, or deployment: after the
+  compatibility guide, read [`config/switchyard/README.md`](config/switchyard/README.md).
+  Its checked-in patch, route template, and `source.lock` are authoritative;
+  the installed runtime is generated output.
+- Control Center or desktop tray work: read
+  [`apps/control-center/README.md`](apps/control-center/README.md) for the
+  cross-platform app and [`docs/MACOS-TRAY.md`](docs/MACOS-TRAY.md) only for the
+  native macOS host.
+- Service, gateway, update, rollback, or installer work: read the matching
+  lifecycle and installation sections in the detailed runbook before touching
+  a live runtime.
 - Credential, discovery-disabled, proxy, or remote-endpoint work: read the
   matching security boundary and preserve its fail-closed behavior.
-- Subagent claims or v2 declarations: read `Subagent capability is researched,
-  not asserted` and the routed subagent regression section. Bind acceptance to
-  exact route and runtime evidence.
+- Subagent claims, selection semantics, proof artifacts, or v2 declarations:
+  read [`docs/SUBAGENT-CERTIFICATION.md`](docs/SUBAGENT-CERTIFICATION.md). Bind
+  registry acceptance to exact route and runtime evidence.
 - Generated media or scratch work: follow `Generated media and scratch output`.
 
 ## Common implementation contract
@@ -43,9 +49,10 @@ you are performing.
 - Keep one active runtime. Build third-party sources in a disposable checkout;
   retain only the reproducible pin, canonical patch, and active deployed
   artifacts described by their integration runbook.
-- Never issue a standalone Router stop during maintenance. Use the guarded
-  restart entry point, or one independent rollback-owning transaction that
-  restores and starts the previous runtime on failure.
+- Never issue a standalone Router stop during maintenance. On Windows use
+  `restart-codex-router.ps1 -InstallDir <intended-install-root>`; elsewhere use
+  the guarded service restart named by `src/router-restart.mjs`. A deployment
+  transaction must restore and start the previous runtime on failure.
 - Keep secrets out of source, command output, logs, fixtures, and support
   bundles. Use the protected stores and generated placeholders described by the
   runbook.

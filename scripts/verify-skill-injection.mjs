@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 export const PACK_SKILLS = [
   "codex-router",
+  "codex-router-media",
   "codex-app-threads",
   "codex-in-app-browser",
   "codex-computer-use",

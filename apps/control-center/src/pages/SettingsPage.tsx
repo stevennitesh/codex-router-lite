@@ -114,6 +114,10 @@ export function SettingsPage({ target, health, presence, chatgptSession, account
     [repairReport],
   );
   const sessionSharingEnabled = chatgptSession?.sharing === "enabled";
+  const followsCodexPresence = api?.platform === "darwin";
+  const presenceMode = followsCodexPresence && presence?.mode === "follow-codex"
+    ? "follow-codex"
+    : "always";
   const sessionLoginLabel = chatgptSession?.session === "usable"
     ? (typeof chatgptSession.expiresInHours === "number"
       ? t("settings.chatgptSession.status.loginUsableHours", { hours: chatgptSession.expiresInHours })
@@ -336,18 +340,24 @@ export function SettingsPage({ target, health, presence, chatgptSession, account
           </section>
 
           <section className="panel-section">
-            <SectionHeading title={t("settings.service.title")} description={t("settings.service.description")} />
+            <SectionHeading
+              title={t("settings.service.title")}
+              description={followsCodexPresence ? t("settings.service.description") : undefined}
+            />
             <div className="settings-list">
               <div className="setting-row">
-                <div><strong>{t("settings.presence.title")}</strong><small>{t("settings.presence.detail")}</small></div>
+                <div>
+                  <strong>{t("settings.presence.title")}</strong>
+                  {followsCodexPresence ? <small>{t("settings.presence.detail")}</small> : null}
+                </div>
                 <select
                   aria-label={t("settings.presence.title")}
-                  value={presence?.mode || "always"}
+                  value={presenceMode}
                   disabled={!api}
                   onChange={(event) => api && void runAction("Change presence mode", () => api.setPresence(event.target.value as "always" | "follow-codex"))}
                 >
                   <option value="always">{t("settings.presence.always")}</option>
-                  <option value="follow-codex">{t("settings.presence.followCodex")}</option>
+                  {followsCodexPresence ? <option value="follow-codex">{t("settings.presence.followCodex")}</option> : null}
                 </select>
               </div>
               <div className="setting-row static-row">

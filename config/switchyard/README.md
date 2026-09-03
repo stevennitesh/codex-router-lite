@@ -1,220 +1,260 @@
 # Switchyard integration
 
-This directory is the source of truth for Codex Router's Switchyard integration.
-Do not keep a permanent Switchyard checkout or archived runtime copies. The
-installed files under `C:\Users\steve\.codex\switchyard` are generated or
-deployed artifacts, not editable source.
+This directory is the source of truth for Codex Router's Switchyard
+integration. The active runtime under `%CODEX_HOME%\switchyard` (or
+`CODEX_ROUTER_SWITCHYARD_ROOT`) is generated output, not editable source.
+Never keep a permanent upstream checkout or alternate runtime tree.
 
-## Ownership and locations
+Load only the section needed for the task:
 
-| Item | Authoritative location | Notes |
-|---|---|---|
-| Router integration and tests | This repository root | Owns the catalog, request handling, provider selection, and process supervision. |
-| Switchyard source change | `config\switchyard\patches\switchyard-codex-compat.patch` | Apply to the upstream commit recorded in `source.lock`. |
-| Routing policy template | `config\switchyard\routes.template.toml` | Contains no generated local caller key. |
-| Optional worker role | `config\switchyard\switchyard_worker.toml` | Source for `%CODEX_HOME%\agents\switchyard_worker.toml`. |
-| Active runtime | `C:\Users\steve\.codex\switchyard` | Keep only deployed binary, active routes, provenance, routing history, and current logs. |
+- request, catalog, WebSocket, or trust-boundary work: **Security and request
+  flow** and **Codex compatibility**;
+- startup or health failures: **Runtime supervision and diagnosis**;
+- upstream refresh or patch work: **Update the pin and patch**, then **Build
+  from source.lock**;
+- live replacement: **Stage and validate**, then **Deploy and roll back**;
+- subagent publication: **Switchyard v2 promotion** plus the linked general
+  certification guide.
 
-There is no permanent Switchyard source clone. Rebuild from a disposable checkout.
-The runtime directory is necessary because Router launches an installed binary, but
-it must not become a second source tree.
+## Authority and installed artifacts
 
-## Request flow
+| Item | Authority | Rule |
+| --- | --- | --- |
+| Router catalog, dispatch, provider selection, health, and supervision | repository source and tests | Router remains the sole client/catalog owner. |
+| Upstream source identity | `source.lock` | Use the exact repository, commit, Rust toolchain, binary path, patch path, and patch SHA-256. |
+| Switchyard changes | `patches/switchyard-codex-compat.patch` | Apply only to the locked commit. Do not maintain a fork checkout. |
+| Routing policy | `routes.template.toml` | The template contains no generated Router capability. |
+| Optional named worker | `switchyard_worker.toml` | Install at `%CODEX_HOME%\agents\switchyard_worker.toml` only when requested. |
+| Active runtime | `%CODEX_HOME%\switchyard` by default | Keep the active binary, private `routes.toml`, provenance, routing history, current logs, and at most one in-progress rollback set. |
 
-1. Codex sends the selected model to Codex Router.
-2. Native Sol, Terra, Luna, GLM-5.3-Flash, and other picker entries stay on their existing routes.
-3. Only `switchyard/auto` uses the `switchyard-native` request profile.
-4. Router sends ordinary `switchyard/auto` turns to Switchyard on
-   `127.0.0.1:4000` as uncompressed Responses JSON. A separate ephemeral
-   local-hop capability authenticates this request without replacing the
-   caller's `Authorization` header.
-5. Switchyard classifies the turn, selects a Luna or Sol target and effort, then
-   sends it back through Router's authenticated loopback Responses endpoint.
-6. `forward_auth = true` preserves the Codex login headers for the native ChatGPT
-   backend.
+An installed hash or proof is evidence about one deployment. It never overrides
+the checked-in lock, patch, template, or current Router source.
 
-Router remains the only catalog owner. Switchyard is one separately selectable
-model. It never replaces the default provider, merged catalog, or native models.
+## Security and request flow
 
-## Why the Switchyard patch exists
+1. Codex sends `switchyard/auto` to Codex Router. Native Sol, Terra, Luna,
+   GLM-5.3-Flash, and other picker entries keep their existing routes.
+2. Router sends uncompressed native Responses JSON to Switchyard on loopback.
+   A fresh per-service-generation capability authenticates every Switchyard
+   endpoint except `/health`; Router removes that header before any upstream
+   request.
+3. Switchyard classifies the turn, chooses a configured Luna or Sol target and
+   effort, and sends the native request back through Router's capability-gated
+   Responses endpoint.
+4. `forward_auth = true` preserves the original Codex authorization and account
+   envelope for the native ChatGPT backend. Switchyard must not substitute or
+   log it.
 
-Upstream Switchyard identifies targets by the upstream model ID and lets caller
-request fields win over target defaults. That cannot represent several effort
-variants of the same native model safely. The patch adds:
+The managed address must remain loopback-only. `/v1/models`, `/v1/decision`,
+and serving endpoints must return 401 without the local-hop capability;
+`/health` remains the unauthenticated liveness leaf. Decision output must not
+expose target base URLs, credentials, account headers, or capabilities.
 
-- `routing_id`, a unique local identity for each target while `id` remains the
-  exact model sent upstream;
-- `body_overrides`, recursively merged after caller fields so the selected
-  target owns `reasoning.effort`, `store`, and `stream` without erasing native
-  reasoning siblings such as context and summary controls; and
-- `remove_body_fields`, applied last to strip fields rejected by the upstream;
-- raw Responses item inspection for Codex tool outputs, so custom, computer,
-  shell, and tool-search continuations retain the selected target instead of
-  being mistaken for a new user turn; and
-- forwarding of the common `priority` service tier to the hidden classifier
-  request as well as the selected serving request;
-- capability enforcement on every server endpoint except `/health`, with the
-  local-hop header removed before any upstream request; and
-- redaction of target base URLs from `/v1/decision` responses.
+## Why the canonical patch exists
 
-Every configured target enforces `store = false` and `stream = true` and removes
-`max_output_tokens`. The ChatGPT subscription Responses backend requires this
-shape. The patch also documents and tests the new fields.
+The locked upstream identifies targets by model ID and lets caller fields win
+over target defaults. That cannot safely represent several effort variants of
+the same native model. The patch adds and tests:
+
+- `routing_id` as the local target identity while `id` remains the upstream
+  model;
+- recursive `body_overrides`, then `remove_body_fields`, so the chosen route
+  owns effort, `store`, `stream`, and unsupported fields without erasing native
+  reasoning siblings;
+- raw Responses item inspection so custom, computer, shell, and tool-search
+  continuations retain the selected target;
+- `priority` propagation to classifier and serving requests;
+- local-hop capability enforcement and removal; and
+- target-URL redaction in decision output.
+
+Every target sets `store = false`, `stream = true`, and removes
+`max_output_tokens` for the ChatGPT subscription Responses backend.
 
 ## Routing policy
 
-- `luna-high` handles closed, low-risk work with cheap verification.
-- `luna-max` handles difficult but tightly specified and strongly verifiable work.
-- `sol-medium` is the default for ambiguity, weak verification, or judgment.
-- `sol-high` handles hard diagnosis, architecture, migrations, security, and
+- `luna-high`: closed, low-risk work with cheap verification.
+- `luna-max`: difficult but tightly specified and strongly verifiable work.
+- `sol-medium`: ambiguity, weak verification, or judgment.
+- `sol-high`: hard diagnosis, architecture, migrations, security, and
   consequential review.
-- `sol-xhigh` is reserved for exceptional quality-first or recovery work.
+- `sol-xhigh`: exceptional quality-first or recovery work.
 
-The full classifier prompt and schema live in `routes.template.toml`.
+The classifier prompt and schema live only in `routes.template.toml`.
 
-## V2 subagents
+## Codex compatibility
 
-`switchyard/auto` currently advertises Codex multi-agent v1. Its earlier v2
-application lives at `v2_agent/switchyard/auto/`, but it is a draft for the new
-runtime candidate because the accepted observations predate the pinned upstream
-commit and compatibility patch. After deployment, rerun the exact-route encrypted
-child, marker, continuation, and forced-tool checks and bind the proof to the
-deployed source, patch, binary, Router commit, and route hashes before promoting
-the catalog entry back to v2.
+The public `switchyard/auto` entry derives its context, compaction behavior,
+instructions, model messages, modalities, tools, service tiers, and other
+native capabilities from the current installed Sol behavior template. Its
+authored picker effort ladder remains Switchyard-owned. Do not freeze a copied
+native field list here or in the route fragment.
 
-## Compaction and request compatibility
+Router keeps Codex compaction requests on the native public route rather than
+sending them through Switchyard's auxiliary compaction endpoint. The optional
+named worker must not set `model_context_window` or
+`model_reasoning_summary`; omission preserves catalog-owned defaults.
 
-Switchyard owns ordinary turns only in this integration. Although the pinned
-server exposes an auxiliary Responses compaction endpoint, Router does not send
-either Codex compaction form through it. Router detects v1 endpoint requests and
-v2 terminal compaction triggers and sends both directly to the native model behind
-the public route. Router also skips routed-agent input
-normalization for the Switchyard profile because the selected native model receives
-the original Codex request after Switchyard chooses the target.
+Router owns the Codex WebSocket edge. It authenticates and translates each
+complete WebSocket request into the canonical HTTP Responses path, so
+Switchyard itself receives plain HTTP JSON. This is not a client fallback and
+does not authorize a second WebSocket implementation in Switchyard.
 
-The public `switchyard/auto` catalog entry derives its context and compaction
-contract from the current native Sol behavior template whenever Router publishes
-the catalog. When `auto_compact_token_limit` is absent, Codex derives its native
-threshold as 90 percent of the resolved context window. Router preserves that
-absence. It separately preserves the token-budget and context-reset controls in
-`model_messages`; those controls do not set the automatic compaction threshold.
-The context values therefore follow the installed Codex catalog instead of being
-frozen in this integration. Switchyard's internal routes may retain their larger
-model context windows; those limits do not control when the Codex client compacts
-its task history.
+The common `priority` tier may pass because every configured Luna and Sol
+target supports it. Sol-only tiers stay hidden from the public routed entry.
 
-The Codex-facing entry also inherits the request contract of its native Sol behavior
-template: native instructions and model messages, image input, web search, verbosity,
-original image detail, parallel/custom tools, Responses Lite, and code-only tool mode.
-The route keeps its own picker effort ladder because Switchyard, not the picker,
-chooses the downstream model and effort. The optional `switchyard_worker` role must
-not set `model_context_window` or `model_reasoning_summary`; omitting both lets root
-and worker sessions use the same catalog-owned native defaults.
-Its checked-in source is `config\switchyard\switchyard_worker.toml`; copy that file
-to `%CODEX_HOME%\agents\switchyard_worker.toml` when installing or refreshing the
-named role. Codex v2 inherited children already use the root's Switchyard model and
-do not require the named role.
+## Runtime supervision and diagnosis
 
-The local Router endpoint currently has no WebSocket relay. Current Codex builds
-may attempt the upgrade and then fall back to the supported HTTP Responses stream. This is a
-transport latency/logging difference, not a request-shape or agent-behavior change.
-The `priority` Fast service tier is advertised and passed through because every Sol
-and Luna target supports it. The Sol-only `ultrafast` tier stays hidden; advertising
-it on the routed root would send an unsupported tier whenever the classifier chooses
-Luna. Codex subagents can inherit the common Fast tier from the root.
-
-Codex may send zstd-compressed native requests. The local Switchyard hop receives
-plain JSON because Switchyard currently accepts JSON bodies, not Codex's zstd
-request encoding.
-
-## Runtime supervision
-
-Router starts Switchyard only when the `switchyard` provider is selected. Router
-refuses a managed non-loopback address, launches the installed binary, waits for
-`/health`, observes its exit, and owns its lifetime. While selected, Switchyard is
-also a steady-state Router health dependency and appears as `switchyard` in the
-fixed `degraded` set when unreachable. Do not start a second Switchyard process.
+Router starts Switchyard only when the `switchyard` provider is selected. It
+validates the installed binary and route file, rejects non-loopback overrides,
+waits for `/health`, watches the child, and owns its lifetime. Do not start a
+second process. A Switchyard exit ends the Router generation so the OS
+supervisor can rebuild one coherent stack.
 
 Defaults and supported overrides:
 
-- runtime root: `%CODEX_HOME%\switchyard` or `CODEX_ROUTER_SWITCHYARD_ROOT`;
+- root: `%CODEX_HOME%\switchyard` or `CODEX_ROUTER_SWITCHYARD_ROOT`;
 - binary: `switchyard-server.exe` or `CODEX_ROUTER_SWITCHYARD_BIN`;
-- route config: `routes.toml` or `CODEX_ROUTER_SWITCHYARD_CONFIG`; and
-- local Responses address: `http://127.0.0.1:4000/v1` or
+- config: `routes.toml` or `CODEX_ROUTER_SWITCHYARD_CONFIG`;
+- address: `http://127.0.0.1:4000/v1` or
   `CODEX_ROUTER_SWITCHYARD_BASE_URL`.
 
-Use Router's own controls. Enabling or disabling Switchyard requires one supervised
-Router restart because provider selection changes the child-process set.
+Diagnose the first failing owner instead of restarting blindly:
+
+| Observation | Meaning and action |
+| --- | --- |
+| Provider enable is blocked | Binary or route file is incomplete. Compare runtime status with the lock and staged artifacts. |
+| Selected provider starts with a warning but no child | The previously selected runtime is now incomplete. Repair/deploy it before re-enabling; do not create a placeholder. |
+| Non-loopback override is refused | Expected fail-closed behavior. Restore loopback; do not widen the listener. |
+| 401 from `/v1/models`, `/v1/decision`, or serving endpoints | Expected without the ephemeral hop capability. Test through Router unless specifically proving the negative boundary. |
+| `local-hop capability is unavailable` | Router and Switchyard were not started as one supervised generation. Find the lifecycle/config split; do not paste a static capability into files. |
+| Router health reports `degraded: ["switchyard"]` | The selected child is unreachable. Inspect the supervised child exit and active config before any restart. |
+| Switchyard exits and the whole Router service exits | Expected generation ownership. Fix the child root cause; the service supervisor restarts the coherent stack. |
+
+Provider selection changes the supervised child set and therefore requires one
+guarded Router restart:
 
 ```powershell
 $routerRoot = (& git rev-parse --show-toplevel).Trim()
 & (Join-Path $routerRoot "model-router.ps1") codex providers enable switchyard
-& (Join-Path $routerRoot "restart-codex-router.ps1")
-Invoke-RestMethod http://127.0.0.1:4000/health -TimeoutSec 2
+& (Join-Path $routerRoot "restart-codex-router.ps1") -InstallDir $routerRoot
 ```
 
-Never issue a standalone stop during maintenance. Use the guarded restart command,
-which owns both shutdown and startup.
+Never issue a standalone stop during maintenance.
 
-## Route deployment
+## Update the pin and patch
 
-`routes.template.toml` deliberately contains
-`__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__`. The real URL contains Router's
-generated local caller capability and must not enter source control, issues, logs,
-or support bundles. Obtain the current managed `openai_base_url` from the local
-Codex configuration without printing it, substitute it into a staged runtime
-`routes.toml`, validate the staged config, then deploy it through a guarded restart.
-That downstream URL capability is distinct from the ephemeral Router-to-Switchyard
-capability generated at service startup. The latter is passed only in process
-environment and a dedicated request header; it is never written into `routes.toml`
-or forwarded to the native backend.
+An upstream release or branch update is research input, not an automatic
+upgrade. Fetch the upstream repository in a disposable checkout, inspect the
+full diff from the locked commit, choose an exact new commit, rebase the
+canonical patch deliberately, and update every field in `source.lock`. Review
+security, Responses events, tool calls, classifier behavior, configuration
+schema, and build dependencies before accepting the new pin.
 
-## Rebuild
+Do not edit the lock merely because upstream `main` moved or a release tag was
+published. The reviewed commit plus canonical patch is the candidate.
 
-`source.lock` pins the upstream repository, commit, Rust toolchain, patch path, and
-patch SHA-256. Use a disposable checkout:
+## Build from source.lock
+
+Run from the Router repository in PowerShell. This parses the lock once and
+verifies the patch before touching upstream source:
 
 ```powershell
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]::NewGuid())
 $routerRoot = (& git rev-parse --show-toplevel).Trim()
-$patchPath = Join-Path $routerRoot "config\switchyard\patches\switchyard-codex-compat.patch"
-git clone https://github.com/NVIDIA-NeMo/Switchyard.git $buildRoot
-git -C $buildRoot checkout --detach 7a72c0667774244d66a8b631e375c9d6e393bf57
+$configRoot = Join-Path $routerRoot "config\switchyard"
+$lock = Get-Content -Raw -LiteralPath (Join-Path $configRoot "source.lock") | ConvertFrom-Json
+$patchPath = Join-Path $configRoot $lock.patch
+$patchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $patchPath).Hash.ToLowerInvariant()
+if ($patchHash -ne $lock.patchSha256.ToLowerInvariant()) { throw "Switchyard patch hash does not match source.lock" }
+$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]::NewGuid())
+git clone $lock.repository $buildRoot
+git -C $buildRoot checkout --detach $lock.commit
 git -C $buildRoot apply --check $patchPath
 git -C $buildRoot apply $patchPath
+rustup toolchain install $lock.rustToolchain --profile minimal
 Push-Location $buildRoot
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner
-cargo build --release -p switchyard-server
+rustup run $lock.rustToolchain cargo fmt --all --check
+rustup run $lock.rustToolchain cargo clippy --workspace --all-targets -- -D warnings
+rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server
+rustup run $lock.rustToolchain cargo build --release -p switchyard-server
 Pop-Location
+$candidateBinary = Join-Path $buildRoot ($lock.binary -replace '/', '\')
+$candidateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $candidateBinary).Hash.ToLowerInvariant()
 ```
 
-Before deployment, verify that Router can build a custom catalog from the target
-Codex binary and that the same binary can parse it:
+Keep `$buildRoot`, `$candidateBinary`, `$candidateHash`, and `$lock` for the
+staging transaction. Delete the disposable checkout after deployment evidence
+and rollback retention are resolved.
+
+## Stage and validate
+
+`routes.template.toml` contains
+`__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__`. The replacement URL contains the
+private Router caller capability. Read it from managed Codex configuration
+without printing it, substitute it into a private staged `routes.toml`, and
+apply the current-user ACL before validation. The service-generation
+Router-to-Switchyard capability is different and must never be written to this
+file.
+
+Stage the binary, route file, and provenance under the active runtime root so
+the final replacements stay on one volume. Before stopping anything, run:
 
 ```powershell
-node scripts/check-codex-catalog-compat.mjs "C:\path\to\desktop-codex.exe"
+& $candidateBinary --config $stagedRoutes --dry-run
+$codexBinary = node --input-type=module -e "import {findCodexBinary} from './src/codex-binary.mjs'; process.stdout.write(findCodexBinary() || '')"
+if (-not $codexBinary) { throw "Current Codex binary was not found" }
+node scripts/check-codex-catalog-compat.mjs $codexBinary
+npm run check
+node --test test/switchyard-runtime.test.mjs test/routing.test.mjs test/catalog.test.mjs
 ```
 
-The check validates the current nested model-message controls and routed
-capability fields. It uses a temporary catalog and does not change the active
-Codex or Router configuration.
+The catalog script checks current native-field inheritance and the specific
+Switchyard/GLM catalog assertions. It does not validate the patch, route-file
+privacy, local-hop authentication, loopback binding, decision redaction, or
+runtime health; those need their own checks above and below.
 
-Validate the new binary with the active route configuration before replacement.
-After a guarded replacement, verify Router health, Switchyard `/health`, the merged
-catalog, and one routed smoke request. Delete the disposable checkout afterward.
+## Deploy and roll back
 
-## Provenance and retention
+A guarded restart only restarts the files already installed. It does **not**
+copy a rebuilt binary or route file. Because Windows may lock the active
+executable, live replacement must be one independent rollback-owning
+transaction, not a sequence of ad hoc stop/copy/start commands.
 
-The currently installed binary may predate this source lock until the next
-guarded restart. `SOURCE_COMMIT` records the deployed binary; `source.lock`
-records the reproducible candidate built from upstream commit
-`7a72c0667774244d66a8b631e375c9d6e393bf57` and the canonical patch in this
-directory.
+The transaction must:
 
-Keep only the active binary, active `routes.toml`, `SOURCE_COMMIT`, routing history,
-and current service logs under `.codex\switchyard`. An upgrade may create one
-temporary rollback binary. Remove it after health and smoke checks pass. Do not
-retain activation scripts, PID files, standalone model catalogs, old route trees,
-build output, or permanent source checkouts.
+1. Confirm the intended `-InstallDir`, active runtime root, candidate hashes,
+   staged-route dry run, and current Router health.
+2. Snapshot the exact active binary, `routes.toml`, `SOURCE_COMMIT`, and any
+   provenance file into one private same-volume rollback directory. Record
+   which files did not previously exist.
+3. Enter one `try`/rollback boundary; stop the Router service inside that
+   boundary, replace the complete staged set, write the locked commit and
+   binary/patch/route/Router hashes, then start the same service and wait for
+   readiness.
+4. On any copy, start, or readiness failure, stop the failed generation if
+   needed, restore the exact prior set including prior absences, start it, and
+   prove its health before returning the original failure.
+5. After the candidate is healthy, verify Router health, Switchyard `/health`,
+   unauthenticated 401 responses on protected Switchyard endpoints, merged
+   catalog parsing, installed binary/config/provenance hashes, and—only when
+   separately authorized—one quota-consuming routed smoke.
+6. Retain one rollback set until all authorized acceptance checks pass, then
+   delete the disposable checkout and rollback set. Never keep alternate active
+   runtime trees, activation scripts, PID files, or standalone catalogs.
+
+If no command or reviewed script owns that entire transaction, stop and add
+one before deploying. Do not claim that a restart performed a deployment, and
+do not weaken the no-standalone-stop rule to work around the missing owner.
+
+## Switchyard v2 promotion
+
+`switchyard/auto` is currently v1. Its prior draft under
+`v2_agent/switchyard/auto/` predates the locked candidate and cannot authorize
+promotion. Read
+[`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
+for the five general checks. Switchyard additionally requires the proof's
+runtime binding to record the deployed upstream commit, patch SHA-256, binary
+SHA-256, Router commit, and generated-routes SHA-256.
+
+Recertify after any change to one of those identities or to the native
+collaboration/tool namespace contract. Do not duplicate the general v2
+procedure here.

@@ -387,7 +387,7 @@ test("Windows and Linux never trust linked package ancestors or resources", () =
         `${platform} must not certify a linked package root`,
       );
 
-      rmSync(packageRoot, { force: true });
+      rmSync(packageRoot, { recursive: true, force: true });
       mkdirSync(packageRoot, { recursive: true });
       writeFileSync(path.join(packageRoot, executable), "binary");
       writeFileSync(path.join(externalResources, "app.asar"), "archive");

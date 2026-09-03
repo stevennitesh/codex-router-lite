@@ -21,6 +21,7 @@ import { spawnableCommand } from "./codex-binary.mjs";
 import { VERIFICATION_CHECKS } from "./subagent-proofs.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const TOOL_CALL_MODES = new Set(["forced", "auto"]);
 
 export const CHECK_LABELS = Object.freeze({
   streaming: "streamed reply",
@@ -97,6 +98,9 @@ export function recordApplicationEvidence(
   if (!checksComplete(checks)) {
     throw new Error(`Refusing to record incomplete v2 evidence for ${slug}`);
   }
+  if (!TOOL_CALL_MODES.has(checks.toolCall.mode)) {
+    throw new Error(`Refusing to record v2 evidence without a known tool-call mode for ${slug}`);
+  }
   const applicationPath = path.join(applicationsRoot, ...parts, "proof.json");
   if (!existsSync(applicationPath)) {
     throw new Error(`Missing v2 application for ${slug}: ${applicationPath}`);
@@ -109,6 +113,7 @@ export function recordApplicationEvidence(
       outcome: "pass",
       ...(Number.isInteger(check.status) ? { status: check.status } : {}),
       ...(check.completion === "codex-task-complete" ? { completion: check.completion } : {}),
+      ...(name === "toolCall" ? { mode: check.mode } : {}),
       observedAt: check.observedAt,
     };
   }
@@ -425,7 +430,7 @@ async function runHttpChecks({ slug, baseUrl, secret, timeoutMs }) {
   try {
     const forced = await toolProbe({ type: "function", name: "codex_router_probe" });
     if (forced.ok) {
-      results.toolCall = pass(forced.status);
+      results.toolCall = { ...pass(forced.status), mode: "forced" };
     } else if (STATUS_ABOUT_THE_ACCOUNT.has(forced.status)) {
       results.toolCall = deferred(forced.status, forced.detail || `forced tool call returned HTTP ${forced.status}`);
     } else {

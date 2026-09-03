@@ -5,6 +5,12 @@ CLI** the router already integrates. This guide covers T3 Code. Nothing here
 changes that app's own subscriptions, history, or settings beyond the additive
 model configuration the router owns.
 
+Treat a wrapper as inheriting an existing client contract. Create a new
+compatibility target only when the app speaks a genuinely different protocol
+or owns different credentials/state; follow the conditional client procedure
+in [`agents/router-maintenance.md`](agents/router-maintenance.md) rather than
+copying it here.
+
 ## T3 Code
 
 [T3 Code](https://betterstack.com/community/guides/ai/t3-code/) is a GUI that
@@ -15,6 +21,7 @@ install.
 
 1. Install the router for the CLI T3 Code drives:
    - Codex adapter → `./install.sh --target codex --guided`.
+   - Codex adapter on Windows → `./install.ps1 -Target codex -Guided`.
 2. Fully quit and reopen T3 Code so its adapter reloads the model list.
 3. Pick the added model in T3 Code's model selector; project context and thread
    history are preserved by T3 Code as usual.

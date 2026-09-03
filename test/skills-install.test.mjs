@@ -19,7 +19,6 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 import {
   approveExternalSkills,
   revokeExternalSkills,
@@ -29,7 +28,6 @@ import {
   packSkillNames,
   skillOwnershipPath,
   skillPackStatus,
-  skillRequiredFields,
   uninstallSkills,
 } from "../src/skills-install.mjs";
 
@@ -1134,52 +1132,6 @@ test("installedSkillsFresh flags a missing managed skill", () => {
     assert.ok(stale.includes("codex-router"));
   } finally {
     rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("the skill's declared required fields match the app snapshot", () => {
-  const codexApp = CODEX_APP_TOOLS.find((entry) => entry.name === "codex_app");
-  assert.ok(codexApp, "codex_app namespace present in snapshot");
-  const byName = new Map(codexApp.tools.map((fn) => [fn.name, fn]));
-  const expected = skillRequiredFields();
-  assert.deepEqual(expected, {
-    create_thread: ["prompt", "target"],
-    read_thread: ["threadId"],
-    send_message_to_thread: ["threadId", "prompt"],
-  });
-  for (const [name, want] of Object.entries(expected)) {
-    const fn = byName.get(name);
-    assert.ok(fn, `snapshot carries ${name}`);
-    assert.deepEqual(
-      [...(fn.inputSchema?.required || [])].sort(),
-      [...want].sort(),
-      `${name} required fields match the skill pack`,
-    );
-  }
-  // The skills text must actually say create_thread needs prompt AND target.
-  const threadsSkill = readFileSync(
-    path.join(skillsRoot(), "codex-app-threads", "SKILL.md"),
-    "utf8",
-  );
-  assert.match(threadsSkill, /requires TWO fields: `prompt` \(string\) and `target`/);
-});
-
-test("a missing or malformed skill contract is reported as unavailable", () => {
-  const fakeSource = mkdtempSync(path.join(os.tmpdir(), "codex-skills-source-"));
-  try {
-    const dir = path.join(fakeSource, "codex-app-threads");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, "SKILL.md"), "# no contract\n");
-    process.env.CODEX_ROUTER_SKILLS_DIR = fakeSource;
-    assert.equal(skillRequiredFields(), undefined);
-    writeFileSync(
-      path.join(dir, "SKILL.md"),
-      '<!-- codex-router-required-fields: {"create_thread":"prompt"} -->\n',
-    );
-    assert.equal(skillRequiredFields(), undefined);
-  } finally {
-    delete process.env.CODEX_ROUTER_SKILLS_DIR;
-    rmSync(fakeSource, { recursive: true, force: true });
   }
 });
 

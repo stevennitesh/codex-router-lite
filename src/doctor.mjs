@@ -59,11 +59,7 @@ import {
   SOURCE_ROOT,
   TARGET,
 } from "./paths.mjs";
-import { CODEX_APP_TOOLS } from "./codex-app-tools.mjs";
-import {
-  skillPackStatus,
-  skillRequiredFields,
-} from "./skills-install.mjs";
+import { skillPackStatus } from "./skills-install.mjs";
 import { discoveryDisabled } from "./discovery-mode.mjs";
 import { credentialLabel } from "./provider-credentials.mjs";
 import { providerApiKeyPoolsSnapshot } from "./provider-api-key-pool.mjs";
@@ -1610,32 +1606,6 @@ if (codexTarget) {
       actions.join("; "),
     );
   }
-  // The declaration comes from the skill itself, then is compared with the
-  // app snapshot. This makes the check evidence about the shipped skill text
-  // rather than a comparison between two JavaScript literals.
-  const expectedRequired = skillRequiredFields();
-  const codexApp = CODEX_APP_TOOLS.find((entry) => entry.name === "codex_app");
-  const toolsByName = new Map((codexApp?.tools || []).map((fn) => [fn.name, fn]));
-  const drift = [];
-  if (!expectedRequired) {
-    drift.push("skill declaration is missing or malformed");
-  } else {
-    for (const [name, expected] of Object.entries(expectedRequired)) {
-      const fn = toolsByName.get(name);
-      const have = [...(fn?.inputSchema?.required || [])].sort();
-      if (!fn || JSON.stringify(have) !== JSON.stringify([...expected].sort())) {
-        drift.push(`${name} (skill declares [${expected.join(", ")}], snapshot requires [${have.join(", ")}])`);
-      }
-    }
-  }
-  add(
-    drift.length === 0 ? "ok" : "warn",
-    "Codex skill pack schema match",
-    drift.length === 0
-      ? "skill declaration matches the app toolset snapshot"
-      : `skill shapes drifted from the snapshot: ${drift.join("; ")}`,
-    "co-revise the skill pack together with src/codex-app-tools.mjs",
-  );
 }
 
 if (codex && catalogOk && routedTransportActive && credentialDiscoveryOff) {

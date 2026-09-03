@@ -9,9 +9,12 @@ the Subagents column in the Control Center.
 
 ## What "v2" is, and what "v1" is not
 
-`v2` means the route provably carries Codex's native collaboration: the parent
-delegates through the encrypted payload relay, the child answers, and it answers
-again on a follow-up in the same thread.
+The checked-in registry uses `v2` for a route whose accepted application shows
+that it carries Codex's native collaboration: the parent delegates through the
+encrypted payload relay, the child answers, and it answers again on a follow-up
+in the same thread. An operator can also publish a route as effective v2 with
+`selected` or `all`. That makes it spawnable locally; it is an operator override,
+not repository certification.
 
 `v1` is **not** a lesser working mode. Nothing spawns a v1 route as a subagent:
 
@@ -33,7 +36,7 @@ From `v2_agent/README.md`, in the order a reviewer reproduces them:
 | Check | What it proves |
 |---|---|
 | `streaming` | a streamed Responses turn emits text and completes |
-| `toolCall` | a forced function call returns the requested name and valid JSON arguments |
+| `toolCall` | a function call returns the requested name and valid JSON arguments; an exact request profile may require offered `auto` selection |
 | `encryptedRelay` | a native Codex parent delegates a child through the encrypted payload relay |
 | `markerReturn` | the child returns an exact marker |
 | `sameThreadFollowUp` | a same-thread follow-up returns a second marker |
@@ -45,10 +48,10 @@ promotion gate exists.
 
 ## Three ways a route becomes v2
 
-1. **The operator selects it.** This is the ordinary path and the one almost
-   everyone uses. `subagents mode selected` plus `subagents set <slug> on`
-   promotes that route, writes its agent definition, and Codex can spawn it by
-   name. `mode all` does the same for every non-hidden route. See
+1. **The operator advertises it locally.** `subagents mode selected` plus
+   `subagents set <slug> on` publishes that route as effective v2, writes its
+   agent definition, and lets Codex spawn it by name. `mode all` does the same
+   for every non-hidden route. Neither path proves compatibility. See
    `.claude/skills/codex-subagents/SKILL.md`; `applyMultiAgentSettings` is where
    it happens.
 2. **The registry.** `multiAgentVersion: "v2"` checked in, alongside an accepted
@@ -69,35 +72,34 @@ What is **not** a fourth way: the legacy diagnostic statuses in the proofs file
 > definition on disk. If you are changing that function, the modes are the
 > feature, not a formality — and `subagent-report.mjs` is how you check.
 
-## A ChatGPT account cannot certify a routed model
+## Choose the certification execution surface
 
-Checks 3–5 cannot complete while Codex is signed in with a ChatGPT account.
-Codex says so in the parent's own message:
+The standalone `codex exec` certification runner cannot complete checks 3–5
+for a routed child while that CLI is signed in with a ChatGPT account. Codex
+reports:
 
 ```
 The '<provider>/<model>' model is not supported when using Codex with a
 ChatGPT account.
 ```
 
-This is a property of the harness and the account, not of the route, so it
-records as **deferred** — never as a refusal. Do not "fix" it by relaxing the
-promotion gate.
+This is a property of that CLI execution surface and account mode, not a route
+refusal, so the runner records it as **deferred**. Do not relax the promotion
+gate. The Codex desktop app's native orchestration path is a valid reproduction
+surface when it can create the exact routed child, return both markers, and
+preserve the evidence required below.
 
 Two things that look like a way out and are not:
 
 - **Signed routing** (`set_signed_routing`) declares a provider block with
   `requires_openai_auth = true`. That is the same ChatGPT-account auth, so it
   changes nothing here.
-- **Marking the candidate v2 in the catalog** is already done: Codex only
-  offers a subagent for a route its catalog marks v2, so the run builds a
-  private catalog copy with just the candidate marked. That clears an earlier
-  "not supported with the current ChatGPT account" error and gets as far as the
-  refusal above — it does not get past it.
+- **Marking the candidate v2 in the catalog** only makes the route eligible for
+  selection. It does not prove the encrypted relay or same-child follow-up.
 
-The remaining untested path is running Codex under `auth_mode: "apikey"` rather
-than `"chatgpt"`. The wording of the refusal implies an API key would be
-accepted, but that has not been verified, and it bills separately from a
-ChatGPT plan. Verify before promising anyone this works.
+Running the standalone CLI under `auth_mode: "apikey"` remains unverified and
+may bill separately from a ChatGPT plan. Verify before documenting it as a
+supported certification path.
 
 ## What has already been verified, and what has not
 
@@ -108,10 +110,10 @@ Do not re-run these. They cost quota and the answers are recorded here.
 | Does the caller endpoint serve `chat/completions`? | **No.** It answers Responses at `<callerBase>/responses` and takes the caller key as a bearer. | A 404 was once reported to the operator as "this model cannot run subagents". |
 | Can a route stream through the router? | **Yes** for every route tried. | `deepseek/deepseek-v4-flash-vision-exp` returned HTTP 200 with a real SSE stream. |
 | Does a forced `tool_choice` work everywhere? | **No.** A reasoning route can reject the forcing mode itself — *"Thinking mode does not support this tool_choice"* — while calling the tool correctly when simply offered it. | `opencode-go/deepseek-v4-flash-vision-exp`: forced → 400, `auto` → 200 with `{"token": "ok"}`. Codex does not force tool_choice in ordinary use. |
-| Can checks 3-5 complete under a ChatGPT account? | **No.** See the section above. | Codex states it in the parent's own message. |
+| Can the standalone `codex exec` runner complete checks 3-5 under a ChatGPT account? | **No.** See the section above. | Codex states it in the parent's own message. The desktop app path is separate and has completed accepted applications. |
 | Does marking the candidate v2 in a private catalog help? | **Partly.** It clears an earlier "not supported with the current ChatGPT account" error and gets as far as the refusal above. It does not get past it. | Already implemented in the runner. |
 | Is signed routing a way around that? | **No.** Its provider block is `requires_openai_auth = true` — the same account. | `managedSignedProviderBlock` in `config-manager.mjs`. |
-| Do Ox Alpha, Fugu Ultra or Inkling have a registry certification? | **No.** The registry has seven v2 routes and none of them is one of these. | They reach v2 through operator selection instead. |
+| Do Ox Alpha, Fugu Ultra or Inkling have a registry certification? | **No.** Query the current registry rather than copying a route count here. | An operator may advertise them locally; that is not certification. |
 
 Statuses that answer about the account or the moment — 401, 402, 403, 408, 429,
 5xx, aborts and timeouts — are recorded as **deferred**, never as a refusal, and
@@ -163,26 +165,29 @@ that cannot stream never pays for a delegation. On a complete pass it writes
 
 This is the part that matters for cost.
 
-- **Same machine.** The verified record persists. It does **not** expire on a
-  router upgrade — what the checks measure is the provider route, and a patch
-  bump does not change the provider. `PROOF_EPOCH` in `src/subagent-proofs.mjs`
-  exists to invalidate records deliberately if a future change makes old
-  evidence untrue; do not add per-version expiry back.
+- **Same machine.** The current local gate binds only the exact slug, five
+  passing outcomes, and `PROOF_EPOCH`; it is not an immutable fingerprint of
+  the provider route or Codex build. Raise the epoch and recertify after a
+  change to provider or upstream binding, request profile, endpoint policy,
+  collaboration schema, tool namespace relay, or compatibility code. Do not
+  add automatic expiry for an unrelated package-version bump.
 - **Everyone else.** A passing run writes
   `v2_agent/<provider>/<model>/proof.json` with the real outcomes and
   timestamps. Commit it, open the PR, and once it is accepted **with the
   matching registry change in the same PR**, every installer gets the route as
   v2 and nobody runs the checks again.
 
-So the intended lifecycle is: verify once locally → the artifact is written for
-you → PR → registry → nobody pays again.
+So the intended lifecycle is: verify once for a stable exact route → write the
+artifact → PR with the registry change → reuse the accepted historical evidence
+until a listed compatibility boundary changes.
 
 ## Rules for agents changing this code
 
-1. **Never promote on partial evidence.** `verifiedForRoute()` requires all five
-   checks passing, the record's slug matching the route exactly, and the current
-   epoch. A run that reached three checks must leave a record that promotes
-   nothing.
+1. **Never promote on partial evidence.** `verifiedForRoute()` currently
+   requires all five checks passing, the record's slug matching the route
+   exactly, and the current epoch. A run that reached three checks must leave a
+   record that promotes nothing. Because this is slug-plus-epoch binding,
+   invalidate and recertify after any semantic route change listed above.
 2. **A record promotes only its own route.** `deepseek/deepseek-v4-flash` and
    `openrouter/deepseek-v4-flash` are separate applications: different
    credential, adapter, and tool handling.
@@ -213,6 +218,31 @@ you → PR → registry → nobody pays again.
 | `src/subagent-verify.mjs` | the older cheap two-request probe — **diagnostic only**, do not conflate with the above |
 | `src/multi-agent-state.mjs` | resolves effective v2 claims for catalog, agents dir, and doctor |
 | `v2_agent/` | applications; the review gate for shipping a route to every installer |
+
+## Encrypted relay implementation invariants
+
+Load this section only when changing the collaboration relay, native/external
+message translation, or test state isolation.
+
+- A normal `/responses` smoke does not cover native collaboration. A delegated
+  task may arrive as native `encrypted_content`, which an external model cannot
+  read.
+- The relay is signed-in-only and fail-closed. Preserve streaming, recognize
+  valid padded Fernet ciphertext by format rather than readability, and never
+  forward unreadable ciphertext to an external route.
+- In the reverse direction, a routed child can place readable handoff text in
+  `agent_message.content[].encrypted_content`. Before a native `/responses` or
+  `/responses/compact` request, convert non-Fernet values to `input_text` and
+  preserve valid Fernet values byte-for-byte. Do not add a Router sentinel to
+  data the Router did not author.
+- Never log relay bodies, decrypted task text, or exceptions that can echo
+  either. Regressions need fragmented or mislabeled SSE coverage plus a real
+  marker return and same-child follow-up.
+- A test that invokes catalog publication with scratch Router state must also
+  isolate `CODEX_HOME`; the managed agents directory is derived from
+  `$CODEX_HOME/agents`, not `MODEL_ROUTER_STATE_DIR`. Otherwise a test can prune
+  the operator's real routed agent definitions. `test/state-owner.test.mjs`
+  enforces this boundary.
 
 ## Tests that must keep passing
 

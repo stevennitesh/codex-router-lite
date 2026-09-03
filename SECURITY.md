@@ -10,8 +10,11 @@ intentional exception: the router reuses the official Kimi CLI session under
 
 Codex Router keeps every credential class on a distinct path:
 
-- ChatGPT/Codex authentication is allow-listed only for native GPT, image, and
-  standalone web-search requests.
+- ChatGPT/Codex authentication is allow-listed only for native GPT, image,
+  standalone web-search, and the authenticated local Switchyard hop. Switchyard
+  is loopback-only and also requires a per-generation Router capability; it
+  preserves the native authorization envelope for its selected native route and
+  never logs or substitutes those headers.
 - Kimi Code OAuth is read from the official Kimi CLI directory and sent only to
   the Kimi Code managed endpoint.
 - Kimi Platform API keys are sent only to the configured Kimi Platform endpoint.
@@ -20,10 +23,11 @@ Codex Router keeps every credential class on a distinct path:
   account endpoint and sent only to the GitHub-owned inference endpoint that
   account metadata selects.
 
-External requests never receive ChatGPT account IDs, Codex installation IDs,
-attestation headers, or the caller's authorization header. The loopback gateway
-uses a random internal key, which the final forwarder replaces with exactly one
-provider credential.
+External provider requests never receive ChatGPT account IDs, Codex
+installation IDs, attestation headers, or the caller's authorization header.
+The Switchyard exception terminates at the authenticated loopback process. The
+ordinary loopback gateway uses a random internal key, which the final forwarder
+replaces with exactly one provider credential.
 
 No provider credential is written to the model registry, catalog, Codex config,
 generated LiteLLM config, logs, or health responses. Codex config does contain a
@@ -33,27 +37,22 @@ protected or redacted.
 
 ## Local secret storage
 
-Router state lives under `$CODEX_HOME/codex-router` by default:
+Router state lives under `$CODEX_HOME/codex-router` by default. Treat these
+categories as private rather than maintaining a filename inventory here:
 
-| File | Purpose | Mode |
-| --- | --- | --- |
-| `internal-secret` | Random loopback service key | `600` |
-| `caller-secret` | Random capability used by that app target's router requests | `600` |
-| `kimi-api-key.secret` | Optional Kimi Platform key | `600` |
-| `deepseek-api-key.secret` | Optional DeepSeek key | `600` |
-| `clinepass-api-key.secret` | Optional ClinePass key | `600` |
-| `xai-api-key.secret` | Optional xAI key | `600` |
-| `anthropic-api-key.secret` | Optional Anthropic key | `600` |
-| `github-copilot-token.secret` | Optional fine-grained GitHub token with Copilot Requests permission | `600` |
-| `orcarouter-api-key.secret` | Optional OrcaRouter API key | `600` |
-| `native-models.json` | Cached native Codex catalog | `600` |
-| `merged-models.json` | Native plus registry model catalog | `600` |
-| `litellm.yaml` | Generated routes with environment references only | `600` |
-| `enabled-providers.json` | Picker visibility, no credential values | `600` |
-| `provider-catalog-cache.json` | Model ids each provider published, no credential values | `600` |
-| `install-manifest.json` | Installed version and rollback metadata | `600` |
-| `migrations/` | Protected config/service rollback snapshots | private |
-| `support/` | Locally generated diagnostic bundles | `600` files |
+- caller and internal service capabilities;
+- every provider file declared by `credential.file` in `config/`;
+- generated catalogs, route configs, discovery caches, selection state, and
+  account/session metadata;
+- install manifests, migrations, rollback snapshots, support bundles, and
+  local proof records;
+- the generated Switchyard runtime, route file, provenance, and routing history
+  under `$CODEX_HOME/switchyard` unless an explicit runtime root is configured.
+
+`src/paths.mjs` owns Router state paths, provider fragments own credential-file
+names, and `src/switchyard-runtime.mjs` owns the Switchyard root. New state must
+join the same private-file and ACL policy instead of being added to a prose
+allowlist.
 
 The router can read provider keys from process environment or compatible
 legacy macOS Keychain services. The interactive helper writes protected local
@@ -75,9 +74,9 @@ a generated config from a live installation.
 
 ## Network boundary
 
-The router, LiteLLM gateway, OAuth forwarder, and API forwarder bind only to
-`127.0.0.1`. Every model route requires a random caller capability, which Codex carries
-in the managed URL.
+The router, LiteLLM gateway, OAuth forwarders, API forwarder, and Switchyard
+bind only to `127.0.0.1`. Every model route requires a random caller capability,
+which Codex carries in the managed URL.
 Internal gateway and forwarder routes require a separate random service key,
 and credential-detail health responses are authenticated.
 Model requests must use JSON; requests with browser-origin headers are rejected,

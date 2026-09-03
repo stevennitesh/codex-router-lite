@@ -55,6 +55,8 @@ function acceptedProof() {
     officialSources: ["https://api-docs.deepseek.com/models/alpha"],
     testedAt: now,
     routerVersion: "0.5.0",
+    codexVersion: "0.153.0-alpha.5",
+    executionSurface: "codex-desktop-native",
     checks: Object.fromEntries(
       ["streaming", "toolCall", "encryptedRelay", "markerReturn", "sameThreadFollowUp"]
         .map((name) => [name, { outcome: "pass", status: 200, observedAt: now }]),
@@ -68,6 +70,55 @@ test("an accepted application requires all native collaboration evidence", () =>
   assert.deepEqual(validateV2AgentApplications(root, { models: ACCEPTED_MODELS }), [{
     provider: "example", model: "alpha", slug: "example/alpha", status: "accepted",
   }]);
+});
+
+test("accepted applications bind the tested Codex build and execution surface", () => {
+  for (const field of ["codexVersion", "executionSurface"]) {
+    const root = temporaryRoot(`v2-agent-provenance-${field}-`);
+    const proof = acceptedProof();
+    delete proof[field];
+    application(root, proof);
+    assert.throws(
+      () => validateV2AgentApplications(root, { models: ACCEPTED_MODELS }),
+      new RegExp(field),
+    );
+  }
+
+  const invalid = temporaryRoot("v2-agent-provenance-surface-");
+  const proof = acceptedProof();
+  proof.executionSurface = "unknown";
+  application(invalid, proof);
+  assert.throws(
+    () => validateV2AgentApplications(invalid, { models: ACCEPTED_MODELS }),
+    /executionSurface/,
+  );
+});
+
+test("applications validate optional tool-call selection modes", () => {
+  for (const mode of ["forced", "auto"]) {
+    const root = temporaryRoot(`v2-agent-tool-mode-${mode}-`);
+    const proof = acceptedProof();
+    proof.checks.toolCall.mode = mode;
+    application(root, proof);
+    assert.equal(validateV2AgentApplications(root, { models: ACCEPTED_MODELS })[0].status, "accepted");
+  }
+
+  const invalidRoot = temporaryRoot("v2-agent-tool-mode-invalid-");
+  const invalid = acceptedProof();
+  invalid.checks.toolCall.mode = "sometimes";
+  application(invalidRoot, invalid);
+  assert.throws(
+    () => validateV2AgentApplications(invalidRoot, { models: ACCEPTED_MODELS }),
+    /checks\.toolCall\.mode must be "forced" or "auto"/,
+  );
+
+  const invalidDraftRoot = temporaryRoot("v2-agent-tool-mode-invalid-draft-");
+  invalid.status = "draft";
+  application(invalidDraftRoot, invalid);
+  assert.throws(
+    () => validateV2AgentApplications(invalidDraftRoot, { models: [] }),
+    /checks\.toolCall\.mode must be "forced" or "auto"/,
+  );
 });
 
 test("an accepted native check may pair client-cancel metering with Codex task completion", () => {

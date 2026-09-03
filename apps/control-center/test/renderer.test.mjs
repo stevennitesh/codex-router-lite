@@ -16,6 +16,7 @@ const bridgeSource = String.raw`
   let navigationListener;
   let operationListener;
   const searchParams = new URLSearchParams(location.search);
+  const platform = searchParams.get("platform") || (navigator.platform.toLowerCase().includes("mac") ? "darwin" : "linux");
   let usageDelayMs = Number(searchParams.get("usageDelayMs")) || 0;
   let cursorHarnessState = "configured";
   let openclawHarnessConfigured = true;
@@ -205,7 +206,7 @@ const bridgeSource = String.raw`
   };
 
   window.routerControl = Object.freeze({
-    platform: navigator.platform.toLowerCase().includes("mac") ? "darwin" : "linux",
+    platform,
     getSnapshot: async () => {
       await new Promise((resolve) => setTimeout(resolve, snapshotDelayMs));
       return snapshot;
@@ -233,6 +234,7 @@ const bridgeSource = String.raw`
       return providers;
     },
     getPresence: async () => ({ mode: "always" }),
+    setPresence: async (mode) => { record("setPresence", mode); return { mode }; },
     getHealth: async () => {
       healthReads += 1;
       const read = healthReads;
@@ -942,6 +944,40 @@ test("the production renderer exposes model discovery and picker actions", { tim
     assert.deepEqual(corruptPoolErrors, []);
     await corruptPoolPage.close();
     assert.deepEqual(pageErrors, [], `renderer errors: ${pageErrors.join("; ")}`);
+  } finally {
+    await browser.close();
+    await close();
+  }
+});
+
+test("presence following is offered only on macOS", { timeout: 120_000 }, async () => {
+  assert.equal(existsSync(path.join(dist, "index.html")), true, "npm test must build the renderer first");
+  assert.ok(chromiumPath, "No Chromium executable is available for the Control Center renderer test.");
+
+  const { url, close } = await serveRenderer();
+  const browser = await chromium.launch({
+    executablePath: chromiumPath,
+    headless: true,
+    args: process.platform === "linux" ? ["--no-sandbox"] : [],
+  });
+  try {
+    const linuxPage = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+    await linuxPage.goto(`${url}?platform=linux`, { waitUntil: "domcontentloaded" });
+    await linuxPage.getByRole("button", { name: "Settings", exact: true }).click();
+    const linuxPresence = linuxPage.getByRole("combobox", { name: "Presence mode" });
+    assert.deepEqual(await linuxPresence.locator("option").allTextContents(), ["Always"]);
+    assert.equal(await linuxPage.getByText("With Codex", { exact: true }).count(), 0);
+    await linuxPage.close();
+
+    const macPage = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+    await macPage.goto(`${url}?platform=darwin`, { waitUntil: "domcontentloaded" });
+    await macPage.getByRole("button", { name: "Settings", exact: true }).click();
+    const macPresence = macPage.getByRole("combobox", { name: "Presence mode" });
+    assert.deepEqual(await macPresence.locator("option").allTextContents(), ["Always", "With Codex"]);
+    await macPresence.selectOption("follow-codex");
+    await macPage.waitForFunction(() => window.routerControlTest.calls()
+      .some((call) => call.name === "setPresence" && call.args[0] === "follow-codex"));
+    await macPage.close();
   } finally {
     await browser.close();
     await close();

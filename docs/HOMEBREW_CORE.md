@@ -6,11 +6,12 @@ no application form: the submission is a pull request adding
 yet, so the public install remains the explicit tap until that pull request is
 merged.
 
-As checked on August 28, 2026, the repository is more than 30 days old and its
-stars and forks exceed Homebrew's self-submission notability threshold. v0.5.0
-is stable but predates the Homebrew desktop-build guard; submit v0.5.1 or newer.
-Recheck those facts immediately before opening the pull request instead of
-treating this note as permanent approval.
+As checked on September 2, 2026, the repository is more than 30 days old and
+its stars and forks exceed Homebrew's self-submission notability threshold.
+The published v0.5.1 release and checked-in formula include the desktop-build
+guard. Recheck those facts, the chosen stable release, and the generated
+formula immediately before opening the pull request instead of treating this
+note as permanent approval.
 
 The formula is intentionally CLI-first. It installs the router, provider
 setup, background service, and browser panel; it does not build or download the
@@ -20,17 +21,17 @@ out of Homebrew setup avoids mutating the keg or downloading application code
 at runtime, and keeps the formula aligned with `homebrew/core` rather than a
 native-app cask.
 
-Do not submit the formula while its source URL still points at v0.5.0. Publish
-v0.5.1 from the commit containing this change, then let the release workflow
-regenerate the formula URL and checksum before copying it into `homebrew-core`.
+Do not assume v0.5.1 remains the submission candidate. Select the current
+stable release at submission time, then require its tag, package version,
+archive, generated formula URL, and checksum to agree.
 
 ## Before submitting
 
 - Confirm the upstream repository is still at least 30 days old.
-- Publish the next release containing the Homebrew desktop-build guard and
-  identify it explicitly as stable. A beta or release candidate is not
-  eligible. The tag, `package.json` version, source archive name, formula
-  version, and release URL must agree.
+- Confirm the selected release contains the Homebrew desktop-build guard and is
+  explicitly stable. A beta or release candidate is not eligible. The tag,
+  `package.json` version, source archive name, formula version, and release URL
+  must agree.
 - Confirm the repository still meets Homebrew's self-submission notability
   threshold: 90 forks, 90 watchers, or 225 stars.
 - Confirm the release archive is immutable and that the formula contains its

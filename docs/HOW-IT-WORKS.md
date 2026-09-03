@@ -1,21 +1,26 @@
 # How Codex Router works
 
-The provider core has one app frontend: Codex uses the Responses API and a
-merged native catalog.
+Codex Router has one shared routing plane and several client publishers. Codex
+uses the Responses API and a merged native catalog; DeepSeek Harness, Gemini,
+Cursor, Claude Code, and OpenClaw consume the same routed-provider state through
+their own client contracts.
 
 ## Why a router is needed
 
 The Codex App expects the Responses API and a Codex-shaped model catalog.
-Kimi and DeepSeek expose OpenAI-compatible Chat Completions APIs with different
-authentication and request details. Codex Router bridges those contracts while
-leaving native GPT traffic on the normal ChatGPT Codex backend.
+External providers expose different protocols, authentication, and request
+details. Codex Router bridges those contracts while leaving native GPT traffic
+on the normal ChatGPT Codex backend.
 
-Four pieces make the integration work:
+The main pieces are:
 
 - A generated catalog places external models beside native GPT models.
 - A dispatcher chooses native or external routing by namespaced model ID.
-- LiteLLM translates Responses requests, streams, and tool calls.
+- LiteLLM translates routes that use Chat Completions or another supported
+  gateway protocol. Direct Responses routes bypass that translation.
 - Credential forwarders inject only the selected provider's authentication.
+- The optional Switchyard child receives native Responses JSON over an
+  authenticated loopback hop and returns its stream through Router.
 
 ## Request flow
 
@@ -26,6 +31,7 @@ sequenceDiagram
   participant L as LiteLLM :4200
   participant O as Kimi OAuth :4201
   participant A as API forwarder :4203
+  participant S as Switchyard loopback
   participant G as ChatGPT Codex
   participant P as External provider
 
@@ -34,7 +40,7 @@ sequenceDiagram
     R->>G: Allow-listed Codex headers + native model
     G-->>R: Responses stream
     R-->>C: Responses stream
-  else Registry model
+  else Gateway-translated registry model
     C->>R: Capability URL + Responses request + namespaced model
     R->>L: Gateway model + internal key
     L->>L: Responses to Chat Completions
@@ -47,6 +53,11 @@ sequenceDiagram
     end
     P-->>L: Chat Completions stream
     L-->>C: Responses events through router
+  else Switchyard route
+    C->>R: Capability URL + native Responses request
+    R->>S: Sanitized native body + authenticated local hop
+    S-->>R: Responses stream
+    R-->>C: Responses stream
   end
 ```
 
@@ -83,7 +94,10 @@ the slug mapping; the router consults it when dispatching `/responses`, and
 pickers highlight the active model. Signed-in catalog builds clear the alias
 map, which restores native GPT routing.
 
-| Picker model | Public slug | Gateway model | Upstream model |
+The following rows are examples, not the authoritative or complete catalog.
+Read `config/` or generated discovery output for the current inventory.
+
+| Example picker model | Public slug | Gateway model | Upstream model |
 | --- | --- | --- | --- |
 | K2.7 Coding Highspeed OAuth | `kimi-oauth/kimi-for-coding-highspeed` | `kimi-oauth-kimi-for-coding-highspeed` | `kimi-for-coding-highspeed` |
 | K2.7 Coding OAuth | `kimi-oauth/kimi-for-coding` | `kimi-oauth-kimi-for-coding` | `kimi-for-coding` |
@@ -125,11 +139,11 @@ picker instead of replacing the provider with a generic `Custom` entry.
 For a selected custom provider, the tray's login-free switch keeps the provider
 id unchanged and temporarily replaces its complete table with a router-owned,
 auth-free table that points Responses requests at the local router. The
-built-in `openai` id is the deliberate
-exception: Codex 0.141 requires authentication for its implicit definition,
-while current Desktop builds reject any explicit `[model_providers.openai]`
-override as reserved. A root-OpenAI configuration therefore keeps the proven
-`codex-router` provider switch instead of writing a config one supported build
+built-in `openai` id is the deliberate exception: affected older builds
+required authentication for its implicit definition, while supported Desktop
+builds reject an explicit `[model_providers.openai]` override as reserved. A
+root-OpenAI configuration therefore keeps the proven `codex-router` provider
+switch instead of writing a config one supported build
 cannot load. Model selection stays in the native Codex picker: login-free
 catalogs alias external models onto native slugs, and `control model-set`
 switches the active model from the command line.
@@ -182,6 +196,7 @@ Messages-native providers cannot declare this OpenAI endpoint.
 | Route | Incoming Codex credential | Upstream credential |
 | --- | --- | --- |
 | Native GPT, image generation, and web search | Allow-listed and forwarded | Existing ChatGPT/Codex authentication |
+| Switchyard | Allow-listed only to the capability-authenticated loopback child | Existing ChatGPT/Codex authentication; never an external provider credential |
 | Kimi OAuth | Discarded | Kimi CLI OAuth bearer from `~/.kimi-code` |
 | Kimi API | Discarded | Kimi Platform API key |
 | DeepSeek | Discarded | DeepSeek API key |
@@ -217,7 +232,7 @@ upstream aliases without advertising them to new users.
 
 ### Standalone web search
 
-Codex 0.146 and newer can execute web search itself for a custom model
+Supported Codex builds can execute web search themselves for a custom model
 provider. A routed model may opt in with `"searchTool": { "mode":
 "standalone" }`; the merged catalog then advertises the search capability and
 Codex sends the search result back through the normal routed Responses turn.
@@ -356,15 +371,14 @@ The relay requires an active ChatGPT sign-in because only the native Codex
 backend can open its own opaque payload. In login-free mode the router fails
 closed instead of forwarding unreadable ciphertext to an external provider.
 
-Only registry-proven models are advertised as native v2 spawn-agent overrides.
-The Settings tab (desktop panel and macOS tray) exposes two local accordions:
-**Subagent models** can withhold or re-enable proven models, while **Model
-picker** controls visibility. Local settings never promote an unverified model
-to `multi_agent_version: "v2"`; that capability requires the checked-in native
-collaboration proof. A model hidden from the picker is not exposed as a
-subagent. Each accordion also has select-all and unselect-all bulk actions.
+Registry-certified models ship as native v2 spawn-agent overrides. Operators
+can also advertise selected non-hidden routes as effective v2 on one machine;
+that makes them spawnable but is not repository certification. The Settings
+tab keeps subagent selection separate from picker visibility, and an explicit
+off still wins. See [SUBAGENT-CERTIFICATION.md](SUBAGENT-CERTIFICATION.md) for
+the evidence gate.
 
-On Codex 0.147, a child's FINAL_ANSWER is recorded as `subAgentActivity`
+On affected Codex builds, a child's FINAL_ANSWER is recorded as `subAgentActivity`
 `interacted` and stays visually working for the whole live parent turn.
 `close_agent` is not in that v2 toolset. The managed `multi_agent_v2` block
 therefore also sets `usage_hint_enabled` and tells the root agent to call

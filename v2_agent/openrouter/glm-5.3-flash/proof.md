@@ -6,7 +6,12 @@
 - Upstream model ID: `z-ai/glm-5.3-flash`
 - Provider: OpenRouter, pinned to NovitaAI
 - Router version: `0.5.1`
+- Codex version/build: `0.153.0-alpha.5`
+- Execution surface: Codex desktop native orchestration on Windows
 - Current application status: accepted
+
+This is dated historical evidence supporting the checked-in registry decision,
+not a claim that a live probe ran at current `HEAD` or the current Codex build.
 
 The old slug is not retained as an alias or compatibility route. The current
 route uses the canonical `z-ai/glm-5.3-flash` identity and a fail-closed

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   getContextSessionsSnapshot,
+  getHarnessSnapshot,
   registerIpcHandlers,
 } from "../apps/control-center/electron/ipc.mjs";
 
@@ -233,6 +234,23 @@ test("client setup is fixed to the six supported targets and keeps session bodie
   assert.doesNotMatch(source, /readFileSync\([^\n]*session\.jsonl\.zstd/);
   const preload = await readFile(new URL("../apps/control-center/electron/preload.cjs", import.meta.url), "utf8");
   assert.doesNotMatch(preload, /cwd|argv|runCommand|spawn/);
+});
+
+test("harness detection accepts Codex from the shared Windows Desktop binary resolver", () => {
+  const desktopBinary = String.raw`C:\Users\tester\AppData\Local\OpenAI\Codex\bin\version-hash\codex.exe`;
+  let resolverCalls = 0;
+  const snapshot = getHarnessSnapshot({
+    codexBinaryResolver: () => {
+      resolverCalls += 1;
+      return desktopBinary;
+    },
+  });
+  const codex = snapshot.harnesses.find((entry) => entry.id === "codex");
+
+  assert.equal(resolverCalls, 1);
+  assert.equal(codex?.cliInstalled, true);
+  assert.equal(codex?.canInstall, true);
+  assert.equal(codex?.installRequirement, "Publishes the shared router catalog into Codex.");
 });
 
 test("Claude setup reuses the exact CLI path detected outside a GUI PATH", async () => {
@@ -562,6 +580,62 @@ test("service stop and restart are rejected at the IPC boundary", async () => {
     const controlService = handlers.get("router-control:controlService");
     await assert.rejects(controlService({}, { action: "stop" }), /status, start/);
     await assert.rejects(controlService({}, { action: "restart" }), /status, start/);
+  } finally {
+    if (priorRoot === undefined) delete process.env.CODEX_ROUTER_SOURCE_ROOT;
+    else process.env.CODEX_ROUTER_SOURCE_ROOT = priorRoot;
+  }
+});
+
+test("presence following is accepted only on macOS at the IPC boundary", async () => {
+  const priorRoot = process.env.CODEX_ROUTER_SOURCE_ROOT;
+  const calls = [];
+  const register = (platform) => {
+    const handlers = new Map();
+    registerIpcHandlers({
+      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      BrowserWindow: { getAllWindows: () => [] },
+      shell: {},
+      platform,
+      controlJsonRunner: async (args) => {
+        calls.push({ platform, args });
+        return { mode: args.at(-1) };
+      },
+      senderGuard: () => true,
+    });
+    return handlers.get("router-control:setPresence");
+  };
+
+  try {
+    process.env.CODEX_ROUTER_SOURCE_ROOT = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+    );
+    for (const platform of ["win32", "linux"]) {
+      const setPresence = register(platform);
+      assert.equal(typeof setPresence, "function");
+      await assert.rejects(
+        setPresence({}, { mode: "follow-codex" }),
+        /supported only on macOS/,
+      );
+      assert.deepEqual(
+        await setPresence({}, { mode: "always" }),
+        { mode: "always" },
+      );
+    }
+    assert.deepEqual(calls, [
+      { platform: "win32", args: ["presence", "set", "always"] },
+      { platform: "linux", args: ["presence", "set", "always"] },
+    ]);
+
+    const setMacPresence = register("darwin");
+    assert.deepEqual(
+      await setMacPresence({}, { mode: "follow-codex" }),
+      { mode: "follow-codex" },
+    );
+    assert.deepEqual(calls.at(-1), {
+      platform: "darwin",
+      args: ["presence", "set", "follow-codex"],
+    });
   } finally {
     if (priorRoot === undefined) delete process.env.CODEX_ROUTER_SOURCE_ROOT;
     else process.env.CODEX_ROUTER_SOURCE_ROOT = priorRoot;

@@ -34,10 +34,10 @@ credentials, or service logic in the renderer.
 - Context Manager: one metadata-only session index across Cursor, DeepSeek
   Harness, and Codex, with search, client filters, context use, and resume
   actions in the session's owning client.
-- Settings: signed routing, presence, safe service start/status,
-  tray, language,
-  appearance, Token maxxing, vision, and read-only maintenance
-  guidance. Updates and repairs remain interactive-terminal workflows.
+- Settings: signed routing, presence, safe service start/status, doctor fix,
+  tray, language, appearance, Token maxxing, vision, and maintenance guidance.
+  Version updates and destructive lifecycle operations remain
+  interactive-terminal workflows.
 
 The Control Center and tray ship as one visible application on every platform.
 On macOS, `Codex Router.app` keeps the existing Swift-native menu-bar item,
@@ -55,6 +55,11 @@ Windows, and Linux. They use the same installed router state and fixed
 `control.mjs` commands on every platform; provider selection, API credentials,
 models, local runtime controls, health, usage, and settings are the cross-platform
 contract for this beta.
+
+Presence is intentionally asymmetric. The native macOS host implements
+**With Codex** process watching. Windows and Linux expose only **Always** because
+their Electron tray has no Codex/ChatGPT watcher; the IPC layer rejects a
+crafted `follow-codex` mutation on those platforms.
 
 The macOS host sets `CODEX_ROUTER_EMBEDDED_CONTROL_CENTER=1` only for its
 bundled Electron child. That suppresses a duplicate Electron tray. The child

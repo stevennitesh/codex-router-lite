@@ -21,6 +21,25 @@ If a recognized older Kimi router is reported:
 
 Neither command prints credential values. Repair refuses unknown router owners.
 
+## Switchyard is incomplete or unreachable
+
+Run the normal provider/status checks first; do not start a second Switchyard
+process or issue a standalone Router stop:
+
+```sh
+./bin/model-router codex providers
+./bin/model-router codex status
+./bin/model-router codex doctor
+```
+
+An incomplete runtime blocks provider enable. A selected but unreachable child
+appears as `degraded: ["switchyard"]`; a 401 from Switchyard endpoints other
+than `/health` is expected when probed without the ephemeral local-hop
+capability. Use the observation-to-owner table in
+[`config/switchyard/README.md`](../config/switchyard/README.md#runtime-supervision-and-diagnosis)
+before changing state. Rebuild and deployment are separate transactions; a
+guarded restart alone does not install a candidate binary.
+
 ## State directory belongs to another checkout
 
 If `doctor` reports a state ownership failure, you are running from a clone
@@ -280,7 +299,7 @@ Fix it by editing `contextWindow` and `autoCompact` (85% of the window) in
 curating the model again. Either way run `./bin/install` and restart the
 service so the picker catalog and the gateway routes carry the new figures.
 
-## Finished subagents stay Working
+## Finished subagents stay Working on affected older Codex builds
 
 Codex 0.147 keeps a child visually working after it has already written
 `FINAL_ANSWER` if the parent turn is still live. Opening the child flips it

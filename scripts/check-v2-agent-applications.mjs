@@ -15,6 +15,7 @@ const REQUIRED_CHECKS = Object.freeze([
   "sameThreadFollowUp",
 ]);
 const APPLICATION_STATUSES = new Set(["draft", "accepted", "rejected"]);
+const TOOL_CALL_MODES = new Set(["forced", "auto"]);
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]*$/i;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const GIT_COMMIT = /^[0-9a-f]{40}$/i;
@@ -166,6 +167,12 @@ function checkAcceptedProof(proof, location, models) {
   if (typeof proof.routerVersion !== "string" || !proof.routerVersion.trim()) {
     fail(`${location}: accepted applications need routerVersion`);
   }
+  if (typeof proof.codexVersion !== "string" || !proof.codexVersion.trim()) {
+    fail(`${location}: accepted applications need codexVersion`);
+  }
+  if (!["codex-cli", "codex-desktop-native"].includes(proof.executionSurface)) {
+    fail(`${location}: accepted applications need executionSurface "codex-cli" or "codex-desktop-native"`);
+  }
   const route = (Array.isArray(models) ? models : []).find((model) =>
     model?.slug === proof.slug &&
     model.provider === proof.provider &&
@@ -216,6 +223,12 @@ export function validateV2AgentApplications(
         fail(`${location}: proof.json slug must match its provider/route directory`);
       }
       if (!APPLICATION_STATUSES.has(proof.status)) fail(`${location}: invalid status`);
+      if (
+        proof.checks?.toolCall?.mode !== undefined &&
+        !TOOL_CALL_MODES.has(proof.checks.toolCall.mode)
+      ) {
+        fail(`${location}: checks.toolCall.mode must be "forced" or "auto"`);
+      }
       const serialized = `${markdownText}\n${JSON.stringify(proof)}`;
       if (secretLike(serialized)) fail(`${location}: proof artifacts must not contain credentials or bearer values`);
       if (proof.status === "accepted") checkAcceptedProof(proof, location, models);

@@ -31,6 +31,12 @@ the process because there is no proven tray surface from which to reopen it.
 
 ## What the Control Center shows
 
+This is a cross-platform summary, not a second feature specification. The
+current Electron contract lives in
+[`apps/control-center/README.md`](../apps/control-center/README.md); native
+macOS-only login-free, OAuth, update, widget, Island, and follow-Codex behavior
+lives in [`MACOS-TRAY.md`](MACOS-TRAY.md).
+
 - **Dashboard** summarizes router health, the active model and provider,
   request activity, token traffic, and recently observed models.
 - **Usage** provides 7-, 30-, and 90-day token views, provider and model
@@ -38,10 +44,7 @@ the process because there is no proven tray surface from which to reopen it.
 - Quota cards use one **Weekly limit** label and one reset line. A reported
   five-hour window appears as its own **5-hour limit** card.
 - Provider cards are absent until that provider has a usable OAuth session or
-  API key. Unconnected providers remain available only in **Connections**.
-- **Connections** includes a **Use without OpenAI login** switch for new Codex
-  sessions. It requires a connected, enabled external provider and restores the
-  prior model-provider setting when switched off.
+  API key. Unconnected providers remain available in **Models**.
 - **Models** groups equivalent routes by model family. Each provider route has
   its own picker visibility, certified subagent selection, and reasoning-effort
   controls; the provider directory can discover and add catalog models.
@@ -70,9 +73,11 @@ the process because there is no proven tray surface from which to reopen it.
 - **Status** mirrors the macOS live view with in-flight requests, elapsed time,
   model speed, and quota reset times. Usage also includes all-provider and
   tokens-by-model summaries.
-- **Connections** includes signed routing, login-free mode, tray presence
-  (always or while Codex/ChatGPT is running), one-click OAuth **Install & Sign
-  In**, and Update/Fix maintenance actions.
+- **Settings** includes signed routing, safe service start/status, doctor fix,
+  and platform-supported tray presence. **With Codex** presence is implemented
+  only by the native macOS host; Windows and Linux expose **Always** so a stored
+  mode cannot stop the Router without a watcher. Interactive sign-in and update
+  remain platform-specific as described by the owning guides above.
 - **Vision bridge** exposes the shared native/hosted engine and effort
   selectors, local vision downloads, benchmark/use actions, and the same
   default-on/fail-closed behavior as macOS.
@@ -212,7 +217,8 @@ Windows 11 hides new tray icons in the `^` overflow next to the clock. Drag the
 icon onto the taskbar to pin it; an unpinned icon is the most common reason the
 companion looks like it never started.
 
-The app discovers the router checkout from `MODEL_ROUTER_SOURCE_ROOT`, a saved
+The app discovers the router checkout from `CODEX_ROUTER_SOURCE_ROOT`, the
+compatibility alias `MODEL_ROUTER_SOURCE_ROOT`, a saved
 bundle pointer, the source tree during development, or the standard install
 location (`%LOCALAPPDATA%\codex-router` on Windows and
 `~/.local/share/codex-router` on Linux). It displays a useful offline state when

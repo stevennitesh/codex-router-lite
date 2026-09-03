@@ -1,10 +1,26 @@
 # Development guide
 
+Load the detailed guide only for the branch being changed:
+
+- native Codex catalog, app tools, Windows app, OpenRouter, GLM, or Switchyard
+  compatibility: [`agents/compatibility-maintenance.md`](agents/compatibility-maintenance.md);
+- provider/client installation, credentials, relays, or lifecycle:
+  [`agents/router-maintenance.md`](agents/router-maintenance.md);
+- Switchyard source/build/deploy after compatibility triage:
+  [`../config/switchyard/README.md`](../config/switchyard/README.md);
+- subagent selection, proof, or v2 publication:
+  [`SUBAGENT-CERTIFICATION.md`](SUBAGENT-CERTIFICATION.md).
+
 ## Architecture
 
 - `config/` is the split provider and model registry tree.
 - `src/model-registry.mjs` validates and indexes that registry.
 - `src/catalog.mjs` merges listed registry models with native Codex models.
+- `src/codex-binary.mjs` resolves the installed CLI and versioned Windows app
+  binaries.
+- `src/codex-app-tools.mjs` holds the version-paired native app-tool snapshot;
+  `src/chat-tool-surface.mjs` and `src/namespace-relay.mjs` translate tool
+  identity only where the selected protocol requires it.
 - `src/litellm-config.mjs` generates every provider translation route.
 - `src/router.mjs` dispatches native and namespaced external model IDs.
 - `src/oauth-forwarder.mjs` owns Kimi CLI OAuth loading and refresh.
@@ -15,8 +31,13 @@
 - `src/rate-limit-state.mjs` stores the latest observed window per provider.
 - `src/provider-selection.mjs` controls which tested models enter the picker.
 - `src/start.mjs` supervises the loopback processes.
+- `src/switchyard-runtime.mjs` validates and launches the optional pinned local
+  Switchyard child.
 - `src/service-*.mjs` install per-user services for macOS, Linux, and Windows.
 - `src/paths.mjs` defines state roots, ports, and service names.
+- `apps/control-center/` owns the Windows/Linux Electron app and shared panel;
+  `apps/macos/ModelRouterTray/` owns native macOS-only presence and tray
+  behavior.
 
 ### Model catalog discovery
 
@@ -56,7 +77,9 @@ live miss.
 7. Install in isolated state and run
    `bin/test-model provider/model --live --yes`; verify text, streaming, tool
    calls, and compaction before setting `listed: true`.
-8. Update the README model table and provider-specific setup documentation.
+8. Update the provider-owned setup documentation. Keep README tables as
+   non-exhaustive examples; the checked-in registry and discovery output own
+   the current inventory.
 
 The shared API forwarder strips host and internal authentication before
 injecting the selected provider key. It supports the registry's tested

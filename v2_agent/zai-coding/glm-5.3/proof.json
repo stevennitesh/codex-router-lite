@@ -10,6 +10,8 @@
   ],
   "testedAt": "2026-08-23T18:26:52.888Z",
   "routerVersion": "0.4.0-beta.4",
+  "codexVersion": "0.149.0-alpha.4.1",
+  "executionSurface": "codex-desktop-native",
   "checks": {
     "streaming": { "outcome": "pass", "status": 200, "observedAt": "2026-08-16T20:40:23.293Z" },
     "toolCall": { "outcome": "pass", "status": 200, "observedAt": "2026-08-16T20:40:23.293Z" },

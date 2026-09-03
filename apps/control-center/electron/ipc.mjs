@@ -33,6 +33,10 @@ const spawnableCommandUrl = import.meta.url.includes("/app.asar/")
   ? new URL("../../src/spawnable-command.mjs", import.meta.url)
   : new URL("../../../src/spawnable-command.mjs", import.meta.url);
 const { spawnableCommand } = await import(spawnableCommandUrl);
+const codexBinaryUrl = import.meta.url.includes("/app.asar/")
+  ? new URL("../../router-src/codex-binary.mjs", import.meta.url)
+  : new URL("../../../src/codex-binary.mjs", import.meta.url);
+const { findCodexBinary } = await import(codexBinaryUrl);
 const loginLeaseUrl = import.meta.url.includes("/app.asar/")
   ? new URL("../../src/chatgpt-login-lease.mjs", import.meta.url)
   : new URL("../../../src/chatgpt-login-lease.mjs", import.meta.url);
@@ -297,8 +301,8 @@ function terminalAvailable() {
   return process.platform === "darwin" && existsSync("/usr/bin/open");
 }
 
-export function getHarnessSnapshot() {
-  const codex = executablePath("codex");
+export function getHarnessSnapshot({ codexBinaryResolver = findCodexBinary } = {}) {
+  const codex = codexBinaryResolver();
   const dsh = executablePath("dsh");
   const cursorAgent = executablePath("cursor-agent");
   const cursorLauncher = executablePath("cursor-router-agent");
@@ -1274,6 +1278,7 @@ export function registerIpcHandlers({
   harnessExecutableResolver = executablePath,
   cursorAppPath = cursorDesktopPath,
   openclawAppPath = openclawDesktopPath,
+  platform = process.platform,
   senderGuard = () => true,
 } = {}) {
   if (!ipcMain?.handle) throw new TypeError("ipcMain.handle is required.");
@@ -1941,7 +1946,13 @@ export function registerIpcHandlers({
   handleAction("setChatGptAccountSelection", async ({ selection } = {}) => {
     return runJson(["chatgpt-account-pool", "select", stringValue(selection, "Account selection", CHATGPT_ACCOUNT_ID)], { timeoutMs: 60_000 });
   });
-  handleAction("setPresence", async ({ mode } = {}) => runJson(["presence", "set", oneOf(mode, PRESENCE_MODES, "Presence mode")]));
+  handleAction("setPresence", async ({ mode } = {}) => {
+    const value = oneOf(mode, PRESENCE_MODES, "Presence mode");
+    if (value === "follow-codex" && platform !== "darwin") {
+      throw new Error("Following Codex presence is supported only on macOS.");
+    }
+    return controlJsonRunner(["presence", "set", value]);
+  });
   handleAction("controlService", async ({ action = "status" } = {}) => {
     const value = oneOf(action, SERVICE_COMMANDS, "Service action");
     const timeoutMs = ["start", "restart"].includes(value) ? 330_000 : 120_000;

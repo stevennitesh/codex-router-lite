@@ -1,5 +1,10 @@
 # Codex Router
 
+Maintainers and agents should start with [`AGENTS.md`](AGENTS.md), not preload
+this full user guide. It routes each change to one conditional runbook so Codex,
+GLM/OpenRouter, Switchyard, desktop, provider, and certification context is
+loaded only when relevant.
+
 ## Install everything (recommended)
 
 This is the default setup: **guided provider setup + Electron Control Center +
@@ -243,6 +248,10 @@ Linux installations support the Codex CLI.
 
 ## Models and authentication
 
+This is a non-exhaustive user-facing sample. The checked-in `config/` registry
+and current discovery output own the complete inventory; maintainers must not
+manually keep this table in lockstep with every catalog route.
+
 | Picker label | Model ID | Authentication |
 | --- | --- | --- |
 | K2.7 Coding Highspeed (OAuth) | `kimi-oauth/kimi-for-coding-highspeed` | Existing Kimi Code CLI OAuth session |
@@ -281,6 +290,7 @@ Linux installations support the Codex CLI.
 | GLM-5.3 (Z.ai API) | `zai-api/glm-5.3` | Separately billed Z.ai platform API key |
 | GLM-5.2 (Z.ai API) | `zai-api/glm-5.2` | Separately billed Z.ai platform API key |
 | GLM-4.7 (Z.ai API) | `zai-api/glm-4.7` | Separately billed Z.ai platform API key |
+| Switchyard Auto | `switchyard/auto` | Complete selected local Switchyard runtime; no provider key |
 | Muse Spark 1.2 (Meta) | `meta/muse-spark-1.2` | Meta Model API key |
 | Muse Spark 1.2 Contributor (Meta) | `meta/muse-spark-1.2-contributor` | Meta Model API key |
 | Muse Spark 1.1 (Meta) | `meta/muse-spark-1.1` | Meta Model API key |
@@ -908,8 +918,18 @@ ladder, and defaults to max.
 OpenCode Go keeps its provider-advertised 1M context and compacts at 400K
 because larger live multimodal histories returned empty completions. OpenRouter
 uses a 1,048,576-token context and compacts at 900K. The OpenRouter route sends
-only to providers with at least 1M context and the full Codex tool-choice set.
-It retains fallbacks within that verified provider set.
+only to NovitaAI and fails closed; OpenRouter provider fallback is disabled.
+The exact policy and other live metadata are owned by
+[`config/openrouter/glm-5.3-flash.json`](config/openrouter/glm-5.3-flash.json).
+
+### Switchyard
+
+`switchyard/auto` is an optional, keyless local route backed by a separately
+built NVIDIA NeMo Switchyard runtime. Router supervises the loopback-only child,
+publishes the route only when its runtime is complete and selected, and keeps
+the native Codex catalog authoritative. Switchyard source is pinned and patched
+reproducibly; see the conditional maintenance and deployment guide in
+[`config/switchyard/README.md`](config/switchyard/README.md).
 
 ### Meta Model API
 
@@ -1175,8 +1195,9 @@ turn; events that compacted history include `toolResultsAged` and
 serialized context bytes, while provider-billed token counts remain the
 authoritative cost measurement.
 
-For a reproducible provider-reported A/B, see
-[`docs/tool-result-aging-benchmark.md`](docs/tool-result-aging-benchmark.md).
+For a new provider-reported A/B, use the live benchmark script under explicit
+quota authorization and retain its generated result outside the maintenance
+documentation tree.
 
 The integration preserves the built-in OpenAI provider, native GPT models,
 ChatGPT sign-in, profiles, MCP settings, project trust, and reasoning defaults.
@@ -2118,18 +2139,18 @@ packaging, and the platform behavior matrix.
 ## Skills for custom models
 
 Custom models (anything routed through codex-router instead of the built-in
-OpenAI backend) get the Codex app's full native toolset — threads,
-automations, the in-app browser, computer use — in the flattened form the
-provider accepts. Weaker models sometimes need guidance to call those tools
-correctly, so the installer adds a small skill pack to `~/.codex/skills/`:
+OpenAI backend) receive the current Codex app tool schema. Chat Completions
+routes use flattened tool names that the Router restores; Responses-native
+routes can retain native namespace fields. The installer adds a small,
+progressively loaded skill pack to `~/.codex/skills/`:
 
-- `codex-router` — orientation: how flattened `codex_app__` / `mcp__` tools
-  work and when to read the companion skills.
-- `codex-app-threads` — exact argument shapes for thread operations
-  (create, list, read, message, wait, fork, archive, pin) and automations.
-- `codex-in-app-browser` — driving the in-app browser through
-  `mcp__node_repl__js`.
-- `codex-computer-use` — driving local apps through the `@oai/sky` runtime.
+- `codex-router` — minimal orientation and conditional companion routing.
+- `codex-app-threads` — durable task/automation behavior; live schemas own
+  argument shapes.
+- `codex-in-app-browser` — the current unified CUA browser contract.
+- `codex-computer-use` — a bridge to the current official computer-use skill.
+- `codex-router-media` — MiniMax Token Plan media generation when explicitly
+  requested.
 
 The skills live in `skills/` in this repository. `bin/install` copies them
 to `~/.codex/skills/` (each directory is marked `.codex-router-managed`);
@@ -2177,6 +2198,10 @@ the rollout proves a completed path-referencing call, not that the command read
 specific bytes. Browser and computer-use execution remains live-only.
 
 ## Common commands
+
+`start` and `stop` are operator lifecycle commands. During maintenance or
+redeployment, never stop the live Router as a separate step; use the guarded
+restart/deployment transaction described in the maintenance guide.
 
 ```sh
 ./bin/model-router codex setup --guided
@@ -2385,6 +2410,8 @@ streaming, image-input, tool-call, and context behavior are verified. See
 - [Architecture and request flow](docs/HOW-IT-WORKS.md)
 - [Security and credential handling](SECURITY.md)
 - [Provider development and tests](docs/DEVELOPMENT.md)
+- [Compatibility maintenance for Codex, GLM, OpenRouter, Windows, and Switchyard](docs/agents/compatibility-maintenance.md)
+- [Switchyard build and deployment](config/switchyard/README.md)
 - [Verifying the Devin CLI provider](docs/DEVIN-CLI-PROBE.md)
 - [Changelog](CHANGELOG.md)
 

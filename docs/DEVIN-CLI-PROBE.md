@@ -1,8 +1,8 @@
 # Verifying the Devin CLI provider (`bin/devin-probe`)
 
-This page is for someone who has a Devin account and is willing to spend about
-five minutes and a few cents of ACU credit settling a question no maintainer of
-this repository can answer.
+This is the maintainer reference for the still-unverified Devin CLI provider.
+Run it only when a Devin account owner explicitly authorizes the small ACU cost
+and wants to produce current compatibility evidence.
 
 You do not need to know this codebase. You will not install the router, start a
 service, change any configuration, or hand over a credential. The probe reads
@@ -117,13 +117,14 @@ usually a `fix:` line. Those two lines are the useful part — please include th
 | `FAIL tool call ids` | Tool calls arrived without ids. The forwarder keys restatements by id, so without them a restated call would be dispatched twice. |
 | `FAIL transport replay` | The bytes the upstream sent are read differently by the client the router actually runs than by the probe's own reader. A bug in this repository. |
 
-## What to paste back
+## Reporting a result
 
 At the end of a text run the probe prints a fenced block beginning
-` ```text `. **Copy that whole block, fences included, into
-[issue #270](https://github.com/duolahypercho/codex-router/issues/270).** It
-carries the checklist plus your Node version, platform and `devin` CLI version,
-which is what makes the result reproducible.
+` ```text `. Issue #270 is closed and is historical context, not the submission
+queue. Open a current compatibility issue and include that whole redacted block,
+the exact Router commit, and a link back to the closed issue when relevant. It
+carries the checklist plus the Node version, platform, and `devin` CLI version,
+which makes the result reproducible.
 
 Also worth adding in your own words:
 

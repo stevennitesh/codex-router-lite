@@ -79,6 +79,7 @@ function isolatedEnvironment(testRoot) {
   return {
     ...process.env,
     HOME: testRoot,
+    CODEX_HOME: path.join(testRoot, "codex-home"),
     PATH: isolatedPath(),
     // Onboarding falls back to npm's own global bin directory when PATH and
     // the guessed locations come up empty, so an isolated home is not enough

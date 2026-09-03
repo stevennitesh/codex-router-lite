@@ -83,11 +83,12 @@ The router background service is a separate launchd agent. Reinstalling or
 rebuilding the desktop app updates its own agent without merging the two
 services or creating another copy of the app.
 
-The Settings tab's **Models** section has two accordions. **Subagent models**
-controls which registry-proven v2 models remain available as Codex subagent
-overrides; **Model picker** hides or shows individual models without changing
-their provider connection. Restart Codex after changing either group so its
-model picker reloads the merged catalog.
+The Settings tab's **Models** section keeps subagent advertisement separate
+from picker visibility. Registry-certified v2 routes ship enabled; an operator
+may also advertise a selected non-hidden route locally, which is not repository
+certification. See [SUBAGENT-CERTIFICATION.md](SUBAGENT-CERTIFICATION.md) before
+changing this behavior. Restart Codex after either group changes so the merged
+catalog reloads.
 
 ## Show tray only while Codex runs
 
@@ -157,9 +158,9 @@ ChatGPT is the initial detail view only when native ChatGPT usage is available;
 otherwise the tray starts with an existing external provider. The detailed
 view and the Island automatically return to the provider handling the next
 Codex request. Hover the Island for a quick view or click it for expanded
-account usage. During activity, the compact Island shows the provider's
-published mark and the Codex session title instead of repeating the provider
-name. Additional
+account usage. During activity, the compact Island shows the provider's native
+mapped mark when one exists, otherwise the generic provider fallback, plus the
+Codex session title instead of repeating the provider name. Additional
 concurrent requests appear as a muted, unframed `+N`; hover lists every live
 routed session with its status and elapsed time while retaining the seven-day
 usage graph and today's usage metrics. When the selected provider reports a

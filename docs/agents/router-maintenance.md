@@ -1,4 +1,12 @@
-# Model Router installation instructions
+# Installation and provider runbook
+
+This detailed branch guide owns installation, client configuration,
+credentials, relays, and provider onboarding. Do not load it for every task.
+Codex native catalog/app-tool drift, Windows app compatibility, OpenRouter
+GLM-5.3-Flash, and Switchyard triage begin in
+[`compatibility-maintenance.md`](compatibility-maintenance.md); Switchyard build
+and deployment continue in
+[`../../config/switchyard/README.md`](../../config/switchyard/README.md).
 
 ## Repository maintenance workflow
 
@@ -81,6 +89,9 @@ user.
    `openrouter`, `venice`, and `nousresearch` also ship live-reviewed checked-in
    presets, so their picker is not empty after the key is stored; anything else
    on their current account catalogs still has to be curated.
+   `switchyard` is keyless and loopback-only, but its separately pinned runtime
+   must already be complete. If requested, follow the Switchyard guide linked
+   above; never assemble it as ordinary provider onboarding.
    `venice` and `nousresearch` are ordinary API-key providers — Venice keys come
    from venice.ai/settings/api and Nous Portal keys from
    portal.nousresearch.com; neither has a router-managed CLI sign-in path, and
@@ -612,7 +623,8 @@ The service definition still looked correct at every glance.
 3. **A silent environment adopts the recorded proxy.**
    `inheritedProxyEnvironment()` in `src/proxy-environment.mjs` reads the
    install manifest, and `src/start.mjs` applies it to `process.env` before it
-   reads anything or spawns a child, so the router and all three forwarders
+   reads anything or spawns a child, so the router and every configured
+   forwarder
    inherit it. This is the belt to the service definition's braces: it makes
    the foreground path, and any future path that execs the supervisor directly,
    reach upstreams exactly as the managed one does.
@@ -635,7 +647,7 @@ dies. It exists because the gateway is the one child of the service that is not
 ours: a bug anywhere in that pinned Python tree can end the process rather than
 the request, and issue #261 is exactly that — mapping an upstream 429 raised out
 of LiteLLM's own request handler and the proxy exited 1. `start.mjs` raced every
-child's exit, so one failed request killed the router and all three forwarders
+child's exit, so one failed request killed the router and every active forwarder
 and every client saw a bare "Connection error" naming nothing.
 
 1. **Only the gateway is supervised.** The forwarders and the router are ours;
@@ -664,9 +676,10 @@ and every client saw a bare "Connection error" naming nothing.
    Otherwise the loop waits on an exit that only an external kill can produce,
    and a hung gateway looks like a healthy one.
 6. **`/health` names the unreachable dependency.** The unauthenticated leaf
-   carries `degraded: ["gateway"]` — a closed set of three fixed local service
-   names, never a URL, a credential, or the per-service payloads the protected
-   leaf carries, and `test/routing.test.mjs` asserts that boundary. It is what
+   carries `degraded: ["gateway"]`. The allowed dependency names are the
+   source-owned closed set in `src/router.mjs`, never a URL, credential, or the
+   per-service payloads the protected leaf carries; `test/routing.test.mjs`
+   asserts that boundary. It is what
    lets doctor report "serving but reports gateway unreachable" instead of "not
    ready", which sent operators looking for a dead service when the gateway was
    the thing that died.
@@ -815,46 +828,11 @@ installation. It is repository development and requires the process below.
 
 ### Subagent capability is researched, not asserted
 
-Switching a model on as a subagent (tray toggle, `control subagents set`) is
-the operator's whole job; deciding whether that model **under that provider**
-can hold the v2 child role is the router's. The same model answers differently
-per provider — tool support, request profiles, and payload handling all vary —
-so the unit of evidence is always the slug, never the model name.
-
-1. Enabling an unknown model hands it to a detached compatibility probe
-   (`src/subagent-verify.mjs`): two live requests through the installed router
-   proving streaming and a forced tool call. The proofs snapshot shows
-   `checking` until the verdict lands. A passing probe records `candidate`; it
-   does **not** advertise v2. A worker that dies without a verdict records a
-   failure, and a stale `checking` record is retryable. Explicit registry-v1
-   routes are settled decisions and are never re-opened by this local probe;
-   registry-v2 routes need no compatibility probe.
-2. `multi-agent-proofs.json` is diagnostic application evidence only. Local
-   `candidate`, and legacy `experimental` / `proven`, records cannot change the
-   catalog's `multi_agent_version`, managed agent definitions, or any client
-   route. `applySubagentProofs` deliberately returns the registry capabilities
-   unchanged. An unreadable proofs file therefore authorizes and promotes
-   nothing.
-3. The compatibility probe is not the native collaboration proof. It does not
-   exercise Codex's encrypted child payload relay, a marker-return spawn, or a
-   same-thread follow-up. A successful ordinary chat/tool request must never be
-   presented as evidence that the model can hold the native v2 child role.
-4. Only the exact checked-in registry route may assert v2. The route's slug,
-   provider, and upstream model must match an accepted artifact under
-   `v2_agent/`, and the accepted artifact and `multiAgentVersion: "v2"` change
-   land in the same pull request. CI enforces the implication in both
-   directions for every post-workflow promotion. Six exact Kimi/Grok route
-   identities certified before the artifact gate are grandfathered; changing
-   any part of one identity loses that exception.
-5. `control subagents verify [SLUG ...]` re-researches explicitly (foreground,
-   about two requests per unknown candidate); with no slugs it sweeps the
-   enabled list. Select-all and mode changes never trigger probes. Provider,
-   model, and family auto-policies are explicit standing consent for matching
-   newly configured unknown routes; they still produce only candidates.
-6. Machine-local evidence is exactly that. Never edit checked-in `config/`
-   because one machine's probe passed. Complete the redacted application,
-   reproduce the two native child checks with a spendable account, and review
-   the exact provider route before shipping a v2 claim to every installer.
+The evidence unit is the exact routed slug, not the model family. A cheap
+stream/tool probe, operator selection, completed local certification, and a
+registry-certified v2 declaration have different effects. Read
+[`../SUBAGENT-CERTIFICATION.md`](../SUBAGENT-CERTIFICATION.md) before changing
+any of them; it owns selection, promotion, proof, cost, and recertification.
 
 ### Ship a model to every installer
 
@@ -1328,15 +1306,17 @@ not publish preview-name aliases or migration routes.
 The model always thinks and accepts only `low`, `high`, and `max` reasoning
 efforts. The `glm-5.3-flash` request profile clamps Codex's wider ladder onto
 those values and keeps reasoning separate from visible assistant text across
-tool turns. Direct Z.ai routes continue to use `glm-thinking` because that API
-owns a different thinking-control parameter.
+tool turns. Direct Z.ai Flash routes use `glm-thinking-auto-tool-choice`
+because that API owns a different thinking-control parameter and requires
+offered rather than forced tool selection.
 
 OpenCode Go advertises 1,000,000 context but has returned empty completions on
-large multimodal histories, so its route compacts at 400,000. OpenRouter uses
-1,048,576 context and compacts at 900,000, matching the successful long-context
-history recorded for this model. Its checked-in provider policy restricts
-requests to at least 1M-context endpoints with the full tool-choice set. Keep
-that policy in model configuration and validate it at the forwarder boundary.
+large multimodal histories, so its route compacts at 400,000. For the current
+OpenRouter context limits, endpoint pin, and fallback policy, use the
+authoritative model configuration and the `GLM-5.3-Flash on OpenRouter` section
+of [`compatibility-maintenance.md`](compatibility-maintenance.md); do not copy
+those volatile values into this provider guide. Validate the selected policy at
+the forwarder boundary.
 
 The OpenRouter route uses the current Sol behavior template for Codex message
 structure and a concise GLM-specific instruction profile for the actual base
@@ -1916,43 +1896,10 @@ purpose.
 
 ## Routed subagent regression prevention
 
-- A normal `/responses` smoke test does not cover Codex collaboration. Current
-  model-generated subagent tasks and messages can arrive as native
-  `encrypted_content`, with visible text ending at `Payload:`. External models
-  cannot read that payload directly.
-- The compatibility relay must remain signed-in-only and fail closed. Send its
-  native request with `stream: true`, accept SSE by body framing as well as
-  content type, recognize padded `gAAAA...=` ciphertext, and treat non-Fernet
-  `encrypted_content` from an external parent as plaintext.
-- The same rule applies in reverse, and it is not conditional on the envelope.
-  A routed subagent cannot mint an OpenAI token, so Codex stores its readable
-  handoff under `agent_message.content[].encrypted_content` whatever the
-  surrounding `Message Type:` rendering looks like. Before forwarding to a
-  native Responses endpoint — `/responses` and `/responses/compact` alike —
-  rewrite every non-Fernet `encrypted_content` part of an `agent_message` to
-  `input_text`; that schema accepts only `input_text`, `input_image`, and
-  `encrypted_content`, so `output_text` is not a fallback. Classify on the
-  ciphertext format (the `gAAAAA` Fernet prefix over base64url with no
-  whitespace), never on whether the plaintext looks readable, and forward a
-  value that passes byte-identical. Do not gate this on a router-written
-  sentinel: the router never authors these items, and a marker would strand
-  the already-broken conversations this recovers.
-- Never log relay response bodies, decrypted task text, or exception messages
-  that can echo either. Regressions require fragmented/mislabeled SSE tests and
-  real marker-return probes through every installed routed agent plus a
-  same-thread follow-up.
-- A test that isolates the state directory must isolate `CODEX_HOME` with it.
-  `MODEL_ROUTER_STATE_DIR` and `CODEX_ROUTER_STATE_DIR` do not redirect
-  `CODEX_AGENTS_DIR`, which is `$CODEX_HOME/agents`, and `src/catalog.mjs`
-  prunes that directory to the exact registry-v2 routes the state it just read
-  leaves enabled and visible.
-  Point the state at a scratch directory while inheriting the real home and the
-  run deletes the operator's own routed agent definitions — every model
-  selected in the real state can disappear from that scratch publication —
-  while `multi-agent-settings.json` and `multi-agent-proofs.json` live in the
-  scratch state. The operator sees subagents reset after an unrelated command.
-  `test/state-owner.test.mjs` pins this: no test file may spawn the catalog
-  without setting `CODEX_HOME`.
+This branch is owned by
+[`../SUBAGENT-CERTIFICATION.md`](../SUBAGENT-CERTIFICATION.md). Load its
+**Encrypted relay implementation invariants** section only when changing relay,
+state-isolation, or collaboration translation code.
 
 ## Installing the harness is one action, and it is never a side effect
 
@@ -2115,7 +2062,7 @@ the tray can actually see. `NSRunningApplication` enumerates app bundles, so it
 sees the desktop apps and nothing else — a `codex` TUI in a terminal and a `dsh`
 harness turn both register nothing at all. Neither can be started on demand
 either: a turn that finds 127.0.0.1:4202 closed fails immediately, while the
-five-process stack behind that port takes up to 300 seconds to warm, so lazy
+  supervised stack behind that port can take up to 300 seconds to warm, so lazy
 start does not exist at request latency. The port has to already be open.
 
 - `effectivePresenceMode()` in `src/presence-state.mjs` is what the tray and

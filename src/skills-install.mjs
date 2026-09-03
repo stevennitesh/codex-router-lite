@@ -1047,32 +1047,6 @@ export function skillPackStatus(codexHome) {
   };
 }
 
-export function skillRequiredFields() {
-  const source = path.join(skillsSource(), "codex-app-threads", "SKILL.md");
-  try {
-    const text = readFileSync(source, "utf8");
-    const match = /<!--\s*codex-router-required-fields:\s*(\{[\s\S]*?\})\s*-->/.exec(text);
-    if (!match) return undefined;
-    const parsed = JSON.parse(match[1]);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    if (Object.keys(parsed).length === 0) return undefined;
-    const fields = {};
-    for (const [name, required] of Object.entries(parsed)) {
-      if (
-        !validSkillName(name) ||
-        !Array.isArray(required) ||
-        required.some((field) => typeof field !== "string" || !field)
-      ) {
-        return undefined;
-      }
-      fields[name] = [...new Set(required)];
-    }
-    return fields;
-  } catch {
-    return undefined;
-  }
-}
-
 function installSkillsUnlocked(
   codexHome,
   {

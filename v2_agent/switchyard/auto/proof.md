@@ -8,6 +8,10 @@
 - Prior Router version: `0.4.0-beta.4`
 - Current application status: draft; new candidate recertification pending
 
+This file is historical evidence only. Read the current source, patch, runtime
+binding, and recertification procedure before using it for a maintenance
+decision.
+
 Switchyard may select Luna high/max or Sol medium/high/xhigh for an ordinary
 turn. `gpt-5.6-sol` is the public route's registry identity, not a claim that
 every certified child turn used Sol.

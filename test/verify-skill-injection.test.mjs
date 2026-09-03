@@ -264,12 +264,13 @@ test("invalid analysis expectation is rejected", () => {
   assert.throws(() => analyzeRollout([], { expect: "anything" }), /invalid expectation/);
 });
 
-test("the pack list is the four shipped skills", () => {
+test("the pack list is the five shipped skills", () => {
   assert.deepEqual([...PACK_SKILLS].sort(), [
     "codex-app-threads",
     "codex-computer-use",
     "codex-in-app-browser",
     "codex-router",
+    "codex-router-media",
   ]);
 });
 

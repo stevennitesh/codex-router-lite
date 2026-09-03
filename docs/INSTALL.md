@@ -19,7 +19,9 @@ Required software:
 - Node.js 22.19+ (Node.js 24 LTS recommended)
 - `uv`, or Python 3.10+ with `venv`
 - Git for managed one-command installation and rollback
-- At least one Kimi OAuth, Kimi API, or DeepSeek API credential
+- A credential or ready local runtime only when external routed models are
+  enabled. Idle/native-only installation and `--no-provider --no-discovery`
+  validation require none.
 - On Windows, Windows PowerShell in `FullLanguage` mode with application-control
   policy that permits `Add-Type`. The bounded process-tree owner fails before
   launching a mutation command when that host capability is unavailable.
@@ -95,6 +97,12 @@ ready/needs-key/needs-sign-in status per provider, credential onboarding for
 anything you selected that is not connected yet, and a review summary before
 any change is made.
 
+Switchyard is a special keyless local provider: it becomes selectable only
+after its separately pinned runtime and route file are complete. Maintainers
+must use the reproducible build and guarded deployment procedure in
+[`config/switchyard/README.md`](../config/switchyard/README.md); ordinary users
+should not assemble or copy a runtime by hand.
+
 ## Authentication choices
 
 Kimi Code OAuth reuses the official CLI session. Guided setup offers to run the
@@ -107,16 +115,10 @@ kimi login
 API-key providers use hidden prompts:
 
 ```sh
-./bin/provider-key kimi-api set
-./bin/provider-key deepseek set
-./bin/provider-key grok-api set
-./bin/provider-key anthropic-api set
-./bin/provider-key ollama-cloud set
-./bin/provider-key qwen-plan set
-./bin/provider-key zai-coding set
-./bin/provider-key zai-api set
-./bin/provider-key github-copilot set
-./bin/provider-key orca set
+./bin/model-router codex provider-key PROVIDER set
+# examples:
+./bin/model-router codex provider-key openrouter set
+./bin/model-router codex provider-key zai-api set
 ```
 
 Replace a stored key by running `set` again. Delete one with `remove`, which
@@ -462,10 +464,14 @@ Live quota-consuming verification is separate:
 
 ## Starting the router when Codex starts
 
-The router normally runs continuously under launchd, and the macOS tray starts
-it again whenever Codex appears. Both learn about a new Codex by polling, so a
-cold start can race: the CLI can send its first request a second or two before
-the gateway is accepting connections.
+The router normally runs continuously under the per-user service manager:
+launchd on macOS, systemd on Linux, or Task Scheduler on Windows. The native
+macOS tray can optionally follow Codex/ChatGPT presence and start it when those
+apps appear. Windows and Linux use continuous service presence; they do not
+offer that macOS-only watcher mode.
+
+A cold service start can still race the first CLI request by a second or two
+while the local stack becomes ready.
 
 The optional `codex` shim closes that window by doing the check in the one place
 that is provably earlier than Codex — in front of it:

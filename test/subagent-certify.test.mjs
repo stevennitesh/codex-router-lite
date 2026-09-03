@@ -71,6 +71,7 @@ test("a complete run updates only bounded application evidence", () => {
       status: 200,
       observedAt: "2026-09-01T12:00:00.000Z",
       prompt: "must not persist",
+      ...(name === "toolCall" ? { mode: "auto" } : {}),
     };
   }
   try {
@@ -80,14 +81,45 @@ test("a complete run updates only bounded application evidence", () => {
       { applicationsRoot: applicationRoot },
     );
     assert.equal(result.endsWith("v2_agent/switchyard/auto/proof.json"), true);
-    const proof = JSON.parse(readFileSync(proofPath, "utf8"));
+    let proof = JSON.parse(readFileSync(proofPath, "utf8"));
     assert.equal(proof.status, "draft");
     assert.equal(proof.routerVersion, "0.5.1");
     assert.equal(proof.testedAt, "2026-09-01T12:01:00.000Z");
     assert.deepEqual(proof.runtimeBinding, binding);
     assert.equal(proof.checks.streaming.prompt, undefined);
+    assert.equal(proof.checks.toolCall.mode, "auto");
+
+    checks.toolCall.mode = "forced";
+    recordApplicationEvidence(
+      "switchyard/auto",
+      { checks, routerVersion: "0.5.1", at: "2026-09-01T12:02:00.000Z" },
+      { applicationsRoot: applicationRoot },
+    );
+    proof = JSON.parse(readFileSync(proofPath, "utf8"));
+    assert.equal(proof.checks.toolCall.mode, "forced");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the application writer requires a known tool-call selection mode", () => {
+  const checks = Object.fromEntries(
+    VERIFICATION_CHECKS.map((name) => [name, {
+      outcome: "pass",
+      status: 200,
+      observedAt: "2026-09-01T12:00:00.000Z",
+    }]),
+  );
+  for (const mode of [undefined, "sometimes"]) {
+    checks.toolCall.mode = mode;
+    assert.throws(
+      () => recordApplicationEvidence(
+        "switchyard/auto",
+        { checks, routerVersion: "0.5.1" },
+        { applicationsRoot: path.join(os.tmpdir(), "not-used") },
+      ),
+      /known tool-call mode/,
+    );
   }
 });
 
@@ -250,6 +282,8 @@ test("the checks call the endpoint the router actually serves", async () => {
   // offered call is covered by its own test below.
   assert.match(source, /toolProbe\(\{ type: "function", name: "codex_router_probe" \}\)/);
   assert.match(source, /tool_choice: choice/);
+  assert.match(source, /pass\(forced\.status\), mode: "forced"/);
+  assert.match(source, /pass\(offered\.status\), mode: "auto"/);
 });
 
 test("independent routes fan out, but recording and publishing do not", () => {

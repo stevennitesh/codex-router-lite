@@ -18,8 +18,10 @@ account that can spend the route's quota:
 1. The provider's official documentation and `/models` catalog identify the
    exact upstream model and supported endpoint.
 2. A streamed Responses turn emits text and completes normally.
-3. A forced function call returns the requested tool name and valid JSON
-   arguments.
+3. A function call returns the requested tool name and valid JSON arguments.
+   Use forced selection when the exact route supports it. If its checked-in
+   request profile deliberately normalizes required or named selection to
+   `auto`, record that mode and prove the offered tool was actually called.
 4. A native Codex parent delegates a child through the encrypted payload
    relay, and the child returns an exact marker.
 5. The parent sends a same-thread follow-up to that child and receives the
@@ -43,6 +45,8 @@ A cancelled request without that completion evidence fails the gate.
 2. Record stable metadata and redacted outcome summaries in `proof.md` and
    `proof.json`. Do not commit API keys, bearer capabilities, raw prompts,
    decrypted payloads, or provider response bodies.
+   Record the Codex version/build and whether the evidence came from the
+   standalone CLI runner or Codex desktop native orchestration.
    An OpenRouter route pinned with `provider.only` must record the exact
    `endpointProvider`. A locally patched Switchyard route must also record a
    `runtimeBinding` containing the deployed upstream commit, patch SHA-256,
@@ -59,6 +63,12 @@ A cancelled request without that completion evidence fails the gate.
 CI validates the artifact shape and refuses evidence that looks like a
 credential. It cannot run billable native Codex delegation on behalf of an
 account, so human reproduction remains required.
+
+Accepted evidence is a dated historical observation supporting the current
+registry decision, not proof that a live probe ran at current `HEAD`. Re-run it
+when the exact provider or upstream binding, request profile, endpoint policy,
+Codex collaboration schema, tool namespace relay, or compatibility code
+changes.
 
 CI also enforces the registry/application relationship in both directions:
 an accepted application must bind one exact checked-in v2 route, and every new

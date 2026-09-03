@@ -6,7 +6,13 @@
 - Upstream model ID: `glm-5.3`
 - Provider: Z.ai GLM Coding Plan
 - Router version: `0.4.0-beta.4`
+- Codex version/build: `0.149.0-alpha.4.1`
+- Execution surface: Codex desktop native orchestration
 - Test completed: `2026-08-23T18:26:52.888Z`
+
+This is dated historical evidence supporting the checked-in registry decision,
+not a claim that the route was live-probed at current `HEAD` or the current
+Codex build.
 
 ## Evidence
 

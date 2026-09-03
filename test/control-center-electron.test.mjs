@@ -1151,10 +1151,18 @@ test("electron boundary does not enable node integration or shell argv", async (
     new URL("../../src/spawnable-command.mjs", packageImport).pathname,
     "/tmp/x.app/Contents/Resources/src/spawnable-command.mjs",
   );
+  assert.equal(
+    new URL("../../router-src/codex-binary.mjs", packageImport).pathname,
+    "/tmp/x.app/Contents/Resources/router-src/codex-binary.mjs",
+  );
   const devImport = "file:///tmp/repo/apps/control-center/electron/ipc.mjs";
   assert.equal(
     new URL("../../../src/spawnable-command.mjs", devImport).pathname,
     "/tmp/repo/src/spawnable-command.mjs",
+  );
+  assert.equal(
+    new URL("../../../src/codex-binary.mjs", devImport).pathname,
+    "/tmp/repo/src/codex-binary.mjs",
   );
   assert.match(builder, /extraResources:[\s\S]*from: \.\.\/\.\.\/src[\s\S]*to: router-src/);
   assert.match(builder, /runAsNode:\s*true/);
