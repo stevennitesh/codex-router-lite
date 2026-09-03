@@ -69,7 +69,7 @@ function port(name, fallback) {
   return value;
 }
 
-export const DEFAULT_PORTS = Object.freeze({
+const DEFAULT_PORTS = Object.freeze({
   gateway: 4200,
   router: 4202,
   api: 4203,

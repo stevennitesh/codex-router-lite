@@ -8,8 +8,8 @@
 // Backing off keeps the common case fast (the first probes are still 200 ms
 // apart, so a service that is already up is detected immediately) while a slow
 // or failing boot settles to one probe every couple of seconds.
-export const INITIAL_PROBE_DELAY_MS = 200;
-export const MAX_PROBE_DELAY_MS = 2_000;
+const INITIAL_PROBE_DELAY_MS = 200;
+const MAX_PROBE_DELAY_MS = 2_000;
 
 // How long a single probe is allowed to stay in flight. This is a separate
 // question from how long to wait between probes, and it used to be a flat
@@ -27,7 +27,7 @@ export const MAX_PROBE_DELAY_MS = 2_000;
 // Growing the window keeps the early loop responsive (the first probe is still
 // the same 1 s it always was, so a crash or a Ctrl-C is still noticed within a
 // second) while giving a starved machine room to answer later on.
-export const INITIAL_PROBE_TIMEOUT_MS = 1_000;
+const INITIAL_PROBE_TIMEOUT_MS = 1_000;
 export const MAX_PROBE_TIMEOUT_MS = 10_000;
 
 export function probeTimeoutMs(attempt, options = {}) {

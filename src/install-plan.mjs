@@ -25,20 +25,20 @@ export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
 // The litellm pin itself is a security floor as much as a version: 1.95.0
 // required `cryptography>=48.0.1,<49.0`, which no patched cryptography can
 // satisfy (GHSA-g6cj-pr64-35w5 is fixed in 50.0.0). Do not move it back.
-export const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.96.0", "fastapi==0.139.2"];
+const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.96.0", "fastapi==0.139.2"];
 
 // Pinning the two direct requirements left their whole transitive tree floating:
 // every install re-resolved `litellm[proxy]` against PyPI and executed whatever
 // it got. `requirements/python.txt` is the hash-verified closure of the pins
 // above, and both installers now install *from that file* with
 // `--require-hashes` instead of naming the packages themselves. That is also
-// why the version literals no longer appear in the shell scripts: #114 was
-// three copies of one rule drifting apart, and the fix is fewer copies rather
+// why the version literals no longer appear in the shell scripts. Three copies
+// of one rule had drifted apart, and the fix is fewer copies rather
 // than more comments asking people to keep them in step.
 //
 // Slash-separated on purpose because these are repository paths.
-export const PYTHON_LOCK = "requirements/python.txt";
-export const PYTHON_LOCK_INPUT = "requirements/python.in";
+const PYTHON_LOCK = "requirements/python.txt";
+const PYTHON_LOCK_INPUT = "requirements/python.in";
 
 // The lock is universal: one file covering macOS, Linux, and Windows on
 // CPython 3.10+, with environment markers selecting per-platform entries. A
@@ -65,7 +65,7 @@ function readFile(target) {
   }
 }
 
-export function requirementParts(requirement) {
+function requirementParts(requirement) {
   const [specifier, version] = String(requirement).split("==");
   return { name: specifier.replace(/\[[^\]]*\]$/, "").trim(), version: (version || "").trim() };
 }
@@ -77,7 +77,7 @@ function sitePackages(root, platform) {
 
 // Distribution directories normalize the project name, so `litellm[proxy]`
 // installs as `litellm-1.95.0.dist-info`.
-export function installedDistributionVersion(name, { root = SOURCE_ROOT, platform = process.platform } = {}) {
+function installedDistributionVersion(name, { root = SOURCE_ROOT, platform = process.platform } = {}) {
   const normalized = name.toLowerCase().replace(/[-_.]+/g, "_");
   for (const directory of sitePackages(root, platform)) {
     let entries;
@@ -114,7 +114,7 @@ function venvPythonVersion(root) {
 // The venv records the base interpreter it was created from. If that directory
 // disappears, the venv is unusable even when its launcher remains. Treat an
 // unresolvable home as "not installed" so every install/update rebuilds it.
-export function venvPythonHomeUsable(root = SOURCE_ROOT) {
+function venvPythonHomeUsable(root = SOURCE_ROOT) {
   const config = readFile(path.join(root, ".venv", "pyvenv.cfg")) || "";
   const match = config.match(/^\s*home\s*=\s*(.+)$/m);
   if (!match) return true; // unknown; the interpreter probe decides
@@ -122,7 +122,7 @@ export function venvPythonHomeUsable(root = SOURCE_ROOT) {
   return existsSync(home);
 }
 
-export const STEPS = {
+const STEPS = {
   "node-deps": {
     stamp: (root) => path.join(root, "node_modules", STAMP_NAME),
     fingerprint: (root) =>
@@ -169,7 +169,7 @@ export const STEPS = {
   },
 };
 
-export function stepStatus(
+function stepStatus(
   step,
   {
     root = SOURCE_ROOT,
@@ -190,7 +190,7 @@ export function stepStatus(
   }
 }
 
-export function recordStep(step, { root = SOURCE_ROOT } = {}) {
+function recordStep(step, { root = SOURCE_ROOT } = {}) {
   const definition = STEPS[step];
   if (!definition) throw new Error(`Unknown install step: ${step}`);
   const target = definition.stamp(root);
@@ -218,7 +218,7 @@ function normalizeProject(name) {
 // Returns one entry per pinned line: its project, version, and whether the line
 // carries at least one hash. An entry without hashes is the failure this whole
 // mechanism exists to prevent, so it is reported rather than skipped.
-export function parseLock(contents) {
+function parseLock(contents) {
   const entries = [];
   let current;
   for (const line of String(contents).split("\n")) {
@@ -238,18 +238,18 @@ export function parseLock(contents) {
 }
 
 // Requirement lines of the compile input, comments and blanks removed.
-export function lockInputRequirements(root = SOURCE_ROOT) {
+function lockInputRequirements(root = SOURCE_ROOT) {
   return (readFile(repoPath(root, PYTHON_LOCK_INPUT)) ?? "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
 }
 
-// Every way the lock can stop describing PYTHON_REQUIREMENTS. Drift is what
-// killed the first attempt at this (#52 pinned a LiteLLM twelve minor versions
-// behind main and nothing failed), so each condition returns a sentence rather
+// Every way the lock can stop describing PYTHON_REQUIREMENTS. An earlier lock
+// pinned LiteLLM twelve minor versions behind main without failing, so each
+// condition returns a sentence rather
 // than a boolean.
-export function pythonLockDrift(root = SOURCE_ROOT) {
+function pythonLockDrift(root = SOURCE_ROOT) {
   const problems = [];
   const contents = readFile(repoPath(root, PYTHON_LOCK));
   if (contents === undefined) {
@@ -307,7 +307,7 @@ export function pythonLockDrift(root = SOURCE_ROOT) {
 // where only the uv branch was converted still leaves everyone else unverified.
 // Matching on the command shape also keeps prose about `--require-hashes` in
 // the surrounding comments from passing for an install.
-export function installerPythonInstalls(script) {
+function installerPythonInstalls(script) {
   return String(script)
     .split("\n")
     .filter((line) => !/^\s*(#|\s*<#)/.test(line))
@@ -315,7 +315,7 @@ export function installerPythonInstalls(script) {
 }
 
 // The installer no longer repeats the version literals — it installs the lock.
-export function installerRequirementDrift(root = SOURCE_ROOT) {
+function installerRequirementDrift(root = SOURCE_ROOT) {
   return ["install.ps1"].filter(
     (script) => installerPythonInstalls(readFile(path.join(root, script)) ?? "").length !== 2,
   );
@@ -323,7 +323,7 @@ export function installerRequirementDrift(root = SOURCE_ROOT) {
 
 // Slash-separated for the same reason PYTHON_LOCK is: these are repository
 // paths, resolved through repoPath, not host paths.
-export const INSTALLER_SCRIPTS = { windows: "install.ps1" };
+const INSTALLER_SCRIPTS = { windows: "install.ps1" };
 
 // Which of the two extracted lines belongs to which branch. `uv pip install`
 // and `<python> -m pip install` are disjoint by construction, so neither
@@ -339,7 +339,7 @@ const INSTALL_TOOLS = {
 // `installerRequirementDrift` uses, and it is returned ready to execute in the
 // checkout root. The PowerShell lines expect the `$Python` that install.ps1
 // itself defines.
-export function pythonInstallCommand(tool, { root = SOURCE_ROOT, platform = "windows" } = {}) {
+function pythonInstallCommand(tool, { root = SOURCE_ROOT, platform = "windows" } = {}) {
   const script = INSTALLER_SCRIPTS[platform];
   if (!script) {
     throw new Error(`Unknown installer platform: ${platform} (expected windows)`);

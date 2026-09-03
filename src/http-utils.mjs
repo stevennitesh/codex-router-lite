@@ -44,12 +44,12 @@ export const HOP_BY_HOP_HEADERS = new Set([
 // `stream disconnected before completion: error sending request for url`.
 // The server has to be the side that outlasts the pool, so hold idle
 // connections past any plausible client idle timeout instead.
-export const KEEPALIVE_TIMEOUT_MS = 120_000;
+const KEEPALIVE_TIMEOUT_MS = 120_000;
 
 // Node runs the headers timer over keep-alive idle time as well, so a
 // `headersTimeout` below `keepAliveTimeout` destroys connections the server
 // otherwise intends to keep. Derive it rather than letting the two drift.
-export const HEADERS_TIMEOUT_MS = KEEPALIVE_TIMEOUT_MS + 5_000;
+const HEADERS_TIMEOUT_MS = KEEPALIVE_TIMEOUT_MS + 5_000;
 
 export function applyKeepAliveTimeouts(server) {
   server.keepAliveTimeout = KEEPALIVE_TIMEOUT_MS;
@@ -170,12 +170,12 @@ export function installGracefulShutdown(
 // 'error' event` and a libuv stack, with the *label of the process that died
 // nowhere in it. Every forwarder here is spawned by start.mjs with inherited
 // stdio into one shared stream, so an unlabelled crash cannot even be
-// attributed to a forwarder -- a real Windows CI failure (#271's gating test)
-// showed only `EADDRINUSE 127.0.0.1:22624` and left which of the four had
+// attributed to a forwarder. A Windows CI failure showed only
+// `EADDRINUSE 127.0.0.1:22624` and left which of the four had
 // died an open question.
 //
-// `src/router.mjs` has carried its own copy of this since #171 for the same
-// reason. This is that treatment, shared, so the forwarders name themselves
+// The router has the same treatment. This shared helper makes the forwarders
+// name themselves
 // and the port they wanted. The exit codes match the router's, so one line in
 // the service log classifies the death for a supervisor and a human alike.
 export function reportListenFailure(server, { label, host, port }) {
@@ -356,8 +356,8 @@ export function writeJson(response, status, payload) {
 // The transport reports every connection-level failure as a bare
 // `TypeError: fetch failed`; the code that says why (ECONNREFUSED,
 // UND_ERR_CONNECT_TIMEOUT, ENOTFOUND, ...) lives on the `cause` chain, and a
-// log line that stops at the top error is what left #171's repeated native
-// failures unexplainable from the retained log. Walk the chain and name every
+// log line that stops at the top error leaves repeated native failures
+// unexplainable from the retained log. Walk the chain and name every
 // link. Services whose failures can wrap upstream response text pass
 // `messages: false` and record names and codes only, which never carry a body.
 const MAX_ERROR_CHAIN_DEPTH = 8;

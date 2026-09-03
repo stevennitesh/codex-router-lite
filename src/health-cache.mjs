@@ -8,12 +8,12 @@
 // A short TTL collapses a burst of polls into one probe. It is deliberately
 // short: the tray shows live service status, so a stale "reachable" is a lie
 // with a shelf life, and a few seconds is the most that is honest.
-export const DEFAULT_HEALTH_TTL_MS = 3_000;
+const DEFAULT_HEALTH_TTL_MS = 3_000;
 // Stale-while-revalidate must not serve an hours-old "reachable" to doctor on a
 // tray-less machine that has not polled since the gateway died. The TTL is the
 // companion's refresh cadence; this is the hard bound on how old a nonblocking
 // snapshot may be before `/health` waits for a live probe.
-export const DEFAULT_MAX_STALE_MS = 15_000;
+const DEFAULT_MAX_STALE_MS = 15_000;
 
 export function createHealthCache({
   ttlMs = DEFAULT_HEALTH_TTL_MS,

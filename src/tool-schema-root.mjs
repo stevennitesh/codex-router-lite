@@ -88,7 +88,7 @@ export function hasObjectRoot(schema) {
 
 // Returns `schema` unchanged when its root is already a plain object, so the
 // common case costs one type check and no copy.
-export function objectRootToolSchema(schema) {
+function objectRootToolSchema(schema) {
   if (!isPlainObject(schema)) return { type: "object", properties: {} };
   if (hasObjectRoot(schema)) return schema;
 
@@ -178,7 +178,7 @@ function matchesDeclaredType(value, types) {
 
 // Returns `schema` by identity when nothing contradicts, so a clean toolset
 // costs one walk and no copy, and the client's object is never mutated.
-export function normalizeSchemaLiterals(schema, depth = 0) {
+function normalizeSchemaLiterals(schema, depth = 0) {
   if (!isPlainObject(schema) || depth > MAX_LITERAL_DEPTH) return schema;
   let next = schema;
   const replace = (key, value) => {

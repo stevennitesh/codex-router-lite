@@ -9,7 +9,7 @@ import {
 } from "./http-utils.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 
-export const RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
+const RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
 
 const RESPONSE_ROUTES = new Set(["/responses", "/v1/responses"]);
 const FORWARDED_REQUEST_HEADERS = new Set([

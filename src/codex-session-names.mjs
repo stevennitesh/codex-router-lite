@@ -19,10 +19,10 @@ const METADATA_ID_KEYS = new Set([
   "thread_id",
 ]);
 
-export const SESSION_INDEX_PATH =
+const SESSION_INDEX_PATH =
   process.env.CODEX_ROUTER_SESSION_INDEX ||
   path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "session_index.jsonl");
-export const SESSIONS_PATH =
+const SESSIONS_PATH =
   process.env.CODEX_ROUTER_SESSIONS_PATH ||
   path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "sessions");
 
@@ -56,7 +56,7 @@ function metadataThreadId(value) {
   return undefined;
 }
 
-export function threadIdFromHeaders(headers = {}) {
+function threadIdFromHeaders(headers = {}) {
   for (const name of ["thread-id", "session-id", "session_id"]) {
     const id = uuidIn(headerText(headers, name));
     if (id) return id;
@@ -71,7 +71,7 @@ export function threadIdFromHeaders(headers = {}) {
   }
 }
 
-export function parentThreadIdFromHeaders(headers = {}) {
+function parentThreadIdFromHeaders(headers = {}) {
   return uuidIn(headerText(headers, "x-codex-parent-thread-id"));
 }
 

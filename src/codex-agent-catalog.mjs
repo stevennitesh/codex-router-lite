@@ -11,7 +11,7 @@ import path from "node:path";
 import { protectPrivateFile } from "./file-security.mjs";
 import { CODEX_AGENTS_DIR } from "./paths.mjs";
 
-export function safeIdentifier(value, separator) {
+function safeIdentifier(value, separator) {
   return String(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, separator)
@@ -77,7 +77,7 @@ function writeManagedAgent(target, contents) {
   protectPrivateFile(target);
 }
 
-export function routedAgentDefinition(model) {
+function routedAgentDefinition(model) {
   const slug = String(model?.slug || "").trim();
   if (!slug || !slug.includes("/")) {
     throw new Error(`Cannot create a routed agent for invalid model slug: ${slug || "<empty>"}`);

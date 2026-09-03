@@ -12,7 +12,7 @@ function positiveInteger(value, fallback, minimum = 1) {
   return Number.isFinite(value) ? Math.max(minimum, Math.floor(value)) : fallback;
 }
 
-export function callerKeyRotationLockTarget(stateDir = STATE_DIR) {
+function callerKeyRotationLockTarget(stateDir = STATE_DIR) {
   return path.join(stateDir, "caller-key-rotation");
 }
 

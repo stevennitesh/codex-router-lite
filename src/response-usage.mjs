@@ -25,8 +25,8 @@ const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
 // compaction fires somewhere between 690,000 and 900,000 real tokens.
 //
 // That band only holds if the bytes handed to it are bytes the model reads.
-// See NON_VISIBLE_KEY below for the one class that is not, and issue #266 for
-// what happened when it was counted anyway.
+// See NON_VISIBLE_KEY below for the one class that is not and the measured
+// overcount that results when it is included.
 const ESTIMATE_BYTES_PER_TOKEN = 3.3;
 
 // Below this the substitution could not affect compaction anyway, and leaving
@@ -55,8 +55,8 @@ const MIN_ESTIMATED_INPUT_TOKENS = 1_000;
 // it has no summary to give, is forwarded whole. Measured through the router
 // itself on a twelve-turn tool loop: with summaries, no ciphertext reaches the
 // gateway at all; without them, every blob does and they are 64% of the body
-// the router sends. That is the regime issue #266 was reported from, and 64%
-// of the bytes charged at 3.3 each is where 3.9x-4.7x comes from.
+// the router sends. Charging that 64% at 3.3 bytes per token produces the
+// observed 3.9x-4.7x overcount.
 //
 // Everything else stays counted. JSON escaping (0.2%-3%) and structural
 // scaffolding (1%-5%) are small and keep the estimate erring high, which is the
@@ -139,7 +139,7 @@ function tokenCount(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : undefined;
 }
 
-export function normalizeTokenUsage(value) {
+function normalizeTokenUsage(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const inputTokens = tokenCount(value.input_tokens ?? value.prompt_tokens);
   const outputTokens = tokenCount(value.output_tokens ?? value.completion_tokens);
@@ -277,7 +277,7 @@ function withEstimatedPromptTokens(usage, estimate) {
 
 // Returns a copy of a payload whose zero prompt count has been replaced by the
 // estimate, or undefined when the payload does not qualify.
-export function substituteZeroInputUsage(payload, estimate) {
+function substituteZeroInputUsage(payload, estimate) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
   if (!Number.isInteger(estimate) || estimate <= 0) return undefined;
   if (reportsZeroPromptTokens(payload.usage)) {
@@ -317,8 +317,8 @@ export class ResponseUsageTransform extends Transform {
   // When the first token of visible output arrived, relative to whenever the
   // caller says the request started. Headers are not this: a reasoning model
   // answers with headers and then thinks in silence for seconds before the
-  // first token appears, and counting that silence as generation is what makes
-  // a fast model read as slow. See #192.
+  // first token appears. Counting that silence as generation makes a fast
+  // model read as slow.
   #firstTokenAt;
   #completedResponseObserved = false;
 

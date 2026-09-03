@@ -45,7 +45,7 @@ function parseUpstreamError(bodyText) {
   }
 }
 
-export function extractUpstreamDetail(bodyText) {
+function extractUpstreamDetail(bodyText) {
   let message = parseUpstreamError(bodyText).message;
   for (const pattern of ROUTING_NOISE) message = message.replace(pattern, "");
   let previous;
@@ -122,7 +122,7 @@ const CONTEXT_LENGTH_PATTERNS = [
   /context[_\s-]length[_\s-]exceeded/i,
 ];
 
-export function contextLengthFailure(bodyText) {
+function contextLengthFailure(bodyText) {
   const detail = extractUpstreamDetail(bodyText);
   if (!detail) return undefined;
   for (const pattern of CONTEXT_LENGTH_PATTERNS) {

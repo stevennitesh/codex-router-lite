@@ -6,7 +6,7 @@ import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 const MAX_PRECONTENT_BYTES = 1024 * 1024;
 const MAX_PRECONTENT_MS = 30_000;
 
-export class EmptyCompletionPreludeLimitError extends Error {
+class EmptyCompletionPreludeLimitError extends Error {
   constructor(kind) {
     super(
       kind === "time"

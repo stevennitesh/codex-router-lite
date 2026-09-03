@@ -38,7 +38,7 @@ function integerToken(token) {
   return integerSpelling(token) ?? token;
 }
 
-export function rewriteWholeNumberTokens(raw) {
+function rewriteWholeNumberTokens(raw) {
   if (typeof raw !== "string" || raw.length === 0) return raw;
   let out = "";
   let inString = false;
@@ -73,7 +73,7 @@ export function rewriteWholeNumberTokens(raw) {
   return out;
 }
 
-export function coerceWholeNumberJson(value) {
+function coerceWholeNumberJson(value) {
   if (Array.isArray(value)) {
     return value.map((entry) => coerceWholeNumberJson(entry));
   }

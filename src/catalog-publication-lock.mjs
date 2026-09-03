@@ -20,7 +20,7 @@ function positiveInteger(value, fallback, minimum = 1) {
     : fallback;
 }
 
-export function catalogPublicationLockTarget(stateDir = STATE_DIR) {
+function catalogPublicationLockTarget(stateDir = STATE_DIR) {
   return path.join(stateDir, "catalog-publication");
 }
 

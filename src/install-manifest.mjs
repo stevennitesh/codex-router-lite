@@ -51,7 +51,7 @@ function atomicWrite(value) {
   writePrivateJson(INSTALL_MANIFEST_PATH, value, { directoryMode: 0o700 });
 }
 
-export function recordInstall() {
+function recordInstall() {
   const previous = readInstallManifest();
   // The skills field is derived from the checkout's skills/ directory, not
   // from post-install filesystem state: bin/install records the manifest

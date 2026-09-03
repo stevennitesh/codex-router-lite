@@ -20,7 +20,7 @@ function run(script, args = []) {
   return result.stdout || "";
 }
 
-export function refreshCatalog({ execute = run } = {}) {
+function refreshCatalog({ execute = run } = {}) {
   const catalogOutput = execute("catalog.mjs", ["--refresh-native"]);
   execute("litellm-config.mjs");
   return { catalogOutput };

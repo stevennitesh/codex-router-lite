@@ -20,7 +20,7 @@ function positiveInteger(value, fallback, minimum = 1) {
     : fallback;
 }
 
-export function modelOverlayLockTarget(stateDir = STATE_DIR) {
+function modelOverlayLockTarget(stateDir = STATE_DIR) {
   return path.join(stateDir, "model-overlay-transaction");
 }
 

@@ -37,7 +37,7 @@ function causeChain(error) {
   return chain;
 }
 
-export function transportFailureHost(error) {
+function transportFailureHost(error) {
   for (const link of causeChain(error)) {
     if (typeof link.hostname === "string" && link.hostname) return link.hostname;
     const message = typeof link.message === "string" ? link.message : "";
@@ -102,7 +102,7 @@ const LOCAL_HINT = " That is one of this install's own processes, not the networ
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
 
-export function localTransportHost(host) {
+function localTransportHost(host) {
   if (typeof host !== "string" || !host) return false;
   const bare = host.replace(/^\[|\]$/g, "").toLowerCase();
   return LOCAL_HOSTS.has(bare) || bare.startsWith("127.");

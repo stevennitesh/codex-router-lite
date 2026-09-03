@@ -37,19 +37,19 @@ function clampedInteger(raw, fallback, min, max) {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
-export const NATIVE_RETRY_LIMIT = clampedInteger(
+const NATIVE_RETRY_LIMIT = clampedInteger(
   process.env.CODEX_ROUTER_NATIVE_RETRIES,
   DEFAULT_RETRIES,
   0,
   MAX_RETRIES,
 );
-export const NATIVE_RETRY_BACKOFF_MS = clampedInteger(
+const NATIVE_RETRY_BACKOFF_MS = clampedInteger(
   process.env.CODEX_ROUTER_NATIVE_RETRY_BACKOFF_MS,
   DEFAULT_BACKOFF_MS,
   0,
   MAX_BACKOFF_MS,
 );
-export const NATIVE_RETRY_BUDGET_MS = clampedInteger(
+const NATIVE_RETRY_BUDGET_MS = clampedInteger(
   process.env.CODEX_ROUTER_NATIVE_RETRY_BUDGET_MS,
   DEFAULT_BUDGET_MS,
   0,
@@ -74,13 +74,13 @@ export const NATIVE_RETRY_BUDGET_MS = clampedInteger(
 //   4xx  deterministic. The same request produces the same answer.
 //   500  the origin ran and failed. Unlike the edge statuses above, a repeat
 //        risks a second execution of work that already happened.
-export const RETRYABLE_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
+const RETRYABLE_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
 
 // Transport failures where no response ever started. `fetch` reports these as
 // a generic TypeError whose cause carries the socket-level code.
 //
-// ENOTFOUND, EADDRNOTAVAIL, and ENOBUFS joined after #171: a Windows machine
-// under loopback churn failed native connects repeatedly while the same
+// ENOTFOUND, EADDRNOTAVAIL, and ENOBUFS are included because a Windows machine
+// under loopback churn can fail native connects repeatedly while the same
 // origin answered other requests in the same window, which is the transient
 // shape this bound exists to absorb. All three fail before a connection
 // exists — a name that did not resolve, no ephemeral port to bind, no kernel
@@ -103,11 +103,11 @@ const RETRYABLE_ERROR_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 
-export function isRetryableStatus(status) {
+function isRetryableStatus(status) {
   return RETRYABLE_STATUSES.has(Number(status));
 }
 
-export function isRetryableTransportError(error) {
+function isRetryableTransportError(error) {
   if (!error) return false;
   // An abort is the caller leaving, and a router-side error (a body that is too
   // large, an unsupported encoding) carries its own HTTP status and would fail

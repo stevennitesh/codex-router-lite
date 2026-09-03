@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 import { redactCallerUrl } from "./caller-auth.mjs";
 
-export const KCR1_PREFIX = "kcr1:";
-export const KCR2_PREFIX = "kcr2:";
+const KCR1_PREFIX = "kcr1:";
+const KCR2_PREFIX = "kcr2:";
 
 export const CHECKPOINT_WARNING =
   "This is a lossy continuation checkpoint, not a complete execution record. Only the " +
@@ -515,7 +515,7 @@ export function renderCompactionValue(value) {
   return renderCheckpoint(decoded.checkpoint);
 }
 
-export function checkpointFromRenderedText(text) {
+function checkpointFromRenderedText(text) {
   if (typeof text !== "string" || !text.startsWith(CHECKPOINT_WARNING)) return undefined;
   const start = text.indexOf(`${CHECKPOINT_BEGIN}\n`);
   const end = text.indexOf(`\n${CHECKPOINT_END}`, start + CHECKPOINT_BEGIN.length);

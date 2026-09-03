@@ -39,7 +39,7 @@ export function resolveProviderCredential(providerOrId, { persistent = false } =
   return undefined;
 }
 
-export function credentialSetupHint() {
+function credentialSetupHint() {
   return ".\\model-router.ps1 codex provider-key openrouter set";
 }
 

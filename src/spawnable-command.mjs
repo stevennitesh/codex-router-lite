@@ -19,7 +19,7 @@
 // so a caller that gets the path right also gets the launch right.
 import { execFileSync } from "node:child_process";
 
-export const WINDOWS_SPAWNABLE_EXTENSIONS = [".exe", ".com", ".cmd", ".bat"];
+const WINDOWS_SPAWNABLE_EXTENSIONS = [".exe", ".com", ".cmd", ".bat"];
 
 // Ordered by preference: a real executable is spawned directly, and only a
 // batch shim has to pay for a cmd.exe hop.
@@ -52,7 +52,7 @@ export function commandOnPath(
   }
 }
 
-export function isWindowsBatchShim(binary, platform = process.platform) {
+function isWindowsBatchShim(binary, platform = process.platform) {
   return platform === "win32" && /\.(cmd|bat)$/i.test(String(binary || ""));
 }
 
@@ -71,7 +71,7 @@ export function isWindowsBatchShim(binary, platform = process.platform) {
 // incorrect", which is how this was caught.
 const CMD_SHIM_PATTERN = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i;
 
-export function needsDoubleEscape(binary) {
+function needsDoubleEscape(binary) {
   return CMD_SHIM_PATTERN.test(String(binary || ""));
 }
 const CMD_META_CHARACTERS = /([()\][%!^"`<>&|;, *?])/g;
@@ -90,7 +90,7 @@ const CMD_META_CHARACTERS = /([()\][%!^"`<>&|;, *?])/g;
 // "that is not a path" error.
 const PATH_ILLEGAL_ON_WINDOWS = /["<>|?*\u0000-\u001f]/;
 
-export function assertSpawnablePath(binary) {
+function assertSpawnablePath(binary) {
   if (PATH_ILLEGAL_ON_WINDOWS.test(String(binary))) {
     throw new Error(
       "Refusing to run a Windows path containing characters no file name may hold. " +
@@ -100,7 +100,7 @@ export function assertSpawnablePath(binary) {
   return binary;
 }
 
-export function escapeWindowsShellCommand(value) {
+function escapeWindowsShellCommand(value) {
   return String(value).replace(CMD_META_CHARACTERS, "^$1");
 }
 
@@ -112,7 +112,7 @@ export function escapeWindowsShellCommand(value) {
 // also simply what a person typing the command would produce.
 const SAFE_BARE_ARGUMENT = /^[A-Za-z0-9_@+=:.\/\\-]+$/;
 
-export function escapeWindowsShellArgument(value, doubleEscape = false) {
+function escapeWindowsShellArgument(value, doubleEscape = false) {
   let escaped = String(value);
   if (SAFE_BARE_ARGUMENT.test(escaped)) return escaped;
   // Backslashes are literal unless they precede a quote, where each one has to

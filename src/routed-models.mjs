@@ -63,7 +63,7 @@ if (
 export const PROVIDERS = new Map(providerRecords.map((provider) => [provider.id, Object.freeze(provider)]));
 export const RUNTIME_PROVIDERS = PROVIDERS;
 export const CHECKED_IN_MODELS = Object.freeze(modelRecords.map((model) => Object.freeze(model)));
-export const MODELS = CHECKED_IN_MODELS;
+const MODELS = CHECKED_IN_MODELS;
 export const LISTED_MODELS = Object.freeze(MODELS.filter((model) => model.listed));
 export const MODEL_BY_SLUG = new Map(MODELS.map((model) => [model.slug, model]));
 export const MODEL_BY_GATEWAY_ID = new Map(MODELS.map((model) => [model.gatewayModel, model]));

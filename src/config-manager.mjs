@@ -52,7 +52,7 @@ function tomlValue(value) {
   return JSON.stringify(value);
 }
 
-export function managedMultiAgentV2FeatureLine() {
+function managedMultiAgentV2FeatureLine() {
   return (
     `multi_agent_v2 = { enabled = true, max_concurrent_threads_per_session = ${managedAgentMaxConcurrency}, ` +
     `expose_spawn_agent_model_overrides = true, usage_hint_enabled = true, ` +

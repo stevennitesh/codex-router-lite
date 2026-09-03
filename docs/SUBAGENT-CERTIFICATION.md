@@ -7,10 +7,9 @@ A route is spawnable only when its published model has `multiAgentVersion: "v2"`
 Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
-The retained routes are:
-
-- `openrouter/glm-5.3-flash`
-- `switchyard/auto`
+The current v2 route is `openrouter/glm-5.3-flash`. `switchyard/auto` remains
+v1 until it passes the same native parent, child, and continuation checks with
+proof bound to its deployed runtime hashes.
 
 ## Required checks
 

@@ -38,7 +38,7 @@ function partialClient(label) {
   throw new Error(`Refusing caller capability rotation while ${label} has partial managed state; run its doctor/repair path first.`);
 }
 
-export function installedTargetsFromStatus({ codex = {} } = {}) {
+function installedTargetsFromStatus({ codex = {} } = {}) {
   const targets = [];
   const codexManagedArtifacts = codex.managed_router_artifacts_present === true;
   if (codex.mode === "router") {
@@ -57,7 +57,7 @@ function commandDetail(result, fallback) {
   return detail ? redactCallerUrl(detail.slice(-2_000)) : fallback;
 }
 
-export function runNodeCommand(script, args = []) {
+function runNodeCommand(script, args = []) {
   const result = spawnSync(process.execPath, [path.join(ROOT, script), ...args], {
     cwd: ROOT, env: process.env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
   });
@@ -71,17 +71,17 @@ function parseJsonCommand(script, args, runNode = runNodeCommand) {
   catch { throw new Error(`${script} returned invalid status JSON.`); }
 }
 
-export async function readManagedClientStatuses({ runNode = runNodeCommand } = {}) {
+async function readManagedClientStatuses({ runNode = runNodeCommand } = {}) {
   return {
     codex: parseJsonCommand("src/config-manager.mjs", ["status"], runNode),
   };
 }
 
-export async function readRouterServiceStatus({ runNode = runNodeCommand } = {}) {
+async function readRouterServiceStatus({ runNode = runNodeCommand } = {}) {
   return parseJsonCommand("src/service.mjs", ["status"], runNode);
 }
 
-export function managedServiceIsRunning(service) {
+function managedServiceIsRunning(service) {
   if (service?.installed !== true) return false;
   return service.loaded === true || service.state === "running";
 }
@@ -96,7 +96,7 @@ async function validModelList(response) {
   }
 }
 
-export async function verifyCurrentCallerCapability({ currentSecret, fetchImpl = fetch }) {
+async function verifyCurrentCallerCapability({ currentSecret, fetchImpl = fetch }) {
   try {
     const fresh = await fetchImpl(`${callerBaseUrl(PORTS.router, currentSecret)}/models`, { signal: AbortSignal.timeout(5_000) });
     if (!(await validModelList(fresh))) throw new Error("The new caller capability did not return a valid model list.");
@@ -106,7 +106,7 @@ export async function verifyCurrentCallerCapability({ currentSecret, fetchImpl =
   }
 }
 
-export async function verifyCallerRotation({ previousSecret, currentSecret, fetchImpl = fetch }) {
+async function verifyCallerRotation({ previousSecret, currentSecret, fetchImpl = fetch }) {
   try {
     const fresh = await fetchImpl(`${callerBaseUrl(PORTS.router, currentSecret)}/models`, { signal: AbortSignal.timeout(5_000) });
     if (!(await validModelList(fresh))) throw new Error("The new caller capability did not return a valid model list.");
@@ -144,7 +144,7 @@ async function runRouterServiceMutationUnlocked(command) {
   if (status !== 0) throw new Error(`Router service ${command} failed.`);
 }
 
-export async function finalizeCallerKeyRotation({ journal, secretPath = CALLER_SECRET_PATH } = {}) {
+async function finalizeCallerKeyRotation({ journal, secretPath = CALLER_SECRET_PATH } = {}) {
   discardCallerCapabilityBackup({ secretPath, operationId: journal.operationId });
   clearCallerKeyRotationJournal({ operationId: journal.operationId });
 }
@@ -237,7 +237,7 @@ async function recoverPendingCallerKeyRotationUnlocked({
   return { recovered: true, committed: false };
 }
 
-export async function runCallerKeyRotation({
+async function runCallerKeyRotation({
   readClientStatuses = () => readManagedClientStatuses(),
   readServiceStatus = () => readRouterServiceStatus(),
   runNode = runNodeCommand,

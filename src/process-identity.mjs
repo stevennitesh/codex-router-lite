@@ -16,7 +16,7 @@ export function processStartIdentity(
   return result.state === "alive" ? result.identity : undefined;
 }
 
-export function processStartIdentityProbe(
+function processStartIdentityProbe(
   pid,
   { spawn = spawnSync, platform = process.platform } = {},
 ) {

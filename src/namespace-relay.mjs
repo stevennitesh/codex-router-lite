@@ -38,7 +38,7 @@ import {
 // (`mcp__codex_apps__github`), so restoration always resolves through the map
 // built from the exact tools that were flattened -- never by splitting names.
 
-export const NAMESPACE_DELIMITER = "__";
+const NAMESPACE_DELIMITER = "__";
 const DEFAULT_FUNCTION_NAMESPACE = "functions";
 const MCP_NAMESPACE_PREFIX = "mcp__";
 
@@ -240,7 +240,7 @@ function availableCustomToolName(nativeName, visibleNames) {
 // memorised V4A emitting patches Codex cannot parse. Carry the definition in
 // the bridged description instead -- that is the one field every
 // function-tool provider does put in front of the model.
-export function bridgedCustomToolDescription(tool) {
+function bridgedCustomToolDescription(tool) {
   const sections = [];
   if (typeof tool?.description === "string" && tool.description.trim()) {
     sections.push(tool.description.trim());
@@ -456,7 +456,7 @@ function schemaStringValues(schema, values = new Set()) {
 // A fresh local thread inherits the routed session model when the caller did
 // not choose one. Follow-up messages intentionally keep the target thread's
 // settings, and cloud tasks require model omission, so neither is rewritten.
-export const SPAWN_MODEL_TOOLS = new Set(["create_thread"]);
+const SPAWN_MODEL_TOOLS = new Set(["create_thread"]);
 const SPAWN_TOOL_PREFIX = `codex_app${NAMESPACE_DELIMITER}`;
 
 function isSpawnModelCall(item) {
@@ -476,7 +476,7 @@ function isSpawnModelCall(item) {
 // `model` is the routed session's model (route.slug). Returns a rewritten
 // item when the call is one of SPAWN_MODEL_TOOLS, carries no explicit model,
 // and a session model is available; otherwise returns the item untouched.
-export function injectSessionModelForSpawnCalls(item, model) {
+function injectSessionModelForSpawnCalls(item, model) {
   if (!isSpawnModelCall(item)) return item;
   if (typeof model !== "string" || !model) return item;
   if (typeof item.arguments !== "string") return item;
@@ -786,7 +786,7 @@ function jsonArgumentsAreUnambiguous(value, { allowEmpty = false } = {}) {
 
 // Repair the parameter roots needed by the GLM bridge. An ordinary root keeps
 // its identity and costs no copy.
-export function repairToolSchemaRoot(tool) {
+function repairToolSchemaRoot(tool) {
   const parameters = tool?.function?.parameters ?? tool?.parameters;
   if (parameters === undefined) return tool;
   const repaired = providerToolSchema(parameters);

@@ -4,7 +4,7 @@
 // visual feedback; reporting the captured length and flagging an input that
 // looks like the same value pasted twice prevents silent doubled keys.
 
-export const MIN_DOUBLED_SECRET_LENGTH = 8;
+const MIN_DOUBLED_SECRET_LENGTH = 8;
 
 function normalized(value) {
   return String(value ?? "").trim();
@@ -23,7 +23,7 @@ export function secretEntryProblem(value) {
   return undefined;
 }
 
-export function looksDoubledSecret(value) {
+function looksDoubledSecret(value) {
   const key = normalized(value);
   if (key.length < MIN_DOUBLED_SECRET_LENGTH) return false;
   if (key.length % 2 === 0) {

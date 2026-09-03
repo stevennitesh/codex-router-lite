@@ -309,7 +309,7 @@ async function main() {
   // Only the gateway is supervised. The forwarders and the router are ours and
   // are restarted by rebuilding the whole service; the gateway is a third-party
   // Python process that can end itself on a single bad upstream response
-  // (issue #261, a 429 raised out of LiteLLM's exception mapping), and taking
+  // (a 429 raised out of LiteLLM's exception mapping), and taking
   // the router down with it turned one failed request into a dead session.
   const result = await Promise.race([
     waitForExit(api, "API forwarder"),

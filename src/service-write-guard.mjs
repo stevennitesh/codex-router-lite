@@ -31,7 +31,7 @@ export function assertServiceWriteIsolated(
 
 // Tests may render a task definition, but they must never change the machine's
 // Task Scheduler registration. Reads stay live so status remains trustworthy.
-export function serviceManagerDisabled(env = process.env) {
+function serviceManagerDisabled(env = process.env) {
   return env.MODEL_ROUTER_SKIP_SERVICE_MANAGER === "1";
 }
 

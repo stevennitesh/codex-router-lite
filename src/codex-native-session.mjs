@@ -22,7 +22,7 @@ const discoveryDisabled = () => false;
 // Access and refresh tokens are never logged, returned by a status call, or
 // put in an error message. The desktop status may include the verified email
 // claim from the id_token so the user can identify the signed-in profile.
-export const CODEX_AUTH_PATH =
+const CODEX_AUTH_PATH =
   process.env.MODEL_ROUTER_CODEX_AUTH || path.join(CODEX_HOME, "auth.json");
 
 function consentMarkerEnabled() {
@@ -209,7 +209,7 @@ let lastRefreshAttemptMs = 0;
 const REFRESH_RETRY_INTERVAL_MS = 5 * 60_000;
 const REFRESH_TIMEOUT_MS = 30_000;
 
-export async function refreshViaCodex({ now = Date.now() } = {}) {
+async function refreshViaCodex({ now = Date.now() } = {}) {
   // `codex login status` makes Codex read (and possibly rewrite) its session
   // file; unreachable while readSession() is guarded, but the promise should
   // not depend on that call graph staying put.

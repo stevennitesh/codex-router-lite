@@ -22,4 +22,6 @@ jobs:
       - run: npm run check
       - name: Test the retained Windows runtime
         run: npm test
-      - run: npm audit --omit=dev --audit-level=high
+      - name: Audit production dependencies
+        timeout-minutes: 5
+        run: npm audit --omit=dev --audit-level=high

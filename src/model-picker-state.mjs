@@ -11,7 +11,7 @@ import path from "node:path";
 import { protectPrivateFile } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
-export const MODEL_PICKER_STATE_PATH =
+const MODEL_PICKER_STATE_PATH =
   process.env.MODEL_ROUTER_MODEL_PICKER_STATE ||
   path.join(STATE_DIR, "model-picker.json");
 

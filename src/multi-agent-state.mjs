@@ -7,11 +7,11 @@ import path from "node:path";
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
-export const MULTI_AGENT_STATE_PATH =
+const MULTI_AGENT_STATE_PATH =
   process.env.MODEL_ROUTER_MULTI_AGENT_STATE ||
   path.join(STATE_DIR, "multi-agent-settings.json");
 
-export const SUBAGENT_MODES = Object.freeze(["all", "selected", "proven"]);
+const SUBAGENT_MODES = Object.freeze(["all", "selected", "proven"]);
 
 function defaultSettings() {
   return { version: 2, mode: "proven", enabled: [], disabled: [] };
@@ -74,7 +74,7 @@ export function setMultiAgentModel(slug, enabled) {
 // Applies a provider-sized selection in one protected-state write. Besides
 // being faster than one command per model, this prevents a half-cleared
 // provider when the UI closes or a later catalog refresh fails.
-export function setMultiAgentModels(slugs, enabled) {
+function setMultiAgentModels(slugs, enabled) {
   const values = [...new Set(slugs.map((slug) => String(slug || "").trim()).filter(Boolean))];
   if (values.length === 0) throw new Error("At least one model slug is required.");
   const current = readMultiAgentSettings();
@@ -113,7 +113,7 @@ export function setMultiAgentModels(slugs, enabled) {
 // recording the model's own default -- a default that later changes upstream
 // should follow the model, not stay frozen at whatever it was when someone
 // opened a settings page.
-export function subagentEfforts() {
+function subagentEfforts() {
   const efforts = readMultiAgentSettings().efforts;
   if (!efforts || typeof efforts !== "object" || Array.isArray(efforts)) return {};
   const clean = {};
@@ -148,7 +148,7 @@ export function setSubagentEffort(slug, effort) {
 
 // `proven` and `all` keep every certified route unless it is disabled.
 // `selected` keeps only certified routes the operator explicitly enabled.
-export function applyMultiAgentSettings(models, settings, hidden = new Set()) {
+function applyMultiAgentSettings(models, settings, hidden = new Set()) {
   const disabled = new Set(settings.disabled || []);
   const enabled = new Set(settings.enabled || []);
   const mode = settings.mode || "proven";

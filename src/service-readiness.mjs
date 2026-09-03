@@ -85,7 +85,7 @@ export async function waitForServiceReadiness({
         // The task's own result is a bare exit code. When the router log
         // explains why the launch died, say that instead of leaving the
         // operator to reconcile "no running launcher" against a Node error
-        // that names a file they can open (issue #548).
+        // that names a file they can open.
         const diagnosis = diagnoseWindowsLaunchFailure({ logText: readLogTail(logPath) });
         throw new Error(
           `Windows Scheduled Task has no running launcher process (LastTaskResult=${result}); router cannot become healthy.` +

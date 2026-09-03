@@ -21,7 +21,7 @@ import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 // hold connections longer than it does -- surfacing as UND_ERR_SOCKET on a
 // POST Undici will not retry. Only the loopback probe pool below, whose one
 // origin is our own server, raises it.
-export function fetchDispatcherOptions() {
+function fetchDispatcherOptions() {
   return {
     allowH2: false,
     pipelining: 1,
@@ -51,7 +51,7 @@ export function installStableFetchTransport({
 // Use undici's own `fetch` with this Agent. Passing an npm-undici dispatcher
 // into Node's builtin `fetch` throws `invalid onRequestStart method`, every
 // probe looks unreachable, and `/health` stays 503 until startup gives up.
-export function createLoopbackProbeDispatcher({
+function createLoopbackProbeDispatcher({
   AgentClass = Agent,
   EnvHttpProxyAgentClass = EnvHttpProxyAgent,
   environment = process.env,
@@ -76,7 +76,7 @@ export function createLoopbackProbeDispatcher({
 // them. Created on first use so importing this module opens nothing.
 let sharedProbeDispatcher;
 
-export function loopbackProbeDispatcher() {
+function loopbackProbeDispatcher() {
   sharedProbeDispatcher ??= createLoopbackProbeDispatcher();
   return sharedProbeDispatcher;
 }

@@ -189,7 +189,7 @@ const EMBEDDINGS_MAX_RESPONSE_BYTES = positiveByteLimit(
   process.env.CODEX_ROUTER_EMBEDDINGS_MAX_RESPONSE_BYTES,
   8 * 1024 * 1024,
 );
-// Kill switch for the zero-prompt-token substitution (#95). It is on because a
+// Kill switch for the zero-prompt-token substitution. It is on because a
 // provider that reports no prompt tokens breaks compaction outright, but an
 // operator who would rather see the provider's own numbers can turn it off
 // without downgrading the router.
@@ -232,7 +232,7 @@ const configuredActiveRequests = Number(
     process.env.CODEX_ROUTER_MAX_ACTIVE_REQUESTS ||
     64,
 );
-export const MAX_ACTIVE_REQUESTS =
+const MAX_ACTIVE_REQUESTS =
   Number.isFinite(configuredActiveRequests) && configuredActiveRequests > 0
     ? Math.floor(configuredActiveRequests)
     : 64;
@@ -487,7 +487,7 @@ function bindClientAbort(request, response, onAbort) {
 // Codex zstd-compresses every request body, so this runs on every turn and
 // the buffer grows with the conversation. The one-shot synchronous decoder
 // inflated it on the event loop, and that path is the one implicated in an
-// intermittent native abort on Windows (issue #465: exit 0xC0000409 with no JS
+// intermittent native abort on Windows: exit 0xC0000409 with no JS
 // frame, always at the end of a long session with a large accumulated
 // context, always right after a successful turn). It has not been reproduced
 // here, so the change is defensive rather than a confirmed fix: the declared
@@ -3121,7 +3121,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
     }
     // A failure with no usage event is invisible to the diagnostic that
     // separates "the upstream failed" from "the request died inside the
-    // router" — the distinction #171 turned on. Meter this path the way the
+    // router". Meter this path the way the
     // turn path does: a departed client as 0, everything else by its status.
     if (clientGone) {
 
@@ -3343,8 +3343,8 @@ const server = http.createServer((request, response) => {
     // The bare string this used to log made every mid-stream failure
     // indistinguishable in production, and stopping at the top error was the
     // second half of the same problem: a native connect failure logs
-    // `TypeError: fetch failed` with the socket-level code buried on its cause
-    // (#171). The whole chain belongs in the log; response bodies never do.
+    // `TypeError: fetch failed` with the socket-level code buried on its cause.
+    // The whole chain belongs in the log; response bodies never do.
     console.error(`[codex-router] request failed: ${formatErrorChain(error)}`);
     // A socket-level failure is the one class of error whose cause is safe to
     // state and useless to withhold: it names a host and a network condition,
@@ -3414,7 +3414,7 @@ server.on("error", (error) => {
 });
 // One escaped error here takes native and routed traffic down together, and
 // the default crash leaves nothing in the service log but the supervisor's
-// exit line — #171 recorded `exited (code=4294967295)` on Windows with no way
+// exit line. Windows recorded `exited (code=4294967295)` with no way
 // to tell an in-process crash from an external kill. Name the failure and its
 // whole cause chain before exiting, and use exit codes distinct from the
 // listen-failure ones above so the supervisor's line alone classifies the

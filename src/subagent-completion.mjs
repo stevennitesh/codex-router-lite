@@ -57,7 +57,7 @@ function itemText(item) {
   return contentPartsText(item.content);
 }
 
-export function extractFinalAnswerTargetsFromText(text) {
+function extractFinalAnswerTargetsFromText(text) {
   if (typeof text !== "string" || !text) return [];
   const targets = [];
   FINAL_ANSWER_HEADER.lastIndex = 0;
@@ -96,7 +96,7 @@ function parseFunctionCallArgs(item) {
   return undefined;
 }
 
-export function isInterruptAgentCall(item) {
+function isInterruptAgentCall(item) {
   if (!item || item.type !== "function_call") return false;
   if (item.namespace === "collaboration" && item.name === "interrupt_agent") {
     return true;
@@ -111,7 +111,7 @@ export function interruptTargetFromCall(item) {
   return typeof target === "string" && target.trim() ? target.trim() : undefined;
 }
 
-export function collaborationToolAvailable(namespaces) {
+function collaborationToolAvailable(namespaces) {
   if (!(namespaces instanceof Map)) return false;
   const names = namespaces.get("collaboration");
   return names instanceof Set && names.has("interrupt_agent");
@@ -127,7 +127,7 @@ export function collaborationToolAvailable(namespaces) {
 // own prose; scanning them meant a turn that merely *quoted* a FINAL_ANSWER
 // envelope (docs, a changelog, this very feature under discussion) had a
 // fabricated interrupt_agent call spliced into its response.
-export function collectFinishedSubagentState(input) {
+function collectFinishedSubagentState(input) {
   const finished = new Set();
   const interrupted = new Set();
   if (!Array.isArray(input)) {

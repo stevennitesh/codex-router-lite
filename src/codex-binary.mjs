@@ -13,7 +13,7 @@ export { preferSpawnablePath, spawnableCommand };
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash
 // changes on every app update, so scan for the newest installed version
 // instead of pinning a single path.
-export function desktopAppBundledCodexCandidates({
+function desktopAppBundledCodexCandidates({
   platform = process.platform,
   localAppData = process.env.LOCALAPPDATA,
 } = {}) {
@@ -31,7 +31,7 @@ export function desktopAppBundledCodexCandidates({
   }
 }
 
-export function codexCandidatePaths({
+function codexCandidatePaths({
   localAppData = process.env.LOCALAPPDATA,
   home = os.homedir(),
 } = {}) {
@@ -83,7 +83,7 @@ function comparePrerelease(left, right) {
   return 0;
 }
 
-export function compareCodexVersions(left, right) {
+function compareCodexVersions(left, right) {
   const parsedLeft = parsedCodexVersion(left);
   const parsedRight = parsedCodexVersion(right);
   if (!parsedLeft && !parsedRight) return 0;
@@ -111,7 +111,7 @@ function codexBinaryVersion(binary) {
   }
 }
 
-export function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersion) {
+function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersion) {
   const existing = [...new Set(candidatePaths)]
     .filter((candidate) => candidate && existsSync(candidate));
   if (existing.length === 0) return undefined;
@@ -143,7 +143,7 @@ export function findCodexBinary() {
   return newestCodexBinary([...candidates(), found]);
 }
 
-export function requireCodexBinary() {
+function requireCodexBinary() {
   const binary = findCodexBinary();
   if (!binary) {
     throw new Error(

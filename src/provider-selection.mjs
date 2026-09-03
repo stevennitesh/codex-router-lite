@@ -21,7 +21,7 @@ export function canonicalProviderId(id) {
   return String(id || "").trim();
 }
 
-export function validateProviderIds(values) {
+function validateProviderIds(values) {
   const result = [];
   for (const value of values || []) {
     const id = canonicalProviderId(value);
@@ -31,7 +31,7 @@ export function validateProviderIds(values) {
   return result;
 }
 
-export function configuredProviderIds() {
+function configuredProviderIds() {
   const configured = [];
   const openRouter = resolveProviderCredential("openrouter", { persistent: true });
   if (openRouter?.value) configured.push("openrouter");
@@ -44,11 +44,11 @@ export function providerRuntimeAvailable(providerId, { switchyardStatus } = {}) 
   return (switchyardStatus || switchyardRuntimeStatus()).ready === true;
 }
 
-export function defaultProviderIds() {
+function defaultProviderIds() {
   return configuredProviderIds().filter((id) => id === "openrouter");
 }
 
-export function readProviderSelectionDetail() {
+function readProviderSelectionDetail() {
   if (!existsSync(PROVIDER_SELECTION_PATH)) {
     return { providers: [...PROVIDER_IDS], ignored: [], degraded: undefined };
   }
@@ -118,7 +118,7 @@ export function disableProvider(providerId) {
   return writeProviderSelection(readProviderSelection().filter((entry) => entry !== id));
 }
 
-export function selectedListedModels() {
+function selectedListedModels() {
   const selected = new Set(readProviderSelection());
   return LISTED_MODELS.filter((model) => selected.has(model.provider));
 }

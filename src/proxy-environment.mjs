@@ -68,7 +68,7 @@ const PROXY_ADDRESS_VARIABLES = [
 //
 // An empty value is read the same way, for the same reason: a login session
 // that exports `HTTP_PROXY=` has not chosen to stop proxying.
-export function proxyEnvironmentDeclared(
+function proxyEnvironmentDeclared(
   environment = process.env,
   execArgv = process.execArgv,
 ) {
@@ -89,7 +89,7 @@ export function proxyEnvironmentDeclared(
 // This reads the manifest file directly rather than through
 // install-manifest.mjs, which would import this module back and drag its
 // install-time dependencies into every process that merely resolves a proxy.
-export function recordedProxyEnvironment(manifestPath = INSTALL_MANIFEST_PATH) {
+function recordedProxyEnvironment(manifestPath = INSTALL_MANIFEST_PATH) {
   let recorded;
   try {
     const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));

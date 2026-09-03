@@ -1,4 +1,4 @@
-export function sidecarSearchAvailable() {
+function sidecarSearchAvailable() {
   return false;
 }
 

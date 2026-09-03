@@ -1,8 +1,8 @@
 // The LiteLLM gateway is the one child of the service that is not ours. It is
 // a large Python process pinned by `requirements/python.txt`, and a bug
-// anywhere in that tree can end the process rather than the request -- issue
-// #261 is exactly that: mapping an upstream 429 raised out of the request
-// handler and the proxy exited 1.
+// anywhere in that tree can end the process rather than the request. One
+// observed failure mapped an upstream 429 outside the request handler and the
+// proxy exited 1.
 //
 // Before this module, `start.mjs` raced every child's exit and tore the whole
 // service down when any of them died, so a gateway crash took the router and
@@ -34,16 +34,16 @@
 //      hard-sets `CODEX_ROUTER_QUIET`, and a router that quietly resurrects a
 //      crashing gateway is indistinguishable from one that never failed.
 
-export const DEFAULT_MAX_RESTARTS = 5;
-export const DEFAULT_RESTART_WINDOW_MS = 10 * 60_000;
-export const DEFAULT_RESTART_BACKOFF_MS = 1_000;
-export const MAX_RESTART_BACKOFF_MS = 30_000;
+const DEFAULT_MAX_RESTARTS = 5;
+const DEFAULT_RESTART_WINDOW_MS = 10 * 60_000;
+const DEFAULT_RESTART_BACKOFF_MS = 1_000;
+const MAX_RESTART_BACKOFF_MS = 30_000;
 
 // Doubling from the base, capped. The cap matters more than the curve: a
 // gateway that crashes on a poisoned request recovers on the first restart,
 // while one that dies on startup must not be respawned faster than it takes to
 // read the failure in the log.
-export function restartBackoffMs(attempt, base = DEFAULT_RESTART_BACKOFF_MS) {
+function restartBackoffMs(attempt, base = DEFAULT_RESTART_BACKOFF_MS) {
   const index = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
   const step = Math.max(0, base) * 2 ** Math.min(index, 16);
   return Math.min(step, MAX_RESTART_BACKOFF_MS);
@@ -59,9 +59,9 @@ function positiveInteger(value, fallback, { allowZero = false } = {}) {
   return floored;
 }
 
-// `CODEX_ROUTER_GATEWAY_RESTARTS=0` disables supervision entirely and restores
-// the pre-#261 behaviour, which is what a bisect or a crash investigation
-// wants: the process should die where it died.
+// `CODEX_ROUTER_GATEWAY_RESTARTS=0` disables supervision entirely. This is
+// useful for a bisect or crash investigation because the process dies where
+// the failure occurred.
 export function gatewaySupervisorLimits(env = process.env) {
   return {
     maxRestarts: positiveInteger(env.CODEX_ROUTER_GATEWAY_RESTARTS, DEFAULT_MAX_RESTARTS, {

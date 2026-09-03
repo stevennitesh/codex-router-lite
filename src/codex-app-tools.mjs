@@ -7,8 +7,8 @@
 // natively; the router relays the definitions to routed providers that
 // would otherwise never see them, and restores the namespace on the way back.
 
-export const CODEX_APP_NAMESPACE = "codex_app";
-export const CODEX_APP_TOOL_DELIMITER = "__";
+const CODEX_APP_NAMESPACE = "codex_app";
+const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
   capturedAt: "2026-09-03",
   windowsAppVersion: "26.901.2854.0",

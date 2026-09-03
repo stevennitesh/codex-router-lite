@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 // Node reports a module it cannot *read* the same way it reports one that is
 // not there: `Cannot find module '<path>'` with code MODULE_NOT_FOUND. On
 // Windows that collapses two very different failures into one message, and a
-// scheduled task hits the readable-only-to-someone-else case (issue #548):
+// scheduled task hits the readable-only-to-someone-else case:
 // the installer creates the managed checkout, the task exits 1, the router log
 // names `src\start.mjs` as missing, and the operator can open that exact file.
 //

@@ -75,7 +75,7 @@ function decodeBasicString(body) {
   return decoded;
 }
 
-export function readRootStringValues(contents, key) {
+function readRootStringValues(contents, key) {
   const firstTable = contents.search(/^\s*\[/m);
   const root = firstTable === -1 ? contents : contents.slice(0, firstTable);
   return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`, "gm"))]
@@ -106,7 +106,7 @@ export function readRootStringValues(contents, key) {
     .filter((value) => value !== undefined);
 }
 
-export function rootAssignmentCount(contents, key) {
+function rootAssignmentCount(contents, key) {
   const firstTable = contents.search(/^\s*\[/m);
   const root = firstTable === -1 ? contents : contents.slice(0, firstTable);
   return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=`, "gm"))].length;
@@ -174,7 +174,7 @@ function writeNativeCatalogSource(value) {
   }
 }
 
-export function prepareNativeCatalogSourceFromConfig() {
+function prepareNativeCatalogSourceFromConfig() {
   const contents = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "";
   const catalogs = readRootStringValues(contents, "model_catalog_json");
   const existing = readNativeCatalogSource();
@@ -210,7 +210,7 @@ export function prepareNativeCatalogSourceFromConfig() {
   return { created: true, source };
 }
 
-export function clearNativeCatalogSource(options = {}) {
+function clearNativeCatalogSource(options = {}) {
   const source = readNativeCatalogSource();
   if (!source || (options.pendingOnly && source.status !== "pending")) return false;
   unlinkSync(NATIVE_CATALOG_SOURCE_PATH);

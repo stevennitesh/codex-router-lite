@@ -25,7 +25,7 @@ function canonical(directory) {
   }
 }
 
-export function stateOwnershipStatus() {
+function stateOwnershipStatus() {
   const current = canonical(SOURCE_ROOT);
   const recorded = readInstallManifest()?.current?.sourceRoot;
   const owner = canonical(recorded);
@@ -40,7 +40,7 @@ export function stateOwnershipStatus() {
   };
 }
 
-export function stateOwnershipMessage(operation, status) {
+function stateOwnershipMessage(operation, status) {
   return [
     `Refusing to ${operation}: ${status.stateDir} is owned by another checkout.`,
     `  owner:   ${status.owner}`,

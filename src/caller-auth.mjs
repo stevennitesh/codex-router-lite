@@ -1,10 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 
-export const CALLER_PATH_PREFIX = "/_codex-router";
+const CALLER_PATH_PREFIX = "/_codex-router";
 const MINIMUM_SECRET_LENGTH = 32;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-export function validCallerSecret(value) {
+function validCallerSecret(value) {
   return (
     typeof value === "string" &&
     value.length >= MINIMUM_SECRET_LENGTH &&
@@ -29,7 +29,7 @@ export function secretEqual(actual, expected) {
   );
 }
 
-export function callerBasePath(secret) {
+function callerBasePath(secret) {
   return `${CALLER_PATH_PREFIX}/${assertCallerSecret(secret)}/v1`;
 }
 

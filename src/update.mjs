@@ -152,7 +152,7 @@ function restoreRevision(revision) {
   installCurrentCheckout();
 }
 
-export function checkForUpdate() {
+function checkForUpdate() {
   requireManagedCheckout();
   git(["fetch", "--quiet", "origin", "main"]);
   const current = git(["rev-parse", "HEAD"]);
@@ -175,7 +175,7 @@ export function installationNeedsRefresh(manifest, revision) {
   return manifest?.current?.commit !== revision;
 }
 
-export function updateCheckout({ force = false } = {}) {
+function updateCheckout({ force = false } = {}) {
   const status = checkForUpdate();
   if (!status.updateAvailable) {
     if (!installationNeedsRefresh(readInstallManifest(), status.current)) {
@@ -214,7 +214,7 @@ export function updateCheckout({ force = false } = {}) {
   return { ...status, updated: true, reinstalled: true };
 }
 
-export function rollbackCheckout({ force = false } = {}) {
+function rollbackCheckout({ force = false } = {}) {
   requireManagedCheckout();
   // A rollback checks out a different revision, so it overwrites tracked edits
   // exactly the way an update does.
@@ -255,7 +255,7 @@ const COMMANDS = {
 
 // `check` must stay read-only so callers can ask whether an update is available
 // without touching the installation.
-export function resolveCommand(args) {
+function resolveCommand(args) {
   return COMMANDS[args.find((argument) => !argument.startsWith("--")) || "update"];
 }
 

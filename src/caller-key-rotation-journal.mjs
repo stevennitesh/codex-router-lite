@@ -4,7 +4,7 @@ import path from "node:path";
 import { privateFileIsProtected, writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
-export const CALLER_KEY_ROTATION_JOURNAL_PATH = path.join(STATE_DIR, "caller-key-rotation.json");
+const CALLER_KEY_ROTATION_JOURNAL_PATH = path.join(STATE_DIR, "caller-key-rotation.json");
 const PHASES = new Set(["prepared", "service-stopped", "secret-swapped", "clients-refreshed", "service-started", "verified"]);
 const TARGETS = new Set(["codex"]);
 const TRANSITIONS = Object.freeze({

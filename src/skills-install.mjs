@@ -91,11 +91,11 @@ function markerContent(name, token, source) {
   return `${JSON.stringify({ version: 1, name, token, source }, null, 2)}\n`;
 }
 
-export function codexSkillsDir(codexHome) {
+function codexSkillsDir(codexHome) {
   return path.join(codexHome, "skills");
 }
 
-export function skillOwnershipPath(codexHome) {
+function skillOwnershipPath(codexHome) {
   return path.resolve(codexHome) === path.resolve(CODEX_HOME)
     ? SKILL_OWNERSHIP_PATH
     : path.join(codexHome, "codex-router", "managed-skills.json");
@@ -1235,7 +1235,7 @@ function uninstallSkillsUnlocked(
   return removed;
 }
 
-export function approveExternalSkills(codexHome, names, options) {
+function approveExternalSkills(codexHome, names, options) {
   return withAtomicStateLock(
     skillOwnershipPath(codexHome),
     () => approveExternalSkillsUnlocked(codexHome, names, options),
@@ -1243,7 +1243,7 @@ export function approveExternalSkills(codexHome, names, options) {
   );
 }
 
-export function revokeExternalSkills(codexHome, names, options) {
+function revokeExternalSkills(codexHome, names, options) {
   return withAtomicStateLock(
     skillOwnershipPath(codexHome),
     () => revokeExternalSkillsUnlocked(codexHome, names, options),
@@ -1251,7 +1251,7 @@ export function revokeExternalSkills(codexHome, names, options) {
   );
 }
 
-export function installSkills(codexHome, options) {
+function installSkills(codexHome, options) {
   return withAtomicStateLock(
     skillOwnershipPath(codexHome),
     () => installSkillsUnlocked(codexHome, options),
@@ -1259,7 +1259,7 @@ export function installSkills(codexHome, options) {
   );
 }
 
-export function uninstallSkills(codexHome, options) {
+function uninstallSkills(codexHome, options) {
   return withAtomicStateLock(
     skillOwnershipPath(codexHome),
     () => uninstallSkillsUnlocked(codexHome, options),

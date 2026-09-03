@@ -177,8 +177,8 @@ function protectPrivateFilesWin32(paths) {
         // Every private write reaches this helper, including the ones a
         // Control Center status refresh performs. A console child of a GUI
         // parent gets its own window unless this is set, which is how a
-        // routine refresh produced a burst of visible PowerShell windows
-        // (issue #565). The script is non-interactive and its stdio is
+        // routine refresh produced a burst of visible PowerShell windows.
+        // The script is non-interactive and its stdio is
         // already redirected, so nothing is hidden from the operator.
         windowsHide: true,
       },
@@ -299,7 +299,7 @@ export function writePrivateFile(target, contents, { directoryMode } = {}) {
 // This async form retains the exact same temporary-file/DACL/rename boundary
 // without blocking the event loop; each operation is independently bounded and
 // cannot strand later requests behind a persistent helper.
-export async function writePrivateFileAsync(target, contents, { directoryMode } = {}) {
+async function writePrivateFileAsync(target, contents, { directoryMode } = {}) {
   if (process.platform !== "win32") return writePrivateFile(target, contents, { directoryMode });
   const directory = path.dirname(target);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -353,7 +353,7 @@ export function privateFileIsProtected(target) {
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 15_000,
         // Verification runs from the same GUI-parented paths as the write
-        // above; see issue #565.
+        // above, so it must also hide its console window.
         windowsHide: true,
       },
     ).trim().toLowerCase() === "true";

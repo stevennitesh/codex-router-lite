@@ -63,7 +63,7 @@ function nativeCatalogFingerprint(catalog) {
     .digest("hex");
 }
 
-export function previouslyPublishedNativeSlugs(
+function previouslyPublishedNativeSlugs(
   nativeModels,
   catalogPath = MERGED_CATALOG_PATH,
 ) {
@@ -89,7 +89,7 @@ export function previouslyPublishedNativeSlugs(
 // `{{ ... }}` token can never reach a model's system prompt.
 const INSTRUCTION_PLACEHOLDER = /\{\{\s*([\w.-]+)\s*\}\}/g;
 
-export function deriveBaseInstructions(modelMessages) {
+function deriveBaseInstructions(modelMessages) {
   const template = modelMessages?.instructions_template;
   if (typeof template !== "string") return undefined;
   const variables = modelMessages?.instructions_variables;
@@ -202,7 +202,7 @@ function deepBackfillNativeMetadata(accountValue, bundledValue) {
 // capabilities already present in the current binary. Preserve the non-empty
 // bundled value for the allowlisted schema fields in that case; a non-empty
 // account value always remains authoritative.
-export function mergeNativeModel(accountModel, bundledModel) {
+function mergeNativeModel(accountModel, bundledModel) {
   if (!bundledModel) return { ...accountModel };
 
   const merged = { ...bundledModel, ...accountModel };
@@ -348,7 +348,7 @@ function captureNative(cache) {
 // carry different capability values for the same slug. An unknown current
 // version keeps the cache — with no binary to re-ask, stale is the best we
 // have.
-export function nativeCatalogIsReusable(
+function nativeCatalogIsReusable(
   parsed,
   currentVersion,
   currentSourceFingerprint = undefined,
@@ -413,8 +413,8 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
 
 // Codex's picker deserializes reasoning efforts into a fixed enum and
 // silently drops any level it does not recognize, so a curated "max" level
-// simply vanishes from the effort menu on builds whose enum ends at xhigh
-// (issue #57). No runtime probe can see this: config parsing accepts unknown
+// simply vanishes from the effort menu on builds whose enum ends at xhigh.
+// No runtime probe can see this: config parsing accepts unknown
 // effort strings, and `debug models` passes catalog levels through as plain
 // strings even on builds whose picker cannot offer them. The enum history is
 // the only reliable signal — max and ultra joined in 0.143.0 (verified
@@ -748,7 +748,7 @@ export function routedModel(
   return next;
 }
 
-export const AUTO_ANNOUNCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const AUTO_ANNOUNCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function formatTokenCount(tokens) {
   if (tokens >= 995_000) {
@@ -792,7 +792,7 @@ function autoAnnouncementCopy(model) {
 // excluded because the operator added those deliberately. Only models whose
 // provider is selected and credentialed ever reach this list, so a model the
 // operator cannot use never announces.
-export function annotateNewModelAnnouncements(routedModelsList, announcedAt, userSlugs, now) {
+function annotateNewModelAnnouncements(routedModelsList, announcedAt, userSlugs, now) {
   const firstRun = announcedAt === null;
   const nextAnnouncedAt = new Map(firstRun ? [] : announcedAt);
   const models = routedModelsList.map((model) => {
@@ -881,7 +881,7 @@ function sortCatalogModels(models) {
 // The installed Codex catalog owns native collaboration capability. Local
 // selection may opt an upstream v2 entry out, but it must never promote a
 // native v1 entry beyond the client build that will consume this catalog.
-export function nativeSubagentCertification(model) {
+function nativeSubagentCertification(model) {
   return model?.multi_agent_version === "v2" || model?.multi_agent_version === "v1"
     ? model.multi_agent_version
     : undefined;
@@ -1003,7 +1003,7 @@ export function applyPickerVisibility(
   });
 }
 
-export function publishCatalog({ refreshNative = refresh, output = true } = {}) {
+function publishCatalog({ refreshNative = refresh, output = true } = {}) {
   // The catalog is what Codex offers in its picker. Writing it from a checkout
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.

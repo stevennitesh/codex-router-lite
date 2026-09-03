@@ -4,7 +4,7 @@
 // may receive an additional endpoint only when its own reviewed/user-owned
 // metadata names it. A shared base URL or provider name grants nothing.
 
-export const OPENAI_MODEL_ENDPOINTS = Object.freeze([
+const OPENAI_MODEL_ENDPOINTS = Object.freeze([
   "/chat/completions",
   "/responses",
   "/embeddings",
@@ -12,7 +12,7 @@ export const OPENAI_MODEL_ENDPOINTS = Object.freeze([
 
 const ENDPOINTS = new Set(OPENAI_MODEL_ENDPOINTS);
 
-export function normalizeSupportedEndpoints(value, { field = "supportedEndpoints" } = {}) {
+function normalizeSupportedEndpoints(value, { field = "supportedEndpoints" } = {}) {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`${field} must be a non-empty array.`);
@@ -27,7 +27,7 @@ export function normalizeSupportedEndpoints(value, { field = "supportedEndpoints
   return result;
 }
 
-export function providerModelEndpoint(provider) {
+function providerModelEndpoint(provider) {
   if (provider?.protocol === undefined || provider?.protocol === "openai") {
     return "/chat/completions";
   }
