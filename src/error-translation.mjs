@@ -242,7 +242,7 @@ function describeFailure({
     };
   }
   if (status === 429) {
-    const hint = Number.isFinite(retryAfterSeconds)
+    const hint = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
       ? `Retry in about ${retryAfterSeconds}s.`
       : "Wait a bit and retry.";
     return {

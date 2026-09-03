@@ -53,6 +53,9 @@ function clearAuth() {
   rmSync(authPath, { force: true });
 }
 
+const jwtWithClaims = (claims) =>
+  `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
+
 test.beforeEach(() => {
   clearAuth();
   setNativeSessionSharingEnabled(false);
@@ -84,6 +87,25 @@ test("a signed-in session stays private until the user authorizes sharing once",
     assert.equal(statSync(NATIVE_SESSION_CONSENT_PATH).mode & 0o777, 0o600);
   }
   assert.doesNotMatch(readFileSync(NATIVE_SESSION_CONSENT_PATH, "utf8"), /access|account/i);
+});
+
+test("shared native session reconstructs the FedRAMP header from Codex identity claims", () => {
+  const id_token = jwtWithClaims({
+    "https://api.openai.com/auth": { chatgpt_account_is_fedramp: true },
+  });
+  writeAuth({ access_token: ACCESS, account_id: ACCOUNT, id_token });
+  setNativeSessionSharingEnabled(true);
+  assert.equal(nativeSessionHeaders()["x-openai-fedramp"], "true");
+
+  for (const claims of [
+    { "https://api.openai.com/auth": { chatgpt_account_is_fedramp: false } },
+    {},
+  ]) {
+    writeAuth({ access_token: ACCESS, account_id: ACCOUNT, id_token: jwtWithClaims(claims) });
+    assert.equal(nativeSessionHeaders()["x-openai-fedramp"], undefined);
+  }
+  writeAuth({ access_token: ACCESS, account_id: ACCOUNT, id_token: "malformed" });
+  assert.equal(nativeSessionHeaders()["x-openai-fedramp"], undefined);
 });
 
 test("the current Codex session authenticates only its own bearer without enabling sharing", () => {
@@ -331,8 +353,7 @@ test("a substituted caller's payload is made acceptable to the native endpoint",
 // the access token has a ten-day life, Codex renews it whenever Codex is used,
 // and a harness-only stretch longer than that left the router sending a dead
 // token and the user staring at 401s.
-const jwtWithExp = (epochSeconds) =>
-  `header.${Buffer.from(JSON.stringify({ exp: epochSeconds })).toString("base64url")}.sig`;
+const jwtWithExp = (epochSeconds) => jwtWithClaims({ exp: epochSeconds });
 
 test("the expiry claim is read without the token leaving the module", () => {
   const at = Math.floor(Date.now() / 1000) + 3600;

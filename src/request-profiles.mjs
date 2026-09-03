@@ -11,6 +11,7 @@ export const REQUEST_PROFILES = Object.freeze([
   "deepseek-thinking",
   "glm-5.3-flash",
   "glm-thinking",
+  "glm-thinking-auto-tool-choice",
   "hy4-reasoning",
   "kimi-k3",
   "kimi-oauth",

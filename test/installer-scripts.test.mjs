@@ -447,7 +447,39 @@ test("both installers keep the update when setup reports exit 2", () => {
   // unrecognized failure still restores the previous revision.
   assert.match(posix, /switch --detach "\$previous_revision"/);
   assert.match(windows, /switch --detach \$PreviousRevision/);
+  const windowsRestore = windows.indexOf("switch --detach $PreviousRevision");
+  const windowsReinstall = windows.indexOf('& (Join-Path $Repository "install.ps1") -CheckoutInstall -Target $Target');
+  assert.ok(windowsRestore >= 0 && windowsRestore < windowsReinstall);
+  assert.match(windows, /automatic rollback restored source revision[\s\S]*could not reinstall it/);
 });
+
+test("Windows containment capability is proved before installer mutation", () => {
+  const windows = readFileSync(path.join(root, "install.ps1"), "utf8");
+  const preflight = windows.indexOf("Assert-WindowsProcessContainmentCapability\n");
+  assert.ok(preflight >= 0, "installer must invoke the containment preflight");
+  for (const mutation of ["git -C $InstallDir pull", "git clone", "npm ci", "secret.mjs", "config-manager.mjs"]) {
+    const position = windows.indexOf(mutation);
+    assert.ok(position > preflight, `${mutation} must follow the containment preflight`);
+  }
+  assert.match(windows, /LanguageMode\s+-ne\s+"FullLanguage"/);
+  assert.match(windows, /Add-Type[\s\S]*application-control policy to permit PowerShell Add-Type/);
+});
+
+test(
+  "Windows installer refuses ConstrainedLanguage before checkout work",
+  { skip: process.platform !== "win32" },
+  () => {
+    const script = path.join(root, "install.ps1").replaceAll("'", "''");
+    const command = `$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; & '${script}' -CheckoutInstall -PrepareOnly`;
+    const result = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { encoding: "utf8", timeout: 15_000 },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /requires PowerShell FullLanguage mode/);
+  },
+);
 
 test("broken virtual environments use the venv tools' exact-target clear mode", () => {
   const posix = readFileSync(path.join(root, "bin", "install"), "utf8");

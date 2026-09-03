@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   compareCodexVersions,
   codexCandidatePaths,
+  desktopAppBundledCodexCandidates,
   findCodexBinary,
   linuxDesktopAppBundledCodex,
   newestCodexBinary,
@@ -88,6 +89,30 @@ test("newest Codex selection follows the installed version, not path order", () 
   }
 });
 
+test("all Windows desktop app builds remain candidates for semantic version selection", () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-desktop-candidates-"));
+  const olderMtimeNewerVersion = path.join(testRoot, "OpenAI", "Codex", "bin", "new", "codex.exe");
+  const newerMtimeOlderVersion = path.join(testRoot, "OpenAI", "Codex", "bin", "old", "codex.exe");
+  mkdirSync(path.dirname(olderMtimeNewerVersion), { recursive: true });
+  mkdirSync(path.dirname(newerMtimeOlderVersion), { recursive: true });
+  writeFileSync(olderMtimeNewerVersion, "");
+  writeFileSync(newerMtimeOlderVersion, "");
+  utimesSync(olderMtimeNewerVersion, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  try {
+    const candidates = desktopAppBundledCodexCandidates({
+      platform: "win32",
+      localAppData: testRoot,
+    });
+    const versions = new Map([
+      [olderMtimeNewerVersion, "codex-cli 0.153.0"],
+      [newerMtimeOlderVersion, "codex-cli 0.152.0"],
+    ]);
+    assert.equal(newestCodexBinary(candidates, (file) => versions.get(file)), olderMtimeNewerVersion);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
 test("prefers the Linux desktop app's bundled CLI over a standalone CLI", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-linux-desktop-cli-"));
   const bundled = path.join(testRoot, "resources", "codex");
@@ -134,7 +159,7 @@ test("a POSIX binary never gets a shell, even if it ends in .cmd", () => {
 });
 
 test(
-  "finds the newest Codex Desktop App bundled CLI on Windows",
+  "finds every Codex Desktop App bundled CLI on Windows",
   { skip: process.platform !== "win32" },
   () => {
     const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-desktop-cli-"));
@@ -158,7 +183,10 @@ test(
       delete process.env.CODEX_BIN;
       delete process.env.CODEX_INSTALL_DIR;
       process.env.LOCALAPPDATA = testRoot;
-      assert.equal(findCodexBinary(), newVersion);
+      assert.deepEqual(
+        new Set(desktopAppBundledCodexCandidates({ platform: "win32", localAppData: testRoot })),
+        new Set([oldVersion, newVersion]),
+      );
     } finally {
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key];

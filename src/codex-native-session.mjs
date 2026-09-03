@@ -77,15 +77,20 @@ export function tokenExpiryMs(accessToken) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function tokenEmail(idToken) {
+function tokenIdentity(idToken) {
   try {
     const payload = String(idToken).split(".")[1];
-    if (!payload) return undefined;
+    if (!payload) return {};
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     const email = typeof claims?.email === "string" ? claims.email.trim() : "";
-    return email.length <= 320 && EMAIL.test(email) ? email : undefined;
+    return {
+      ...(email.length <= 320 && EMAIL.test(email) ? { email } : {}),
+      ...(claims?.["https://api.openai.com/auth"]?.chatgpt_account_is_fedramp === true
+        ? { fedramp: true }
+        : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -113,10 +118,12 @@ function sessionFromAuthDocument(parsed) {
     const idToken = typeof tokens?.id_token === "string" ? tokens.id_token : "";
     if (!accessToken) return undefined;
     const expiresAtMs = tokenExpiryMs(accessToken);
+    const identity = tokenIdentity(idToken);
     return {
       accessToken,
       accountId,
-      email: tokenEmail(idToken),
+      email: identity.email,
+      fedramp: identity.fedramp === true,
       lastRefresh: parsed?.last_refresh,
       expiresAtMs,
       expired: expiresAtMs !== undefined && expiresAtMs - EXPIRY_SKEW_MS <= Date.now(),
@@ -264,6 +271,7 @@ export function nativeSessionHeaders() {
   return {
     authorization: `Bearer ${session.accessToken}`,
     ...(session.accountId ? { "chatgpt-account-id": session.accountId } : {}),
+    ...(session.fedramp ? { "x-openai-fedramp": "true" } : {}),
   };
 }
 

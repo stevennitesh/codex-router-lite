@@ -685,6 +685,260 @@ index 4b211ae8..0dad01cc 100644
      #[test]
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
+diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
+index 3f59fd0a..00b1f284 100644
+--- a/crates/switchyard-server/README.md
++++ b/crates/switchyard-server/README.md
+@@ -59,6 +59,12 @@ cargo install --locked switchyard-server
+ switchyard-server --config routes.toml
+ ```
+
++When Codex Router manages this server, it sets
++`CODEX_ROUTER_SWITCHYARD_CAPABILITY` and binds a loopback address. In that mode
++every endpoint except `/health` requires the same value in
++`x-codex-router-switchyard-capability`; the server removes that hop-only header
++before routing or proxying the request.
++
+ Ctrl+C and Unix `SIGTERM` stop new connections and allow active requests to drain for up to
+ `--shutdown-timeout` (30 seconds by default) before they are terminated.
+
+diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
+index 231d4e2b..42304412 100644
+--- a/crates/switchyard-server/src/cli.rs
++++ b/crates/switchyard-server/src/cli.rs
+@@ -9,8 +9,8 @@ use std::path::PathBuf;
+ use clap::Parser;
+ use switchyard_server::config::load_server_state;
+ use switchyard_server::{
+-    DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT, DEFAULT_LISTEN_BACKLOG, ServerError, ServerResult,
+-    ServerRunOptions, ServerState, TlsOptions, run_server,
++    DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT, DEFAULT_LISTEN_BACKLOG, LOCAL_HOP_CAPABILITY_ENV,
++    ServerError, ServerResult, ServerRunOptions, ServerState, TlsOptions, run_server,
+ };
+
+ const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+@@ -72,6 +72,14 @@ impl ServerArgs {
+         if let Some(path) = self.routing_log_file {
+             state = state.with_routing_log(path)?;
+         }
++        if let Ok(capability) = std::env::var(LOCAL_HOP_CAPABILITY_ENV) {
++            state = state.with_local_hop_capability(&capability)?;
++            if !self.host.is_loopback() {
++                return Err(ServerError::new(
++                    "a capability-protected local hop must bind to a loopback address",
++                ));
++            }
++        }
+         let tls = match (self.tls_cert, self.tls_key) {
+             (Some(cert), Some(key)) => {
+                 if !cert.exists() || !key.exists() {
+diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
+index 84493183..60291b83 100644
+--- a/crates/switchyard-server/src/lib.rs
++++ b/crates/switchyard-server/src/lib.rs
+@@ -63,6 +63,10 @@ pub const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+ pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+ const HEADER_SELECTED_MODEL: &str = "x-model-router-selected-model";
++/// Environment variable and request header used by Codex Router to protect
++/// the otherwise unauthenticated local Switchyard hop.
++pub const LOCAL_HOP_CAPABILITY_ENV: &str = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
++pub const LOCAL_HOP_CAPABILITY_HEADER: &str = "x-codex-router-switchyard-capability";
+ const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
+ /// Non-standard status used only in logs and metrics for a request whose
+ /// downstream client disconnected before any response was written.
+@@ -130,7 +134,9 @@ struct DecisionTargetResponse {
+ #[derive(Serialize)]
+ struct DecisionLlmClientResponse {
+     format: WireFormat,
+-    base_url: String,
++    // A configured base URL may contain a local caller capability in its path.
++    // The decision endpoint is diagnostic; callers do not need the address.
++    base_url: &'static str,
+ }
+
+ /// Shared server state used by all endpoint handlers.
+@@ -142,6 +148,7 @@ pub struct ServerState {
+     stats: StatsAccumulator,
+     routing_log: Option<SharedRoutingLog>,
+     track_cache_eligibility: bool,
++    local_hop_capability: Option<HeaderValue>,
+ }
+
+ #[derive(Clone)]
+@@ -220,9 +227,22 @@ impl ServerState {
+             stats,
+             routing_log: None,
+             track_cache_eligibility: tracking_enabled_from_env(),
++            local_hop_capability: None,
+         })
+     }
+
++    /// Requires this capability on every endpoint except `/health`.
++    pub fn with_local_hop_capability(mut self, capability: &str) -> ServerResult<Self> {
++        if capability.is_empty() {
++            return Err(ServerError::new("local-hop capability must not be empty"));
++        }
++        self.local_hop_capability =
++            Some(HeaderValue::from_str(capability).map_err(|_| {
++                ServerError::new("local-hop capability is not a valid header value")
++            })?);
++        Ok(self)
++    }
++
+     /// Enables durable per-request routing records at `path`.
+     pub fn with_routing_log(mut self, path: impl Into<PathBuf>) -> ServerResult<Self> {
+         self.routing_log = Some(SharedRoutingLog::new(path.into())?);
+@@ -258,7 +278,7 @@ impl ServerState {
+             model: target.model,
+             llm_client: DecisionLlmClientResponse {
+                 format: target.format,
+-                base_url: target.base_url,
++                base_url: "[REDACTED]",
+             },
+             extra_body: target.extra_body,
+         };
+@@ -500,12 +520,40 @@ pub fn build_switchyard_router(state: ServerState) -> Router {
+     if state.routing_log.is_some() {
+         router = router.route("/v1/routing/session-stats", get(get_session_stats));
+     }
+-    router
++    router = router
+         .fallback(proxy_unmatched)
+         .layer(DefaultBodyLimit::max(DEFAULT_MAX_REQUEST_BODY_BYTES))
+         // `layer` only wraps routes registered before it, so this stays last.
+-        .layer(axum::middleware::from_fn(stamp_request_start))
+-        .with_state(state)
++        .layer(axum::middleware::from_fn(stamp_request_start));
++    if let Some(capability) = state.local_hop_capability.clone() {
++        router = router.layer(axum::middleware::from_fn(move |request, next| {
++            require_local_hop_capability(capability.clone(), request, next)
++        }));
++    }
++    router.with_state(state)
++}
++
++async fn require_local_hop_capability(
++    capability: HeaderValue,
++    mut request: HttpRequest,
++    next: Next,
++) -> Response {
++    if request.uri().path() == "/health" {
++        return next.run(request).await;
++    }
++    if request.headers().get(LOCAL_HOP_CAPABILITY_HEADER) != Some(&capability) {
++        return error_response(
++            StatusCode::UNAUTHORIZED,
++            "missing or invalid local-hop capability",
++            "authentication_error",
++            "authentication_error",
++        );
++    }
++    // This header authenticates only Router -> Switchyard. Removing it before
++    // handlers build metadata also prevents forward_auth and the fallback
++    // proxy from carrying it to an upstream.
++    request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
++    next.run(request).await
+ }
+
+ fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
+diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
+index 4fca26f0..d91f625f 100644
+--- a/crates/switchyard-server/tests/server.rs
++++ b/crates/switchyard-server/tests/server.rs
+@@ -25,7 +25,10 @@ use switchyard_llm_client::{
+ use switchyard_protocol::ModelId;
+ use switchyard_protocol::RoutedLlmClient;
+ use switchyard_server::config::load_server_state;
+-use switchyard_server::{DEFAULT_MAX_REQUEST_BODY_BYTES, ServerState, build_switchyard_router};
++use switchyard_server::{
++    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState,
++    build_switchyard_router,
++};
+ use tokio::net::TcpListener;
+ use tokio::sync::Mutex;
+ use tokio::task::JoinHandle;
+@@ -393,6 +396,7 @@ async fn upstream_responses_requires_forwarded_auth(
+             .get("x-openai-fedramp")
+             .and_then(|value| value.to_str().ok())
+             == Some("true")
++        && !headers.contains_key(LOCAL_HOP_CAPABILITY_HEADER)
+         && !headers.contains_key("x-api-key")
+         && !headers.contains_key("anthropic-beta");
+     if !has_expected_headers {
+@@ -1132,7 +1136,7 @@ escalation = {{ confirmations = 1 }}
+                 "model": "model/weak",
+                 "llm_client": {
+                     "format": "openai_chat",
+-                    "base_url": model_upstream.base_url,
++                    "base_url": "[REDACTED]",
+                 },
+                 "extra_body": {"service_tier": "priority"},
+             },
+@@ -1141,7 +1145,7 @@ escalation = {{ confirmations = 1 }}
+                 "model": "model/strong",
+                 "llm_client": {
+                     "format": "openai_chat",
+-                    "base_url": model_upstream.base_url,
++                    "base_url": "[REDACTED]",
+                 },
+                 "extra_body": {},
+             }],
+@@ -2041,7 +2045,29 @@ target = "openai"
+ "#,
+         base_url = upstream.base_url
+     ))?;
+-    let app = build_switchyard_router(state);
++    let app =
++        build_switchyard_router(state.with_local_hop_capability("test-local-hop-capability")?);
++
++    let health = send(&app, "GET", "/health", None).await?;
++    assert_eq!(health.status, StatusCode::OK);
++    let missing = send(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({"model": "switchyard/codex", "input": "hello"})),
++    )
++    .await?;
++    assert_eq!(missing.status, StatusCode::UNAUTHORIZED);
++    let wrong = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({"model": "switchyard/codex", "input": "hello"})),
++        &[(LOCAL_HOP_CAPABILITY_HEADER, "wrong")],
++    )
++    .await?;
++    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
++    assert!(upstream.calls.lock().await.is_empty());
+
+     let response = send_with_headers(
+         &app,
+@@ -2052,6 +2078,7 @@ target = "openai"
+             ("authorization", "Bearer codex-login-token"),
+             ("chatgpt-account-id", "account-123"),
+             ("x-openai-fedramp", "true"),
++            (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
+             ("x-api-key", "must-not-cross-providers"),
+             ("anthropic-beta", "oauth-must-not-cross-providers"),
+         ],
+@@ -2068,6 +2095,7 @@ target = "openai"
+             ("authorization", "Bearer codex-login-token"),
+             ("chatgpt-account-id", "account-123"),
+             ("x-openai-fedramp", "true"),
++            (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
+             ("x-test-redirect", "1"),
+         ],
+     )
+@@ -2082,6 +2110,7 @@ target = "openai"
+         Some(json!({"model": "switchyard/codex", "input": "hello"})),
+         &[
+             ("authorization", "Bearer codex-login-token"),
++            (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
+             ("x-test-echo-auth", "1"),
+         ],
+     )
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
 index 966edd97..fd6cb86a 100644
 --- a/docs/reference/toml_schema.md

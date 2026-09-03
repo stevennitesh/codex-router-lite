@@ -75,6 +75,11 @@ import {
   resolveProviderBaseUrl,
 } from "./model-registry.mjs";
 import { createHealthCache } from "./health-cache.mjs";
+import {
+  SWITCHYARD_CAPABILITY_ENV,
+  SWITCHYARD_CAPABILITY_HEADER,
+  switchyardHealthUrl,
+} from "./switchyard-runtime.mjs";
 import { discoveryDisabled } from "./discovery-mode.mjs";
 import { readNativeAliases } from "./native-alias.mjs";
 import { nativeContextVariantBase } from "./native-context-variants.mjs";
@@ -140,6 +145,8 @@ import {
   readFailoverSettings,
   recordProviderCooldown,
 } from "./model-failover.mjs";
+import { cooldownScope } from "./provider-cooldown.mjs";
+import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import {
   awaitingSpawnProof,
   recordSpawnFailure,
@@ -245,6 +252,7 @@ const CATALOG_PATH =
 const INTERNAL_KEY =
   process.env.CODEX_ROUTER_INTERNAL_KEY || process.env.KIMI_INTERNAL_KEY;
 const CALLER_KEY = process.env.CODEX_ROUTER_CALLER_KEY;
+const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
 const QUIET =
   process.env.CODEX_ROUTER_QUIET === "1" || process.env.KIMI_PROXY_QUIET === "1";
 function positiveByteLimit(value, fallback) {
@@ -522,6 +530,8 @@ const FORWARD_HEADERS = new Set([
   "x-codex-turn-state",
   "x-codex-window-id",
   "x-oai-attestation",
+  "x-openai-fedramp",
+  "x-openai-internal-codex-residency",
   "x-openai-internal-codex-responses-lite",
   "x-openai-subagent",
   "x-responsesapi-include-timing-metrics",
@@ -836,7 +846,22 @@ function routedHeaders() {
 // can cause the upstream model to emit an invalid forced call.
 function normalizeAutoToolChoice(payload, route) {
   if (
-    ["auto-tool-choice", "ollama-cloud-auto-tool-choice"].includes(route.requestProfile) &&
+    route.requestProfile === "glm-thinking-auto-tool-choice" &&
+    payload.tool_choice === "none"
+  ) {
+    // Z.ai documents only automatic selection. Preserve the caller's request
+    // to suppress tools by removing the tool inventory before LiteLLM turns
+    // this Responses request into Chat Completions.
+    payload.tools = [];
+    delete payload.tool_choice;
+    return;
+  }
+  if (
+    [
+      "auto-tool-choice",
+      "glm-thinking-auto-tool-choice",
+      "ollama-cloud-auto-tool-choice",
+    ].includes(route.requestProfile) &&
     payload.tool_choice !== undefined &&
     payload.tool_choice !== "none"
   ) {
@@ -986,6 +1011,16 @@ function switchyardTarget(route, pathname) {
   const baseUrl = resolveProviderBaseUrl(provider).baseUrl;
   const routePath = String(pathname || "/responses").replace(/^\/v1(?=\/)/, "");
   return `${baseUrl}${routePath}`;
+}
+
+function switchyardHeaders(request) {
+  if (!SWITCHYARD_CAPABILITY) {
+    throw new Error("Switchyard local-hop capability is unavailable.");
+  }
+  return {
+    ...nativeHeaders(request),
+    [SWITCHYARD_CAPABILITY_HEADER]: SWITCHYARD_CAPABILITY,
+  };
 }
 
 // Provider-level query_params are applied by Codex to every request sent to
@@ -1256,7 +1291,7 @@ async function healthPayload() {
       provider.generic === true || enabled.has(provider.id)
     ),
   );
-  const [oauth, api, grokOauth, gateway] = await Promise.all([
+  const [oauth, api, grokOauth, gateway, switchyard] = await Promise.all([
     enabled.has("kimi-oauth")
       ? serviceHealth(OAUTH_HEALTH)
       : { reachable: true, enabled: false },
@@ -1269,10 +1304,15 @@ async function healthPayload() {
       ? serviceHealth(GROK_OAUTH_HEALTH)
       : { reachable: true, enabled: false },
     serviceHealth(GATEWAY_HEALTH),
+    enabled.has("switchyard")
+      ? Promise.resolve()
+        .then(() => serviceHealth(switchyardHealthUrl()))
+        .catch(() => ({ reachable: false }))
+      : { reachable: true, enabled: false },
   ]);
   // Naming the unreachable dependency is the difference between "the router is
   // broken" and "the gateway is restarting". It costs nothing to carry: these
-  // are four fixed local service names, so it is safe on the unauthenticated
+  // are fixed local service names, so it is safe on the unauthenticated
   // leaf too, which is the only one `waitForRouterHealth` and therefore doctor
   // can read.
   const degraded = [
@@ -1280,6 +1320,7 @@ async function healthPayload() {
     ["api", api],
     ["grokOauth", grokOauth],
     ["gateway", gateway],
+    ["switchyard", switchyard],
   ]
     .filter(([, service]) => !service.reachable)
     .map(([name]) => name);
@@ -1295,6 +1336,7 @@ async function healthPayload() {
     api,
     grokOauth,
     gateway,
+    switchyard,
   };
 }
 
@@ -2103,7 +2145,7 @@ async function bridgeVisionInput(input, route, request) {
   const readWithAnyEngine = async (url, question) => {
     let lastError;
     for (const [index, engine] of engines.entries()) {
-      const provider = canonicalProviderId(visionEngineProvider(engine));
+      const provider = cooldownScope(visionEngineProvider(engine));
       const cooled = providerCooldown(provider);
       if (cooled || exhaustedProviders.has(provider)) {
         lastError ??= new Error(
@@ -2659,7 +2701,7 @@ async function summarize(request, payload, route, signal, { allowFailover = true
     const verdict = classifyRoutedFailure({
       status: sent.upstream.status,
       bodyText: bytes.toString("utf8"),
-      retryAfterSeconds: Number(sent.upstream.headers.get("retry-after")),
+      retryAfterSeconds: retryAfterSeconds(sent.upstream.headers),
     });
     if (!allowFailover) return { ...last, failed };
     if (!verdict.swap) return { ...last, failed };
@@ -3455,7 +3497,7 @@ async function attemptModelFailover({
     const hopVerdict = classifyRoutedFailure({
       status: upstream.status,
       bodyText: hopBodyText,
-      retryAfterSeconds: Number(upstream.headers.get("retry-after")),
+      retryAfterSeconds: retryAfterSeconds(upstream.headers),
     });
     // A transport retry stops as soon as another provider gives any real HTTP
     // answer. Walking onward would turn an application failure into a silent
@@ -3820,7 +3862,7 @@ async function handleResponses(request, response, requestUrl) {
         bearerToken(request.headers.authorization),
       );
       if (observesNativeAuth) nativeAuthDesktop = await codexDesktopStateAsync();
-      headers = nativeHeaders(request);
+      headers = switchyard ? switchyardHeaders(request) : nativeHeaders(request);
       const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
       routedBody = switchyard && !compactV1 && !compactV2
         ? nativeBody
@@ -3883,7 +3925,7 @@ async function handleResponses(request, response, requestUrl) {
       const verdict = classifyRoutedFailure({
         status: upstream.status,
         bodyText: failedBodyText,
-        retryAfterSeconds: Number(upstream.headers.get("retry-after")),
+        retryAfterSeconds: retryAfterSeconds(upstream.headers),
       });
       // Switchyard already owns target selection and retries inside its local
       // route. Its request deliberately bypasses Router's external-provider
@@ -3957,7 +3999,7 @@ async function handleResponses(request, response, requestUrl) {
     if (route && !upstream.ok) {
       const provider = providerForModel(route);
       const retryAfterHeader = upstream.headers.get("retry-after");
-      const retryAfterSeconds = Number(retryAfterHeader);
+      const retrySeconds = retryAfterSeconds(upstream.headers);
       const translatedStatus = gatewayErrorStatus({
         status: upstream.status,
         bodyText: failedBodyText,
@@ -3978,9 +4020,7 @@ async function handleResponses(request, response, requestUrl) {
               : provider?.ownedBy || provider?.displayName || route.provider,
           providerKind: provider?.kind,
           providerAuthMode: provider?.authMode,
-          retryAfterSeconds: Number.isFinite(retryAfterSeconds)
-            ? retryAfterSeconds
-            : undefined,
+          retryAfterSeconds: retrySeconds,
         }),
       );
       recordUsageEvent({
@@ -4023,10 +4063,10 @@ async function handleResponses(request, response, requestUrl) {
       });
       const transforms = [usageObserver];
       let envelopeCompat = !directResponses && route
-        ? zaiResponsesCompatTransform(route.provider, contentType)
+        ? zaiResponsesCompatTransform(route.provider, contentType, route.slug)
         : undefined;
-      // Z.ai Responses streams from GLM-5.3 can start assistant text after
-      // reasoning without its message envelope. Keep that repair provider-scoped.
+      // LiteLLM Responses streams from GLM-5.3 can start assistant text after
+      // reasoning without its message envelope. Keep that repair route-scoped.
       if (
         !envelopeCompat &&
         route?.provider === "zai-coding" &&

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -25,22 +25,21 @@ export function linuxDesktopAppBundledCodex({
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash
 // changes on every app update, so scan for the newest installed version
 // instead of pinning a single path.
-function desktopAppBundledCodex({
+export function desktopAppBundledCodexCandidates({
   platform = process.platform,
   localAppData = process.env.LOCALAPPDATA,
 } = {}) {
-  if (platform !== "win32") return undefined;
-  if (!localAppData) return undefined;
+  if (platform !== "win32") return [];
+  if (!localAppData) return [];
   const binDir = path.join(localAppData, "OpenAI", "Codex", "bin");
-  if (!existsSync(binDir)) return undefined;
+  if (!existsSync(binDir)) return [];
   try {
     return readdirSync(binDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => path.join(binDir, entry.name, "codex.exe"))
-      .filter((candidate) => existsSync(candidate))
-      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+      .filter((candidate) => existsSync(candidate));
   } catch {
-    return undefined;
+    return [];
   }
 }
 
@@ -65,7 +64,7 @@ export function codexCandidatePaths({
     localAppData && path.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "app", "bin", "codex.exe"),
-    desktopAppBundledCodex({ platform, localAppData }),
+    ...desktopAppBundledCodexCandidates({ platform, localAppData }),
     path.join(home, ".local", "bin", platform === "win32" ? "codex.exe" : "codex"),
   ].filter(Boolean);
 }

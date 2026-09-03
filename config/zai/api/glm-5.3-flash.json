@@ -28,9 +28,10 @@
       "contextWindow": 1000000,
       "autoCompact": 400000,
       "inputModalities": [
-        "text"
+        "text",
+        "image"
       ],
-      "requestProfile": "glm-thinking",
+      "requestProfile": "glm-thinking-auto-tool-choice",
       "compHash": "zai-api-glm-5-3-flash-v1"
     }
   ]

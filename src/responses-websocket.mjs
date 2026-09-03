@@ -32,6 +32,8 @@ const FORWARDED_REQUEST_HEADERS = new Set([
   "x-codex-turn-state",
   "x-codex-window-id",
   "x-oai-attestation",
+  "x-openai-fedramp",
+  "x-openai-internal-codex-residency",
   "x-openai-internal-codex-responses-lite",
   "x-openai-subagent",
   "x-responsesapi-include-timing-metrics",

@@ -115,6 +115,16 @@ export function requestQuotaFromRateLimitHeaders(headers, { now = Date.now() } =
   };
 }
 
+// `Retry-After` may be either delay-seconds or an HTTP-date. Keep an absent or
+// invalid header distinct from an explicit zero so callers do not invent a
+// retry window or silently ignore a valid dated one.
+export function retryAfterSeconds(headers, { now = Date.now() } = {}) {
+  if (!headers || typeof headers.get !== "function") return undefined;
+  const at = resetAt(headers.get("retry-after"), now);
+  if (at === undefined) return undefined;
+  return Math.max(0, Math.ceil((at - now) / 1_000));
+}
+
 // The soonest moment a provider is worth retrying, or undefined when nothing in
 // the response says the caller is currently limited. A cooldown map reads this.
 export function cooldownUntil(snapshot) {

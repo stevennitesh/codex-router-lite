@@ -71,9 +71,21 @@ test("leaves an already valid message stream byte-identical", async () => {
   assert.equal(await transformed([input]), input);
 });
 
-test("compatibility factory is scoped to Z.ai Responses event streams", () => {
+test("compatibility factory is scoped to proven malformed Responses routes", () => {
   assert.ok(zaiResponsesCompatTransform("zai-coding", "text/event-stream"));
   assert.ok(zaiResponsesCompatTransform("zai-api", "text/event-stream; charset=utf-8"));
+  assert.ok(
+    zaiResponsesCompatTransform(
+      "openrouter",
+      "text/event-stream",
+      "openrouter/glm-5.3-flash",
+    ),
+  );
+  assert.equal(zaiResponsesCompatTransform("openrouter", "text/event-stream"), undefined);
+  assert.equal(
+    zaiResponsesCompatTransform("openrouter", "text/event-stream", "openrouter/hy4-preview"),
+    undefined,
+  );
   assert.equal(zaiResponsesCompatTransform("openai", "text/event-stream"), undefined);
   assert.equal(zaiResponsesCompatTransform("zai-coding", "application/json"), undefined);
 });

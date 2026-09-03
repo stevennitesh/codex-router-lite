@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Retry handling now honors both legal `Retry-After` forms, keeps an absent
+  header distinct from an explicit zero, and avoids misleading `0s` advice.
+- Provider cooldowns now keep separately billed OpenCode Go and Zen allowances
+  independent while still sharing windows across protocol variants.
+
 - **The Windows Control Center no longer flashes PowerShell windows.** A console
   process spawned by a parent that has no console of its own — the Electron
   Control Center and the tray — gets its own window unless `windowsHide` is set,

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   installedSwitchyardLaunch,
   switchyardLaunch,
+  switchyardHealthUrl,
   switchyardRuntimeStatus,
   switchyardSelectedForStartup,
 } from "../src/switchyard-runtime.mjs";
@@ -45,6 +46,28 @@ test("Switchyard supervision derives one loopback process and health contract", 
     "4888",
   ]);
   assert.equal(launch.args.at(-1), path.join("C:\\fixture", "switchyard", "routing.jsonl"));
+});
+
+test("managed Switchyard rejects a non-loopback bind", () => {
+  assert.throws(
+    () => switchyardHealthUrl({
+      env: { CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://192.0.2.10:4000/v1" },
+    }),
+    /must bind to loopback/,
+  );
+  assert.throws(
+    () => switchyardLaunch({
+      selected: true,
+      stateDir: "/fixture/codex-router",
+      platform: "linux",
+      env: {
+        CODEX_HOME: "/fixture",
+        CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://0.0.0.0:4000/v1",
+      },
+      exists: () => true,
+    }),
+    /must bind to loopback/,
+  );
 });
 
 test("Switchyard supervision refuses a selected provider with no installed runtime", () => {

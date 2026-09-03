@@ -339,7 +339,11 @@ test("relays canonical per-request metadata through HTTP and never forwards the 
   });
   t.after(() => server.close());
   const { head, peer } = await connect(port, {
-    headers: { Authorization: `Bearer ${CALLER_KEY}` },
+    headers: {
+      Authorization: `Bearer ${CALLER_KEY}`,
+      "X-OpenAI-Fedramp": "true",
+      "X-OpenAI-Internal-Codex-Residency": "us",
+    },
   });
   assert.match(head, /^HTTP\/1\.1 101 Switching Protocols/);
   const turnMetadata = JSON.stringify({ request_kind: "turn", turn_id: "turn-paid" });
@@ -392,6 +396,8 @@ test("relays canonical per-request metadata through HTTP and never forwards the 
     "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
   );
   assert.equal(requestHeaders[0].tracestate, "vendor=value");
+  assert.equal(requestHeaders[0]["x-openai-fedramp"], "true");
+  assert.equal(requestHeaders[0]["x-openai-internal-codex-residency"], "us");
   assert.equal(requestHeaders[0]["x-openai-internal-codex-responses-lite"], "true");
   assert.equal(
     bodies[0].client_metadata.ws_request_header_x_openai_internal_codex_responses_lite,

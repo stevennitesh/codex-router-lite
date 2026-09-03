@@ -209,6 +209,124 @@ function taskAction() {
   };
 }
 
+function legacyTaskAction() {
+  return {
+    execute: "cmd.exe",
+    argument: `/D /C ""${wrapperPath}""`,
+  };
+}
+
+function taskSnapshot() {
+  if (!taskExists()) return { exists: false };
+  const canonical = taskAction();
+  const legacy = legacyTaskAction();
+  const script = [
+    "$task = Get-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -ErrorAction Stop",
+    "$actions = @($task.Actions)",
+    "$principal = [string]$task.Principal.UserId",
+    "$current = [Security.Principal.WindowsIdentity]::GetCurrent()",
+    "$ownedPrincipal = ($principal -ieq $current.Name -or $principal -ieq $current.User.Value)",
+    "if (-not $ownedPrincipal) { try { $ownedPrincipal = ((New-Object Security.Principal.NTAccount -ArgumentList $principal).Translate([Security.Principal.SecurityIdentifier]).Value -ieq $current.User.Value) } catch { $ownedPrincipal = $false } }",
+    "$ownedAction = $false",
+    "if ($actions.Count -eq 1) {",
+    "  $execute = [string]$actions[0].Execute",
+    "  $arguments = [string]$actions[0].Arguments",
+    "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
+    "}",
+    "$scheduler = New-Object -ComObject Schedule.Service",
+    "$scheduler.Connect()",
+    "$registered = $scheduler.GetFolder('\\').GetTask($env:CODEX_ROUTER_TASK)",
+    "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); xml = (Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK); sddl = $registered.GetSecurityDescriptor(7); running = ($task.State.ToString() -ieq 'Running') }",
+    "[Console]::Out.Write(($snapshot | ConvertTo-Json -Compress))",
+  ].join("\n");
+  const env = {
+    ...process.env,
+    CODEX_ROUTER_TASK: taskName,
+    CODEX_ROUTER_TASK_EXECUTE: canonical.execute,
+    CODEX_ROUTER_TASK_ARGUMENT: canonical.argument,
+    CODEX_ROUTER_LEGACY_EXECUTE: legacy.execute,
+    CODEX_ROUTER_LEGACY_ARGUMENT: legacy.argument,
+  };
+  for (const executable of ["powershell.exe", "pwsh.exe"]) {
+    try {
+      return JSON.parse(execFileSync(
+        executable,
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          encoding: "utf8",
+          env,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: TASK_STATE_TIMEOUT_MS,
+          windowsHide: true,
+        },
+      ));
+    } catch {
+      // Try the other PowerShell host before using schtasks as an absence check.
+    }
+  }
+  throw new Error(`Unable to verify ownership of the existing ${taskName} scheduled task.`);
+}
+
+function assertOwnedTask(snapshot) {
+  if (snapshot.exists && snapshot.owned !== true) {
+    throw new Error(`The ${taskName} scheduled task is not owned by this Codex Router installation; refusing to modify it.`);
+  }
+}
+
+function launcherSnapshot() {
+  return new Map([wrapperPath, launcherPath].map((target) => [
+    target,
+    existsSync(target) ? readFileSync(target) : undefined,
+  ]));
+}
+
+function restoreLaunchers(snapshot) {
+  for (const [target, contents] of snapshot) {
+    if (contents === undefined) {
+      if (existsSync(target)) unlinkSync(target);
+    } else {
+      writeAtomic(target, contents);
+    }
+  }
+}
+
+function restoreInstallState(snapshot, launchers) {
+  const current = taskSnapshot();
+  assertOwnedTask(current);
+  if (current.exists) endTask();
+  restoreLaunchers(launchers);
+  if (!snapshot.exists) {
+    try {
+      schtasks(["/Delete", "/TN", taskName, "/F"], { quiet: true, mutating: true });
+    } catch {
+      // The failed install may not have registered anything.
+    }
+    return;
+  }
+  const script = [
+    "$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json",
+    "Register-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -Xml ([string]$payload.xml) -Force | Out-Null",
+    "$scheduler = New-Object -ComObject Schedule.Service",
+    "$scheduler.Connect()",
+    "$scheduler.GetFolder('\\').GetTask($env:CODEX_ROUTER_TASK).SetSecurityDescriptor([string]$payload.sddl, 0x10)",
+  ].join("; ");
+  execFileSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      env: { ...process.env, CODEX_ROUTER_TASK: taskName },
+      input: JSON.stringify({ xml: snapshot.xml, sddl: snapshot.sddl }),
+      stdio: ["pipe", "ignore", "ignore"],
+      timeout: TASK_STATE_TIMEOUT_MS,
+      windowsHide: true,
+    },
+  );
+  if (snapshot.running) {
+    schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
+  }
+}
+
 function installTask() {
   // PowerShell is a second Task Scheduler path, independent of schtasks().
   // Keep it behind the same mutation guard so tests cannot register or replace
@@ -429,12 +547,10 @@ function taskState() {
   return undefined;
 }
 
-async function taskRunning(state) {
-  if (state === "running") return true;
-  // Task Scheduler can answer Ready while its detached launcher is still
-  // serving. Reuse the process-level probe that guards startup readiness, but
-  // keep an unavailable query inconclusive so a restricted shell cannot turn
-  // an idle task into a false running service.
+async function taskRunning() {
+  // Scheduler's Running state can be stale, while Ready can race a detached
+  // launcher that is still serving. In either case require the registered
+  // task instance and its exact live launcher to agree.
   const corroborated = await windowsScheduledTaskState({
     taskName,
     platform: effectivePlatform,
@@ -476,6 +592,9 @@ if (command === "render") {
   // test install is a safety violation, not a restricted Task Scheduler
   // failure, and must exit non-zero without touching the host filesystem.
   guardLauncherWrite();
+  const previousTask = taskSnapshot();
+  assertOwnedTask(previousTask);
+  const previousLaunchers = launcherSnapshot();
   try {
     // Writing the launchers belongs inside the try: renameSync over the .vbs
     // raises a sharing violation while a running wscript.exe still holds it
@@ -488,21 +607,21 @@ if (command === "render") {
     // hidden run — the console window would survive until the next logon.
     endTask();
     installTask();
+    const installedTask = taskSnapshot();
+    if (!installedTask.exists) throw new Error(`${taskName} registration did not create a task.`);
+    assertOwnedTask(installedTask);
     schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
-  } catch {
-    // Scheduled-task creation can be restricted in a non-elevated terminal. The
-    // launchers are still written, so the install is reported as success and
-    // the caller can retry -- but endTask() has already stopped whatever was
-    // running by this point, so simply returning would take a working router
-    // down in exchange for nothing. Start whichever definition survived the
-    // failed registration. When none did there is nothing to restore: no
-    // snapshot was taken, and re-creating the old console-visible action would
-    // reintroduce the very defect this launcher exists to fix.
+  } catch (installError) {
+    let restoreError;
     try {
-      if (taskExists()) schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
-    } catch {
-      // Nothing left to start; the caller's readiness check reports the failure.
+      restoreInstallState(previousTask, previousLaunchers);
+    } catch (error) {
+      restoreError = error;
     }
+    if (restoreError) {
+      throw new AggregateError([installError, restoreError], "Windows service install failed and its previous state could not be fully restored.");
+    }
+    throw installError;
   }
   // Launchers alone are not an installed service. A restricted scheduler (or
   // a test-mode mutation guard) must not claim success when the task is absent.
@@ -511,6 +630,7 @@ if (command === "render") {
   // Refuse before `/End`, `/Delete`, or any filesystem removal when a test has
   // not redirected its service state directory.
   guardLauncherWrite();
+  assertOwnedTask(taskSnapshot());
   endTask();
   try {
     schtasks(["/Delete", "/TN", taskName, "/F"], { quiet: true, mutating: true });
@@ -530,10 +650,11 @@ if (command === "render") {
   let state = "stopped";
   let loaded = false;
   try {
-    schtasks(["/Query", "/TN", taskName, "/FO", "LIST", "/V"]);
+    const snapshot = taskSnapshot();
+    if (!snapshot.exists || !snapshot.owned) throw new Error("missing or foreign task");
     installed = true;
     state = taskState() || "ready";
-    loaded = await taskRunning(state);
+    loaded = await taskRunning();
     if (loaded) state = "running";
   } catch {
     // Missing task.
@@ -544,9 +665,13 @@ if (command === "render") {
 } else if (command === "stop") {
   // Stopping is idempotent, like uninstall and restart: a task that is missing
   // or already idle is the state the caller asked for, not an error to raise.
-  endTask();
+  const previousTask = taskSnapshot();
+  assertOwnedTask(previousTask);
+  if (previousTask.exists) endTask();
   process.stdout.write(`${JSON.stringify({ state: "stopped" })}\n`);
 } else {
+  const previousTask = taskSnapshot();
+  assertOwnedTask(previousTask);
   if (command === "restart") endTask();
   schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
   process.stdout.write(`${JSON.stringify({ state: "running" })}\n`);

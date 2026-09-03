@@ -6,6 +6,7 @@ const {
   parseRateLimitHeaders,
   requestQuotaFromRateLimitHeaders,
   resetAt,
+  retryAfterSeconds,
 } = await import(
   "../src/rate-limit-headers.mjs"
 );
@@ -138,4 +139,20 @@ test("cooldown only triggers on real exhaustion", () => {
   // An explicit retry-after is honored on its own.
   assert.equal(cooldownUntil({ retryAt: "2026-07-25T12:09:00.000Z" }), "2026-07-25T12:09:00.000Z");
   assert.equal(cooldownUntil(undefined), undefined);
+});
+
+test("retry-after distinguishes RFC forms, zero, and absence", () => {
+  const seconds = (value) =>
+    retryAfterSeconds(new Headers(value === undefined ? {} : { "retry-after": value }), {
+      now: NOW,
+    });
+  assert.equal(seconds("120"), 120);
+  assert.equal(seconds("Sat, 25 Jul 2026 12:05:00 GMT"), 300);
+  assert.equal(seconds("0"), 0);
+  assert.equal(seconds("Sat, 25 Jul 2026 11:59:00 GMT"), 0);
+  assert.equal(seconds("0.2"), 1);
+  assert.equal(seconds(undefined), undefined);
+  assert.equal(seconds("soon"), undefined);
+  assert.equal(seconds("-5"), undefined);
+  assert.equal(retryAfterSeconds(undefined, { now: NOW }), undefined);
 });

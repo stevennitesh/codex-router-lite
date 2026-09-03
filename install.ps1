@@ -81,6 +81,18 @@ function Assert-Command([string]$Name, [string]$Help) {
   }
 }
 
+function Assert-WindowsProcessContainmentCapability {
+  if ([string]$ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
+    throw "Windows process containment requires PowerShell FullLanguage mode; this host's application-control policy exposes $($ExecutionContext.SessionState.LanguageMode)."
+  }
+  $ProbeName = "CodexRouterInstallProbe$([Guid]::NewGuid().ToString('N'))"
+  try {
+    Add-Type -TypeDefinition "public static class $ProbeName { public static int Ready = 1; }" -Language CSharp
+  } catch {
+    throw "Windows process containment requires application-control policy to permit PowerShell Add-Type: $($_.Exception.Message)"
+  }
+}
+
 function Test-RouterCheckout([string]$Directory) {
   $Package = Join-Path $Directory "package.json"
   if (-not (Test-Path $Package)) { return $false }
@@ -131,6 +143,11 @@ function Reset-ManagedCheckout([string]$Directory) {
   & git -C $Directory reset --hard HEAD
   if ($LASTEXITCODE -ne 0) { throw "Unable to discard the local changes in $Directory." }
 }
+
+# The installed service uses a Windows Job Object so every child is contained.
+# Prove the PowerShell capabilities needed to create it before cloning, pulling,
+# installing dependencies, changing configuration, or touching service state.
+Assert-WindowsProcessContainmentCapability
 
 $ScriptDirectory = $PSScriptRoot
 if (-not $ScriptDirectory) { $ScriptDirectory = (Get-Location).Path }
@@ -225,7 +242,14 @@ if (-not $CheckoutInstall) {
     Write-Warning "Setup did not finish configuring; the update was kept. Re-run setup to continue, or ./codex-router.ps1 rollback to return to the previous revision."
   } elseif ($SetupExitCode -ne 0 -and $PreviousRevision) {
     & git -C $Repository switch --detach $PreviousRevision 2>$null | Out-Null
-    Write-Warning "Setup failed; the managed source checkout was restored to $PreviousRevision."
+    if ($LASTEXITCODE -ne 0) {
+      throw "Setup failed and automatic rollback could not restore source revision $PreviousRevision."
+    }
+    & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target $Target
+    if ($LASTEXITCODE -ne 0) {
+      throw "Setup failed and automatic rollback restored source revision $PreviousRevision but could not reinstall it."
+    }
+    Write-Warning "Setup failed; source revision $PreviousRevision was restored and reinstalled."
   }
   exit $SetupExitCode
 }

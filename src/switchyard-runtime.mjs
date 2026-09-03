@@ -4,6 +4,26 @@ import path from "node:path";
 import { PROVIDERS, resolveProviderBaseUrl } from "./model-registry.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
+export const SWITCHYARD_CAPABILITY_ENV = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
+export const SWITCHYARD_CAPABILITY_HEADER = "x-codex-router-switchyard-capability";
+
+export function switchyardHealthUrl({ env = process.env } = {}) {
+  const provider = PROVIDERS.get("switchyard");
+  const resolved = resolveProviderBaseUrl(provider, env);
+  if (resolved.refusedOverride) {
+    throw new Error("Managed Switchyard must bind to loopback; refusing configured address.");
+  }
+  const baseUrl = new URL(resolved.baseUrl);
+  const host = baseUrl.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const loopback = host === "localhost" || host === "::1" || /^127(?:\.|$)/u.test(host);
+  if (!loopback) {
+    throw new Error(
+      `Managed Switchyard must bind to loopback; refusing ${baseUrl.origin}.`,
+    );
+  }
+  return `${baseUrl.origin}/health`;
+}
+
 export function switchyardRuntimeStatus({
   stateDir = STATE_DIR,
   env = process.env,
@@ -57,13 +77,14 @@ function switchyardLaunchFromStatus(status, env = process.env) {
   const { binary, config, runtimeRoot } = status;
   const provider = PROVIDERS.get("switchyard");
   const baseUrl = new URL(resolveProviderBaseUrl(provider, env).baseUrl);
+  const healthUrl = switchyardHealthUrl({ env });
   const host = baseUrl.hostname.replace(/^\[|\]$/g, "");
   const port = baseUrl.port || (baseUrl.protocol === "https:" ? "443" : "80");
   return {
     binary,
     config,
     runtimeRoot,
-    healthUrl: `${baseUrl.origin}/health`,
+    healthUrl,
     args: [
       "--config",
       config,

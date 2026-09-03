@@ -587,11 +587,14 @@ export class EmptyCompletionGuard extends Transform {
 
   #classifyBlock(block) {
     const { eventType, dataText } = this.#fields(block);
+    let data;
+    let parsed = false;
     if (dataText === "[DONE]") {
       this.#sawParseableEvent = true;
     } else if (dataText) {
       try {
-        JSON.parse(dataText);
+        data = JSON.parse(dataText);
+        parsed = true;
         this.#sawParseableEvent = true;
       } catch {
         // `#contentOf` below keeps malformed terminal data indeterminate. The
@@ -602,7 +605,7 @@ export class EmptyCompletionGuard extends Transform {
     // Content is decided before the terminal check: a gateway that puts the
     // whole turn in `response.completed` emits a terminal event that is also
     // the only content event in the stream.
-    const content = this.#contentOf(eventType, dataText);
+    const content = this.#contentOf(eventType, dataText, data, parsed);
     if (content === true) {
       this.#sawContent = true;
       this.#clearTimer();
@@ -624,7 +627,10 @@ export class EmptyCompletionGuard extends Transform {
     // Neither content nor terminal. If it proves the upstream is generating,
     // stop holding: the cost of the hold is paid by every reasoning turn, while
     // the empty completions it repairs are a fraction of a percent of them.
-    if (!this.#released && this.#livenessOf(eventType, dataText) === true) {
+    if (
+      !this.#released &&
+      this.#livenessOf(eventType, dataText, data, parsed) === true
+    ) {
       this.#release({ liveness: true });
     }
   }
@@ -700,27 +706,21 @@ export class EmptyCompletionGuard extends Transform {
   // Liveness never decides the verdict, only the hold, so an unparseable block
   // is simply "not yet proven alive" rather than the indeterminate that
   // `#contentOf` has to preserve.
-  #livenessOf(eventType, dataText) {
+  #livenessOf(eventType, dataText, data, parsed) {
     if (!dataText || dataText === "[DONE]") return false;
-    try {
-      const data = JSON.parse(dataText);
-      return isLivenessEvent(eventType ?? data?.type, data);
-    } catch {
-      return false;
-    }
+    if (!parsed) return false;
+    return isLivenessEvent(eventType ?? data?.type, data);
   }
 
-  #contentOf(eventType, dataText) {
+  #contentOf(eventType, dataText, data, parsed) {
     if (!dataText || dataText === "[DONE]") return false;
-    try {
-      const data = JSON.parse(dataText);
-      return isContentEvent(eventType ?? data?.type, data);
-    } catch {
+    if (!parsed) {
       // Indeterminate, not "no content": the payload could not be parsed, so
       // the absence of recognized content says nothing about whether the turn
       // produced output. Callers must not treat this as evidence of an empty
       // completion.
       return undefined;
     }
+    return isContentEvent(eventType ?? data?.type, data);
   }
 }

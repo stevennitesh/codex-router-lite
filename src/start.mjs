@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -37,6 +38,7 @@ import { antigravityOAuthStatus } from "./antigravity-oauth-status.mjs";
 import { cursorTunnelRunSpec } from "./cursor-cloudflare-tunnel.mjs";
 import {
   installedSwitchyardLaunch,
+  SWITCHYARD_CAPABILITY_ENV,
   switchyardSelectedForStartup,
 } from "./switchyard-runtime.mjs";
 import { providerSelectionStatus } from "./provider-selection.mjs";
@@ -306,8 +308,16 @@ async function main() {
   const switchyardLaunch = installedSwitchyardLaunch({
     selected: switchyardSelectedForStartup(providerSelection),
   });
+  // This ephemeral capability belongs only to the Router -> Switchyard hop.
+  // It is separate from both caller and internal service credentials, never
+  // enters argv or the route file, and rotates with the supervised service.
+  const switchyardCapability = switchyardLaunch
+    ? randomBytes(32).toString("hex")
+    : undefined;
   const switchyard = switchyardLaunch
-    ? run(switchyardLaunch.binary, switchyardLaunch.args)
+    ? run(switchyardLaunch.binary, switchyardLaunch.args, {
+      [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability,
+    })
     : undefined;
   await Promise.all([
     waitForHealth(
@@ -402,7 +412,13 @@ async function main() {
 
   const frontend = FRONTEND;
   const frontendService = frontend.service;
-  const router = run(process.execPath, [path.join(SOURCE_ROOT, "src", frontend.script)]);
+  const router = run(
+    process.execPath,
+    [path.join(SOURCE_ROOT, "src", frontend.script)],
+    switchyardCapability
+      ? { [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability }
+      : {},
+  );
   await waitForHealth(
     frontend.label,
     loopback(PORTS.router, "/health"),

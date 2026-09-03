@@ -28,6 +28,7 @@ import {
   cooldownUntil,
   parseRateLimitHeaders,
   requestQuotaFromRateLimitHeaders,
+  retryAfterSeconds,
 } from "./rate-limit-headers.mjs";
 import { recordRateLimitSnapshot } from "./rate-limit-state.mjs";
 import { recordProviderCooldown } from "./model-failover.mjs";
@@ -860,7 +861,9 @@ function normalizeBody(buffer, contentType, route) {
     if (payload.tool_choice !== undefined && payload.tool_choice !== "none") {
       payload.tool_choice = "auto";
     }
-  } else if (model.requestProfile === "glm-thinking") {
+  } else if (
+    ["glm-thinking", "glm-thinking-auto-tool-choice"].includes(model.requestProfile)
+  ) {
     payload.thinking = { type: "enabled", clear_thinking: false };
     payload.messages = restoreGlmReasoningContent(payload.messages);
     // Each GLM entry declares exactly the tiers Z.ai documents for it, and the
@@ -878,6 +881,14 @@ function normalizeBody(buffer, contentType, route) {
     // overrides so the upstream default applies.
     delete payload.temperature;
     delete payload.top_p;
+    if (model.requestProfile === "glm-thinking-auto-tool-choice") {
+      if (payload.tool_choice === "none") {
+        payload.tools = [];
+        delete payload.tool_choice;
+      } else if (payload.tool_choice !== undefined) {
+        payload.tool_choice = "auto";
+      }
+    }
   } else if (model.requestProfile === "xai-reasoning") {
     if (!["low", "medium", "high"].includes(payload.reasoning_effort)) {
       payload.reasoning_effort = "high";
@@ -1145,16 +1156,10 @@ function recordUpstreamLimits(normalized, upstream) {
   if (upstream.ok) return;
   const until = cooldownUntil(rateLimit);
   if (!until) return;
-  recordProviderCooldown(canonicalProviderId(normalized.provider.id), {
+  recordProviderCooldown(normalized.provider.id, {
     until,
     reason: upstream.status === 429 ? "rate_limited" : "out_of_usage",
   });
-}
-
-function responseRetryAfterSeconds(headers, now = Date.now()) {
-  const retryAt = Date.parse(parseRateLimitHeaders(headers, { now })?.retryAt || "");
-  if (!Number.isFinite(retryAt) || retryAt <= now) return undefined;
-  return Math.max(1, Math.ceil((retryAt - now) / 1_000));
 }
 
 function healthPayload() {
@@ -1400,7 +1405,7 @@ async function handleRequest(request, response) {
             ...outcome,
             headers: outcome.responseHeaders || upstreamHeaders,
             upstreamHeaders,
-            retryAfterSeconds: responseRetryAfterSeconds(upstreamHeaders),
+            retryAfterSeconds: retryAfterSeconds(upstreamHeaders),
             quota: requestQuotaFromRateLimitHeaders(upstreamHeaders),
             committed: outcome.committed === true,
             route: "plan",
@@ -1470,7 +1475,7 @@ async function handleRequest(request, response) {
                 ...outcome,
                 headers: outcome.responseHeaders || upstreamHeaders,
                 upstreamHeaders,
-                retryAfterSeconds: responseRetryAfterSeconds(upstreamHeaders),
+                retryAfterSeconds: retryAfterSeconds(upstreamHeaders),
                 quota: requestQuotaFromRateLimitHeaders(upstreamHeaders),
                 committed: outcome.committed === true,
                 route: "plan",
@@ -1482,7 +1487,7 @@ async function handleRequest(request, response) {
             status: attemptResponse.status,
             ok: false,
             committed: false,
-            retryAfterSeconds: responseRetryAfterSeconds(attemptResponse.headers),
+            retryAfterSeconds: retryAfterSeconds(attemptResponse.headers),
             quota: requestQuotaFromRateLimitHeaders(attemptResponse.headers),
             bodyText,
             headers: attemptResponse.headers,
@@ -1572,7 +1577,7 @@ async function handleRequest(request, response) {
         ok: upstream.ok,
         committed: false,
         error: upstream.ok ? undefined : `upstream status ${upstream.status}`,
-        retryAfterSeconds: responseRetryAfterSeconds(upstream.headers),
+        retryAfterSeconds: retryAfterSeconds(upstream.headers),
         quota: requestQuotaFromRateLimitHeaders(upstream.headers),
       });
     }

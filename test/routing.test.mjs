@@ -406,11 +406,11 @@ test("router requires the configured path capability before any model route", as
     );
     // `degraded` names which local service is unreachable so doctor can say the
     // gateway died rather than "the router is not ready". It is a closed set of
-    // three fixed local service names -- never a URL, a credential, or the
+    // fixed local service names -- never a URL, a credential, or the
     // per-service payloads the protected leaf carries.
     assert.ok(
       publicPayload.degraded.every((name) =>
-        ["oauth", "api", "grokOauth", "gateway"].includes(name)),
+        ["oauth", "api", "grokOauth", "gateway", "switchyard"].includes(name)),
       JSON.stringify(publicPayload.degraded),
     );
     assert.equal(publicPayload.activity.state, "error");
@@ -990,6 +990,8 @@ test("router preserves native auth and isolates every external route", async () 
       Traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
       Tracestate: "vendor=value",
       "X-Codex-Routing-Hint": "route-affinity",
+      "X-OpenAI-Fedramp": "true",
+      "X-OpenAI-Internal-Codex-Residency": "us",
       "X-OpenAI-Internal-Codex-Responses-Lite": "true",
       "X-Session-Id": "session-affinity",
       "X-Private-Header": "must-not-forward",
@@ -1075,6 +1077,8 @@ test("router preserves native auth and isolates every external route", async () 
     );
     assert.equal(nativeRequests[0].headers.tracestate, "vendor=value");
     assert.equal(nativeRequests[0].headers["x-codex-routing-hint"], "route-affinity");
+    assert.equal(nativeRequests[0].headers["x-openai-fedramp"], "true");
+    assert.equal(nativeRequests[0].headers["x-openai-internal-codex-residency"], "us");
     assert.equal(nativeRequests[0].headers["x-openai-internal-codex-responses-lite"], "true");
     assert.equal(nativeRequests[0].headers["x-session-id"], "session-affinity");
     assert.equal(nativeRequests[0].headers["x-private-header"], undefined);
@@ -1094,6 +1098,8 @@ test("router preserves native auth and isolates every external route", async () 
       assert.equal(request.headers["x-codex-installation-id"], undefined);
       assert.equal(request.headers.traceparent, undefined);
       assert.equal(request.headers.tracestate, undefined);
+      assert.equal(request.headers["x-openai-fedramp"], undefined);
+      assert.equal(request.headers["x-openai-internal-codex-residency"], undefined);
       assert.equal(request.headers["x-openai-internal-codex-responses-lite"], undefined);
       assert.equal(request.headers["x-private-header"], undefined);
       assert.equal(request.body.client_metadata, undefined);
@@ -3247,6 +3253,10 @@ test("Switchyard preserves native requests and leaves compaction on the native b
   );
   const switchyardRequests = [];
   const switchyard = await mockServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/health") {
+      json(response, 503, { status: "degraded" });
+      return;
+    }
     const requestBody = await bodyJson(request);
     switchyardRequests.push({
       url: request.url,
@@ -3254,6 +3264,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       body: requestBody,
     });
     if (JSON.stringify(requestBody.input).includes("SWITCHYARD_429")) {
+      response.setHeader("Retry-After", "120");
       json(response, 429, {
         error: { message: "switchyard target is rate limited", type: "rate_limit_error" },
       });
@@ -3272,6 +3283,10 @@ test("Switchyard preserves native requests and leaves compaction on the native b
   });
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/health") {
+      json(response, 200, { ok: true });
+      return;
+    }
     nativeRequests.push({
       url: request.url,
       headers: request.headers,
@@ -3291,8 +3306,11 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     CODEX_ROUTER_SHOW_ALL_MODELS: "0",
     CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
     CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
+    CODEX_ROUTER_SWITCHYARD_CAPABILITY: "test-switchyard-local-hop-capability",
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${native.port}/health`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${native.port}/health`,
     CODEX_ROUTER_QUIET: "1",
   });
   const headers = {
@@ -3340,6 +3358,10 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(switchyardRequests[0].url, "/v1/responses");
     assert.equal(switchyardRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
     assert.equal(switchyardRequests[0].headers["chatgpt-account-id"], "account-id");
+    assert.equal(
+      switchyardRequests[0].headers["x-codex-router-switchyard-capability"],
+      "test-switchyard-local-hop-capability",
+    );
     assert.equal(switchyardRequests[0].headers["content-encoding"], undefined);
     assert.equal(switchyardRequests[0].body.model, "gpt-5.6-sol");
     assert.deepEqual(switchyardRequests[0].body.input, input);
@@ -3383,6 +3405,12 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(nativeRequests[0].url, "/backend-api/codex/responses/compact");
     assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
     assert.equal(nativeRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+
+    const health = await fetch(`${routerBase(routerPort)}/health`);
+    assert.equal(health.status, 503);
+    const healthBody = await health.json();
+    assert.deepEqual(healthBody.degraded, ["switchyard"]);
+    assert.equal(healthBody.switchyard.reachable, false);
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);
@@ -5594,6 +5622,79 @@ test("API forwarder routes GLM coding-plan models with thinking enabled", async 
   }
 });
 
+test("direct Z.ai Flash routes keep images and normalize unsupported tool choices", async () => {
+  const upstreamRequests = [];
+  const upstream = await mockServer(async (request, response) => {
+    upstreamRequests.push({ headers: request.headers, body: await bodyJson(request) });
+    json(response, 200, { choices: [] });
+  });
+  const forwarderPort = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(forwarderPort),
+    ZAI_API_BASE_URL: `http://127.0.0.1:${upstream.port}`,
+    ZAI_PLATFORM_API_KEY: "TEST_ZAI_PLATFORM_KEY",
+    ZAI_CODING_BASE_URL: `http://127.0.0.1:${upstream.port}`,
+    ZAI_API_KEY: "TEST_ZAI_CODING_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  async function forward(model, toolChoice) {
+    const response = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${INTERNAL_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          ],
+        }],
+        tools: [{
+          type: "function",
+          function: { name: "inspect", parameters: { type: "object", properties: {} } },
+        }],
+        ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+      }),
+    });
+    assert.equal(response.status, 200);
+    return upstreamRequests.at(-1);
+  }
+
+  try {
+    await waitFor(`http://127.0.0.1:${forwarderPort}/health`, forwarder, {
+      Authorization: `Bearer ${INTERNAL_KEY}`,
+    });
+    for (const [gatewayModel, expectedKey] of [
+      ["zai-api-glm-5-3-flash", "Bearer TEST_ZAI_PLATFORM_KEY"],
+      ["zai-coding-glm-5-3-flash", "Bearer TEST_ZAI_CODING_KEY"],
+    ]) {
+      for (const forced of [
+        "required",
+        { type: "function", function: { name: "inspect" } },
+      ]) {
+        const request = await forward(gatewayModel, forced);
+        assert.equal(request.headers.authorization, expectedKey);
+        assert.equal(request.body.model, "glm-5.3-flash");
+        assert.equal(request.body.tool_choice, "auto");
+        assert.equal(request.body.messages[0].content[1].type, "image_url");
+      }
+      const suppressed = await forward(gatewayModel, "none");
+      assert.deepEqual(suppressed.body.tools, []);
+      assert.equal("tool_choice" in suppressed.body, false);
+      const absent = await forward(gatewayModel);
+      assert.equal("tool_choice" in absent.body, false);
+    }
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+  }
+});
+
 test("API forwarder restores bridged GLM thinking as native reasoning_content", async () => {
   const upstreamRequests = [];
   const upstream = await mockServer(async (request, response) => {
@@ -7240,6 +7341,8 @@ test("router normalizes forced tool choices before LiteLLM for auto-tool-choice 
     for (const [slug, gatewayModel] of [
       ["ollama-cloud/minimax-m3", "ollama-cloud-minimax-m3"],
       ["commandcode/muse-spark-1.2", "commandcode-muse-spark-1-2"],
+      ["zai-api/glm-5.3-flash", "zai-api-glm-5-3-flash"],
+      ["zai-coding/glm-5.3-flash", "zai-coding-glm-5-3-flash"],
       [
         "opencode-go-responses/muse-spark-1.2-contributor",
         "opencode-go-responses-muse-spark-1-2-contributor",
@@ -7252,7 +7355,12 @@ test("router normalizes forced tool choices before LiteLLM for auto-tool-choice 
 
     // The collaboration relay uses an object form; it has the same upstream
     // restriction and therefore must not survive the Responses hop either.
-    for (const slug of ["ollama-cloud/minimax-m3", "commandcode/muse-spark-1.2"]) {
+    for (const slug of [
+      "ollama-cloud/minimax-m3",
+      "commandcode/muse-spark-1.2",
+      "zai-api/glm-5.3-flash",
+      "zai-coding/glm-5.3-flash",
+    ]) {
       const forcedFunction = await route(slug, {
         type: "function",
         name: "relay_external_agent_payload",
@@ -7264,6 +7372,12 @@ test("router normalizes forced tool choices before LiteLLM for auto-tool-choice 
     // such as compaction that deliberately disable tools.
     const suppressed = await route("commandcode/muse-spark-1.2", "none");
     assert.equal(suppressed.tool_choice, "none");
+
+    for (const slug of ["zai-api/glm-5.3-flash", "zai-coding/glm-5.3-flash"]) {
+      const zaiSuppressed = await route(slug, "none");
+      assert.deepEqual(zaiSuppressed.tools, []);
+      assert.equal("tool_choice" in zaiSuppressed, false);
+    }
 
     const absent = await route("commandcode/muse-spark-1.2");
     assert.equal("tool_choice" in absent, false);
@@ -8373,6 +8487,52 @@ test("two concurrent turns carrying one image buy one read, not two", async () =
     await closeServer(native.server);
     await closeServer(engine.server);
     rmSync(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test("direct Z.ai Flash routes receive native image input without the vision bridge", async () => {
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, { id: "resp_glm_image", object: "response", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const input = [{
+    type: "message",
+    role: "user",
+    content: [
+      { type: "input_text", text: "read this" },
+      { type: "input_image", image_url: "data:image/png;base64,AAAA" },
+    ],
+  }];
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    for (const [model, gatewayModel] of [
+      ["zai-api/glm-5.3-flash", "zai-api-glm-5-3-flash"],
+      ["zai-coding/glm-5.3-flash", "zai-coding-glm-5-3-flash"],
+    ]) {
+      const response = await fetch(`${routerBase(routerPort)}/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CALLER_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model, stream: false, input }),
+      });
+      assert.equal(response.status, 200, router.testErrors());
+      assert.equal(gatewayRequests.at(-1).model, gatewayModel);
+      assert.deepEqual(gatewayRequests.at(-1).input, input);
+      assert.doesNotMatch(JSON.stringify(gatewayRequests.at(-1)), /vision bridge/i);
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
   }
 });
 
@@ -9844,13 +10004,13 @@ test("router applies the translated empty-message repair to bounded JSON respons
   }
 });
 
-test("router repairs malformed Z.ai message envelopes after LiteLLM Responses translation", async () => {
-  const testRoot = mkdtempSync(path.join(os.tmpdir(), "zai-responses-compat-router-"));
+test("router repairs malformed OpenRouter GLM-5.3-Flash message envelopes after LiteLLM translation", async () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-responses-compat-router-"));
   const stateDir = path.join(testRoot, "state");
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     path.join(stateDir, "enabled-providers.json"),
-    `${JSON.stringify({ version: 1, providers: ["zai-coding"] })}\n`,
+    `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
   );
   const gateway = await mockServer(async (request, response) => {
     if (request.method === "GET") {
@@ -9860,12 +10020,12 @@ test("router repairs malformed Z.ai message envelopes after LiteLLM Responses tr
     await bodyJson(request);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const events = [
-      { type: "response.output_item.added", output_index: 0, model: "zai-coding-glm-5-3", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "zai-coding-glm-5-3", item: { id: "rs_1", type: "reasoning", summary: [] } },
-      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "zai-coding-glm-5-3", delta: "ROUTER_OK" },
-      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "zai-coding-glm-5-3", text: "ROUTER_OK" },
-      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "zai-coding-glm-5-3", part: { type: "reasoning_text", reasoning: "private reasoning" } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "zai-coding-glm-5-3", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
+      { type: "response.output_item.added", output_index: 0, model: "openrouter-glm-5-3-flash", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "openrouter-glm-5-3-flash", item: { id: "rs_1", type: "reasoning", summary: [] } },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", delta: "ROUTER_OK" },
+      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", text: "ROUTER_OK" },
+      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", part: { type: "reasoning_text", reasoning: "private reasoning" } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "openrouter-glm-5-3-flash", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
       { type: "response.completed", response: { id: "resp_1", status: "completed", output: [], usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
     ];
     response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
@@ -9879,6 +10039,7 @@ test("router repairs malformed Z.ai message envelopes after LiteLLM Responses tr
     CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
     CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
     CODEX_ROUTER_GROK_OAUTH_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY",
     CODEX_ROUTER_QUIET: "1",
   });
   try {
@@ -9886,7 +10047,7 @@ test("router repairs malformed Z.ai message envelopes after LiteLLM Responses tr
     const response = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "zai-coding/glm-5.3", input: "test", stream: true }),
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "test", stream: true }),
     });
     assert.equal(response.status, 200);
     const text = await response.text();

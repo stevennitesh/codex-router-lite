@@ -117,6 +117,18 @@ test("a 429 mentions rate limiting and the retry hint", () => {
   assert.equal(payload.error.type, "rate_limit_error");
 });
 
+test("a zero-second retry window does not advise retrying in 0s", () => {
+  const payload = translateGatewayError({
+    status: 429,
+    bodyText: "",
+    modelName: "Kimi K3",
+    providerName: "kimi",
+    retryAfterSeconds: 0,
+  });
+  assert.match(payload.error.message, /Wait a bit and retry/);
+  assert.doesNotMatch(payload.error.message, /0s/);
+});
+
 test("a 429 without retry-after still reads cleanly", () => {
   const payload = translateGatewayError({
     status: 429,

@@ -956,20 +956,12 @@ function sortCatalogModels(models) {
   });
 }
 
-// Native entries carry upstream's static multi_agent_version. One pinned
-// backend exception is maintained in the repository after upstream evidence;
-// local selection or a stream/tool probe must never promote any other v1
-// model. That avoids turning a UI toggle into an unreviewed v2 assertion.
-const NATIVE_V2_BACKEND_SLUGS = new Set(["gpt-5.6-luna"]);
-
-// Keep the repository/upstream verdict separate from the effective catalog
-// value. Hiding or disabling a certified native route correctly publishes it
-// as v1, but that opt-out must not erase the certificate the control surfaces
-// need in order to let the operator turn it back on.
+// The installed Codex catalog owns native collaboration capability. Local
+// selection may opt an upstream v2 entry out, but it must never promote a
+// native v1 entry beyond the client build that will consume this catalog.
 export function nativeSubagentCertification(model) {
   const slug = String(model?.slug || "");
   if (NATIVE_CONTEXT_VARIANT_SLUGS.includes(slug)) return "v1";
-  if (NATIVE_V2_BACKEND_SLUGS.has(slug)) return "v2";
   return model?.multi_agent_version === "v2" || model?.multi_agent_version === "v1"
     ? model.multi_agent_version
     : undefined;

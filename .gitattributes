@@ -17,3 +17,7 @@ bin/* text eol=lf
 # and are conventionally CRLF, but nothing here depends on their endings, so
 # they are normalized in the repository and left to the platform on checkout.
 *.ps1 text
+
+# Canonical patches are hashed and applied byte-for-byte during reproducible
+# third-party builds. Windows checkout conversion would corrupt that contract.
+*.patch text eol=lf

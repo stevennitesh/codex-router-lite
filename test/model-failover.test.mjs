@@ -281,6 +281,34 @@ test("a cooldown is recorded against the whole variant family", (t) => {
   assert.ok(providerCooldown("opencode-go", { now: NOW }));
 });
 
+test("a separately billed provider variant keeps its own cooldown window", (t) => {
+  t.after(() => clearAllProviderCooldowns());
+  recordProviderCooldown("opencode-go", {
+    until: new Date(NOW + 1_800_000).toISOString(),
+    reason: "out_of_usage",
+    now: NOW,
+  });
+  assert.ok(providerCooldown("opencode-go-messages", { now: NOW }));
+  assert.equal(providerCooldown("opencode-zen", { now: NOW }), undefined);
+  recordProviderCooldown("opencode-zen", {
+    until: new Date(NOW + 1_800_000).toISOString(),
+    reason: "out_of_usage",
+    now: NOW,
+  });
+  assert.ok(providerCooldown("opencode-zen", { now: NOW }));
+  clearProviderCooldown("opencode-zen");
+  assert.equal(providerCooldown("opencode-zen", { now: NOW }), undefined);
+  assert.ok(providerCooldown("opencode-go", { now: NOW }));
+
+  clearAllProviderCooldowns();
+  recordProviderCooldown("opencode-zen", {
+    until: new Date(NOW + 1_800_000).toISOString(),
+    reason: "out_of_usage",
+    now: NOW,
+  });
+  assert.equal(providerCooldown("opencode-go", { now: NOW }), undefined);
+});
+
 test("a later hop may sharpen the reason but never invent the window", (t) => {
   t.after(() => clearAllProviderCooldowns());
   // api-forwarder sees the provider's Retry-After but not its body, so it can
@@ -392,6 +420,23 @@ test("rankFailoverCandidates skips a provider that is already cooled down", (t) 
     ranked.map((entry) => entry.model.slug),
     ["deepseek/v4"],
   );
+});
+
+test("rankFailoverCandidates still offers a separately billed provider variant", (t) => {
+  t.after(() => clearAllProviderCooldowns());
+  recordProviderCooldown("opencode-go", {
+    until: new Date(NOW + 600_000).toISOString(),
+    now: NOW,
+  });
+  const ranked = rankFailoverCandidates(
+    [
+      model("opencode-go/glm-5.3", "opencode-go"),
+      model("opencode-go-responses/glm-5.3", "opencode-go-responses"),
+      model("opencode-zen/glm-5.3", "opencode-zen"),
+    ],
+    { from: FROM, now: NOW },
+  );
+  assert.deepEqual(ranked.map((entry) => entry.model.slug), ["opencode-zen/glm-5.3"]);
 });
 
 test("rankFailoverCandidates keeps a collaboration turn on a v2 model", () => {

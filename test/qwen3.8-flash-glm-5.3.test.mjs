@@ -65,7 +65,7 @@ test("zai-api/glm-5.3-flash records the upstream id and window", () => {
     assert.equal(model.listed, true);
     assert.equal(model.contextWindow, contextWindow);
     assert.equal(model.autoCompact, autoCompact);
-    assert.equal(model.requestProfile, "glm-thinking");
+    assert.equal(model.requestProfile, "glm-thinking-auto-tool-choice");
   }
 });
 

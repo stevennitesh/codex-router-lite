@@ -1369,9 +1369,7 @@ test("duplicate account slugs collapse to the first occurrence", () => {
   assert.equal(merged.models[0].visibility, "list");
 });
 
-test("native listed models retain only repository-certified v2 capability", () => {
-  // Upstream still ships gpt-5.6-luna as v1 while it runs fine on the v2
-  // backend, and spawn_agent filters child models on that static value.
+test("native listed models retain the installed catalog's collaboration capability", () => {
   const native = [
     { slug: "gpt-5.6-terra", visibility: "list", multi_agent_version: "v2" },
     { slug: "gpt-5.6-luna", visibility: "list", multi_agent_version: "v1" },
@@ -1382,7 +1380,7 @@ test("native listed models retain only repository-certified v2 capability", () =
     enabled: [],
     disabled: [],
   });
-  assert.equal(promoted[1].multi_agent_version, "v2");
+  assert.equal(promoted[1].multi_agent_version, "v1");
   // Hidden native entries are never advertised as spawn targets.
   assert.equal(promoted[2].multi_agent_version, "v1");
 });
@@ -1429,10 +1427,7 @@ test("selected subagent mode does not promote unreviewed native models", () => {
   assert.equal(promoted[1].multi_agent_version, "v1");
 });
 
-test("proven subagent mode still promotes upstream-verified v2-backend slugs", () => {
-  // gpt-5.6-luna is shipped as v1 by upstream but runs on the v2 backend, so
-  // it must be promoted even in the conservative proven mode; an unverified
-  // native slug keeps its upstream value.
+test("proven subagent mode cannot override installed native capability", () => {
   const native = [
     { slug: "gpt-5.6-luna", visibility: "list", multi_agent_version: "v1" },
     { slug: "gpt-5.4", visibility: "list", multi_agent_version: "v1" },
@@ -1442,13 +1437,13 @@ test("proven subagent mode still promotes upstream-verified v2-backend slugs", (
     enabled: [],
     disabled: [],
   });
-  assert.equal(promoted[0].multi_agent_version, "v2");
+  assert.equal(promoted[0].multi_agent_version, "v1");
   assert.equal(promoted[1].multi_agent_version, "v1");
 });
 
-test("an upstream-verified slug still honours disabled and picker-hidden", () => {
+test("native certification follows the installed catalog", () => {
   const native = [{ slug: "gpt-5.6-luna", visibility: "list", multi_agent_version: "v1" }];
-  assert.equal(nativeSubagentCertification(native[0]), "v2");
+  assert.equal(nativeSubagentCertification(native[0]), "v1");
   const promoted = promoteNativeMultiAgent(
     native,
     { mode: "proven", enabled: [], disabled: ["gpt-5.6-luna"] },

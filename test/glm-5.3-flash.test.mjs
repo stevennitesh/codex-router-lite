@@ -21,8 +21,8 @@ const ROUTES = [
   ["opencode-go/glm-5.3-flash", "glm-5.3-flash", "glm-5.3-flash", 1_000_000, 400_000, ["text", "image"]],
   ["ollama-cloud/glm-5.3-flash", "glm-5.3-flash:cloud", "ollama-cloud-glm-5-3-flash", 1_000_000, 400_000, ["text", "image"]],
   ["openrouter/glm-5.3-flash", "z-ai/glm-5.3-flash", "glm-5.3-flash", 1_048_576, 900_000, ["text", "image"]],
-  ["zai-api/glm-5.3-flash", "glm-5.3-flash", "glm-thinking", 1_000_000, 400_000, ["text"]],
-  ["zai-coding/glm-5.3-flash", "glm-5.3-flash", "glm-thinking", 1_000_000, 400_000, ["text"]],
+  ["zai-api/glm-5.3-flash", "glm-5.3-flash", "glm-thinking-auto-tool-choice", 1_000_000, 400_000, ["text", "image"]],
+  ["zai-coding/glm-5.3-flash", "glm-5.3-flash", "glm-thinking-auto-tool-choice", 1_000_000, 400_000, ["text", "image"]],
 ];
 
 test("every checked-in GLM-5.3-Flash route records its static metadata", () => {

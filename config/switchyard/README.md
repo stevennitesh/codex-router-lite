@@ -25,7 +25,9 @@ it must not become a second source tree.
 2. Native Sol, Terra, Luna, GLM-5.3-Flash, and other picker entries stay on their existing routes.
 3. Only `switchyard/auto` uses the `switchyard-native` request profile.
 4. Router sends ordinary `switchyard/auto` turns to Switchyard on
-   `127.0.0.1:4000` as uncompressed Responses JSON.
+   `127.0.0.1:4000` as uncompressed Responses JSON. A separate ephemeral
+   local-hop capability authenticates this request without replacing the
+   caller's `Authorization` header.
 5. Switchyard classifies the turn, selects a Luna or Sol target and effort, then
    sends it back through Router's authenticated loopback Responses endpoint.
 6. `forward_auth = true` preserves the Codex login headers for the native ChatGPT
@@ -50,7 +52,10 @@ variants of the same native model safely. The patch adds:
   shell, and tool-search continuations retain the selected target instead of
   being mistaken for a new user turn; and
 - forwarding of the common `priority` service tier to the hidden classifier
-  request as well as the selected serving request.
+  request as well as the selected serving request;
+- capability enforcement on every server endpoint except `/health`, with the
+  local-hop header removed before any upstream request; and
+- redaction of target base URLs from `/v1/decision` responses.
 
 Every configured target enforces `store = false` and `stream = true` and removes
 `max_output_tokens`. The ChatGPT subscription Responses backend requires this
@@ -79,9 +84,11 @@ the catalog entry back to v2.
 
 ## Compaction and request compatibility
 
-Switchyard owns ordinary turns only. It does not implement either Codex compaction
-endpoint. Router detects v1 and v2 compaction requests and sends those directly to
-the native model behind the public route. Router also skips routed-agent input
+Switchyard owns ordinary turns only in this integration. Although the pinned
+server exposes an auxiliary Responses compaction endpoint, Router does not send
+either Codex compaction form through it. Router detects v1 endpoint requests and
+v2 terminal compaction triggers and sends both directly to the native model behind
+the public route. Router also skips routed-agent input
 normalization for the Switchyard profile because the selected native model receives
 the original Codex request after Switchyard chooses the target.
 
@@ -123,8 +130,10 @@ request encoding.
 ## Runtime supervision
 
 Router starts Switchyard only when the `switchyard` provider is selected. Router
-launches the installed binary, waits for `/health`, observes its exit, and owns its
-lifetime. Do not start a second Switchyard process.
+refuses a managed non-loopback address, launches the installed binary, waits for
+`/health`, observes its exit, and owns its lifetime. While selected, Switchyard is
+also a steady-state Router health dependency and appears as `switchyard` in the
+fixed `degraded` set when unreachable. Do not start a second Switchyard process.
 
 Defaults and supported overrides:
 
@@ -155,6 +164,10 @@ generated local caller capability and must not enter source control, issues, log
 or support bundles. Obtain the current managed `openai_base_url` from the local
 Codex configuration without printing it, substitute it into a staged runtime
 `routes.toml`, validate the staged config, then deploy it through a guarded restart.
+That downstream URL capability is distinct from the ephemeral Router-to-Switchyard
+capability generated at service startup. The latter is passed only in process
+environment and a dedicated request header; it is never written into `routes.toml`
+or forwarded to the native backend.
 
 ## Rebuild
 

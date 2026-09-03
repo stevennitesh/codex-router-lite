@@ -811,3 +811,29 @@ test("a terminal event whose data fails to parse is indeterminate, not empty", a
   assert.equal(guard.hasContent(), false);
   assert.equal(Buffer.concat(chunks).toString("utf8"), input);
 });
+
+test("each valid SSE JSON block is parsed at most once", async () => {
+  const input = [
+    "event: response.created",
+    'data: {"type":"response.created"}',
+    "",
+    "event: response.completed",
+    'data: {"type":"response.completed","response":{"output":[]}}',
+    "",
+  ].join("\n");
+  const nativeParse = JSON.parse;
+  let parseCalls = 0;
+  JSON.parse = (...args) => {
+    parseCalls += 1;
+    return nativeParse(...args);
+  };
+  try {
+    const { body, empty, suppressed } = await runGuard(input);
+    assert.equal(empty, true);
+    assert.equal(suppressed, true);
+    assert.equal(body, "");
+    assert.equal(parseCalls, 2);
+  } finally {
+    JSON.parse = nativeParse;
+  }
+});
