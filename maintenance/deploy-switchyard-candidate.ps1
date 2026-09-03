@@ -89,6 +89,19 @@ function Invoke-RouterInstall([string]$Root) {
   if ($LASTEXITCODE -ne 0) { throw "Router install failed from $Root." }
 }
 
+function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
+  $stateRoot = Join-Path $codexHome "codex-router"
+  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $runningRoot = [IO.Path]::GetFullPath($processState.sourceRoot)
+  foreach ($allowedRoot in $AllowedRoots) {
+    $resolved = [IO.Path]::GetFullPath($allowedRoot)
+    if ([string]::Equals($runningRoot, $resolved, [StringComparison]::OrdinalIgnoreCase)) {
+      return $resolved
+    }
+  }
+  throw "The running Router source root is not an approved candidate or rollback checkout: $runningRoot."
+}
+
 function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit) {
   & node (Join-Path $Root "src\doctor.mjs") | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "Router Doctor failed from $Root." }
@@ -208,7 +221,8 @@ if ($LASTEXITCODE -ne 0) { throw "Switchyard candidate dry-run failed." }
 
 & node (Join-Path $repoRoot "src\config-manager.mjs") validate-enable | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Codex configuration cannot accept the Router candidate." }
-Assert-RouterHealth $rollbackRouterRoot $expectedRollbackCommit
+$runningRouterRoot = Resolve-RunningRouterRoot @($repoRoot, $rollbackRouterRoot)
+Assert-RouterHealth $runningRouterRoot $expectedRollbackCommit
 Assert-SwitchyardHealth
 if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candidate-*").Count) {
   throw "A Switchyard candidate staging directory already exists."
@@ -237,7 +251,7 @@ try {
   @{
     version = 1
     previousRouterCommit = $expectedRollbackCommit
-    previousRouterRoot = $repoRoot
+    previousRouterRoot = $runningRouterRoot
     rollbackRouterRoot = $rollbackRouterRoot
     files = @($existing)
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -251,7 +265,7 @@ try {
 
     Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
     $activationStarted = $true
-    Invoke-RouterService $repoRoot "stop"
+    Invoke-RouterService $runningRouterRoot "stop"
     Copy-RuntimeFile $stageRoot $runtimeRoot "switchyard-server.exe"
     Copy-RuntimeFile $stageRoot $runtimeRoot "routes.toml"
     Protect-PrivateFile (Join-Path $runtimeRoot "routes.toml")

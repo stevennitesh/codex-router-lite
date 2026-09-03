@@ -61,12 +61,12 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     "CODEX_ROUTER_SWITCHYARD_BASE_URL",
   ]) assert.match(source, new RegExp(name, "u"));
   assert.match(source, /config-manager\.mjs"\) validate-enable/);
-  assert.match(source, /config-manager\.mjs"\) enable[\s\S]*\$activationStarted = \$true[\s\S]*Invoke-RouterService \$repoRoot "stop"/);
+  assert.match(source, /config-manager\.mjs"\) enable[\s\S]*\$activationStarted = \$true[\s\S]*Invoke-RouterService \$runningRouterRoot "stop"/);
   assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
-  assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
+  assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
   assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
   assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /if \(-not \$activationStarted\)/);
