@@ -58,6 +58,12 @@ function validNativeCatalog(parsed) {
   return parsed && Array.isArray(parsed.models) && parsed.models.length > 0;
 }
 
+function nativeCatalogFingerprint(catalog) {
+  return createHash("sha256")
+    .update(JSON.stringify(catalog.models))
+    .digest("hex");
+}
+
 export function previouslyPublishedNativeSlugs(
   nativeModels,
   catalogPath = MERGED_CATALOG_PATH,
@@ -361,7 +367,7 @@ export function nativeCatalogIsReusable(
   return true;
 }
 
-function nativeCatalog({ refreshNative = refresh } = {}) {
+export function nativeCatalog({ refreshNative = refresh } = {}) {
   const source = readNativeCatalogSource();
   if (source) {
     const catalog = readNativeCatalogFile(source.path);
@@ -370,7 +376,17 @@ function nativeCatalog({ refreshNative = refresh } = {}) {
         `Configured native model catalog is unavailable or invalid: ${source.path}`,
       );
     }
-    return catalog;
+    const fingerprint = nativeCatalogFingerprint(catalog);
+    if (!refreshNative && existsSync(NATIVE_CATALOG_PATH)) {
+      const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
+      if (nativeCatalogIsReusable(parsed, codexVersion(), fingerprint)) {
+        return parsed;
+      }
+    }
+    // An adopted catalog owns account visibility and entries, but it cannot
+    // own binary-schema fields such as shell_type. Normalize it through the
+    // same current bundled capture used for Codex's account catalog.
+    return captureNative({ catalog, fingerprint });
   }
   // `models_cache.json` is the signed-in account's catalog written to disk,
   // so a discovery-disabled install leaves it unread like every other

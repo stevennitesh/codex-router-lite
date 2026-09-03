@@ -72,6 +72,12 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.doesNotMatch(source, /AppData\\Local\\codex-router/);
 });
 
+test("Windows install refreshes the current Codex bundled catalog", () => {
+  const source = readScript("install.ps1");
+  assert.match(source, /node src\/catalog\.mjs --refresh-native/);
+  assert.doesNotMatch(source, /Test-NonEmptyFile/);
+});
+
 test("the Windows restart helper uses the supported service transaction", () => {
   const source = readScript("restart-codex-router.ps1");
   assert.match(source, /\$env:LOCALAPPDATA/);

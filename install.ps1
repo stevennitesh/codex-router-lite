@@ -360,16 +360,11 @@ try {
     elseif ($env:CODEX_ROUTER_STATE_DIR) { $env:CODEX_ROUTER_STATE_DIR }
     elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME "codex-router" }
     else { Join-Path $HOME ".codex\codex-router" }
-  # A zero-byte state file is half-written and must not publish an empty catalog.
-  function Test-NonEmptyFile([string] $Path) {
-    return (Test-Path $Path -PathType Leaf) -and ((Get-Item $Path).Length -gt 0)
-  }
-  $NativeCatalogPath = Join-Path $StateRoot "native-models.json"
-  if (Test-NonEmptyFile $NativeCatalogPath) {
-    & node src/catalog.mjs
-  } else {
-    & node src/catalog.mjs --refresh-native
-  }
+  # The version string is not a sufficient freshness identity for Codex's
+  # bundled catalog: Desktop can update catalog schema or feature-owned fields
+  # without changing it. An install is the compatibility boundary, so recapture
+  # the installed binary's authoritative catalog before publishing routes.
+  & node src/catalog.mjs --refresh-native
   if ($LASTEXITCODE -ne 0) { throw "Codex model-catalog generation failed." }
   & node src/litellm-config.mjs
   if ($LASTEXITCODE -ne 0) { throw "Gateway configuration generation failed." }

@@ -173,6 +173,7 @@ test("native catalog merge preserves account visibility and bundled-only models"
     slug: "gpt-mini",
     visibility: "list",
     source: "account",
+    shell_type: "shell_command",
     model_messages: { instructions_template: "account instructions" },
   };
   const merged = mergeNativeCatalogs(
@@ -192,6 +193,7 @@ test("native catalog merge preserves account visibility and bundled-only models"
           slug: "gpt-mini",
           visibility: "hide",
           source: "bundled",
+          shell_type: "unified_exec",
           base_instructions: "bundled instructions",
         },
         { slug: "gpt-bundled-only", visibility: "list" },
@@ -201,6 +203,7 @@ test("native catalog merge preserves account visibility and bundled-only models"
   assert.deepEqual(merged.models, [
     {
       ...accountMini,
+      shell_type: "unified_exec",
       base_instructions: "bundled instructions",
     },
     {
@@ -211,6 +214,66 @@ test("native catalog merge preserves account visibility and bundled-only models"
     },
     { slug: "gpt-bundled-only", visibility: "list" },
   ]);
+});
+
+test("configured native catalog refresh applies current bundled schema", {
+  skip: process.platform !== "win32",
+}, () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-native-source-"));
+  const codexHome = path.join(testRoot, "codex");
+  const state = path.join(codexHome, "codex-router");
+  const sourcePath = path.join(testRoot, "source.json");
+  const fakeCodex = path.join(testRoot, "codex.cmd");
+  const fakeCodexModule = path.join(testRoot, "fake-codex.mjs");
+  const sourceCatalog = {
+    models: [
+      { ...template, shell_type: "shell_command" },
+      { ...template, slug: "gpt-5.6-sol", shell_type: "shell_command" },
+    ],
+  };
+  const bundledCatalog = {
+    models: sourceCatalog.models.map((model) => ({
+      ...model,
+      shell_type: "unified_exec",
+    })),
+  };
+  mkdirSync(state, { recursive: true });
+  writeFileSync(sourcePath, `${JSON.stringify(sourceCatalog)}\n`);
+  writeFileSync(
+    path.join(state, "native-catalog-source.json"),
+    `${JSON.stringify({ version: 1, path: sourcePath, status: "active" })}\n`,
+  );
+  writeFileSync(fakeCodex, '@node "%~dp0fake-codex.mjs" %*\r\n');
+  writeFileSync(
+    fakeCodexModule,
+    `if (process.argv[2] === "--version") console.log("codex-cli 0.153.0");\n` +
+      `else if (process.argv.slice(2).join(" ") === "debug models --bundled") ` +
+      `console.log(${JSON.stringify(JSON.stringify(bundledCatalog))});\n` +
+      `else process.exitCode = 2;\n`,
+  );
+  const program =
+    `const { nativeCatalog } = await import(${JSON.stringify(new URL("../src/catalog.mjs", import.meta.url).href)});` +
+    `process.stdout.write(JSON.stringify(nativeCatalog({ refreshNative: true })));`;
+  try {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", program], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CODEX_BIN: fakeCodex,
+        CODEX_HOME: codexHome,
+        MODEL_ROUTER_STATE_DIR: state,
+      },
+      windowsHide: true,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const refreshed = JSON.parse(result.stdout);
+    assert.deepEqual(
+      refreshed.models.map((model) => [model.slug, model.shell_type]),
+      [["gpt-5.5", "unified_exec"], ["gpt-5.6-sol", "unified_exec"]],
+    );
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
 });
 
 test("native listed models retain the installed catalog's collaboration capability", () => {
