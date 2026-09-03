@@ -36,6 +36,7 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "deploy-codex-router.ps1",
     "restart-codex-router.ps1",
     "model-router.ps1",
+    "maintenance/deploy-switchyard-candidate.ps1",
     "src/windows-process-tree.ps1",
   ]) {
     const target = path.join(root, name).replaceAll("'", "''");
@@ -49,6 +50,26 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
       stdio: ["ignore", "pipe", "inherit"],
     });
   }
+});
+
+test("the Switchyard deployment owns preflight, activation, and exact rollback", () => {
+  const source = readScript("maintenance/deploy-switchyard-candidate.ps1");
+  for (const name of [
+    "CODEX_ROUTER_SWITCHYARD_ROOT",
+    "CODEX_ROUTER_SWITCHYARD_BIN",
+    "CODEX_ROUTER_SWITCHYARD_CONFIG",
+    "CODEX_ROUTER_SWITCHYARD_BASE_URL",
+  ]) assert.match(source, new RegExp(name, "u"));
+  assert.match(source, /config-manager\.mjs"\) validate-enable/);
+  assert.match(source, /config-manager\.mjs"\) enable[\s\S]*\$activationStarted = \$true[\s\S]*Invoke-RouterService \$repoRoot "stop"/);
+  assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
+  assert.match(source, /Assert-CodexCatalog \$repoRoot/);
+  assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
+  assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
+  assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
+  assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
+  assert.match(source, /if \(-not \$activationStarted\)/);
+  assert.doesNotMatch(source, /AppData\\Local\\codex-router/);
 });
 
 test("the Windows restart helper uses the supported service transaction", () => {

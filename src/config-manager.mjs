@@ -125,6 +125,48 @@ function foreignTableSegments(innerLines, managedHeader) {
   return output;
 }
 
+function recoverUnterminatedRouterRootBlock(input) {
+  const lines = String(input).split("\n");
+  const starts = lines
+    .map((line, index) => line.trim() === startMarker ? index : -1)
+    .filter((index) => index >= 0);
+  const ends = lines.filter((line) => line.trim() === endMarker);
+  if (starts.length !== 1 || ends.length !== 0) return String(input);
+
+  const start = starts[0];
+  const firstTable = scanTomlDocument(input).headers[0]?.index;
+  if (firstTable === undefined || start >= firstTable) return String(input);
+
+  const managed = lines.slice(start + 1, firstTable).filter((line) => line.trim());
+  const required = [
+    `openai_base_url = ${tomlValue(configuredRouterBaseUrl())}`,
+    `model_catalog_json = ${tomlValue(MERGED_CATALOG_PATH)}`,
+  ];
+  const optional = new Map([
+    [
+      "experimental_realtime_webrtc_call_base_url",
+      `experimental_realtime_webrtc_call_base_url = ${tomlValue(
+        nativeRealtimeCallBaseUrl(lines.slice(0, start)),
+      )}`,
+    ],
+    [
+      "experimental_realtime_ws_base_url",
+      `experimental_realtime_ws_base_url = ${tomlValue(defaultRealtimeWebsocketBaseUrl)}`,
+    ],
+  ]);
+  const expected = [...required];
+  for (const key of optional.keys()) {
+    if (managed.some((line) => line.trim().startsWith(`${key} =`))) expected.push(optional.get(key));
+  }
+  if (
+    managed.length !== expected.length ||
+    managed.some((line, index) => line.trim() !== expected[index])
+  ) return String(input);
+
+  lines.splice(firstTable, 0, endMarker);
+  return lines.join("\n");
+}
+
 function removeMarkerPair(input, start, end, managedHeader) {
   const lines = String(input).split("\n");
   const output = [];
@@ -146,10 +188,11 @@ function removeMarkerPair(input, start, end, managedHeader) {
 }
 
 function removeManagedBlocks(input) {
+  const recovered = recoverUnterminatedRouterRootBlock(input);
   return markerPairs.reduce(
     (contents, [start, end, managedHeader]) =>
       removeMarkerPair(contents, start, end, managedHeader),
-    String(input),
+    recovered,
   );
 }
 
@@ -340,15 +383,27 @@ function atomicWrite(contents) {
   }
 }
 
-const validCommands = new Set(["enable", "disable", "status", "caller-capability-refresh"]);
+const validCommands = new Set([
+  "enable",
+  "disable",
+  "status",
+  "validate-enable",
+  "caller-capability-refresh",
+]);
 if (!validCommands.has(command)) {
-  console.error("Usage: config-manager.mjs enable|disable|status|caller-capability-refresh");
+  console.error(
+    "Usage: config-manager.mjs enable|disable|status|validate-enable|caller-capability-refresh",
+  );
   process.exit(2);
 }
 
 const current = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "";
 if (command === "status") {
   process.stdout.write(`${JSON.stringify(snapshot(current))}\n`);
+  process.exit(0);
+}
+if (command === "validate-enable") {
+  process.stdout.write(`${JSON.stringify(snapshot(enabledContents(current)))}\n`);
   process.exit(0);
 }
 

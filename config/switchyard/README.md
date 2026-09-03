@@ -245,6 +245,15 @@ If no command or reviewed script owns that entire transaction, stop and add
 one before deploying. Do not claim that a restart performed a deployment, and
 do not weaken the no-standalone-stop rule to work around the missing owner.
 
+The repository-owned transaction is
+`maintenance/deploy-switchyard-candidate.ps1`. Pass the staged binary and
+route hashes, the clean candidate commit, and an already prepared detached
+rollback checkout for the exact running commit. The script validates Codex
+configuration before stopping Router, deploys from the active repository
+root, and restores through the detached checkout if activation fails. It
+refuses Switchyard path or address overrides so its file and health checks
+cannot certify a different runtime from the one Router starts.
+
 ## Switchyard v2 promotion
 
 `switchyard/auto` is currently v1. Its prior draft under

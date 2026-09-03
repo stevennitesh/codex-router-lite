@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,9 +9,14 @@ import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 import { spawnableCommand } from "../src/codex-binary.mjs";
 
 const binary = process.argv[2];
-if (!binary || process.argv.length > 3) {
+const installedCatalogPath = process.argv[3] === "--catalog" ? process.argv[4] : undefined;
+if (
+  !binary ||
+  (process.argv.length !== 3 && process.argv.length !== 5) ||
+  (process.argv.length === 5 && !installedCatalogPath)
+) {
   console.error(
-    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX",
+    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX [--catalog PATH]",
   );
   process.exit(2);
 }
@@ -76,9 +81,30 @@ function buildCandidate(binary) {
 
 const source = buildCandidate(binary);
 const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
-const catalogPath = path.join(temporaryHome, "merged-models.json");
+const catalogPath = installedCatalogPath || path.join(temporaryHome, "merged-models.json");
 try {
-  writeFileSync(catalogPath, `${JSON.stringify(source.catalog)}\n`, { mode: 0o600 });
+  const checkedCatalog = installedCatalogPath
+    ? JSON.parse(readFileSync(installedCatalogPath, "utf8"))
+    : source.catalog;
+  if (!installedCatalogPath) {
+    writeFileSync(catalogPath, `${JSON.stringify(checkedCatalog)}\n`, { mode: 0o600 });
+  }
+  const checkedBySlug = new Map(checkedCatalog.models?.map((model) => [model.slug, model]) || []);
+  const expectedBySlug = new Map(source.catalog.models.map((model) => [model.slug, model]));
+  const routeOwnedFields = (model) => {
+    const { availability_nux: _announcementState, ...owned } = model;
+    return owned;
+  };
+  for (const model of routed) {
+    if (!checkedBySlug.has(model.slug)) {
+      throw new Error(`${source.version} catalog is missing routed entry ${model.slug}`);
+    }
+    assert.deepEqual(
+      routeOwnedFields(checkedBySlug.get(model.slug)),
+      routeOwnedFields(expectedBySlug.get(model.slug)),
+      `${source.version} installed routed entry ${model.slug} does not match the candidate`,
+    );
+  }
   const parsed = JSON.parse(
     runCodex(
       source.binary,
@@ -97,7 +123,7 @@ try {
     throw new Error(`${source.version} did not preserve Switchyard native compaction`);
   }
   process.stdout.write(
-    `${source.version} parsed ${source.catalog.models.length} current-schema models; ` +
+    `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
       "GLM and Switchyard compatibility passed\n",
   );
 } finally {
