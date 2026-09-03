@@ -9,7 +9,7 @@ deployed artifacts, not editable source.
 
 | Item | Authoritative location | Notes |
 |---|---|---|
-| Router integration and tests | `C:\Users\steve\AppData\Local\codex-router` | Owns the catalog, request handling, provider selection, and process supervision. |
+| Router integration and tests | This repository root | Owns the catalog, request handling, provider selection, and process supervision. |
 | Switchyard source change | `config\switchyard\patches\switchyard-codex-compat.patch` | Apply to the upstream commit recorded in `source.lock`. |
 | Routing policy template | `config\switchyard\routes.template.toml` | Contains no generated local caller key. |
 | Optional worker role | `config\switchyard\switchyard_worker.toml` | Source for `%CODEX_HOME%\agents\switchyard_worker.toml`. |
@@ -138,7 +138,7 @@ Use Router's own controls. Enabling or disabling Switchyard requires one supervi
 Router restart because provider selection changes the child-process set.
 
 ```powershell
-$routerRoot = Join-Path $env:LOCALAPPDATA "codex-router"
+$routerRoot = (& git rev-parse --show-toplevel).Trim()
 & (Join-Path $routerRoot "model-router.ps1") codex providers enable switchyard
 & (Join-Path $routerRoot "restart-codex-router.ps1")
 Invoke-RestMethod http://127.0.0.1:4000/health -TimeoutSec 2
@@ -163,7 +163,7 @@ patch SHA-256. Use a disposable checkout:
 
 ```powershell
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]::NewGuid())
-$routerRoot = "C:\Users\steve\AppData\Local\codex-router"
+$routerRoot = (& git rev-parse --show-toplevel).Trim()
 $patchPath = Join-Path $routerRoot "config\switchyard\patches\switchyard-codex-compat.patch"
 git clone https://github.com/NVIDIA-NeMo/Switchyard.git $buildRoot
 git -C $buildRoot checkout --detach 7a72c0667774244d66a8b631e375c9d6e393bf57
