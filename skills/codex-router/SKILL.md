@@ -25,8 +25,6 @@ native tools in your current tool list.
 - In-app browser work: read `codex-in-app-browser`.
 - Windows UI automation: read the currently exposed official computer-use
   skill; `codex-computer-use` is only the Router bridge to that authority.
-- MiniMax media generation: read `codex-router-media`.
-
 Do not load companions for work that does not need them.
 
 ## Turn continuation

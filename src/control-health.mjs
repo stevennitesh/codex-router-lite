@@ -23,9 +23,7 @@ function safeService(service) {
 }
 
 // Read the protected health leaf and project it to the stable, credential-free
-// contract shared by the CLI, tray, and Electron Control Center. Callers may
-// provide fetch/read seams for deterministic tests; production keeps the
-// capability and its URL inside the trusted Node/Electron main process.
+// contract used by the Windows CLI and Codex integration.
 export async function readControlHealth({
   fetchImpl = globalThis.fetch,
   readCallerSecret = () => readFileSync(CALLER_SECRET_PATH, "utf8"),
@@ -55,9 +53,7 @@ export async function readControlHealth({
       ...(Array.isArray(body.degraded) ? { degraded: body.degraded } : {}),
       ...(body.activity && typeof body.activity === "object" ? { activity: body.activity } : {}),
       ...(safeService(body.gateway) ? { gateway: safeService(body.gateway) } : {}),
-      ...(safeService(body.oauth) ? { oauth: safeService(body.oauth) } : {}),
       ...(safeService(body.api) ? { api: safeService(body.api) } : {}),
-      ...(safeService(body.grokOauth) ? { grokOauth: safeService(body.grokOauth) } : {}),
     };
   } catch (error) {
     const timedOut = error?.name === "AbortError" || error?.name === "TimeoutError";

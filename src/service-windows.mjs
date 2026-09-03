@@ -85,7 +85,6 @@ function wrapper() {
     // would otherwise encode stdout as the legacy code page.
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
-    ...(process.env.KIMI_CODE_HOME ? { KIMI_CODE_HOME: process.env.KIMI_CODE_HOME } : {}),
   };
   return `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${Object.entries(variables)
     .map(([key, value]) => `set "${key}=${cmdEscape(value)}"`)
@@ -488,7 +487,7 @@ function stopOwnedServiceTree() {
 function endTask() {
   // Do not poll after a skipped `/End`: taskState is a truthful read, but in a
   // test there was no mutation to wait for and a missing PowerShell can spend
-  // the full timeout. This also keeps Kimi OAuth cleanup bounded.
+  // the full timeout.
   const managerSkipped = skipServiceManagerCall({ hostManaged: HOST_MANAGED });
   if (managerSkipped) return;
   try {

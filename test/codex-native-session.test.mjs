@@ -213,35 +213,6 @@ test("an unrecognized consent marker fails closed", () => {
   assert.equal(nativeSessionAvailable(), false);
 });
 
-test("native models map for the harness, minus Codex's internal variants", () => {
-  const mapped = nativeClientModels([
-    {
-      slug: "gpt-5.6-sol",
-      display_name: "GPT-5.6-Sol",
-      visibility: "list",
-      context_window: 272000,
-      input_modalities: ["text", "image"],
-      supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
-      priority: 1,
-    },
-    // A watermarked build and the auto-review model are Codex's own internals.
-    { slug: "gpt-5.6-sol-wm", display_name: "watermarked", visibility: "hide" },
-    { slug: "codex-auto-review", visibility: "hide" },
-  ]);
-
-  assert.equal(mapped.length, 1);
-  assert.deepEqual(mapped[0], {
-    slug: "gpt-5.6-sol",
-    displayName: "GPT-5.6-Sol (Codex)",
-    contextWindow: 272000,
-    inputModalities: ["text", "image"],
-    reasoningLevels: [{ effort: "low" }, { effort: "high" }],
-    // Codex ranks with 1 as best; the router ranks with higher as better.
-    priority: -1,
-    native: true,
-  });
-});
-
 test("an empty or malformed native catalog publishes nothing", () => {
   assert.deepEqual(nativeClientModels(undefined), []);
   assert.deepEqual(nativeClientModels([]), []);

@@ -190,7 +190,7 @@ export function replaceMultiAgentState({ mode, enabled = [], disabled = [], effo
   return subagentSettingsSnapshot();
 }
 
-// The three modes documented in `.claude/skills/codex-subagents/SKILL.md`:
+// The three supported subagent selection modes:
 // `proven` ships only what the registry verified, `selected` adds the routes
 // the operator explicitly turned on, and `all` advertises every non-hidden
 // route "regardless of whether it works".

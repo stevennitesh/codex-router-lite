@@ -20,11 +20,7 @@ for (const directory of directories) {
   }
 }
 
-execFileSync(process.execPath, ["--test", path.join(root, "test", "retained-boundary.test.mjs")], {
-  stdio: "inherit",
-});
-
-execFileSync(process.execPath, [path.join(root, "scripts", "check-retained-boundary.mjs")], {
+execFileSync(process.execPath, [path.join(root, "scripts", "check-product-boundary.mjs")], {
   stdio: "inherit",
 });
 

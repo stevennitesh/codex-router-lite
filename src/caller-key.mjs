@@ -19,7 +19,6 @@ import {
 } from "./caller-key-rotation-journal.mjs";
 import { withCallerKeyRotationLock } from "./caller-key-rotation-lock.mjs";
 import { withModelOverlayLock } from "./model-overlay-lock.mjs";
-import { withLoginFreeRefreshLock } from "./login-free-refresh-lock.mjs";
 import { privateFileIsProtected } from "./file-security.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { runServiceCommandUnlocked } from "./service.mjs";
@@ -41,14 +40,11 @@ function partialClient(label) {
 
 export function installedTargetsFromStatus({ codex = {} } = {}) {
   const targets = [];
-  const codexStatePresent = codex.provider_mode_state_present === true || codex.signed_provider_state_present === true;
   const codexManagedArtifacts = codex.managed_router_artifacts_present === true;
   if (codex.mode === "router") {
     if (codex.config_protected !== true) partialClient("Codex");
-    if (codex.provider_mode_state_present && !codex.login_free_managed) partialClient("Codex");
-    if (codex.signed_provider_state_present && !codex.signed_routing_managed) partialClient("Codex");
     targets.push("codex");
-  } else if (codexStatePresent || codexManagedArtifacts) {
+  } else if (codexManagedArtifacts) {
     partialClient("Codex");
   }
 
@@ -87,12 +83,7 @@ export async function readRouterServiceStatus({ runNode = runNodeCommand } = {})
 
 export function managedServiceIsRunning(service) {
   if (service?.installed !== true) return false;
-  // All platform status renderers expose `loaded` as the service manager's
-  // process-ownership signal. Linux names that state `active`, while launchd
-  // can keep a job loaded through waiting, spawning, or shutdown transitions.
-  // Retain the named running states for older callers and deterministic
-  // fixtures that predate the shared `loaded` field.
-  return service.loaded === true || service.state === "running" || service.state === "active";
+  return service.loaded === true || service.state === "running";
 }
 
 async function validModelList(response) {
@@ -139,7 +130,7 @@ function currentSecret(secretPath) {
 }
 
 async function withCallerMutationLocks(operation) {
-  return withModelOverlayLock(() => withLoginFreeRefreshLock(operation));
+  return withModelOverlayLock(operation);
 }
 
 function callerServiceLock(secretPath, override) {
@@ -321,7 +312,6 @@ export async function runCallerKeyRotation({
 function restartNotice(targets, serviceRestarted) {
   const notes = [];
   if (targets.includes("codex")) notes.push("Fully quit and reopen Codex before continuing existing tasks.");
-  if (targets.includes("gemini")) notes.push("Restart any running Gemini CLI session.");
   if (!serviceRestarted) notes.push("The router service was not running; its prior stopped state was preserved.");
   return notes.join(" ");
 }

@@ -32,11 +32,7 @@ test("cache compatibility is installed only for Z.ai event streams", () => {
   assert.ok(zaiCacheUsageTransform("openrouter", "text/event-stream"));
   assert.ok(zaiCacheUsageTransform("openrouter", "text/event-stream; charset=utf-8"));
   assert.equal(zaiCacheUsageTransform("openrouter", "application/json"), undefined);
-  assert.equal(zaiCacheUsageTransform("deepseek", "text/event-stream"), undefined);
-  // opencode Go's chat endpoint uses the same choice-bearing terminal usage
-  // shape (litellm#36168), so the compat transform covers it too.
-  assert.equal(zaiCacheUsageTransform("zai-api", "text/event-stream"), undefined);
-  assert.equal(zaiCacheUsageTransform("opencode-go", "text/event-stream"), undefined);
+  assert.equal(zaiCacheUsageTransform("switchyard", "text/event-stream"), undefined);
 });
 
 test("non-usage and malformed SSE lines pass through byte-for-byte", async () => {

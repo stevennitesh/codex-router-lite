@@ -96,18 +96,3 @@ test("query failures and malformed output stay inconclusive", async () => {
     undefined,
   );
 });
-
-test("non-Windows callers never invoke Task Scheduler", async () => {
-  let called = false;
-  assert.equal(
-    await windowsScheduledTaskState({
-      execFile: () => {
-        called = true;
-        return "1|0";
-      },
-      platform: "linux",
-    }),
-    undefined,
-  );
-  assert.equal(called, false);
-});

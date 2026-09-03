@@ -30,14 +30,13 @@ export function switchyardHealthUrl({ env = process.env } = {}) {
 export function switchyardRuntimeStatus({
   stateDir = STATE_DIR,
   env = process.env,
-  platform = process.platform,
   exists = existsSync,
 } = {}) {
   const codexHome = env.CODEX_HOME || path.dirname(stateDir);
   const runtimeRoot = env.CODEX_ROUTER_SWITCHYARD_ROOT || path.join(codexHome, "switchyard");
   const binary = env.CODEX_ROUTER_SWITCHYARD_BIN || path.join(
     runtimeRoot,
-    platform === "win32" ? "switchyard-server.exe" : "switchyard-server",
+    "switchyard-server.exe",
   );
   const config = env.CODEX_ROUTER_SWITCHYARD_CONFIG || path.join(runtimeRoot, "routes.toml");
   const missing = [
@@ -63,11 +62,10 @@ export function switchyardLaunch({
   selected,
   stateDir = STATE_DIR,
   env = process.env,
-  platform = process.platform,
   exists = existsSync,
 } = {}) {
   if (!selected) return undefined;
-  const status = switchyardRuntimeStatus({ stateDir, env, platform, exists });
+  const status = switchyardRuntimeStatus({ stateDir, env, exists });
   if (!status.ready) {
     throw new Error(
       `Switchyard is enabled but its runtime is incomplete; missing ${status.missing.join(", ")}.`,

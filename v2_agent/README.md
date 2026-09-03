@@ -1,77 +1,14 @@
-# v2 agent applications
+# v2 route applications
 
-This directory is the review gate for promoting a routed model to Codex
-`multiAgentVersion: "v2"` for every installer. A model is v1 unless its exact
-`provider/model` route has an accepted application here **and** the matching
-registry change is included in the same pull request.
+This directory contains exact-route evidence for models published as subagents v2.
 
-An application is scoped to the route, not the model family. For example,
-`deepseek/deepseek-v4-pro` and `opencode-go/deepseek-v4-pro` need separate
-applications because their credentials, upstream adapter, and tool handling
-are different.
+Each retained route has one directory:
 
-## What qualifies
+- `openrouter/glm-5.3-flash`
+- `switchyard/auto`
 
-All five checks below must pass through the installed router with a real
-account that can spend the route's quota:
+Copy `_template/proof.json` only when refreshing one of those routes. Do not add another provider or model without a separate product decision.
 
-1. The provider's official documentation and `/models` catalog identify the
-   exact upstream model and supported endpoint.
-2. A streamed Responses turn emits text and completes normally.
-3. A function call returns the requested tool name and valid JSON arguments.
-   Use forced selection when the exact route supports it. If its checked-in
-   request profile deliberately normalizes required or named selection to
-   `auto`, record that mode and prove the offered tool was actually called.
-4. A native Codex parent delegates a child through the encrypted payload
-   relay, and the child returns an exact marker.
-5. The parent sends a same-thread follow-up to that child and receives the
-   second exact marker.
+An accepted proof must identify the public slug, provider, upstream model, Router and Codex versions, execution path, timestamps, and all five checks. Switchyard also records its upstream commit, patch, binary, Router, and generated-route hashes.
 
-Do not infer any of this from a model name, a successful ordinary chat turn,
-or a vendor's generic claim that its API supports tools.
-
-A native Codex tool loop may meter transport status `0` after Codex has already
-accepted the function call or final item and closed the stream. An accepted
-application may use that status only when the same rollout records
-`task_complete`; record `completion: "codex-task-complete"` beside the status.
-A cancelled request without that completion evidence fails the gate.
-
-## Submit an application
-
-1. Copy `_template/` to `v2_agent/<provider>/<slug-model>/`; both directory
-   names use lowercase letters, digits, `.`, `_`, and `-`. The second segment
-   is the routed slug segment, not necessarily the upstream model ID. Record
-   that exact upstream ID in `proof.json` even when it contains `/` or `:`.
-2. Record stable metadata and redacted outcome summaries in `proof.md` and
-   `proof.json`. Do not commit API keys, bearer capabilities, raw prompts,
-   decrypted payloads, or provider response bodies.
-   Record the Codex version/build and whether the evidence came from the
-   standalone CLI runner or Codex desktop native orchestration.
-   An OpenRouter route pinned with `provider.only` must record the exact
-   `endpointProvider`. A locally patched Switchyard route must also record a
-   `runtimeBinding` containing the deployed upstream commit, patch SHA-256,
-   binary SHA-256, Router commit, and generated-routes SHA-256. Accepted proofs
-   are rejected when those source and patch identities drift.
-3. Leave `status` as `draft` until all five checks have passed. Set it to
-   `accepted` only in the PR that also sets the exact registry route's
-   `multiAgentVersion` to `"v2"`.
-4. Run `node scripts/check-v2-agent-applications.mjs`, `npm run check`, and
-   the focused routing/catalog tests.
-5. Open a draft PR. Reviewers reproduce the marker-return and same-thread
-   steps, inspect the redacted evidence, and then approve the registry change.
-
-CI validates the artifact shape and refuses evidence that looks like a
-credential. It cannot run billable native Codex delegation on behalf of an
-account, so human reproduction remains required.
-
-Accepted evidence is a dated historical observation supporting the current
-registry decision, not proof that a live probe ran at current `HEAD`. Re-run it
-when the exact provider or upstream binding, request profile, endpoint policy,
-Codex collaboration schema, tool namespace relay, or compatibility code
-changes.
-
-CI also enforces the registry/application relationship in both directions:
-an accepted application must bind one exact checked-in v2 route, and every new
-checked-in v2 route must have its accepted application. Six exact Kimi/Grok
-route identities certified before this artifact workflow are grandfathered;
-changing their slug, provider, or upstream model removes that exception.
+The checker rejects a v2 catalog declaration whose matching application is missing, draft, mismatched, or incomplete. Read `docs/SUBAGENT-CERTIFICATION.md` for the refresh conditions and quota boundary.

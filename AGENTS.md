@@ -46,22 +46,19 @@ migration systems are outside the product and must not return.
 
 ## Commands
 
-- JavaScript syntax, retained-boundary enforcement, and v2 application
+- JavaScript syntax, product-boundary enforcement, and v2 application
   validation: `npm run check`.
-- Fast retained-product suite: `npm test`.
-- Exhaustive certification suite: `npm run test:full`. Reserve it for release
-  certification or changes to the recovery tests themselves; several
-  cross-process crash simulations take minutes on Windows.
+- Retained-product suite: `npm test`.
 
 ## Common implementation contract
 
 - Keep native GPT routes and Codex-owned catalog behavior unchanged unless the
   task explicitly targets them. Apply compatibility changes only to the routed
   model or provider that requires them.
-- Treat [`maintenance/retained-boundary.json`](maintenance/retained-boundary.json)
-  as the machine-enforced dependency and configuration boundary. A temporary
-  adapter must name one exact caller, its exact legacy targets, and the issue
-  that removes it; do not widen an adapter to make the check pass.
+- Treat [`maintenance/windows-package.json`](maintenance/windows-package.json)
+  as the complete installed file set. The permanent product check rejects
+  excluded families and transitional adapters; do not weaken it to keep dead
+  code.
 - Keep one active runtime. Build third-party sources in a disposable checkout;
   retain only the reproducible pin, canonical patch, and active deployed
   artifacts described by their integration runbook.

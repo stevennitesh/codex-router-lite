@@ -20,7 +20,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm test
+      - name: Test the retained Windows runtime
+        run: npm test
       - run: npm audit --omit=dev --audit-level=high
       - name: Parse retained PowerShell entrypoints
         shell: pwsh

@@ -10,18 +10,6 @@ const discoveryDisabled = () => false;
 
 export { preferSpawnablePath, spawnableCommand };
 
-const LINUX_DESKTOP_APP_ROOTS = ["/opt/codex-desktop"];
-
-export function linuxDesktopAppBundledCodex({
-  platform = process.platform,
-  roots = LINUX_DESKTOP_APP_ROOTS,
-} = {}) {
-  if (platform !== "linux") return undefined;
-  return roots
-    .map((root) => path.join(root, "resources", "codex"))
-    .find((candidate) => existsSync(candidate) && !isShimFile(candidate));
-}
-
 // The ChatGPT/Codex desktop app bundles its CLI under a version-hashed
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash
 // changes on every app update, so scan for the newest installed version
@@ -45,28 +33,17 @@ export function desktopAppBundledCodexCandidates({
 }
 
 export function codexCandidatePaths({
-  platform = process.platform,
   localAppData = process.env.LOCALAPPDATA,
   home = os.homedir(),
-  linuxDesktopRoots,
 } = {}) {
   return [
     process.env.CODEX_BIN,
-    process.env.CODEX_INSTALL_DIR &&
-      path.join(
-        process.env.CODEX_INSTALL_DIR,
-        platform === "win32" ? "codex.exe" : "codex",
-      ),
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/Resources/codex",
-    "/opt/homebrew/bin/codex",
-    linuxDesktopAppBundledCodex({ platform, roots: linuxDesktopRoots }),
-    "/usr/local/bin/codex",
+    process.env.CODEX_INSTALL_DIR && path.join(process.env.CODEX_INSTALL_DIR, "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "app", "bin", "codex.exe"),
-    ...desktopAppBundledCodexCandidates({ platform, localAppData }),
-    path.join(home, ".local", "bin", platform === "win32" ? "codex.exe" : "codex"),
+    ...desktopAppBundledCodexCandidates({ platform: "win32", localAppData }),
+    path.join(home, ".local", "bin", "codex.exe"),
   ].filter(Boolean);
 }
 
@@ -167,11 +144,7 @@ export function findCodexBinary() {
   // build is newer. They are configuration, not candidates.
   const explicit = [
     process.env.CODEX_BIN,
-    process.env.CODEX_INSTALL_DIR &&
-      path.join(
-        process.env.CODEX_INSTALL_DIR,
-        process.platform === "win32" ? "codex.exe" : "codex",
-      ),
+    process.env.CODEX_INSTALL_DIR && path.join(process.env.CODEX_INSTALL_DIR, "codex.exe"),
   ].find((candidate) => candidate && existsSync(candidate) && !isShimFile(candidate));
   if (explicit) return explicit;
 

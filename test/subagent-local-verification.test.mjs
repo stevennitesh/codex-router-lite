@@ -30,16 +30,16 @@ function verifiedRecord(slug, overrides = {}) {
 }
 
 test("a completed local verification promotes exactly its own route", () => {
-  const proof = verifiedRecord("deepseek/deepseek-v4-flash");
-  assert.equal(verifiedForRoute(proof, "deepseek/deepseek-v4-flash", { routerVersion: ROUTER_VERSION }), true);
+  const proof = verifiedRecord("openrouter/glm-5.3-flash");
+  assert.equal(verifiedForRoute(proof, "openrouter/glm-5.3-flash", { routerVersion: ROUTER_VERSION }), true);
 
   const models = [
-    { slug: "deepseek/deepseek-v4-flash", multiAgentVersion: "v1" },
-    { slug: "deepseek/deepseek-v4-pro", multiAgentVersion: "v1" },
+    { slug: "openrouter/glm-5.3-flash", multiAgentVersion: "v1" },
+    { slug: "switchyard/auto", multiAgentVersion: "v1" },
   ];
   const applied = applySubagentProofs(
     models,
-    { "deepseek/deepseek-v4-flash": proof },
+    { "openrouter/glm-5.3-flash": proof },
     { routerVersion: ROUTER_VERSION },
   );
   assert.equal(applied[0].multiAgentVersion, "v2");
@@ -53,7 +53,7 @@ test("a completed local verification promotes exactly its own route", () => {
 test("the cheap stream/tool probe can never stand in for native collaboration", () => {
   // The exact failure the promotion gate exists to prevent: checks 1-2 pass,
   // the delegation checks never ran, and the route is still v1.
-  const partial = verifiedRecord("deepseek/deepseek-v4-flash", {
+  const partial = verifiedRecord("openrouter/glm-5.3-flash", {
     checks: {
       streaming: { outcome: "pass" },
       toolCall: { outcome: "pass" },
@@ -62,7 +62,7 @@ test("the cheap stream/tool probe can never stand in for native collaboration", 
       sameThreadFollowUp: { outcome: "pending" },
     },
   });
-  assert.equal(verifiedForRoute(partial, "deepseek/deepseek-v4-flash", { routerVersion: ROUTER_VERSION }), false);
+  assert.equal(verifiedForRoute(partial, "openrouter/glm-5.3-flash", { routerVersion: ROUTER_VERSION }), false);
 
   for (const missing of VERIFICATION_CHECKS) {
     const record = verifiedRecord("a/b", {
@@ -90,11 +90,11 @@ test("legacy diagnostic statuses still promote nothing", () => {
 });
 
 test("a record cannot promote a route it was not produced for", () => {
-  const proof = verifiedRecord("deepseek/deepseek-v4-flash");
-  assert.equal(verifiedForRoute(proof, "openrouter/deepseek-v4-flash", { routerVersion: ROUTER_VERSION }), false);
+  const proof = verifiedRecord("openrouter/glm-5.3-flash");
+  assert.equal(verifiedForRoute(proof, "switchyard/auto", { routerVersion: ROUTER_VERSION }), false);
   const applied = applySubagentProofs(
-    [{ slug: "openrouter/deepseek-v4-flash", multiAgentVersion: "v1" }],
-    { "openrouter/deepseek-v4-flash": proof },
+    [{ slug: "switchyard/auto", multiAgentVersion: "v1" }],
+    { "switchyard/auto": proof },
     { routerVersion: ROUTER_VERSION },
   );
   assert.equal(applied[0].multiAgentVersion, "v1");

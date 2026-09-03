@@ -12,7 +12,6 @@ import {
   RETENTION_MIN_TTL_DAYS,
   retentionTtlMsFromDays,
 } from "./tool-result-retention.mjs";
-import { toolResultAgingTotals } from "./usage-events.mjs";
 
 export const TOOL_RESULT_AGING_STATE_PATH =
   process.env.MODEL_ROUTER_TOOL_RESULT_AGING_STATE ||
@@ -172,8 +171,5 @@ export function toolResultAgingSnapshot() {
     configured: existsSync(TOOL_RESULT_AGING_STATE_PATH),
     environmentOverride,
     path: TOOL_RESULT_AGING_STATE_PATH,
-    // Cumulative savings derived from recorded usage events, so every status
-    // surface (CLI, desktop, tray) can show what the feature actually bought.
-    stats: toolResultAgingTotals(),
   };
 }

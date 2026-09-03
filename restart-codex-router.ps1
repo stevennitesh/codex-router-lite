@@ -3,13 +3,20 @@ param(
   [string]$InstallDir = $(
     if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
     else { Join-Path $HOME ".local\share\codex-router" }
-  )
+  ),
+  [string]$RepoDir = "E:\GitHub\code\codex-router"
 )
 
 $ErrorActionPreference = "Stop"
 $routerRoot = [IO.Path]::GetFullPath($InstallDir)
-if (-not (Test-Path (Join-Path $routerRoot "src\service.mjs"))) {
-  throw "Installed Codex Router not found at $routerRoot."
+if (-not (Test-Path -LiteralPath (Join-Path $routerRoot "src\service.mjs") -PathType Leaf)) {
+  $repoRoot = [IO.Path]::GetFullPath($RepoDir)
+  if (Test-Path -LiteralPath (Join-Path $repoRoot "src\service.mjs") -PathType Leaf) {
+    Write-Warning "Installed Codex Router not found at $routerRoot; restarting from repository checkout $repoRoot instead."
+    $routerRoot = $repoRoot
+  } else {
+    throw "Codex Router not found at either $routerRoot or $repoRoot."
+  }
 }
 Push-Location $routerRoot
 try {

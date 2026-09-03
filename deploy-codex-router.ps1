@@ -1,5 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
+  [string]$RepoDir = "E:\GitHub\code\codex-router",
   [string]$InstallDir = $(
     if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
     else { Join-Path $HOME ".local\share\codex-router" }
@@ -7,13 +8,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$sourceDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
+$scriptDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Path
+$preferredRepoDir = [IO.Path]::GetFullPath($RepoDir)
+$sourceDir = if (Test-Path -LiteralPath (Join-Path $scriptDir "src\start.mjs") -PathType Leaf) {
+  $scriptDir
+} elseif (Test-Path -LiteralPath (Join-Path $preferredRepoDir "src\start.mjs") -PathType Leaf) {
+  $preferredRepoDir
+} else {
+  throw "Router source not found next to this script ($scriptDir) or at configured repository path $preferredRepoDir."
+}
 $installDir = [IO.Path]::GetFullPath($InstallDir)
 $DeployManifestName = ".codex-router-deploy-manifest.json"
 $DeployManifestPath = Join-Path $installDir $DeployManifestName
-$ExcludedDirectoryNames = @(
-  ".git", ".venv", "node_modules", "target", "dist", "release", "release-local"
-)
+$SourceManifestPath = Join-Path $sourceDir "maintenance\windows-package.json"
 
 function Get-NormalizedDirectory([string]$Path) {
   return [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('\', '/'))
@@ -26,24 +33,24 @@ function Test-NestedDirectory([string]$Candidate, [string]$Container) {
 }
 
 function Get-DeploySourceFiles {
-  $SourcePrefix = "$(Get-NormalizedDirectory $sourceDir)\"
-  $Pending = New-Object 'System.Collections.Generic.Stack[string]'
-  $Pending.Push($sourceDir)
-  $Files = New-Object 'System.Collections.Generic.List[string]'
-  while ($Pending.Count -gt 0) {
-    $Directory = $Pending.Pop()
-    foreach ($Entry in Get-ChildItem -LiteralPath $Directory -Force) {
-      if ($Entry.PSIsContainer) {
-        if (($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and
-            $ExcludedDirectoryNames -notcontains $Entry.Name) {
-          $Pending.Push($Entry.FullName)
-        }
-        continue
-      }
-      if ($Entry.Name -eq $DeployManifestName) { continue }
-      $Files.Add($Entry.FullName.Substring($SourcePrefix.Length))
-    }
+  if (-not (Test-Path -LiteralPath $SourceManifestPath -PathType Leaf)) {
+    throw "Windows package manifest not found at $SourceManifestPath."
   }
+  $Document = Get-Content -LiteralPath $SourceManifestPath -Raw | ConvertFrom-Json
+  if ($Document.version -ne 1 -or $null -eq $Document.files) {
+    throw "Unsupported Windows package manifest."
+  }
+  $Files = @($Document.files | ForEach-Object {
+    if ($_ -isnot [string] -or -not $_ -or [IO.Path]::IsPathRooted($_) -or
+        @($_ -split '[\\/]') -contains '..') {
+      throw "The Windows package manifest contains an unsafe path."
+    }
+    $SourceFile = Join-Path $sourceDir $_
+    if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) {
+      throw "The Windows package manifest names a missing file: $_"
+    }
+    $_
+  })
   return @($Files | Sort-Object -Unique)
 }
 
@@ -128,45 +135,16 @@ Write-Host "Publishing $sourceDir"
 Write-Host "        to $installDir"
 
 if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
-  # Copy without a blanket purge, then retire only files recorded by the prior
-  # deployment. That removes renamed config fragments (the registry loads them
-  # recursively) while preserving operator notes and unrelated target files.
   $CurrentDeployFiles = @(Get-DeploySourceFiles)
-  $RobocopyArguments = @(
-    $sourceDir,
-    $installDir,
-    "/E",
-    "/COPY:DAT",
-    "/DCOPY:DAT",
-    "/R:2",
-    "/W:1",
-    "/XJ",
-    "/XD",
-    ".git",
-    ".venv",
-    "node_modules",
-    "target",
-    "dist",
-    "release",
-    "release-local"
-  )
-  # From PowerShell 7.4, $PSNativeCommandUseErrorActionPreference defaults to
-  # true, so under $ErrorActionPreference = "Stop" a robocopy that copied files
-  # (exit 1 is normal success) would terminate before we could read its
-  # meaning -- the 0-7 convention below is exactly what this script has to
-  # honor. Disable it around the call only, then restore, so the rest of the
-  # script keeps its strict error semantics. On Windows PowerShell 5.1 the
-  # preference does not exist; saving it still yields $null and restoring $null
-  # changes nothing, so the call is left harmless there too.
-  $SavedNativeUseErrorActionPref = $PSNativeCommandUseErrorActionPreference
-  $PSNativeCommandUseErrorActionPreference = $false
-  try {
-    & robocopy @RobocopyArguments
-  } finally {
-    $PSNativeCommandUseErrorActionPreference = $SavedNativeUseErrorActionPref
+  foreach ($RelativePath in $CurrentDeployFiles) {
+    $SourceFile = Join-Path $sourceDir $RelativePath
+    $TargetFile = Resolve-ManagedTargetFile $RelativePath
+    $TargetDirectory = Split-Path -Parent $TargetFile
+    if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
+      New-Item -ItemType Directory -Force -Path $TargetDirectory | Out-Null
+    }
+    Copy-Item -LiteralPath $SourceFile -Destination $TargetFile -Force
   }
-  $CopyExitCode = $LASTEXITCODE
-  if ($CopyExitCode -gt 7) { throw "robocopy failed with exit code $CopyExitCode." }
   Update-DeployManifest $CurrentDeployFiles
 
   Push-Location $installDir

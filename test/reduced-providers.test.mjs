@@ -43,7 +43,8 @@ async function waitFor(url, child) {
 }
 
 async function stop(child) {
-  if (child.exitCode === null) child.kill();
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
   await new Promise((resolve) => child.once("exit", resolve));
 }
 

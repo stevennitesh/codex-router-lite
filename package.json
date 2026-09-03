@@ -9,9 +9,7 @@
   },
   "scripts": {
     "check": "node scripts-check.mjs",
-    "test": "node scripts/run-retained-tests.mjs",
-    "test:fast": "node scripts/run-retained-tests.mjs",
-    "test:full": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "proper-lockfile": "4.1.2",

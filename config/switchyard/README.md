@@ -75,7 +75,7 @@ Every target sets `store = false`, `stream = true`, and removes
 - `luna-high`: closed, low-risk work with cheap verification.
 - `luna-max`: difficult but tightly specified and strongly verifiable work.
 - `sol-medium`: ambiguity, weak verification, or judgment.
-- `sol-high`: hard diagnosis, architecture, migrations, security, and
+- `sol-high`: hard diagnosis, architecture, large refactors, security, and
   consequential review.
 - `sol-xhigh`: exceptional quality-first or recovery work.
 

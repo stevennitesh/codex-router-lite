@@ -52,15 +52,26 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run test:full
-      - name: Build source archives and checksums
+      - run: npm test
+      - name: Build the explicit Windows package and checksum
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          $prefix = "codex-router-lite-$version/"
-          git archive --format=tar.gz --prefix=$prefix -o "dist/codex-router-lite-$version.tar.gz" $env:GITHUB_REF_NAME
-          git archive --format=zip --prefix=$prefix -o "dist/codex-router-lite-$version.zip" $env:GITHUB_REF_NAME
+          $packageRoot = Join-Path $env:RUNNER_TEMP "codex-router-lite-$version"
+          $manifest = Get-Content -Raw maintenance/windows-package.json | ConvertFrom-Json
+          if ($manifest.version -ne 1) { throw "Unsupported Windows package manifest." }
+          foreach ($relativePath in $manifest.files) {
+            if ([IO.Path]::IsPathRooted($relativePath) -or @($relativePath -split '[\\/]') -contains '..') {
+              throw "Unsafe package path: $relativePath"
+            }
+            $source = Join-Path $PWD $relativePath
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing package file: $relativePath" }
+            $target = Join-Path $packageRoot $relativePath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target
+          }
+          Compress-Archive -LiteralPath $packageRoot -DestinationPath "dist/codex-router-lite-$version-windows.zip"
           Get-ChildItem -LiteralPath dist -File | ForEach-Object {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"

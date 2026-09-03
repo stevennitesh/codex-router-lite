@@ -11,16 +11,13 @@ const discoveryDisabled = () => false;
 //
 // Native GPT traffic is authorized by the caller's own session: `nativeHeaders`
 // copies `authorization` and `chatgpt-account-id` off the incoming request, and
-// Codex attaches both. A DeepSeek Harness turn attaches neither, so a native
-// model advertised to the harness used to be a model it could not spend.
+// Codex attaches both. Router-internal callers attach neither and therefore
+// cannot spend a native model unless sharing is explicitly enabled.
 //
 // This module can fall back to the session already sitting in
 // `$CODEX_HOME/auth.json`, but only after the user authorizes that once for the
 // shared router plane. The authorization is one owner-only marker carrying no
-// credential. DeepSeek Harness, Gemini CLI, and any future local client then
-// share that decision; asking the same OS user to sign in once per harness buys
-// nothing. Separate subscription profiles are activated by an explicit
-// account switch while Codex is closed; this fallback never rotates accounts.
+// credential. This fallback never rotates accounts.
 //
 // Access and refresh tokens are never logged, returned by a status call, or
 // put in an error message. The desktop status may include the verified email

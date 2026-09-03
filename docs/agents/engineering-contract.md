@@ -64,8 +64,8 @@ that type at the edge and pass only the domain values or model the core needs.
 Preserve the behavior and failure semantics the accepted contract exposes.
 
 Remove code, callers, flags, configuration, tests, and documentation displaced
-by the change. Keep an older path only for a named compatibility, migration,
-recovery, or ownership need.
+by the change. Keep an older path only for a named compatibility, recovery, or
+ownership need.
 
 Update documentation when the public contract, operator procedure, skill
 usage, or a durable non-obvious decision changes. Readable code needs no

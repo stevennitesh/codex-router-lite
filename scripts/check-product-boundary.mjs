@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const requiredEntrypoints = [
+  "install.ps1",
+  "model-router.ps1",
+  "deploy-codex-router.ps1",
+  "restart-codex-router.ps1",
+  "src/start.mjs",
+  "src/router.mjs",
+  "src/api-forwarder.mjs",
+  "src/control.mjs",
+  "src/config-manager.mjs",
+  "src/doctor.mjs",
+];
+const retainedConfig = [
+  "config/openrouter/glm-5.3-flash.json",
+  "config/openrouter/openrouter.json",
+  "config/switchyard/auto.json",
+  "config/switchyard/switchyard.json",
+];
+const forbiddenPaths = [
+  /^docs-site\//u,
+  /^bin\//u,
+  /^hooks\//u,
+  /^docs\/research\//u,
+  /^maintenance\/retained-/u,
+  /^scripts\/(?:capture-|run-retained-tests|aging-|live-test-|measure-)/u,
+  /^src\/(?:deepseek-tool-message-compat|direct-image-policy|login-free-|native-alias|native-context-variants|route-failure-policy|usage-events)\.mjs$/u,
+  /^skills\/codex-router-media\//u,
+];
+
+const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root })
+  .toString("utf8")
+  .split("\0")
+  .filter(Boolean)
+  .map((file) => file.replaceAll("\\", "/"))
+  .filter((file) => existsSync(path.join(root, file)));
+
+for (const file of requiredEntrypoints) {
+  assert.ok(existsSync(path.join(root, file)), `missing retained entrypoint: ${file}`);
+}
+for (const dispatcher of ["src/start.mjs", "install.ps1", "model-router.ps1", "deploy-codex-router.ps1", "restart-codex-router.ps1"]) {
+  const source = readFileSync(path.join(root, dispatcher), "utf8");
+  for (const match of source.matchAll(/src[\\/]([A-Za-z0-9_.-]+\.mjs)/gu)) {
+    const target = `src/${match[1]}`;
+    assert.ok(existsSync(path.join(root, target)), `${dispatcher} references missing ${target}`);
+  }
+}
+for (const file of tracked) {
+  assert.ok(!forbiddenPaths.some((pattern) => pattern.test(file)), `forbidden product artifact: ${file}`);
+}
+
+const actualConfig = [];
+for (const provider of ["openrouter", "switchyard"]) {
+  for (const name of readdirSync(path.join(root, "config", provider))) {
+    if (name.endsWith(".json")) actualConfig.push(`config/${provider}/${name}`);
+  }
+}
+assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must contain only GLM and Switchyard");
+
+const packageManifest = JSON.parse(
+  readFileSync(path.join(root, "maintenance", "windows-package.json"), "utf8"),
+);
+assert.equal(packageManifest.version, 1);
+assert.equal(new Set(packageManifest.files).size, packageManifest.files.length, "duplicate package path");
+for (const file of packageManifest.files) {
+  assert.ok(existsSync(path.join(root, file)), `package file is missing: ${file}`);
+  assert.ok(
+    !/^(?:\.github|docs|generated|test|scripts)(?:\/|$)/u.test(file),
+    `development-only file is packaged: ${file}`,
+  );
+}
+for (const file of [...requiredEntrypoints, ...retainedConfig, "LICENSE", "NOTICE.md"]) {
+  assert.ok(packageManifest.files.includes(file), `retained package file is absent: ${file}`);
+}
+
+console.log(`product boundary passed (${tracked.length} tracked files, ${packageManifest.files.length} packaged files)`);

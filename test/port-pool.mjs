@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 //
 // The fix is to stop drawing from the pool everything else draws from. Each
 // test file gets a block of ports of its own, and the blocks sit *below* every
-// platform's ephemeral range (Linux from 32768, macOS and Windows from 49152),
+// Windows ephemeral range (normally beginning at 49152),
 // so no other process's bind(0) can be handed one of ours and no other test
 // file using this helper shares a block. What remains is a leftover from an
 // earlier run of the same file, which the bind check catches by moving up the
@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 // suite now needs 75 distinct listeners; starting at 20,000 divided the range
 // into only 74 ports once the Control Center tests were added.
 const FIRST_PORT = 10_000;
-// One below Linux's default ephemeral floor of 32768.
+// Below the Windows ephemeral range.
 const LAST_PORT = 32_767;
 const MAX_BLOCK = 256;
 const MIN_BLOCK = 32;

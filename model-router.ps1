@@ -15,7 +15,14 @@ $ErrorActionPreference = "Stop"
 $env:MODEL_ROUTER_TARGET = "codex"
 if ($null -eq $CommandArguments) { $CommandArguments = @() }
 
+$PreferredRepo = "E:\GitHub\code\codex-router"
 $Root = $PSScriptRoot
+if (-not $Root -or -not (Test-Path -LiteralPath (Join-Path $Root "src\start.mjs") -PathType Leaf)) {
+  $Root = [IO.Path]::GetFullPath($PreferredRepo)
+}
+if (-not (Test-Path -LiteralPath (Join-Path $Root "src\start.mjs") -PathType Leaf)) {
+  throw "Codex Router checkout not found next to this script or at $PreferredRepo."
+}
 $Commands = @(
   "install", "doctor", "status", "providers", "provider-key", "caller-key",
   "enable", "disable", "uninstall", "update", "rollback", "start", "stop",

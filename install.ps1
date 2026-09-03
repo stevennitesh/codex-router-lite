@@ -5,18 +5,12 @@ param(
   [switch]$ForceDeps,
   [ValidateSet("codex")]
   [string]$Target = "codex",
-  [switch]$Guided,
-  [switch]$Auto,
   [string]$Providers,
-  [switch]$AdoptNativeCatalog,
-  [switch]$SmokeTest,
-  # Matches install.sh's --no-provider/--no-discovery: install idle with an
-  # explicit empty selection, optionally with credential discovery disabled.
   [switch]$NoProvider,
-  [switch]$NoDiscovery,
   # Discards tracked edits in the managed checkout so the update can proceed.
   # Deliberately never touches untracked files -- see Reset-ManagedCheckout.
   [switch]$Force,
+  [string]$RepoDir = "E:\GitHub\code\codex-router",
   [string]$InstallDir = $(
     if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
     else { Join-Path $HOME ".local\share\codex-router" }
@@ -25,17 +19,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $env:MODEL_ROUTER_TARGET = $Target
-if ($PrepareOnly -and $AdoptNativeCatalog) {
-  throw "-AdoptNativeCatalog cannot be used with -PrepareOnly."
-}
-# An idle install is exactly "no providers", so naming providers alongside it
-# is a contradiction; and -NoDiscovery alone would select providers that can
-# never authenticate.
-if ($NoProvider -and ($Guided -or $Providers)) {
-  throw "-NoProvider cannot be combined with -Guided or -Providers."
-}
-if ($NoDiscovery -and -not $NoProvider) {
-  throw "-NoDiscovery requires -NoProvider."
+if ($NoProvider -and $Providers) {
+  throw "-NoProvider cannot be combined with -Providers."
 }
 $PreviousRevision = $null
 $RepositoryUrl = if ($env:CODEX_ROUTER_REPOSITORY_URL) {
@@ -120,6 +105,7 @@ Assert-WindowsProcessContainmentCapability
 
 $ScriptDirectory = $PSScriptRoot
 if (-not $ScriptDirectory) { $ScriptDirectory = (Get-Location).Path }
+$PreferredRepository = [IO.Path]::GetFullPath($RepoDir)
 
 if (-not $CheckoutInstall) {
   Assert-Command "git" "Install Git for Windows from https://git-scm.com/download/win."
@@ -127,6 +113,8 @@ if (-not $CheckoutInstall) {
 
   if (Test-RouterCheckout $ScriptDirectory) {
     $Repository = $ScriptDirectory
+  } elseif (Test-RouterCheckout $PreferredRepository) {
+    $Repository = $PreferredRepository
   } else {
     if (Test-Path (Join-Path $InstallDir ".git")) {
       if (-not (Test-RouterCheckout $InstallDir)) {
@@ -187,9 +175,6 @@ if (-not $CheckoutInstall) {
     exit $LASTEXITCODE
   }
 
-  if ($AdoptNativeCatalog -or $SmokeTest -or $NoDiscovery) {
-    throw "This reduced installer does not expose legacy setup, smoke-test, or discovery modes."
-  }
   if ($Providers) {
     $NamedProviders = @($Providers.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $Unsupported = @($NamedProviders | Where-Object { $_ -notin @("openrouter", "switchyard") })
@@ -220,7 +205,6 @@ $ConfigEnableCommand = "enable"
 $ConfigDisableCommand = "disable"
 $ConfigEnabled = $false
 $ServiceInstalled = $false
-$AdoptionPending = $false
 # The foreign-state override below is set only for a full install, but the
 # finally runs for prepare-only and for failures that happen before that point
 # too. Snapshot the caller's environment before any installer step can throw.
@@ -374,19 +358,8 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Local router-key setup failed." }
   $StateRoot = if ($env:MODEL_ROUTER_STATE_DIR) { $env:MODEL_ROUTER_STATE_DIR }
     elseif ($env:CODEX_ROUTER_STATE_DIR) { $env:CODEX_ROUTER_STATE_DIR }
-    elseif ($env:KIMI_CODEX_STATE_DIR) { $env:KIMI_CODEX_STATE_DIR }
     elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME "codex-router" }
     else { Join-Path $HOME ".codex\codex-router" }
-  # Only refresh-catalog can safely resume the provider-state/journal pair left
-  # by an interrupted login-free catalog refresh. Refuse install and doctor
-  # repair before either can publish another catalog and report false recovery.
-  & node src/login-free-refresh-journal.mjs assert-clear
-  if ($LASTEXITCODE -ne 0) { throw "Finish the pending login-free catalog refresh before installing or repairing." }
-  if ($AdoptNativeCatalog) {
-    & node src/native-catalog-source.mjs prepare-from-config | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Existing native model-catalog adoption failed." }
-    $AdoptionPending = $true
-  }
   # A zero-byte state file is half-written and must not publish an empty catalog.
   function Test-NonEmptyFile([string] $Path) {
     return (Test-Path $Path -PathType Leaf) -and ((Get-Item $Path).Length -gt 0)
@@ -412,10 +385,8 @@ try {
 
   $ConfigEnabled = $true
   $ConfigArguments = @($ConfigManager, $ConfigEnableCommand)
-  if ($AdoptNativeCatalog) { $ConfigArguments += "--adopt-native-catalog" }
   & node @ConfigArguments
   if ($LASTEXITCODE -ne 0) { throw "$Target configuration update failed." }
-  $AdoptionPending = $false
   # Record before the service starts, not after. The manifest is provenance for
   # the install that just happened -- which checkout owns the state, and the
   # proxy environment a later repair must restore -- and the service itself
@@ -458,8 +429,6 @@ try {
     if (-not $ConfigWasEnabled) {
       & node $ConfigManager $ConfigDisableCommand 2>$null | Out-Null
     }
-  } elseif ($AdoptionPending) {
-    & node src/native-catalog-source.mjs clear-pending 2>$null | Out-Null
   }
   throw
 } finally {

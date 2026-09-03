@@ -58,8 +58,7 @@ test("managed Switchyard rejects a non-loopback bind", () => {
   assert.throws(
     () => switchyardLaunch({
       selected: true,
-      stateDir: "/fixture/codex-router",
-      platform: "linux",
+      stateDir: "C:\\fixture\\codex-router",
       env: {
         CODEX_HOME: "/fixture",
         CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://0.0.0.0:4000/v1",
@@ -74,9 +73,8 @@ test("Switchyard supervision refuses a selected provider with no installed runti
   assert.throws(
     () => switchyardLaunch({
       selected: true,
-      stateDir: "/fixture/codex-router",
-      platform: "linux",
-      env: { CODEX_HOME: "/fixture" },
+      stateDir: "C:\\fixture\\codex-router",
+      env: { CODEX_HOME: "C:\\fixture" },
       exists: () => false,
     }),
     /runtime is incomplete/,
@@ -85,15 +83,14 @@ test("Switchyard supervision refuses a selected provider with no installed runti
 
 test("Switchyard runtime status names every missing deployment artifact", () => {
   const status = switchyardRuntimeStatus({
-    stateDir: "/fixture/codex-router",
-    platform: "linux",
-    env: { CODEX_HOME: "/fixture" },
+    stateDir: "C:\\fixture\\codex-router",
+    env: { CODEX_HOME: "C:\\fixture" },
     exists: () => false,
   });
   assert.equal(status.ready, false);
   assert.deepEqual(status.missing, [
-    path.join("/fixture", "switchyard", "switchyard-server"),
-    path.join("/fixture", "switchyard", "routes.toml"),
+    path.join("C:\\fixture", "switchyard", "switchyard-server.exe"),
+    path.join("C:\\fixture", "switchyard", "routes.toml"),
   ]);
 });
 
@@ -103,9 +100,8 @@ test("installed Switchyard launch fails open when an old selection outlives its 
     selected: true,
     warn: (message) => warnings.push(message),
     runtimeOptions: {
-      stateDir: "/fixture/codex-router",
-      platform: "linux",
-      env: { CODEX_HOME: "/fixture" },
+      stateDir: "C:\\fixture\\codex-router",
+      env: { CODEX_HOME: "C:\\fixture" },
       exists: () => false,
     },
   });
@@ -119,10 +115,9 @@ test("installed Switchyard launch probes each runtime artifact once", () => {
   const launch = installedSwitchyardLaunch({
     selected: true,
     runtimeOptions: {
-      stateDir: "/fixture/codex-router",
-      platform: "linux",
+      stateDir: "C:\\fixture\\codex-router",
       env: {
-        CODEX_HOME: "/fixture",
+        CODEX_HOME: "C:\\fixture",
         CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://127.0.0.1:4888/v1",
       },
       exists: (target) => {
@@ -133,8 +128,8 @@ test("installed Switchyard launch probes each runtime artifact once", () => {
   });
   assert.ok(launch);
   assert.deepEqual(checked, [
-    path.join("/fixture", "switchyard", "switchyard-server"),
-    path.join("/fixture", "switchyard", "routes.toml"),
+    path.join("C:\\fixture", "switchyard", "switchyard-server.exe"),
+    path.join("C:\\fixture", "switchyard", "routes.toml"),
   ]);
 });
 
