@@ -644,6 +644,10 @@ function nativeHeaders(request) {
   return headers;
 }
 
+function hasNativeSession(headers = {}) {
+  return Boolean(headers.authorization && headers["chatgpt-account-id"]);
+}
+
 // The token out of an `Authorization: Bearer <token>` header, or undefined for
 // any other scheme -- which is relayed untouched rather than inspected.
 //

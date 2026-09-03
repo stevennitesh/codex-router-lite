@@ -77,14 +77,21 @@ test("LiteLLM owns only the OpenRouter GLM hop", () => {
   assert.doesNotMatch(config, /switchyard|fallback|failover/u);
 });
 
-test("OpenRouter hop strips native metadata, preserves images, pins Novita, and rejects search", async () => {
+test("OpenRouter hop applies Novita's exact request contract and rejects search", async () => {
   const state = mkdtempSync(path.join(os.tmpdir(), "router-lite-provider-"));
   writeFileSync(path.join(state, "openrouter-api-key.secret"), "TEST_OPENROUTER_KEY\n", { mode: 0o600 });
   const seen = [];
   const upstream = await server(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
-    seen.push({ headers: request.headers, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    seen.push({ headers: request.headers, body });
+    if (body.parallel_tool_calls !== undefined) {
+      json(response, 404, {
+        error: { message: "No endpoints found that can handle the requested parameters." },
+      });
+      return;
+    }
     json(response, 200, { choices: [] });
   });
   const port = await openPort();
@@ -120,6 +127,12 @@ test("OpenRouter hop strips native metadata, preserves images, pins Novita, and 
         model: "openrouter-glm-5-3-flash",
         input,
         client_metadata: { account: "must-not-leave" },
+        parallel_tool_calls: true,
+        reasoning: { effort: "high" },
+        include: ["reasoning.encrypted_content"],
+        max_output_tokens: 128,
+        tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+        tool_choice: "auto",
       }),
     });
     assert.equal(response.status, 200, await response.text());
@@ -128,8 +141,16 @@ test("OpenRouter hop strips native metadata, preserves images, pins Novita, and 
     assert.equal(seen[0].headers["chatgpt-account-id"], undefined);
     assert.equal(seen[0].headers["x-codex-installation-id"], undefined);
     assert.equal(seen[0].body.client_metadata, undefined);
+    assert.equal(seen[0].body.parallel_tool_calls, undefined);
     assert.equal(seen[0].body.model, "z-ai/glm-5.3-flash");
     assert.deepEqual(seen[0].body.input, input);
+    assert.deepEqual(seen[0].body.reasoning, { effort: "high" });
+    assert.deepEqual(seen[0].body.include, ["reasoning.encrypted_content"]);
+    assert.equal(seen[0].body.max_output_tokens, 128);
+    assert.deepEqual(seen[0].body.tools, [
+      { type: "function", name: "exec_command", parameters: { type: "object" } },
+    ]);
+    assert.equal(seen[0].body.tool_choice, "auto");
     assert.deepEqual(seen[0].body.provider, {
       order: ["novita"],
       only: ["novita"],

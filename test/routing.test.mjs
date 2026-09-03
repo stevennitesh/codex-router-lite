@@ -231,6 +231,15 @@ test("router preserves native auth and isolates every external route", async () 
       assert.equal(nativeRequests.at(-1).body.input, `${encoding} native test`);
     }
 
+    const imageResponse = await fetch(`${routerBase(routerPort)}/images/generations`, {
+      method: "POST",
+      headers: callerHeaders,
+      body: JSON.stringify({ model: "gpt-image-2", prompt: "native image test" }),
+    });
+    assert.equal(imageResponse.status, 200, router.testErrors());
+    assert.equal(nativeRequests.at(-1).url, "/backend-api/codex/images/generations");
+    assert.equal(nativeRequests.at(-1).body.prompt, "native image test");
+
     for (const [model, gatewayModel] of [
       ["openrouter/glm-5.3-flash", "openrouter-glm-5-3-flash"],
     ]) {

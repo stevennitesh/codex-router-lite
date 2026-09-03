@@ -54,6 +54,14 @@ function sanitizePayload(payload) {
   }
   const {
     client_metadata: _clientMetadata,
+    // Codex advertises and requests parallel tool calls, but Novita's current
+    // GLM-5.3-Flash endpoint does not. With OpenRouter's strict
+    // `require_parameters` routing, merely sending this optional flag removes
+    // the only allowed endpoint before the model sees the request. The model
+    // still receives the complete tool surface and may select one tool at a
+    // time; only the unsupported concurrency hint is omitted at this exact
+    // provider hop.
+    parallel_tool_calls: _parallelToolCalls,
     prompt_cache_retention: _promptCacheRetention,
     ...clean
   } = payload;
