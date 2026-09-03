@@ -24,38 +24,14 @@ function listResponse(status, body = { object: "list", data: [] }) {
   return { status, json: async () => body };
 }
 
-test("managed target detection refuses partial client state", () => {
+test("managed target detection accepts only protected Codex state", () => {
   assert.equal(typeof cli.installedTargetsFromStatus, "function");
   assert.deepEqual(cli.installedTargetsFromStatus({
     codex: { mode: "router", config_protected: true },
-    dsh: { routeInstalled: true, credentialInstalled: true },
-    gemini: { installed: true, baseUrlManaged: true, envExists: true, documentReadable: true, conflicts: [], managedBlockPresent: true },
-  }), ["codex", "dsh", "gemini"]);
-  assert.deepEqual(cli.installedTargetsFromStatus({
-    openclaw: {
-      installed: true, providerInstalled: true, baseUrlManaged: true,
-      configValid: true, configProtected: true,
-    },
-  }), ["openclaw"]);
+  }), ["codex"]);
   assert.throws(() => cli.installedTargetsFromStatus({
-    openclaw: { installed: true, providerInstalled: false },
-  }), /OpenClaw.*partial/i);
-  assert.throws(() => cli.installedTargetsFromStatus({
-    codex: { mode: "native" },
-    dsh: { routeInstalled: true, credentialInstalled: false },
-    gemini: {},
-  }), /DeepSeek Harness.*partial/i);
-  assert.throws(() => cli.installedTargetsFromStatus({
-    codex: { mode: "native" }, dsh: {},
-    gemini: { installed: true, baseUrlManaged: false, envExists: true, documentReadable: true, conflicts: [], managedBlockPresent: true },
-  }), /Gemini.*partial/i);
-  assert.throws(() => cli.installedTargetsFromStatus({
-    codex: { mode: "native", managed_router_artifacts_present: true }, dsh: {}, gemini: {},
+    codex: { mode: "native", managed_router_artifacts_present: true },
   }), /Codex.*partial/i);
-  assert.throws(() => cli.installedTargetsFromStatus({
-    codex: { mode: "native" }, dsh: {},
-    gemini: { installed: false, baseUrlManaged: false, envExists: true, documentReadable: true, conflicts: [], managedBlockPresent: true },
-  }), /Gemini.*partial/i);
 });
 
 test("caller verification requires a valid 200 model list and exact stale 401", async () => {
@@ -75,7 +51,7 @@ test("caller verification requires a valid 200 model list and exact stale 401", 
   }), /valid model list/i);
 });
 
-test("rotation preserves a stopped installed service and uses capability-only client refresh", async (t) => {
+test("rotation preserves a stopped installed service and refreshes only Codex", async (t) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "caller-key-stopped-"));
   const secretPath = path.join(directory, "caller-secret");
   writeFileSync(secretPath, `${oldKey}\n`, { mode: 0o600 });
@@ -90,27 +66,23 @@ test("rotation preserves a stopped installed service and uses capability-only cl
     recoverPending: async () => {},
     readClientStatuses: async () => ({
       codex: { mode: "router", config_protected: true },
-      dsh: { routeInstalled: true, credentialInstalled: true },
-      gemini: { installed: true, baseUrlManaged: true, envExists: true, documentReadable: true, conflicts: [], managedBlockPresent: true },
     }),
     readServiceStatus: async () => ({ installed: true, state: "stopped" }),
     runNode: async (script, args) => calls.push([script, ...args]),
     rotateSecret: async () => ({ previousSecret: oldKey, currentSecret: newKey }),
-    beginJournal: async () => ({ operationId: "1".repeat(32), phase: "prepared", targets: ["codex", "dsh", "gemini"], serviceWasRunning: false }),
+    beginJournal: async () => ({ operationId: "1".repeat(32), phase: "prepared", targets: ["codex"], serviceWasRunning: false }),
     updateJournal: async (state, phase) => ({ ...state, phase }),
     finalizeRotation: async () => calls.push(["finalize"]),
     recoverAfterFailure: async () => {},
   });
   assert.deepEqual(calls, [
     ["src/config-manager.mjs", "caller-capability-refresh"],
-    ["src/dsh-config-manager.mjs", "caller-capability-refresh"],
-    ["src/gemini-config-manager.mjs", "caller-capability-refresh"],
     ["finalize"],
   ]);
   assert.equal(result.serviceRestarted, false);
 });
 
-test("systemd active service is stopped before swap, then started and verified", async (t) => {
+test("an active Windows service is stopped before swap, then started and verified", async (t) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "caller-key-running-"));
   const secretPath = path.join(directory, "caller-secret");
   writeFileSync(secretPath, `${oldKey}\n`, { mode: 0o600 });
@@ -229,7 +201,7 @@ test("pending secret-swapped rotation restores the prior generation and refreshe
   writeFileSync(secretPath, `${oldKey}\n`, { mode: 0o600 });
   try {
     let state = journal.beginCallerKeyRotationJournal({
-      targets: ["codex", "gemini"], serviceWasRunning: false,
+      targets: ["codex"], serviceWasRunning: false,
       operationId: "c".repeat(32), previousSecretSha256: digest(oldKey), journalPath,
     });
     const swapped = rotation.swapCallerCapability({
@@ -252,7 +224,6 @@ test("pending secret-swapped rotation restores the prior generation and refreshe
     assert.equal(readFileSync(secretPath, "utf8").trim(), oldKey);
     assert.deepEqual(calls, [
       ["src/config-manager.mjs", "caller-capability-refresh"],
-      ["src/gemini-config-manager.mjs", "caller-capability-refresh"],
     ]);
     assert.equal(existsSync(rotation.callerCapabilityBackupPath(secretPath, state.operationId)), false);
     assert.equal(existsSync(journalPath), false);
@@ -265,7 +236,7 @@ test("pending secret-swapped rotation restores the prior generation and refreshe
   } finally { rmSync(stateDir, { recursive: true, force: true }); }
 });
 
-test("recovery restarts a launchd job loaded in a non-running transitional state", async () => {
+test("recovery restarts a loaded Windows task in a non-running transitional state", async () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "caller-key-recover-prestarted-"));
   const secretPath = path.join(stateDir, "caller-secret");
   const journalPath = path.join(stateDir, "caller-key-rotation.json");

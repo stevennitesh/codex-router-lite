@@ -69,19 +69,19 @@ function credentialIsProtected(target) {
 
 function probeCommand() {
   return process.platform === "win32"
-    ? ".\\codex-router.ps1 providers probe antigravity-oauth --live --yes"
+    ? ".\\model-router.ps1 providers probe antigravity-oauth --live --yes"
     : "./bin/providers probe antigravity-oauth --live --yes";
 }
 
 function loginCommand() {
   return process.platform === "win32"
-    ? ".\\codex-router.ps1 providers login antigravity-oauth"
+    ? ".\\model-router.ps1 providers login antigravity-oauth"
     : "./bin/providers login antigravity-oauth";
 }
 
 function disconnectCommand() {
   return process.platform === "win32"
-    ? ".\\codex-router.ps1 providers disconnect antigravity-oauth"
+    ? ".\\model-router.ps1 providers disconnect antigravity-oauth"
     : "./bin/providers disconnect antigravity-oauth";
 }
 

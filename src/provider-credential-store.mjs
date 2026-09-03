@@ -18,11 +18,12 @@ import { normalizeGenericProviderId } from "./generic-provider-identity.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
 import {
   CODEX_HOME,
-  PROVIDER_CREDENTIAL_MIGRATIONS_DIR,
   PROVIDER_CREDENTIAL_STORE_PATH,
   ROUTER_PLANE_TARGET,
   STATE_DIR,
 } from "./paths.mjs";
+
+const PROVIDER_CREDENTIAL_MIGRATIONS_DIR = path.join(STATE_DIR, "credential-migrations");
 
 /**
  * Metadata for a credential is deliberately separate from the credential

@@ -393,12 +393,12 @@ the generic provider also removes its credential and every dependent sidecar
 binding. Fully quit and reopen Codex after changing a binding so its model
 catalog refreshes.
 
-On Windows, the same commands are available through `codex-router.ps1`:
+On Windows, the same commands are available through `model-router.ps1`:
 
 ```powershell
-.\codex-router.ps1 providers generic add perplexity-search --name "Perplexity Search" --base-url https://api.perplexity.ai --adapter openai-chat
-.\codex-router.ps1 providers generic credential perplexity-search set
-.\codex-router.ps1 search-sidecar set PROVIDER/MODEL perplexity-search
+.\model-router.ps1 providers generic add perplexity-search --name "Perplexity Search" --base-url https://api.perplexity.ai --adapter openai-chat
+.\model-router.ps1 providers generic credential perplexity-search set
+.\model-router.ps1 search-sidecar set PROVIDER/MODEL perplexity-search
 ```
 
 ```sh
@@ -1226,7 +1226,7 @@ through the supported transaction instead of deleting state files by hand:
 ./bin/model-router codex caller-key rotate
 ```
 
-On Windows use `./codex-router.ps1 caller-key rotate`. Rotation acquires the
+On Windows use `./model-router.ps1 caller-key rotate`. Rotation acquires the
 router's mutation locks, refuses partial managed client state, and refreshes only
 the caller URL/key fields of integrations that are already installed. A running
 router is stopped before the key swap, restarted afterward, and accepted only
@@ -2116,7 +2116,7 @@ the window.
 
 # or build and register it by hand
 .\scripts\build-electron-companion.ps1
-.\codex-router.ps1 tray install
+.\model-router.ps1 tray install
 ```
 
 [Download the latest Windows or Linux desktop package](https://github.com/duolahypercho/codex-router/releases/latest).

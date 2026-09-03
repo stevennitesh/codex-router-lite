@@ -19,7 +19,6 @@ import {
   ANNOUNCED_MODELS_PATH,
   CODEX_PROVIDER_MODE_PATH,
   CONFIG_PATH,
-  LEGACY_PORTS,
   MERGED_CATALOG_PATH,
   MODELS_CACHE_PATH,
   NATIVE_ALIAS_PATH,
@@ -535,8 +534,7 @@ function loginFreeConfigured() {
 // custom provider (for example a configuration switcher) owns the endpoint and
 // would make external picker entries misleading.
 function managedCodexRouterBaseUrl(value) {
-  return isManagedCodexBaseUrl(value, PORTS.router) ||
-    isManagedCodexBaseUrl(value, LEGACY_PORTS.router);
+  return isManagedCodexBaseUrl(value, PORTS.router);
 }
 
 export function routedCatalogConfigured(contents, override = process.env.MODEL_ROUTER_SIGNED_ROUTING) {

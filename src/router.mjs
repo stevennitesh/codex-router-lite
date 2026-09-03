@@ -29,19 +29,10 @@ import {
   renderCompactionValue,
 } from "./compaction-checkpoint.mjs";
 import {
-  handleClaudeRequest,
-  handleCursorRequest,
-  handleGeminiRequest,
-  handlePanelRequest,
-  isClaudeRoute,
-  isCursorRoute,
-  isGeminiRoute,
-  isPanelRoute,
   MODEL_BY_SLUG,
   RUNTIME_PROVIDERS,
   providerForModel,
   resolveProviderBaseUrl,
-  routedClientModels,
   discoveryDisabled,
   executeSearchSidecar,
   SearchSidecarError,
@@ -75,7 +66,7 @@ import {
   supportsImageInput,
   readVisionBridgeSettings,
   installedNativeVisionEngines,
-} from "./compat/retirement/legacy-router-surfaces.mjs";
+} from "./compat/retirement/issue5-router-provider-features.mjs";
 import {
   applyKeepAliveTimeouts,
   copyResponseHeaders,
@@ -2837,25 +2828,6 @@ async function handleModels(response) {
   writeJson(response, 200, { object: "list", data });
 }
 
-// What the Gemini surface will accept a turn for.
-//
-// Deliberately the catalog the router already serves on `/v1/models`, not the
-// narrower set the Gemini settings document was published with. The gate exists
-// so a typo cannot fall through to the native path and quietly become a
-// ChatGPT-session request; being *stricter* than the published list would
-// instead refuse a model the user was legitimately offered, and a native model
-// whose session has since expired is better served by the provider's own 401
-// than by a 404 that misdescribes why.
-function geminiRoutedModels() {
-  return catalogModels().map((model) => ({
-    slug: String(model.slug),
-    displayName: model.display_name || model.displayName || String(model.slug),
-    contextWindow: Number.isFinite(model.context_window)
-      ? model.context_window
-      : model.contextWindow,
-  }));
-}
-
 function requireCodexTransport(request, response) {
   if (request.headers.origin || request.headers["sec-fetch-site"]) {
     writeJson(response, 403, {
@@ -5039,36 +5011,6 @@ async function handleRequest(request, response) {
   }
   requestUrl.pathname = route;
 
-  // Behind the caller capability, like every other local endpoint: the panel
-  // reads the same data the tray does, so it is gated the same way.
-  if (isPanelRoute(route) && (await handlePanelRequest(request, response, route, { writeJson }))) {
-    return;
-  }
-
-  // Cursor has two different client protocols. The desktop app reaches the
-  // OpenAI-compatible `/cursor/v1` leaf, while Cursor Agent uses its Connect
-  // control plane. Both translate and re-enter this router's `/v1/responses`
-  // path, so providers, retries, failover, accounting, and caller authority
-  // remain shared with every other client.
-  if (isCursorRoute(route)) {
-    await handleCursorRequest(request, response, route, {
-      responsesUrl: `${callerBaseUrl(LISTEN_PORT, CALLER_KEY)}/responses`,
-      routedModels: routedClientModels,
-    });
-    return;
-  }
-
-  // Claude Code speaks Anthropic Messages. This leaf translates that protocol
-  // and re-enters the canonical Responses path, so routing, failover, usage,
-  // and provider credentials stay on the same shared plane as every client.
-  if (isClaudeRoute(route)) {
-    await handleClaudeRequest(request, response, route, {
-      responsesUrl: `${callerBaseUrl(LISTEN_PORT, CALLER_KEY)}/responses`,
-      routedModels: routedClientModels,
-    });
-    return;
-  }
-
   if (
     request.method === "GET" &&
     ["/health", "/v1/health"].includes(requestUrl.pathname)
@@ -5079,17 +5021,6 @@ async function handleRequest(request, response) {
   }
   if (request.method === "GET" && ["/models", "/v1/models"].includes(requestUrl.pathname)) {
     await handleModels(response);
-    return;
-  }
-  // Gemini CLI speaks nothing but the Gemini API, so it gets its own leaf
-  // behind the same capability. The handler translates and re-enters
-  // `/v1/responses` over the loopback rather than reaching a provider itself --
-  // there is still exactly one request path to keep correct.
-  if (isGeminiRoute(requestUrl.pathname)) {
-    await handleGeminiRequest(request, response, requestUrl.pathname, {
-      responsesUrl: `${callerBaseUrl(LISTEN_PORT, CALLER_KEY)}/responses`,
-      routedModels: geminiRoutedModels,
-    });
     return;
   }
   if (request.method === "OPTIONS") {

@@ -194,7 +194,7 @@ test("an unavailable service leaves clients withdrawn and names exact recovery c
   const events = [];
   await assert.rejects(
     activateAntigravityProbe({
-      platform: "linux",
+      platform: "win32",
       probe: async ({ onProofInvalidated }) => {
         await onProofInvalidated();
         events.push("probe-complete");
@@ -207,8 +207,8 @@ test("an unavailable service leaves clients withdrawn and names exact recovery c
     (error) => {
       assert.equal(error.code, "antigravity_forwarder_not_confirmed");
       assert.match(error.message, /Installed clients remain withdrawn/);
-      assert.match(error.message, /\.\/bin\/control service restart/);
-      assert.match(error.message, /\.\/bin\/providers enable antigravity-oauth/);
+      assert.match(error.message, /\.\\model-router\.ps1 codex restart/);
+      assert.match(error.message, /\.\\model-router\.ps1 providers enable antigravity-oauth/);
       return true;
     },
   );
@@ -232,15 +232,15 @@ test("a failed restart cannot publish and preserves the failure as its cause", a
     (error) => {
       assert.equal(error.code, "antigravity_forwarder_not_confirmed");
       assert.equal(error.cause, restartFailure);
-      assert.match(error.message, /node \.\\src\\control\.mjs service restart/);
-      assert.match(error.message, /\.\\codex-router\.ps1 providers enable antigravity-oauth/);
+      assert.match(error.message, /\.\\model-router\.ps1 codex restart/);
+      assert.match(error.message, /\.\\model-router\.ps1 providers enable antigravity-oauth/);
       return true;
     },
   );
   assert.equal(published, false);
   assert.equal(
     antigravityProviderEnableCommand("win32"),
-    ".\\codex-router.ps1 providers enable antigravity-oauth",
+    ".\\model-router.ps1 providers enable antigravity-oauth",
   );
 });
 
@@ -248,7 +248,7 @@ test("health success for a different generation cannot publish the pending proof
   const events = [];
   await assert.rejects(
     activateAntigravityProbe({
-      platform: "linux",
+      platform: "win32",
       probe: async ({ onProofInvalidated }) => {
         await onProofInvalidated();
         return { verified: true, activationGeneration: ACTIVATION_GENERATION };

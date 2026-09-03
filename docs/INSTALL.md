@@ -207,12 +207,12 @@ by its operator; the command reports this instead of claiming the route is live.
 Windows:
 
 ```powershell
-./codex-router.ps1 provider-key kimi-api set
-./codex-router.ps1 provider-key deepseek set
-./codex-router.ps1 provider-key grok-api set
-./codex-router.ps1 provider-key anthropic-api set
-./codex-router.ps1 provider-key github-copilot set
-./codex-router.ps1 provider-key orca set
+./model-router.ps1 provider-key kimi-api set
+./model-router.ps1 provider-key deepseek set
+./model-router.ps1 provider-key grok-api set
+./model-router.ps1 provider-key anthropic-api set
+./model-router.ps1 provider-key github-copilot set
+./model-router.ps1 provider-key orca set
 ```
 
 Kimi OAuth, Kimi Platform, DeepSeek, xAI, Anthropic, GitHub Copilot, and OrcaRouter are separate account and billing
@@ -511,9 +511,9 @@ The shim is a bash script and is not available on Windows.
 Windows:
 
 ```powershell
-./codex-router.ps1 update check
-./codex-router.ps1 update
-./codex-router.ps1 rollback
+./model-router.ps1 update check
+./model-router.ps1 update
+./model-router.ps1 rollback
 ```
 
 The updater requires the recognized GitHub origin and a checkout with no edits
@@ -525,7 +525,7 @@ only compares the revisions and changes nothing.
 Untracked files never block an update; only edits to tracked files do, and the
 refusal names them. Keep them with `git -C <checkout> stash`, or discard them by
 re-running the same command with `--force` (`./bin/update --force`,
-`./bin/rollback --force`, `./codex-router.ps1 rollback --force`). The bootstrap
+`./bin/rollback --force`, `./model-router.ps1 rollback --force`). The bootstrap
 installers take the same escape: `--force` for the `curl | sh` script and
 `-Force` for the `irm | iex` one. Every force path discards tracked edits only;
 none of them delete untracked files.
@@ -537,7 +537,7 @@ that was just fetched, and discarding it means the next attempt repeats the
 same failure with the same code. Rolling back there is what made a setup-path
 bug impossible to fix by updating: the fix was fetched and then thrown away.
 Any other non-zero exit still restores the previous revision. Re-run setup to
-continue, or `./bin/rollback` (`./codex-router.ps1 rollback` on Windows) to
+continue, or `./bin/rollback` (`./model-router.ps1 rollback` on Windows) to
 return to the retained revision deliberately.
 
 For checkout installs, the reinstall skips dependency work whose inputs are
@@ -578,9 +578,9 @@ instead. Release pages provide SHA-256 checksums and provenance attestations.
 Windows:
 
 ```powershell
-./codex-router.ps1 disable
-./codex-router.ps1 enable
-./codex-router.ps1 uninstall
+./model-router.ps1 disable
+./model-router.ps1 enable
+./model-router.ps1 uninstall
 ```
 
 Uninstall removes the marked integration config and current background service.

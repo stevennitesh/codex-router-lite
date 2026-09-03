@@ -29,9 +29,6 @@ import { assertStateOwnership } from "./state-owner.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const refreshCommand = Object.freeze({
   codex: ["src/config-manager.mjs", ["caller-capability-refresh"]],
-  dsh: ["src/dsh-config-manager.mjs", ["caller-capability-refresh"]],
-  gemini: ["src/gemini-config-manager.mjs", ["caller-capability-refresh"]],
-  openclaw: ["src/openclaw-config-manager.mjs", ["caller-capability-refresh"]],
 });
 
 function secretDigest(secret) {
@@ -42,7 +39,7 @@ function partialClient(label) {
   throw new Error(`Refusing caller capability rotation while ${label} has partial managed state; run its doctor/repair path first.`);
 }
 
-export function installedTargetsFromStatus({ codex = {}, dsh = {}, gemini = {}, openclaw = {} } = {}) {
+export function installedTargetsFromStatus({ codex = {} } = {}) {
   const targets = [];
   const codexStatePresent = codex.provider_mode_state_present === true || codex.signed_provider_state_present === true;
   const codexManagedArtifacts = codex.managed_router_artifacts_present === true;
@@ -55,42 +52,6 @@ export function installedTargetsFromStatus({ codex = {}, dsh = {}, gemini = {}, 
     partialClient("Codex");
   }
 
-  const dshRoute = dsh.routeInstalled === true;
-  const dshCredential = dsh.credentialInstalled === true;
-  if (dshRoute !== dshCredential) partialClient("DeepSeek Harness");
-  if (dshRoute) targets.push("dsh");
-
-  const geminiCatalog = gemini.installed === true;
-  const geminiBase = gemini.baseUrlManaged === true;
-  const geminiBlock = gemini.managedBlockPresent === true;
-  const geminiManagedEvidence = geminiCatalog || geminiBase || geminiBlock;
-  if (geminiManagedEvidence) {
-    if (
-      !geminiCatalog ||
-      !geminiBase ||
-      !geminiBlock ||
-      gemini.envExists !== true ||
-      gemini.documentReadable !== true ||
-      (Array.isArray(gemini.conflicts) && gemini.conflicts.length)
-    ) {
-      partialClient("Gemini");
-    }
-    targets.push("gemini");
-  }
-
-  const openclawEvidence = openclaw.installed === true || openclaw.providerInstalled === true;
-  if (openclawEvidence) {
-    if (
-      openclaw.installed !== true ||
-      openclaw.providerInstalled !== true ||
-      openclaw.baseUrlManaged !== true ||
-      openclaw.configValid !== true ||
-      openclaw.configProtected !== true
-    ) {
-      partialClient("OpenClaw");
-    }
-    targets.push("openclaw");
-  }
   return targets;
 }
 
@@ -117,9 +78,6 @@ function parseJsonCommand(script, args, runNode = runNodeCommand) {
 export async function readManagedClientStatuses({ runNode = runNodeCommand } = {}) {
   return {
     codex: parseJsonCommand("src/config-manager.mjs", ["status"], runNode),
-    dsh: parseJsonCommand("src/dsh-config-manager.mjs", ["status"], runNode),
-    gemini: parseJsonCommand("src/gemini-config-manager.mjs", ["status"], runNode),
-    openclaw: parseJsonCommand("src/openclaw-config-manager.mjs", ["status"], runNode),
   };
 }
 

@@ -609,12 +609,12 @@ upstream was dialled directly, chatgpt.com timed out, and the router answered
 set an opt-in that was already set -- in the LaunchAgent it had just unloaded.
 The service definition still looked correct at every glance.
 
-1. **Both verbs go through `src/service.mjs`.** `bin/start`, Windows
-   `codex-router.ps1 start`, and their corresponding stop paths manage the same
+1. **Both verbs go through `src/service.mjs`.** Windows
+   `model-router.ps1 codex start` and its stop path manage the same
    background-service layer. Never add a lifecycle verb that manages the service
    on one side and bypasses it on the other.
 2. **The foreground supervisor stays reachable, never by accident.**
-   `bin/start --foreground` and `codex-router.ps1 start --foreground` are the
+   `model-router.ps1 codex start --foreground` is the
    explicit debugging paths. They enter through `src/foreground-start.mjs`,
    which holds the shared service-operation lock for the supervisor's lifetime.
    That keeps caller-capability rotation/recovery from swapping generations
@@ -898,8 +898,11 @@ any of them; it owns selection, promotion, proof, cost, and recertification.
    the picker. Only the published entry is renumbered; failover, the vision
    bridge, and other clients keep reading the registry value.
 6. Add registry, catalog, routing/request-profile, and failure-path regression
-   tests. Run `npm run check` and `npm test`. With explicit quota approval, run
-   `./bin/test-model 'provider/model' --live --yes`, reinstall, fully restart
+   tests. Run `npm run check`, the affected test file, and `npm test`. Reserve
+   `npm run test:full` for release certification or changes to its exhaustive
+   recovery cases. With explicit quota approval, run
+   `.\model-router.ps1 codex test-model 'provider/model' --live --yes`,
+   reinstall, fully restart
    Codex, and perform the native subagent probe before claiming support.
 
 ### Republish a native model at a different context window

@@ -473,7 +473,7 @@ Windows PowerShell:
 
 ```powershell
 Get-ScheduledTask -TaskName "Codex Router"
-./codex-router.ps1 doctor --fix
+./model-router.ps1 doctor --fix
 ```
 
 The task runs `start-codex-router-hidden.vbs` from the state directory under

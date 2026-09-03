@@ -12,7 +12,7 @@ export function dependencyRepairHint({
     return "Run `brew reinstall codex-router` to rebuild the package-managed dependencies";
   }
   if (platform === "win32") {
-    return "Run `./codex-router.ps1 doctor --fix` or `./install.ps1 -CheckoutInstall -ForceDeps`";
+    return "Run `./model-router.ps1 doctor --fix` or `./install.ps1 -CheckoutInstall -ForceDeps`";
   }
   return "Run `./bin/doctor --fix` or `./bin/install --force-deps`";
 }

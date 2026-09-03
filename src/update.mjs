@@ -1,16 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readInstallManifest } from "./install-manifest.mjs";
-import { SOURCE_ROOT, TARGET } from "./paths.mjs";
-import {
-  automaticTraySupervisionAllowed,
-  readTraySupervisionPreference,
-  traySupervisionPreferencePath,
-} from "./tray-supervision-preference.mjs";
+import { SOURCE_ROOT } from "./paths.mjs";
 
 function git(args, options = {}) {
   const output = execFileSync("git", ["-C", SOURCE_ROOT, ...args], {
@@ -21,11 +15,6 @@ function git(args, options = {}) {
 }
 
 function requireManagedCheckout() {
-  if (process.env.CODEX_ROUTER_PACKAGE_MANAGER === "homebrew") {
-    throw new Error(
-      "This installation is managed by Homebrew. Upgrade it with `brew upgrade codex-router`.",
-    );
-  }
   if (!existsSync(path.join(SOURCE_ROOT, ".git"))) {
     throw new Error(
       "This release is not a Git checkout. Re-run the installation command to upgrade it.",
@@ -88,32 +77,30 @@ function requireReplaceableCheckout(force) {
   git(["reset", "--hard", "HEAD"], { inherit: true });
 }
 
-// `posixScript` picks which bin/ entry point the POSIX branch runs. Windows
-// has only the one installer -- codex-router.ps1 maps both `install` and
-// `enable` onto `install.ps1 -CheckoutInstall` -- so the Windows half is
-// identical either way, which is exactly why control.mjs reuses this instead
-// of hand-rolling a second PowerShell argument list that nothing tested.
 export function currentCheckoutInstaller(
   platform = process.platform,
-  target = TARGET,
-  { posixScript = "install" } = {},
+  target = "codex",
 ) {
-  return platform === "win32"
-    ? {
-        command: "powershell.exe",
-        args: [
-          "-NoLogo",
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          path.join(SOURCE_ROOT, "install.ps1"),
-          "-CheckoutInstall",
-          "-Target",
-          target,
-        ],
-      }
-    : { command: path.join(SOURCE_ROOT, "bin", posixScript), args: [] };
+  if (platform !== "win32") {
+    throw new Error(`Unsupported installer platform: ${platform}`);
+  }
+  if (target !== "codex") {
+    throw new Error(`Unsupported client target: ${target}`);
+  }
+  return {
+    command: "powershell.exe",
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(SOURCE_ROOT, "install.ps1"),
+      "-CheckoutInstall",
+      "-Target",
+      "codex",
+    ],
+  };
 }
 
 function installCurrentCheckout() {
@@ -121,74 +108,11 @@ function installCurrentCheckout() {
   const result = spawnSync(installer.command, installer.args, {
     cwd: SOURCE_ROOT,
     stdio: "inherit",
-    env: { ...process.env, MODEL_ROUTER_TARGET: TARGET },
+    env: { ...process.env, MODEL_ROUTER_TARGET: "codex" },
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`Installer exited with status ${result.status}.`);
-  }
-}
-
-function registeredTrayBundlePath() {
-  try {
-    const value = execFileSync(
-      "defaults",
-      [
-        "read",
-        "io.github.codex-router.tray",
-        "ModelRouterTray.loginItemBundlePath",
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    return value || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function trayRefreshRequired({
-  platform = process.platform,
-  home = os.homedir(),
-  sourceRoot = SOURCE_ROOT,
-  registeredPath,
-  supervisionPreference,
-} = {}) {
-  if (platform !== "darwin") return false;
-  const preference = supervisionPreference ?? readTraySupervisionPreference({
-    file: traySupervisionPreferencePath({ home }),
-  });
-  if (!automaticTraySupervisionAllowed(preference)) return false;
-  const registered = registeredPath ?? registeredTrayBundlePath();
-  const candidates = [
-    path.join(sourceRoot, "dist", "Model Router.app"),
-    path.join(sourceRoot, "dist", "Codex Router.app"),
-    path.join(home, "Applications", "Model Router.app"),
-    path.join(home, "Applications", "Codex Router.app"),
-  ];
-  return (
-    candidates.some((candidate) => existsSync(candidate)) ||
-    Boolean(registered && existsSync(registered))
-  );
-}
-
-// The tray is rebuilt from the same checkout that owns the router, so an
-// update never leaves a stale companion binary behind. Best-effort: the router
-// update itself succeeded, and a failed tray refresh must not roll it back.
-function refreshTrayCompanion() {
-  // A desktop app can be this update's parent. Replacing it synchronously
-  // would deadlock against the parent's active-mutation drain; the caller
-  // starts `control tray refresh` detached after this transaction returns.
-  if (process.env.CODEX_ROUTER_DEFER_TRAY_REBUILD === "1") return;
-  if (!trayRefreshRequired()) return;
-  const launcher = path.join(SOURCE_ROOT, "bin", "model-router-tray");
-  const result = spawnSync(launcher, ["--preserve-window"], {
-    cwd: SOURCE_ROOT,
-    stdio: "inherit",
-  });
-  if (result.error) {
-    process.stderr.write(`Menu-bar companion refresh did not finish: ${result.error.message}\n`);
-  } else if (result.status !== 0) {
-    process.stderr.write(`Menu-bar companion refresh exited with status ${result.status}.\n`);
   }
 }
 
@@ -225,7 +149,6 @@ export function updateCheckout({ force = false } = {}) {
       return { ...status, updated: false, reinstalled: false };
     }
     installCurrentCheckout();
-    refreshTrayCompanion();
     return { ...status, updated: false, reinstalled: true };
   }
   requireReplaceableCheckout(force);
@@ -241,7 +164,6 @@ export function updateCheckout({ force = false } = {}) {
   git(["merge", "--ff-only", status.available], { inherit: true });
   try {
     installCurrentCheckout();
-    refreshTrayCompanion();
   } catch (error) {
     try {
       restoreRevision(status.current);
@@ -298,8 +220,8 @@ const COMMANDS = {
   rollback: rollbackCheckout,
 };
 
-// `check` must stay read-only: the tray and the CLI both use it to answer "is
-// an update available?" without touching the installation.
+// `check` must stay read-only so callers can ask whether an update is available
+// without touching the installation.
 export function resolveCommand(args) {
   return COMMANDS[args.find((argument) => !argument.startsWith("--")) || "update"];
 }

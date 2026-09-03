@@ -3,22 +3,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SOURCE_ROOT } from "./paths.mjs";
-import {
-  legacyServiceScriptForPlatform,
-  stopLegacyManagedOllama,
-} from "./compat/retirement/legacy-service-platforms.mjs";
+import { stopManagedOllama } from "./ollama-runtime.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
 
 const platform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
-const script = platform === "win32"
-  ? "service-windows.mjs"
-  : legacyServiceScriptForPlatform(platform);
-
-if (!script) {
+if (platform !== "win32") {
   throw new Error(`Unsupported background-service platform: ${platform}`);
 }
+const script = "service-windows.mjs";
 
 const mutatingCommands = new Set(["install", "uninstall", "start", "stop", "restart"]);
 const readinessCommands = new Set(["install", "start", "restart"]);
@@ -45,11 +39,6 @@ function remainingOperationMs(limit = Number.POSITIVE_INFINITY) {
   if (remaining <= 0) throw new Error("The router operation deadline expired.");
   return Math.max(1, Math.min(remaining, limit));
 }
-// One restart-count query runs on every readiness poll, synchronously. A
-// systemctl that never answers must cost the wait a bounded slice, not the
-// whole readiness budget, so the query is killed and read as inconclusive.
-const RESTART_QUERY_TIMEOUT_MS = 5_000;
-
 export async function runServiceCommandUnlocked(
   command = "status",
   args = [command],
@@ -86,7 +75,7 @@ export async function runServiceCommandUnlocked(
   // a no-op. Only the exact detached `ollama serve` process this router
   // started is coupled to an explicit router shutdown. Installs and restarts
   // deliberately keep it alive across the brief service handoff.
-  if (shutdownCommands.has(command)) await stopLegacyManagedOllama();
+  if (shutdownCommands.has(command)) await stopManagedOllama();
   if (!readinessCommands.has(command)) return 0;
 
   const readinessBudgetMs = remainingOperationMs();
@@ -97,35 +86,6 @@ export async function runServiceCommandUnlocked(
   }
   const health = await waitForServiceReadiness({
     timeoutMs: READINESS_TIMEOUT_MS,
-    // Only the Linux service manager exposes an automatic-restart counter
-    // this guard can read; Windows readiness carries its own task-state
-    // guard, and launchd has no equivalent counter.
-    ...(script === "service-linux.mjs"
-      ? {
-          // The readiness guard passes whatever budget it has left, so the
-          // fixed slice below can never stretch the wait past its deadline.
-          getServiceRestarts: (remainingMs) => {
-            if (!(remainingMs > 0)) return undefined;
-            const counter = spawnSync(
-              process.execPath,
-              [path.join(SOURCE_ROOT, "src", script), "restart-count"],
-              {
-                encoding: "utf8",
-                env: childEnvironment,
-                timeout: Math.min(RESTART_QUERY_TIMEOUT_MS, remainingMs),
-                killSignal: "SIGKILL",
-              },
-            );
-            if (counter.error || counter.status !== 0) return undefined;
-            try {
-              const parsed = JSON.parse(counter.stdout);
-              return typeof parsed.restarts === "number" ? parsed.restarts : undefined;
-            } catch {
-              return undefined;
-            }
-          },
-        }
-      : {}),
   });
   if (health.ok) return 0;
   console.error(

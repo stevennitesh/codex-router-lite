@@ -7,20 +7,10 @@
 // `.venv/`), so deleting the artifact invalidates the stamp automatically and
 // no state directory has to stay in sync with the checkout.
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  legacyCompanionActions,
-  trayBundleDir,
-} from "./compat/retirement/shared-legacy-install-plan-tray.mjs";
-import {
-  automaticTraySupervisionAllowed,
-  readTraySupervisionPreference,
-  traySupervisionPreferencePath,
-} from "./tray-supervision-preference.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
 
 export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,9 +36,7 @@ export const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.96.0", "fastapi==0.139.2"
 // three copies of one rule drifting apart, and the fix is fewer copies rather
 // than more comments asking people to keep them in step.
 //
-// Slash-separated on purpose. These strings are matched against the text of
-// `bin/install` and `install.ps1`, so they must not pick up backslashes when
-// the test suite runs on Windows.
+// Slash-separated on purpose because these are repository paths.
 export const PYTHON_LOCK = "requirements/python.txt";
 export const PYTHON_LOCK_INPUT = "requirements/python.in";
 
@@ -57,8 +45,7 @@ export const PYTHON_LOCK_INPUT = "requirements/python.in";
 // regeneration that drops `--universal` still produces a valid-looking file
 // that only resolves on the machine that generated it, so `pythonLockDrift`
 // checks the flags uv records in the header as well as the pins. The compile
-// command itself lives in `bin/lock-python` and nowhere else.
-export const PYTHON_LOCK_SCRIPT = "bin/lock-python";
+// Regenerate it with uv's universal, hash-generating compile mode.
 
 function repoPath(root, relative) {
   return path.join(root, ...relative.split("/"));
@@ -78,46 +65,14 @@ function readFile(target) {
   }
 }
 
-function fileDigest(target) {
-  try {
-    return sha256(readFileSync(target));
-  } catch {
-    return sha256("");
-  }
-}
-
-function regularFileExists(target) {
-  try {
-    const stat = lstatSync(target);
-    return stat.isFile() && stat.size > 0;
-  } catch {
-    return false;
-  }
-}
-
-function realDirectoryExists(target) {
-  try {
-    return lstatSync(target).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 export function requirementParts(requirement) {
   const [specifier, version] = String(requirement).split("==");
   return { name: specifier.replace(/\[[^\]]*\]$/, "").trim(), version: (version || "").trim() };
 }
 
 function sitePackages(root, platform) {
-  if (platform === "win32") return [path.join(root, ".venv", "Lib", "site-packages")];
-  const libraries = path.join(root, ".venv", "lib");
-  try {
-    return readdirSync(libraries)
-      .filter((entry) => entry.startsWith("python"))
-      .map((entry) => path.join(libraries, entry, "site-packages"));
-  } catch {
-    return [];
-  }
+  if (platform !== "win32") throw new Error(`Unsupported install platform: ${platform}`);
+  return [path.join(root, ".venv", "Lib", "site-packages")];
 }
 
 // Distribution directories normalize the project name, so `litellm[proxy]`
@@ -145,9 +100,8 @@ export function installedDistributionVersion(name, { root = SOURCE_ROOT, platfor
 }
 
 function venvPython(root, platform) {
-  return platform === "win32"
-    ? path.join(root, ".venv", "Scripts", "python.exe")
-    : path.join(root, ".venv", "bin", "python");
+  if (platform !== "win32") throw new Error(`Unsupported install platform: ${platform}`);
+  return path.join(root, ".venv", "Scripts", "python.exe");
 }
 
 // uv writes `version_info`, the stdlib venv module writes `version`.
@@ -157,11 +111,8 @@ function venvPythonVersion(root) {
   return match ? match[1] : "unknown";
 }
 
-// The venv records the base interpreter it was created from. If that
-// directory was cleared -- macOS periodically wipes /private/tmp, and an
-// installer that recorded a temporary Python as the venv home leaves the
-// interpreter dangling after reboot -- the venv is unusable even when
-// `.venv/bin/python` still resolves through a copied binary. Treat an
+// The venv records the base interpreter it was created from. If that directory
+// disappears, the venv is unusable even when its launcher remains. Treat an
 // unresolvable home as "not installed" so every install/update rebuilds it.
 export function venvPythonHomeUsable(root = SOURCE_ROOT) {
   const config = readFile(path.join(root, ".venv", "pyvenv.cfg")) || "";
@@ -169,210 +120,6 @@ export function venvPythonHomeUsable(root = SOURCE_ROOT) {
   if (!match) return true; // unknown; the interpreter probe decides
   const home = match[1].trim();
   return existsSync(home);
-}
-
-// The companion is one bundle per user, not one per checkout: a `dist/` target
-// inside the repository produces a separate tray for every clone and leaves
-// launchd pointing at whichever one installed last.
-function sourceFilesIn(dir, extensions) {
-  try {
-    return readdirSync(dir)
-      .sort()
-      .filter((entry) => extensions.some((extension) => entry.endsWith(extension)))
-      .map((entry) => path.join(dir, entry));
-  } catch {
-    // A checkout without that companion still answers "no sources".
-    return [];
-  }
-}
-
-function sourceTreeFiles(dir, extensions) {
-  try {
-    return readdirSync(dir, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .flatMap((entry) => {
-        const candidate = path.join(dir, entry.name);
-        if (entry.isDirectory()) return sourceTreeFiles(candidate, extensions);
-        return extensions.length === 0
-          || extensions.some((extension) => entry.name.endsWith(extension))
-          ? [candidate]
-          : [];
-      });
-  } catch {
-    return [];
-  }
-}
-
-function controlCenterSources(root) {
-  const base = path.join(root, "apps", "control-center");
-  return [
-    // The build entrypoints decide the packaged shape just as much as the
-    // renderer and Electron sources do. A changed staging/swap contract must
-    // invalidate an installed companion on every platform it can build.
-    path.join(root, "scripts", "build-electron-companion.sh"),
-    path.join(root, "scripts", "build-electron-companion.ps1"),
-    path.join(base, "package.json"),
-    path.join(base, "package-lock.json"),
-    path.join(base, "electron-builder.yml"),
-    path.join(root, "src", "spawnable-command.mjs"),
-    path.join(root, "src", "chatgpt-login-lease.mjs"),
-    path.join(root, "src", "file-security.mjs"),
-    path.join(root, "src", "path-security.mjs"),
-    path.join(root, "src", "process-identity.mjs"),
-    path.join(base, "index.html"),
-    path.join(base, "main.mjs"),
-    path.join(base, "vite.config.ts"),
-    path.join(base, "tsconfig.json"),
-    path.join(base, "tsconfig.node.json"),
-    ...sourceTreeFiles(path.join(base, "electron"), [".mjs", ".cjs"]),
-    ...sourceTreeFiles(path.join(base, "src"), [
-      ".js",
-      ".mjs",
-      ".json",
-      ".ts",
-      ".tsx",
-      ".css",
-      ".svg",
-      ".png",
-      ".jpg",
-      ".jpeg",
-      ".webp",
-    ]),
-    path.join(base, "assets", "icon.png"),
-    path.join(base, "assets", "icon.ico"),
-  ];
-}
-
-// trayDecision offers the companion on macOS, Linux *and* Windows, so all
-// three need a staleness answer here. Covering only some would leave the rest
-// with the exact drift this gating exists to stop: a companion built once and
-// never rebuilt, running against router code it no longer matches. Windows was
-// the gap -- recordTrayBuild() threw there, so the one platform whose tray has
-// to be built deliberately was also the one that never recorded having been.
-const TRAY_PLATFORMS = {
-  darwin: {
-    sources: (root) => {
-      const base = path.join(root, "apps", "macos", "ModelRouterTray");
-      const widget = path.join(root, "apps", "macos", "RouterUsageWidget");
-      return [
-        path.join(root, "scripts", "build-macos-tray-app.sh"),
-        path.join(root, "scripts", "build-macos-widget.sh"),
-        path.join(base, "Package.swift"),
-        path.join(base, "Resources", "Info.plist"),
-        path.join(base, "Resources", "ModelRouterTray.entitlements"),
-        path.join(base, "Resources", "AppIcon.icns"),
-        ...sourceFilesIn(path.join(base, "Sources"), [".swift"]),
-        // SwiftPM copies this tree recursively into the resource bundle. Every
-        // file is a build input regardless of extension, including future icon
-        // formats that are not known to this installer yet.
-        ...sourceTreeFiles(path.join(base, "Sources", "Resources"), []),
-        ...sourceTreeFiles(widget, [
-          ".swift",
-          ".plist",
-          ".entitlements",
-          ".pbxproj",
-          ".xcscheme",
-          ".yml",
-        ]),
-        ...controlCenterSources(root),
-      ];
-    },
-    artifactRoot: (root, home) => trayBundleDir("darwin", home),
-    artifacts: (root, home) => {
-      const bundle = trayBundleDir("darwin", home);
-      const embedded = path.join(
-        bundle,
-        "Contents",
-        "Resources",
-        "Control Center.app",
-        "Contents",
-      );
-      return [
-        path.join(bundle, "Contents", "MacOS", "ModelRouterTray"),
-        path.join(
-          bundle,
-          "Contents",
-          "PlugIns",
-          "RouterUsageWidget.appex",
-          "Contents",
-          "MacOS",
-          "RouterUsageWidget",
-        ),
-        path.join(embedded, "MacOS", "Codex Router"),
-        path.join(embedded, "Resources", "app.asar"),
-      ];
-    },
-    // The source fingerprint is mutable router state, not an app resource.
-    // Keeping it inside Contents would invalidate the completed bundle seal.
-    stamp: (root, home) => path.join(home, ".codex", "codex-router", "tray-build.json"),
-    // Companions built before the per-user move live inside the checkout.
-    legacy: (root, home) => [
-      path.join(root, "dist", "Model Router.app", "Contents", "MacOS", "ModelRouterTray"),
-      path.join(home, "Applications", "Model Router.app"),
-    ],
-  },
-  linux: {
-    sources: controlCenterSources,
-    artifactRoot: (root) =>
-      path.join(root, "apps", "control-center", "release", "linux-unpacked"),
-    artifactDirectories: (root) => {
-      const apps = path.join(root, "apps");
-      const controlCenter = path.join(apps, "control-center");
-      const releaseRoot = path.join(controlCenter, "release");
-      const release = path.join(releaseRoot, "linux-unpacked");
-      return [apps, controlCenter, releaseRoot, release, path.join(release, "resources")];
-    },
-    artifacts: (root) => {
-      const release = path.join(root, "apps", "control-center", "release", "linux-unpacked");
-      return [
-        path.join(release, "codex-router-control-center"),
-        path.join(release, "resources", "app.asar"),
-      ];
-    },
-    // A checkout can contain packages for both operating systems (for
-    // example on a shared dual-boot volume). One platform's successful build
-    // must not certify the other platform's still-old executable.
-    stamp: (root) =>
-      path.join(root, "apps", "control-center", ".codex-router-install-linux.json"),
-    legacy: (root) => legacyCompanionActions("linux", root).map((action) => action.execute),
-  },
-  // Same packaged Control Center as Linux; only the artifact path differs.
-  win32: {
-    sources: controlCenterSources,
-    artifactRoot: (root) =>
-      path.join(root, "apps", "control-center", "release", "win-unpacked"),
-    artifactDirectories: (root) => {
-      const apps = path.join(root, "apps");
-      const controlCenter = path.join(apps, "control-center");
-      const releaseRoot = path.join(controlCenter, "release");
-      const release = path.join(releaseRoot, "win-unpacked");
-      return [apps, controlCenter, releaseRoot, release, path.join(release, "resources")];
-    },
-    artifacts: (root) => {
-      const release = path.join(root, "apps", "control-center", "release", "win-unpacked");
-      return [
-        path.join(release, "Codex Router.exe"),
-        path.join(release, "resources", "app.asar"),
-      ];
-    },
-    stamp: (root) =>
-      path.join(root, "apps", "control-center", ".codex-router-install-win32.json"),
-    legacy: (root) => legacyCompanionActions("win32", root).map((action) => action.execute),
-  },
-};
-
-export function traySourceFingerprint(root = SOURCE_ROOT, platform = process.platform) {
-  const definition = TRAY_PLATFORMS[platform];
-  if (!definition) return "";
-  return sha256(
-    definition
-      .sources(root)
-      // Hash bytes before combining them. Reading icons as UTF-8 collapsed
-      // distinct invalid byte sequences to the same replacement character,
-      // so a changed packaged asset could incorrectly look current.
-      .map((file) => `${path.relative(root, file)}\0${fileDigest(file)}`)
-      .join("\0"),
-  );
 }
 
 export const STEPS = {
@@ -404,9 +151,7 @@ export const STEPS = {
         ].join("\0"),
       ),
     installed: (root, platform, { runtimeProblem = venvRuntimeProblem } = {}) => {
-      // A venv whose interpreter home was cleared (macOS wipes /private/tmp,
-      // and installers that recorded a temporary Python as the venv home end
-      // up with a dangling interpreter) must read as "not installed" so the
+      // A venv whose interpreter home disappeared must read as "not installed" so the
       // next install/update rebuilds it instead of skipping a broken venv.
       if (!venvPythonHomeUsable(root)) return false;
       const python = venvPython(root, platform);
@@ -423,76 +168,6 @@ export const STEPS = {
     skipMessage: "LiteLLM already matches the pinned versions; skipping the Python install.",
   },
 };
-
-// Deliberately not a STEPS entry: those treat "artifact missing" as "run", and
-// a missing tray means the user never asked for one. An update keeps whatever
-// companion the user chose in sync; it never installs a new one.
-//   unsupported - no desktop companion for this platform
-//   absent      - no companion installed, leave it that way
-//   disabled    - the operator explicitly disabled macOS tray supervision
-//   unavailable - its managed preference is damaged/unreadable; fail closed
-//   skip        - installed and already matches its sources
-//   rebuild     - installed but built from different sources
-export function trayRebuildPlan({
-  root = SOURCE_ROOT,
-  platform = process.platform,
-  home = os.homedir(),
-  supervisionPreference,
-} = {}) {
-  const definition = TRAY_PLATFORMS[platform];
-  if (!definition) return "unsupported";
-  if (platform === "darwin") {
-    const preference = supervisionPreference ?? readTraySupervisionPreference({
-      file: traySupervisionPreferencePath({ home }),
-    });
-    if (preference.state === "disabled") return "disabled";
-    if (!automaticTraySupervisionAllowed(preference)) return "unavailable";
-  }
-  const artifacts = definition.artifacts(root, home);
-  const artifactDirectories = definition.artifactDirectories?.(root, home) ?? [];
-  const complete = artifactDirectories.every((directory) => realDirectoryExists(directory))
-    && artifacts.every((artifact) => regularFileExists(artifact));
-  if (!complete) {
-    // A package root or any one required file is installation evidence. Treat
-    // the missing remainder as corruption and rebuild it; calling a partial
-    // package "absent" would abandon a tray the user already opted into.
-    if (
-      existsSync(definition.artifactRoot(root, home))
-      || artifacts.some((artifact) => existsSync(artifact))
-    ) return "rebuild";
-    // A companion at a superseded location still counts as installed, so the
-    // update migrates it rather than reading as "absent" and abandoning it.
-    const legacy = definition.legacy?.(root, home);
-    const candidates = Array.isArray(legacy) ? legacy : legacy ? [legacy] : [];
-    return candidates.some((candidate) => existsSync(candidate)) ? "rebuild" : "absent";
-  }
-  const stamp = readFile(definition.stamp(root, home));
-  if (!stamp) return "rebuild";
-  try {
-    return JSON.parse(stamp)?.fingerprint === traySourceFingerprint(root, platform)
-      ? "skip"
-      : "rebuild";
-  } catch {
-    return "rebuild";
-  }
-}
-
-export function recordTrayBuild({
-  root = SOURCE_ROOT,
-  platform = process.platform,
-  home = os.homedir(),
-} = {}) {
-  const definition = TRAY_PLATFORMS[platform];
-  if (!definition) throw new Error(`The desktop companion is not built on ${platform}.`);
-  const target = definition.stamp(root, home);
-  mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    target,
-    `${JSON.stringify({ version: 1, step: "tray", fingerprint: traySourceFingerprint(root, platform) }, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  return target;
-}
 
 export function stepStatus(
   step,
@@ -578,7 +253,7 @@ export function pythonLockDrift(root = SOURCE_ROOT) {
   const problems = [];
   const contents = readFile(repoPath(root, PYTHON_LOCK));
   if (contents === undefined) {
-    return [`${PYTHON_LOCK} is missing; regenerate it with ${PYTHON_LOCK_SCRIPT}`];
+    return [`${PYTHON_LOCK} is missing; regenerate it with uv pip compile`];
   }
 
   const input = lockInputRequirements(root);
@@ -639,16 +314,16 @@ export function installerPythonInstalls(script) {
     .filter((line) => line.includes("--require-hashes") && line.includes(`-r ${PYTHON_LOCK}`));
 }
 
-// The installers no longer repeat the version literals — they install the lock.
+// The installer no longer repeats the version literals — it installs the lock.
 export function installerRequirementDrift(root = SOURCE_ROOT) {
-  return [path.join("bin", "install"), "install.ps1"].filter(
+  return ["install.ps1"].filter(
     (script) => installerPythonInstalls(readFile(path.join(root, script)) ?? "").length !== 2,
   );
 }
 
 // Slash-separated for the same reason PYTHON_LOCK is: these are repository
 // paths, resolved through repoPath, not host paths.
-export const INSTALLER_SCRIPTS = { posix: "bin/install", windows: "install.ps1" };
+export const INSTALLER_SCRIPTS = { windows: "install.ps1" };
 
 // Which of the two extracted lines belongs to which branch. `uv pip install`
 // and `<python> -m pip install` are disjoint by construction, so neither
@@ -662,12 +337,12 @@ const INSTALL_TOOLS = {
 // hand-written pip line, so the job cannot pass while the shipped installer
 // fails. The line is extracted verbatim by the same matcher
 // `installerRequirementDrift` uses, and it is returned ready to execute in the
-// checkout root: the posix lines already name `.venv/bin/python`, and the
-// PowerShell lines expect the `$Python` that install.ps1 itself defines.
-export function pythonInstallCommand(tool, { root = SOURCE_ROOT, platform = "posix" } = {}) {
+// checkout root. The PowerShell lines expect the `$Python` that install.ps1
+// itself defines.
+export function pythonInstallCommand(tool, { root = SOURCE_ROOT, platform = "windows" } = {}) {
   const script = INSTALLER_SCRIPTS[platform];
   if (!script) {
-    throw new Error(`Unknown installer platform: ${platform} (expected posix or windows)`);
+    throw new Error(`Unknown installer platform: ${platform} (expected windows)`);
   }
   const pattern = INSTALL_TOOLS[tool];
   if (!pattern) throw new Error(`Unknown install tool: ${tool} (expected uv or pip)`);
@@ -701,22 +376,6 @@ function main(argv) {
     recordStep(step);
     return 0;
   }
-  if (command === "tray-plan") {
-    // Fail closed, unlike `status`: an unexpected error must leave the
-    // companion alone rather than trigger a Swift build during an update.
-    let plan = "absent";
-    try {
-      plan = trayRebuildPlan();
-    } catch {
-      plan = "absent";
-    }
-    process.stdout.write(`${plan}\n`);
-    return 0;
-  }
-  if (command === "record-tray") {
-    recordTrayBuild();
-    return 0;
-  }
   if (command === "requirements") {
     process.stdout.write(`${PYTHON_REQUIREMENTS.join("\n")}\n`);
     return 0;
@@ -731,15 +390,15 @@ function main(argv) {
     process.stdout.write(venvPythonHomeUsable() ? "ok\n" : "damaged\n");
     return venvPythonHomeUsable() ? 0 : 1;
   }
-  // `python-install-command <uv|pip> [posix|windows]` — what CI runs so that it
+  // `python-install-command <uv|pip> [windows]` — what CI runs so that it
   // exercises the shipped installer's command rather than a copy of it.
   if (command === "python-install-command") {
-    process.stdout.write(`${pythonInstallCommand(step, { platform: argv[2] || "posix" })}\n`);
+    process.stdout.write(`${pythonInstallCommand(step, { platform: argv[2] || "windows" })}\n`);
     return 0;
   }
   console.error(
-    "Usage: install-plan.mjs status|record <node-deps|python-deps> | tray-plan | record-tray | " +
-      "requirements | venv-home-ok | python-install-command <uv|pip> [posix|windows]",
+    "Usage: install-plan.mjs status|record <node-deps|python-deps> | requirements | " +
+      "venv-home-ok | python-install-command <uv|pip> [windows]",
   );
   return 2;
 }

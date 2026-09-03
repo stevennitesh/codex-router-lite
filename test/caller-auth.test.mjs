@@ -140,22 +140,16 @@ test("secret setup creates stable, separate, current-user-only keys", () => {
     );
     const internalPath = path.join(stateDir, "internal-secret");
     const callerPath = path.join(stateDir, "caller-secret");
-    const cursorPublicPath = path.join(stateDir, "cursor-public-secret");
     const internal = readFileSync(internalPath, "utf8").trim();
     const caller = readFileSync(callerPath, "utf8").trim();
-    const cursorPublic = readFileSync(cursorPublicPath, "utf8").trim();
     assert.equal(first.present, true);
     assert.equal(first.internal.present, true);
     assert.equal(first.caller.present, true);
-    assert.equal(first.cursorPublic.present, true);
     assert.notEqual(internal, caller);
-    assert.notEqual(cursorPublic, caller);
     assert.match(internal, /^[A-Za-z0-9_-]{64}$/);
     assert.match(caller, /^[A-Za-z0-9_-]{64}$/);
-    assert.match(cursorPublic, /^[A-Za-z0-9_-]{64}$/);
     assert.equal(privateFileIsProtected(internalPath), true);
     assert.equal(privateFileIsProtected(callerPath), true);
-    assert.equal(privateFileIsProtected(cursorPublicPath), true);
 
     execFileSync(process.execPath, [secretTool, "ensure"], {
       cwd: root,
@@ -164,7 +158,6 @@ test("secret setup creates stable, separate, current-user-only keys", () => {
     });
     assert.equal(readFileSync(internalPath, "utf8").trim(), internal);
     assert.equal(readFileSync(callerPath, "utf8").trim(), caller);
-    assert.equal(readFileSync(cursorPublicPath, "utf8").trim(), cursorPublic);
 
     writeFileSync(callerPath, "invalid\n", { mode: 0o600 });
     execFileSync(process.execPath, [secretTool, "ensure"], {

@@ -97,7 +97,7 @@ openai_base_url = "https://foreign.invalid/v1"
   );
   assert.equal(
     routedCatalogConfigured(`model_provider = "openai"
-openai_base_url = "http://127.0.0.1:4102/_codex-router/test-caller-secret-with-sufficient-length/v1"
+openai_base_url = "http://127.0.0.1:4202/_codex-router/test-caller-secret-with-sufficient-length/v1"
 `),
     true,
   );
@@ -106,6 +106,12 @@ openai_base_url = "http://127.0.0.1:4102/_codex-router/test-caller-secret-with-s
 openai_base_url = "http://127.0.0.1:4202/v1"
 `),
     true,
+  );
+  assert.equal(
+    routedCatalogConfigured(`model_provider = "openai"
+openai_base_url = "http://127.0.0.1:4102/v1"
+`),
+    false,
   );
   assert.equal(
     routedCatalogConfigured(`model_provider = "openai"
@@ -130,7 +136,7 @@ openai_base_url = "https://foreign.invalid/v1"
     routedCatalogConfigured(`model_provider = "custom"
 
 [model_providers.custom]
-base_url = "http://127.0.0.1:4102/_codex-router/test-caller-secret-with-sufficient-length/v1"
+base_url = "http://127.0.0.1:4202/_codex-router/test-caller-secret-with-sufficient-length/v1"
 wire_api = "responses"
 `),
     true,
@@ -148,7 +154,7 @@ wire_api = "responses"
     routedCatalogConfigured(`model_provider = "custom"
 note = """
 [model_providers.custom]
-base_url = "http://127.0.0.1:4102/_codex-router/test-caller-secret-with-sufficient-length/v1"
+base_url = "http://127.0.0.1:4202/_codex-router/test-caller-secret-with-sufficient-length/v1"
 """
 
 [model_providers.custom]
@@ -161,7 +167,7 @@ wire_api = "responses"
     routedCatalogConfigured(`model_provider = "custom]id"
 
 [model_providers."custom]id"]
-base_url = "http://127.0.0.1:4102/_codex-router/test-caller-secret-with-sufficient-length/v1"
+base_url = "http://127.0.0.1:4202/_codex-router/test-caller-secret-with-sufficient-length/v1"
 wire_api = "responses"
 `),
     true,

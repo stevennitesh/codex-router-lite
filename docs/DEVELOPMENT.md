@@ -199,29 +199,22 @@ compatibility probe and the subagent payload relay's forced function call.
 
 ## Tests
 
-```sh
+```powershell
 npm ci
 npm run check
 npm test
-sh -n install.sh
-for file in bin/*; do
-  case "$file" in
-    *.mjs) node --check "$file" ;;
-    *) sh -n "$file" ;;
-  esac
-done
 npm audit --omit=dev
 ```
 
-The test suite verifies native header forwarding, external credential
-isolation, Kimi and DeepSeek rewriting, registry-generated gateway routes,
-Zstandard request decoding, both Codex compaction formats, legacy migration,
-provider selection, port defaults, Anthropic API forwarding, discovery
-comparison, and service rendering for all three service platforms.
+`npm test` runs the deterministic Windows Codex compatibility set in
+`maintenance/retained-tests.json`. It covers native Codex, Codex app functions,
+OpenRouter GLM-5.3-Flash, Switchyard, namespace restoration, subagents v2, and
+Windows service behavior. Use `npm run test:full` only for release certification
+or when changing an exhaustive recovery test. The full set includes
+cross-process crash simulations that can take several minutes each on Windows.
 
-CI runs the Node suite on macOS, Linux, and Windows. Tagged releases are built
-only after the suite passes and include checksums plus GitHub provenance
-attestations.
+CI runs the fast suite on Windows. Tagged releases run the full suite before
+building source archives, checksums, and GitHub provenance attestations.
 
 Prepare an isolated state directory without touching the live Codex config:
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,64 +12,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const PROXY = "http://127.0.0.1:3213";
 
-// `bin/start` resolves `node` from PATH. A shim that records its arguments and
-// exits instead of running them turns "which layer does this verb reach" into
-// an observable fact, without touching this machine's launchd.
-function withNodeShim(run) {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-lifecycle-"));
-  const log = path.join(directory, "argv.log");
-  const shim = path.join(directory, "node");
-  writeFileSync(shim, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nexit 0\n`);
-  chmodSync(shim, 0o755);
-  writeFileSync(log, "");
-  try {
-    return run({
-      env: { ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH}` },
-      readLog: () => readFileSync(log, "utf8").trim(),
-    });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
-
-test("start and stop act on the same layer", { skip: process.platform === "win32" }, () => {
-  withNodeShim(({ env, readLog }) => {
-    execFileSync(path.join(root, "bin", "start"), [], { env, encoding: "utf8" });
-    const started = readLog();
-    // Not `src/start.mjs`. A `start` that execs the supervisor leaves the
-    // service that `stop` unloaded still unloaded, and puts an unmanaged copy
-    // carrying the calling shell's environment in its place.
-    assert.match(started, /src\/service\.mjs start$/);
-    assert.doesNotMatch(started, /start\.mjs$/);
-  });
-
-  withNodeShim(({ env, readLog }) => {
-    execFileSync(path.join(root, "bin", "stop"), [], { env, encoding: "utf8" });
-    assert.match(readLog(), /src\/service\.mjs stop$/);
-  });
-});
-
-test("the foreground supervisor is reachable, but only on purpose", { skip: process.platform === "win32" }, () => {
-  withNodeShim(({ env, readLog }) => {
-    execFileSync(path.join(root, "bin", "start"), ["--foreground"], { env, encoding: "utf8" });
-    assert.match(readLog(), /src\/foreground-start\.mjs$/);
-  });
-
-  // An unrecognized argument is refused rather than quietly falling through to
-  // either layer.
-  withNodeShim(({ env, readLog }) => {
-    const result = spawnSync(path.join(root, "bin", "start"), ["--deamon"], { env, encoding: "utf8" });
-    assert.equal(result.status, 2);
-    assert.match(result.stderr, /Usage: start \[--foreground\]/);
-    assert.equal(readLog(), "");
-  });
-});
-
 test("foreground supervisor holds service lifecycle ownership", () => {
-  const startScript = readFileSync(path.join(root, "bin", "start"), "utf8");
+  const startScript = readFileSync(path.join(root, "model-router.ps1"), "utf8");
   const supervisor = readFileSync(path.join(root, "src", "start.mjs"), "utf8");
   const launcher = readFileSync(path.join(root, "src", "foreground-start.mjs"), "utf8");
-  assert.match(startScript, /src\/foreground-start\.mjs/);
+  assert.match(startScript, /src[\\/]foreground-start\.mjs/);
   assert.match(launcher, /withServiceOperationLock/);
   assert.match(launcher, /import\("\.\/start\.mjs"\)/);
   assert.doesNotMatch(supervisor, /withServiceOperationLock/);
@@ -117,13 +64,13 @@ test("Windows start dispatches managed and foreground modes without bypassing li
   writeFileSync(log, "");
   const env = { ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH}` };
   try {
-    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "codex-router.ps1"), "start"], { env, encoding: "utf8" });
+    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "model-router.ps1"), "codex", "start"], { env, encoding: "utf8" });
     let lines = readFileSync(log, "utf8").trim().split(/\r?\n/);
     assert.equal(lines.length, 1);
     assert.match(lines[0], /src\\service\.mjs start$/i);
 
     writeFileSync(log, "");
-    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "codex-router.ps1"), "start", "--foreground"], { env, encoding: "utf8" });
+    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "model-router.ps1"), "codex", "start", "--foreground"], { env, encoding: "utf8" });
     lines = readFileSync(log, "utf8").trim().split(/\r?\n/);
     assert.equal(lines.length, 1);
     assert.match(lines[0], /src\\foreground-start\.mjs$/i);

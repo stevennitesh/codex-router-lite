@@ -28,7 +28,7 @@ import {
 import {
   refreshCodexCallerCapabilityContents,
   refreshCodexCallerCapabilityState,
-} from "./compat/retirement/legacy-config-clients.mjs";
+} from "./caller-key-client-refresh.mjs";
 import {
   clearCodexRouterDefault,
   readCodexRouterDefault,
@@ -50,8 +50,6 @@ import {
   CALLER_SECRET_PATH,
   CODEX_PROVIDER_MODE_PATH,
   CONFIG_PATH,
-  LEGACY_STATE_DIRS,
-  LEGACY_PORTS,
   MERGED_CATALOG_PATH,
   PORTS,
   SIGNED_PROVIDER_MODE_PATH,
@@ -62,7 +60,6 @@ import { scanTomlDocument } from "./toml-structure.mjs";
 
 const managedRouterBaseUrls = new Set([
   loopback(PORTS.router, "/v1"),
-  loopback(LEGACY_PORTS.router, "/v1"),
 ]);
 const startMarker = "# BEGIN codex-router-managed";
 const endMarker = "# END codex-router-managed";
@@ -104,8 +101,7 @@ const defaultRealtimeWebsocketBaseUrl = "https://api.openai.com/v1";
 
 // Renders a string as a TOML basic string. JSON escaping is valid TOML
 // escaping, and unlike TOML literal strings it supports apostrophes anywhere
-// in a Windows path. The legacy-migration detector unescapes basic strings
-// before comparing catalog paths.
+// in a Windows path.
 function tomlValue(value) {
   return JSON.stringify(value);
 }
@@ -125,8 +121,6 @@ function managedCallerAuthBlock(providerId) {
 const realtimeCallBaseUrlKey = "experimental_realtime_webrtc_call_base_url";
 const realtimeWebsocketBaseUrlKey = "experimental_realtime_ws_base_url";
 const markerPairs = [
-  // The legacy layout parked the managed provider table inside the root
-  // block, so the root pair recognizes that header as managed too.
   [
     startMarker,
     endMarker,
@@ -145,8 +139,6 @@ const markerPairs = [
   [agentConcurrencyStartMarker, agentConcurrencyEndMarker],
   [multiAgentV2StartMarker, multiAgentV2EndMarker],
   [standaloneWebSearchStartMarker, standaloneWebSearchEndMarker],
-  ["# BEGIN kimi-codex-router-managed", "# END kimi-codex-router-managed"],
-  ["# BEGIN kimi-codex-proxy-managed", "# END kimi-codex-proxy-managed"],
 ];
 const command = process.argv[2] || "status";
 const adoptNativeCatalog = process.argv.includes("--adopt-native-catalog");
@@ -163,8 +155,7 @@ function configuredRouterBaseUrl() {
 function isManagedRouterBaseUrl(value) {
   return (
     managedRouterBaseUrls.has(value) ||
-    isManagedCallerBaseUrl(value, PORTS.router) ||
-    isManagedCallerBaseUrl(value, LEGACY_PORTS.router)
+    isManagedCallerBaseUrl(value, PORTS.router)
   );
 }
 
@@ -1158,7 +1149,6 @@ function removeLegacyManagedRouterProvider(contents, provider) {
 function clean(contents) {
   const knownCatalogPaths = [
     MERGED_CATALOG_PATH,
-    ...LEGACY_STATE_DIRS.map((directory) => path.join(directory, "merged-models.json")),
   ];
   const knownManaged =
     markerPairs.some(([start]) => contents.includes(start)) ||
@@ -1526,11 +1516,11 @@ if (command === "caller-capability-refresh") {
     throw new Error("Codex Router is not the active managed route; refusing caller capability refresh.");
   }
   const nextBase = configuredRouterBaseUrl();
-  const nextContents = refreshCodexCallerCapabilityContents(current, nextBase, { port: PORTS.router, legacyPort: LEGACY_PORTS.router });
+  const nextContents = refreshCodexCallerCapabilityContents(current, nextBase, { port: PORTS.router });
   const providerState = readProviderModeState();
   const signedState = readSignedProviderModeState();
-  const nextProviderState = providerState ? refreshCodexCallerCapabilityState(providerState, nextBase, { port: PORTS.router, legacyPort: LEGACY_PORTS.router }) : undefined;
-  const nextSignedState = signedState ? refreshCodexCallerCapabilityState(signedState, nextBase, { port: PORTS.router, legacyPort: LEGACY_PORTS.router }) : undefined;
+  const nextProviderState = providerState ? refreshCodexCallerCapabilityState(providerState, nextBase, { port: PORTS.router }) : undefined;
+  const nextSignedState = signedState ? refreshCodexCallerCapabilityState(signedState, nextBase, { port: PORTS.router }) : undefined;
   atomicWrite(nextContents);
   if (nextProviderState) writeProviderModeState(nextProviderState);
   if (nextSignedState) writeSignedProviderModeState(nextSignedState);

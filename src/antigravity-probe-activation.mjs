@@ -15,9 +15,8 @@ const ACTIVATION_CONFIRM_TIMEOUT_MS = 35_000;
 const ACTIVATION_CONFIRM_POLL_MS = 25;
 
 export function antigravityProviderEnableCommand(platform = process.platform) {
-  return platform === "win32"
-    ? ".\\codex-router.ps1 providers enable antigravity-oauth"
-    : "./bin/providers enable antigravity-oauth";
+  if (platform !== "win32") throw new Error(`Unsupported platform: ${platform}`);
+  return ".\\model-router.ps1 providers enable antigravity-oauth";
 }
 
 function recoveryInstructions(platform) {

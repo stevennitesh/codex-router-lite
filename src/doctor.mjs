@@ -28,7 +28,6 @@ import {
   NATIVE_CATALOG_PATH,
   PORTS,
   SOURCE_ROOT,
-  TARGET,
 } from "./paths.mjs";
 import { skillPackStatus } from "./skills-install.mjs";
 import { stateOwnershipStatus } from "./state-owner.mjs";
@@ -48,30 +47,17 @@ import { serviceProxyOptInProblem } from "./proxy-environment.mjs";
 import {
   antigravityOAuthHealth,
   canonicalProviderId,
-  CLAUDE_CATALOG_PATH,
-  CLAUDE_LAUNCHER_PATH,
   credentialLabel,
-  CURSOR_CATALOG_PATH,
-  CURSOR_LAUNCHER_PATH,
-  CURSOR_PUBLIC_SECRET_PATH,
-  CURSOR_STATE_DB_PATH,
-  detectLegacyInstallations,
   discoveryDisabled,
-  DSH_CATALOG_PATH,
-  DSH_SETTINGS_PATH,
   effectiveProviderCredentialStatus,
   failoverTierCounts,
-  GEMINI_CATALOG_PATH,
-  GEMINI_ENV_PATH,
   genericProviderConfigured,
   grokCliPreflight,
   grokOAuthStatus,
   installedNativeVisionEngines,
-  isHomebrewManaged,
   kimiOAuthHealth,
   MODEL_BY_SLUG,
   MODELS,
-  OPENCLAW_CATALOG_PATH,
   providerApiKeyPoolsSnapshot,
   providerNeedsCuration,
   providerNeedsNoKey,
@@ -86,20 +72,17 @@ import {
   resolveVisionEngine,
   RUNTIME_PROVIDERS,
   RUNTIME_PROVIDER_WARNINGS,
-  SEARCH_SIDECARS_PATH,
   selectedConfiguredListedModels,
-  serviceFollowsHostApps,
   trustedSearchProviderDescriptor,
   visionBridgeConfigured,
-} from "./compat/retirement/legacy-doctor-features.mjs";
+} from "./compat/retirement/issue5-doctor-provider-features.mjs";
+import { SEARCH_SIDECARS_PATH } from "./paths.mjs";
 
 const checks = [];
 const add = (status, name, detail, fix) => checks.push({ status, name, detail, fix });
 const jsonOutput = process.argv.includes("--json");
-const homebrewManaged = isHomebrewManaged();
 const usesBundledVenv = !process.env.MODEL_ROUTER_LITELLM_BIN &&
-  !(TARGET === "codex" &&
-    (process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN));
+  !(process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN);
 const bundledVenvBin = path.join(
   SOURCE_ROOT,
   ".venv",
@@ -219,79 +202,34 @@ function repair() {
     process.exit(result.status ?? 1);
   }
 
-  // Homebrew owns every file under the formula prefix. Re-running npm or pip
-  // from here would mutate that prefix and fails for resources intentionally
-  // installed without pip RECORD metadata. A healthy package can still use
-  // doctor --fix to regenerate config and services, but damaged package files
-  // must be rebuilt by Homebrew itself before the service transaction starts.
-  if (homebrewManaged && usesBundledVenv) {
-    const problem = bundledVenvProblem();
-    if (problem) {
-      throw new Error(`Homebrew-managed LiteLLM is damaged (${problem}). ${dependencyFix}.`);
-    }
-  }
-  if (homebrewManaged && !jsonOutput) {
-    process.stdout.write(
-      "Homebrew manages the dependency files; run `brew reinstall codex-router` to rebuild them if needed.\n",
-    );
-  }
-
-  const legacy = detectLegacyInstallations();
-  if (legacy.unknownConflict) {
-    throw new Error(
-      `Another router owns ${legacy.config.modelCatalogJson}; repair will not overwrite it.`,
-    );
-  }
-  if (legacy.installations.length && !process.argv.includes("--migrate-known")) {
-    throw new Error(
-      `A known older router (${legacy.installations.map((item) => item.id).join(", ")}) was found. Re-run with --fix --migrate-known to snapshot and migrate it.`,
-    );
-  }
-  if (legacy.installations.length) {
-    childJson("legacy-migration.mjs", ["apply", "--yes"]);
-  }
   const repairStdio = jsonOutput ? ["inherit", "ignore", "inherit"] : "inherit";
-  // Checkout repair rebuilds dependencies unconditionally: the fingerprints
-  // an ordinary install trusts cannot see a corrupted node_modules or virtual
-  // environment. Homebrew has already validated its package-owned tree above,
-  // so its repair only regenerates configuration and services.
-  const posixArguments = homebrewManaged ? [] : ["--force-deps"];
-  const windowsArguments = [
-    "-CheckoutInstall",
-    "-Target",
-    TARGET,
-    ...(homebrewManaged ? [] : ["-ForceDeps"]),
-  ];
-  const result = process.platform === "win32"
-    ? spawnSync(
-        "powershell.exe",
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          path.join(SOURCE_ROOT, "install.ps1"),
-          ...windowsArguments,
-        ],
-        { cwd: SOURCE_ROOT, env: process.env, stdio: repairStdio },
-      )
-    : spawnSync(path.join(SOURCE_ROOT, "bin", "install"), posixArguments, {
-        cwd: SOURCE_ROOT,
-        env: process.env,
-        stdio: repairStdio,
-      });
+  // Checkout repair rebuilds dependencies unconditionally because the normal
+  // fingerprints cannot detect a corrupted node_modules or virtual environment.
+  if (process.platform !== "win32") throw new Error("Codex Router repair supports Windows only.");
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(SOURCE_ROOT, "install.ps1"),
+      "-CheckoutInstall",
+      "-ForceDeps",
+    ],
+    { cwd: SOURCE_ROOT, env: process.env, stdio: repairStdio },
+  );
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`Repair installer exited with ${result.status}.`);
   repairAntigravityOAuthPermissions();
 }
 
 if (process.argv.includes("--help")) {
-  process.stdout.write(`Usage: doctor [--json] [--fix [--migrate-known]]
+  process.stdout.write(`Usage: doctor [--json] [--fix]
 
-Checks the complete Codex Router installation without printing credentials.
+Checks the Windows Codex Router installation without printing credentials.
 --fix reinstalls generated files, configuration, and the background service.
-Known older routers are migrated only with the explicit --migrate-known flag.
 `);
   process.exit(0);
 }
@@ -314,17 +252,14 @@ add(
   "Install Node.js 24 LTS, then run ./bin/doctor --fix.",
 );
 add(
-  ["darwin", "linux", "win32"].includes(process.platform) ? "ok" : "fail",
+  process.platform === "win32" ? "ok" : "fail",
   "Platform",
   process.platform,
-  "Use macOS, Windows, or Linux with the Codex CLI.",
+  "Use Windows with the Codex app or CLI.",
 );
 
-// Everything from here to the routing-config check describes the *client* this
-// command was invoked for. The shared router plane below it is checked the
-// same way whichever integration asked, because it is the same plane.
-const codexTarget = TARGET === "codex";
-const codex = codexTarget ? findCodexBinary() : undefined;
+const codexTarget = true;
+const codex = findCodexBinary();
 if (codexTarget) {
   add(
     codex ? "ok" : "fail",
@@ -336,7 +271,7 @@ if (codexTarget) {
 // A Codex binary that cannot be spawned reads as "signed out" everywhere it is
 // probed, which silently removes every native model from the picker. Surface it
 // as its own failure instead of letting it masquerade as a logged-out session.
-const codexAuth = codexTarget ? codexAuthStatus() : undefined;
+const codexAuth = codexAuthStatus();
 if (codexTarget) {
   add(
     codexAuth.reason === "probe-failed" ? "fail" : "ok",
@@ -357,7 +292,7 @@ if (codexTarget) {
 // single unparseable key aborts the whole config load -- no models, native or
 // routed. Codex's own loader is the only authority on that, and its error
 // names the file, line, and column, so it is worth quoting verbatim.
-const configLoad = codexTarget ? codexConfigLoadError() : undefined;
+const configLoad = codexConfigLoadError();
 if (codexTarget) {
   add(
     configLoad ? "fail" : "ok",
@@ -368,63 +303,19 @@ if (codexTarget) {
       : undefined,
   );
 }
-// Gemini and DSH still carry the caller capability in their private documents.
-// Modern Codex providers obtain it from an auth command instead, so Codex's
-// config does not need to be a credential store. Legacy capability configs do.
-const privacyTarget = codexTarget
-  ? CONFIG_PATH
-  : TARGET === "gemini"
-    ? GEMINI_ENV_PATH
-    : TARGET === "cursor"
-      ? CURSOR_CATALOG_PATH
-      : TARGET === "claude"
-        ? CLAUDE_CATALOG_PATH
-        : TARGET === "openclaw"
-          ? OPENCLAW_CATALOG_PATH
-      : DSH_SETTINGS_PATH;
-const cursorAgentOnly = TARGET === "cursor" &&
-  !existsSync(CURSOR_CATALOG_PATH) && existsSync(CURSOR_LAUNCHER_PATH);
-const configMode = existsSync(privacyTarget)
-  ? statSync(privacyTarget).mode & 0o777
-  : undefined;
-const codexConfigText = codexTarget && existsSync(CONFIG_PATH)
-  ? readFileSync(CONFIG_PATH, "utf8")
-  : "";
-const codexConfigCarriesCallerCapability =
-  codexTarget && redactCallerUrl(codexConfigText) !== codexConfigText;
-const privacyRequired = !codexTarget || codexConfigCarriesCallerCapability;
-const configProtected = cursorAgentOnly || (
-  configMode !== undefined && (!privacyRequired || privateFileIsProtected(privacyTarget))
-);
+// Codex providers obtain the caller capability from an auth command, so the
+// config does not normally need to be a credential store.
+const privacyTarget = CONFIG_PATH;
+const configMode = existsSync(privacyTarget) ? statSync(privacyTarget).mode & 0o777 : undefined;
+const codexConfigText = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "";
+const privacyRequired = redactCallerUrl(codexConfigText) !== codexConfigText;
+const configProtected = configMode !== undefined && (!privacyRequired || privateFileIsProtected(privacyTarget));
 add(
   configProtected ? "ok" : "fail",
-  codexTarget
-    ? "Codex config privacy"
-    : TARGET === "gemini"
-      ? "Gemini environment privacy"
-      : TARGET === "cursor"
-        ? "Cursor router-state privacy"
-        : TARGET === "claude"
-          ? "Claude router-state privacy"
-          : TARGET === "openclaw"
-            ? "OpenClaw router-state privacy"
-      : "Harness settings privacy",
-  cursorAgentOnly
-    ? "agent-only; no Cursor App router-state document"
-    : configMode === undefined
-    ? "missing"
-    : codexTarget && !privacyRequired
-      ? "router credentials stay outside config.toml"
-      : process.platform === "win32"
-        ? configProtected
-          ? "current-user Windows ACL"
-          : "Windows ACL is broader than the current user"
-        : `mode ${configMode.toString(8)}`,
-  configProtected
-    ? undefined
-    : "Run ./bin/doctor --fix; the managed router URL contains a local caller capability.",
+  "Codex config privacy",
+  configMode === undefined ? "missing" : !privacyRequired ? "router credentials stay outside config.toml" : configProtected ? "current-user Windows ACL" : "Windows ACL is broader than the current user",
+  configProtected ? undefined : "Run .\doctor.ps1 --fix; the managed router URL contains a local caller capability.",
 );
-
 let selection = { providers: [], explicit: false };
 let requiredRoutedModels = [];
 let catalogRoutedModels = [];
@@ -433,17 +324,7 @@ let requiredModels = new Set();
 // per client: Codex's managed config block, and the harness's published route
 // snapshot. Reading Codex's config for a harness install reported every routed
 // model as unoffered on a machine that has no Codex at all.
-const routedTransportActive = codexTarget
-  ? routedCatalogConfigured(existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "")
-  : TARGET === "gemini"
-    ? existsSync(GEMINI_CATALOG_PATH)
-    : TARGET === "cursor"
-      ? existsSync(CURSOR_CATALOG_PATH) || existsSync(CURSOR_LAUNCHER_PATH)
-      : TARGET === "claude"
-        ? existsSync(CLAUDE_CATALOG_PATH) && existsSync(CLAUDE_LAUNCHER_PATH)
-        : TARGET === "openclaw"
-          ? existsSync(OPENCLAW_CATALOG_PATH)
-      : existsSync(DSH_CATALOG_PATH);
+const routedTransportActive = routedCatalogConfigured(existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "");
 // An install made with --no-provider --no-discovery is idle on purpose: the
 // selection is an explicit empty list and the discovery marker is set. That
 // state is what the operator asked for, so the empty selection and the empty
@@ -762,9 +643,7 @@ add(
   venvCheck.status,
   "LiteLLM venv runtime",
   venvCheck.detail,
-  jsonOutput && homebrewManaged
-    ? "Reinstall codex-router with its package manager to rebuild dependencies."
-    : `${dependencyFix}.`,
+  `${dependencyFix}.`,
 );
 
 const secretMode = existsSync(INTERNAL_SECRET_PATH)
@@ -807,25 +686,6 @@ add(
         : `mode ${callerSecretMode.toString(8)}`,
   "Run ./bin/doctor --fix; this capability is generated locally and is not a provider key.",
 );
-
-if (TARGET === "cursor") {
-  const cursorSecretMode = existsSync(CURSOR_PUBLIC_SECRET_PATH)
-    ? statSync(CURSOR_PUBLIC_SECRET_PATH).mode & 0o777
-    : undefined;
-  const cursorSecretValid = readableSecret(CURSOR_PUBLIC_SECRET_PATH, validCallerSecret);
-  add(
-    cursorSecretValid && privateFileIsProtected(CURSOR_PUBLIC_SECRET_PATH) ? "ok" : "fail",
-    "Cursor public edge key",
-    cursorSecretMode === undefined
-      ? "missing"
-      : !cursorSecretValid
-        ? "invalid"
-        : process.platform === "win32"
-          ? "current-user Windows ACL"
-          : `mode ${cursorSecretMode.toString(8)}`,
-    "Run ./bin/model-router cursor doctor --fix; this capability is generated locally and is not a provider key.",
-  );
-}
 
 // Tool-result retention is the one place this router keeps model-visible
 // *content* on disk rather than counts and bytes, and it has no eviction and no
@@ -1051,7 +911,7 @@ for (const provider of RUNTIME_PROVIDERS.values()) {
   }
 }
 
-if (TARGET === "codex" && existsSync(SEARCH_SIDECARS_PATH)) {
+if (existsSync(SEARCH_SIDECARS_PATH)) {
   try {
     for (const binding of readSearchSidecarState().bindings) {
       const model = MODEL_BY_SLUG.get(binding.model);
@@ -1144,293 +1004,8 @@ for (const provider of PROVIDERS.values()) {
   }
 }
 
-if (TARGET === "gemini") {
-  try {
-    const gemini = childJson("gemini-config-manager.mjs", ["status"]);
-    add(
-      gemini.installed && gemini.baseUrlManaged ? "ok" : "fail",
-      "Gemini routing config",
-      gemini.installed
-        ? gemini.baseUrlManaged
-          ? `${gemini.managedKeys.join(", ")} in ${gemini.envPath}`
-          : `${gemini.envPath} names a base URL this router does not serve (${gemini.baseUrl})`
-        : `no managed block in ${gemini.envPath}`,
-      "Run ./bin/model-router gemini enable.",
-    );
-    // A managed key assigned outside the block is the failure mode this
-    // integration has that the others do not: dotenv lets the last assignment
-    // of a key win, so a duplicate silently decides the endpoint or the
-    // credential and nothing about the file says which one is in force.
-    add(
-      gemini.documentReadable && !gemini.conflicts.length ? "ok" : "fail",
-      "Gemini environment conflicts",
-      !gemini.documentReadable
-        ? `${gemini.envPath} could not be read plainly; its managed block markers are damaged`
-        : gemini.conflicts.length
-          ? gemini.conflicts.map(({ key, line }) => `${key} (line ${line})`).join(", ")
-          : "no competing assignments",
-      `Remove or comment out the competing assignments in ${gemini.envPath}, then run ./bin/model-router gemini enable.`,
-    );
-    // The model list is served live off the router's own catalog, so it cannot
-    // drift. The published default model can: it is one slug, written once, and
-    // a default naming a model the routable set has lost puts every fresh
-    // session on a 404 before the user has typed anything.
-    const drift = childJson("gemini-config-manager.mjs", ["drift"]);
-    add(
-      drift.defaultMissing ? "warn" : "ok",
-      "Gemini default model",
-      gemini.defaultModel
-        ? drift.defaultMissing
-          ? `${gemini.defaultModel} is no longer routable`
-          : gemini.defaultModel
-        : "not set; Gemini CLI will use its own default unless --model is passed",
-      "Run ./bin/model-router gemini enable to republish.",
-    );
-  } catch (error) {
-    add(
-      "fail",
-      "Gemini routing config",
-      error instanceof Error ? error.message : String(error),
-      `Inspect ${GEMINI_ENV_PATH}, then run ./bin/model-router gemini enable.`,
-    );
-  }
-} else if (TARGET === "dsh") {
-  try {
-    const dsh = childJson("dsh-config-manager.mjs", ["status"]);
-    add(
-      dsh.routeInstalled ? "ok" : "fail",
-      "Harness routing config",
-      dsh.routeInstalled
-        ? `llm-pi-ai.providers.${dsh.route} in ${dsh.settings}`
-        : dsh.structureError || `no ${dsh.route} route in ${dsh.settings}`,
-      "Run ./bin/model-router dsh enable.",
-    );
-    add(
-      dsh.credentialInstalled ? "ok" : "fail",
-      "Harness caller credential",
-      dsh.credentialInstalled
-        ? `stored in ${dsh.credentials}`
-        : `missing from ${dsh.credentials}`,
-      "Run ./bin/model-router dsh enable; the route resolves its key by reference, so an absent value fails every request.",
-    );
-    // Drift is the failure mode this integration has that Codex's does not:
-    // the harness hot-reloads its settings document, so anything else that
-    // writes it -- the Models page, a hand edit -- takes effect at once and can
-    // leave the published route naming models the gateway no longer routes.
-    add(
-      dsh.publishedModels === dsh.routableModels ? "ok" : "warn",
-      "Harness catalog freshness",
-      `published ${dsh.publishedModels}, routable ${dsh.routableModels}`,
-      "Run ./bin/model-router dsh enable to republish.",
-    );
-  } catch (error) {
-    add(
-      "fail",
-      "Harness routing config",
-      error instanceof Error ? error.message : String(error),
-      "Inspect $DSH_HOME/settings.yaml, then run ./bin/model-router dsh enable.",
-    );
-  }
-} else if (TARGET === "cursor") {
-  try {
-    const cursor = childJson("cursor-config-manager.mjs", ["status"]);
-    add(
-      cursor.appConfigured ? "ok" : cursor.agentConfigured ? "warn" : "fail",
-      "Cursor App routing config",
-      cursor.appConfigured
-        ? `${cursor.publishedModels.length} models / ${cursor.publishedAliases.length} effort choices in ${cursor.stateDb}; ${cursor.publicBaseUrl}`
-        : cursor.agentConfigured
-          ? "Cursor App is not connected; Cursor Agent is ready locally"
-        : cursor.running
-          ? "Cursor is running with stale or incomplete router settings"
-          : `router settings are missing or stale in ${cursor.stateDb}`,
-      "Fully quit Cursor, then use Harness > Connect. The managed path asks for a hostname and configures the named tunnel itself.",
-    );
-    add(
-      cursor.launcherInstalled && cursor.cursorAgent.available ? "ok" : "fail",
-      "Cursor Agent launcher",
-      cursor.launcherInstalled
-        ? cursor.cursorAgent.available
-          ? `${cursor.launcher}; ${cursor.cursorAgent.version || cursor.cursorAgent.command}`
-          : `${cursor.launcher} is installed, but ${cursor.cursorAgent.command} is unavailable`
-        : `${cursor.launcher} is missing`,
-      "Install Cursor Agent, then use Harness > Set up & open. The local agent does not require Cursor App to quit.",
-    );
-    if (cursor.installed) {
-      const tunnel = childJson("cursor-cloudflare-tunnel.mjs", ["status"]);
-      add(
-        cursor.tunnelProvider === "cloudflare" ? (tunnel.ready ? "ok" : "fail") : "ok",
-        "Cursor App named tunnel",
-        cursor.tunnelProvider === "cloudflare"
-          ? tunnel.ready
-            ? `${tunnel.hostname}; app-only edge on 127.0.0.1:${PORTS.cursorPublic}`
-            : `managed tunnel is incomplete; next action: ${tunnel.nextAction}`
-          : "stable public endpoint is managed outside Codex Router",
-        "Use Harness > Cursor to install cloudflared, sign in once, and reconnect the hostname.",
-      );
-      const drift = childJson("cursor-config-manager.mjs", ["drift"]);
-      add(
-        !drift.missing?.length && !drift.added?.length && !drift.aliasesStale ? "ok" : "warn",
-        "Cursor App catalog freshness",
-        !drift.missing?.length && !drift.added?.length && !drift.aliasesStale
-          ? `published ${cursor.publishedModels.length} models across ${cursor.publishedAliases.length} effort choices`
-          : `missing ${drift.missing?.join(", ") || "none"}; added ${drift.added?.join(", ") || "none"}; ` +
-            `picker aliases ${drift.aliasesStale ? "need the current Cursor-safe format" : "current"}`,
-        `Fully quit Cursor, then reconnect it from Harness. Cursor owns ${CURSOR_STATE_DB_PATH} while running.`,
-      );
-    } else {
-      add(
-        "ok",
-        "Cursor Agent catalog",
-        `${cursor.routableModels.length} routed models are read live at launch`,
-        "No republish is needed for Cursor Agent.",
-      );
-    }
-  } catch (error) {
-    add(
-      "fail",
-      "Cursor routing config",
-      error instanceof Error ? error.message : String(error),
-      "Fully quit Cursor, inspect its settings database, then run ./bin/model-router cursor enable.",
-    );
-  }
-} else if (TARGET === "claude") {
-  try {
-    const claude = childJson("claude-code-config-manager.mjs", ["status"]);
-    add(
-      claude.installed && claude.baseUrlManaged ? "ok" : "fail",
-      "Claude Code routing config",
-      claude.installed
-        ? `${claude.publishedModels.length} codex_router/anthropic/... models; ${claude.baseUrl}`
-        : "router-owned launcher or model snapshot is missing",
-      "Run ./bin/model-router claude enable.",
-    );
-    add(
-      claude.claude.available ? "ok" : "fail",
-      "Claude Code CLI",
-      claude.claude.available ? claude.claude.version || claude.claude.command : "official claude CLI not found",
-      "Install Claude Code, then run ./bin/model-router claude enable.",
-    );
-    const drift = childJson("claude-code-config-manager.mjs", ["drift"]);
-    add(
-      !drift.missing?.length && !drift.added?.length ? "ok" : "warn",
-      "Claude Code catalog freshness",
-      !drift.missing?.length && !drift.added?.length
-        ? `${claude.publishedModels.length} published models match the routed catalog`
-        : `missing ${drift.missing?.join(", ") || "none"}; added ${drift.added?.join(", ") || "none"}`,
-      "Run ./bin/model-router claude enable to republish.",
-    );
-  } catch (error) {
-    add("fail", "Claude Code routing config", error instanceof Error ? error.message : String(error), "Run ./bin/model-router claude enable.");
-  }
-} else if (TARGET === "openclaw") {
-  try {
-    const openclaw = childJson("openclaw-config-manager.mjs", ["status"]);
-    add(
-      openclaw.installed && openclaw.providerInstalled && openclaw.baseUrlManaged && openclaw.configValid ? "ok" : "fail",
-      "OpenClaw routing config",
-      openclaw.configError
-        ? openclaw.configError
-        : openclaw.providerInstalled
-        ? `${openclaw.publishedModels} models in models.providers.codex-router; ${openclaw.baseUrl || "unmanaged endpoint"}`
-        : "the router-owned OpenClaw provider is missing",
-      "Run ./bin/model-router openclaw enable.",
-    );
-    add(
-      openclaw.cliInstalled ? "ok" : "fail",
-      "OpenClaw CLI",
-      openclaw.cliInstalled ? openclaw.cli || "openclaw" : "not installed",
-      "Use Harness > OpenClaw > Set up, or run ./bin/model-router openclaw enable.",
-    );
-    add(
-      openclaw.configProtected ? "ok" : "fail",
-      "OpenClaw config privacy",
-      openclaw.configProtected ? `${openclaw.config} is private` : openclaw.config || "config path unavailable",
-      "Run ./bin/model-router openclaw enable; its provider carries the local caller capability.",
-    );
-    add(
-      openclaw.catalogFresh ? "ok" : "warn",
-      "OpenClaw catalog freshness",
-      `published ${openclaw.publishedModels}, routable ${openclaw.routableModels}`,
-      "Run ./bin/model-router openclaw enable to republish.",
-    );
-  } catch (error) {
-    add(
-      "fail",
-      "OpenClaw routing config",
-      error instanceof Error ? error.message : String(error),
-      "Run ./bin/model-router openclaw enable.",
-    );
-  }
-} else try {
-  const config = childJson("config-manager.mjs", ["status"]);
-  add(
-    config.mode === "router" ? "ok" : "fail",
-    "Codex routing config",
-    config.mode,
-    "Run ./bin/enable or ./bin/doctor --fix.",
-  );
-  const providerModeOk = config.login_free
-    ? config.login_free_managed
-    : !config.provider_mode_state_present;
-  add(
-    providerModeOk ? "ok" : "fail",
-    "Codex login mode",
-    config.login_free
-      ? config.login_free_managed
-        ? "external providers; OpenAI login not required"
-        : "unmanaged custom provider"
-      : config.provider_mode_state_present
-        ? "stale provider-mode restore state"
-        : "OpenAI login available",
-    "Use the tray toggle to switch modes, or run ./bin/doctor --fix.",
-  );
-  const signedModeOk = config.signed_routing
-    ? config.signed_routing_managed
-    : !config.signed_provider_state_present;
-  add(
-    signedModeOk ? "ok" : "fail",
-    "Signed router coexistence",
-    config.signed_routing
-      ? config.signed_routing_managed
-        ? "active; native GPT and external models share the authenticated router"
-        : "active without managed restore state"
-      : config.signed_provider_state_present
-        ? `ownership drift; active provider is ${config.model_provider}`
-        : `off; active provider is ${config.model_provider}`,
-    "Use the tray toggle to restore the previous provider table before changing configuration managers.",
-  );
-} catch (error) {
-  add(
-    "fail",
-    "Codex routing config",
-    error instanceof Error ? error.message : String(error),
-    "Inspect ~/.codex/config.toml, then run ./bin/doctor --fix.",
-  );
-}
-
-const legacy = detectLegacyInstallations();
-add(
-  legacy.unknownConflict ? "fail" : legacy.installations.length ? "fail" : "ok",
-  "Router ownership",
-  legacy.unknownConflict
-    ? `unknown catalog: ${legacy.config.modelCatalogJson}`
-    : legacy.installations.length
-      ? `older router: ${legacy.installations.map((item) => item.id).join(", ")}`
-      : "no conflicting router detected",
-  legacy.installations.length
-    ? "Run ./bin/doctor --fix --migrate-known."
-    : "Disable the other router manually; Codex Router will not overwrite it.",
-);
-
-// When the tray follows the desktop apps it stops the service as soon as Codex
-// and ChatGPT are both closed. That is the resting state, not a fault, so it
-// must not read as a failure: a `fail` here sets the exit code and sends the
-// tray's Fix button down the full repair path for a router that is off on
-// purpose.
 // A ChatGPT session the router can no longer spend is not a router fault, but
-// it is why native models stop appearing in the harness -- and it is fixed by
-// opening Codex, which nothing else would tell the user.
+// it explains why native models stop appearing until Codex signs in again.
 try {
   const { nativeSessionStatus } = await import("./codex-native-session.mjs");
   const session = nativeSessionStatus();
@@ -1438,43 +1013,38 @@ try {
     const hours = session.expiresInHours;
     add(
       session.usable ? "ok" : "warn",
-      "ChatGPT session for local clients",
+      "ChatGPT session",
       session.usable
         ? `valid${hours === undefined ? "" : ` for ${hours}h`}`
         : session.present
-          ? "expired; native models are withheld from non-Codex clients until sign-in is renewed"
+          ? "expired; native model access waits for sign-in renewal"
           : "sharing is enabled, but no Codex login is available; native models are withheld",
       "Run `codex login`; the existing one-time sharing authorization will be reused.",
     );
   } else if (session.present) {
     add(
       session.usable ? "ok" : "warn",
-      "ChatGPT session for local clients",
+      "ChatGPT session",
       session.usable
-        ? "not shared; the router exposes no native GPT models to other local clients"
-        : "not shared and not currently usable; the router exposes no native GPT models to other local clients",
+        ? "available to Codex but not shared with the router"
+        : "not shared with the router and not currently usable",
       session.usable
-        ? "To authorize every local router client once, run `./bin/model-router codex chatgpt-session enable`."
-        : "Run `codex login`, then authorize every local router client once with `./bin/model-router codex chatgpt-session enable`.",
+        ? "Run `.\\model-router.ps1 codex chatgpt-session enable` to authorize the router."
+        : "Run `codex login`, then `.\\model-router.ps1 codex chatgpt-session enable`.",
     );
   }
 } catch {
   // Never let a diagnostic be the thing that fails the doctor.
 }
 
-const followsHostApps = serviceFollowsHostApps();
 let serviceLoaded = false;
-let serviceStoppedByDesign = false;
 try {
   const service = childJson("service.mjs", ["status"]);
   serviceLoaded = Boolean(service.loaded);
-  serviceStoppedByDesign = !serviceLoaded && followsHostApps;
   add(
-    serviceLoaded ? "ok" : serviceStoppedByDesign ? "warn" : "fail",
+    serviceLoaded ? "ok" : "fail",
     "Background service",
-    serviceStoppedByDesign
-      ? "stopped; following Codex (open Codex or ChatGPT to start it)"
-      : service.state || "stopped",
+    service.state || "stopped",
     "Run ./bin/enable or ./bin/doctor --fix.",
   );
 } catch (error) {
@@ -1495,13 +1065,11 @@ const degradedDependencies = Array.isArray(health.degradedPayload?.degraded)
   ? health.degradedPayload.degraded
   : [];
 add(
-  health.ok ? "ok" : serviceStoppedByDesign ? "warn" : "fail",
+  health.ok ? "ok" : "fail",
   "Router health",
   health.ok
     ? `version ${health.payload.version}`
-    : serviceStoppedByDesign
-      ? "not serving; the background service is following Codex"
-      : degradedDependencies.length
+    : degradedDependencies.length
         ? `serving on 127.0.0.1:${PORTS.router} but ${health.error}` +
           (degradedDependencies.includes("gateway")
             ? "; the service restarts a crashed gateway in place, so check the log for its restart lines"

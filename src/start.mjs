@@ -6,14 +6,12 @@ import path from "node:path";
 import { assertCallerSecret } from "./caller-auth.mjs";
 import {
   CALLER_SECRET_PATH,
-  CURSOR_CATALOG_PATH,
   INTERNAL_SECRET_PATH,
   LITELLM_CONFIG_PATH,
   MERGED_CATALOG_PATH,
   PORTS,
   SOURCE_ROOT,
   STATE_DIR,
-  TARGET,
   loopback,
 } from "./paths.mjs";
 import { SHUTDOWN_DRAIN_MS, SHUTDOWN_FLUSH_MS } from "./http-utils.mjs";
@@ -36,14 +34,12 @@ import {
 } from "./switchyard-runtime.mjs";
 import {
   antigravityOAuthStartupState,
-  antigravityOAuthStatus,
   attemptAntigravityProbePromotionAfterReadiness,
-  cursorTunnelRunSpec,
   ensureOllamaHeadless,
   MODELS,
   providerSelectionStatus,
   readLocalModelSelection,
-} from "./compat/retirement/legacy-startup-features.mjs";
+} from "./compat/retirement/issue5-start-provider-features.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever
@@ -75,9 +71,8 @@ const dependencyFix = dependencyRepairHint();
 
 const litellm =
   process.env.MODEL_ROUTER_LITELLM_BIN ||
-  (TARGET === "codex"
-    ? process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN
-    : undefined) ||
+  process.env.CODEX_ROUTER_LITELLM_BIN ||
+  process.env.KIMI_LITELLM_BIN ||
   path.join(
     SOURCE_ROOT,
     ".venv",
@@ -101,8 +96,7 @@ if (!existsSync(litellm)) {
 // MODEL_ROUTER_LITELLM_BIN=process.execPath on a fresh checkout that has no
 // venv at all.
 const usesBundledVenv = !process.env.MODEL_ROUTER_LITELLM_BIN &&
-  !(TARGET === "codex" &&
-    (process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN));
+  !(process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN);
 if (usesBundledVenv) {
   const venvPython = path.join(
     SOURCE_ROOT,
@@ -157,10 +151,9 @@ if (readLocalModelSelection().enabled.length) {
 // naming that command, not a bare connection error from a port nobody is
 // listening on.
 const devinCliRouted = MODELS.some((model) => model.provider === "devin-cli");
-const cursorInstalled = existsSync(CURSOR_CATALOG_PATH);
 
 const commonEnv = {
-  MODEL_ROUTER_TARGET: TARGET,
+  MODEL_ROUTER_TARGET: "codex",
   MODEL_ROUTER_STATE_DIR: STATE_DIR,
   MODEL_ROUTER_CALLER_KEY: callerKey,
   MODEL_ROUTER_INTERNAL_KEY: internalKey,
@@ -182,7 +175,6 @@ const commonEnv = {
   ANTIGRAVITY_OAUTH_FORWARD_BASE_URL: loopback(PORTS.antigravityOauth, "/v1"),
   MODEL_ROUTER_DEVIN_CLI_PORT: String(PORTS.devinCli),
   DEVIN_CLI_FORWARD_BASE_URL: loopback(PORTS.devinCli, "/v1"),
-  MODEL_ROUTER_CURSOR_PUBLIC_PORT: String(PORTS.cursorPublic),
   MODEL_ROUTER_QUIET: "1",
   CODEX_ROUTER_CALLER_KEY: callerKey,
   CODEX_ROUTER_INTERNAL_KEY: internalKey,
@@ -447,27 +439,6 @@ async function main() {
       );
     }
   }
-  const cursorEdge = cursorInstalled
-    ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "cursor-public-edge.mjs")])
-    : undefined;
-  if (cursorEdge) {
-    await waitForHealth(
-      "Cursor public edge",
-      loopback(PORTS.cursorPublic, "/health"),
-      {},
-      30_000,
-      "codex-router-cursor-edge",
-      cursorEdge,
-    );
-  }
-  // Cursor App sends BYOK requests from Cursor's backend, so its loopback edge
-  // is paired with a user-owned named tunnel when one has been provisioned.
-  // The generated ingress points only at port 4214 and ends in a 404 catch-all.
-  const cursorTunnelSpec = cursorEdge ? cursorTunnelRunSpec() : undefined;
-  const cursorTunnel = cursorTunnelSpec
-    ? run(cursorTunnelSpec.command, cursorTunnelSpec.args)
-    : undefined;
-
   console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
   // Only the gateway is supervised. The forwarders and the router are ours and
   // are restarted by rebuilding the whole service; the gateway is a third-party
@@ -489,8 +460,6 @@ async function main() {
     // session.
     ...(devinForwarder ? [waitForExit(devinForwarder, "Devin CLI forwarder")] : []),
     ...(switchyard ? [waitForExit(switchyard, "Switchyard")] : []),
-    ...(cursorEdge ? [waitForExit(cursorEdge, "Cursor public edge")] : []),
-    ...(cursorTunnel ? [waitForExit(cursorTunnel, "Cursor named tunnel")] : []),
     superviseGateway({
       label: "LiteLLM gateway",
       child: gateway,

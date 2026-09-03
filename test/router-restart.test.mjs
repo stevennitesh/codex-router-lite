@@ -28,11 +28,11 @@ const ABSENT_STATUS = {
 };
 const NOT_INSTALLED_STATUS = { status: 1, error: undefined, stdout: "" };
 
-test("restart instructions are exact on POSIX and Windows", () => {
-  assert.equal(routerServiceRestartCommand("linux"), "./bin/control service restart");
+test("restart instructions are Windows Codex-only", () => {
+  assert.throws(() => routerServiceRestartCommand("linux"), /Unsupported service platform/);
   assert.equal(
     routerServiceRestartCommand("win32"),
-    "node .\\src\\control.mjs service restart",
+    ".\\model-router.ps1 codex restart",
   );
 });
 

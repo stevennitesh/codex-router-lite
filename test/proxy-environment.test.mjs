@@ -174,50 +174,6 @@ test("the shared bundle carries no proxy password, from any install in history",
   assert.match(source, /history\.map\(scrub\)/);
 });
 
-test("a service rendered with no proxy in the environment still carries the recorded one", () => {
-  // The end-to-end shape of the desktop-repair bug: render the real macOS
-  // service with every proxy variable removed, and the plist must still name
-  // the proxy and the opt-in. Without both, the router dials direct and every
-  // upstream call on a proxied network times out.
-  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-proxy-render-"));
-  const stateDir = path.join(testRoot, "state");
-  mkdirSync(stateDir, { recursive: true });
-  writeFileSync(
-    path.join(stateDir, "install-manifest.json"),
-    JSON.stringify({ version: 1, current: { proxyEnvironment: { ...PROXIED } }, history: [] }),
-  );
-  const stripped = { ...process.env };
-  for (const name of [
-    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
-    "http_proxy", "https_proxy", "no_proxy", "all_proxy",
-    "NODE_USE_ENV_PROXY", "NODE_OPTIONS",
-  ]) delete stripped[name];
-
-  try {
-    const plist = execFileSync(
-      process.execPath,
-      [path.join(root, "src", "service-macos.mjs"), "render"],
-      {
-        cwd: root,
-        encoding: "utf8",
-        env: {
-          ...stripped,
-          CODEX_HOME: path.join(testRoot, "codex home"),
-          MODEL_ROUTER_STATE_DIR: stateDir,
-          CODEX_ROUTER_STATE_DIR: stateDir,
-          MODEL_ROUTER_TARGET: "codex",
-          CODEX_ROUTER_SERVICE_PLATFORM: "darwin",
-        },
-      },
-    );
-    assert.match(plist, /<key>NODE_USE_ENV_PROXY<\/key>\s*<string>1<\/string>/);
-    assert.match(plist, /<key>HTTPS_PROXY<\/key>\s*<string>http:\/\/127\.0\.0\.1:3213<\/string>/);
-    assert.match(plist, /<key>NO_PROXY<\/key>/);
-  } finally {
-    rmSync(testRoot, { recursive: true, force: true });
-  }
-});
-
 test("proxy variables the router will silently ignore are reported", () => {
   // The exact misconfiguration that produced a router 502 naming a connect
   // timeout: the service definition holds the proxy and Node never uses it.

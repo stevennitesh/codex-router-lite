@@ -124,24 +124,6 @@ if (-not (Test-Path (Join-Path $installDir "src\start.mjs"))) {
   throw "Installed router not found at $installDir."
 }
 
-function Get-TrayStatus {
-  $Output = (& node (Join-Path $installDir "src\tray-service.mjs") status | Out-String)
-  $StatusExitCode = $LASTEXITCODE
-  if ($StatusExitCode -ne 0) {
-    throw "Reading the installed tray status failed with exit code $StatusExitCode."
-  }
-  try {
-    return $Output | ConvertFrom-Json
-  } catch {
-    throw "The installed tray returned an invalid status document."
-  }
-}
-
-# Remember the operator's existing choice before any source moves. The
-# canonical installer refreshes an existing companion, but never installs one
-# on a machine that did not already have it.
-$TrayWasInstalled = (Get-TrayStatus).installed -eq $true
-
 Write-Host "Publishing $sourceDir"
 Write-Host "        to $installDir"
 
@@ -187,25 +169,12 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
   if ($CopyExitCode -gt 7) { throw "robocopy failed with exit code $CopyExitCode." }
   Update-DeployManifest $CurrentDeployFiles
 
-  $TrayStoppedForDeploy = $false
   Push-Location $installDir
   try {
-    # The packaged Control Center updates files held open by its running process.
-    # Stop an opted-in tray before either the canonical installer's best-effort
-    # refresh or the strict verification below gets a chance to rebuild it.
-    if ($TrayWasInstalled) {
-      & node (Join-Path $installDir "src\tray-service.mjs") stop
-      $TrayStopExitCode = $LASTEXITCODE
-      if ($TrayStopExitCode -ne 0) {
-        throw "Stopping the installed tray failed with exit code $TrayStopExitCode."
-      }
-      $TrayStoppedForDeploy = $true
-    }
-
     # This is the supported update transaction: dependency fingerprints,
-    # generated catalogs, client configuration, manifest, service health,
-    # managed skills, and the optional existing tray all stay in one path. It
-    # reads the current provider selection rather than replacing it.
+    # generated catalogs, Codex configuration, manifest, service health, and
+    # managed skills stay in one path. It reads the current provider selection
+    # rather than replacing it.
     & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
     if (-not $?) { throw "The installed Codex Router update failed." }
 
@@ -214,53 +183,7 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
     if ($DoctorExitCode -ne 0) {
       throw "Codex Router doctor failed with exit code $DoctorExitCode."
     }
-
-    if ($TrayWasInstalled) {
-      # install.ps1 deliberately treats the optional companion as best effort.
-      # This explicit working-tree deployment is stricter: re-run the installed
-      # wrapper, propagate a failed build/registration, then prove Task
-      # Scheduler points at the artifact selected by that wrapper.
-      $SavedRouterTarget = $env:MODEL_ROUTER_TARGET
-      try {
-        $env:MODEL_ROUTER_TARGET = "codex"
-        & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $installDir "codex-router.ps1") tray install --preserve-window
-        $TrayInstallExitCode = $LASTEXITCODE
-        if ($TrayInstallExitCode -ne 0) {
-          throw "Refreshing the installed tray failed with exit code $TrayInstallExitCode."
-        }
-      } finally {
-        $env:MODEL_ROUTER_TARGET = $SavedRouterTarget
-      }
-
-      $TrayStatus = Get-TrayStatus
-      if (-not $TrayStatus.installed -or -not $TrayStatus.loaded -or -not $TrayStatus.appPresent) {
-        throw "The refreshed tray is not installed, running, and present on disk."
-      }
-      $ExpectedTrayPath = Join-Path $installDir "apps\control-center\release\win-unpacked\Codex Router.exe"
-      $RegisteredTrayPath = [IO.Path]::GetFullPath([string]$TrayStatus.path)
-      if (-not [string]::Equals(
-        $RegisteredTrayPath,
-        [IO.Path]::GetFullPath($ExpectedTrayPath),
-        [StringComparison]::OrdinalIgnoreCase
-      )) {
-        throw "The refreshed tray registered an unexpected executable: $RegisteredTrayPath"
-      }
-      if ([string]$TrayStatus.argument -ne "--tray-only") {
-        throw "The refreshed tray registered unexpected arguments: $($TrayStatus.argument)"
-      }
-      $TrayStoppedForDeploy = $false
-    }
   } finally {
-    if ($TrayWasInstalled -and $TrayStoppedForDeploy) {
-      try {
-        & node (Join-Path $installDir "src\tray-service.mjs") start
-        if ($LASTEXITCODE -ne 0) {
-          Write-Warning "Deployment failed and the previous tray could not be restarted (exit $LASTEXITCODE)."
-        }
-      } catch {
-        Write-Warning "Deployment failed and the previous tray could not be restarted: $($_.Exception.Message)"
-      }
-    }
     Pop-Location
   }
   Write-Host "Codex Router published, installed, and verified."

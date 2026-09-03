@@ -38,7 +38,6 @@ const {
 } = await import("../src/direct-responses-provider.mjs");
 const { modelIds } = await import("../src/model-discovery.mjs");
 const { MODEL_BY_SLUG, PROVIDERS } = await import("../src/model-registry.mjs");
-const { routedClientModels } = await import("../src/routed-client-models.mjs");
 const { userModelIdentity } = await import("../src/user-models.mjs");
 
 test("ChatGPT Web is an explicit Codex-only direct Responses provider", () => {
@@ -54,7 +53,6 @@ test("ChatGPT Web is an explicit Codex-only direct Responses provider", () => {
     "chatgpt-web/pro",
   );
 });
-
 test("ChatGPT Web discovery accepts a Codex catalog and withholds native rows", () => {
   const payload = {
     models: [
@@ -101,8 +99,4 @@ test("direct Responses requests retain Codex authority but strip account credent
     )),
     { model: "chatgpt-web/light", client_metadata: { authority: "kept" } },
   );
-});
-
-test("non-Codex client publication omits ChatGPT Web routes", () => {
-  assert.ok(!routedClientModels().models.some((model) => model.slug.startsWith("chatgpt-web/")));
 });

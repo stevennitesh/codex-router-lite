@@ -3,19 +3,18 @@
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "Extensible local model router for Codex and Cursor",
+  "description": "Windows compatibility router for native Codex, OpenRouter GLM-5.3-Flash, and Switchyard",
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "check": "node scripts-check.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node scripts/run-retained-tests.mjs",
+    "test:fast": "node scripts/run-retained-tests.mjs",
+    "test:full": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "proper-lockfile": "4.1.2",
     "undici": "8.10.1"
-  },
-  "devDependencies": {
-    "playwright": "1.62.1"
   }
 }

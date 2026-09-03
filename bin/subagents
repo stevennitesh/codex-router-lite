@@ -1,9 +1,0 @@
-#!/bin/sh
-set -eu
-
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ "${MODEL_ROUTER_TARGET:-codex}" != "codex" ]; then
-  echo "Native subagent certification is supported only for the Codex target." >&2
-  exit 2
-fi
-exec node "$repo_dir/src/control.mjs" subagents "$@"

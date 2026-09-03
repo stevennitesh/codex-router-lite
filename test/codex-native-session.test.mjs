@@ -35,7 +35,7 @@ const {
 } = await import("../src/codex-native-session.mjs");
 const { NATIVE_SESSION_CONSENT_PATH } = await import("../src/paths.mjs");
 
-const { dshNativeModels } = await import("../src/dsh-catalog.mjs");
+const { nativeClientModels } = await import("../src/native-client-models.mjs");
 
 const ACCESS = "sk-test-access-token";
 const ACCOUNT = "acct-0123456789";
@@ -214,7 +214,7 @@ test("an unrecognized consent marker fails closed", () => {
 });
 
 test("native models map for the harness, minus Codex's internal variants", () => {
-  const mapped = dshNativeModels([
+  const mapped = nativeClientModels([
     {
       slug: "gpt-5.6-sol",
       display_name: "GPT-5.6-Sol",
@@ -243,9 +243,9 @@ test("native models map for the harness, minus Codex's internal variants", () =>
 });
 
 test("an empty or malformed native catalog publishes nothing", () => {
-  assert.deepEqual(dshNativeModels(undefined), []);
-  assert.deepEqual(dshNativeModels([]), []);
-  assert.deepEqual(dshNativeModels([{ display_name: "no slug" }]), []);
+  assert.deepEqual(nativeClientModels(undefined), []);
+  assert.deepEqual(nativeClientModels([]), []);
+  assert.deepEqual(nativeClientModels([{ display_name: "no slug" }]), []);
 });
 
 // The bug this file exists to prevent a repeat of: the first version of the

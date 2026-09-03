@@ -17,7 +17,6 @@ import { protectPrivateFile } from "./file-security.mjs";
 import { normalizeGenericProviderId } from "./generic-provider-identity.mjs";
 import {
   GENERIC_PROVIDER_CREDENTIALS_DIR,
-  LEGACY_STATE_DIRS,
   ROUTER_PLANE_TARGET,
   STATE_DIR,
   TARGET,
@@ -53,10 +52,7 @@ export function credentialPaths(provider) {
   // nothing for a support bundle to redact.
   if (!provider.credential) return [];
   const names = [provider.credential.file, ...(provider.credential.legacyFiles || [])];
-  const candidates = names.flatMap((name) => [
-    path.join(STATE_DIR, name),
-    ...LEGACY_STATE_DIRS.map((directory) => path.join(directory, name)),
-  ]);
+  const candidates = names.map((name) => path.join(STATE_DIR, name));
   return [...new Set(candidates)];
 }
 

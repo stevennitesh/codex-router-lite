@@ -3,14 +3,13 @@ import { closeSync, openSync, readSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { detectLegacyInstallations, applyKnownMigrations, rollbackLatestMigration } from "./legacy-migration.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
 import { antigravityOAuthStatus } from "./antigravity-oauth-status.mjs";
 import { LISTED_MODELS, PROVIDERS, providerNeedsNoKey } from "./model-registry.mjs";
 import { ensureNodeDependencies, isNodeDependencyFailure } from "./node-dependency-install.mjs";
 import { effectiveVisibleModels, setModelSelection } from "./model-picker-state.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
-import { SOURCE_ROOT, TARGET } from "./paths.mjs";
+import { SOURCE_ROOT } from "./paths.mjs";
 import { effectiveProviderCredentialStatus } from "./provider-api-key-routing.mjs";
 import {
   installOauthCli,
@@ -32,7 +31,6 @@ import {
   writeProviderSelection,
 } from "./provider-selection.mjs";
 import { writeDiscoveryMode } from "./discovery-mode.mjs";
-import { trayDecision, traySetupError } from "./tray-install.mjs";
 import { resolveVisionEngine } from "./vision-bridge.mjs";
 import {
   readVisionBridgeSettings,
@@ -45,24 +43,18 @@ import {
 
 const args = process.argv.slice(2);
 const guided = args.includes("--guided");
-const migrateKnown = args.includes("--migrate-known");
 const adoptNativeCatalog = args.includes("--adopt-native-catalog");
 const runSmoke = args.includes("--smoke-test");
 const selectionOnly = args.includes("--selection-only");
-const withTray = args.includes("--with-tray");
-const noTray = args.includes("--no-tray");
 const noProvider = args.includes("--no-provider");
 const noDiscovery = args.includes("--no-discovery");
 
 const flagOptions = new Set([
   "--guided",
   "--auto",
-  "--migrate-known",
   "--adopt-native-catalog",
   "--smoke-test",
   "--selection-only",
-  "--with-tray",
-  "--no-tray",
   "--no-provider",
   "--no-discovery",
   "--help",
@@ -70,11 +62,9 @@ const flagOptions = new Set([
 let setupArgumentError;
 for (let index = 0; index < args.length; index += 1) {
   const argument = args[index];
-  if (argument === "--providers" || argument === "--public-url" || argument === "--hostname") {
+    if (argument === "--providers") {
     if (!args[index + 1] || args[index + 1].startsWith("--")) {
-      setupArgumentError = argument === "--providers"
-        ? "--providers requires a comma-separated value."
-        : `${argument} requires a value.`;
+      setupArgumentError = "--providers requires a comma-separated value.";
       break;
     }
     index += 1;
@@ -82,10 +72,6 @@ for (let index = 0; index < args.length; index += 1) {
     setupArgumentError = `Unknown setup option: ${argument}`;
     break;
   }
-}
-if (!setupArgumentError && migrateKnown && adoptNativeCatalog) {
-  setupArgumentError =
-    "--adopt-native-catalog cannot be combined with --migrate-known.";
 }
 // An idle install is exactly "no providers": naming providers, answering the
 // guided picker, or pasting keys alongside it is a contradiction to report,
@@ -104,26 +90,8 @@ if (!setupArgumentError && noDiscovery && !noProvider) {
 // before the marker file exists -- and a re-run without the flag must clear a
 // stale environment value just as writeDiscoveryMode clears the marker.
 process.env.CODEX_ROUTER_NO_DISCOVERY = noDiscovery ? "1" : "0";
-// Both act on Codex's own configuration: one replaces an older router's
-// managed block, the other adopts the ChatGPT-plan catalog Codex reads. The
-// harness integration is one settings section and has neither.
-if (!setupArgumentError && TARGET !== "codex" && (migrateKnown || adoptNativeCatalog)) {
-  setupArgumentError = `${
-    migrateKnown ? "--migrate-known" : "--adopt-native-catalog"
-  } applies only to the Codex target.`;
-}
-if (!setupArgumentError && TARGET !== "cursor" && (args.includes("--public-url") || args.includes("--hostname"))) {
-  setupArgumentError = "--public-url and --hostname apply only to the Cursor target.";
-}
-if (!setupArgumentError && args.includes("--public-url") && args.includes("--hostname")) {
-  setupArgumentError = "Use either --hostname or --public-url, not both.";
-}
-if (!setupArgumentError) {
-  setupArgumentError = traySetupError({
-    packageManager: process.env.CODEX_ROUTER_PACKAGE_MANAGER,
-    withTray,
-    noTray,
-  });
+if (!setupArgumentError && process.platform !== "win32") {
+  setupArgumentError = "Codex Router setup supports Windows only.";
 }
 
 function option(name) {
@@ -153,17 +121,12 @@ if (args.includes("--help")) {
 Guided, credential-safe Codex Router setup.
 
 Options:
-  --guided             Ask provider and migration questions interactively
+  --guided             Ask provider and model questions interactively
   --auto               Use already configured credentials (default)
   --providers LIST     Comma-separated provider ids
-  --hostname HOST      Public hostname for a managed Cloudflare named tunnel
-  --public-url URL     Existing stable HTTPS tunnel origin for Cursor App
-  --migrate-known      Safely migrate recognized earlier Codex Router installs
   --adopt-native-catalog  Use an existing user-owned native Codex catalog as the merge base
   --smoke-test         Make one small live request per enabled provider
   --selection-only     Save provider selection without installing (development)
-  --with-tray          Also build and launch the desktop companion app (source installs only)
-  --no-tray            Never offer the desktop companion app
   --no-provider        Install idle, with no provider selected or configured
   --no-discovery       With --no-provider: never read credentials, the
                        Keychain, or other CLIs' sessions; refuse traffic locally
@@ -337,10 +300,10 @@ function oauthSetupHint(provider) {
   if (provider.id === "grok-oauth") return "run `grok login --oauth`";
   if (provider.id === "antigravity-oauth") {
     const command = process.platform === "win32"
-      ? ".\\codex-router.ps1 providers login antigravity-oauth"
+      ? ".\\model-router.ps1 providers login antigravity-oauth"
       : "./bin/providers login antigravity-oauth";
     const probe = process.platform === "win32"
-      ? ".\\codex-router.ps1 providers probe antigravity-oauth --live --yes"
+      ? ".\\model-router.ps1 providers probe antigravity-oauth --live --yes"
       : "./bin/providers probe antigravity-oauth --live --yes";
     return `run \`${command}\`, then explicitly run \`${probe}\` after reviewing its quota cost`;
   }
@@ -388,7 +351,7 @@ async function configureProvider(provider) {
       }
       if (!status.configured) {
         const probe = process.platform === "win32"
-          ? ".\\codex-router.ps1 providers probe antigravity-oauth --live --yes"
+          ? ".\\model-router.ps1 providers probe antigravity-oauth --live --yes"
           : "./bin/providers probe antigravity-oauth --live --yes";
         throw incomplete(
           `${provider.displayName} is signed in but remains disabled until the explicit live compatibility test succeeds; run \`${probe}\` after reviewing its quota cost.`,
@@ -424,76 +387,11 @@ async function configureProvider(provider) {
   }
 }
 
-// Best-effort: the router install has already succeeded, so a companion-app
-// build failure warns and continues instead of failing the whole setup.
-function installTray() {
-  try {
-    if (process.platform === "darwin") {
-      try {
-        execFileSync("xcrun", ["--find", "swift"], { stdio: "ignore" });
-      } catch {
-        process.stdout.write(
-          "The Swift toolchain is missing; run `xcode-select --install`, then `./bin/model-router-tray` to add the companion later.\n",
-        );
-        return;
-      }
-      // One canonical transaction stages the signed bundle, drains any
-      // running embedded Control Center, swaps atomically, stamps the build,
-      // and hands the native host to launchd.
-      run(path.join(SOURCE_ROOT, "bin", "model-router-tray"), []);
-      process.stdout.write("Codex Router installed with its native menu-bar tray and Control Center.\n");
-    } else if (process.platform === "win32") {
-      // Windows had no path through here at all: the tray was built by hand or
-      // not at all, and nothing brought it back after a reboot. `tray install`
-      // builds when the sources moved, stamps the build, and registers the
-      // logon task that starts it now and at every logon -- the same entry
-      // point a user runs by hand, so the sequence exists once instead of
-      // drifting between the installer and the CLI.
-      run("powershell.exe", [
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(SOURCE_ROOT, "codex-router.ps1"),
-        "tray",
-        "install",
-      ]);
-    } else {
-      run(path.join(SOURCE_ROOT, "bin", "model-router-tray"), []);
-      process.stdout.write("Desktop companion built and launched.\n");
-    }
-  } catch (error) {
-    process.stdout.write(
-      `Desktop companion install did not finish: ${error instanceof Error ? error.message : String(error)}\n` +
-        (process.platform === "darwin"
-          ? "Recent macOS SDKs need the full Xcode app (not only the Command Line Tools) to build the menu-bar companion's SwiftUI macros.\n"
-          : "") +
-        (process.platform === "win32"
-          ? "The router itself is installed; retry later with .\\codex-router.ps1 tray.\n"
-          : "The router itself is installed; retry later with ./bin/model-router-tray.\n") +
-        // Nothing to build and nothing to download, so it is the one suggestion
-        // that cannot fail for the same reason this just did.
-        "The companion also runs in a browser: .\\codex-router.ps1 panel (./bin/panel on macOS and Linux).\n",
-    );
-  }
-}
-
 async function main() {
   if (setupArgumentError) throw incomplete(setupArgumentError);
-  const legacy = detectLegacyInstallations();
-  if (
-    legacy.unknownConflict &&
-    !(adoptNativeCatalog && legacy.adoptableNativeCatalog)
-  ) {
-    throw incomplete(
-      `An unknown model router owns ${legacy.config.modelCatalogJson}; automatic setup will not replace it.`,
-    );
-  }
   const stepTitles = ["Choose providers"];
   if (guided) stepTitles.push("Choose models");
   stepTitles.push("Connect credentials");
-  if (legacy.installations.length) stepTitles.push("Migrate older router");
   stepTitles.push("Review and install");
   let stepIndex = 0;
   const nextStep = (title) => {
@@ -598,67 +496,21 @@ async function main() {
           )?.slug || null,
       };
 
-  let migration;
-  if (legacy.installations.length) {
-    nextStep("Migrate older router");
-    const approved = migrateKnown || (guided && confirm(
-      `Safely migrate ${legacy.installations.map((item) => item.id).join(", ")} and keep a rollback snapshot?`,
-    ));
-    if (!approved) {
-      throw incomplete("A recognized older router must be migrated before installation. Re-run with --migrate-known.");
-    }
-    migration = applyKnownMigrations();
-  }
-
   if (selectionOnly) {
     process.stdout.write(
-      `${JSON.stringify({ providers, ...(guided ? { models: selectedModelSlugs } : {}), migration }, null, 2)}\n`,
+      `${JSON.stringify({ providers, ...(guided ? { models: selectedModelSlugs } : {}) }, null, 2)}\n`,
     );
     return;
   }
 
-  const cursorTarget = TARGET === "cursor";
-  let cursorHostname = option("--hostname") || process.env.MODEL_ROUTER_CURSOR_TUNNEL_HOSTNAME;
-  let cursorPublicUrl = option("--public-url") || process.env.MODEL_ROUTER_CURSOR_PUBLIC_BASE_URL;
-  if (cursorTarget && guided && !cursorHostname && !cursorPublicUrl) {
-    cursorHostname = promptLine(
-      "Cloudflare hostname for Cursor App (for example cursor-router.example.com)",
-    );
-  }
-  if (cursorTarget && !cursorHostname && !cursorPublicUrl) {
-    throw incomplete(
-      "Cursor App requires --hostname for a managed named tunnel, or --public-url for an existing stable tunnel; retail Cursor's BYOK backend cannot reach loopback addresses.",
-    );
-  }
-  if (cursorHostname) process.env.MODEL_ROUTER_CURSOR_TUNNEL_HOSTNAME = cursorHostname;
-  if (cursorPublicUrl) process.env.MODEL_ROUTER_CURSOR_PUBLIC_BASE_URL = cursorPublicUrl;
-
   nextStep("Review and install");
-  const dshTarget = TARGET === "dsh";
-  // Like the harness, Gemini CLI has no native catalog to adopt: that list is
-  // the ChatGPT-plan model set Codex publishes for itself.
-  const geminiTarget = TARGET === "gemini";
-  const claudeTarget = TARGET === "claude";
-  const openclawTarget = TARGET === "openclaw";
   if (guided) {
     process.stdout.write(
       `\nReady to install:\n` +
         `  Providers: ${providers.length ? providers.join(", ") : "none (idle install)"}\n` +
         `  Models: ${selectedModelSlugs.length ? selectedModelSlugs.join(", ") : "none"}\n` +
-        `  Migration: ${migration ? "recognized older router (rollback snapshot kept)" : "none needed"}\n` +
-        (dshTarget
-          ? `  Changes: per-user background service and one provider route in the harness settings document\n`
-          : geminiTarget
-            ? `  Changes: per-user background service and one managed block in Gemini CLI's environment file\n`
-            : cursorTarget
-              ? `  Changes: per-user background service, Cursor Agent launcher, and Cursor App model settings\n` +
-                `  Public edge: ${cursorPublicUrl} -> 127.0.0.1:${(await import("./paths.mjs")).PORTS.cursorPublic}\n`
-            : claudeTarget
-              ? `  Changes: per-user background service and a router-owned claude-router launcher; Claude settings stay untouched\n`
-            : openclawTarget
-              ? `  Changes: installs OpenClaw when missing, starts the shared background service, and owns only models.providers.codex-router\n`
-            : `  Native catalog: ${adoptNativeCatalog ? "adopt existing user catalog" : "capture from Codex"}\n` +
-              `  Changes: per-user background service and the managed Codex config block\n`),
+        `  Native catalog: ${adoptNativeCatalog ? "adopt existing user catalog" : "capture from Codex"}\n` +
+        `  Changes: Windows per-user background service and the managed Codex config block\n`,
     );
     if (!confirm("Proceed?")) {
       throw incomplete("Setup was cancelled before installing the service.");
@@ -674,43 +526,15 @@ async function main() {
     setModelSelection(modelChoices.map((model) => model.slug), selectedModelSlugs);
   }
 
-  try {
-    if (process.platform === "win32") {
-      run("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(SOURCE_ROOT, "install.ps1"),
-        "-CheckoutInstall",
-        "-Target",
-        TARGET,
-        ...(adoptNativeCatalog ? ["-AdoptNativeCatalog"] : []),
-      ]);
-    } else {
-      run(
-        path.join(SOURCE_ROOT, "bin", "install"),
-        adoptNativeCatalog ? ["--adopt-native-catalog"] : [],
-      );
-    }
-  } catch (error) {
-    if (migration?.migrated) rollbackLatestMigration();
-    throw error;
-  }
-
-  const trayStep = trayDecision({
-    platform: process.platform,
-    withTray,
-    noTray,
-    guided,
-    packageManager: process.env.CODEX_ROUTER_PACKAGE_MANAGER,
-  });
-  if (trayStep !== "skip") {
-    const wanted =
-      trayStep === "install" ||
-      confirm("Install the desktop companion app (menu-bar usage meters and provider switcher)?");
-    if (wanted) installTray();
-  }
+  run("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    path.join(SOURCE_ROOT, "install.ps1"),
+    "-CheckoutInstall",
+    ...(adoptNativeCatalog ? ["-AdoptNativeCatalog"] : []),
+  ]);
 
   if (runSmoke || (guided && confirm("Run one small live request per enabled provider?", false))) {
     run(process.execPath, [path.join(SOURCE_ROOT, "src", "smoke-test.mjs"), "--yes"]);
@@ -720,26 +544,7 @@ async function main() {
     ? providers.join(", ")
     : "no providers (idle install; traffic gets a local error until one is enabled)";
   process.stdout.write(
-    dshTarget
-      ? `\nDeepSeek Harness is ready with: ${providerSummary}\n` +
-        `It reloads its settings document on the next request, so there is nothing to restart.\n` +
-        `For native GPT models, run \`codex login\`, then \`./bin/model-router codex chatgpt-session enable\` once; that authorization is shared by every local client.\n`
-      : geminiTarget
-        ? `\nGemini CLI is ready with: ${providerSummary}\n` +
-          `It reads its environment at startup, so the next \`gemini\` run picks this up.\n` +
-          `If it asks how to authenticate, choose "Use Gemini API key" once -- the key is this router's local caller capability.\n` +
-          `For native GPT models, run \`codex login\`, then \`./bin/model-router codex chatgpt-session enable\` once; that authorization is shared by every local client.\n`
-        : cursorTarget
-          ? `\nCursor is ready with: ${providerSummary}\n` +
-            `Run \`cursor-router-agent --list-models\` for the CLI. Fully quit and reopen Cursor App, then choose a \`codex_router/.../EFFORT\` model.\n` +
-            `The HTTPS tunnel must keep forwarding to 127.0.0.1:${(await import("./paths.mjs")).PORTS.cursorPublic}.\n`
-        : claudeTarget
-          ? `\nClaude Code is ready with: ${providerSummary}\n` +
-            `Run \`claude-router\`, then choose any \`codex_router/anthropic/...\` model from /model.\n`
-        : openclawTarget
-          ? `\nOpenClaw is ready with: ${providerSummary}\n` +
-            `Run \`openclaw\`; every routed model is available under the \`codex-router\` provider.\n`
-        : `\nCodex Router is ready with: ${providerSummary}\nFully quit Codex, reopen it, and start a new task.\n`,
+    `\nCodex Router is ready with: ${providerSummary}\nFully quit Codex, reopen it, and start a new task.\n`,
   );
   if (visionBridge?.enabled && visionBridge.engine) {
     process.stdout.write(

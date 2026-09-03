@@ -47,9 +47,10 @@ function serviceStatusDeadline(deadline, env) {
 }
 
 export function routerServiceRestartCommand(platform = process.platform) {
-  return platform === "win32"
-    ? "node .\\src\\control.mjs service restart"
-    : "./bin/control service restart";
+  if (platform !== "win32") {
+    throw new Error(`Unsupported service platform: ${platform}`);
+  }
+  return ".\\model-router.ps1 codex restart";
 }
 
 function assertOperationActive(signal, deadline) {

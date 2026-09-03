@@ -6,9 +6,8 @@ you are performing.
 
 The retained product is Windows Codex app and native Codex compatibility,
 `openrouter/glm-5.3-flash`, `switchyard/auto` over native Codex models, and
-exact-route subagents v2. Treat other clients, providers, platforms, and Router
-UIs as legacy. Touch them only to isolate or remove dependencies, preserve a
-required migration, or prevent regressions in the retained product.
+exact-route subagents v2. Other clients, providers, platforms, Router UIs, and
+migration systems are outside the product and must not return.
 
 ## Before changing anything
 
@@ -19,12 +18,6 @@ required migration, or prevent regressions in the retained product.
 
 ## Route to the detailed runbook
 
-- Legacy client, API/OAuth relay, response translation, or retry removal work
-  involving DeepSeek Harness, Gemini CLI, Cursor, Claude Code, or OpenClaw:
-  read the corresponding outcome, procedure, and write-boundary sections in
-  [`docs/agents/router-maintenance.md`](docs/agents/router-maintenance.md).
-- Legacy provider, model, vision, embeddings, anonymous endpoint, or local-model
-  removal work: read only the matching section in that runbook.
 - Codex native catalog, app functions/tools, namespace relay, installed-version
   drift, Windows Codex app, OpenRouter, or GLM-5.3-Flash work: read
   [`docs/agents/compatibility-maintenance.md`](docs/agents/compatibility-maintenance.md).
@@ -32,10 +25,6 @@ required migration, or prevent regressions in the retained product.
   compatibility guide, read [`config/switchyard/README.md`](config/switchyard/README.md).
   Its checked-in patch, route template, and `source.lock` are authoritative;
   the installed runtime is generated output.
-- Control Center, desktop tray, macOS, or Linux removal and migration work: read
-  [`apps/control-center/README.md`](apps/control-center/README.md) for the
-  cross-platform app and [`docs/MACOS-TRAY.md`](docs/MACOS-TRAY.md) only for the
-  native macOS host.
 - Service, gateway, update, rollback, or installer work: read the matching
   lifecycle and installation sections in the detailed runbook before touching
   a live runtime.
@@ -59,8 +48,10 @@ required migration, or prevent regressions in the retained product.
 
 - JavaScript syntax, retained-boundary enforcement, and v2 application
   validation: `npm run check`.
-- Retained compatibility suite: `node scripts/run-retained-tests.mjs`.
-- Full Node test suite: `npm test`.
+- Fast retained-product suite: `npm test`.
+- Exhaustive certification suite: `npm run test:full`. Reserve it for release
+  certification or changes to the recovery tests themselves; several
+  cross-process crash simulations take minutes on Windows.
 
 ## Common implementation contract
 
@@ -74,9 +65,8 @@ required migration, or prevent regressions in the retained product.
 - Keep one active runtime. Build third-party sources in a disposable checkout;
   retain only the reproducible pin, canonical patch, and active deployed
   artifacts described by their integration runbook.
-- Never issue a standalone Router stop during maintenance. On Windows use
-  `restart-codex-router.ps1 -InstallDir <intended-install-root>`; elsewhere use
-  the guarded service restart named by `src/router-restart.mjs`. A deployment
+- Never issue a standalone Router stop during maintenance. Use
+  `restart-codex-router.ps1 -InstallDir <intended-install-root>`. A deployment
   transaction must restore and start the previous runtime on failure.
 - Keep secrets out of source, command output, logs, fixtures, and support
   bundles. Use the protected stores and generated placeholders described by the

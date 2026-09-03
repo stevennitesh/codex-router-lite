@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -35,33 +35,21 @@ const PINNED_VERSIONS = Object.fromEntries(
     return [name, version];
   }),
 );
-const TEST_PLATFORM = process.platform === "win32" ? "win32" : "darwin";
+const TEST_PLATFORM = "win32";
 const healthyRuntime = () => undefined;
 
 function sitePackages(root) {
-  return TEST_PLATFORM === "win32"
-    ? path.join(root, ".venv", "Lib", "site-packages")
-    : path.join(root, ".venv", "lib", "python3.12", "site-packages");
+  return path.join(root, ".venv", "Lib", "site-packages");
 }
 
 function installVenv(root, versions = PINNED_VERSIONS) {
   const site = sitePackages(root);
   mkdirSync(site, { recursive: true });
-  const pythonBin = TEST_PLATFORM === "win32" ? "Scripts" : "bin";
-  const pythonName = TEST_PLATFORM === "win32" ? "python.exe" : "python";
+  const pythonBin = "Scripts";
+  const pythonName = "python.exe";
   mkdirSync(path.join(root, ".venv", pythonBin), { recursive: true });
-  // A copied macOS Node binary loses its adjacent libnode dylib. Use a
-  // wrapper instead of a symlink: the broken-runtime test deliberately
-  // rewrites this fixture, and writing through a symlink would overwrite the
-  // real Node executable that is running the test suite.
   const python = path.join(root, ".venv", pythonBin, pythonName);
-  if (TEST_PLATFORM === "win32") {
-    copyFileSync(process.execPath, python);
-  } else {
-    const quotedExecPath = `'${process.execPath.replaceAll("'", "'\\''")}'`;
-    writeFileSync(python, `#!/bin/sh\nexec ${quotedExecPath} "$@"\n`, "utf8");
-    chmodSync(python, 0o755);
-  }
+  copyFileSync(process.execPath, python);
   writeFileSync(path.join(root, ".venv", "pyvenv.cfg"), "version_info = 3.12\n");
   for (const [name, version] of Object.entries(versions)) {
     mkdirSync(path.join(site, `${name}-${version}.dist-info`), { recursive: true });
@@ -157,9 +145,7 @@ test("a virtual environment whose interpreter home was cleared reinstalls", () =
   try {
     installVenv(root);
     recordStep("python-deps", { root });
-    // macOS wipes /private/tmp; an installer that recorded a temporary Python
-    // as the venv home leaves the interpreter dangling after reboot. The stamp
-    // must not vouch for a venv that cannot run.
+    // The stamp must not vouch for a venv whose recorded interpreter vanished.
     writeFileSync(
       path.join(root, ".venv", "pyvenv.cfg"),
       "home = /private/tmp/codex-router-python-bin\nversion = 3.12.12\n",
@@ -196,8 +182,8 @@ test("a venv launcher that cannot start Python reinstalls", () => {
       path.join(
         root,
         ".venv",
-        TEST_PLATFORM === "win32" ? "Scripts" : "bin",
-        TEST_PLATFORM === "win32" ? "python.exe" : "python",
+        "Scripts",
+        "python.exe",
       ),
     );
   } finally {
@@ -223,7 +209,7 @@ test("distribution lookup normalizes names and ignores extras", () => {
 // The pins themselves live in requirements/python.txt now; what the installers
 // have to agree on is that they both install that lock with hash checking.
 // test/python-lock.test.mjs covers the lock's own agreement with these pins.
-test("both installers install the Python tree from the hashed lock", () => {
+test("the Windows installer installs the Python tree from the hashed lock", () => {
   assert.equal(PYTHON_REQUIREMENTS.length, 2);
   assert.deepEqual(installerRequirementDrift(), []);
 });

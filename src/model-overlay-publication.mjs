@@ -191,9 +191,7 @@ export async function rebuildModelOverlayPublication({
   const write = writeGateway ||
     (await import("./litellm-config.mjs")).writeLiteLlmConfig;
   const refresh = refreshTargets ||
-    (await import(
-      "./compat/retirement/shared-legacy-model-overlay-publication-target-integration.mjs"
-    )).refreshTargetPickerIfInstalled;
+    (await import("./target-integration.mjs")).refreshTargetPickerIfInstalled;
 
   const operationDeadline = overlayPublicationDeadline(deadline);
   remainingOperationMs(operationDeadline, signal);
@@ -206,7 +204,7 @@ export async function rebuildModelOverlayPublication({
 /**
  * Publish from a new Node process so the registry observes the overlay that was
  * just committed to disk. The child also provides one fail-closed ordering
- * point: the gateway is written before any Codex, DSH, or Gemini publication.
+ * point: the gateway is written before the Codex catalog publication.
  */
 export async function publishModelOverlayFresh({
   run = runProcessTree,

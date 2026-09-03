@@ -62,13 +62,13 @@ function isolatedCheckout(testRoot) {
 
 function expectedLoginCommand() {
   return process.platform === "win32"
-    ? ".\\codex-router.ps1 providers login antigravity-oauth"
+    ? ".\\model-router.ps1 providers login antigravity-oauth"
     : "./bin/providers login antigravity-oauth";
 }
 
 function expectedProbeCommand() {
   return process.platform === "win32"
-    ? ".\\codex-router.ps1 providers probe antigravity-oauth --live --yes"
+    ? ".\\model-router.ps1 providers probe antigravity-oauth --live --yes"
     : "./bin/providers probe antigravity-oauth --live --yes";
 }
 
@@ -218,57 +218,4 @@ test("the provider runbook forbids vendor credential reuse and impersonation", (
   assert.match(contents, /OS-assigned port/i);
   assert.match(contents, /truthfully\s+as Codex Router/i);
   assert.match(contents, /probe antigravity-oauth --live --yes/);
-});
-
-test("desktop onboarding keeps the Antigravity probe explicit on every platform", () => {
-  const ipc = readFileSync(path.join(root, "apps", "control-center", "electron", "ipc.mjs"), "utf8");
-  const page = readFileSync(
-    path.join(root, "apps", "control-center", "src", "pages", "ModelsPage.tsx"),
-    "utf8",
-  );
-  const tray = readFileSync(
-    path.join(root, "apps", "macos", "ModelRouterTray", "Sources", "ModelRouterTrayApp.swift"),
-    "utf8",
-  );
-  const startup = readFileSync(path.join(root, "src", "start.mjs"), "utf8");
-  assert.match(ipc, /provider\.action === "probe"/);
-  assert.match(ipc, /\["probe-provider", id, "--live", "--yes"\]/);
-  assert.match(ipc, /return updateProviderSelection\(id, true\)/);
-  assert.match(ipc, /ROUTER_BROWSER_OAUTH_TIMEOUT_MS/);
-  assert.match(page, /setup\.action === "probe" \? "Run live test"/);
-  assert.match(page, /setup\.disconnectable/);
-  assert.match(tray, /case "probe": return routerLocalized\("Test & Enable"\)/);
-  assert.match(tray, /setup\?\.disconnectable == true/);
-  assert.match(startup, /const antigravityStartup = antigravityOAuthStartupState\(\)/);
-  assert.match(startup, /attemptAntigravityProbePromotionAfterReadiness/);
-  assert.match(startup, /\.\.\.\(antigravityForwarder/);
-  const providers = readFileSync(path.join(root, "src", "providers.mjs"), "utf8");
-  const control = readFileSync(path.join(root, "src", "control.mjs"), "utf8");
-  const activation = readFileSync(
-    path.join(root, "src", "antigravity-probe-activation.mjs"),
-    "utf8",
-  );
-  const onboarding = readFileSync(
-    path.join(root, "src", "antigravity-oauth-onboarding.mjs"),
-    "utf8",
-  );
-  const providerOnboarding = readFileSync(
-    path.join(root, "src", "provider-onboarding.mjs"),
-    "utf8",
-  );
-  assert.match(providers, /restartRouterServiceIfInstalled\(operation\)/);
-  assert.match(providers, /activateAntigravityProbe/);
-  assert.match(control, /activateAntigravityProbe/);
-  assert.match(activation, /Installed clients remain withdrawn/);
-  assert.ok(activation.indexOf("await restart(") < activation.indexOf("await publish("));
-  assert.ok(
-    activation.indexOf("const activated = await waitForExactActivation") <
-      activation.indexOf("await publish("),
-  );
-  assert.match(activation, /throwIfAborted\(signal, deadline\)/);
-  assert.match(onboarding, /oauth_browser_launch_failed/);
-  assert.ok(
-    providerOnboarding.indexOf("await ensureNodeDependencies({ signal, deadline });") <
-      providerOnboarding.indexOf('import("./antigravity-oauth-onboarding.mjs")'),
-  );
 });

@@ -98,7 +98,7 @@ import {
 
 function providersCommand(action, providerId) {
   return process.platform === "win32"
-    ? `.\\codex-router.ps1 providers ${action} ${providerId}`
+    ? `.\\model-router.ps1 providers ${action} ${providerId}`
     : `./bin/providers ${action} ${providerId}`;
 }
 

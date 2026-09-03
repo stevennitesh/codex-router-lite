@@ -4,14 +4,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-// Three Windows defects in this repository were the same mistake made in
-// different files: resolve a command the way POSIX does, spawn it the way
-// POSIX does, or run a POSIX shell script outright. Each one surfaced as a
-// spawn error that the caller then misread as something else -- "signed out",
-// "blocked by Windows application control", a check that quietly passed. None
-// of them can be caught by the Linux and macOS legs of CI, and the Windows leg
-// cannot exercise an operator's npm install either, so the invariants are
-// asserted against the source instead.
+// Windows command resolution and process-spawn defects can be misread as
+// unrelated failures, so invariants that do not require service mutation are
+// asserted against the source.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceDir = path.join(root, "src");
 
@@ -30,10 +25,7 @@ test("command lookup lives in one place, so no file takes the finder's first lin
   assert.deepEqual(offenders, [], `these must use commandOnPath(): ${offenders.join(", ")}`);
 });
 
-test("no POSIX bin/ script is spawned without a Windows counterpart", () => {
-  // bin/* are `#!/bin/sh` scripts. Windows reaches the same work through a
-  // PowerShell counterpart -- install.ps1 for doctor --fix and curate-models,
-  // codex-router.ps1 tray rebuild for the tray launcher.
+test("no removed POSIX bin/ script is spawned", () => {
   const spawnsBinScript = /(?:spawnSync|spawn|execFileSync)\(\s*path\.join\([^)]*"bin",\s*"[a-z-]+"\s*\)/;
   const offenders = sources
     .filter(({ text }) => spawnsBinScript.test(text))
@@ -64,7 +56,7 @@ test("every detached worker is spawned without a console window", () => {
 });
 
 test("Windows start uses the managed service and keeps foreground explicit", () => {
-  const dispatcher = readFileSync(path.join(root, "codex-router.ps1"), "utf8");
+  const dispatcher = readFileSync(path.join(root, "model-router.ps1"), "utf8");
   assert.match(dispatcher, /"start"\s*\{[\s\S]{0,800}src\\service\.mjs[\s\S]{0,100}@\("start"\)/);
   assert.match(dispatcher, /--foreground/);
   assert.match(dispatcher, /src\\foreground-start\.mjs/);

@@ -72,37 +72,6 @@ test("a small log and a missing log both leave the service startable", () => {
   }
 });
 
-test("rotation runs while the service is stopped, never from inside it", () => {
-  // The first attempt rotated from start.mjs. launchd and systemd both open
-  // the log before the service execs, so the started process renamed a file it
-  // already held a descriptor on and kept appending to the renamed inode: the
-  // log grew exactly as before under a `.1` name. Verified on a live service,
-  // whose fds 1 and 2 both pointed at router.log.1 after the rename.
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const start = readFileSync(path.join(root, "src", "start.mjs"), "utf8");
-  assert.doesNotMatch(start, /log-rotation/);
-
-  const macos = readFileSync(path.join(root, "src", "service-macos.mjs"), "utf8");
-  assert.match(macos, /rotateLog\(LOG_PATH\)/);
-  // Ordering is the whole fix: rotating before the old process is gone
-  // reintroduces the open-descriptor bug.
-  assert.ok(
-    macos.indexOf("bootout();") < macos.indexOf("rotateLog(LOG_PATH)"),
-    "macOS must stop the service before rotating",
-  );
-  assert.ok(
-    macos.indexOf("rotateLog(LOG_PATH)") < macos.indexOf("bootstrap();"),
-    "macOS must rotate before starting the service again",
-  );
-
-  const linux = readFileSync(path.join(root, "src", "service-linux.mjs"), "utf8");
-  assert.match(linux, /rotateLog\(LOG_PATH\)/);
-  assert.ok(
-    linux.indexOf('systemctl(["stop", unitName]') < linux.indexOf("rotateLog(LOG_PATH)"),
-    "Linux must stop the unit before rotating",
-  );
-});
-
 test("rotating twice does not lose the log to a failed replace", () => {
   // rename replaces the destination atomically. Unlinking the previous
   // generation first left a window where a failure between the two calls
