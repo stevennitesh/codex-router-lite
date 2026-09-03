@@ -133,12 +133,8 @@ function port(name, fallback) {
 
 export const DEFAULT_PORTS = Object.freeze({
   gateway: 4200,
-  oauth: 4201,
   router: 4202,
   api: 4203,
-  grokOauth: 4208,
-  devinCli: 4210,
-  antigravityOauth: 4212,
 });
 
 export const PORTS = {
@@ -146,21 +142,14 @@ export const PORTS = {
     "MODEL_ROUTER_GATEWAY_PORT",
     process.env.CODEX_ROUTER_GATEWAY_PORT || process.env.KIMI_GATEWAY_PORT || DEFAULT_PORTS.gateway,
   ),
-  oauth: port(
-    "MODEL_ROUTER_OAUTH_PORT",
-    process.env.CODEX_ROUTER_OAUTH_PORT || process.env.KIMI_OAUTH_FORWARD_PORT || DEFAULT_PORTS.oauth,
-  ),
   router: port(
     "MODEL_ROUTER_PORT",
-    process.env.CODEX_ROUTER_PORT || process.env.KIMI_ROUTER_PORT || DEFAULT_PORTS.router,
+    process.env.CODEX_ROUTER_PORT || DEFAULT_PORTS.router,
   ),
   api: port(
     "MODEL_ROUTER_API_PORT",
     process.env.CODEX_ROUTER_API_PORT || process.env.KIMI_API_FORWARD_PORT || DEFAULT_PORTS.api,
   ),
-  grokOauth: port("MODEL_ROUTER_GROK_OAUTH_PORT", DEFAULT_PORTS.grokOauth),
-  devinCli: port("MODEL_ROUTER_DEVIN_CLI_PORT", DEFAULT_PORTS.devinCli),
-  antigravityOauth: port("MODEL_ROUTER_ANTIGRAVITY_OAUTH_PORT", DEFAULT_PORTS.antigravityOauth),
 };
 
 export function loopback(portNumber, suffix = "") {

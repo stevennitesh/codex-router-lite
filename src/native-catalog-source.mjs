@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { protectPrivateFile } from "./file-security.mjs";
 import {
   MODEL_BY_SLUG,
-} from "./compat/retirement/shared-legacy-native-catalog-model-registry.mjs";
+} from "./routed-models.mjs";
 import {
   CONFIG_PATH,
   MERGED_CATALOG_PATH,

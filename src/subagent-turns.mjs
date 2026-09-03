@@ -21,7 +21,7 @@ import { acceptedInputTokens } from "./context-window-drift.mjs";
 // The session simply never ends" -- the same failure the v0.4.0-beta.4
 // changelog records for understated windows (#266). The unit in that sentence
 // is the model's auto-compact budget, which every listed model already carries
-// (`autoCompact`, validated in model-registry.mjs and derived from the
+// (`autoCompact`, validated in routed-models.mjs and derived from the
 // provider's own declared window at AUTO_COMPACT_RATIO). It is per model, it
 // is published by the provider, and nobody here invented it.
 //

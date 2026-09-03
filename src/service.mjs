@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SOURCE_ROOT } from "./paths.mjs";
-import { stopManagedOllama } from "./ollama-runtime.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
@@ -16,7 +15,6 @@ const script = "service-windows.mjs";
 
 const mutatingCommands = new Set(["install", "uninstall", "start", "stop", "restart"]);
 const readinessCommands = new Set(["install", "start", "restart"]);
-const shutdownCommands = new Set(["stop", "uninstall"]);
 // start.mjs allows the LiteLLM gateway 300s to cold start, so the readiness
 // wait has to cover at least that. A shorter wait reports failure while the
 // service is still booting, and the installer's rollback then uninstalls the
@@ -71,11 +69,6 @@ export async function runServiceCommandUnlocked(
   );
   if (result.error) throw result.error;
   if (result.status !== 0) return result.status ?? 1;
-  // A server that was already running is external and stopManagedOllama() is
-  // a no-op. Only the exact detached `ollama serve` process this router
-  // started is coupled to an explicit router shutdown. Installs and restarts
-  // deliberately keep it alive across the brief service handoff.
-  if (shutdownCommands.has(command)) await stopManagedOllama();
   if (!readinessCommands.has(command)) return 0;
 
   const readinessBudgetMs = remainingOperationMs();

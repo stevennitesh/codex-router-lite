@@ -41,7 +41,7 @@ $PreviousRevision = $null
 $RepositoryUrl = if ($env:CODEX_ROUTER_REPOSITORY_URL) {
   $env:CODEX_ROUTER_REPOSITORY_URL
 } else {
-  "https://github.com/duolahypercho/codex-router.git"
+  "https://github.com/stevennitesh/codex-router-lite.git"
 }
 
 function Assert-Command([string]$Name, [string]$Help) {
@@ -135,9 +135,9 @@ if (-not $CheckoutInstall) {
       $Origin = (& git -C $InstallDir remote get-url origin).Trim()
       $AllowedOrigins = @(
         $RepositoryUrl,
-        "https://github.com/duolahypercho/codex-router",
-        "https://github.com/duolahypercho/codex-router.git",
-        "git@github.com:duolahypercho/codex-router.git"
+        "https://github.com/stevennitesh/codex-router-lite",
+        "https://github.com/stevennitesh/codex-router-lite.git",
+        "git@github.com:stevennitesh/codex-router-lite.git"
       ) | Where-Object { $_ }
       if ($Origin -notin $AllowedOrigins) {
         throw "$InstallDir has an unrecognized origin and will not be updated: $Origin"
@@ -187,37 +187,21 @@ if (-not $CheckoutInstall) {
     exit $LASTEXITCODE
   }
 
-  $SetupScript = "src\setup.mjs"
-  $SetupArguments = @((Join-Path $Repository $SetupScript))
-  $UseGuided = $Guided -or (-not $Auto -and -not $NoProvider -and [Environment]::UserInteractive)
-  if ($UseGuided) { $SetupArguments += "--guided" }
-  if ($Providers) { $SetupArguments += @("--providers", $Providers) }
-  if ($AdoptNativeCatalog) { $SetupArguments += "--adopt-native-catalog" }
-  if ($SmokeTest) { $SetupArguments += "--smoke-test" }
-  if ($NoProvider) { $SetupArguments += "--no-provider" }
-  if ($NoDiscovery) { $SetupArguments += "--no-discovery" }
-  & node @SetupArguments
-  $SetupExitCode = $LASTEXITCODE
-  # Exit 2 means setup left configuration unfinished (a declined prompt, a
-  # missing credential) and says nothing about the code that was just pulled.
-  # Rolling back there discards the update the user ran this for, and if the
-  # unfinished step is itself the bug being fixed, every retry repeats it.
-  # Any other non-zero code still restores the checkout, so the running
-  # service is never left on half-applied code by an unrecognized failure.
-  if ($SetupExitCode -eq 2) {
-    Write-Warning "Setup did not finish configuring; the update was kept. Re-run setup to continue, or .\model-router.ps1 codex rollback to return to the previous revision."
-  } elseif ($SetupExitCode -ne 0 -and $PreviousRevision) {
-    & git -C $Repository switch --detach $PreviousRevision 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw "Setup failed and automatic rollback could not restore source revision $PreviousRevision."
-    }
-    & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target codex
-    if ($LASTEXITCODE -ne 0) {
-      throw "Setup failed and automatic rollback restored source revision $PreviousRevision but could not reinstall it."
-    }
-    Write-Warning "Setup failed; source revision $PreviousRevision was restored and reinstalled."
+  if ($AdoptNativeCatalog -or $SmokeTest -or $NoDiscovery) {
+    throw "This reduced installer does not expose legacy setup, smoke-test, or discovery modes."
   }
-  exit $SetupExitCode
+  if ($Providers) {
+    $NamedProviders = @($Providers.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $Unsupported = @($NamedProviders | Where-Object { $_ -notin @("openrouter", "switchyard") })
+    if ($Unsupported.Count -gt 0) { throw "Unsupported provider(s): $($Unsupported -join ', ')." }
+    & node (Join-Path $Repository "src\provider-selection.mjs") set @NamedProviders | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  } elseif ($NoProvider) {
+    & node (Join-Path $Repository "src\provider-selection.mjs") set | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
+  & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target codex -ForceDeps:$ForceDeps
+  exit $LASTEXITCODE
 }
 
 if (-not (Test-RouterCheckout $ScriptDirectory)) {

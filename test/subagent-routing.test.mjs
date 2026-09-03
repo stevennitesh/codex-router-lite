@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CHECKED_IN_MODELS } from "../src/model-registry.mjs";
+import { CHECKED_IN_MODELS } from "../src/routed-models.mjs";
 import {
   MAX_SUBAGENT_ATTEMPTS,
   MAX_SUBAGENT_WEIGHT,

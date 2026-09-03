@@ -4,7 +4,7 @@ import path from "node:path";
 import {
   PROVIDERS,
   resolveProviderBaseUrl,
-} from "./compat/retirement/shared-legacy-switchyard-runtime-model-registry.mjs";
+} from "./routed-models.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
 export const SWITCHYARD_CAPABILITY_ENV = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";

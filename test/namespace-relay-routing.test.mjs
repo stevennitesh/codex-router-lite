@@ -886,7 +886,7 @@ async function scenario(
   stream = true,
   {
     endpoint = "/responses",
-    model = "opencode-go/deepseek-v4-flash",
+    model = "openrouter/glm-5.3-flash",
     sseBody = gatewaySseBody,
     jsonBody = gatewayJsonBody,
     requestPayload = routedRequestPayload,
@@ -1405,7 +1405,7 @@ test("routed request flattens every namespace to the gateway and restores calls 
   assert.equal(second.clientBody, first.clientBody);
 
   const outgoing = first.gatewayBodies[0];
-  assert.equal(outgoing.model, "opencode-go-deepseek-v4-flash");
+  assert.equal(outgoing.model, "openrouter-glm-5-3-flash");
   const names = outgoing.tools.map((tool) => tool.name);
 
   // The full native toolset reaches the provider in the flattened form,
@@ -1471,7 +1471,7 @@ test("routed request flattens every namespace to the gateway and restores calls 
     { name: "create_thread", namespace: "codex_app" },
   );
   assert.deepEqual(JSON.parse(calls.get("call_thread").arguments), {
-    model: "opencode-go/deepseek-v4-flash",
+    model: "openrouter/glm-5.3-flash",
   });
   assert.deepEqual(JSON.parse(calls.get("call_explicit_thread").arguments), {
     model: "gpt-5.6-terra",
@@ -1623,7 +1623,7 @@ test("non-streaming routed responses restore namespace calls before client dispa
     { name: "create_thread", namespace: "codex_app" },
   );
   assert.deepEqual(JSON.parse(client.output[1].arguments), {
-    model: "opencode-go/deepseek-v4-flash",
+    model: "openrouter/glm-5.3-flash",
   });
   assert.deepEqual(JSON.parse(client.output[2].arguments), {
     model: "gpt-5.6-terra",

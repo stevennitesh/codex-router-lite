@@ -178,7 +178,7 @@ export function restoreModelOverlayFiles(
  * Rebuild the shared routing plane, then every installed client's model list.
  *
  * This is exported for dependency-injected tests and for the fresh child below.
- * Callers that have already loaded model-registry.mjs must use
+ * Callers that have already loaded routed-models.mjs must use
  * publishModelOverlayFresh(): user-model overlays are read at module load, so
  * rebuilding in their process can silently publish the pre-mutation model set.
  */

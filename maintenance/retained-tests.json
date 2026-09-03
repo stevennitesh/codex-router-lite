@@ -12,7 +12,7 @@
       "id": "retained-router-dispatch",
       "surfaces": ["native-codex", "openrouter-glm-5.3-flash", "switchyard", "collaboration-relay"],
       "file": "test/routing.test.mjs",
-      "testNamePattern": "^(plain Codex provider routes accept the caller key as a bearer token|router preserves native auth and isolates every external route|router relays encrypted Codex subagent payloads before external routing|router fails closed when an encrypted subagent payload cannot be relayed|Switchyard preserves native requests and leaves compaction on the native backend|router repairs malformed OpenRouter GLM-5\\.3-Flash message envelopes after LiteLLM translation)$"
+      "testNamePattern": "^(router preserves native auth and isolates every external route|router relays encrypted Codex subagent payloads before external routing|router fails closed when an encrypted subagent payload cannot be relayed|Switchyard preserves native requests and leaves compaction on the native backend|router repairs malformed OpenRouter GLM-5\\.3-Flash message envelopes after LiteLLM translation)$"
     },
     {
       "id": "native-session",
@@ -42,6 +42,11 @@
       "file": "test/zai-cache-usage.test.mjs"
     },
     {
+      "id": "reduced-provider-boundary",
+      "surfaces": ["openrouter-glm-5.3-flash", "switchyard", "native-codex"],
+      "file": "test/reduced-providers.test.mjs"
+    },
+    {
       "id": "switchyard-runtime",
       "surfaces": ["switchyard"],
       "file": "test/switchyard-runtime.test.mjs"
@@ -56,17 +61,12 @@
       "id": "namespace-routing",
       "surfaces": ["namespace-restoration", "collaboration-relay"],
       "file": "test/namespace-relay-routing.test.mjs",
-      "testNamePattern": "^(routed request flattens every namespace to the gateway and restores calls to the client|non-streaming routed responses restore namespace calls before client dispatch|routed tool_search history declares discovered tools and restores their calls|Responses-native routed providers inherit the model on fresh local thread calls)$"
+      "testNamePattern": "^(routed request flattens every namespace to the gateway and restores calls to the client|non-streaming routed responses restore namespace calls before client dispatch|routed tool_search history declares discovered tools and restores their calls)$"
     },
     {
       "id": "v2-promotion-gate",
       "surfaces": ["collaboration-v2"],
       "file": "test/subagent-local-verification.test.mjs"
-    },
-    {
-      "id": "v2-certification-decision",
-      "surfaces": ["collaboration-v2"],
-      "file": "test/subagent-certify.test.mjs"
     },
     {
       "id": "windows-service-lifecycle",

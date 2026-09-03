@@ -33,19 +33,22 @@ import {
   RUNTIME_PROVIDERS,
   providerForModel,
   resolveProviderBaseUrl,
-  discoveryDisabled,
-  executeSearchSidecar,
-  SearchSidecarError,
-  searchSidecarBindingForModel,
+} from "./routed-models.mjs";
+const discoveryDisabled = () => false;
+import {
   routedModelPreservesSearchContract,
   routedModelSearchMode,
   searchModePreservesSearchContract,
   stripUnsupportedHostedSearch,
   unsupportedSearchContractError,
+} from "./search-capability.mjs";
+import {
   canonicalProviderId,
   providerRuntimeAvailable,
   readProviderSelection,
   selectedConfiguredListedModels,
+} from "./provider-selection.mjs";
+import {
   FAILOVER_BUDGET_MS,
   MAX_FAILOVER_HOPS,
   classifyRoutedFailure,
@@ -55,6 +58,8 @@ import {
   readFailoverSettings,
   recordProviderCooldown,
   cooldownScope,
+} from "./route-failure-policy.mjs";
+import {
   describeImage,
   evidenceCache,
   hasNativeSession,
@@ -66,7 +71,7 @@ import {
   supportsImageInput,
   readVisionBridgeSettings,
   installedNativeVisionEngines,
-} from "./compat/retirement/issue5-router-provider-features.mjs";
+} from "./direct-image-policy.mjs";
 import {
   applyKeepAliveTimeouts,
   copyResponseHeaders,
@@ -201,41 +206,31 @@ import {
 installStableFetchTransport();
 
 const LISTEN_HOST =
-  process.env.CODEX_ROUTER_HOST || process.env.KIMI_ROUTER_HOST || "127.0.0.1";
+  process.env.CODEX_ROUTER_HOST || "127.0.0.1";
 const LISTEN_PORT = Number(
-  process.env.CODEX_ROUTER_PORT || process.env.KIMI_ROUTER_PORT || PORTS.router,
+  process.env.CODEX_ROUTER_PORT || PORTS.router,
 );
 const NATIVE_BASE = (
   process.env.CODEX_NATIVE_BASE_URL || "https://chatgpt.com/backend-api/codex"
 ).replace(/\/+$/, "");
 const GATEWAY_BASE = (
   process.env.CODEX_ROUTER_GATEWAY_BASE_URL ||
-  process.env.KIMI_GATEWAY_BASE_URL ||
   loopback(PORTS.gateway, "/v1")
 ).replace(/\/+$/, "");
-const OAUTH_HEALTH =
-  process.env.CODEX_ROUTER_OAUTH_HEALTH_URL ||
-  process.env.KIMI_OAUTH_HEALTH_URL ||
-  loopback(PORTS.oauth, "/health");
 const API_HEALTH =
   process.env.CODEX_ROUTER_API_HEALTH_URL ||
-  process.env.KIMI_API_HEALTH_URL ||
   loopback(PORTS.api, "/health");
 const API_BASE = (
   process.env.CODEX_ROUTER_API_BASE_URL ||
   loopback(PORTS.api, "/v1")
 ).replace(/\/+$/, "");
-const GROK_OAUTH_HEALTH =
-  process.env.CODEX_ROUTER_GROK_OAUTH_HEALTH_URL ||
-  loopback(PORTS.grokOauth, "/health");
 const GATEWAY_HEALTH =
   process.env.CODEX_ROUTER_GATEWAY_HEALTH_URL ||
-  process.env.KIMI_GATEWAY_HEALTH_URL ||
   loopback(PORTS.gateway, "/health/liveliness");
 const CATALOG_PATH =
-  process.env.CODEX_ROUTER_CATALOG || process.env.KIMI_ROUTER_CATALOG || MERGED_CATALOG_PATH;
+  process.env.CODEX_ROUTER_CATALOG || MERGED_CATALOG_PATH;
 const INTERNAL_KEY =
-  process.env.CODEX_ROUTER_INTERNAL_KEY || process.env.KIMI_INTERNAL_KEY;
+  process.env.CODEX_ROUTER_INTERNAL_KEY;
 const CALLER_KEY = process.env.CODEX_ROUTER_CALLER_KEY;
 const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
 const QUIET =
@@ -1276,18 +1271,8 @@ async function healthPayload() {
       provider.generic === true || enabled.has(provider.id)
     ),
   );
-  const [oauth, api, grokOauth, gateway, switchyard] = await Promise.all([
-    enabled.has("kimi-oauth")
-      ? serviceHealth(OAUTH_HEALTH)
-      : { reachable: true, enabled: false },
+  const [api, gateway, switchyard] = await Promise.all([
     apiEnabled ? serviceHealth(API_HEALTH) : { reachable: true, enabled: false },
-    // The Grok OAuth forwarder is started unconditionally but is only a real
-    // dependency for an operator who selected the provider, so it is gated the
-    // way the Kimi OAuth forwarder is: an unselected provider reports standby
-    // rather than being probed on a port nobody routes through.
-    enabled.has("grok-oauth")
-      ? serviceHealth(GROK_OAUTH_HEALTH)
-      : { reachable: true, enabled: false },
     serviceHealth(GATEWAY_HEALTH),
     enabled.has("switchyard")
       ? Promise.resolve()
@@ -1301,9 +1286,7 @@ async function healthPayload() {
   // leaf too, which is the only one `waitForRouterHealth` and therefore doctor
   // can read.
   const degraded = [
-    ["oauth", oauth],
     ["api", api],
-    ["grokOauth", grokOauth],
     ["gateway", gateway],
     ["switchyard", switchyard],
   ]
@@ -1317,9 +1300,7 @@ async function healthPayload() {
     degraded,
     activity: activityPayload(),
     resources: resourceLimitsPayload(),
-    oauth,
     api,
-    grokOauth,
     gateway,
     switchyard,
   };
@@ -4622,70 +4603,13 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
     let body;
     let payload;
     const searchRequest = defaultModel === "web-search";
-    // A search binding is selected by the exact routed slug inside Codex's
-    // authenticated search request. Parse it before asking for a native
-    // session; otherwise a deliberately external sidecar would still require
-    // and leak the request to ChatGPT. Image requests keep their old ordering.
+    // Native Codex owns its own web-search route. Routed search sidecars are
+    // not part of the reduced product.
     if (searchRequest) {
       const encoded = await readRequestBody(request, { signal: controller.signal });
       body = await decodeBody(encoded, request.headers["content-encoding"]);
       payload = await parseBodyAsync(body);
       requestedModel = typeof payload.model === "string" ? payload.model : defaultModel;
-      const binding = searchSidecarBindingForModel(requestedModel);
-      if (binding) {
-        servingProvider = `search:${binding.providerId}`;
-        activity.setRoute({
-          provider: servingProvider,
-          model: requestedModel,
-          ...activityMetadataFromHeaders(request.headers),
-        });
-        const routedModel = MODEL_BY_SLUG.get(requestedModel);
-        if (
-          !routedModel ||
-          !routeProviderEnabled(routedModel.provider) ||
-          routedModel.searchTool !== undefined
-        ) {
-          throw new SearchSidecarError(
-            "The selected model is not eligible for its configured search sidecar.",
-            { code: "search_sidecar_model_ineligible", status: 409 },
-          );
-        }
-        const accountId = String(request.headers["chatgpt-account-id"] || "");
-        const installationId = String(request.headers["x-codex-installation-id"] || "");
-        // The local caller capability proves authorization, not account
-        // identity. If Codex supplies no account id, use a one-request nonce
-        // so the cache cannot cross an account switch on the same install.
-        const accountScope = createHash("sha256")
-          .update(String(request.headers.authorization || ""))
-          .update("\0")
-          .update(accountId || randomUUID())
-          .update("\0")
-          .update(installationId)
-          .digest("base64url");
-        const sidecar = await executeSearchSidecar({
-          binding,
-          payload,
-          accountScope,
-          signal: controller.signal,
-        });
-        writeJson(response, 200, sidecar.response);
-        recordUsageEvent({
-          model: requestedModel,
-          provider: servingProvider,
-          status: 200,
-          durationMs: Date.now() - startedAt,
-          retries: Math.max(0, (sidecar.telemetry?.attempts || 1) - 1),
-          searchSidecar: true,
-          searchCacheHit: sidecar.telemetry?.cacheHit === true,
-          searchResults: sidecar.telemetry?.results,
-        });
-        if (!QUIET) {
-          console.error(
-            `[codex-router] model=${requestedModel} provider=${servingProvider} status=200 attempts=${sidecar.telemetry?.attempts || 0} cache_hit=${sidecar.telemetry?.cacheHit === true}`,
-          );
-        }
-        return;
-      }
     }
 
     // Image requests and unbound web-search turns remain native-only; an idle
@@ -4815,26 +4739,6 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
         durationMs: Date.now() - startedAt,
       });
       activity.finish(0);
-      return;
-    }
-    if (error instanceof SearchSidecarError && !response.headersSent) {
-      const status = error.status;
-      writeJson(response, status, {
-        error: {
-          type: error.code,
-          message: error.message,
-        },
-      });
-      recordUsageEvent({
-        model: requestedModel,
-        provider: servingProvider,
-        status,
-        durationMs: Date.now() - startedAt,
-        retries: Math.max(0, (error.telemetry?.attempts || 1) - 1),
-        searchSidecar: true,
-        searchCacheHit: false,
-      });
-      activity.finish(status);
       return;
     }
     const status = response.headersSent ? 502 : httpErrorStatus(error);

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { MODEL_BY_SLUG } from "./model-registry.mjs";
+import { MODEL_BY_SLUG } from "./routed-models.mjs";
 import {
   clearSubagentProof,
   readSubagentProofs,

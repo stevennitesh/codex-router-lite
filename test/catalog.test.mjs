@@ -30,7 +30,6 @@ import {
   routedCatalogConfigured,
   routedModel,
 } from "../src/catalog.mjs";
-import { sidecarSearchAvailable } from "../src/search-capability.mjs";
 
 const template = {
   slug: "gpt-5.5",

@@ -329,7 +329,7 @@ test("router requires the configured path capability before any model route", as
     const authorized = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Thread-Id": firstThread },
-      body: JSON.stringify({ model: "deepseek/deepseek-v4-pro", input: "allowed" }),
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "allowed" }),
     });
     assert.equal(authorized.status, 200);
     assert.equal(gatewayRequests.length, 1);
@@ -460,7 +460,7 @@ test("plain Codex provider routes accept the caller key as a bearer token", asyn
     const rejected = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, {
       method: "POST",
       headers: { Authorization: "Bearer unrelated-token", "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "deepseek/deepseek-v4-pro", input: "rejected" }),
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "rejected" }),
     });
     assert.equal(rejected.status, 401);
     assert.equal(gatewayRequests.length, 1, "an unrelated bearer reached the gateway");
@@ -1045,12 +1045,7 @@ test("router preserves native auth and isolates every external route", async () 
     }
 
     for (const [model, gatewayModel] of [
-      ["kimi-oauth/k3", "kimi-oauth-k3"],
-      ["kimi-api/kimi-k3", "kimi-api-k3"],
-      ["deepseek/deepseek-v4-flash", "deepseek-v4-flash"],
-      ["deepseek/deepseek-v4-pro", "deepseek-v4-pro"],
-      ["grok-api/grok-4.5", "grok-api-grok-4-5"],
-      ["anthropic-api/claude-opus-4.8", "anthropic-api-claude-opus-4-8"],
+      ["openrouter/glm-5.3-flash", "openrouter-glm-5-3-flash"],
     ]) {
       const response = await fetch(`${routerBase(routerPort)}/responses`, {
         method: "POST",
@@ -1418,7 +1413,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "kimi-oauth/k3",
+        model: "openrouter/glm-5.3-flash",
         stream: false,
         input: [
           {
@@ -1457,7 +1452,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "kimi-oauth/k3",
+        model: "openrouter/glm-5.3-flash",
         stream: false,
         input: [
           {
@@ -1484,7 +1479,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "kimi-oauth/k3",
+        model: "openrouter/glm-5.3-flash",
         stream: false,
         input: [
           {
@@ -1543,7 +1538,7 @@ test("router fails closed when an encrypted subagent payload cannot be relayed",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "grok-oauth/grok-4.5",
+        model: "openrouter/glm-5.3-flash",
         input: [
           {
             type: "agent_message",

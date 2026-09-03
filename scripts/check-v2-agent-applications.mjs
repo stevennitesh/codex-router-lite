@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CHECKED_IN_MODELS } from "../src/model-registry.mjs";
+import { CHECKED_IN_MODELS } from "../src/routed-models.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_APPLICATIONS_ROOT = path.join(ROOT, "v2_agent");
@@ -22,17 +22,7 @@ const GIT_COMMIT = /^[0-9a-f]{40}$/i;
 const SHA256 = /^[0-9a-f]{64}$/i;
 const RESERVED_SOURCE_HOST =
   /(?:^|\.)(?:example\.(?:com|net|org)|example|invalid|localhost|test)$/i;
-// These six routes were already repository-certified before the application
-// gate existed. The identity tuple, rather than only the slug, prevents a
-// future provider or upstream-model swap from inheriting that grandfathering.
-const PRE_WORKFLOW_V2_ROUTES = new Set([
-  '["grok-api/grok-4.5","grok-api","grok-4.5"]',
-  '["grok-oauth/grok-4.5","grok-oauth","grok-4.5"]',
-  '["kimi-api/kimi-k3","kimi-api","kimi-k3"]',
-  '["kimi-oauth/k3","kimi-oauth","k3"]',
-  '["kimi-oauth/kimi-for-coding","kimi-oauth","kimi-for-coding"]',
-  '["kimi-oauth/kimi-for-coding-highspeed","kimi-oauth","kimi-for-coding-highspeed"]',
-]);
+const PRE_WORKFLOW_V2_ROUTES = new Set();
 
 function fail(message) {
   throw new Error(`v2-agent application: ${message}`);

@@ -12,9 +12,7 @@ import {
   SOURCE_ROOT,
   TARGET,
 } from "./paths.mjs";
-import {
-  providerSelectionStatus,
-} from "./compat/retirement/shared-legacy-install-manifest-provider-selection.mjs";
+import { providerSelectionStatus } from "./provider-selection.mjs";
 import { serviceProxyEnvironment } from "./proxy-environment.mjs";
 import { packSkillNames } from "./skills-install.mjs";
 

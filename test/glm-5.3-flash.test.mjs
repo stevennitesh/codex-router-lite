@@ -11,7 +11,7 @@ const testRoot = mkdtempSync(path.join(os.tmpdir(), "glm-5.3-flash-test-"));
 process.env.MODEL_ROUTER_USER_MODELS = path.join(testRoot, "user-models.json");
 process.env.MODEL_ROUTER_STATE_DIR = path.join(testRoot, "state");
 
-const { MODEL_BY_SLUG, MODEL_SLUG_ALIASES } = await import("../src/model-registry.mjs");
+const { MODEL_BY_SLUG, MODEL_SLUG_ALIASES } = await import("../src/routed-models.mjs");
 const { REQUEST_PROFILES } = await import("../src/request-profiles.mjs");
 
 // This inventory asserts checked-in metadata only. The Ollama Cloud entry is a

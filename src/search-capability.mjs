@@ -1,22 +1,5 @@
-import { genericProviderConfigured } from "./generic-provider-readiness.mjs";
-import { RUNTIME_PROVIDERS } from "./model-registry.mjs";
-import { trustedSearchProviderDescriptor } from "./search-sidecar-policy.mjs";
-import { searchSidecarBindingForModel } from "./search-sidecar-state.mjs";
-
-export function sidecarSearchAvailable(model, {
-  bindingForModel = searchSidecarBindingForModel,
-  providers = RUNTIME_PROVIDERS,
-  providerReady = genericProviderConfigured,
-} = {}) {
-  let binding;
-  try {
-    binding = bindingForModel(model?.slug);
-  } catch {
-    return false;
-  }
-  if (!binding || model?.searchTool !== undefined) return false;
-  const provider = providers.get(binding.providerId);
-  return trustedSearchProviderDescriptor(provider, { requireGeneric: true }) && providerReady(provider.id);
+export function sidecarSearchAvailable() {
+  return false;
 }
 
 // The catalog and the last provider-facing hop must answer this question from

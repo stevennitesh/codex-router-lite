@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildMergedCatalog } from "../src/catalog.mjs";
-import { MODEL_BY_SLUG } from "../src/model-registry.mjs";
+import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 import { spawnableCommand } from "../src/codex-binary.mjs";
 
 const binary = process.argv[2];

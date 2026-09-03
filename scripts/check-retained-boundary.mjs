@@ -286,8 +286,8 @@ function validateManifest(manifest) {
   if (!manifest.excludedOwnershipGroups || typeof manifest.excludedOwnershipGroups !== "object") {
     errors.push("manifest excludedOwnershipGroups must be an object");
   }
-  if (!Array.isArray(manifest.temporaryAdapters) || manifest.temporaryAdapters.length === 0) {
-    errors.push("manifest temporaryAdapters must be a nonempty array");
+  if (!Array.isArray(manifest.temporaryAdapters)) {
+    errors.push("manifest temporaryAdapters must be an array");
   }
   if (!Array.isArray(manifest.temporaryPowerShellAdapters)) {
     errors.push("manifest temporaryPowerShellAdapters must be an array");

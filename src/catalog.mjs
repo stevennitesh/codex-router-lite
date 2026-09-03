@@ -57,18 +57,15 @@ import {
   readNativeAuthObservation,
 } from "./native-auth-observation.mjs";
 import {
-  applyVisionBridge,
-  configuredProviderIds,
-  discoveryDisabled,
+  LISTED_MODELS,
   MODEL_BY_SLUG,
   MODEL_SLUG_ALIASES,
-  nativeVisionEngines,
-  readUserModels,
-  readVisionBridgeSettings,
-  resolveVisionEngine,
-  routedModelSearchAvailable,
-  selectedConfiguredListedModels,
-} from "./compat/retirement/legacy-catalog-features.mjs";
+} from "./routed-models.mjs";
+
+const configuredProviderIds = () => ["openrouter", "switchyard"];
+const discoveryDisabled = () => true;
+const routedModelSearchAvailable = () => false;
+const selectedConfiguredListedModels = () => LISTED_MODELS;
 
 const refresh = process.argv.includes("--refresh-native");
 
@@ -1120,7 +1117,7 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
-  const userSlugs = new Set(readUserModels().map((model) => String(model.slug)));
+  const userSlugs = new Set();
   const selectedModels = selectedConfiguredListedModels();
   const loginFree = loginFreeConfigured();
   // Before the picker state is read, not after: new router models are opt-in
@@ -1222,30 +1219,9 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
     ? previouslyPublishedNativeSlugs(native.models)
     : undefined;
   const routedCatalog = routedCatalogActive();
-  // Advertised last, and only while an engine actually resolves: Codex gates
-  // the paste on `input_modalities`, so a bridge that has gone away must take
-  // the advertisement with it rather than leaving a paste that 400s. This runs
-  // after the announcement pass so a bridged model never announces "image
-  // input" as though it grew the capability itself.
-  //
-  // Native models join the candidate list only once the auth probe says the
-  // session can actually spend them. A login-free install routes every turn
-  // away from the native backend, so nominating a native engine there would
-  // promise image input the router cannot deliver.
-  // The one shared rule (`src/vision-engines.mjs`). This is the only caller
-  // that can name the gate from the probe itself: it is the process that runs
-  // the probe, and it is building the merged catalog every other caller reads
-  // the verdict back out of.
-  const nativeEngines = nativeVisionEngines({
-    models: captured.models,
-    hidden: effectiveHiddenModels,
-    authorized: openaiAuthenticated && !loginFree,
-  });
-  const visionEngine = resolveVisionEngine(
-    () => [...selectedModels, ...nativeEngines],
-    readVisionBridgeSettings(),
-  );
-  const catalogModels = applyVisionBridge(routedModels, visionEngine);
+  // Both retained routed models accept images directly. No fallback vision
+  // engine is advertised or invoked.
+  const catalogModels = routedModels;
   const { models: merged, aliases } = loginFree
     ? buildLoginFreeCatalog(native, catalogModels)
     : {

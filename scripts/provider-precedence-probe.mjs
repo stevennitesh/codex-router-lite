@@ -21,7 +21,7 @@ import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { buildMergedCatalog } from "../src/catalog.mjs";
 import { findCodexBinary, spawnableCommand } from "../src/codex-binary.mjs";
 import { writeLiteLlmConfig } from "../src/litellm-config.mjs";
-import { MODEL_BY_SLUG, PROVIDERS } from "../src/model-registry.mjs";
+import { MODEL_BY_SLUG, PROVIDERS } from "../src/routed-models.mjs";
 
 const SOURCE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");

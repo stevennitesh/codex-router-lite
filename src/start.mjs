@@ -32,14 +32,7 @@ import {
   SWITCHYARD_CAPABILITY_ENV,
   switchyardSelectedForStartup,
 } from "./switchyard-runtime.mjs";
-import {
-  antigravityOAuthStartupState,
-  attemptAntigravityProbePromotionAfterReadiness,
-  ensureOllamaHeadless,
-  MODELS,
-  providerSelectionStatus,
-  readLocalModelSelection,
-} from "./compat/retirement/issue5-start-provider-features.mjs";
+import { providerSelectionStatus } from "./provider-selection.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever
@@ -72,7 +65,6 @@ const dependencyFix = dependencyRepairHint();
 const litellm =
   process.env.MODEL_ROUTER_LITELLM_BIN ||
   process.env.CODEX_ROUTER_LITELLM_BIN ||
-  process.env.KIMI_LITELLM_BIN ||
   path.join(
     SOURCE_ROOT,
     ".venv",
@@ -96,7 +88,7 @@ if (!existsSync(litellm)) {
 // MODEL_ROUTER_LITELLM_BIN=process.execPath on a fresh checkout that has no
 // venv at all.
 const usesBundledVenv = !process.env.MODEL_ROUTER_LITELLM_BIN &&
-  !(process.env.CODEX_ROUTER_LITELLM_BIN || process.env.KIMI_LITELLM_BIN);
+  !process.env.CODEX_ROUTER_LITELLM_BIN;
 if (usesBundledVenv) {
   const venvPython = path.join(
     SOURCE_ROOT,
@@ -125,69 +117,25 @@ const callerKey = assertCallerSecret(
 );
 writeLiteLlmConfig();
 
-// A checked local model means the operator intends to route through Ollama,
-// so keep its daemon available for the gateway. This never installs software
-// or pulls a model during service startup; a missing runtime remains a doctor
-// warning, while a present runtime is started as a detached, headless server.
-if (readLocalModelSelection().enabled.length) {
-  try {
-    await ensureOllamaHeadless({ install: false });
-  } catch (error) {
-    console.error(`Local Ollama is unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-// Same rule, one layer up: a curated model is what gives a provider a gateway
-// route, so it is also what makes that provider's own forwarder worth a
-// process and a port. `writeLiteLlmConfig()` above emits the
-// `DEVIN_CLI_FORWARD_BASE_URL` route from this same MODELS array on this same
-// boot, so the route and the listener cannot disagree -- no curated Devin
-// model means no route to the port and nothing bound to it. Devin ships
-// catalog-only (`bin/curate-models devin-cli`), so an operator who never asked
-// for it pays nothing: no fourth child, no fourth port, no fourth health wait.
-//
-// The stored credential is deliberately *not* the gate. Someone who curated a
-// model but has not run `devin auth login` should get the forwarder's 401
-// naming that command, not a bare connection error from a port nobody is
-// listening on.
-const devinCliRouted = MODELS.some((model) => model.provider === "devin-cli");
-
 const commonEnv = {
   MODEL_ROUTER_TARGET: "codex",
   MODEL_ROUTER_STATE_DIR: STATE_DIR,
   MODEL_ROUTER_CALLER_KEY: callerKey,
   MODEL_ROUTER_INTERNAL_KEY: internalKey,
   MODEL_ROUTER_GATEWAY_BASE_URL: loopback(PORTS.gateway, "/v1"),
-  MODEL_ROUTER_OAUTH_HEALTH_URL: loopback(PORTS.oauth, "/health"),
   MODEL_ROUTER_API_HEALTH_URL: loopback(PORTS.api, "/health"),
   MODEL_ROUTER_GATEWAY_HEALTH_URL: loopback(PORTS.gateway, "/health/liveliness"),
   MODEL_ROUTER_GATEWAY_PORT: String(PORTS.gateway),
-  // LiteLLM's ollama_chat provider talks to the daemon root, not the
-  // OpenAI-compatible /v1 surface the bridge uses for inference.
-  MODEL_ROUTER_LOCAL_BASE_URL_ROOT:
-    (process.env.MODEL_ROUTER_LOCAL_BASE_URL || "http://127.0.0.1:11434/v1").replace(/\/v1\/?$/, ""),
-  MODEL_ROUTER_OAUTH_PORT: String(PORTS.oauth),
   MODEL_ROUTER_API_PORT: String(PORTS.api),
   MODEL_ROUTER_PORT: String(PORTS.router),
-  MODEL_ROUTER_GROK_OAUTH_PORT: String(PORTS.grokOauth),
-  GROK_OAUTH_FORWARD_BASE_URL: loopback(PORTS.grokOauth, "/v1"),
-  MODEL_ROUTER_ANTIGRAVITY_OAUTH_PORT: String(PORTS.antigravityOauth),
-  ANTIGRAVITY_OAUTH_FORWARD_BASE_URL: loopback(PORTS.antigravityOauth, "/v1"),
-  MODEL_ROUTER_DEVIN_CLI_PORT: String(PORTS.devinCli),
-  DEVIN_CLI_FORWARD_BASE_URL: loopback(PORTS.devinCli, "/v1"),
   MODEL_ROUTER_QUIET: "1",
   CODEX_ROUTER_CALLER_KEY: callerKey,
   CODEX_ROUTER_INTERNAL_KEY: internalKey,
-  KIMI_INTERNAL_KEY: internalKey,
-  KIMI_OAUTH_FORWARD_BASE_URL: loopback(PORTS.oauth, "/v1"),
   CODEX_ROUTER_API_FORWARD_BASE_URL: loopback(PORTS.api, "/v1"),
-  CODEX_ROUTER_ANTHROPIC_FORWARD_BASE_URL: loopback(PORTS.api),
   CODEX_ROUTER_GATEWAY_BASE_URL: loopback(PORTS.gateway, "/v1"),
-  CODEX_ROUTER_OAUTH_HEALTH_URL: loopback(PORTS.oauth, "/health"),
   CODEX_ROUTER_API_HEALTH_URL: loopback(PORTS.api, "/health"),
   CODEX_ROUTER_GATEWAY_HEALTH_URL: loopback(PORTS.gateway, "/health/liveliness"),
   CODEX_ROUTER_CATALOG: MERGED_CATALOG_PATH,
-  CODEX_ROUTER_OAUTH_PORT: String(PORTS.oauth),
   CODEX_ROUTER_API_PORT: String(PORTS.api),
   CODEX_ROUTER_GATEWAY_PORT: String(PORTS.gateway),
   CODEX_ROUTER_PORT: String(PORTS.router),
@@ -279,25 +227,9 @@ const FRONTEND = { script: "router.mjs", service: "codex-router", label: "Codex 
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stopChildren);
 
 async function main() {
-  // These forwarders use separate ports and do not depend on one another.
-  // Start all of them before waiting so a cold service does not pay their
-  // startup times one after another.
-  const kimiForwarder = run(process.execPath, [path.join(SOURCE_ROOT, "src", "oauth-forwarder.mjs")]);
+  // GLM uses the exact OpenRouter forwarder. Switchyard is a separate selected
+  // loopback runtime; no other provider process is part of this product.
   const api = run(process.execPath, [path.join(SOURCE_ROOT, "src", "api-forwarder.mjs")]);
-  const grokForwarder = run(process.execPath, [path.join(SOURCE_ROOT, "src", "grok-oauth-forwarder.mjs")]);
-  // An unverified account has no routable Antigravity model. A successful
-  // probe writes a nonpublishable pending generation, which is the sole
-  // exception to the active-proof gate: startup may boot and health-check its
-  // forwarder, then atomically promote that exact generation only after the
-  // whole local stack is ready. An unrelated listener on this otherwise-unused
-  // port therefore cannot take down an account that has never passed proof.
-  const antigravityStartup = antigravityOAuthStartupState();
-  const antigravityForwarder = antigravityStartup.startForwarder
-    ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "antigravity-oauth-forwarder.mjs")])
-    : undefined;
-  const devinForwarder = devinCliRouted
-    ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "devin-cli-forwarder.mjs")])
-    : undefined;
   const providerSelection = providerSelectionStatus();
   const switchyardLaunch = installedSwitchyardLaunch({
     selected: switchyardSelectedForStartup(providerSelection),
@@ -315,14 +247,6 @@ async function main() {
     : undefined;
   await Promise.all([
     waitForHealth(
-      "OAuth forwarder",
-      loopback(PORTS.oauth, "/health"),
-      { Authorization: `Bearer ${internalKey}` },
-      30_000,
-      undefined,
-      kimiForwarder,
-    ),
-    waitForHealth(
       "API forwarder",
       loopback(PORTS.api, "/health"),
       { Authorization: `Bearer ${internalKey}` },
@@ -330,42 +254,6 @@ async function main() {
       undefined,
       api,
     ),
-    waitForHealth(
-      "Grok OAuth forwarder",
-      loopback(PORTS.grokOauth, "/health"),
-      { Authorization: `Bearer ${internalKey}` },
-      30_000,
-      undefined,
-      grokForwarder,
-    ),
-    ...(antigravityForwarder
-      ? [
-        waitForHealth(
-          "Antigravity OAuth forwarder",
-          loopback(PORTS.antigravityOauth, "/health"),
-          { Authorization: `Bearer ${internalKey}` },
-          30_000,
-          undefined,
-          antigravityForwarder,
-        ),
-      ]
-      : []),
-    // Spread rather than a conditional inside the wait: an unrouted Devin adds
-    // no entry at all, so it cannot add latency. A routed one is waited on
-    // exactly as the other three are, and a forwarder that cannot bind still
-    // aborts startup by name instead of being skipped quietly.
-    ...(devinForwarder
-      ? [
-        waitForHealth(
-          "Devin CLI forwarder",
-          loopback(PORTS.devinCli, "/health"),
-          { Authorization: `Bearer ${internalKey}` },
-          30_000,
-          undefined,
-          devinForwarder,
-        ),
-      ]
-      : []),
     ...(switchyard
       ? [
         waitForHealth(
@@ -422,23 +310,6 @@ async function main() {
     router,
   );
 
-  if (antigravityStartup.pendingActivationGeneration) {
-    const promoted = await attemptAntigravityProbePromotionAfterReadiness({
-      generation: antigravityStartup.pendingActivationGeneration,
-      sessionGeneration: antigravityStartup.pendingSessionGeneration,
-      children,
-    });
-    if (!promoted) {
-      // Never log the generation or any credential material. A concurrent
-      // replacement/disconnect, a newer probe, or a child death all leave the
-      // pending proof nonpublishable; the service can still serve every other
-      // provider while the initiating command reports that exact activation
-      // was not confirmed.
-      console.error(
-        "[codex-router] Antigravity live-proof activation was superseded or startup lost a child; the route remains disabled.",
-      );
-    }
-  }
   console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
   // Only the gateway is supervised. The forwarders and the router are ours and
   // are restarted by rebuilding the whole service; the gateway is a third-party
@@ -446,19 +317,7 @@ async function main() {
   // (issue #261, a 429 raised out of LiteLLM's exception mapping), and taking
   // the router down with it turned one failed request into a dead session.
   const result = await Promise.race([
-    waitForExit(kimiForwarder, "OAuth forwarder"),
     waitForExit(api, "API forwarder"),
-    waitForExit(grokForwarder, "Grok OAuth forwarder"),
-    ...(antigravityForwarder
-      ? [waitForExit(antigravityForwarder, "Antigravity OAuth forwarder")]
-      : []),
-    // Only when it is actually running. A forwarder of ours that dies is a bug
-    // report, and the rule above is that the service exits so the OS supervisor
-    // rebuilds it -- leaving this one out of the race would instead strand a
-    // Devin user on connection errors with nothing to notice them. An install
-    // that never spawned it adds no entry, so this cannot end anyone else's
-    // session.
-    ...(devinForwarder ? [waitForExit(devinForwarder, "Devin CLI forwarder")] : []),
     ...(switchyard ? [waitForExit(switchyard, "Switchyard")] : []),
     superviseGateway({
       label: "LiteLLM gateway",
