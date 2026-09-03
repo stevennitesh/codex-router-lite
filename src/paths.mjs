@@ -163,6 +163,14 @@ export const NATIVE_SESSION_CONSENT_PATH = path.join(
   STATE_DIR,
   "native-session-consent.json",
 );
+// Last observed acceptance or rejection of the credential supplied by the
+// running Codex desktop process. This file contains no credential or account
+// identifier; its process generation prevents an old session from authorizing
+// a later desktop launch.
+export const NATIVE_AUTH_OBSERVATION_PATH = path.join(
+  STATE_DIR,
+  "native-auth-observation.json",
+);
 // The last model list each provider published for itself. It is a convenience
 // cache for the curation surfaces, never an authority: what is registered
 // locally is always recomputed from the live registry.

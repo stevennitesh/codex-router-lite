@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  brotliDecompressSync,
-  gunzipSync,
-  inflateSync,
+  brotliDecompress,
+  gunzip,
+  inflate,
   zstdCompress,
   zstdDecompress,
 } from "node:zlib";
@@ -78,6 +78,10 @@ import { createHealthCache } from "./health-cache.mjs";
 import { discoveryDisabled } from "./discovery-mode.mjs";
 import { readNativeAliases } from "./native-alias.mjs";
 import { nativeContextVariantBase } from "./native-context-variants.mjs";
+import {
+  codexDesktopStateAsync,
+  observeNativeAuthOutcome,
+} from "./native-auth-observation.mjs";
 import { readNativeRedirect } from "./native-redirect.mjs";
 import {
   executeSearchSidecar,
@@ -509,6 +513,7 @@ const FORWARD_HEADERS = new Set([
   "thread-id",
   "traceparent",
   "tracestate",
+  "x-codex-routing-hint",
   "x-client-request-id",
   "x-codex-beta-features",
   "x-codex-installation-id",
@@ -520,6 +525,7 @@ const FORWARD_HEADERS = new Set([
   "x-openai-internal-codex-responses-lite",
   "x-openai-subagent",
   "x-responsesapi-include-timing-metrics",
+  "x-session-id",
 ]);
 
 function parseBody(buffer) {
@@ -566,6 +572,9 @@ function bindClientAbort(request, response, onAbort) {
 // the asynchronous one, which keeps a multi-megabyte inflate off the thread
 // that is serving every other request.
 const decompressZstd = promisify(zstdDecompress);
+const decompressGzip = promisify(gunzip);
+const decompressDeflate = promisify(inflate);
+const decompressBrotli = promisify(brotliDecompress);
 
 async function decodeBody(
   body,
@@ -596,9 +605,9 @@ async function decodeBody(
         }
         decoded = await decompressZstd(decoded, options);
       } else if (encoding === "gzip" || encoding === "x-gzip") {
-        decoded = gunzipSync(decoded, options);
-      } else if (encoding === "deflate") decoded = inflateSync(decoded, options);
-      else if (encoding === "br") decoded = brotliDecompressSync(decoded, options);
+        decoded = await decompressGzip(decoded, options);
+      } else if (encoding === "deflate") decoded = await decompressDeflate(decoded, options);
+      else if (encoding === "br") decoded = await decompressBrotli(decoded, options);
       else {
         const error = new Error(`Unsupported Content-Encoding: ${encoding}`);
         error.status = 415;
@@ -838,7 +847,12 @@ function normalizeAutoToolChoice(payload, route) {
 function routedSearchCompatibility(payload, route) {
   const searchMode = routedModelSearchMode(route);
   const provider = providerForModel(route);
-  const compatiblePayload = provider?.generic !== true || searchMode !== undefined
+  // Generic endpoints and the GLM Flash profile have no provider-owned hosted
+  // search contract. Other checked-in routes may intentionally preserve raw
+  // provider-specific search fields even when Codex does not advertise them.
+  const stripsUnsupportedSearch =
+    provider?.generic === true || route.requestProfile === "glm-5.3-flash";
+  const compatiblePayload = !stripsUnsupportedSearch || searchMode !== undefined
     ? payload
     : stripUnsupportedHostedSearch(payload, { model: route.slug });
   return { payload: compatiblePayload, searchMode };
@@ -3483,6 +3497,8 @@ async function handleResponses(request, response, requestUrl) {
   let directResponses = false;
   let upstreamRetries;
   let upstreamStatus;
+  let observesNativeAuth = false;
+  let nativeAuthDesktop;
   let upstreamLatencyMs;
   let firstTokenMs;
   let usageTransform;
@@ -3798,6 +3814,12 @@ async function handleResponses(request, response, requestUrl) {
       target = switchyard && !compactV1 && !compactV2
         ? switchyardTarget(route, requestUrl.pathname)
         : nativeTarget(requestUrl.pathname);
+      // Provenance is the credential the caller brought, not whatever
+      // nativeHeaders may substitute for a managed caller afterward.
+      observesNativeAuth = !switchyard && nativeSessionTokenMatches(
+        bearerToken(request.headers.authorization),
+      );
+      if (observesNativeAuth) nativeAuthDesktop = await codexDesktopStateAsync();
       headers = nativeHeaders(request);
       const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
       routedBody = switchyard && !compactV1 && !compactV2
@@ -3837,6 +3859,11 @@ async function handleResponses(request, response, requestUrl) {
     );
     upstreamRetries = retries;
     upstreamStatus = upstream.status;
+    if (!route && !switchyard && observesNativeAuth) {
+      void observeNativeAuthOutcome(upstream.status, {
+        desktop: nativeAuthDesktop,
+      }).catch(() => {});
+    }
     // Time until the upstream chain answered the request. Everything before
     // this is router-side work (body read, normalization, flattening, vision
     // bridge) plus the upstream's own time to produce response headers. For a
@@ -4661,6 +4688,12 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
       writeIdleNoProviderError(response);
       return;
     }
+    const observesNativeAuth = nativeSessionTokenMatches(
+      bearerToken(request.headers.authorization),
+    );
+    const nativeAuthDesktop = observesNativeAuth
+      ? await codexDesktopStateAsync()
+      : undefined;
     const headers = nativeHeaders(request);
     if (!hasNativeSession(headers)) {
       writeJson(response, 401, {
@@ -4720,6 +4753,11 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
         onRetry: (event) => logUpstreamRetry(event, requestedModel, requestUrl.pathname),
       },
     );
+    if (observesNativeAuth) {
+      void observeNativeAuthOutcome(upstream.status, {
+        desktop: nativeAuthDesktop,
+      }).catch(() => {});
+    }
     await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS);
     recordUsageEvent({
       model: requestedModel,

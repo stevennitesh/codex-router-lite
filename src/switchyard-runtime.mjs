@@ -50,6 +50,10 @@ export function switchyardLaunch({
       `Switchyard is enabled but its runtime is incomplete; missing ${status.missing.join(", ")}.`,
     );
   }
+  return switchyardLaunchFromStatus(status, env);
+}
+
+function switchyardLaunchFromStatus(status, env = process.env) {
   const { binary, config, runtimeRoot } = status;
   const provider = PROVIDERS.get("switchyard");
   const baseUrl = new URL(resolveProviderBaseUrl(provider, env).baseUrl);
@@ -87,5 +91,5 @@ export function installedSwitchyardLaunch({
     );
     return undefined;
   }
-  return switchyardLaunch({ selected: true, ...runtimeOptions });
+  return switchyardLaunchFromStatus(status, runtimeOptions.env);
 }

@@ -172,7 +172,7 @@ git -C $buildRoot apply $patchPath
 Push-Location $buildRoot
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p switchyard-llm-client -p switchyard-runner
+cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner
 cargo build --release -p switchyard-server
 Pop-Location
 ```

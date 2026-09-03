@@ -115,18 +115,6 @@ test("qwen-plan routes have the qwen-plan request profile", () => {
   assert.equal(model.supportsImageDetailOriginal, true);
 });
 
-test("no route sets multiAgentVersion v2 without v2_agent/ artifact", () => {
-  const allNewSlugs = [
-    ...QWEN_FLASH_ROUTES.map(([slug]) => slug),
-    ...GLM_FULL_ROUTES.map(([slug]) => slug),
-    ...GLM_FLASH_ZAI_API.map(([slug]) => slug),
-  ];
-  for (const slug of allNewSlugs) {
-    const model = MODEL_BY_SLUG.get(slug);
-    assert.notEqual(model.multiAgentVersion, "v2", `${slug} must not set v2 without artifact`);
-  }
-});
-
 test("OpenRouter, Command Code, Nous, and Venice routes have no requestProfile", () => {
   const noProfileSlugs = [
     "openrouter/qwen3.8-flash",

@@ -91,6 +91,30 @@ test("installed Switchyard launch fails open when an old selection outlives its 
   assert.match(warnings[0], /continuing without it/);
 });
 
+test("installed Switchyard launch probes each runtime artifact once", () => {
+  const checked = [];
+  const launch = installedSwitchyardLaunch({
+    selected: true,
+    runtimeOptions: {
+      stateDir: "/fixture/codex-router",
+      platform: "linux",
+      env: {
+        CODEX_HOME: "/fixture",
+        CODEX_ROUTER_SWITCHYARD_BASE_URL: "http://127.0.0.1:4888/v1",
+      },
+      exists: (target) => {
+        checked.push(target);
+        return true;
+      },
+    },
+  });
+  assert.ok(launch);
+  assert.deepEqual(checked, [
+    path.join("/fixture", "switchyard", "switchyard-server"),
+    path.join("/fixture", "switchyard", "routes.toml"),
+  ]);
+});
+
 test("Switchyard source lock pins the canonical compatibility patch", () => {
   const configRoot = path.join(root, "config", "switchyard");
   const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));

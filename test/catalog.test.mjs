@@ -21,6 +21,7 @@ import {
   codexEffortVocabulary,
   effectivePickerHiddenModels,
   nativeCatalogIsReusable,
+  previouslyPublishedNativeSlugs,
   deriveBaseInstructions,
   mergeNativeCatalogs,
   mergeNativeModel,
@@ -1137,6 +1138,76 @@ test("native catalog merge never loses non-empty bundled metadata", () => {
     ).visibility,
     "list",
   );
+});
+
+test("native catalog merge takes shell type from the installed binary", () => {
+  const merged = mergeNativeModel(
+    {
+      slug: "gpt-5.6-sol",
+      shell_type: "shell_command",
+      service_tiers: [{ id: "priority", name: "Account Fast" }],
+    },
+    {
+      slug: "gpt-5.6-sol",
+      shell_type: "unified_exec",
+      service_tiers: [{ id: "priority", name: "Bundled Fast" }],
+    },
+  );
+  assert.equal(merged.shell_type, "unified_exec");
+  assert.deepEqual(merged.service_tiers, [{ id: "priority", name: "Account Fast" }]);
+
+  const accountOnlyShell = mergeNativeModel(
+    { slug: "gpt-account-only", shell_type: "shell_command" },
+    { slug: "gpt-account-only" },
+  );
+  assert.equal(accountOnlyShell.shell_type, "shell_command");
+});
+
+test("native preservation publishes only prior native slugs without losing routed templates", () => {
+  const currentNative = {
+    models: [
+      template,
+      { ...template, slug: "gpt-new", display_name: "New native" },
+    ],
+  };
+  const routed = {
+    slug: "external/model",
+    displayName: "External",
+    description: "External route",
+    provider: "external",
+  };
+  const merged = buildMergedCatalog(currentNative, [routed], {
+    nativeSlugs: new Set([template.slug]),
+  });
+  assert.deepEqual(merged.map((model) => model.slug).sort(), ["external/model", template.slug]);
+
+  const routedOnly = buildMergedCatalog(currentNative, [routed], {
+    nativeSlugs: new Set(),
+  });
+  assert.deepEqual(routedOnly.map((model) => model.slug), ["external/model"]);
+});
+
+test("prior native slug recovery cannot add routed or stale catalog models", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-native-prior-"));
+  const catalogPath = path.join(directory, "models.json");
+  try {
+    writeFileSync(catalogPath, JSON.stringify({
+      models: [
+        { slug: "gpt-5.5" },
+        { slug: "external/model" },
+        { slug: "gpt-stale" },
+      ],
+    }));
+    assert.deepEqual(
+      [...previouslyPublishedNativeSlugs(
+        [{ slug: "gpt-5.5" }, { slug: "gpt-new" }],
+        catalogPath,
+      )],
+      ["gpt-5.5"],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("native catalog merge backfills missing nested model-message keys only", () => {

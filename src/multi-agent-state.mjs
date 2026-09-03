@@ -252,16 +252,6 @@ export function subagentEligibleModels(models, settings) {
   );
 }
 
-// Compatibility helper for the original all-models switch.
-export function applyAllMultiAgent(models, enabled) {
-  return applyMultiAgentSettings(models, {
-    version: 2,
-    mode: enabled ? "all" : "proven",
-    enabled: [],
-    disabled: [],
-  });
-}
-
 // Compatibility helper for the original shell switch.
 export function writeAllMultiAgent(enabled) {
   setMultiAgentMode(enabled ? "all" : "proven");

@@ -63,11 +63,33 @@ import {
 import { discoveryDisabled } from "./discovery-mode.mjs";
 import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { routedModelSearchAvailable } from "./search-capability.mjs";
+import {
+  codexDesktopState,
+  nativeCatalogPublicationMode,
+  readNativeAuthObservation,
+} from "./native-auth-observation.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
 
 function validNativeCatalog(parsed) {
   return parsed && Array.isArray(parsed.models) && parsed.models.length > 0;
+}
+
+export function previouslyPublishedNativeSlugs(
+  nativeModels,
+  catalogPath = MERGED_CATALOG_PATH,
+) {
+  const candidates = new Set((nativeModels || []).map((model) => String(model?.slug || "")));
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, "utf8"));
+    return new Set(
+      (parsed?.models || [])
+        .map((model) => String(model?.slug || ""))
+        .filter((slug) => candidates.has(slug)),
+    );
+  } catch {
+    return new Set();
+  }
 }
 
 // The account cache stores the raw instruction template while the bundled
@@ -167,6 +189,11 @@ const BUNDLED_BACKFILL_FIELDS = Object.freeze([
   "include_apps_usage_instructions",
 ]);
 
+// The installed Codex binary owns the shell implementation it can deserialize.
+// An account cache can survive a client upgrade with the old non-empty value,
+// so emptiness is not a sufficient drift check for this field.
+const BUNDLED_AUTHORITATIVE_FIELDS = Object.freeze(["shell_type"]);
+
 function deepBackfillNativeMetadata(accountValue, bundledValue) {
   if (
     !accountValue ||
@@ -195,6 +222,9 @@ export function mergeNativeModel(accountModel, bundledModel) {
   if (!bundledModel) return { ...accountModel };
 
   const merged = { ...bundledModel, ...accountModel };
+  for (const field of BUNDLED_AUTHORITATIVE_FIELDS) {
+    if (owns(bundledModel, field)) merged[field] = bundledModel[field];
+  }
   for (const field of BUNDLED_BACKFILL_FIELDS) {
     const value = bundledModel[field];
     if (
@@ -982,7 +1012,11 @@ function behaviorTemplateFor(nativeModels, model, fallback) {
   return matched;
 }
 
-export function buildMergedCatalog(native, routedModelsList, { includeNative = true } = {}) {
+export function buildMergedCatalog(
+  native,
+  routedModelsList,
+  { includeNative = true, nativeSlugs } = {},
+) {
   const template =
     native.models.find((model) => model.slug === "gpt-5.5") ||
     native.models.find((model) => model.visibility === "list") ||
@@ -992,7 +1026,9 @@ export function buildMergedCatalog(native, routedModelsList, { includeNative = t
   }
   const models = new Map(
     includeNative
-      ? native.models.map((model) => [
+      ? native.models
+        .filter((model) => !nativeSlugs || nativeSlugs.has(model.slug))
+        .map((model) => [
           model.slug,
           // Native entries are owned by the current bundled Codex catalog.
           { ...model },
@@ -1180,7 +1216,19 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
         "Set CODEX_BIN to a runnable Codex CLI and try again.",
     );
   }
-  const openaiAuthenticated = auth.authenticated;
+  // Publication is a cold path and needs a current generation. Native request
+  // handling uses the module's bounded cache instead of probing per turn.
+  const desktop = codexDesktopState({ forceRefresh: true });
+  const nativeAuthObservation = readNativeAuthObservation({ desktop });
+  const nativePublication = nativeCatalogPublicationMode(
+    auth,
+    desktop,
+    nativeAuthObservation,
+  );
+  const openaiAuthenticated = nativePublication === "all";
+  const preservedNativeSlugs = nativePublication === "preserve"
+    ? previouslyPublishedNativeSlugs(native.models)
+    : undefined;
   const routedCatalog = routedCatalogActive();
   // Advertised last, and only while an engine actually resolves: Codex gates
   // the paste on `input_modalities`, so a bridge that has gone away must take
@@ -1210,7 +1258,8 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
     ? buildLoginFreeCatalog(native, catalogModels)
     : {
         models: buildMergedCatalog(native, routedCatalog ? catalogModels : [], {
-          includeNative: openaiAuthenticated,
+          includeNative: nativePublication !== "none",
+          nativeSlugs: preservedNativeSlugs,
         }),
         aliases: {},
       };
@@ -1298,14 +1347,17 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
     vision_bridged_models: catalogModels.filter(
       (model) => model.visionBridgeEngine !== undefined,
     ).length,
-    native_models: !loginFree && openaiAuthenticated
-      ? merged.filter((model) => !MODEL_BY_SLUG.has(String(model.slug))).length
+    native_models: !loginFree
+      ? merged.filter((model) => native.models.some(
+          (nativeModel) => String(nativeModel.slug) === String(model.slug),
+        )).length
       : 0,
     aliased_models: Object.keys(aliases).length,
     login_free: loginFree,
     routed_catalog_active: routedCatalog || loginFree,
     openai_authenticated: openaiAuthenticated,
     openai_auth_reason: auth.reason,
+    native_publication: nativePublication,
     selected_model: selectedModel() || null,
   };
   if (output) process.stdout.write(`${JSON.stringify(result)}\n`);

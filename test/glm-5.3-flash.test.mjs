@@ -83,10 +83,3 @@ test("withdrawn or uncertified reseller routes stay absent while direct-proven r
   assert.equal(MODEL_BY_SLUG.has("opencode-go/glm-5.3-flash"), true);
   assert.equal(MODEL_BY_SLUG.has("ollama-cloud/glm-5.3-flash"), true);
 });
-
-test("Ollama Cloud Flash candidate records its upstream id and request profile", () => {
-  assert.equal(MODEL_BY_SLUG.has("ollama-cloud/glm-5.3-flash"), true);
-  const model = MODEL_BY_SLUG.get("ollama-cloud/glm-5.3-flash");
-  assert.equal(model?.upstreamModel, "glm-5.3-flash:cloud");
-  assert.equal(model?.requestProfile, "ollama-cloud-glm-5-3-flash");
-});

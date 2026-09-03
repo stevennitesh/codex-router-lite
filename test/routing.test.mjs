@@ -13,7 +13,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { gzipSync, zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  deflateSync,
+  gzipSync,
+  zstdCompressSync,
+  zstdDecompressSync,
+} from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import {
@@ -941,6 +947,7 @@ test("native tool-result aging is opt-in and rewrites only consumed old results"
 });
 
 test("router preserves native auth and isolates every external route", async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "native-auth-isolation-"));
   const nativeRequests = [];
   const routedRequests = [];
   const native = await mockServer(async (request, response) => {
@@ -971,6 +978,7 @@ test("router preserves native auth and isolates every external route", async () 
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
     CODEX_ROUTER_QUIET: "1",
+    MODEL_ROUTER_STATE_DIR: stateDir,
   });
 
   try {
@@ -981,7 +989,9 @@ test("router preserves native auth and isolates every external route", async () 
       "X-Codex-Installation-Id": "installation-secret",
       Traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
       Tracestate: "vendor=value",
+      "X-Codex-Routing-Hint": "route-affinity",
       "X-OpenAI-Internal-Codex-Responses-Lite": "true",
+      "X-Session-Id": "session-affinity",
       "X-Private-Header": "must-not-forward",
       "Content-Type": "application/json",
     };
@@ -1009,6 +1019,28 @@ test("router preserves native auth and isolates every external route", async () 
       },
     );
     assert.equal(nativeResponse.status, 200);
+    assert.equal(
+      existsSync(path.join(stateDir, "native-auth-observation.json")),
+      false,
+      "an unrelated caller credential must not authorize the desktop native catalog",
+    );
+
+    for (const [encoding, compress] of [
+      ["gzip", gzipSync],
+      ["deflate", deflateSync],
+      ["br", brotliCompressSync],
+    ]) {
+      const compressedResponse = await fetch(`${routerBase(routerPort)}/responses`, {
+        method: "POST",
+        headers: { ...callerHeaders, "Content-Encoding": encoding },
+        body: compress(Buffer.from(JSON.stringify({
+          model: "gpt-5.6-sol",
+          input: `${encoding} native test`,
+        }))),
+      });
+      assert.equal(compressedResponse.status, 200, router.testErrors());
+      assert.equal(nativeRequests.at(-1).body.input, `${encoding} native test`);
+    }
 
     for (const [model, gatewayModel] of [
       ["kimi-oauth/k3", "kimi-oauth-k3"],
@@ -1042,7 +1074,9 @@ test("router preserves native auth and isolates every external route", async () 
       "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
     );
     assert.equal(nativeRequests[0].headers.tracestate, "vendor=value");
+    assert.equal(nativeRequests[0].headers["x-codex-routing-hint"], "route-affinity");
     assert.equal(nativeRequests[0].headers["x-openai-internal-codex-responses-lite"], "true");
+    assert.equal(nativeRequests[0].headers["x-session-id"], "session-affinity");
     assert.equal(nativeRequests[0].headers["x-private-header"], undefined);
     assert.equal(nativeRequests[0].url, "/backend-api/codex/responses");
     assert.doesNotMatch(nativeRequests[0].url, /PROVIDER_QUERY_SECRET/);
@@ -1067,6 +1101,7 @@ test("router preserves native auth and isolates every external route", async () 
   } finally {
     await stopChild(router);
     await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
@@ -1178,6 +1213,12 @@ test("substituted native compaction omits the ordinary Responses store policy", 
       assert.equal(request.headers["chatgpt-account-id"], "test-native-account");
       assert.equal(request.headers.authorization.includes(CALLER_KEY), false);
     }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    assert.equal(
+      existsSync(path.join(testRoot, "state", "native-auth-observation.json")),
+      false,
+      "a managed caller must not inherit observation provenance from fallback substitution",
+    );
   } finally {
     await stopChild(router);
     await closeServer(native.server);
@@ -6681,6 +6722,116 @@ test("router refuses unsupported search history on selected generic turns and co
     await stopChild(router);
     await closeServer(gateway.server);
     rmSync(fixture.dir, { recursive: true, force: true });
+  }
+});
+
+test("router enforces missing search capability for checked-in OpenRouter GLM turns", async () => {
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, {
+      id: `resp-${gatewayRequests.length}`,
+      object: "response",
+      status: "completed",
+      output: [{
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "ok" }],
+      }],
+    });
+  });
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-search-state-"));
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+    MODEL_ROUTER_STATE_DIR: stateDir,
+  });
+  const headers = {
+    Authorization: `Bearer ${CALLER_KEY}`,
+    "Content-Type": "application/json",
+  };
+  const model = "openrouter/glm-5.3-flash";
+  const webSearch = { type: "web_search", search_context_size: "medium" };
+  const shell = { type: "function", name: "shell", parameters: { type: "object" } };
+  const searchFields = {
+    web_search_options: { search_context_size: "medium" },
+    include: ["reasoning.encrypted_content", "web_search_call.action.sources"],
+  };
+
+  const send = (suffix, body) => fetch(`${routerBase(routerPort)}/responses${suffix}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model, ...body }),
+  });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+
+    const requiredOnly = await send("", {
+      input: "test",
+      tools: [webSearch],
+      tool_choice: "required",
+    });
+    assert.equal(requiredOnly.status, 400);
+    assert.equal((await requiredOnly.json()).error.type, "model_search_not_supported");
+
+    const explicitChoice = await send("", {
+      input: "test",
+      tools: [webSearch, shell],
+      tool_choice: { type: "web_search" },
+    });
+    assert.equal(explicitChoice.status, 400);
+    assert.equal((await explicitChoice.json()).error.type, "model_search_not_supported");
+    assert.equal(gatewayRequests.length, 0);
+
+    const mixed = await send("", {
+      input: "test",
+      ...searchFields,
+      tools: [webSearch, shell],
+      tool_choice: "required",
+    });
+    assert.equal(mixed.status, 200, router.testErrors());
+    assert.equal(gatewayRequests[0].web_search_options, undefined);
+    assert.deepEqual(gatewayRequests[0].include, ["reasoning.encrypted_content"]);
+    assert.equal(gatewayRequests[0].tools.some((tool) => tool.type === "web_search"), false);
+    assert.equal(gatewayRequests[0].tools.some((tool) => tool.name === "shell"), true);
+    assert.equal(gatewayRequests[0].tool_choice, "required");
+
+    const compact = await send("/compact", {
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "remember this" }],
+      }],
+      ...searchFields,
+      tools: [webSearch],
+      tool_choice: "required",
+    });
+    assert.equal(compact.status, 200, router.testErrors());
+    assert.equal(gatewayRequests[1].web_search_options, undefined);
+    assert.deepEqual(gatewayRequests[1].include, ["reasoning.encrypted_content"]);
+    assert.deepEqual(gatewayRequests[1].tools, []);
+    assert.equal(gatewayRequests[1].tool_choice, undefined);
+
+    const history = [{
+      type: "web_search_call",
+      id: "search-history",
+      status: "completed",
+      action: { type: "search", query: "router contract" },
+    }];
+    for (const suffix of ["", "/compact"]) {
+      const before = gatewayRequests.length;
+      const stored = await send(suffix, { input: history });
+      assert.equal(stored.status, 400);
+      assert.equal((await stored.json()).error.type, "model_search_not_supported");
+      assert.equal(gatewayRequests.length, before);
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
