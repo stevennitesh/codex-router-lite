@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -144,6 +145,22 @@ function schtasks(args, options = {}) {
 
 function writeAtomic(target, contents) {
   guardLauncherWrite();
+  // The VBS host keeps its script file open for the lifetime of the Router.
+  // Replacing an unchanged launcher can therefore raise a sharing violation
+  // during an otherwise routine reinstall or checkout ownership transfer.
+  // Preserve an identical file in place; the CMD wrapper still changes when
+  // its source checkout or captured service environment changes.
+  if (existsSync(target)) {
+    try {
+      if (readFileSync(target).equals(contents)) {
+        protectPrivateFile(target);
+        return;
+      }
+    } catch {
+      // Fall through to the atomic replacement so its error remains the
+      // authoritative result when the existing file cannot be inspected.
+    }
+  }
   const temporary = `${target}.tmp.${process.pid}`;
   try {
     writeFileSync(temporary, contents, { mode: 0o600 });

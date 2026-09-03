@@ -555,10 +555,16 @@ test(
       // mark, which corrupts a state directory holding non-ASCII characters.
       assert.deepEqual([...bytes.subarray(0, 2)], [0xff, 0xfe]);
       assert.match(bytes.toString("utf16le").slice(1), /^Option Explicit\r\n/);
+      const wrapperInode = statSync(wrapperPath).ino;
+      const launcherInode = statSync(launcherPath).ino;
 
-      // Reinstalling over an existing pair overwrites instead of failing.
+      // Reinstalling over an identical pair leaves both files in place. On
+      // Windows the running VBS host keeps its launcher open, so even an
+      // unnecessary atomic replacement can fail with a sharing violation.
       assert.equal(run("install").installed, false);
       assert.equal(readFileSync(launcherPath).equals(bytes), true);
+      assert.equal(statSync(wrapperPath).ino, wrapperInode);
+      assert.equal(statSync(launcherPath).ino, launcherInode);
 
       assert.equal(run("uninstall").installed, false);
       assert.equal(existsSync(wrapperPath), false);
