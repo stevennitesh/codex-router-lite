@@ -12,31 +12,33 @@ import {
 } from "./model-overlay-publication.mjs";
 import { withModelOverlayLock } from "./model-overlay-lock.mjs";
 import { withNativeContextVariants } from "./native-context-variants.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
 // The publish marker lives under the shared state directory, which does not
 // vary by target, so reading it here does not disturb the per-target probes
 // below that re-import paths with their own MODEL_ROUTER_TARGET.
 import {
-  DSH_CATALOG_PATH,
-  CLAUDE_CATALOG_PATH,
-  CURSOR_CATALOG_PATH,
-  GEMINI_CATALOG_PATH,
-  OPENCLAW_CATALOG_PATH,
   PROVIDER_API_KEY_POOL_PATH,
   PROVIDER_CREDENTIAL_STORE_PATH,
   PROVIDER_SELECTION_PATH,
 } from "./paths.mjs";
 // Same reasoning: presence is a property of the shared plane, not of a target,
 // so the overview can resolve it statically without perturbing those probes.
-import { presenceSnapshot } from "./presence-state.mjs";
-import { harnessSnapshotWithWeb } from "./dsh-install.mjs";
-import { USER_MODELS_PATH } from "./user-models.mjs";
-import { refreshTargetPickerIfInstalled } from "./target-integration.mjs";
-import { activateAntigravityProbe } from "./antigravity-probe-activation.mjs";
 import {
+  activateAntigravityProbe,
   chatGptSessionStatus,
+  CLAUDE_CATALOG_PATH,
+  CURSOR_CATALOG_PATH,
+  DSH_CATALOG_PATH,
+  GEMINI_CATALOG_PATH,
+  harnessSnapshotWithWeb,
+  importLegacyControlModule,
+  legacyControlScript,
+  OPENCLAW_CATALOG_PATH,
+  presenceSnapshot,
+  refreshTargetPickerIfInstalled,
   setChatGptSessionSharingFromControl,
-} from "./chatgpt-session-control.mjs";
+  USER_MODELS_PATH,
+  discoveryDisabled,
+} from "./compat/retirement/legacy-control-features.mjs";
 import {
   boundedOperationChild,
   detachedOperationEnvironment,
@@ -189,7 +191,7 @@ function codexConfigSnapshot() {
 // so the criteria now live in one place for every surface (see
 // `src/vision-engines.mjs`).
 async function shippedNativeVisionEngines(hidden) {
-  const { installedNativeVisionEngines } = await import("./vision-engines.mjs");
+  const { installedNativeVisionEngines } = await importLegacyControlModule("./vision-engines.mjs");
   return installedNativeVisionEngines({ hidden });
 }
 
@@ -269,35 +271,35 @@ function subagentCertification(model) {
 async function emitProbe() {
   const { CONFIG_PATH, NATIVE_CATALOG_PATH, TARGET, PROVIDER_SELECTION_PATH } =
     await import("./paths.mjs");
-  const { canonicalProviderId, readProviderSelection } = await import("./provider-selection.mjs");
-  const { LISTED_MODELS, PROVIDERS } = await import("./model-registry.mjs");
+  const { canonicalProviderId, readProviderSelection } = await importLegacyControlModule("./provider-selection.mjs");
+  const { LISTED_MODELS, PROVIDERS } = await importLegacyControlModule("./model-registry.mjs");
   const { readNativeAliases } = await import("./native-alias.mjs");
   const { subagentSettingsSnapshot } = await import("./multi-agent-state.mjs");
   const { modelPickerSnapshot } = await import("./model-picker-state.mjs");
   const { toolResultAgingSnapshot } = await import("./tool-result-aging-state.mjs");
-  const { readVisionBridgeSettings, visionBridgeSnapshot } = await import(
+  const { readVisionBridgeSettings, visionBridgeSnapshot } = await importLegacyControlModule(
     "./vision-bridge-state.mjs"
   );
-  const { rankVisionEngines, resolveVisionEngine, visionEngineEfforts } = await import(
+  const { rankVisionEngines, resolveVisionEngine, visionEngineEfforts } = await importLegacyControlModule(
     "./vision-bridge.mjs"
   );
-  const { installedNativeVisionEngines } = await import("./vision-engines.mjs");
+  const { installedNativeVisionEngines } = await importLegacyControlModule("./vision-engines.mjs");
   const { annotateLocalModels, hostVisionProfile, refreshVisionModelSizesIfStale } =
-    await import("./vision-host.mjs");
-  const { readVisionDownload } = await import("./vision-download.mjs");
-  const { readBenchmarkResults } = await import("./vision-benchmark.mjs");
-  const { readLocalBenchmarks } = await import("./local-benchmark.mjs");
+    await importLegacyControlModule("./vision-host.mjs");
+  const { readVisionDownload } = await importLegacyControlModule("./vision-download.mjs");
+  const { readBenchmarkResults } = await importLegacyControlModule("./vision-benchmark.mjs");
+  const { readLocalBenchmarks } = await importLegacyControlModule("./local-benchmark.mjs");
   const visionBenchmarks = readBenchmarkResults();
   const localBenchmarks = readLocalBenchmarks();
   const localAndVisionBenchmarks = Object.fromEntries(
     [...new Set([...Object.keys(visionBenchmarks), ...Object.keys(localBenchmarks)])]
       .map((tag) => [tag, { ...visionBenchmarks[tag], ...localBenchmarks[tag] }]),
   );
-  const { localModelInventory, localModelsSnapshot, runningLocalModels } = await import(
+  const { localModelInventory, localModelsSnapshot, runningLocalModels } = await importLegacyControlModule(
     "./local-models.mjs",
   );
-  const { localOllamaRuntimeSnapshot } = await import("./ollama-runtime.mjs");
-  const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+  const { localOllamaRuntimeSnapshot } = await importLegacyControlModule("./ollama-runtime.mjs");
+  const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
   // Bounded and weekly: the tray reads this snapshot constantly, so a fresh
   // cache costs nothing and a stale one costs one short, failure-tolerant pass.
   if (TARGET === "codex") await refreshVisionModelSizesIfStale();
@@ -413,7 +415,7 @@ async function emitProbe() {
                 // The panel's periodic refresh reads this snapshot, not
                 // `local-models list`, so the LM Studio section must ride
                 // here too or it paints once and vanishes on the next poll.
-                lmstudio: await (await import("./lmstudio-models.mjs")).lmstudioSnapshot(),
+                lmstudio: await (await importLegacyControlModule("./lmstudio-models.mjs")).lmstudioSnapshot(),
               },
               visionBridge: (() => {
                 const candidates = selectedConfiguredListedModels();
@@ -467,8 +469,8 @@ async function emitProbe() {
 
 async function emitProbeSet(provider, desired) {
   const { TARGET } = await import("./paths.mjs");
-  const { disableProvider, enableProvider } = await import("./provider-selection.mjs");
-  const { PROVIDERS } = await import("./model-registry.mjs");
+  const { disableProvider, enableProvider } = await importLegacyControlModule("./provider-selection.mjs");
+  const { PROVIDERS } = await importLegacyControlModule("./model-registry.mjs");
   if (!PROVIDERS.has(provider)) throw new Error(`Unknown provider: ${provider}`);
   if (desired !== "on" && desired !== "off") throw new Error("state must be on or off");
 
@@ -486,12 +488,12 @@ async function emitProbeSet(provider, desired) {
 // same selected registry, picker state, and subagent policy.
 async function routerCatalogSnapshot() {
   const { canonicalProviderId, readProviderSelection, selectedConfiguredListedModels } =
-    await import("./provider-selection.mjs");
-  const { CHECKED_IN_MODELS } = await import("./model-registry.mjs");
+    await importLegacyControlModule("./provider-selection.mjs");
+  const { CHECKED_IN_MODELS } = await importLegacyControlModule("./model-registry.mjs");
   const { modelPickerSnapshot } = await import("./model-picker-state.mjs");
   const { subagentSettingsSnapshot } = await import("./multi-agent-state.mjs");
   const { applySubagentProofs } = await import("./subagent-proofs.mjs");
-  const { routerDashboardState } = await import("./router-dashboard.mjs");
+  const { routerDashboardState } = await importLegacyControlModule("./router-dashboard.mjs");
   const settings = subagentSettingsSnapshot();
   const picker = modelPickerSnapshot();
   const hidden = new Set(picker.hidden);
@@ -741,11 +743,11 @@ async function printAccountUsage() {
       "ChatGPT account profiles are unavailable while credential discovery is disabled.",
     );
   }
-  const { readCodexAccountUsage } = await import("./codex-account-usage.mjs");
+  const { readCodexAccountUsage } = await importLegacyControlModule("./codex-account-usage.mjs");
   const {
     ensureChatGPTProfileAccounts,
     selectedChatGPTUsageProfile,
-  } = await import("./chatgpt-profile-switch.mjs");
+  } = await importLegacyControlModule("./chatgpt-profile-switch.mjs");
   await ensureChatGPTProfileAccounts();
   const profile = selectedChatGPTUsageProfile();
   const usage = profile.home
@@ -760,12 +762,12 @@ async function printAccountUsage() {
 }
 
 async function printProviderUsage() {
-  const { providerUsageSnapshot } = await import("./provider-usage.mjs");
+  const { providerUsageSnapshot } = await importLegacyControlModule("./provider-usage.mjs");
   process.stdout.write(`${JSON.stringify(await providerUsageSnapshot(), null, 2)}\n`);
 }
 
 async function printProviderOnboarding() {
-  const { providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
+  const { providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
   process.stdout.write(`${JSON.stringify(providerOnboardingSnapshot(), null, 2)}\n`);
 }
 
@@ -774,18 +776,18 @@ async function handleGenericProviders(...commandArgs) {
   // boundary. Calling the descriptor CRUD layer directly here can leave a
   // running route and every installed client's picker on the pre-mutation
   // registry until some unrelated later apply.
-  const { runGenericCommand } = await import("./providers.mjs");
+  const { runGenericCommand } = await importLegacyControlModule("./providers.mjs");
   await runGenericCommand(commandArgs);
 }
 
 async function installProviderCli(providerId) {
-  const { installOauthCli, providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
+  const { installOauthCli, providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
   installOauthCli(providerId);
   process.stdout.write(`${JSON.stringify(providerOnboardingSnapshot())}\n`);
 }
 
 async function loginProvider(providerId) {
-  const { loginOauthProvider, providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
+  const { loginOauthProvider, providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
   const deadline = operationDeadlineFromEnvironment(process.env, {
     timeoutMs: 10 * 60_000,
     maximumMs: 10 * 60_000,
@@ -823,8 +825,8 @@ async function probeProvider(providerId, flags) {
         "Usage: control probe-provider antigravity-oauth --live --yes [--provision-project]",
     );
   }
-  const { probeAntigravity } = await import("./antigravity-oauth-probe.mjs");
-  const { forgetProviderCatalogFamilyCache } = await import("./provider-catalogs.mjs");
+  const { probeAntigravity } = await importLegacyControlModule("./antigravity-oauth-probe.mjs");
+  const { forgetProviderCatalogFamilyCache } = await importLegacyControlModule("./provider-catalogs.mjs");
   const deadline = operationDeadlineFromEnvironment(process.env, {
     timeoutMs: 10 * 60_000,
     maximumMs: 10 * 60_000,
@@ -867,15 +869,15 @@ async function probeProvider(providerId, flags) {
   } finally {
     clearTimeout(deadlineTimer);
   }
-  const { providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
+  const { providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
   process.stdout.write(`${JSON.stringify(providerOnboardingSnapshot())}\n`);
 }
 
 async function invalidateProviderCatalog(providerId) {
-  const { providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
+  const { providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
   const provider = providerOnboardingSnapshot().providers.find((entry) => entry.id === providerId);
   if (!provider) throw new Error(`Unknown provider: ${providerId}`);
-  const { forgetProviderCatalogFamilyCache } = await import("./provider-catalogs.mjs");
+  const { forgetProviderCatalogFamilyCache } = await importLegacyControlModule("./provider-catalogs.mjs");
   const cleared = await forgetProviderCatalogFamilyCache(providerId);
   process.stdout.write(`${JSON.stringify({ provider: providerId, cleared })}\n`);
 }
@@ -892,15 +894,15 @@ async function readSecretFromStdin() {
 }
 
 async function saveProviderCredential(providerId) {
-  const { providerOnboardingSnapshot, saveApiCredential } = await import("./provider-onboarding.mjs");
+  const { providerOnboardingSnapshot, saveApiCredential } = await importLegacyControlModule("./provider-onboarding.mjs");
   const value = await readSecretFromStdin();
   // The control-center sends this command before it refreshes its provider
   // snapshot. Keep credential persistence, selection, and target publication
   // together so a concurrent remove cannot create an enabled credentialless
   // provider between the child processes.
   await withModelOverlayLock(async () => {
-    const { withProviderCatalogCacheTransaction } = await import("./model-catalog-cache.mjs");
-    const { providerCatalogFamilyCacheIds } = await import("./provider-catalogs.mjs");
+    const { withProviderCatalogCacheTransaction } = await importLegacyControlModule("./model-catalog-cache.mjs");
+    const { providerCatalogFamilyCacheIds } = await importLegacyControlModule("./provider-catalogs.mjs");
     await withProviderCatalogCacheTransaction((catalog) => {
       saveApiCredential(providerId, value);
       // One credential can expose several account catalogs. The same lock
@@ -908,30 +910,30 @@ async function saveProviderCredential(providerId) {
       // generation boundary rather than a race with an old in-flight fetch.
       catalog.forget(providerCatalogFamilyCacheIds(providerId));
     });
-    const { enableProvider } = await import("./provider-selection.mjs");
+    const { enableProvider } = await importLegacyControlModule("./provider-selection.mjs");
     enableProvider(providerId);
-    const { refreshTargetPickerIfInstalled } = await import("./target-integration.mjs");
+    const { refreshTargetPickerIfInstalled } = await importLegacyControlModule("./target-integration.mjs");
     await refreshTargetPickerIfInstalled();
   });
   process.stdout.write(`${JSON.stringify(providerOnboardingSnapshot())}\n`);
 }
 
 async function deleteProviderCredential(providerId) {
-  const { providerOnboardingSnapshot, removeApiCredential } = await import("./provider-onboarding.mjs");
+  const { providerOnboardingSnapshot, removeApiCredential } = await importLegacyControlModule("./provider-onboarding.mjs");
   // Removing a managed credential also withdraws its provider selection. Keep
   // that low-level write under the same cross-process lock as the picker and
   // local-model mutations; status reads remain outside the lock.
   let removal;
   await withModelOverlayLock(async () => {
-    const { withProviderCatalogCacheTransaction } = await import("./model-catalog-cache.mjs");
-    const { providerCatalogFamilyCacheIds } = await import("./provider-catalogs.mjs");
+    const { withProviderCatalogCacheTransaction } = await importLegacyControlModule("./model-catalog-cache.mjs");
+    const { providerCatalogFamilyCacheIds } = await importLegacyControlModule("./provider-catalogs.mjs");
     removal = await withProviderCatalogCacheTransaction(async (catalog) => {
       const result = await removeApiCredential(providerId);
       if (result.removedFiles) catalog.forget(providerCatalogFamilyCacheIds(providerId));
       return result;
     });
     if (removal.removedFiles || providerId === "antigravity-oauth") {
-      const { refreshTargetPickerIfInstalled } = await import("./target-integration.mjs");
+      const { refreshTargetPickerIfInstalled } = await importLegacyControlModule("./target-integration.mjs");
       await refreshTargetPickerIfInstalled();
     }
   });
@@ -951,7 +953,7 @@ async function handleProviderKeyPool(providerId, action, value) {
     storedCredentialPoolUsesServiceEnvironment,
     storedCredentialRequiresServiceEnvironment,
     storedCredentialPoolStatus,
-  } = await import("./provider-api-key-control.mjs");
+  } = await importLegacyControlModule("./provider-api-key-control.mjs");
   if (!action || action === "status") {
     // Status is deliberately lock-free and read-only. It must remain usable
     // while a catalog publication is slow or recovering an abandoned owner.
@@ -1045,9 +1047,9 @@ async function setLoginFreeMode(desired) {
   }
   let loginFreeModel;
   if (desired === "on") {
-    const { providerOnboardingSnapshot } = await import("./provider-onboarding.mjs");
-    const { readProviderSelection, selectedListedModels } = await import("./provider-selection.mjs");
-    const { MODEL_BY_SLUG } = await import("./model-registry.mjs");
+    const { providerOnboardingSnapshot } = await importLegacyControlModule("./provider-onboarding.mjs");
+    const { readProviderSelection, selectedListedModels } = await importLegacyControlModule("./provider-selection.mjs");
+    const { MODEL_BY_SLUG } = await importLegacyControlModule("./model-registry.mjs");
     const { readNativeAliases } = await import("./native-alias.mjs");
     const selected = new Set(readProviderSelection());
     const readyProviders = new Set(
@@ -1115,7 +1117,7 @@ async function setSignedRouting(desired) {
     throw new Error("Usage: control signed-routing <on|off>");
   }
   if (desired === "on") {
-    const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+    const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
     if (selectedConfiguredListedModels().length === 0) {
       throw new Error(
         "Connect and enable at least one external provider before turning on signed routing.",
@@ -1207,7 +1209,7 @@ async function setLoginFreeModel(slug) {
   if (!config?.login_free) {
     throw new Error("Switching the tray model requires login-free mode.");
   }
-  const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+  const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
   if (!selectedConfiguredListedModels().some((model) => model.slug === value)) {
     throw new Error(`${value} is not an enabled, authenticated external model.`);
   }
@@ -1236,7 +1238,7 @@ async function setRouterDefault(action, slug) {
   if (action === "set") {
     value = String(slug || "").trim();
     if (!value) throw new Error("Usage: control router-default set MODEL");
-    const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+    const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
     if (!selectedConfiguredListedModels().some((model) => model.slug === value)) {
       throw new Error(`${value} is not an enabled, authenticated external model.`);
     }
@@ -1385,7 +1387,7 @@ async function knownModelSlug(slug) {
   } catch {
     // Fall back to the checked-in registry for fresh installs.
   }
-  const { MODEL_BY_SLUG } = await import("./model-registry.mjs");
+  const { MODEL_BY_SLUG } = await importLegacyControlModule("./model-registry.mjs");
   return MODEL_BY_SLUG.has(slug);
 }
 
@@ -1394,7 +1396,7 @@ async function knownModelSubagentVersion(slug) {
   // catalog deliberately serializes an unknown route as conservative v1, so
   // consulting it first would mislabel every still-uncertified route as a
   // reviewed v1 verdict and make the compatibility-test workflow unreachable.
-  const { MODEL_BY_SLUG } = await import("./model-registry.mjs");
+  const { MODEL_BY_SLUG } = await importLegacyControlModule("./model-registry.mjs");
   const registryModel = MODEL_BY_SLUG.get(slug);
   if (registryModel) return registryModel.multiAgentVersion;
 
@@ -1460,8 +1462,8 @@ async function handleSubagents(action, value, flag, rest = []) {
     subagentSettingsSnapshot,
   } = await import("./multi-agent-state.mjs");
   if (action === "status") {
-    const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
-    const { subagentAutoPolicySnapshot } = await import("./subagent-auto-policy.mjs");
+    const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
+    const { subagentAutoPolicySnapshot } = await importLegacyControlModule("./subagent-auto-policy.mjs");
     process.stdout.write(`${JSON.stringify({
       ...subagentSettingsSnapshot(),
       autoPolicies: subagentAutoPolicySnapshot(selectedConfiguredListedModels()),
@@ -1471,8 +1473,8 @@ async function handleSubagents(action, value, flag, rest = []) {
   if (action === "policy") {
     const [kind, selector, desired] = [value, flag, rest[2]];
     if (kind === "status" || !kind) {
-      const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
-      const { subagentAutoPolicySnapshot } = await import("./subagent-auto-policy.mjs");
+      const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
+      const { subagentAutoPolicySnapshot } = await importLegacyControlModule("./subagent-auto-policy.mjs");
       process.stdout.write(`${JSON.stringify(subagentAutoPolicySnapshot(selectedConfiguredListedModels()))}\n`);
       return;
     }
@@ -1481,14 +1483,14 @@ async function handleSubagents(action, value, flag, rest = []) {
         "Usage: control subagents policy status|provider <provider-id> <on|off>|model <model-slug> <on|off>|family <name> <on|off>",
       );
     }
-    const { setSubagentAutoPolicy, matchingSubagentAutoPolicyModels } = await import(
+    const { setSubagentAutoPolicy, matchingSubagentAutoPolicyModels } = await importLegacyControlModule(
       "./subagent-auto-policy.mjs"
     );
     const policyState = setSubagentAutoPolicy(kind, selector, desired === "on");
     // Enabling a policy is explicit standing consent for its matching live
     // probes. Only models currently configured for this machine can spend it.
     if (desired === "on") {
-      const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+      const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
       const matches = matchingSubagentAutoPolicyModels(
         selectedConfiguredListedModels().filter((model) => model.multiAgentVersion !== "v1"),
         policyState.policies,
@@ -1496,7 +1498,7 @@ async function handleSubagents(action, value, flag, rest = []) {
       const slugs = matches.map((model) => model.slug);
       if (slugs.length) {
         setMultiAgentModels(slugs, true);
-        const { spawnDetachedVerification } = await import("./subagent-verify.mjs");
+        const { spawnDetachedVerification } = await importLegacyControlModule("./subagent-verify.mjs");
         spawnDetachedVerification(slugs);
       }
     }
@@ -1507,7 +1509,7 @@ async function handleSubagents(action, value, flag, rest = []) {
   if (action === "select-all") {
     replaceMultiAgentState({ mode: "all", enabled: [], disabled: [] });
   } else if (action === "unselect-all") {
-    const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+    const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
     const { modelPickerSnapshot } = await import("./model-picker-state.mjs");
     const { NATIVE_CATALOG_PATH } = await import("./paths.mjs");
     const picker = modelPickerSnapshot();
@@ -1532,7 +1534,7 @@ async function handleSubagents(action, value, flag, rest = []) {
     // Explicit re-research: probe the named slugs (or every enabled one) in
     // the foreground and print the verdicts. Spends ~2 live requests per
     // candidate on that model's own provider.
-    const { verifySubagentCandidates } = await import("./subagent-verify.mjs");
+    const { verifySubagentCandidates } = await importLegacyControlModule("./subagent-verify.mjs");
     const targets = rest.filter(Boolean);
     const sweep = targets.length
       ? targets
@@ -1678,7 +1680,7 @@ async function handleSubagents(action, value, flag, rest = []) {
     // and cannot sit on a live network round-trip; the proofs snapshot shows
     // "checking" until the worker records a verdict and republishes.
     if (flag === "on") {
-      const { spawnDetachedVerification } = await import("./subagent-verify.mjs");
+      const { spawnDetachedVerification } = await importLegacyControlModule("./subagent-verify.mjs");
       spawnDetachedVerification([value]);
     }
   } else if (action === "effort") {
@@ -1700,7 +1702,7 @@ async function handleSubagents(action, value, flag, rest = []) {
     if (!["on", "off"].includes(flag)) {
       throw new Error("Usage: control subagents provider <provider-id> <on|off>");
     }
-    const { canonicalProviderId, selectedConfiguredListedModels } = await import(
+    const { canonicalProviderId, selectedConfiguredListedModels } = await importLegacyControlModule(
       "./provider-selection.mjs"
     );
     const provider = canonicalProviderId(String(value || "").trim());
@@ -1723,7 +1725,7 @@ async function handleSubagents(action, value, flag, rest = []) {
     }
     setMultiAgentModels(slugs, flag === "on");
     if (flag === "on") {
-      const { spawnDetachedVerification } = await import("./subagent-verify.mjs");
+      const { spawnDetachedVerification } = await importLegacyControlModule("./subagent-verify.mjs");
       spawnDetachedVerification(slugs);
     }
   } else {
@@ -1866,7 +1868,7 @@ async function handleFailover(action, ...rest) {
     readProviderCooldowns,
     setFailoverChain,
     setFailoverEnabled,
-  } = await import("./model-failover.mjs");
+  } = await importLegacyControlModule("./model-failover.mjs");
   const snapshot = () => ({
     ...readFailoverSettings(),
     cooldowns: readProviderCooldowns(),
@@ -1902,9 +1904,9 @@ async function handleFailover(action, ...rest) {
 // happens only with --yes; a missing runtime prints one install line and stops.
 async function runVisionBridgeSetup({ consent }) {
   const { readVisionBridgeSettings, setVisionBridgeLocal, setVisionBridgeEnabled } =
-    await import("./vision-bridge-state.mjs");
+    await importLegacyControlModule("./vision-bridge-state.mjs");
   const { suggestLocalVisionSetup, ollamaAvailable, pullOllamaModel, ollamaInstallMessage } =
-    await import("./vision-host.mjs");
+    await importLegacyControlModule("./vision-host.mjs");
 
   const suggestion = await suggestLocalVisionSetup(readVisionBridgeSettings());
   const { chosen, baseUrl, needsPull, profile } = suggestion;
@@ -1940,7 +1942,7 @@ async function runVisionBridgeSetup({ consent }) {
   // Explicit consent also covers installing the missing runtime. The runtime
   // manager uses `ollama serve` detached, so this setup path never opens the
   // Ollama chat window.
-  const { ensureOllamaHeadless } = await import("./ollama-runtime.mjs");
+  const { ensureOllamaHeadless } = await importLegacyControlModule("./ollama-runtime.mjs");
   await ensureOllamaHeadless({ install: true });
   process.stderr.write(`Downloading ${chosen} with Ollama…\n`);
   pullOllamaModel(chosen);
@@ -1970,14 +1972,14 @@ async function handleVisionBridge(action, value, extra) {
     visionBridgeSnapshot,
     VISION_BRIDGE_STATE_PATH,
     VISION_EFFORT_LEVELS,
-  } = await import("./vision-bridge-state.mjs");
+  } = await importLegacyControlModule("./vision-bridge-state.mjs");
   const {
     LOCAL_ENGINE_SLUG,
     rankVisionEngines,
     resolveVisionEngine,
     visionEngineEfforts,
-  } = await import("./vision-bridge.mjs");
-  const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+  } = await importLegacyControlModule("./vision-bridge.mjs");
+  const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
   const nativeEngines = await shippedNativeVisionEngines();
   const snapshot = () => {
     const candidates = [...selectedConfiguredListedModels(), ...nativeEngines];
@@ -2005,7 +2007,7 @@ async function handleVisionBridge(action, value, extra) {
   if (action === "probe") {
     // Read-only: reports what the machine can run and what the local server
     // already has, without pulling, pinning, or spending anything.
-    const { suggestLocalVisionSetup } = await import("./vision-host.mjs");
+    const { suggestLocalVisionSetup } = await importLegacyControlModule("./vision-host.mjs");
     const suggestion = await suggestLocalVisionSetup(readVisionBridgeSettings());
     process.stdout.write(`${JSON.stringify(suggestion)}\n`);
     return;
@@ -2014,8 +2016,8 @@ async function handleVisionBridge(action, value, extra) {
     // The downloadable local-model picker: each curated model with its size,
     // whether it fits this machine, and whether it is already pulled.
     const { annotateLocalModels, hostVisionProfile, refreshVisionModelSizesIfStale } =
-      await import("./vision-host.mjs");
-    const { readBenchmarkResults } = await import("./vision-benchmark.mjs");
+      await importLegacyControlModule("./vision-host.mjs");
+    const { readBenchmarkResults } = await importLegacyControlModule("./vision-benchmark.mjs");
     await refreshVisionModelSizesIfStale();
     process.stdout.write(
       `${JSON.stringify({
@@ -2033,7 +2035,7 @@ async function handleVisionBridge(action, value, extra) {
     // pinned by the worker only after it lands.
     const tag = String(value || "").trim();
     if (!tag) throw new Error("Usage: control vision-bridge pull <model-tag>");
-    const { ollamaAvailable, ollamaInstallMessage } = await import("./vision-host.mjs");
+    const { ollamaAvailable, ollamaInstallMessage } = await importLegacyControlModule("./vision-host.mjs");
     if (!ollamaAvailable()) {
       throw new Error(`Ollama is not installed. ${ollamaInstallMessage()}`);
     }
@@ -2042,7 +2044,7 @@ async function handleVisionBridge(action, value, extra) {
       claimVisionDownloadStart,
       readVisionDownload,
       writeVisionDownload,
-    } = await import("./vision-download.mjs");
+    } = await importLegacyControlModule("./vision-download.mjs");
     const claim = claimVisionDownloadStart();
     if (!claim.acquired) {
       const existing = activeVisionDownloadResult(readVisionDownload(), tag);
@@ -2073,7 +2075,7 @@ async function handleVisionBridge(action, value, extra) {
       });
       const child = spawn(
         process.execPath,
-        [path.join(REPO_ROOT, "src", "vision-download.mjs"), tag],
+        [legacyControlScript(REPO_ROOT, "vision-download-worker"), tag],
         // windowsHide matters more here than anywhere else: a detached child
         // gets its own console on Windows, and this one lives for the length of
         // a multi-gigabyte pull. The local-model worker below already hides.
@@ -2106,8 +2108,8 @@ async function handleVisionBridge(action, value, extra) {
     // a label without touching the CLI or trusting a reputation.
     const tag = String(value || "").trim();
     if (!tag) throw new Error("Usage: control vision-bridge benchmark <model-tag>");
-    const { benchmarkModel, saveBenchmarkResult } = await import("./vision-benchmark.mjs");
-    const { probeLocalServer } = await import("./vision-host.mjs");
+    const { benchmarkModel, saveBenchmarkResult } = await importLegacyControlModule("./vision-benchmark.mjs");
+    const { probeLocalServer } = await importLegacyControlModule("./vision-host.mjs");
     const server = await probeLocalServer();
     if (!server.reachable) {
       throw new Error(`No local runtime at ${server.baseUrl} (${server.error}).`);
@@ -2124,7 +2126,7 @@ async function handleVisionBridge(action, value, extra) {
     return;
   }
   if (action === "pull-status") {
-    const { readVisionDownload } = await import("./vision-download.mjs");
+    const { readVisionDownload } = await importLegacyControlModule("./vision-download.mjs");
     process.stdout.write(`${JSON.stringify(readVisionDownload() || { status: "idle" })}\n`);
     return;
   }
@@ -2151,7 +2153,7 @@ async function handleVisionBridge(action, value, extra) {
     let model = String(value || "").trim();
     let baseUrl = String(extra || "").trim() || undefined;
     if (!model) {
-      const { suggestLocalVisionSetup } = await import("./vision-host.mjs");
+      const { suggestLocalVisionSetup } = await importLegacyControlModule("./vision-host.mjs");
       const suggestion = await suggestLocalVisionSetup(readVisionBridgeSettings());
       model = suggestion.chosen;
       baseUrl = baseUrl || (suggestion.needsPull ? undefined : suggestion.baseUrl);
@@ -2228,9 +2230,9 @@ async function handleLocalModels(action, value, ...rest) {
     LOCAL_MODELS_STATE_PATH,
     localModelsSnapshot,
     setLocalModelEnabled,
-  } = await import("./local-models.mjs");
-  const { readBenchmarkResults } = await import("./vision-benchmark.mjs");
-  const { readLocalBenchmarks } = await import("./local-benchmark.mjs");
+  } = await importLegacyControlModule("./local-models.mjs");
+  const { readBenchmarkResults } = await importLegacyControlModule("./vision-benchmark.mjs");
+  const { readLocalBenchmarks } = await importLegacyControlModule("./local-benchmark.mjs");
   const visionBenchmarks = readBenchmarkResults();
   const localBenchmarks = readLocalBenchmarks();
   const localAndVisionBenchmarks = Object.fromEntries(
@@ -2241,8 +2243,8 @@ async function handleLocalModels(action, value, ...rest) {
   // `local_models` read covers both local runtimes. Its probe is a loopback
   // HTTP call with a short timeout, so an LM Studio that is simply off costs
   // the snapshot a bounded wait, not an error.
-  const { lmstudioSnapshot } = await import("./lmstudio-models.mjs");
-  const { localMlxUiSnapshot } = await import("./local-mlx-operation.mjs");
+  const { lmstudioSnapshot } = await importLegacyControlModule("./lmstudio-models.mjs");
+  const { localMlxUiSnapshot } = await importLegacyControlModule("./local-mlx-operation.mjs");
   const snapshot = async () => {
     const [lmstudio, mlx] = await Promise.all([lmstudioSnapshot(), localMlxUiSnapshot()]);
     return {
@@ -2261,15 +2263,15 @@ async function handleLocalModels(action, value, ...rest) {
       process.stdout.write(`${JSON.stringify(current)}\n`);
       return;
     }
-    const { renderLocalModels } = await import("./local-models.mjs");
+    const { renderLocalModels } = await importLegacyControlModule("./local-models.mjs");
     process.stdout.write(`${renderLocalModels(current)}\n`);
     return;
   }
   if (action === "agent-check") {
     // Runs the real Codex client against the model. Slow by design: every
     // cheaper approximation tried here disagreed with reality.
-    const { checkAgentCapability } = await import("./agent-check.mjs");
-    const { readLocalModelSelection, saveAgentCheck } = await import("./local-models.mjs");
+    const { checkAgentCapability } = await importLegacyControlModule("./agent-check.mjs");
+    const { readLocalModelSelection, saveAgentCheck } = await importLegacyControlModule("./local-models.mjs");
     const tags = value ? [String(value).trim()] : readLocalModelSelection().enabled;
     if (!tags.length) throw new Error("No local models are checked.");
     const results = [];
@@ -2286,7 +2288,7 @@ async function handleLocalModels(action, value, ...rest) {
     // multi-gigabyte download.
     // normalizeLocalModelTag throws on an empty or malformed reference, so
     // there is no separate emptiness check to make here.
-    const { normalizeLocalModelTag } = await import("./local-model-ref.mjs");
+    const { normalizeLocalModelTag } = await importLegacyControlModule("./local-model-ref.mjs");
     const tag = normalizeLocalModelTag(value);
     const {
       fetchRegistryCapabilities,
@@ -2295,7 +2297,7 @@ async function handleLocalModels(action, value, ...rest) {
       detectMachine,
       rateDiskFit,
       rateModelFit,
-    } = await import("./local-models.mjs");
+    } = await importLegacyControlModule("./local-models.mjs");
     // Both are read from the model's own files rather than assumed: the chat
     // template says whether it can call tools, the GGUF header says how much
     // context it holds. One megabyte of ranged reads, no download.
@@ -2322,7 +2324,7 @@ async function handleLocalModels(action, value, ...rest) {
     return;
   }
   if (action === "runtime") {
-    const { localOllamaRuntimeSnapshot, ensureOllamaHeadless, updateOllamaRuntime } = await import(
+    const { localOllamaRuntimeSnapshot, ensureOllamaHeadless, updateOllamaRuntime } = await importLegacyControlModule(
       "./ollama-runtime.mjs"
     );
     const subcommand = String(value || "status").trim();
@@ -2347,7 +2349,7 @@ async function handleLocalModels(action, value, ...rest) {
     throw new Error("Usage: control local-models runtime status|start [--yes]|update --yes");
   }
   if (action === "benchmark") {
-    const { benchmarkLocalModel } = await import("./local-benchmark.mjs");
+    const { benchmarkLocalModel } = await importLegacyControlModule("./local-benchmark.mjs");
     const tag = String(value || "").trim();
     if (!tag) throw new Error("Usage: control local-models benchmark <model-tag>");
     const result = await benchmarkLocalModel(tag);
@@ -2359,18 +2361,18 @@ async function handleLocalModels(action, value, ...rest) {
     return;
   }
   if (action === "mlx-install") {
-    const { startLocalMlxOperation } = await import("./local-mlx-operation.mjs");
+    const { startLocalMlxOperation } = await importLegacyControlModule("./local-mlx-operation.mjs");
     const result = startLocalMlxOperation({ yes: value === "--yes" || flags.has("--yes") });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
   if (action === "mlx-cancel") {
-    const { cancelLocalMlxOperation } = await import("./local-mlx-operation.mjs");
+    const { cancelLocalMlxOperation } = await importLegacyControlModule("./local-mlx-operation.mjs");
     process.stdout.write(`${JSON.stringify(cancelLocalMlxOperation())}\n`);
     return;
   }
   if (action === "cancel") {
-    const { cancelLocalDownload } = await import("./local-download.mjs");
+    const { cancelLocalDownload } = await importLegacyControlModule("./local-download.mjs");
     const result = cancelLocalDownload(value);
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
@@ -2379,7 +2381,7 @@ async function handleLocalModels(action, value, ...rest) {
     // Same detached-worker principle as the vision picker, but this worker is
     // for Codex chat models: successful completion checks the model on and
     // publishes the route automatically.
-    const { normalizeLocalModelTag, splitLocalModelTag } = await import("./local-model-ref.mjs");
+    const { normalizeLocalModelTag, splitLocalModelTag } = await importLegacyControlModule("./local-model-ref.mjs");
     const tag = normalizeLocalModelTag(value);
     const identity = splitLocalModelTag(tag);
     const {
@@ -2387,7 +2389,7 @@ async function handleLocalModels(action, value, ...rest) {
       isLocalOperationActive,
       readLocalDownload,
       writeLocalDownload,
-    } = await import("./local-download.mjs");
+    } = await importLegacyControlModule("./local-download.mjs");
     const startedAt = Date.now();
     const writePhase = (detail, extra = {}) => writeLocalDownload({
       version: 1,
@@ -2429,7 +2431,7 @@ async function handleLocalModels(action, value, ...rest) {
     // installation. The tray may refresh while either one is in progress, and
     // the operator should still see that the click was accepted.
     try {
-      const { isLocalMlxOperationActive, readLocalMlxOperation } = await import(
+      const { isLocalMlxOperationActive, readLocalMlxOperation } = await importLegacyControlModule(
         "./local-mlx-operation.mjs"
       );
       const mlxOperation = readLocalMlxOperation();
@@ -2468,7 +2470,7 @@ async function handleLocalModels(action, value, ...rest) {
         fitAdvisory,
         rateDiskFit,
         rateModelFit,
-      } = await import("./local-models.mjs");
+      } = await importLegacyControlModule("./local-models.mjs");
       // Hugging Face namespaced tags are pulled directly by Ollama and do not
       // have a registry.ollama.ai manifest. Their checked-in catalog size is
       // still authoritative enough for the safety gate: without this fallback
@@ -2490,7 +2492,7 @@ async function handleLocalModels(action, value, ...rest) {
       }
       if (cancelled()) return;
       writePhase("Preparing headless Ollama");
-      const { ensureOllamaHeadless, ollamaCommand } = await import("./ollama-runtime.mjs");
+      const { ensureOllamaHeadless, ollamaCommand } = await importLegacyControlModule("./ollama-runtime.mjs");
       // One action installs both. `--yes` is the operator's consent to touch
       // system software: with it a missing Ollama is installed headlessly (the
       // Homebrew formula when available, otherwise the official installer with
@@ -2506,7 +2508,7 @@ async function handleLocalModels(action, value, ...rest) {
       await ensureOllamaHeadless({ install: installRuntime });
       if (cancelled()) return;
       writePhase("Starting model download");
-      const child = spawn(process.execPath, [path.join(REPO_ROOT, "src", "local-download.mjs"), tag], {
+      const child = spawn(process.execPath, [legacyControlScript(REPO_ROOT, "local-download-worker"), tag], {
         detached: true,
         env: detachedOperationEnvironment(),
         stdio: "ignore",
@@ -2586,14 +2588,14 @@ async function handleLocalModels(action, value, ...rest) {
     if (!flags.has("--yes")) {
       throw new Error(`Removing ${rawTag} deletes it from disk. Pass --yes to confirm.`);
     }
-    const { normalizeLocalModelTag } = await import("./local-model-ref.mjs");
+    const { normalizeLocalModelTag } = await importLegacyControlModule("./local-model-ref.mjs");
     const tag = normalizeLocalModelTag(rawTag);
     const {
       claimLocalOperation,
       isLocalOperationActive,
       readLocalDownload,
       writeLocalDownload,
-    } = await import("./local-download.mjs");
+    } = await importLegacyControlModule("./local-download.mjs");
     const claim = claimLocalOperation(tag, "uninstall");
     if (!claim.acquired) {
       const active = readLocalDownload();
@@ -2610,7 +2612,7 @@ async function handleLocalModels(action, value, ...rest) {
       throw new Error("Another local model operation is starting. Try again shortly.");
     }
     try {
-    const { isLocalMlxOperationActive, readLocalMlxOperation } = await import(
+    const { isLocalMlxOperationActive, readLocalMlxOperation } = await importLegacyControlModule(
       "./local-mlx-operation.mjs"
     );
     const mlxOperation = readLocalMlxOperation();
@@ -2652,7 +2654,7 @@ async function handleLocalModels(action, value, ...rest) {
       try {
         const child = spawn(
           process.execPath,
-          [path.join(REPO_ROOT, "src", "local-uninstall.mjs"), tag],
+          [legacyControlScript(REPO_ROOT, "local-uninstall-worker"), tag],
           {
             detached: true,
             env: detachedOperationEnvironment(),
@@ -2681,7 +2683,7 @@ async function handleLocalModels(action, value, ...rest) {
       process.stdout.write(`${JSON.stringify({ started: true, tag, kind: "uninstall" })}\n`);
       return;
     }
-    const { uninstallLocalModelTransaction } = await import("./local-uninstall.mjs");
+    const { uninstallLocalModelTransaction } = await importLegacyControlModule("./local-uninstall.mjs");
     await uninstallLocalModelTransaction(tag, {
       restartService: restartRouterForLocalRoutes,
     });
@@ -2736,7 +2738,7 @@ async function handleLocalModels(action, value, ...rest) {
     // The panel's checkbox for a model LM Studio serves. Publishing goes
     // through the same user-model overlay `curate-models lmstudio` writes,
     // and the same restart that makes an Ollama toggle live makes this one.
-    const { isLmstudioModelEnabled, setLmstudioModelEnabled } = await import(
+    const { isLmstudioModelEnabled, setLmstudioModelEnabled } = await importLegacyControlModule(
       "./lmstudio-models.mjs"
     );
     const enabled = positional === "on";
@@ -2783,7 +2785,7 @@ async function handlePicker(action, value, flag) {
       // the router's selected registry plus the captured native catalog is
       // the complete local policy surface for every installed client.
       const { MERGED_CATALOG_PATH } = await import("./paths.mjs");
-      const { selectedConfiguredListedModels } = await import("./provider-selection.mjs");
+      const { selectedConfiguredListedModels } = await importLegacyControlModule("./provider-selection.mjs");
       const slugs = new Set(selectedConfiguredListedModels().map((model) => String(model.slug)));
       // The router owns routed models; Codex owns its native picker entries.
       // Keep routed aliases/context variants from the last publication so a
@@ -2827,7 +2829,7 @@ async function handlePicker(action, value, flag) {
           "Native Codex model visibility is managed by Codex and is not part of the router picker overlay.",
         );
       } else {
-        const { canonicalProviderId, selectedConfiguredListedModels } = await import(
+        const { canonicalProviderId, selectedConfiguredListedModels } = await importLegacyControlModule(
           "./provider-selection.mjs",
         );
         const canonical = canonicalProviderId(provider);
@@ -2965,7 +2967,7 @@ function handleTray(action) {
       )
     : spawnSync(
         process.execPath,
-        [path.join(REPO_ROOT, "src", "tray-service.mjs"), subcommand],
+        [legacyControlScript(REPO_ROOT, "tray-service-command"), subcommand],
         { stdio: "inherit", env: process.env, windowsHide: true },
       );
   if (result.error) throw result.error;
@@ -3004,28 +3006,28 @@ async function handleNativeRedirect(action, value) {
 // explicit subcommand rather than folded into `apply`, because it installs a
 // third-party package and that must never be a side effect of something else.
 async function handleHarness(action) {
-  const { harnessSnapshotWithWeb, setupHarness } = await import("./dsh-install.mjs");
+  const { harnessSnapshotWithWeb, setupHarness } = await importLegacyControlModule("./dsh-install.mjs");
   if (!action || action === "status") {
     process.stdout.write(`${JSON.stringify(await harnessSnapshotWithWeb())}\n`);
     return;
   }
   if (action === "web") {
-    const { dshWebState } = await import("./dsh-web.mjs");
+    const { dshWebState } = await importLegacyControlModule("./dsh-web.mjs");
     process.stdout.write(`${JSON.stringify(await dshWebState())}\n`);
     return;
   }
   if (action === "start") {
-    const { startDshWeb } = await import("./dsh-web.mjs");
+    const { startDshWeb } = await importLegacyControlModule("./dsh-web.mjs");
     process.stdout.write(`${JSON.stringify(await startDshWeb())}\n`);
     return;
   }
   if (action === "stop") {
-    const { stopDshWeb } = await import("./dsh-web.mjs");
+    const { stopDshWeb } = await importLegacyControlModule("./dsh-web.mjs");
     process.stdout.write(`${JSON.stringify(await stopDshWeb())}\n`);
     return;
   }
   if (action === "disconnect" || action === "off") {
-    const { disconnectHarness } = await import("./dsh-install.mjs");
+    const { disconnectHarness } = await importLegacyControlModule("./dsh-install.mjs");
     process.stdout.write(`${JSON.stringify(await disconnectHarness())}\n`);
     return;
   }
@@ -3048,12 +3050,12 @@ async function handleClientSetup(target, publicUrl, hostname) {
   }
   if (target === "dsh") {
     if (publicUrl || hostname) throw new Error("--hostname and --public-url apply to Cursor only.");
-    const { setupHarness } = await import("./dsh-install.mjs");
+    const { setupHarness } = await importLegacyControlModule("./dsh-install.mjs");
     process.stdout.write(`${JSON.stringify(await setupHarness())}\n`);
     return;
   }
   if (target === "cursor" && !publicUrl && !hostname) {
-    const { installCursorAgentIntegration } = await import("./cursor-config-manager.mjs");
+    const { installCursorAgentIntegration } = await importLegacyControlModule("./cursor-config-manager.mjs");
     process.stdout.write(`${JSON.stringify({
       target,
       configured: true,
@@ -3097,12 +3099,12 @@ async function handleClientExport() {
     }
     secretEnv = values[++index];
   }
-  const { renderRouterEndpointExport } = await import("./client-exports.mjs");
+  const { renderRouterEndpointExport } = await importLegacyControlModule("./client-exports.mjs");
   process.stdout.write(renderRouterEndpointExport(secretEnv ? { secretEnv } : {}));
 }
 
 async function handlePresence(action, value) {
-  const { PRESENCE_MODES, presenceSnapshot, setPresenceMode } = await import(
+  const { PRESENCE_MODES, presenceSnapshot, setPresenceMode } = await importLegacyControlModule(
     "./presence-state.mjs"
   );
   if (!action || action === "status") {
@@ -3176,7 +3178,7 @@ async function handleChatGptAccountSwitch(action, value, completionLease) {
     readChatGPTAccountPoolState,
     refreshBoundedChatGPTSubscriptionAccounts,
     withChatGPTAccountPoolLock,
-  } = await import("./chatgpt-account-pool.mjs");
+  } = await importLegacyControlModule("./chatgpt-account-pool.mjs");
   const {
     chatGPTProfileSwitchSnapshot,
     discardCompletedChatGPTProfileLogin,
@@ -3187,7 +3189,7 @@ async function handleChatGptAccountSwitch(action, value, completionLease) {
     reconcileChatGPTProfileSwitchIfReady,
     removeChatGPTProfileAccount,
     selectChatGPTProfileAccount,
-  } = await import("./chatgpt-profile-switch.mjs");
+  } = await importLegacyControlModule("./chatgpt-profile-switch.mjs");
 
   if (!action || action === "status") {
     // This is the single production reconcile poll, owned by the Control
@@ -3234,7 +3236,7 @@ async function handleChatGptAccountSwitch(action, value, completionLease) {
         error: "A previous sign-in may still be running. Verify that no Codex login process remains before manually clearing its saved ownership.",
       };
     }
-    const { attachBoundedChatGPTAccountUsage } = await import("./codex-account-usage.mjs");
+    const { attachBoundedChatGPTAccountUsage } = await importLegacyControlModule("./codex-account-usage.mjs");
     await attachBoundedChatGPTAccountUsage(safe, {
       accountHome: (accountId) => chatGPTSubscriptionAccountHome(accountId),
     });

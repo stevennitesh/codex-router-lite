@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { PROVIDERS, resolveProviderBaseUrl } from "./model-registry.mjs";
+import {
+  PROVIDERS,
+  resolveProviderBaseUrl,
+} from "./compat/retirement/shared-legacy-switchyard-runtime-model-registry.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
 export const SWITCHYARD_CAPABILITY_ENV = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";

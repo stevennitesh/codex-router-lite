@@ -28,11 +28,54 @@ import {
   renderCheckpoint,
   renderCompactionValue,
 } from "./compaction-checkpoint.mjs";
-import { handlePanelRequest, isPanelRoute } from "./desktop-panel.mjs";
-import { handleGeminiRequest, isGeminiRoute } from "./gemini-surface.mjs";
-import { handleCursorRequest, isCursorRoute } from "./cursor-surface.mjs";
-import { handleClaudeRequest, isClaudeRoute } from "./claude-surface.mjs";
-import { routedClientModels } from "./routed-client-models.mjs";
+import {
+  handleClaudeRequest,
+  handleCursorRequest,
+  handleGeminiRequest,
+  handlePanelRequest,
+  isClaudeRoute,
+  isCursorRoute,
+  isGeminiRoute,
+  isPanelRoute,
+  MODEL_BY_SLUG,
+  RUNTIME_PROVIDERS,
+  providerForModel,
+  resolveProviderBaseUrl,
+  routedClientModels,
+  discoveryDisabled,
+  executeSearchSidecar,
+  SearchSidecarError,
+  searchSidecarBindingForModel,
+  routedModelPreservesSearchContract,
+  routedModelSearchMode,
+  searchModePreservesSearchContract,
+  stripUnsupportedHostedSearch,
+  unsupportedSearchContractError,
+  canonicalProviderId,
+  providerRuntimeAvailable,
+  readProviderSelection,
+  selectedConfiguredListedModels,
+  FAILOVER_BUDGET_MS,
+  MAX_FAILOVER_HOPS,
+  classifyRoutedFailure,
+  clearProviderCooldown,
+  providerCooldown,
+  rankFailoverCandidates,
+  readFailoverSettings,
+  recordProviderCooldown,
+  cooldownScope,
+  describeImage,
+  evidenceCache,
+  hasNativeSession,
+  inputHasImage,
+  nativeAccountKey,
+  resolveVisionEngines,
+  stripImages,
+  substituteImages,
+  supportsImageInput,
+  readVisionBridgeSettings,
+  installedNativeVisionEngines,
+} from "./compat/retirement/legacy-router-surfaces.mjs";
 import {
   applyKeepAliveTimeouts,
   copyResponseHeaders,
@@ -68,19 +111,12 @@ import {
   PORTS,
   loopback,
 } from "./paths.mjs";
-import {
-  MODEL_BY_SLUG,
-  RUNTIME_PROVIDERS,
-  providerForModel,
-  resolveProviderBaseUrl,
-} from "./model-registry.mjs";
 import { createHealthCache } from "./health-cache.mjs";
 import {
   SWITCHYARD_CAPABILITY_ENV,
   SWITCHYARD_CAPABILITY_HEADER,
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
 import { readNativeAliases } from "./native-alias.mjs";
 import { nativeContextVariantBase } from "./native-context-variants.mjs";
 import {
@@ -88,24 +124,6 @@ import {
   observeNativeAuthOutcome,
 } from "./native-auth-observation.mjs";
 import { readNativeRedirect } from "./native-redirect.mjs";
-import {
-  executeSearchSidecar,
-  SearchSidecarError,
-} from "./search-sidecar.mjs";
-import { searchSidecarBindingForModel } from "./search-sidecar-state.mjs";
-import {
-  routedModelPreservesSearchContract,
-  routedModelSearchMode,
-  searchModePreservesSearchContract,
-  stripUnsupportedHostedSearch,
-  unsupportedSearchContractError,
-} from "./search-capability.mjs";
-import {
-  canonicalProviderId,
-  providerRuntimeAvailable,
-  readProviderSelection,
-  selectedConfiguredListedModels,
-} from "./provider-selection.mjs";
 import {
   estimateInputTokens,
   mergeTokenUsage,
@@ -135,17 +153,6 @@ import {
   GROQ_TOOL_LIMIT_CODE,
 } from "./chat-tool-surface.mjs";
 import { collaborationToolAvailable, pendingInterruptTargets } from "./subagent-completion.mjs";
-import {
-  FAILOVER_BUDGET_MS,
-  MAX_FAILOVER_HOPS,
-  classifyRoutedFailure,
-  clearProviderCooldown,
-  providerCooldown,
-  rankFailoverCandidates,
-  readFailoverSettings,
-  recordProviderCooldown,
-} from "./model-failover.mjs";
-import { cooldownScope } from "./provider-cooldown.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import {
   awaitingSpawnProof,
@@ -177,20 +184,7 @@ import {
   HEADERLESS_SSE_SNIFF_BYTES,
   HEADERLESS_SSE_SNIFF_MS,
 } from "./sse-prefix.mjs";
-import {
-  describeImage,
-  evidenceCache,
-  hasNativeSession,
-  inputHasImage,
-  nativeAccountKey,
-  resolveVisionEngines,
-  stripImages,
-  substituteImages,
-  supportsImageInput,
-} from "./vision-bridge.mjs";
 import { readHiddenModels } from "./model-picker-state.mjs";
-import { readVisionBridgeSettings } from "./vision-bridge-state.mjs";
-import { installedNativeVisionEngines } from "./vision-engines.mjs";
 import { ageToolResults } from "./tool-result-aging.mjs";
 import {
   nativeToolResultAgingEnabled,

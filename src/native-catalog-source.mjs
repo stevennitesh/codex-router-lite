@@ -10,7 +10,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { protectPrivateFile } from "./file-security.mjs";
-import { MODEL_BY_SLUG } from "./model-registry.mjs";
+import {
+  MODEL_BY_SLUG,
+} from "./compat/retirement/shared-legacy-native-catalog-model-registry.mjs";
 import {
   CONFIG_PATH,
   MERGED_CATALOG_PATH,

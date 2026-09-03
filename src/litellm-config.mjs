@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import { protectPrivateFile } from "./file-security.mjs";
 import { LITELLM_CONFIG_PATH } from "./paths.mjs";
-import { MODELS, providerForModel } from "./model-registry.mjs";
+import {
+  MODELS,
+  providerForModel,
+} from "./compat/retirement/shared-legacy-litellm-model-registry.mjs";
 import { assertStateOwnership } from "./state-owner.mjs";
 
 // Big enough for real Codex turns, small enough that a small model stays

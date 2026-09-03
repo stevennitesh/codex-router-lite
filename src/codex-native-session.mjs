@@ -2,7 +2,9 @@ import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { secretEqual } from "./caller-auth.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
+import {
+  discoveryDisabled,
+} from "./compat/retirement/shared-legacy-codex-native-session-discovery.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { CODEX_HOME, NATIVE_SESSION_CONSENT_PATH } from "./paths.mjs";
 

@@ -1,5 +1,7 @@
 import { HOP_BY_HOP_HEADERS } from "./http-utils.mjs";
-import { resolveProviderBaseUrl } from "./model-registry.mjs";
+import {
+  resolveProviderBaseUrl,
+} from "./compat/retirement/shared-legacy-direct-responses-provider-model-registry.mjs";
 
 const DIRECT_REQUEST_HEADERS = new Set([
   "accept",

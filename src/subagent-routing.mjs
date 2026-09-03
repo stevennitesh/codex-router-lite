@@ -1,4 +1,6 @@
-import { CHECKED_IN_MODELS } from "./model-registry.mjs";
+import {
+  CHECKED_IN_MODELS,
+} from "./compat/retirement/shared-legacy-subagent-routing-model-registry.mjs";
 import { readMultiAgentSettings, subagentEligibleModels } from "./multi-agent-state.mjs";
 
 // This module is an unadvertised routing primitive. Codex's agent definitions

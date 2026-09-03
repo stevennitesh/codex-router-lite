@@ -1,0 +1,396 @@
+{
+  "version": 1,
+  "retainedRoots": [
+    "src/catalog.mjs",
+    "src/router.mjs",
+    "src/start.mjs",
+    "src/control.mjs",
+    "src/doctor.mjs",
+    "src/paths.mjs",
+    "src/config-manager.mjs",
+    "src/service.mjs",
+    "src/service-windows.mjs",
+    "install.ps1",
+    "model-router.ps1",
+    "restart-codex-router.ps1"
+  ],
+  "retainedConfigFiles": [
+    "config/openrouter/openrouter.json",
+    "config/openrouter/glm-5.3-flash.json",
+    "config/switchyard/switchyard.json",
+    "config/switchyard/auto.json"
+  ],
+  "processScriptReferences": [
+    "src/catalog.mjs",
+    "src/router.mjs",
+    "src/start.mjs",
+    "src/control.mjs",
+    "src/doctor.mjs",
+    "src/paths.mjs",
+    "src/config-manager.mjs",
+    "src/service.mjs",
+    "src/service-windows.mjs"
+  ],
+  "powershellReferences": [
+    "install.ps1",
+    "model-router.ps1",
+    "restart-codex-router.ps1"
+  ],
+  "excludedOwnershipGroups": {
+    "alternateClientsAndRouterUi": [
+      "codex-router.ps1",
+      "src/caller-key-client-refresh.mjs",
+      "src/claude-code-config-manager.mjs",
+      "src/claude-surface.mjs",
+      "src/cursor-cloudflare-tunnel.mjs",
+      "src/cursor-config-manager.mjs",
+      "src/cursor-surface.mjs",
+      "src/desktop-panel.mjs",
+      "src/dsh-config-manager.mjs",
+      "src/dsh-install.mjs",
+      "src/dsh-web.mjs",
+      "src/gemini-config-manager.mjs",
+      "src/gemini-surface.mjs",
+      "src/openclaw-config-manager.mjs",
+      "src/openclaw-install.mjs",
+      "src/routed-client-models.mjs",
+      "src/setup.mjs",
+      "src/target-integration.mjs",
+      "src/client-exports.mjs"
+    ],
+    "excludedProvidersAndOptionalFeatures": [
+      "src/antigravity-oauth-probe.mjs",
+      "src/antigravity-probe-activation.mjs",
+      "src/antigravity-oauth-status.mjs",
+      "src/chatgpt-session-control.mjs",
+      "src/chatgpt-account-pool.mjs",
+      "src/chatgpt-profile-switch.mjs",
+      "src/codex-account-usage.mjs",
+      "src/discovery-mode.mjs",
+      "src/generic-provider-readiness.mjs",
+      "src/grok-cli.mjs",
+      "src/grok-oauth-status.mjs",
+      "src/local-models.mjs",
+      "src/agent-check.mjs",
+      "src/lmstudio-models.mjs",
+      "src/local-benchmark.mjs",
+      "src/local-download.mjs",
+      "src/local-mlx-operation.mjs",
+      "src/local-model-ref.mjs",
+      "src/local-uninstall.mjs",
+      "src/model-catalog-cache.mjs",
+      "src/model-failover.mjs",
+      "src/model-registry.mjs",
+      "src/oauth-status.mjs",
+      "src/ollama-runtime.mjs",
+      "src/provider-api-key-pool.mjs",
+      "src/provider-api-key-service-environment.mjs",
+      "src/provider-api-key-routing.mjs",
+      "src/provider-api-key-control.mjs",
+      "src/provider-catalogs.mjs",
+      "src/provider-cooldown.mjs",
+      "src/provider-credentials.mjs",
+      "src/provider-onboarding.mjs",
+      "src/provider-selection.mjs",
+      "src/provider-usage.mjs",
+      "src/providers.mjs",
+      "src/router-dashboard.mjs",
+      "src/search-capability.mjs",
+      "src/search-sidecar.mjs",
+      "src/search-sidecar-policy.mjs",
+      "src/search-sidecar-state.mjs",
+      "src/user-models.mjs",
+      "src/subagent-auto-policy.mjs",
+      "src/subagent-verify.mjs",
+      "src/vision-benchmark.mjs",
+      "src/vision-download.mjs",
+      "src/vision-host.mjs",
+      "src/vision-bridge-state.mjs",
+      "src/vision-bridge.mjs",
+      "src/vision-engines.mjs"
+    ],
+    "legacyPlatformsAndState": [
+      "src/legacy-migration.mjs",
+      "src/presence-state.mjs",
+      "src/service-linux.mjs",
+      "src/service-macos.mjs",
+      "src/tray-install.mjs",
+      "src/tray-service.mjs"
+    ]
+  },
+  "temporaryAdapters": [
+    {
+      "path": "src/compat/retirement/legacy-router-surfaces.mjs",
+      "caller": "src/router.mjs",
+      "excludedTargets": [
+        "src/desktop-panel.mjs",
+        "src/gemini-surface.mjs",
+        "src/cursor-surface.mjs",
+        "src/claude-surface.mjs",
+        "src/routed-client-models.mjs",
+        "src/model-registry.mjs",
+        "src/discovery-mode.mjs",
+        "src/search-sidecar.mjs",
+        "src/search-sidecar-state.mjs",
+        "src/search-capability.mjs",
+        "src/provider-selection.mjs",
+        "src/model-failover.mjs",
+        "src/provider-cooldown.mjs",
+        "src/vision-bridge.mjs",
+        "src/vision-bridge-state.mjs",
+        "src/vision-engines.mjs"
+      ],
+      "removalIssues": [4]
+    },
+    {
+      "path": "src/compat/retirement/legacy-startup-features.mjs",
+      "caller": "src/start.mjs",
+      "excludedTargets": [
+        "src/model-registry.mjs",
+        "src/local-models.mjs",
+        "src/antigravity-oauth-status.mjs",
+        "src/antigravity-probe-activation.mjs",
+        "src/ollama-runtime.mjs",
+        "src/cursor-cloudflare-tunnel.mjs",
+        "src/provider-selection.mjs"
+      ],
+      "removalIssues": [4, 5]
+    },
+    {
+      "path": "src/compat/retirement/legacy-control-features.mjs",
+      "caller": "src/control.mjs",
+      "excludedTargets": [
+        "src/dsh-install.mjs",
+        "src/user-models.mjs",
+        "src/target-integration.mjs",
+        "src/antigravity-probe-activation.mjs",
+        "src/chatgpt-session-control.mjs",
+        "src/discovery-mode.mjs",
+        "src/presence-state.mjs",
+        "src/agent-check.mjs",
+        "src/antigravity-oauth-probe.mjs",
+        "src/chatgpt-account-pool.mjs",
+        "src/chatgpt-profile-switch.mjs",
+        "src/client-exports.mjs",
+        "src/codex-account-usage.mjs",
+        "src/cursor-config-manager.mjs",
+        "src/dsh-web.mjs",
+        "src/lmstudio-models.mjs",
+        "src/local-benchmark.mjs",
+        "src/local-download.mjs",
+        "src/local-mlx-operation.mjs",
+        "src/local-model-ref.mjs",
+        "src/local-models.mjs",
+        "src/local-uninstall.mjs",
+        "src/model-catalog-cache.mjs",
+        "src/model-failover.mjs",
+        "src/model-registry.mjs",
+        "src/ollama-runtime.mjs",
+        "src/provider-api-key-control.mjs",
+        "src/provider-catalogs.mjs",
+        "src/provider-onboarding.mjs",
+        "src/provider-selection.mjs",
+        "src/provider-usage.mjs",
+        "src/providers.mjs",
+        "src/router-dashboard.mjs",
+        "src/subagent-auto-policy.mjs",
+        "src/subagent-verify.mjs",
+        "src/vision-benchmark.mjs",
+        "src/vision-bridge-state.mjs",
+        "src/vision-bridge.mjs",
+        "src/vision-download.mjs",
+        "src/vision-engines.mjs",
+        "src/vision-host.mjs",
+        "src/tray-service.mjs"
+      ],
+      "sharedTargets": ["src/paths.mjs"],
+      "removalIssues": [3, 4, 5]
+    },
+    {
+      "path": "src/compat/retirement/legacy-doctor-features.mjs",
+      "caller": "src/doctor.mjs",
+      "excludedTargets": [
+        "src/grok-cli.mjs",
+        "src/legacy-migration.mjs",
+        "src/model-registry.mjs",
+        "src/grok-oauth-status.mjs",
+        "src/antigravity-oauth-status.mjs",
+        "src/oauth-status.mjs",
+        "src/presence-state.mjs",
+        "src/discovery-mode.mjs",
+        "src/provider-credentials.mjs",
+        "src/provider-api-key-pool.mjs",
+        "src/provider-api-key-routing.mjs",
+        "src/generic-provider-readiness.mjs",
+        "src/search-sidecar-policy.mjs",
+        "src/search-sidecar-state.mjs",
+        "src/provider-onboarding.mjs",
+        "src/provider-selection.mjs",
+        "src/vision-bridge.mjs",
+        "src/vision-engines.mjs",
+        "src/vision-bridge-state.mjs",
+        "src/model-failover.mjs"
+      ],
+      "sharedTargets": [
+        "src/paths.mjs",
+        "src/dependency-repair.mjs"
+      ],
+      "removalIssues": [3, 4, 5]
+    },
+    {
+      "path": "src/compat/retirement/legacy-catalog-features.mjs",
+      "caller": "src/catalog.mjs",
+      "excludedTargets": [
+        "src/user-models.mjs",
+        "src/model-registry.mjs",
+        "src/provider-selection.mjs",
+        "src/vision-bridge.mjs",
+        "src/vision-bridge-state.mjs",
+        "src/vision-engines.mjs",
+        "src/discovery-mode.mjs",
+        "src/search-capability.mjs"
+      ],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/legacy-paths.mjs",
+      "caller": "src/paths.mjs",
+      "excludedTargets": ["src/tray-install.mjs"],
+      "removalIssues": [3, 4]
+    },
+    {
+      "path": "src/compat/retirement/legacy-config-clients.mjs",
+      "caller": "src/config-manager.mjs",
+      "excludedTargets": ["src/caller-key-client-refresh.mjs"],
+      "removalIssues": [3, 4]
+    },
+    {
+      "path": "src/compat/retirement/legacy-service-platforms.mjs",
+      "caller": "src/service.mjs",
+      "excludedTargets": [
+        "src/service-macos.mjs",
+        "src/service-linux.mjs",
+        "src/ollama-runtime.mjs"
+      ],
+      "removalIssues": [4, 5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-codex-binary-discovery.mjs",
+      "caller": "src/codex-binary.mjs",
+      "excludedTargets": ["src/discovery-mode.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-codex-native-session-discovery.mjs",
+      "caller": "src/codex-native-session.mjs",
+      "excludedTargets": ["src/discovery-mode.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-install-manifest-provider-selection.mjs",
+      "caller": "src/install-manifest.mjs",
+      "excludedTargets": ["src/provider-selection.mjs"],
+      "removalIssues": [3, 5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-usage-events-provider-selection.mjs",
+      "caller": "src/usage-events.mjs",
+      "excludedTargets": ["src/provider-selection.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-litellm-model-registry.mjs",
+      "caller": "src/litellm-config.mjs",
+      "excludedTargets": ["src/model-registry.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-native-catalog-model-registry.mjs",
+      "caller": "src/native-catalog-source.mjs",
+      "excludedTargets": ["src/model-registry.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-windows-service-provider-environment.mjs",
+      "caller": "src/service-windows.mjs",
+      "excludedTargets": ["src/provider-api-key-service-environment.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-install-plan-tray.mjs",
+      "caller": "src/install-plan.mjs",
+      "excludedTargets": ["src/tray-install.mjs"],
+      "removalIssues": [4]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-switchyard-runtime-model-registry.mjs",
+      "caller": "src/switchyard-runtime.mjs",
+      "excludedTargets": ["src/model-registry.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-subagent-routing-model-registry.mjs",
+      "caller": "src/subagent-routing.mjs",
+      "excludedTargets": ["src/model-registry.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-direct-responses-provider-model-registry.mjs",
+      "caller": "src/direct-responses-provider.mjs",
+      "excludedTargets": ["src/model-registry.mjs"],
+      "removalIssues": [5]
+    },
+    {
+      "path": "src/compat/retirement/shared-legacy-model-overlay-publication-target-integration.mjs",
+      "caller": "src/model-overlay-publication.mjs",
+      "excludedTargets": ["src/target-integration.mjs"],
+      "removalIssues": [4]
+    }
+  ],
+  "temporaryProcessAdapters": [
+    {
+      "caller": "src/control.mjs",
+      "adapter": "src/compat/retirement/legacy-control-features.mjs",
+      "helper": "legacyControlScript",
+      "targets": [
+        { "selector": "vision-download-worker", "target": "src/vision-download.mjs" },
+        { "selector": "local-download-worker", "target": "src/local-download.mjs" },
+        { "selector": "local-uninstall-worker", "target": "src/local-uninstall.mjs" },
+        { "selector": "tray-service-command", "target": "src/tray-service.mjs" }
+      ]
+    },
+    {
+      "caller": "src/service.mjs",
+      "adapter": "src/compat/retirement/legacy-service-platforms.mjs",
+      "helper": "legacyServiceScriptForPlatform",
+      "targets": [
+        { "selector": "darwin", "target": "src/service-macos.mjs" },
+        { "selector": "linux", "target": "src/service-linux.mjs" }
+      ]
+    }
+  ],
+  "temporaryPowerShellAdapters": [
+    {
+      "caller": "install.ps1",
+      "targets": [
+        "codex-router.ps1",
+        "src/setup.mjs",
+        "src/openclaw-install.mjs",
+        "src/dsh-config-manager.mjs",
+        "src/gemini-config-manager.mjs",
+        "src/cursor-config-manager.mjs",
+        "src/claude-code-config-manager.mjs",
+        "src/openclaw-config-manager.mjs",
+        "src/tray-service.mjs",
+        "src/legacy-migration.mjs",
+        "src/provider-selection.mjs"
+      ],
+      "removalIssues": [3, 4, 5]
+    },
+    {
+      "caller": "model-router.ps1",
+      "targets": ["codex-router.ps1"],
+      "removalIssues": [3, 4, 5]
+    }
+  ]
+}

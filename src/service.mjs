@@ -3,17 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SOURCE_ROOT } from "./paths.mjs";
-import { stopManagedOllama } from "./ollama-runtime.mjs";
+import {
+  legacyServiceScriptForPlatform,
+  stopLegacyManagedOllama,
+} from "./compat/retirement/legacy-service-platforms.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
 
 const platform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
-const script = {
-  darwin: "service-macos.mjs",
-  linux: "service-linux.mjs",
-  win32: "service-windows.mjs",
-}[platform];
+const script = platform === "win32"
+  ? "service-windows.mjs"
+  : legacyServiceScriptForPlatform(platform);
 
 if (!script) {
   throw new Error(`Unsupported background-service platform: ${platform}`);
@@ -85,7 +86,7 @@ export async function runServiceCommandUnlocked(
   // a no-op. Only the exact detached `ollama serve` process this router
   // started is coupled to an explicit router shutdown. Installs and restarts
   // deliberately keep it alive across the brief service handoff.
-  if (shutdownCommands.has(command)) await stopManagedOllama();
+  if (shutdownCommands.has(command)) await stopLegacyManagedOllama();
   if (!readinessCommands.has(command)) return 0;
 
   const readinessBudgetMs = remainingOperationMs();

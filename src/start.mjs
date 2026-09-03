@@ -20,12 +20,7 @@ import { SHUTDOWN_DRAIN_MS, SHUTDOWN_FLUSH_MS } from "./http-utils.mjs";
 import { waitForHealth as pollHealth } from "./health-probe.mjs";
 import { gatewaySupervisorLimits, superviseGateway } from "./gateway-supervisor.mjs";
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
-import { MODELS } from "./model-registry.mjs";
-import { readLocalModelSelection } from "./local-models.mjs";
-import { antigravityOAuthStartupState } from "./antigravity-oauth-status.mjs";
-import { attemptAntigravityProbePromotionAfterReadiness } from "./antigravity-probe-activation.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
-import { ensureOllamaHeadless } from "./ollama-runtime.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
 import { dependencyRepairHint } from "./dependency-repair.mjs";
 import { clearServiceProcessState, writeServiceProcessState } from "./service-process.mjs";
@@ -34,14 +29,21 @@ import {
   inheritedProxyEnvironment,
   redactProxyCredentials,
 } from "./proxy-environment.mjs";
-import { antigravityOAuthStatus } from "./antigravity-oauth-status.mjs";
-import { cursorTunnelRunSpec } from "./cursor-cloudflare-tunnel.mjs";
 import {
   installedSwitchyardLaunch,
   SWITCHYARD_CAPABILITY_ENV,
   switchyardSelectedForStartup,
 } from "./switchyard-runtime.mjs";
-import { providerSelectionStatus } from "./provider-selection.mjs";
+import {
+  antigravityOAuthStartupState,
+  antigravityOAuthStatus,
+  attemptAntigravityProbePromotionAfterReadiness,
+  cursorTunnelRunSpec,
+  ensureOllamaHeadless,
+  MODELS,
+  providerSelectionStatus,
+  readLocalModelSelection,
+} from "./compat/retirement/legacy-startup-features.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever

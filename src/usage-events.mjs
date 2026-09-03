@@ -9,7 +9,9 @@ import {
 import path from "node:path";
 
 import { STATE_DIR } from "./paths.mjs";
-import { canonicalProviderId } from "./provider-selection.mjs";
+import {
+  canonicalProviderId,
+} from "./compat/retirement/shared-legacy-usage-events-provider-selection.mjs";
 import { acceptedInputTokens } from "./context-window-drift.mjs";
 
 export const USAGE_EVENTS_PATH = path.join(STATE_DIR, "usage-events.jsonl");

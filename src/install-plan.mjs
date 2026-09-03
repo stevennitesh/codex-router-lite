@@ -12,7 +12,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { legacyCompanionActions, trayBundleDir } from "./tray-install.mjs";
+import {
+  legacyCompanionActions,
+  trayBundleDir,
+} from "./compat/retirement/shared-legacy-install-plan-tray.mjs";
 import {
   automaticTraySupervisionAllowed,
   readTraySupervisionPreference,

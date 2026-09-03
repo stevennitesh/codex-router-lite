@@ -23,6 +23,8 @@ After the refresh, load only the relevant branch:
 | Concern | Authority |
 | --- | --- |
 | Repository policy and routing to detailed instructions | [`AGENTS.md`](../../AGENTS.md) |
+| Retained runtime roots, configuration inputs, and temporary retirement adapters | [`maintenance/retained-boundary.json`](../../maintenance/retained-boundary.json) and `scripts/check-retained-boundary.mjs` |
+| Retained deterministic test definition and comparable baseline method | [`maintenance/retained-tests.json`](../../maintenance/retained-tests.json), `scripts/run-retained-tests.mjs`, and `scripts/capture-retained-baseline.mjs` |
 | Router installation, client setup, credentials, and provider procedures | [`router-maintenance.md`](router-maintenance.md) |
 | Routed model metadata and provider policy | `config/<provider>/*.json`, then `src/catalog.mjs` |
 | GLM request and stream compatibility | `src/request-profiles.mjs`, `src/instruction-profiles.mjs`, `src/api-forwarder.mjs`, `src/litellm-config.mjs`, and `src/zai-responses-compat.mjs` |
@@ -185,6 +187,11 @@ is gone.
 Run `npm run check`, the affected tests, and the current Codex catalog
 compatibility check for every behavior change. Add these focused checks where
 applicable:
+
+`npm run check` rejects new transitive dependencies from a retained root into
+excluded clients, providers, platforms, Router UIs, process targets, or
+configuration inputs. Keep each temporary retirement adapter exact and run
+`node scripts/run-retained-tests.mjs` when changing a retained runtime seam.
 
 | Change | Minimum focused evidence |
 | --- | --- |

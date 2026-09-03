@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { trayBundleDir } from "./tray-install.mjs";
+import { trayBundleDir } from "./compat/retirement/legacy-paths.mjs";
 
 const supportedTargets = new Set(["codex", "dsh", "gemini", "cursor", "claude", "openclaw"]);
 

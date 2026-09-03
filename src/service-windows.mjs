@@ -23,7 +23,9 @@ import {
   serviceProcessOwns,
 } from "./service-process.mjs";
 import { protectPrivateFile } from "./file-security.mjs";
-import { providerApiKeyServiceEnvironment } from "./provider-api-key-service-environment.mjs";
+import {
+  providerApiKeyServiceEnvironment,
+} from "./compat/retirement/shared-legacy-windows-service-provider-environment.mjs";
 import { serviceProxyEnvironment } from "./proxy-environment.mjs";
 import {
   skipServiceManagerCall,

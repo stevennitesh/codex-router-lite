@@ -28,7 +28,7 @@ import {
 import {
   refreshCodexCallerCapabilityContents,
   refreshCodexCallerCapabilityState,
-} from "./caller-key-client-refresh.mjs";
+} from "./compat/retirement/legacy-config-clients.mjs";
 import {
   clearCodexRouterDefault,
   readCodexRouterDefault,

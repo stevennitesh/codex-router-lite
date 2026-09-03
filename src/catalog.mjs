@@ -27,12 +27,7 @@ import {
   PORTS,
 } from "./paths.mjs";
 import { codexAuthStatus, codexVersion, runCodex } from "./codex-binary.mjs";
-import { readUserModels } from "./user-models.mjs";
 import { syncRoutedCodexAgents } from "./codex-agent-catalog.mjs";
-import {
-  MODEL_BY_SLUG,
-  MODEL_SLUG_ALIASES,
-} from "./model-registry.mjs";
 import {
   applyMultiAgentCapabilities,
   readMultiAgentSettings,
@@ -50,24 +45,31 @@ import {
   NATIVE_CONTEXT_VARIANT_SLUGS,
   withNativeContextVariants,
 } from "./native-context-variants.mjs";
-import { selectedConfiguredListedModels, configuredProviderIds } from "./provider-selection.mjs";
 import { assertStateOwnership } from "./state-owner.mjs";
 import { scanTomlDocument, tomlStringValue } from "./toml-structure.mjs";
-import { applyVisionBridge, resolveVisionEngine } from "./vision-bridge.mjs";
-import { readVisionBridgeSettings } from "./vision-bridge-state.mjs";
-import { nativeVisionEngines } from "./vision-engines.mjs";
 import {
   readNativeCatalogFile,
   readNativeCatalogSource,
 } from "./native-catalog-source.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
 import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
-import { routedModelSearchAvailable } from "./search-capability.mjs";
 import {
   codexDesktopState,
   nativeCatalogPublicationMode,
   readNativeAuthObservation,
 } from "./native-auth-observation.mjs";
+import {
+  applyVisionBridge,
+  configuredProviderIds,
+  discoveryDisabled,
+  MODEL_BY_SLUG,
+  MODEL_SLUG_ALIASES,
+  nativeVisionEngines,
+  readUserModels,
+  readVisionBridgeSettings,
+  resolveVisionEngine,
+  routedModelSearchAvailable,
+  selectedConfiguredListedModels,
+} from "./compat/retirement/legacy-catalog-features.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
 

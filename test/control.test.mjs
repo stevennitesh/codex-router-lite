@@ -1140,7 +1140,7 @@ test("Windows tray enable uses the durable package and task transaction", () => 
   );
   assert.ok(
     tray.indexOf('path.join(REPO_ROOT, "codex-router.ps1")')
-      < tray.indexOf('path.join(REPO_ROOT, "src", "tray-service.mjs"), subcommand'),
+      < tray.indexOf('legacyControlScript(REPO_ROOT, "tray-service-command")'),
     "Windows enable must choose the transaction before the raw supervisor fallback",
   );
 });

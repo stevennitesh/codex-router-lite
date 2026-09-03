@@ -191,7 +191,9 @@ export async function rebuildModelOverlayPublication({
   const write = writeGateway ||
     (await import("./litellm-config.mjs")).writeLiteLlmConfig;
   const refresh = refreshTargets ||
-    (await import("./target-integration.mjs")).refreshTargetPickerIfInstalled;
+    (await import(
+      "./compat/retirement/shared-legacy-model-overlay-publication-target-integration.mjs"
+    )).refreshTargetPickerIfInstalled;
 
   const operationDeadline = overlayPublicationDeadline(deadline);
   remainingOperationMs(operationDeadline, signal);

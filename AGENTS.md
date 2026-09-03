@@ -57,7 +57,9 @@ required migration, or prevent regressions in the retained product.
 
 ## Commands
 
-- JavaScript syntax and v2 application validation: `npm run check`.
+- JavaScript syntax, retained-boundary enforcement, and v2 application
+  validation: `npm run check`.
+- Retained compatibility suite: `node scripts/run-retained-tests.mjs`.
 - Full Node test suite: `npm test`.
 
 ## Common implementation contract
@@ -65,6 +67,10 @@ required migration, or prevent regressions in the retained product.
 - Keep native GPT routes and Codex-owned catalog behavior unchanged unless the
   task explicitly targets them. Apply compatibility changes only to the routed
   model or provider that requires them.
+- Treat [`maintenance/retained-boundary.json`](maintenance/retained-boundary.json)
+  as the machine-enforced dependency and configuration boundary. A temporary
+  adapter must name one exact caller, its exact legacy targets, and the issue
+  that removes it; do not widen an adapter to make the check pass.
 - Keep one active runtime. Build third-party sources in a disposable checkout;
   retain only the reproducible pin, canonical patch, and active deployed
   artifacts described by their integration runbook.

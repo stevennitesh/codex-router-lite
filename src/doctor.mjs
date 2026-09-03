@@ -7,94 +7,35 @@ import { codexAuthStatus, codexVersion, findCodexBinary, runCodex } from "./code
 import { commandOnPath, spawnableCommand } from "./spawnable-command.mjs";
 import { routedCodexAgentStatus } from "./codex-agent-catalog.mjs";
 import { privateFileIsProtected } from "./file-security.mjs";
-import { grokCliPreflight } from "./grok-cli.mjs";
-import { detectLegacyInstallations } from "./legacy-migration.mjs";
 import { routedCatalogConfigured } from "./catalog.mjs";
 import { nativeCatalogVersionDrift } from "./native-catalog-freshness.mjs";
 import { readNativeCatalogSource } from "./native-catalog-source.mjs";
-import {
-  MODEL_BY_SLUG,
-  MODELS,
-  PROVIDERS,
-  providerNeedsNoKey,
-  RUNTIME_PROVIDERS,
-  RUNTIME_PROVIDER_WARNINGS,
-} from "./model-registry.mjs";
-import { grokOAuthStatus } from "./grok-oauth-status.mjs";
-import {
-  antigravityOAuthHealth,
-  repairAntigravityOAuthPermissions,
-} from "./antigravity-oauth-status.mjs";
-import { kimiOAuthHealth } from "./oauth-status.mjs";
 import {
   applyMultiAgentCapabilities,
   readMultiAgentSettings,
   subagentEligibleModels,
 } from "./multi-agent-state.mjs";
 import { readHiddenModels } from "./model-picker-state.mjs";
-import { serviceFollowsHostApps } from "./presence-state.mjs";
 import { waitForRouterHealth } from "./router-health.mjs";
 import {
   CALLER_SECRET_PATH,
-  CLAUDE_CATALOG_PATH,
-  CLAUDE_LAUNCHER_PATH,
   CODEX_AGENTS_DIR,
   CODEX_HOME,
   CONFIG_PATH,
-  CURSOR_CATALOG_PATH,
-  CURSOR_LAUNCHER_PATH,
-  CURSOR_PUBLIC_SECRET_PATH,
-  CURSOR_STATE_DB_PATH,
-  DSH_CATALOG_PATH,
-  DSH_SETTINGS_PATH,
-  GEMINI_CATALOG_PATH,
-  GEMINI_ENV_PATH,
   INTERNAL_SECRET_PATH,
   LITELLM_CONFIG_PATH,
   MERGED_CATALOG_PATH,
   NATIVE_CATALOG_PATH,
-  OPENCLAW_CATALOG_PATH,
   PORTS,
-  SEARCH_SIDECARS_PATH,
   SOURCE_ROOT,
   TARGET,
 } from "./paths.mjs";
 import { skillPackStatus } from "./skills-install.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
-import { credentialLabel } from "./provider-credentials.mjs";
-import { providerApiKeyPoolsSnapshot } from "./provider-api-key-pool.mjs";
-import {
-  effectiveProviderCredentialStatus,
-  resolveStoredCredential,
-} from "./provider-api-key-routing.mjs";
-import { genericProviderConfigured } from "./generic-provider-readiness.mjs";
-import { trustedSearchProviderDescriptor } from "./search-sidecar-policy.mjs";
-import { readSearchSidecarState } from "./search-sidecar-state.mjs";
-import { providerNeedsCuration } from "./provider-onboarding.mjs";
 import { stateOwnershipStatus } from "./state-owner.mjs";
-import {
-  canonicalProviderId,
-  providerSelectionStatus,
-  selectedConfiguredListedModels,
-} from "./provider-selection.mjs";
-import { resolveVisionEngine } from "./vision-bridge.mjs";
-import { installedNativeVisionEngines } from "./vision-engines.mjs";
-import {
-  readVisionBridgeSettings,
-  visionBridgeConfigured,
-} from "./vision-bridge-state.mjs";
-import {
-  failoverTierCounts,
-  readFailoverSettings,
-  readProviderCooldowns,
-} from "./model-failover.mjs";
 import { contextWindowDrift, describeContextWindowDrift } from "./context-window-drift.mjs";
 import { observedInputCeilings } from "./usage-events.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
-import {
-  dependencyRepairHint,
-  isHomebrewManaged,
-} from "./dependency-repair.mjs";
+import { dependencyRepairHint } from "./dependency-repair.mjs";
 import {
   describeRetentionAge,
   describeRetentionTtl,
@@ -104,6 +45,53 @@ import {
 import { retentionTtlMs } from "./tool-result-aging-state.mjs";
 import { loopbackProxyBypassStatus } from "./loopback-proxy-bypass.mjs";
 import { serviceProxyOptInProblem } from "./proxy-environment.mjs";
+import {
+  antigravityOAuthHealth,
+  canonicalProviderId,
+  CLAUDE_CATALOG_PATH,
+  CLAUDE_LAUNCHER_PATH,
+  credentialLabel,
+  CURSOR_CATALOG_PATH,
+  CURSOR_LAUNCHER_PATH,
+  CURSOR_PUBLIC_SECRET_PATH,
+  CURSOR_STATE_DB_PATH,
+  detectLegacyInstallations,
+  discoveryDisabled,
+  DSH_CATALOG_PATH,
+  DSH_SETTINGS_PATH,
+  effectiveProviderCredentialStatus,
+  failoverTierCounts,
+  GEMINI_CATALOG_PATH,
+  GEMINI_ENV_PATH,
+  genericProviderConfigured,
+  grokCliPreflight,
+  grokOAuthStatus,
+  installedNativeVisionEngines,
+  isHomebrewManaged,
+  kimiOAuthHealth,
+  MODEL_BY_SLUG,
+  MODELS,
+  OPENCLAW_CATALOG_PATH,
+  providerApiKeyPoolsSnapshot,
+  providerNeedsCuration,
+  providerNeedsNoKey,
+  PROVIDERS,
+  providerSelectionStatus,
+  readFailoverSettings,
+  readProviderCooldowns,
+  readSearchSidecarState,
+  readVisionBridgeSettings,
+  repairAntigravityOAuthPermissions,
+  resolveStoredCredential,
+  resolveVisionEngine,
+  RUNTIME_PROVIDERS,
+  RUNTIME_PROVIDER_WARNINGS,
+  SEARCH_SIDECARS_PATH,
+  selectedConfiguredListedModels,
+  serviceFollowsHostApps,
+  trustedSearchProviderDescriptor,
+  visionBridgeConfigured,
+} from "./compat/retirement/legacy-doctor-features.mjs";
 
 const checks = [];
 const add = (status, name, detail, fix) => checks.push({ status, name, detail, fix });

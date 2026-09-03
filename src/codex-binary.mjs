@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { isShimFile, resolveRealCodex } from "./codex-shim.mjs";
-import { discoveryDisabled } from "./discovery-mode.mjs";
+import {
+  discoveryDisabled,
+} from "./compat/retirement/shared-legacy-codex-binary-discovery.mjs";
 import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
 
 export { preferSpawnablePath, spawnableCommand };

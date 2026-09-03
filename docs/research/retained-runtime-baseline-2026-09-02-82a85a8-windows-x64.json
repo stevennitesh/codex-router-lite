@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "kind": "retained-runtime-baseline",
+  "historical": true,
+  "capturedAt": "2026-09-03T04:30:37.502Z",
+  "issue": "stevennitesh/codex-router-lite#2",
+  "repository": {
+    "commit": "82a85a8226bfda8ff5e14d648289c339c165f20c",
+    "branch": "feat/glm53-switchyard-cutover",
+    "worktree": {
+      "clean": true,
+      "changedPathCount": 0,
+      "trackedChangeCount": 0,
+      "untrackedPathCount": 0
+    }
+  },
+  "environment": {
+    "platform": "win32",
+    "osCaption": "Microsoft Windows 11 Pro",
+    "osVersion": "10.0.26200",
+    "osBuild": "26200",
+    "architecture": "x64",
+    "processArchitecture": "x64",
+    "cpuModel": "AMD Ryzen 9 7950X 16-Core Processor",
+    "logicalProcessors": 32,
+    "totalVisibleMemoryBytes": 33435754496,
+    "node": "v24.13.0",
+    "npm": "11.12.1",
+    "git": "git version 2.54.0.windows.1",
+    "powershell": "7.6.4"
+  },
+  "measurementHarness": {
+    "identity": "The harness is not present at the measured historical commit; these hashes and embedded selections identify the exact later measurement method applied to that checkout.",
+    "files": [
+      { "file": "scripts/capture-retained-baseline.mjs", "sha256": "c0d28a794a348bbf0b59f650ea225feff30660cc124ec691013374e1991d5fa8" },
+      { "file": "scripts/run-retained-tests.mjs", "sha256": "78ccb746334c39eda40b8f270ed10d68a9d93ccfc0abdfb2240a5d6ef988065e" },
+      { "file": "maintenance/retained-tests.json", "sha256": "0fc8a99a6664becfcb95087f1c56927dbc97cb2e8df70ded922deac53c93e8bb" }
+    ],
+    "retainedManifest": {
+      "schemaVersion": 1,
+      "selections": [
+        { "id": "retained-catalog", "surfaces": ["native-codex", "openrouter-glm-5.3-flash", "switchyard", "collaboration-v2"], "file": "test/catalog.test.mjs", "testNamePattern": "^(signed-in picker overlay cannot hide Codex native base entries|Switchyard inherits the native Codex request and compaction contract|GLM-5\\.3-Flash replaces the native prompt with its concise Codex contract|routed models are native v2 spawn-agent model overrides|native catalog merge preserves account visibility and bundled-only models|native listed models retain the installed catalog's collaboration capability)$" },
+        { "id": "retained-router-dispatch", "surfaces": ["native-codex", "openrouter-glm-5.3-flash", "switchyard", "collaboration-relay"], "file": "test/routing.test.mjs", "testNamePattern": "^(plain Codex provider routes accept the caller key as a bearer token|router preserves native auth and isolates every external route|router relays encrypted Codex subagent payloads before external routing|router fails closed when an encrypted subagent payload cannot be relayed|Switchyard preserves native requests and leaves compaction on the native backend|router repairs malformed OpenRouter GLM-5\\.3-Flash message envelopes after LiteLLM translation)$" },
+        { "id": "native-session", "surfaces": ["native-codex"], "file": "test/codex-native-session.test.mjs", "testNamePattern": "^(no session on disk means no fallback rather than an error|a signed-in session stays private until the user authorizes sharing once|shared native session reconstructs the FedRAMP header from Codex identity claims|the current Codex session authenticates only its own bearer without enabling sharing|the current Codex API key authenticates requests but never becomes a shared session|direct Codex authentication uses actual expiry rather than fallback skew|sharing cannot be enabled before the user signs in|status reports presence, never the credential|a session with no access token is not a session|the fallback can be switched off|the environment override is explicit in both directions|an unrecognized consent marker fails closed|an empty or malformed native catalog publishes nothing|the router's own caller key is not an upstream credential|a substituted caller's payload is made acceptable to the native endpoint|the expiry claim is read without the token leaving the module|an expired session is withheld rather than spent on a certain 401|status reports the remaining life, never the token|the bearer parser is linear and rejects the shapes it should)$" },
+        { "id": "codex-app-functions", "surfaces": ["app-function-restoration"], "file": "test/codex-app-tools.test.mjs" },
+        { "id": "openrouter-glm-contract", "surfaces": ["openrouter-glm-5.3-flash"], "file": "test/glm-5.3-flash.test.mjs", "testNamePattern": "^OpenRouter GLM owns its Codex prompt and Novita provider policy$" },
+        { "id": "openrouter-glm-stream-repair", "surfaces": ["openrouter-glm-5.3-flash"], "file": "test/zai-responses-compat.test.mjs" },
+        { "id": "openrouter-glm-usage", "surfaces": ["openrouter-glm-5.3-flash"], "file": "test/zai-cache-usage.test.mjs" },
+        { "id": "switchyard-runtime", "surfaces": ["switchyard"], "file": "test/switchyard-runtime.test.mjs" },
+        { "id": "namespace-restoration", "surfaces": ["namespace-restoration", "collaboration-relay"], "file": "test/namespace-relay.test.mjs", "testNamePattern": "^(flattenNamespaceTools flattens every namespace, including MCP ones|full inventory survives merge \\+ flatten with nothing dropped|response transform restores flattened calls to the native namespace shape|response transform drops a spawn-agent model override not offered by the tool schema|every flattened app tool reaches the provider with an object root|custom-tool bridge maps apply_patch definitions and paired history losslessly|native custom-tool streams accept LiteLLM content-wrapped legacy argument events)$" },
+        { "id": "namespace-routing", "surfaces": ["namespace-restoration", "collaboration-relay"], "file": "test/namespace-relay-routing.test.mjs", "testNamePattern": "^(routed request flattens every namespace to the gateway and restores calls to the client|non-streaming routed responses restore namespace calls before client dispatch|routed tool_search history declares discovered tools and restores their calls|Responses-native routed providers inherit the model on fresh local thread calls)$" },
+        { "id": "v2-promotion-gate", "surfaces": ["collaboration-v2"], "file": "test/subagent-local-verification.test.mjs" },
+        { "id": "v2-certification-decision", "surfaces": ["collaboration-v2"], "file": "test/subagent-certify.test.mjs" },
+        { "id": "windows-service-lifecycle", "surfaces": ["windows-lifecycle"], "file": "test/windows-operations.test.mjs", "testNamePattern": "^(the Windows operational scripts parse in Windows PowerShell|the Windows restart helper uses the supported service transaction)$" },
+        { "id": "windows-service-parity", "surfaces": ["windows-lifecycle"], "file": "test/windows-parity.test.mjs", "testNamePattern": "^(every detached worker is spawned without a console window|Windows start uses the managed service and keeps foreground explicit)$" },
+        { "id": "windows-task-identity", "surfaces": ["windows-lifecycle"], "file": "test/windows-task-state.test.mjs" }
+      ]
+    }
+  },
+  "definitions": {
+    "source": "Sum of Git blob bytes at the exact commit. Source files use the extension set in scripts/capture-retained-baseline.mjs.",
+    "package": "Canonical release tar.gz produced by git archive from the exact commit with the release prefix.",
+    "retainedTests": "Selections and exact name patterns in maintenance/retained-tests.json, executed against the measured source root.",
+    "isolatedStartup": "Time from monotonic pre-spawn to authenticated isolated router.mjs entrypoint readiness, with fixture-owned process and memory sampling only. It is comparable only with the same fixture topology.",
+    "liveRuntimeDiagnostic": "One sanitized observation of the already-running installed generation. This is not the isolated startup baseline."
+  },
+  "commands": {
+    "source": [
+      "git",
+      "ls-tree",
+      "-r",
+      "-l",
+      "82a85a8226bfda8ff5e14d648289c339c165f20c"
+    ],
+    "package": [
+      "git",
+      "archive",
+      "--format=tar.gz",
+      "--prefix=codex-router-0.5.1/",
+      "-o",
+      "<temporary-file>",
+      "82a85a8226bfda8ff5e14d648289c339c165f20c"
+    ],
+    "legacyBroadTestDiagnostic": [
+      "node",
+      "--test",
+      "test/catalog.test.mjs",
+      "test/routing.test.mjs",
+      "test/codex-native-session.test.mjs",
+      "test/codex-app-tools.test.mjs",
+      "test/glm-5.3-flash.test.mjs",
+      "test/zai-responses-compat.test.mjs",
+      "test/zai-cache-usage.test.mjs",
+      "test/switchyard-runtime.test.mjs",
+      "test/namespace-relay.test.mjs",
+      "test/namespace-relay-routing.test.mjs",
+      "test/subagent-local-verification.test.mjs",
+      "test/subagent-certify.test.mjs",
+      "test/subagent-ui.test.mjs",
+      "test/windows-operations.test.mjs",
+      "test/windows-parity.test.mjs",
+      "test/windows-task-state.test.mjs",
+      "test/windows-hidden-consoles.test.mjs",
+      "test/tray-service-windows.test.mjs"
+    ],
+    "maintainedRetainedTests": [
+      "node",
+      "scripts/run-retained-tests.mjs",
+      "--repo-root",
+      "<clean-detached-worktree-at-82a85a8226bfda8ff5e14d648289c339c165f20c>"
+    ],
+    "isolatedStartup": [
+      "node",
+      "scripts/capture-retained-baseline.mjs",
+      "--skip-tests",
+      "--source-root",
+      "<detached-worktree-at-measurement-commit>",
+      "--expected-commit",
+      "82a85a8226bfda8ff5e14d648289c339c165f20c"
+    ],
+    "liveRuntimeDiagnostic": [
+      "pwsh",
+      "-NoProfile",
+      "-Command",
+      "$ports=@(4200,4201,4202,4203,4208,4210,4212); select listeners with Get-NetTCPConnection; select the common listener ancestry and descendants with Get-CimInstance Win32_Process; emit only name, pid, parent pid, creation time, working-set bytes, private bytes, and listening ports"
+    ]
+  },
+  "measurements": {
+    "source": {
+      "raw": {
+        "trackedFiles": 1107,
+        "trackedBlobBytes": 24980219,
+        "sourceFiles": 665,
+        "sourceBlobBytes": 10531206
+      }
+    },
+    "package": {
+      "raw": {
+        "bytes": 14437736,
+        "fileCount": 1107,
+        "directoryEntryCount": 132,
+        "totalArchiveEntries": 1239,
+        "sha256": "47091d3033d76b038d60d5426a03187abbca22097be8ac2b86daa1ceb811cda3"
+      },
+      "additionalFormat": {
+        "format": "zip",
+        "bytes": 14993011,
+        "sha256": "2f24d90fadc79099697f2fc4119021ad8b5b999e16992598f7af0b695c354726"
+      }
+    },
+    "legacyBroadTestDiagnostic": {
+      "exitCode": 0,
+      "wallMilliseconds": 55003.5,
+      "rawSummary": {
+        "tests": 464,
+        "suites": 0,
+        "pass": 464,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "durationMilliseconds": 54937.8345
+      },
+      "limitation": "This is the pinned pre-manifest suite. It includes excluded UI and tray evidence and therefore is historical context only. The maintained comparison command is scripts/run-retained-tests.mjs."
+    },
+    "maintainedRetainedTests": {
+      "exitCode": 0,
+      "selectionCount": 15,
+      "matchedTests": 110,
+      "wallMilliseconds": 12709.2474,
+      "manifest": "maintenance/retained-tests.json",
+      "repositoryCommit": "82a85a8226bfda8ff5e14d648289c339c165f20c",
+      "repositoryWorktreeClean": true,
+      "rawRuns": [
+        { "id": "retained-catalog", "matchedTests": 6, "exitCode": 0, "rawSummary": { "tests": 6, "suites": 0, "pass": 6, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 225.372 } },
+        { "id": "retained-router-dispatch", "matchedTests": 6, "exitCode": 0, "rawSummary": { "tests": 6, "suites": 0, "pass": 6, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 3319.4944 } },
+        { "id": "native-session", "matchedTests": 19, "exitCode": 0, "rawSummary": { "tests": 19, "suites": 0, "pass": 19, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 1730.6323 } },
+        { "id": "codex-app-functions", "matchedTests": 7, "exitCode": 0, "rawSummary": { "tests": 7, "suites": 0, "pass": 7, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 74.362 } },
+        { "id": "openrouter-glm-contract", "matchedTests": 1, "exitCode": 0, "rawSummary": { "tests": 1, "suites": 0, "pass": 1, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 178.6107 } },
+        { "id": "openrouter-glm-stream-repair", "matchedTests": 9, "exitCode": 0, "rawSummary": { "tests": 9, "suites": 0, "pass": 9, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 77.0215 } },
+        { "id": "openrouter-glm-usage", "matchedTests": 6, "exitCode": 0, "rawSummary": { "tests": 6, "suites": 0, "pass": 6, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 105.7403 } },
+        { "id": "switchyard-runtime", "matchedTests": 8, "exitCode": 0, "rawSummary": { "tests": 8, "suites": 0, "pass": 8, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 163.9395 } },
+        { "id": "namespace-restoration", "matchedTests": 7, "exitCode": 0, "rawSummary": { "tests": 7, "suites": 0, "pass": 7, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 100.9052 } },
+        { "id": "namespace-routing", "matchedTests": 4, "exitCode": 0, "rawSummary": { "tests": 4, "suites": 0, "pass": 4, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 3762.7078 } },
+        { "id": "v2-promotion-gate", "matchedTests": 7, "exitCode": 0, "rawSummary": { "tests": 7, "suites": 0, "pass": 7, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 72.7349 } },
+        { "id": "v2-certification-decision", "matchedTests": 21, "exitCode": 0, "rawSummary": { "tests": 21, "suites": 0, "pass": 21, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 89.5393 } },
+        { "id": "windows-service-lifecycle", "matchedTests": 2, "exitCode": 0, "rawSummary": { "tests": 2, "suites": 0, "pass": 2, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 1680.5275 } },
+        { "id": "windows-service-parity", "matchedTests": 2, "exitCode": 0, "rawSummary": { "tests": 2, "suites": 0, "pass": 2, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 193.4892 } },
+        { "id": "windows-task-identity", "matchedTests": 5, "exitCode": 0, "rawSummary": { "tests": 5, "suites": 0, "pass": 5, "fail": 0, "cancelled": 0, "skipped": 0, "todo": 0, "durationMilliseconds": 70.4006 } }
+      ]
+    },
+    "isolatedStartup": {
+      "status": "measured",
+      "measuredAt": "2026-09-03T04:50:14.269Z",
+      "topology": "isolated-router-entrypoint-startup",
+      "comparableTo": "the same entrypoint fixture only; not the installed full-runtime diagnostic",
+      "authenticatedHealth": {
+        "service": "codex-router",
+        "version": "0.5.1",
+        "router": "ready"
+      },
+      "raw": {
+        "readinessMilliseconds": 469.2822,
+        "fixtureChildCount": 1,
+        "quietMilliseconds": 500,
+        "sampleCount": 5,
+        "sampleIntervalMilliseconds": 200,
+        "memorySamples": [
+          { "workingSetBytes": 92672000, "privateBytes": 54648832 },
+          { "workingSetBytes": 92672000, "privateBytes": 54648832 },
+          { "workingSetBytes": 92672000, "privateBytes": 54648832 },
+          { "workingSetBytes": 92672000, "privateBytes": 54648832 },
+          { "workingSetBytes": 92745728, "privateBytes": 54652928 }
+        ]
+      },
+      "cleanup": {
+        "fixtureProcessExited": true,
+        "temporaryStateRemoved": true
+      },
+      "limitation": "This measures only the router.mjs entrypoint with one local gateway-health stand-in. It does not measure installed-service startup, LiteLLM startup, Switchyard startup, Windows Task Scheduler, or full-topology memory."
+    },
+    "liveRuntimeDiagnostic": {
+      "status": "observed",
+      "observedAt": "2026-09-03T04:27:50.309Z",
+      "isolated": false,
+      "idleStateKnown": false,
+      "listeners": [
+        { "localAddress": "127.0.0.1", "localPort": 4200, "pid": 55284 },
+        { "localAddress": "127.0.0.1", "localPort": 4201, "pid": 21308 },
+        { "localAddress": "127.0.0.1", "localPort": 4202, "pid": 57832 },
+        { "localAddress": "127.0.0.1", "localPort": 4203, "pid": 32064 },
+        { "localAddress": "127.0.0.1", "localPort": 4208, "pid": 46804 }
+      ],
+      "processes": [
+        { "name": "conhost.exe", "pid": 10356, "parentPid": 36420, "startedAt": "2026-09-03T02:03:27.075535Z", "uptimeSeconds": 8663.2, "workingSetBytes": 1077248, "privateBytes": 1777664, "listeningPorts": [] },
+        { "name": "node.exe", "pid": 17844, "parentPid": 36420, "startedAt": "2026-09-03T02:03:27.106528Z", "uptimeSeconds": 8663.2, "workingSetBytes": 331776, "privateBytes": 33755136, "listeningPorts": [] },
+        { "name": "litellm.exe", "pid": 21188, "parentPid": 17844, "startedAt": "2026-09-03T02:03:28.606779Z", "uptimeSeconds": 8661.7, "workingSetBytes": 1196032, "privateBytes": 851968, "listeningPorts": [] },
+        { "name": "node.exe", "pid": 21308, "parentPid": 17844, "startedAt": "2026-09-03T02:03:28.346995Z", "uptimeSeconds": 8662.0, "workingSetBytes": 1564672, "privateBytes": 32608256, "listeningPorts": [4201] },
+        { "name": "node.exe", "pid": 32064, "parentPid": 17844, "startedAt": "2026-09-03T02:03:28.351834Z", "uptimeSeconds": 8662.0, "workingSetBytes": 4558848, "privateBytes": 73347072, "listeningPorts": [4203] },
+        { "name": "cmd.exe", "pid": 36420, "parentPid": 28844, "startedAt": "2026-09-03T02:03:27.067830Z", "uptimeSeconds": 8663.2, "workingSetBytes": 1142784, "privateBytes": 4804608, "listeningPorts": [] },
+        { "name": "node.exe", "pid": 46804, "parentPid": 17844, "startedAt": "2026-09-03T02:03:28.356403Z", "uptimeSeconds": 8662.0, "workingSetBytes": 1519616, "privateBytes": 33124352, "listeningPorts": [4208] },
+        { "name": "switchyard-server.exe", "pid": 52068, "parentPid": 17844, "startedAt": "2026-09-03T02:03:28.362765Z", "uptimeSeconds": 8661.9, "workingSetBytes": 1028096, "privateBytes": 4562944, "listeningPorts": [] },
+        { "name": "python.exe", "pid": 55284, "parentPid": 60552, "startedAt": "2026-09-03T02:03:28.622139Z", "uptimeSeconds": 8661.7, "workingSetBytes": 3448832, "privateBytes": 306282496, "listeningPorts": [4200] },
+        { "name": "node.exe", "pid": 57832, "parentPid": 17844, "startedAt": "2026-09-03T02:03:37.089845Z", "uptimeSeconds": 8653.2, "workingSetBytes": 231632896, "privateBytes": 335761408, "listeningPorts": [4202] },
+        { "name": "python.exe", "pid": 60552, "parentPid": 21188, "startedAt": "2026-09-03T02:03:28.614797Z", "uptimeSeconds": 8661.7, "workingSetBytes": 1208320, "privateBytes": 786432, "listeningPorts": [] }
+      ],
+      "raw": {
+        "capturedProcessCount": 11,
+        "aggregateWorkingSetBytes": 248709120,
+        "aggregatePrivateBytes": 827662336,
+        "supervisorUptimeSeconds": 8663.2,
+        "routerUptimeSeconds": 8653.2,
+        "supervisorToRouterCreationOffsetMilliseconds": 9983.317
+      },
+      "limitations": [
+        "The installed Router was serving active Codex connections.",
+        "This is one memory sample, not a fixed idle-window distribution.",
+        "The scheduled-task host above cmd.exe was not included.",
+        "Process creation offset is not authenticated readiness time."
+      ]
+    }
+  },
+  "redactions": [
+    "No environment dump",
+    "No hostname or user identity",
+    "No process command lines or executable paths",
+    "No scheduled-task registration metadata",
+    "No credentials, capabilities, authenticated URLs, prompts, or response bodies",
+    "No repository paths from status output"
+  ]
+}
