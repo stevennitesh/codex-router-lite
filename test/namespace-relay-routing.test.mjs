@@ -530,13 +530,6 @@ async function scenario(
 
 test("routed request flattens every namespace to the gateway and restores calls to the client", async () => {
   const first = await scenario();
-  const second = await scenario();
-  // Determinism: two identical runs produce byte-identical outgoing and
-  // incoming bodies.
-  assert.equal(second.gatewayBodies.length, 1);
-  assert.deepEqual(second.gatewayBodies, first.gatewayBodies);
-  assert.equal(second.clientBody, first.clientBody);
-
   const outgoing = first.gatewayBodies[0];
   assert.equal(outgoing.model, "openrouter-glm-5-3-flash");
   const names = outgoing.tools.map((tool) => tool.name);

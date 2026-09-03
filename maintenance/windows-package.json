@@ -69,6 +69,7 @@
     "src/namespace-relay.mjs",
     "src/native-auth-observation.mjs",
     "src/native-catalog-source.mjs",
+    "src/native-request-compat.mjs",
     "src/native-redirect.mjs",
     "src/openai-endpoint-policy.mjs",
     "src/paths.mjs",

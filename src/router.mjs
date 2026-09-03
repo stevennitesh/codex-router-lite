@@ -17,6 +17,12 @@ import {
   secretEqual,
 } from "./caller-auth.mjs";
 import {
+  bearerToken,
+  callerBroughtNoUpstreamCredential,
+  normalizeNativeForSubstitutedCaller,
+  normalizeNativePromptCacheCompatibility,
+} from "./native-request-compat.mjs";
+import {
   CHECKPOINT_WARNING,
   COMPACTION_PROMPT,
   encodeCheckpoint,
@@ -648,36 +654,6 @@ function hasNativeSession(headers = {}) {
   return Boolean(headers.authorization && headers["chatgpt-account-id"]);
 }
 
-// The token out of an `Authorization: Bearer <token>` header, or undefined for
-// any other scheme -- which is relayed untouched rather than inspected.
-//
-// Parsed rather than matched. `/^Bearer\s+(.+)$/` reads well and backtracks
-// polynomially on a header of many spaces and no token, and this runs on a
-// header an unauthenticated caller controls. Scanning is linear and needs no
-// reasoning about which quantifiers can overlap.
-const BEARER_PREFIX = "bearer";
-function bearerToken(value) {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length <= BEARER_PREFIX.length) return undefined;
-  if (trimmed.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) return undefined;
-  // The scheme and the token must be separated by whitespace, or `BearerX` and
-  // `Bearer X` would parse the same.
-  const separator = trimmed[BEARER_PREFIX.length];
-  if (separator !== " " && separator !== "\t") return undefined;
-  const token = trimmed.slice(BEARER_PREFIX.length + 1).trim();
-  return token || undefined;
-}
-
-// True when the caller authenticated to this router and brought no upstream
-// credential of its own -- the harness, and anything else pointed at a managed
-// caller base URL. Codex is never this.
-function callerBroughtNoUpstreamCredential(request) {
-  const presented = bearerToken(request.headers.authorization);
-  if (presented === undefined) return request.headers.authorization === undefined;
-  return secretEqual(presented, CALLER_KEY || "") || secretEqual(presented, INTERNAL_KEY || "");
-}
-
 function authenticatedDirectV1Route(request, pathname) {
   if (pathname !== "/v1" && !pathname.startsWith("/v1/")) return undefined;
   const presented = bearerToken(request.headers.authorization);
@@ -693,78 +669,6 @@ function authenticatedCallerRoute(request, requestUrl) {
     authenticatedRoute(requestUrl.pathname, CALLER_KEY) ||
     authenticatedDirectV1Route(request, requestUrl.pathname)
   );
-}
-
-// ChatGPT's own backend accepts a narrower request than the public Responses
-// API does. Codex knows the difference and complies; a generic OpenAI client
-// does not, and every one of these comes back as a bare 400 that names a single
-// parameter. Measured against the live endpoint rather than guessed.
-const NATIVE_UNSUPPORTED_PARAMS = Object.freeze([
-  "temperature",
-  "top_p",
-  "presence_penalty",
-  "frequency_penalty",
-  "max_tokens",
-  "max_output_tokens",
-  "metadata",
-  "seed",
-  "user",
-  "truncation",
-]);
-const NATIVE_STATELESS_REASONING_INCLUDE = "reasoning.encrypted_content";
-
-/**
- * Make a generic Responses request acceptable to the native endpoint.
- *
- * Applied only for a caller whose session this router substituted, so a Codex
- * turn is never rewritten -- Codex sends a compliant request already, and the
- * promise that its traffic is byte-identical is worth more than the tidiness of
- * one shared path.
- */
-function normalizeNativeForSubstitutedCaller(payload, { compact = false } = {}) {
-  // Ordinary Responses turns on ChatGPT's backend are stateless: `store` must
-  // be false, and anything else is a 400. The dedicated compact endpoint has
-  // a narrower CompactionInput contract that does not define or send this field.
-  // Injecting `store: false` there also makes its referenced `rs_...` items
-  // look deliberately unpersisted, so omit the field rather than choosing a
-  // persistence policy the compact request never exposed.
-  if (compact) {
-    delete payload.store;
-    // `/responses/compact` has its own narrow request schema. `include` belongs
-    // to ordinary Responses creation and must not leak across this boundary if
-    // a generic caller reuses its normal request options for compaction.
-    delete payload.include;
-  } else {
-    payload.store = false;
-    // The encrypted reasoning payload is the continuation token for a
-    // stateless Responses conversation. A caller that expected storage may not
-    // have requested it; forcing store=false without also requesting this field
-    // leaves only rs_ ids for the next turn, which cannot be retrieved.
-    if (payload.include === undefined) {
-      payload.include = [NATIVE_STATELESS_REASONING_INCLUDE];
-    } else if (
-      Array.isArray(payload.include) &&
-      !payload.include.includes(NATIVE_STATELESS_REASONING_INCLUDE)
-    ) {
-      payload.include = [...payload.include, NATIVE_STATELESS_REASONING_INCLUDE];
-    }
-  }
-  for (const key of NATIVE_UNSUPPORTED_PARAMS) delete payload[key];
-  return payload;
-}
-
-/**
- * Remove the legacy cache-retention shape that GPT-5.6 rejects.
- *
- * Current Codex builds can still emit the old top-level field on a later turn.
- * Omitting it keeps implicit prompt caching active. A caller that already uses
- * `prompt_cache_options` passes through unchanged.
- */
-function normalizeNativePromptCacheCompatibility(payload) {
-  if (/^gpt-5\.6(?:-|$)/.test(String(payload.model || ""))) {
-    delete payload.prompt_cache_retention;
-  }
-  return payload;
 }
 
 function routedHeaders() {
@@ -2649,7 +2553,10 @@ async function handleResponses(request, response, requestUrl) {
       builtSearchMode = built.searchMode;
     } else {
       const native = { ...payload };
-      const substitutedCaller = callerBroughtNoUpstreamCredential(request);
+      const substitutedCaller = callerBroughtNoUpstreamCredential(request.headers, {
+        callerKey: CALLER_KEY,
+        internalKey: INTERNAL_KEY,
+      });
       // An extended-window variant is the model it was derived from, published
       // under a second slug so the picker can offer a different context
       // window (`src/native-context-variants.mjs`). chatgpt.com has never

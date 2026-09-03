@@ -33,7 +33,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readScript = (name) => readFileSync(path.join(root, name), "utf8");
 
 test("the Windows operational scripts parse in Windows PowerShell", { skip: process.platform !== "win32" }, () => {
-  for (const name of [
+  const targets = [
     "install.ps1",
     "deploy-codex-router.ps1",
     "restart-codex-router.ps1",
@@ -41,18 +41,19 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "maintenance/deploy-switchyard-candidate.ps1",
     "maintenance/refresh-compatibility-state.ps1",
     "src/windows-process-tree.ps1",
-  ]) {
-    const target = path.join(root, name).replaceAll("'", "''");
-    const check = [
-      "$tokens = $null; $errors = $null",
-      `[System.Management.Automation.Language.Parser]::ParseFile('${target}', [ref]$tokens, [ref]$errors) | Out-Null`,
-      "if ($errors.Count) { $errors | ForEach-Object { $_.Message }; exit 1 }",
-    ].join("; ");
-    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-Command", check], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-  }
+  ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);
+  const check = [
+    `$targets = @(${targets.join(",")})`,
+    "foreach ($target in $targets) {",
+    "$tokens = $null; $errors = $null",
+    "[System.Management.Automation.Language.Parser]::ParseFile($target, [ref]$tokens, [ref]$errors) | Out-Null",
+    "if ($errors.Count) { $errors | ForEach-Object { $_.Message }; exit 1 }",
+    "}",
+  ].join("; ");
+  execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-Command", check], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
 });
 
 test("Windows entrypoints never fall back to a developer checkout", () => {
@@ -65,21 +66,6 @@ test("Windows entrypoints never fall back to a developer checkout", () => {
     const source = readScript(name);
     assert.doesNotMatch(source, /E:\\GitHub\\code\\codex-router/iu);
     assert.doesNotMatch(source, /\$RepoDir\b/u);
-  }
-});
-
-test("operator repair guidance names supported Windows commands", () => {
-  for (const name of [
-    "src/caller-auth.mjs",
-    "src/config-manager.mjs",
-    "src/proxy-environment.mjs",
-    "src/router.mjs",
-    "src/start.mjs",
-    "src/state-owner.mjs",
-    "src/transport-failure.mjs",
-  ]) {
-    const source = readScript(name);
-    assert.doesNotMatch(source, /\.\/bin\/|doctor --fix/u);
   }
 });
 

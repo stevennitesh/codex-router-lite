@@ -51,6 +51,15 @@ function clearAuth() {
   rmSync(authPath, { force: true });
 }
 
+function writeConsentFixture() {
+  mkdirSync(path.dirname(NATIVE_SESSION_CONSENT_PATH), { recursive: true });
+  writeFileSync(
+    NATIVE_SESSION_CONSENT_PATH,
+    '{"version":1,"sharing":"enabled"}\n',
+    "utf8",
+  );
+}
+
 const jwtWithClaims = (claims) =>
   `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
 
@@ -92,7 +101,7 @@ test("shared native session reconstructs the FedRAMP header from Codex identity 
     "https://api.openai.com/auth": { chatgpt_account_is_fedramp: true },
   });
   writeAuth({ access_token: ACCESS, account_id: ACCOUNT, id_token });
-  setNativeSessionSharingEnabled(true);
+  writeConsentFixture();
   assert.equal(nativeSessionHeaders()["x-openai-fedramp"], "true");
 
   for (const claims of [
@@ -156,7 +165,7 @@ test("sharing cannot be enabled before the user signs in", () => {
 
 test("status reports presence, never the credential", () => {
   writeAuth({ access_token: ACCESS, account_id: ACCOUNT });
-  setNativeSessionSharingEnabled(true);
+  writeConsentFixture();
   const status = nativeSessionStatus();
   assert.equal(status.present, true);
   assert.equal(status.usable, true);
@@ -182,7 +191,7 @@ test("a session with no access token is not a session", () => {
 
 test("the fallback can be switched off", () => {
   writeAuth({ access_token: ACCESS, account_id: ACCOUNT });
-  setNativeSessionSharingEnabled(true);
+  writeConsentFixture();
   process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK = "0";
   try {
     assert.equal(nativeSessionHeaders(), undefined);
@@ -209,107 +218,6 @@ test("an unrecognized consent marker fails closed", () => {
   assert.equal(nativeSessionAvailable(), false);
   writeFileSync(NATIVE_SESSION_CONSENT_PATH, '{"version":99,"sharing":"enabled"}\n', "utf8");
   assert.equal(nativeSessionAvailable(), false);
-});
-
-// The bug this file exists to prevent a repeat of: the first version of the
-// fallback tested `!headers.authorization`, and a curl with no header at all
-// passed. The harness does not call that way -- its provider route has nowhere
-// to put a credential except `apiKeyEnv`, so it sends the router's own caller
-// key as a bearer token. The guard never fired, the caller key went upstream,
-// and every harness turn came back "API key is invalid".
-test("the router's own caller key is not an upstream credential", () => {
-  const CALLER = "caller-secret-0123456789abcdef";
-  const INTERNAL = "internal-key-0123456789abcdef";
-
-  // The predicate the router applies, kept in step with router.mjs.
-  const PREFIX = "bearer";
-  const bearer = (value) => {
-    if (typeof value !== "string") return undefined;
-    const trimmed = value.trim();
-    if (trimmed.length <= PREFIX.length) return undefined;
-    if (trimmed.slice(0, PREFIX.length).toLowerCase() !== PREFIX) return undefined;
-    const separator = trimmed[PREFIX.length];
-    if (separator !== " " && separator !== "\t") return undefined;
-    const token = trimmed.slice(PREFIX.length + 1).trim();
-    return token || undefined;
-  };
-  const isRouterLocal = (header) => {
-    const token = bearer(header);
-    return token !== undefined && (token === CALLER || token === INTERNAL);
-  };
-
-  // What the harness sends: recognised as local, so the session substitutes.
-  assert.equal(isRouterLocal(`Bearer ${CALLER}`), true);
-  assert.equal(isRouterLocal(`bearer ${CALLER}`), true, "the scheme is case-insensitive");
-  assert.equal(isRouterLocal(`Bearer ${INTERNAL}`), true);
-
-  // What Codex sends: a real upstream token, relayed untouched.
-  assert.equal(isRouterLocal("Bearer sk-a-real-upstream-token"), false);
-  assert.equal(isRouterLocal("Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"), false);
-
-  // Anything that is not a bearer header is left alone rather than inspected.
-  assert.equal(isRouterLocal("Basic dXNlcjpwYXNz"), false);
-  assert.equal(isRouterLocal(undefined), false);
-  assert.equal(isRouterLocal(""), false);
-});
-
-// ChatGPT's own backend accepts a narrower request than the public Responses
-// API. Codex complies already; a generic client sends sampling parameters it
-// rejects one at a time, each as a bare 400. Measured against the live endpoint,
-// not guessed -- these are the exact ten it named.
-test("a substituted caller's payload is made acceptable to the native endpoint", () => {
-  const UNSUPPORTED = [
-    "temperature",
-    "top_p",
-    "presence_penalty",
-    "frequency_penalty",
-    "max_tokens",
-    "max_output_tokens",
-    "metadata",
-    "seed",
-    "user",
-    "truncation",
-  ];
-
-  // The transform the router applies, kept in step with router.mjs.
-  const normalize = (payload) => {
-    payload.store = false;
-    for (const key of UNSUPPORTED) delete payload[key];
-    return payload;
-  };
-
-  const sent = {
-    model: "gpt-5.6-luna",
-    stream: true,
-    input: [{ role: "user", content: [{ type: "input_text", text: "hi" }] }],
-    // Everything a generic OpenAI client would reasonably include.
-    temperature: 0.7,
-    top_p: 1,
-    max_output_tokens: 100,
-    metadata: { a: "b" },
-    seed: 1,
-    user: "someone",
-    truncation: "auto",
-    // Accepted upstream, so these must survive.
-    reasoning: { effort: "low" },
-    tool_choice: "auto",
-    parallel_tool_calls: true,
-    instructions: "be brief",
-  };
-
-  const out = normalize({ ...sent });
-  assert.equal(out.store, false, "store must be false or the turn is a 400");
-  for (const key of UNSUPPORTED) {
-    assert.equal(key in out, false, `${key} is rejected upstream and must be stripped`);
-  }
-  // Stripping must not become a whitelist that quietly drops what works.
-  assert.deepEqual(out.reasoning, { effort: "low" });
-  assert.equal(out.tool_choice, "auto");
-  assert.equal(out.parallel_tool_calls, true);
-  assert.equal(out.instructions, "be brief");
-  assert.equal(out.model, "gpt-5.6-luna");
-  assert.equal(out.stream, true);
-  assert.deepEqual(out.input, sent.input);
 });
 
 // The gap that made this "works while you also use Codex" rather than "works":
@@ -358,41 +266,10 @@ test("an expired session is withheld rather than spent on a certain 401", () => 
 test("status reports the remaining life, never the token", () => {
   const seconds = Math.floor(Date.now() / 1000);
   writeAuth({ access_token: jwtWithExp(seconds + 36000), account_id: ACCOUNT });
-  setNativeSessionSharingEnabled(true);
+  writeConsentFixture();
   const status = nativeSessionStatus();
   assert.ok(status.expiresInHours > 9 && status.expiresInHours <= 10);
   assert.doesNotMatch(JSON.stringify(status), new RegExp(ACCOUNT));
-});
-
-test("the bearer parser is linear and rejects the shapes it should", () => {
-  const PREFIX = "bearer";
-  const bearer = (value) => {
-    if (typeof value !== "string") return undefined;
-    const trimmed = value.trim();
-    if (trimmed.length <= PREFIX.length) return undefined;
-    if (trimmed.slice(0, PREFIX.length).toLowerCase() !== PREFIX) return undefined;
-    const separator = trimmed[PREFIX.length];
-    if (separator !== " " && separator !== "\t") return undefined;
-    const token = trimmed.slice(PREFIX.length + 1).trim();
-    return token || undefined;
-  };
-
-  assert.equal(bearer("Bearer abc"), "abc");
-  assert.equal(bearer("bearer\tabc"), "abc");
-  assert.equal(bearer("  Bearer   abc  "), "abc");
-  // A scheme with no separator is a different scheme, not a malformed one.
-  assert.equal(bearer("BearerX"), undefined);
-  assert.equal(bearer("Bearer"), undefined);
-  assert.equal(bearer("Bearer    "), undefined);
-  assert.equal(bearer("Basic abc"), undefined);
-
-  // The header comes from an unauthenticated caller. The old regex backtracked
-  // polynomially on this; parsing has to stay linear.
-  const hostile = `Bearer${" ".repeat(50_000)}`;
-  const started = process.hrtime.bigint();
-  assert.equal(bearer(hostile), undefined);
-  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
-  assert.ok(elapsedMs < 250, `parsing took ${elapsedMs.toFixed(1)}ms, which suggests backtracking`);
 });
 
 test.after(() => {

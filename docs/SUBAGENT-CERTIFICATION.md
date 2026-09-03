@@ -21,7 +21,15 @@ An accepted proof records one run that passes:
 
 Streaming and a tool call alone do not prove native collaboration. Do not promote a partial run.
 
-`v2_agent/<provider>/<route>/proof.json` is the checked-in application. `src/subagent-proofs.mjs` validates it. `src/subagent-routing.mjs` selects only exact eligible routes. `scripts/check-v2-agent-applications.mjs` rejects a v2 declaration without an accepted matching application.
+Each checked-in application contains `proof.json` and `proof.md` under
+`v2_agent/<provider>/<route>/`. The JSON file is the machine-readable
+authority. The Markdown file records reviewer-facing evidence and limitations.
+`scripts/check-v2-agent-applications.mjs` validates both files and rejects a v2
+declaration without an accepted exact-route application.
+
+Machine-local runtime evidence is separate. `src/subagent-proofs.mjs` reads and
+writes those records, and `src/subagent-routing.mjs` selects only exact eligible
+routes.
 
 ## When to refresh proof
 

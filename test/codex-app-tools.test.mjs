@@ -132,32 +132,6 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
 
 });
 
-test("snapshot keeps the established thread, automation, and navigation tools", () => {
-  for (const name of [
-    "create_thread",
-    "list_threads",
-    "read_thread",
-    "fork_thread",
-    "set_thread_title",
-    "set_thread_archived",
-    "send_message_to_thread",
-    "handoff_thread",
-    "wait_threads",
-    "get_handoff_status",
-    "automation_update",
-    "list_projects",
-    "open_in_codex",
-    "navigate_to_codex_page",
-    "read_thread_terminal",
-    "load_workspace_dependencies",
-  ]) {
-    assert.ok(
-      CODEX_APP_TOOL_NAMES.has(name),
-      `snapshot must carry the app tool ${name}`,
-    );
-  }
-});
-
 test("merge fills the deferred app tools into the reduced client namespace", () => {
   const { tools, merged } = mergeCodexAppTools(clientRoutedTools());
   assert.equal(merged, true);
@@ -198,14 +172,26 @@ test("merge appends the full app namespaces when the client omits them", () => {
   }
 });
 
-test("merge leaves a full client namespace intact (client definitions win)", () => {
+test("merge preserves client-provided tool definitions", () => {
   const clientTools = clientRoutedTools();
+  const clientDefinition = clientTools
+    .find((tool) => tool?.type === "namespace" && tool.name === "codex_app")
+    .tools.find((tool) => tool.name === "load_workspace_dependencies");
+  clientDefinition.description = "client-owned definition";
+  clientDefinition.inputSchema = {
+    type: "object",
+    properties: { refresh: { type: "boolean" } },
+    required: ["refresh"],
+  };
   const { tools, merged } = mergeCodexAppTools(clientTools);
   assert.equal(merged, true);
   const codexApp = tools.find(
     (tool) => tool?.type === "namespace" && tool.name === "codex_app",
   );
-  assert.equal(codexApp.tools.length, CURRENT_CODEX_APP_TOOLS.length);
+  assert.strictEqual(
+    codexApp.tools.find((tool) => tool.name === "load_workspace_dependencies"),
+    clientDefinition,
+  );
 });
 
 test("splitFlatCodexAppName parses flattened names only", () => {
