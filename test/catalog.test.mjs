@@ -13,6 +13,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  applyPickerVisibility,
   effectivePickerHiddenModels,
   mergeNativeCatalogs,
   promoteNativeMultiAgent,
@@ -59,6 +60,27 @@ test("signed-in picker overlay cannot hide Codex native base entries", () => {
     [...effectivePickerHiddenModels(hidden, native)].sort(),
     ["gpt-5.6-sol-1m", "openrouter/glm-5.3-flash"],
   );
+});
+
+test("picker visibility projection hides only unselected routed entries", () => {
+  const projected = applyPickerVisibility(
+    [
+      { slug: "gpt-5.6-sol", visibility: "list" },
+      { slug: "openrouter/glm-5.3-flash", visibility: "list" },
+      { slug: "switchyard/auto", visibility: "list" },
+    ],
+    {
+      nativeBaseSlugs: new Set(["gpt-5.6-sol"]),
+      hiddenModels: new Set(["gpt-5.6-sol", "switchyard/auto"]),
+      visibleModels: new Set(["openrouter/glm-5.3-flash"]),
+      hasExplicitVisibility: true,
+    },
+  );
+  assert.deepEqual(projected.map(({ slug, visibility }) => [slug, visibility]), [
+    ["gpt-5.6-sol", "list"],
+    ["openrouter/glm-5.3-flash", "list"],
+    ["switchyard/auto", "hide"],
+  ]);
 });
 
 test("Switchyard inherits the native Codex request and compaction contract", () => {

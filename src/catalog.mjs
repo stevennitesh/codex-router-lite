@@ -994,6 +994,21 @@ export function effectivePickerHiddenModels(hiddenModels, nativeBaseSlugs) {
   return new Set([...hidden].filter((slug) => !native.has(slug)));
 }
 
+export function applyPickerVisibility(
+  models,
+  { nativeBaseSlugs, hiddenModels, visibleModels, hasExplicitVisibility },
+) {
+  return models.map((model) => {
+    const slug = String(model.slug);
+    const routerManaged = !nativeBaseSlugs.has(slug);
+    const hidden = hiddenModels.has(slug);
+    const selected = hasExplicitVisibility ? visibleModels.has(slug) : !hidden;
+    return routerManaged && (hidden || !selected)
+      ? { ...model, visibility: "hide" }
+      : model;
+  });
+}
+
 export function publishCatalog({ refreshNative = refresh, output = true } = {}) {
   // The catalog is what Codex offers in its picker. Writing it from a checkout
   // that does not own this state directory is how the picker ends up
@@ -1077,20 +1092,15 @@ export function publishCatalog({ refreshNative = refresh, output = true } = {}) 
   try {
     writeAnnouncedAt(announcedAt);
     atomicJson(MERGED_CATALOG_PATH, {
-      models: merged.map((model) => {
-        const slug = String(model.slug);
-        const routerManaged = !nativeBaseSlugs.has(slug);
-        const hidden = effectiveHiddenModels.has(slug);
-        // A state file written by the new picker carries positive selections.
-        // Older installs had only `hidden`; preserve their behavior until an
-        // operator makes a picker change, at which point the write records the
-        // explicit allowlist permanently.
-        const selected = pickerState.hasExplicitVisibility
-          ? visibleModels.has(slug)
-          : !hidden;
-        return routerManaged && (hidden || !selected)
-          ? { ...model, visibility: "hide" }
-          : model;
+      // A state file written by the new picker carries positive selections.
+      // Older installs had only `hidden`; preserve their behavior until an
+      // operator makes a picker change, at which point the write records the
+      // explicit allowlist permanently.
+      models: applyPickerVisibility(merged, {
+        nativeBaseSlugs,
+        hiddenModels: effectiveHiddenModels,
+        visibleModels,
+        hasExplicitVisibility: pickerState.hasExplicitVisibility,
       }),
     });
     if (process.env.MODEL_ROUTER_TEST_FAIL_AFTER_CATALOG_WRITE === "1") {

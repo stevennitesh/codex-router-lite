@@ -4,9 +4,20 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { buildMergedCatalog } from "../src/catalog.mjs";
+import {
+  applyPickerVisibility,
+  buildMergedCatalog,
+  clampModelEfforts,
+  codexEffortVocabulary,
+  effectivePickerHiddenModels,
+} from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 import { spawnableCommand } from "../src/codex-binary.mjs";
+import {
+  applyMultiAgentCapabilities,
+  readMultiAgentSettings,
+} from "../src/multi-agent-state.mjs";
+import { modelPickerSnapshot, readHiddenModels } from "../src/model-picker-state.mjs";
 
 const binary = process.argv[2];
 const installedCatalogPath = process.argv[3] === "--catalog" ? process.argv[4] : undefined;
@@ -41,10 +52,28 @@ const routed = ["openrouter/glm-5.3-flash", "switchyard/auto"].map((slug) => {
   return model;
 });
 
-function buildCandidate(binary) {
+function buildCandidate(binary, nativeOverride) {
   const version = runCodex(binary, ["--version"]).trim();
-  const native = JSON.parse(runCodex(binary, ["debug", "models", "--bundled"]));
-  const catalog = { models: buildMergedCatalog(native, routed) };
+  const native = nativeOverride || JSON.parse(runCodex(binary, ["debug", "models", "--bundled"]));
+  const hiddenModels = readHiddenModels();
+  const pickerState = modelPickerSnapshot();
+  const nativeBaseSlugs = new Set(native.models.map((model) => String(model.slug || "")));
+  const effectiveHiddenModels = effectivePickerHiddenModels(hiddenModels, nativeBaseSlugs);
+  const effectiveRouted = clampModelEfforts(
+    applyMultiAgentCapabilities(routed, readMultiAgentSettings(), {
+      hidden: hiddenModels,
+    }),
+    codexEffortVocabulary(version),
+  );
+  const merged = buildMergedCatalog(native, effectiveRouted);
+  const catalog = {
+    models: applyPickerVisibility(merged, {
+      nativeBaseSlugs,
+      hiddenModels: effectiveHiddenModels,
+      visibleModels: new Set(pickerState.visible),
+      hasExplicitVisibility: pickerState.hasExplicitVisibility,
+    }),
+  };
   const builtSwitchyard = catalog.models.find((model) => model.slug === "switchyard/auto");
   const builtGlm = catalog.models.find((model) => model.slug === "openrouter/glm-5.3-flash");
   const nativeSol = native.models.find((model) => model.slug === "gpt-5.6-sol");
@@ -79,7 +108,10 @@ function buildCandidate(binary) {
   return { binary, version, catalog };
 }
 
-const source = buildCandidate(binary);
+const installedNative = installedCatalogPath
+  ? JSON.parse(readFileSync(path.join(path.dirname(installedCatalogPath), "native-models.json"), "utf8"))
+  : undefined;
+const source = buildCandidate(binary, installedNative);
 const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
 const catalogPath = installedCatalogPath || path.join(temporaryHome, "merged-models.json");
 try {
