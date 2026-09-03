@@ -141,3 +141,23 @@ test("Switchyard source lock pins the canonical compatibility patch", () => {
   assert.equal(createHash("sha256").update(patchBytes).digest("hex"), lock.patchSha256);
   assert.match(patchBytes.toString("utf8"), /merge_override_value/);
 });
+
+test("Switchyard's hidden Codex classifier satisfies the Responses-Lite reasoning contract", () => {
+  const template = readFileSync(
+    path.join(root, "config", "switchyard", "routes.template.toml"),
+    "utf8",
+  );
+  const autoRoute = /\[routes\.auto\]([\s\S]*?)(?=\n\[)/u.exec(template)?.[1];
+  const targetName = /classifier_target\s*=\s*"([^"]+)"/u.exec(autoRoute || "")?.[1];
+  assert.ok(targetName, "auto route classifier target is missing");
+  const escapedTarget = targetName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const classifierTarget = new RegExp(
+    `\\[targets\\.${escapedTarget}\\]([\\s\\S]*?)(?=\\n\\[)`,
+    "u",
+  ).exec(template)?.[1];
+  assert.ok(classifierTarget, `${targetName} target is missing`);
+  assert.match(
+    classifierTarget,
+    /body_overrides\s*=\s*\{[^\n]*reasoning\s*=\s*\{[^\n]*context\s*=\s*"all_turns"/u,
+  );
+});
