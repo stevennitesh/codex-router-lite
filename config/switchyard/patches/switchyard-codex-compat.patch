@@ -318,68 +318,77 @@ index 9d191644..a7f6e516 100644
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
 diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index 599e9f9e..9d4aba66 100644
+index 599e9f9..162364d 100644
 --- a/crates/libsy/src/algorithms/llm_class.rs
 +++ b/crates/libsy/src/algorithms/llm_class.rs
-@@ -148,16 +148,46 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
+@@ -148,16 +148,40 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
      counted
  }
 -
 +
 -/// Keeps the opening task and the latest user follow-up when they differ.
-+/// Keeps the opening task and the latest user follow-up as one clean user
++/// Keeps the textual opening task and latest user follow-up as one clean text
 +/// message. Responses tool and relay envelopes can be normalized as user
-+/// messages when their item type has no IR representation; they are transport
-+/// state, not task text, and must not be replayed to the judge as message
-+/// content.
++/// content when their item type has no IR representation. They are transport
++/// state, not task text, and must not be replayed to the judge. One text block
++/// also forces the Responses codec's scalar `input` form, avoiding provider
++/// validation of message-content arrays that the hidden classifier does not
++/// need.
  fn task_messages(messages: &[Message]) -> Vec<Message> {
 -    let mut user_messages = messages.iter().filter(|message| message.role == Role::User);
 -    let Some(opening_task) = user_messages.next() else {
+-        return Vec::new();
 +    let mut user_messages = messages.iter().filter_map(|message| {
 +        if message.role != Role::User {
 +            return None;
 +        }
-+        let content = message
++        let text = message
 +            .content
 +            .iter()
-+            .filter(|block| {
-+                matches!(
-+                    block,
-+                    ContentBlock::Text { .. }
-+                        | ContentBlock::Image { .. }
-+                        | ContentBlock::Audio { .. }
-+                        | ContentBlock::Video { .. }
-+                        | ContentBlock::File { .. }
-+                )
++            .filter_map(|block| match block {
++                ContentBlock::Text { text } => Some(text.as_str()),
++                _ => None,
 +            })
-+            .cloned()
-+            .collect::<Vec<_>>();
-+        (!content.is_empty()).then_some(content)
++            .collect::<Vec<_>>()
++            .join("\n");
++        (!text.is_empty()).then_some(text)
 +    });
-+    let Some(mut content) = user_messages.next() else {
-         return Vec::new();
++    let Some(mut text) = user_messages.next() else {
++        return vec![Message::text(
++            Role::User,
++            "The current user request contains no textual task content.",
++        )];
      };
 -    match user_messages.next_back() {
 -        Some(latest_follow_up) => vec![opening_task.clone(), latest_follow_up.clone()],
 -        None => vec![opening_task.clone()],
 +    if let Some(latest_follow_up) = user_messages.next_back() {
-+        content.push(ContentBlock::Text {
-+            text: "\n\nLatest user update:\n".to_string(),
-+        });
-+        content.extend(latest_follow_up);
++        text.push_str("\n\nLatest user update:\n");
++        text.push_str(&latest_follow_up);
      }
-+    vec![Message {
-+        role: Role::User,
-+        content,
-+    }]
++    vec![Message::text(Role::User, text)]
  }
 -
 +
  /// Selects the task messages shown to capability and custom-schema classifiers.
-@@ -1290,6 +1320,52 @@ mod tests {
+@@ -817,8 +841,8 @@ mod tests {
+-
++
+     use super::*;
+     use switchyard_protocol::{
+-        ContentBlock, InstructionBlock, LlmClientError, LlmRequest, Metadata, ToolCall, ToolResult,
+-        completion_text, text_request, text_response,
++        ContentBlock, ImageSource, InstructionBlock, LlmClientError, LlmRequest, Metadata,
++        ToolCall, ToolResult, completion_text, text_request, text_response,
+     };
+-
++
+     use crate::algorithms::util::llm_judge::Judge;
+@@ -1290,6 +1314,52 @@ mod tests {
          ))
      }
-
+-
++
 +    #[test]
 +    fn classifier_keeps_only_the_common_fast_service_tier() -> Result<()> {
 +        let judge = capability_judge(None)?;
@@ -429,7 +438,7 @@ index 599e9f9e..9d4aba66 100644
      fn judged_contents(recent_turn_window: usize) -> Result<Vec<String>> {
          let judge = capability_judge(Some(recent_turn_window))?;
          let request = Request {
-@@ -1534,16 +1610,17 @@ mod tests {
+@@ -1534,16 +1604,17 @@ mod tests {
              }
              .content,
          );
@@ -451,7 +460,7 @@ index 599e9f9e..9d4aba66 100644
          assert!(!contents.contains(&"client instructions".to_string()));
          assert_eq!(
              judge_request.llm_request.output.response_format,
-@@ -1556,6 +1633,49 @@ mod tests {
+@@ -1556,6 +1627,94 @@ mod tests {
          Ok(())
      }
 -
@@ -466,13 +475,24 @@ index 599e9f9e..9d4aba66 100644
 +                    Message::text(Role::User, "follow-up task"),
 +                    Message {
 +                        role: Role::User,
-+                        content: vec![ContentBlock::ToolResult(ToolResult {
-+                            tool_call_id: "call-1".to_string(),
-+                            content: vec![ContentBlock::Text {
-+                                text: "native relay output".to_string(),
-+                            }],
-+                            is_error: None,
-+                        })],
++                        content: vec![
++                            ContentBlock::Text {
++                                text: "latest visible task".to_string(),
++                            },
++                            ContentBlock::Image {
++                                source: ImageSource::Url {
++                                    url: "https://example.invalid/relay".to_string(),
++                                    detail: None,
++                                },
++                            },
++                            ContentBlock::ToolResult(ToolResult {
++                                tool_call_id: "call-1".to_string(),
++                                content: vec![ContentBlock::Text {
++                                    text: "native relay output".to_string(),
++                                }],
++                                is_error: None,
++                            }),
++                        ],
 +                    },
 +                ],
 +                ..LlmRequest::default()
@@ -487,15 +507,49 @@ index 599e9f9e..9d4aba66 100644
 +            .messages;
 +        assert_eq!(messages.len(), 1);
 +        assert_eq!(messages[0].role, Role::User);
++        assert_eq!(messages[0].content.len(), 1);
++        assert!(matches!(messages[0].content[0], ContentBlock::Text { .. }));
 +        assert!(messages[0].text_content("\n").is_some_and(|text| {
 +            text.contains("initial task")
-+                && text.contains("follow-up task")
++                && text.contains("latest visible task")
 +                && !text.contains("native relay output")
++                && !text.contains("example.invalid")
 +        }));
-+        assert!(messages[0].content.iter().all(|block| !matches!(
-+            block,
-+            ContentBlock::ToolCall(_) | ContentBlock::ToolResult(_) | ContentBlock::Unknown { .. }
-+        )));
++        Ok(())
++    }
++
++    #[test]
++    fn capability_judge_uses_safe_text_for_a_non_text_only_task() -> Result<()> {
++        let judge = capability_judge(None)?;
++        let request = Request {
++            llm_request: LlmRequest {
++                messages: vec![Message {
++                    role: Role::User,
++                    content: vec![ContentBlock::ToolResult(ToolResult {
++                        tool_call_id: "call-1".to_string(),
++                        content: vec![ContentBlock::Text {
++                            text: "native relay output".to_string(),
++                        }],
++                        is_error: None,
++                    })],
++                }],
++                ..LlmRequest::default()
++            },
++            raw_request: None,
++            metadata: None,
++        };
++
++        let messages = judge
++            .build_request(&State::default(), &request)
++            .llm_request
++            .messages;
++        assert_eq!(
++            messages,
++            vec![Message::text(
++                Role::User,
++                "The current user request contains no textual task content."
++            )]
++        );
 +        Ok(())
 +    }
 +
