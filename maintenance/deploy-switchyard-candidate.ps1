@@ -94,6 +94,17 @@ function Prepare-RollbackRouter([string]$Root) {
   # already down. Prepare the exact rollback checkout against an isolated
   # state directory before activation, then discard that generated state. The
   # checkout's ignored node_modules and .venv remain ready for a fast install.
+  $missingSteps = @()
+  foreach ($step in @("node-deps", "python-deps")) {
+    $status = (& node (Join-Path $Root "src\install-plan.mjs") status $step | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $status -ne "skip") { $missingSteps += $step }
+  }
+  if (-not $missingSteps.Count) { return }
+  # A WhatIf run must not create the preparation tree or let PowerShell's
+  # inherited WhatIfPreference suppress environment and directory cleanup.
+  if ($WhatIfPreference) {
+    throw "Rollback Router dependencies need preparation before WhatIf: $($missingSteps -join ', ')."
+  }
   $prepareRoot = [IO.Path]::GetFullPath((
     Join-Path $Root "generated\rollback-prepare-$([Guid]::NewGuid().ToString('N'))"
   ))
@@ -123,7 +134,7 @@ function Prepare-RollbackRouter([string]$Root) {
       Remove-Item -LiteralPath $prepareRoot -Recurse -Force
     }
   }
-  foreach ($step in @("node-deps", "python-deps")) {
+  foreach ($step in $missingSteps) {
     $status = (& node (Join-Path $Root "src\install-plan.mjs") status $step | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $status -ne "skip") {
       throw "Rollback Router $step is not ready in $Root."
