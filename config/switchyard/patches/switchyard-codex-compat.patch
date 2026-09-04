@@ -318,10 +318,65 @@ index 9d191644..a7f6e516 100644
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
 diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index 599e9f9e..600bea52 100644
+index 599e9f9e..9d4aba66 100644
 --- a/crates/libsy/src/algorithms/llm_class.rs
 +++ b/crates/libsy/src/algorithms/llm_class.rs
-@@ -1290,6 +1290,52 @@ mod tests {
+@@ -148,16 +148,46 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
+     counted
+ }
+-
++
+-/// Keeps the opening task and the latest user follow-up when they differ.
++/// Keeps the opening task and the latest user follow-up as one clean user
++/// message. Responses tool and relay envelopes can be normalized as user
++/// messages when their item type has no IR representation; they are transport
++/// state, not task text, and must not be replayed to the judge as message
++/// content.
+ fn task_messages(messages: &[Message]) -> Vec<Message> {
+-    let mut user_messages = messages.iter().filter(|message| message.role == Role::User);
+-    let Some(opening_task) = user_messages.next() else {
++    let mut user_messages = messages.iter().filter_map(|message| {
++        if message.role != Role::User {
++            return None;
++        }
++        let content = message
++            .content
++            .iter()
++            .filter(|block| {
++                matches!(
++                    block,
++                    ContentBlock::Text { .. }
++                        | ContentBlock::Image { .. }
++                        | ContentBlock::Audio { .. }
++                        | ContentBlock::Video { .. }
++                        | ContentBlock::File { .. }
++                )
++            })
++            .cloned()
++            .collect::<Vec<_>>();
++        (!content.is_empty()).then_some(content)
++    });
++    let Some(mut content) = user_messages.next() else {
+         return Vec::new();
+     };
+-    match user_messages.next_back() {
+-        Some(latest_follow_up) => vec![opening_task.clone(), latest_follow_up.clone()],
+-        None => vec![opening_task.clone()],
++    if let Some(latest_follow_up) = user_messages.next_back() {
++        content.push(ContentBlock::Text {
++            text: "\n\nLatest user update:\n".to_string(),
++        });
++        content.extend(latest_follow_up);
+     }
++    vec![Message {
++        role: Role::User,
++        content,
++    }]
+ }
+-
++
+ /// Selects the task messages shown to capability and custom-schema classifiers.
+@@ -1290,6 +1320,52 @@ mod tests {
          ))
      }
 
@@ -374,6 +429,79 @@ index 599e9f9e..600bea52 100644
      fn judged_contents(recent_turn_window: usize) -> Result<Vec<String>> {
          let judge = capability_judge(Some(recent_turn_window))?;
          let request = Request {
+@@ -1534,16 +1610,17 @@ mod tests {
+             }
+             .content,
+         );
+-        assert_eq!(judge_request.llm_request.messages.len(), 2);
++        assert_eq!(judge_request.llm_request.messages.len(), 1);
+         let contents = judge_request
+             .llm_request
+             .messages
+             .iter()
+             .filter_map(|message| message.text_content("\n"))
+             .collect::<Vec<_>>();
+-        assert!(contents.contains(&"recent 4".to_string()));
+-        assert!(contents.contains(&"initial task".to_string()));
+-        assert!(!contents.contains(&"recent 5".to_string()));
++        assert!(contents[0].contains("initial task"));
++        assert!(contents[0].contains("Latest user update:"));
++        assert!(contents[0].contains("recent 4"));
++        assert!(!contents[0].contains("recent 5"));
+         assert!(!contents.contains(&"client instructions".to_string()));
+         assert_eq!(
+             judge_request.llm_request.output.response_format,
+@@ -1556,6 +1633,49 @@ mod tests {
+         Ok(())
+     }
+-
++
++    #[test]
++    fn capability_judge_excludes_native_tool_envelopes_from_task_input() -> Result<()> {
++        let judge = capability_judge(None)?;
++        let request = Request {
++            llm_request: LlmRequest {
++                messages: vec![
++                    Message::text(Role::User, "initial task"),
++                    Message::text(Role::User, "follow-up task"),
++                    Message {
++                        role: Role::User,
++                        content: vec![ContentBlock::ToolResult(ToolResult {
++                            tool_call_id: "call-1".to_string(),
++                            content: vec![ContentBlock::Text {
++                                text: "native relay output".to_string(),
++                            }],
++                            is_error: None,
++                        })],
++                    },
++                ],
++                ..LlmRequest::default()
++            },
++            raw_request: None,
++            metadata: None,
++        };
++
++        let messages = judge
++            .build_request(&State::default(), &request)
++            .llm_request
++            .messages;
++        assert_eq!(messages.len(), 1);
++        assert_eq!(messages[0].role, Role::User);
++        assert!(messages[0].text_content("\n").is_some_and(|text| {
++            text.contains("initial task")
++                && text.contains("follow-up task")
++                && !text.contains("native relay output")
++        }));
++        assert!(messages[0].content.iter().all(|block| !matches!(
++            block,
++            ContentBlock::ToolCall(_) | ContentBlock::ToolResult(_) | ContentBlock::Unknown { .. }
++        )));
++        Ok(())
++    }
++
+     fn sample_value(spec: &Value) -> Value {
+         if let Some(first) = spec
+             .get("enum")
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
 index 7c696aa4..f2ad0bb6 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
