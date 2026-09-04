@@ -236,7 +236,6 @@ export function observeNativeAuthOutcome(status, options = {}) {
 }
 
 export function nativeCatalogPublicationMode(auth, desktop, observation) {
-  if (auth?.reason === "discovery-disabled") return "none";
   if (auth?.authenticated === true) return "all";
   if (!desktop?.running) return "none";
   if (observation?.state === "accepted") return "all";

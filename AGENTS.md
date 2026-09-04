@@ -29,7 +29,7 @@ migration systems are outside the product and must not return.
   [`docs/INSTALL.md`](docs/INSTALL.md). Service failure or rollback work: read
   [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) before touching a live
   runtime.
-- Credential, discovery-disabled, proxy, or remote-endpoint work: read the
+- Credential, proxy, or remote-endpoint work: read the
   matching security boundary and preserve its fail-closed behavior.
 - Subagent claims, selection semantics, proof artifacts, or v2 declarations:
   read [`docs/SUBAGENT-CERTIFICATION.md`](docs/SUBAGENT-CERTIFICATION.md). Bind

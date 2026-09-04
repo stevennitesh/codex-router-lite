@@ -5,8 +5,6 @@ import { secretEqual } from "./caller-auth.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { CODEX_HOME, NATIVE_SESSION_CONSENT_PATH } from "./paths.mjs";
 
-const discoveryDisabled = () => false;
-
 // The ChatGPT session the local Codex install already holds.
 //
 // Native GPT traffic is authorized by the caller's own session: `nativeHeaders`
@@ -39,14 +37,9 @@ function consentMarkerEnabled() {
 
 // The fallback widens what the caller key reaches -- with it, a local process
 // holding that key can spend the ChatGPT subscription and not only API-key
-// providers. Missing state therefore means off, unlike the old implicit
-// discovery behavior. `1` is an explicit headless opt-in and `0` an emergency
-// off switch; any other environment value is not consent.
+// providers. Missing state therefore means off. `1` is an explicit headless
+// opt-in and `0` an emergency off switch; any other value is not consent.
 export function nativeSessionSharingEnabled() {
-  // --no-discovery composes with the dedicated env switch: the Codex session
-  // is a credential this process did not receive from its caller, so an idle
-  // install must never spend it.
-  if (discoveryDisabled()) return false;
   const override = process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK;
   if (override !== undefined) return override === "1";
   return consentMarkerEnabled();
@@ -91,9 +84,6 @@ function tokenIdentity(idToken) {
 const EXPIRY_SKEW_MS = 120_000;
 
 function readAuthDocument() {
-  // Under --no-discovery the Codex auth file is never opened; status readers
-  // above report it absent rather than pretending to know what is inside.
-  if (discoveryDisabled()) return undefined;
   if (!existsSync(CODEX_AUTH_PATH)) return undefined;
   try {
     return JSON.parse(readFileSync(CODEX_AUTH_PATH, "utf8"));
@@ -168,11 +158,6 @@ export function setNativeSessionSharingEnabled(enabled) {
     rmSync(NATIVE_SESSION_CONSENT_PATH, { force: true });
     return false;
   }
-  if (discoveryDisabled()) {
-    throw new Error(
-      "ChatGPT session sharing cannot be enabled while credential discovery is disabled.",
-    );
-  }
   const override = process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK;
   if (override !== undefined && override !== "1") {
     throw new Error(
@@ -209,10 +194,6 @@ const REFRESH_RETRY_INTERVAL_MS = 5 * 60_000;
 const REFRESH_TIMEOUT_MS = 30_000;
 
 async function refreshViaCodex({ now = Date.now() } = {}) {
-  // `codex login status` makes Codex read (and possibly rewrite) its session
-  // file; unreachable while readSession() is guarded, but the promise should
-  // not depend on that call graph staying put.
-  if (discoveryDisabled()) return false;
   if (refreshInFlight) return refreshInFlight;
   if (now - lastRefreshAttemptMs < REFRESH_RETRY_INTERVAL_MS) return false;
   lastRefreshAttemptMs = now;
@@ -247,7 +228,6 @@ async function refreshViaCodex({ now = Date.now() } = {}) {
  * the request exactly as it arrived.
  */
 export function nativeSessionHeaders() {
-  if (discoveryDisabled()) return undefined;
   if (!nativeSessionSharingEnabled()) return undefined;
   const session = readSession();
   if (!session) return undefined;
@@ -267,7 +247,6 @@ export function nativeSessionHeaders() {
 }
 
 export function nativeSessionAvailable() {
-  if (discoveryDisabled()) return false;
   return Boolean(nativeSessionHeaders());
 }
 
@@ -278,22 +257,6 @@ export function nativeSessionAvailable() {
  * from "not signed in".
  */
 export function nativeSessionStatus() {
-  // Whether auth.json exists, and how old it is, is metadata about a
-  // credential this process promised not to look at. Reporting it absent is
-  // the same answer every other guarded reader gives under --no-discovery.
-  if (discoveryDisabled()) {
-    return {
-      path: CODEX_AUTH_PATH,
-      present: false,
-      usable: false,
-      hasAccountId: false,
-      expired: false,
-      expiresInHours: undefined,
-      ageHours: undefined,
-      sharingEnabled: false,
-      fallbackEnabled: false,
-    };
-  }
   const present = existsSync(CODEX_AUTH_PATH);
   const session = present ? readSession() : undefined;
   let ageHours;

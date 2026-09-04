@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 
 import { secretEntryFeedback, secretEntryProblem } from "./secret-entry.mjs";
 
-export const WINDOWS_HIDDEN_PROMPT_SCRIPT = [
+const WINDOWS_HIDDEN_PROMPT_SCRIPT = [
   "$secret = Read-Host $env:CODEX_ROUTER_PROMPT_LABEL -AsSecureString",
   "$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)",
   "try { [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }",
@@ -11,7 +11,7 @@ export const WINDOWS_HIDDEN_PROMPT_SCRIPT = [
 // A -Command argument is re-parsed by Windows before PowerShell sees it, so
 // carry the script as base64 UTF-16LE. Keep try/finally in one array element:
 // joining between them would produce `}; finally`, which PowerShell rejects.
-export function windowsHiddenPromptArgs(script = WINDOWS_HIDDEN_PROMPT_SCRIPT) {
+function windowsHiddenPromptArgs(script = WINDOWS_HIDDEN_PROMPT_SCRIPT) {
   return [
     "-NoLogo",
     "-NoProfile",
@@ -22,7 +22,7 @@ export function windowsHiddenPromptArgs(script = WINDOWS_HIDDEN_PROMPT_SCRIPT) {
 
 const WINDOWS_POWERSHELL_CANDIDATES = ["powershell.exe", "pwsh.exe"];
 
-export function powerShellStartupError(failures) {
+function powerShellStartupError(failures) {
   return failures.find((error) => error?.code !== "ENOENT") ||
     new Error(
       "PowerShell is required for hidden API-key input, but neither powershell.exe nor pwsh.exe could be started.",

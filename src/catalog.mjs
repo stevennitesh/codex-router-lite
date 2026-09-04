@@ -15,7 +15,6 @@ import {
   ANNOUNCED_MODELS_PATH,
   CONFIG_PATH,
   MERGED_CATALOG_PATH,
-  MODELS_CACHE_PATH,
   NATIVE_CATALOG_PATH,
   PORTS,
 } from "./paths.mjs";
@@ -43,10 +42,6 @@ import {
   LISTED_MODELS,
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
-
-const discoveryDisabled = () => true;
-const routedModelSearchAvailable = () => false;
-const selectedConfiguredListedModels = () => LISTED_MODELS;
 
 const refresh = process.argv.includes("--refresh-native");
 
@@ -77,7 +72,7 @@ function previouslyPublishedNativeSlugs(
   }
 }
 
-// The account cache stores the raw instruction template while the bundled
+// The account catalog stores the raw instruction template while the bundled
 // catalog ships `base_instructions` with the template variables already
 // substituted: for every shared slug that carries variables, the bundled
 // `base_instructions` equals the account template with `{{ personality }}`
@@ -103,7 +98,7 @@ function deriveBaseInstructions(modelMessages) {
 // and the static catalog shipped in the binary (`--bundled`). Neither is a
 // safe source by itself. The account catalog can add models or change their
 // visibility without a client update, while the bundled catalog can contain a
-// newer schema or models absent from a stale account cache. Preserve the
+// newer schema or models absent from a stale account catalog. Preserve the
 // account entry for every slug it lists (first occurrence wins on a
 // duplicate), then append bundled-only entries.
 export function mergeNativeCatalogs(
@@ -124,7 +119,7 @@ export function mergeNativeCatalogs(
     seen.add(slug);
     const base = fallbackBySlug.get(slug);
     const merged = mergeNativeModel(model, base);
-    // The remote cache may omit `base_instructions` because Codex can derive
+    // The account catalog may omit `base_instructions` because Codex can derive
     // it internally. A custom model_catalog_json is parsed more strictly and
     // requires the field, so derive it the same way for account-only models
     // such as Codex Spark.
@@ -157,7 +152,7 @@ function isEmptyNativeMetadata(value) {
 // place: the speed/service tiers are the observed bug (a stale account schema
 // wiped the Fast tier), `input_modalities: []` would describe a model nothing
 // can call, and the tool/instruction fields are binary-schema data the account
-// cache merely mirrors. Deliberately absent: `visibility` (the account's own
+// catalog merely mirrors. Deliberately absent: `visibility` (the account's own
 // signal, always non-empty in practice but not worth betting on) and
 // `supported_reasoning_levels` (an account that lost an effort ladder is
 // expressing exactly that — resurrecting bundled's ladder would offer efforts
@@ -171,7 +166,7 @@ const BUNDLED_BACKFILL_FIELDS = Object.freeze([
 ]);
 
 // The installed Codex binary owns the shell implementation it can deserialize.
-// An account cache can survive a client upgrade with the old non-empty value,
+// An account catalog can survive a client upgrade with the old non-empty value,
 // so emptiness is not a sufficient drift check for this field.
 const BUNDLED_AUTHORITATIVE_FIELDS = Object.freeze(["shell_type"]);
 
@@ -215,7 +210,7 @@ function mergeNativeModel(accountModel, bundledModel) {
       merged[field] = value;
     }
   }
-  // Account caches can lag the binary by one model-message schema revision.
+  // Account catalogs can lag the binary by one model-message schema revision.
   // Backfill only missing object properties. Explicit nulls, empty strings,
   // arrays, and scalar values remain account-owned because current Codex gives
   // several of them meaning distinct from an absent property.
@@ -228,25 +223,6 @@ function mergeNativeModel(accountModel, bundledModel) {
     );
   }
   return merged;
-}
-
-// One read serves both the catalog contents and the fingerprint; reading the
-// file twice would hash a possibly different snapshot than the one merged.
-function readModelsCache() {
-  const missing = { catalog: undefined, fingerprint: undefined };
-  if (!existsSync(MODELS_CACHE_PATH)) return missing;
-  try {
-    const parsed = JSON.parse(readFileSync(MODELS_CACHE_PATH, "utf8"));
-    if (!validNativeCatalog(parsed)) return missing;
-    return {
-      catalog: parsed,
-      fingerprint: createHash("sha256")
-        .update(JSON.stringify(parsed.models))
-        .digest("hex"),
-    };
-  } catch {
-    return missing;
-  }
 }
 
 function atomicContents(target, contents) {
@@ -271,35 +247,14 @@ function restoreFileSnapshot(target, snapshot) {
   }
 }
 
-function captureNative(cache) {
-  // A discovery-disabled install promised that nothing account-derived is
-  // read: `debug models` without --bundled reflects the signed-in account's
-  // catalog, and `models_cache.json` is that same catalog written to disk, so
-  // both stay untouched and the bundled static list is the whole capture.
-  // This is the gate SECURITY.md's "the one Codex spawn that remains is
-  // `codex debug models --bundled`" claim rests on.
-  const idle = discoveryDisabled();
-  const resolved = cache ?? (idle ? {} : readModelsCache());
-  // This is the account-aware catalog Codex itself cached after signing in.
-  // Reading it directly also avoids asking `codex debug models` while the
-  // router catalog is active, which would merely return our own merged output.
-  let account = resolved.catalog;
+function captureNative(source = {}) {
+  // The configured Windows app capture owns account visibility. Without one,
+  // use Codex's bundled catalog and do not inspect account cache files.
+  const account = source.catalog;
   let fallback;
-  let accountError;
   let fallbackError;
-  if (!account && !idle) {
-    try {
-      account = JSON.parse(runCodex(["debug", "models"], {
-        encoding: "utf8",
-        timeout: 30_000,
-        maxBuffer: 32 * 1024 * 1024,
-      }));
-    } catch (error) {
-      accountError = error;
-    }
-  }
-  // The bundled source supplies schema fields that the remote cache is allowed
-  // to omit, so use both when available. If it fails, account-only entries are
+  // The bundled source supplies schema fields that the account catalog may
+  // omit, so use both when available. If it fails, account-only entries are
   // still normalized above and remain preferable to an empty picker.
   try {
     fallback = JSON.parse(runCodex(["debug", "models", "--bundled"], {
@@ -312,7 +267,7 @@ function captureNative(cache) {
   }
   const parsed = mergeNativeCatalogs(account, fallback);
   if (!validNativeCatalog(parsed)) {
-    const detail = accountError?.message || fallbackError?.message;
+    const detail = fallbackError?.message;
     throw new Error(
       `Codex returned no valid native model catalog${detail ? ` (${detail})` : ""}.`,
     );
@@ -323,7 +278,7 @@ function captureNative(cache) {
     );
   }
   const capturedWith = codexVersion();
-  const sourceFingerprint = cache.fingerprint;
+  const sourceFingerprint = source.fingerprint;
   atomicJson(NATIVE_CATALOG_PATH, {
     ...(capturedWith ? { captured_with: capturedWith } : {}),
     ...(sourceFingerprint ? { native_source_fingerprint: sourceFingerprint } : {}),
@@ -376,17 +331,13 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
     // same current bundled capture used for Codex's account catalog.
     return captureNative({ catalog, fingerprint });
   }
-  // `models_cache.json` is the signed-in account's catalog written to disk,
-  // so a discovery-disabled install leaves it unread like every other
-  // account-derived artifact.
-  const cache = discoveryDisabled() ? {} : readModelsCache();
-  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative(cache);
+  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative();
   const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
-  if (nativeCatalogIsReusable(parsed, codexVersion(), cache.fingerprint)) {
+  if (nativeCatalogIsReusable(parsed, codexVersion())) {
     return parsed;
   }
   try {
-    return captureNative(cache);
+    return captureNative();
   } catch (error) {
     // Version-mismatched is still better than empty: serve the stale capture
     // when the re-capture fails, but say so instead of hiding it.
@@ -662,7 +613,7 @@ export function routedModel(
     // absent declaration remains the conservative default.
     supports_search_tool: nativeRequestProfile
       ? behaviorTemplate.supports_search_tool === true
-      : routedModelSearchAvailable(model),
+      : false,
     supports_image_detail_original: nativeRequestProfile
       ? behaviorTemplate.supports_image_detail_original === true
       : model.supportsImageDetailOriginal === true,
@@ -998,7 +949,7 @@ function publishCatalog({ refreshNative = refresh, output = true } = {}) {
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
   const userSlugs = new Set();
-  const selectedModels = selectedConfiguredListedModels();
+  const selectedModels = LISTED_MODELS;
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();

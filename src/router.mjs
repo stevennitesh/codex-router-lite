@@ -36,11 +36,10 @@ import {
 } from "./compaction-checkpoint.mjs";
 import {
   MODEL_BY_SLUG,
-  RUNTIME_PROVIDERS,
+  PROVIDERS,
   providerForModel,
   resolveProviderBaseUrl,
 } from "./routed-models.mjs";
-const discoveryDisabled = () => false;
 import {
   routedModelPreservesSearchContract,
   routedModelSearchMode,
@@ -916,7 +915,7 @@ async function probeService(url) {
 
 async function healthPayload() {
   const enabled = new Set(readProviderSelection());
-  const apiEnabled = [...RUNTIME_PROVIDERS.values()].some(
+  const apiEnabled = [...PROVIDERS.values()].some(
     (provider) => provider.kind === "openai-compatible" && enabled.has(provider.id),
   );
   const [api, gateway, switchyard] = await Promise.all([
@@ -2165,26 +2164,6 @@ async function prepareRoutedRequest({
   });
 }
 
-// The models this turn could be moved to, best first. Deliberately computed
-// only after a failure is already known because healthy turns do not need
-// provider discovery or failover ranking.
-// The local answer an idle install gives instead of native forwarding. With
-// discovery disabled the native path is impossible by construction -- the
-// session fallback never reads auth.json -- so traffic that would leave for
-// chatgpt.com is refused before any upstream fetch, keeping the --no-discovery
-// promise that nothing leaves this machine.
-function writeIdleNoProviderError(response) {
-  writeJson(response, 503, {
-    error: {
-      type: "router_idle_no_provider",
-      message:
-        "This router was installed without providers and with credential discovery disabled " +
-        "(--no-provider --no-discovery), so no traffic leaves this machine. " +
-        "Re-run setup without those flags to enable a provider.",
-    },
-  });
-}
-
 async function handleResponses(request, response, requestUrl) {
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -2241,13 +2220,7 @@ async function handleResponses(request, response, requestUrl) {
       });
       return;
     }
-    // Anything without a route from here on is native GPT traffic. An install
-    // that merely hid every provider keeps its native passthrough -- that has
-    // always worked -- but an idle --no-discovery install answers locally.
-    if (!route && discoveryDisabled()) {
-      writeIdleNoProviderError(response);
-      return;
-    }
+    // Anything without a route from here on is native GPT traffic.
     const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
     // Codex remote compaction V2 uses the ordinary Responses endpoint with a
     // terminal trigger. Detect the protocol shape before route dispatch so the
@@ -2902,12 +2875,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
       requestedModel = typeof payload.model === "string" ? payload.model : defaultModel;
     }
 
-    // Image requests and unbound web-search turns remain native-only; an idle
-    // install refuses them locally rather than forwarding to chatgpt.com.
-    if (discoveryDisabled()) {
-      writeIdleNoProviderError(response);
-      return;
-    }
+    // Image requests and unbound web-search turns remain native-only.
     const observesNativeAuth = nativeSessionTokenMatches(
       bearerToken(request.headers.authorization),
     );

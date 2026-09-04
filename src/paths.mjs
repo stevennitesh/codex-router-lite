@@ -7,8 +7,6 @@ if (process.env.MODEL_ROUTER_TARGET && process.env.MODEL_ROUTER_TARGET !== TARGE
   throw new Error("MODEL_ROUTER_TARGET supports only codex.");
 }
 
-export const ROUTER_PLANE_TARGET = "codex";
-
 const configuredSourceRoot = process.env.CODEX_ROUTER_SOURCE_ROOT;
 if (configuredSourceRoot && !path.isAbsolute(configuredSourceRoot)) {
   throw new Error("CODEX_ROUTER_SOURCE_ROOT must be an absolute path.");
@@ -27,7 +25,6 @@ function managedStateDir() {
 
 export const STATE_DIR = process.env.MODEL_ROUTER_STATE_DIR || managedStateDir();
 export const CONFIG_PATH = path.join(CODEX_HOME, "config.toml");
-export const MODELS_CACHE_PATH = path.join(CODEX_HOME, "models_cache.json");
 export const CODEX_AGENTS_DIR = path.join(CODEX_HOME, "agents");
 export const NATIVE_CATALOG_PATH = path.join(STATE_DIR, "native-models.json");
 export const NATIVE_CATALOG_SOURCE_PATH = path.join(

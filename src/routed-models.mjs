@@ -61,7 +61,6 @@ if (
 }
 
 export const PROVIDERS = new Map(providerRecords.map((provider) => [provider.id, Object.freeze(provider)]));
-export const RUNTIME_PROVIDERS = PROVIDERS;
 export const CHECKED_IN_MODELS = Object.freeze(modelRecords.map((model) => Object.freeze(model)));
 const MODELS = CHECKED_IN_MODELS;
 export const LISTED_MODELS = Object.freeze(MODELS.filter((model) => model.listed));

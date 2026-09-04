@@ -4,10 +4,6 @@ import path from "node:path";
 
 import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
 
-const discoveryDisabled = () => false;
-
-export { preferSpawnablePath, spawnableCommand };
-
 // The ChatGPT/Codex desktop app bundles its CLI under a version-hashed
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash
 // changes on every app update, so scan for the newest installed version
@@ -176,13 +172,6 @@ export function codexVersion() {
 // every native model from the catalog. Report the reason so callers can refuse
 // to act on an unknown instead of treating it as a definite "logged out".
 export function codexAuthStatus() {
-  // `codex login status` is a credential probe, so --no-discovery skips the
-  // spawn entirely. The distinct reason keeps this apart from "probe-failed":
-  // the catalog treats it like a deliberate signed-out answer (publish no
-  // native models) instead of refusing to rebuild.
-  if (discoveryDisabled()) {
-    return { authenticated: false, reason: "discovery-disabled" };
-  }
   const binary = findCodexBinary();
   if (!binary) return { authenticated: false, reason: "codex-not-found" };
   try {

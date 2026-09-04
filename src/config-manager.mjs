@@ -10,11 +10,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { findCodexBinary, spawnableCommand } from "./codex-binary.mjs";
+import { findCodexBinary } from "./codex-binary.mjs";
 import { assertCallerSecret, isManagedCallerBaseUrl, redactCallerUrl } from "./caller-auth.mjs";
 import { refreshCodexCallerCapabilityContents } from "./caller-key-client-refresh.mjs";
 import { privateFileIsProtected, protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { catalogPathsEqual, readNativeCatalogSource } from "./native-catalog-source.mjs";
+import { spawnableCommand } from "./spawnable-command.mjs";
 import {
   BACKUP_PATH,
   CALLER_SECRET_PATH,

@@ -8,12 +8,6 @@ import {
 import { disableProvider, enableProvider } from "./provider-selection.mjs";
 import { promptForSecret } from "./secret-prompt.mjs";
 
-export {
-  powerShellStartupError,
-  WINDOWS_HIDDEN_PROMPT_SCRIPT,
-  windowsHiddenPromptArgs,
-} from "./secret-prompt.mjs";
-
 const providerId = process.argv[2];
 const command = process.argv[3] || "status";
 

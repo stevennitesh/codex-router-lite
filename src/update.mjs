@@ -45,14 +45,14 @@ export const DIRTY_PREVIEW_LIMIT = 10;
 // message, so counting untracked files as "local changes" only ever stranded
 // people: one stray file in the checkout and every future update was refused,
 // with nothing in the error to say which file or how to get past it.
-export function localModifications() {
+function localModifications() {
   return git(["status", "--porcelain", "--untracked-files=no"])
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 }
 
-export function localModificationsMessage(changes, sourceRoot = SOURCE_ROOT) {
+function localModificationsMessage(changes, sourceRoot = SOURCE_ROOT) {
   const preview = changes
     .slice(0, DIRTY_PREVIEW_LIMIT)
     .map((line) => `  ${line}`)

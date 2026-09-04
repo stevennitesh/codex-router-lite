@@ -1,13 +1,6 @@
-import { PORTS, ROUTER_PLANE_TARGET, TARGET, loopback } from "./paths.mjs";
+import { PORTS, TARGET, loopback } from "./paths.mjs";
 
-// The name the router reports on `/health`. It identifies the *service*, which
-// is one process shared by every client integration, so it is keyed on the
-// router plane rather than on whichever client this command was invoked for.
-// Keying it on the client made a second integration look like a foreign
-// process squatting on the router port.
-const SERVICE_BY_TARGET = {
-  [ROUTER_PLANE_TARGET]: "codex-router",
-};
+const ROUTER_SERVICE = "codex-router";
 const SUPPORTED_TARGETS = new Set(["codex"]);
 const MAX_ERROR_GRAPH_DEPTH = 8;
 
@@ -43,7 +36,7 @@ export async function waitForRouterHealth({
   fetchImpl = fetch,
 } = {}) {
   if (!SUPPORTED_TARGETS.has(target)) throw new Error(`Unknown router target: ${target}`);
-  const expectedService = SERVICE_BY_TARGET[ROUTER_PLANE_TARGET];
+  const expectedService = ROUTER_SERVICE;
 
   const overallTimeoutMs = Math.max(0, timeoutMs);
   const deadline = Date.now() + overallTimeoutMs;
