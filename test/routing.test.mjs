@@ -680,6 +680,10 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     const healthBody = await health.json();
     assert.deepEqual(healthBody.degraded, ["switchyard"]);
     assert.equal(healthBody.switchyard.reachable, false);
+    assert.equal("activity" in healthBody, false);
+    assert.equal("activityRecordRetentionMs" in healthBody.resources, false);
+    assert.equal(healthBody.resources.inFlightRequests, 0);
+    assert.equal(healthBody.resources.maxActiveRequests, 64);
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);

@@ -30,9 +30,8 @@
 //      lifetime budget and stop being restarted at all; without the bound, a
 //      gateway that dies on every request becomes a spawn loop.
 //   3. **Never silent.** Every crash, every restart, and the decision to stop
-//      restarting are logged unconditionally -- the production LaunchAgent
-//      hard-sets `CODEX_ROUTER_QUIET`, and a router that quietly resurrects a
-//      crashing gateway is indistinguishable from one that never failed.
+//      restarting are logged unconditionally. The Windows service sets
+//      `CODEX_ROUTER_QUIET`, and a quiet restart would hide a crash loop.
 
 const DEFAULT_MAX_RESTARTS = 5;
 const DEFAULT_RESTART_WINDOW_MS = 10 * 60_000;

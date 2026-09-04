@@ -53,12 +53,9 @@ function atomicWrite(value) {
 
 function recordInstall() {
   const previous = readInstallManifest();
-  // The skills field is derived from the checkout's skills/ directory, not
-  // from post-install filesystem state: bin/install records the manifest
-  // before the skills step runs, so managedSkillNames() would report the
-  // previous run's state. The checkout source is deterministic at this point
-  // and correct for provenance, because the skills installed moments later
-  // come from that same checkout.
+  // Derive the skills field from the checkout because install.ps1 records the
+  // manifest before installing skills. Filesystem state still describes the
+  // previous installation at this point.
   const skills = {
     names: packSkillNames(),
     count: packSkillNames().length,
@@ -77,10 +74,8 @@ function recordInstall() {
     // reads this field precisely to avoid rewriting the service without the
     // proxy the operator configured.
     //
-    // A proxy URL may embed `user:password@`, so this file is no less
-    // sensitive than the service definition that already stores the same
-    // value; both are owner-only. support-bundle.mjs strips the credential
-    // from the copy it produces, because that one is meant to be shared.
+    // A proxy URL may embed `user:password@`, so this owner-only file has the
+    // same sensitivity as the service definition.
     proxyEnvironment: serviceProxyEnvironment(),
     providers: providerSelectionStatus().providers,
     skills,

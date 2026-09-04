@@ -322,8 +322,8 @@ function installTask() {
           CODEX_ROUTER_TASK_EXECUTE: execute,
           CODEX_ROUTER_TASK_ARGUMENT: argument,
         },
-        // Registration also runs from the GUI installer and the Control
-        // Center, where a console child gets its own window.
+        // Registration can run from the Windows app, where a console child
+        // gets its own window.
         windowsHide: true,
         stdio: ["ignore", "ignore", "ignore"],
       },
@@ -503,8 +503,8 @@ function taskState() {
           env: { ...process.env, CODEX_ROUTER_TASK: taskName },
           stdio: ["ignore", "pipe", "ignore"],
           timeout: TASK_STATE_TIMEOUT_MS,
-          // Status is polled from the tray on a timer, so an unhidden console
-          // here is a window that reappears on its own.
+          // Status can be polled from the Windows app, so keep the helper
+          // console hidden.
           windowsHide: true,
         },
       ).trim().toLowerCase();

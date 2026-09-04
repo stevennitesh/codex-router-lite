@@ -3,14 +3,11 @@ import { readFileSync } from "node:fs";
 import { assertCallerSecret, callerBaseUrl } from "./caller-auth.mjs";
 import { CALLER_SECRET_PATH, PORTS } from "./paths.mjs";
 
-const OFFLINE_ACTIVITY = Object.freeze({ state: "offline", active: [], activeCount: 0 });
-
 function offlineHealth(error) {
   return {
     ok: false,
     status: 0,
     error,
-    activity: { ...OFFLINE_ACTIVITY },
   };
 }
 
@@ -51,7 +48,6 @@ export async function readControlHealth({
       ...(typeof body.version === "string" ? { version: body.version } : {}),
       ...(typeof body.router === "string" ? { router: body.router } : {}),
       ...(Array.isArray(body.degraded) ? { degraded: body.degraded } : {}),
-      ...(body.activity && typeof body.activity === "object" ? { activity: body.activity } : {}),
       ...(safeService(body.gateway) ? { gateway: safeService(body.gateway) } : {}),
       ...(safeService(body.api) ? { api: safeService(body.api) } : {}),
     };

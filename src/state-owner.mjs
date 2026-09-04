@@ -10,8 +10,8 @@ import { SOURCE_ROOT, STATE_DIR } from "./paths.mjs";
 // from its own registry while Codex is handed a catalog built from a different
 // one, so the picker advertises models the gateway cannot route.
 //
-// `bin/install` is the sanctioned ownership transfer and sets the override
-// below, because it regenerates state before recording the new owner.
+// install.ps1 is the sanctioned ownership transfer. It sets the override below
+// because it regenerates state before recording the new owner.
 const OVERRIDE_ENV = "MODEL_ROUTER_ALLOW_FOREIGN_STATE";
 
 function canonical(directory) {

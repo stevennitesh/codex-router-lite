@@ -36,6 +36,7 @@ const forbiddenPaths = [
   /^scripts\/(?:verify-python-lock\.py|verify-skill-injection\.mjs)$/u,
   /^src\/(?:deepseek-tool-message-compat|direct-image-policy|login-free-|native-alias|native-client-models|native-context-variants|request-profiles|route-failure-policy|usage-events)\.mjs$/u,
   /^src\/(?:native-redirect|subagent-routing|tool-result-aging|tool-result-aging-state|tool-result-retention)\.mjs$/u,
+  /^src\/codex-session-names\.mjs$/u,
   /^docs\/(?:DEVELOPMENT|HOW-IT-WORKS)\.md$/u,
   /^skills\/codex-router-media\//u,
 ];
@@ -99,6 +100,11 @@ const forbiddenRuntimeText = [
   ["chmodSync", "POSIX permission mutation"],
   ["mode: 0o", "POSIX permission mode"],
   ["legacyPort", "retired caller-port compatibility"],
+  ["LaunchAgent", "non-Windows service terminology"],
+  ["Control Center", "retired Router UI terminology"],
+  ["bin/install", "retired installer terminology"],
+  ["support-bundle.mjs", "retired support-bundle reference"],
+  ["the Dock", "non-Windows desktop terminology"],
 ];
 for (const file of runtimeFiles) {
   const source = readFileSync(path.join(root, file), "utf8");

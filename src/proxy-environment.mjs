@@ -60,11 +60,9 @@ const PROXY_ADDRESS_VARIABLES = [
 // gets turned back off -- is the operator speaking and outranks whatever a
 // previous install recorded.
 //
-// A bypass list on its own is not that statement, and treating it as one cost
-// a real installation its proxy: a desktop app launched from the Dock inherits
-// `no_proxy` from the login session and nothing else, so counting that as a
-// decision rewrote the service with the bypass list alone and then recorded
-// that back over the proxy it had been keeping.
+// A bypass list on its own is not that statement. Treating it as one can erase
+// the proxy from a Windows app launch that inherited only `no_proxy`, then
+// record the damage as authoritative state.
 //
 // An empty value is read the same way, for the same reason: a login session
 // that exports `HTTP_PROXY=` has not chosen to stop proxying.
@@ -152,9 +150,8 @@ export function serviceProxyEnvironment(
   environment = process.env,
   { recorded, manifestPath } = {},
 ) {
-  // `bin/install` renders the service before it rewrites the manifest, so the
-  // values restored here are the previous install's and are still the
-  // authoritative answer at this point.
+  // install.ps1 renders the service before rewriting the manifest, so these
+  // values still describe the previous installation at this point.
   const preserved = recorded !== undefined ? recorded : recordedProxyEnvironment(manifestPath);
   if (!proxyEnvironmentDeclared(environment)) {
     if (preserved) return { ...preserved };

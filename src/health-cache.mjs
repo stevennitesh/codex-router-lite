@@ -1,18 +1,11 @@
-// The companion polls the router's /health continuously, and every one of
-// those fanned out to three downstream probes -- including the gateway's
-// /health/liveliness, which LiteLLM's uvicorn logs a line for. On an idle
-// machine that measured 2.5 probes a second, roughly 16.6 MB of log a day,
-// none of it carrying information: the answer cannot meaningfully change
-// between two probes a fraction of a second apart.
+// Concurrent /health calls fan out to local dependency probes, including the
+// gateway's /health/liveliness endpoint. Cache the short-lived answer so a
+// burst of status and readiness calls shares one probe.
 //
-// A short TTL collapses a burst of polls into one probe. It is deliberately
-// short: the tray shows live service status, so a stale "reachable" is a lie
-// with a shelf life, and a few seconds is the most that is honest.
+// Keep the TTL short so a stale "reachable" result expires quickly.
 const DEFAULT_HEALTH_TTL_MS = 3_000;
-// Stale-while-revalidate must not serve an hours-old "reachable" to doctor on a
-// tray-less machine that has not polled since the gateway died. The TTL is the
-// companion's refresh cadence; this is the hard bound on how old a nonblocking
-// snapshot may be before `/health` waits for a live probe.
+// This is the hard bound on how old a nonblocking snapshot may be before
+// `/health` waits for a live probe.
 const DEFAULT_MAX_STALE_MS = 15_000;
 
 export function createHealthCache({

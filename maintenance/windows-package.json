@@ -40,7 +40,6 @@
     "src/codex-app-tools.mjs",
     "src/codex-binary.mjs",
     "src/codex-native-session.mjs",
-    "src/codex-session-names.mjs",
     "src/compaction-checkpoint.mjs",
     "src/config-manager.mjs",
     "src/control-health.mjs",

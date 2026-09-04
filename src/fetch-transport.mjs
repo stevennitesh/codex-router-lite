@@ -45,8 +45,8 @@ export function installStableFetchTransport({
 
 // Health probes must not share the streaming pool. A GET /health/liveliness
 // that queues behind five SSE POSTs to the same origin is what made the
-// unauthenticated `/health` leaf hang long enough for doctor and the tray
-// to call the router dead.
+// unauthenticated `/health` leaf hang long enough for doctor or readiness
+// checks to call the router dead.
 //
 // Use undici's own `fetch` with this Agent. Passing an npm-undici dispatcher
 // into Node's builtin `fetch` throws `invalid onRequestStart method`, every

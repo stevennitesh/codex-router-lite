@@ -36,8 +36,8 @@ function lockWaitError(waitMs, cause) {
 }
 
 /**
- * Serialize the complete model-overlay transaction across CLI, tray, desktop,
- * and detached worker processes. The catalog publisher has its own lock and
+ * Serialize the complete model-overlay transaction across CLI and detached
+ * worker processes. The catalog publisher has its own lock and
  * is entered by a fresh child while this lock is held; the two locks therefore
  * never nest in one process and read-only catalog/status calls remain unlocked.
  */

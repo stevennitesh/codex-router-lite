@@ -1,6 +1,6 @@
 // A test that runs the real service installer rewrites the developer's own
-// machine. The LaunchAgent gets repointed at the checkout under test, the
-// router then refuses to start against state owned by another checkout
+// scheduled task. It can repoint the task at the checkout under test, then the
+// router refuses to start against state owned by another checkout
 // (`foreign_state_owner`), and an uninstall in the same test can delete the
 // definition outright. None of that is visible in the suite's output: the
 // damage surfaces later as a dead router, with nothing tying it back to a test

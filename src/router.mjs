@@ -111,9 +111,6 @@ import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
 import { pendingInterruptTargets } from "./subagent-completion.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
-import {
-  activityMetadataFromHeaders,
-} from "./codex-session-names.mjs";
 import { gatewayErrorStatus, translateGatewayError } from "./error-translation.mjs";
 import { describeTransportFailure } from "./transport-failure.mjs";
 import {
@@ -217,7 +214,6 @@ const EMPTY_COMPLETION_PRELUDE_BYTES =
   configuredEmptyCompletionPreludeBytes >= 0
     ? Math.floor(configuredEmptyCompletionPreludeBytes)
     : 1024 * 1024;
-const ERROR_STATUS_DURATION_MS = 8_000;
 const configuredDecodedBodyBytes = Number(
   process.env.MODEL_ROUTER_MAX_DECODED_BODY_BYTES ||
     process.env.CODEX_ROUTER_MAX_DECODED_BODY_BYTES ||
@@ -236,22 +232,7 @@ const MAX_ACTIVE_REQUESTS =
   Number.isFinite(configuredActiveRequests) && configuredActiveRequests > 0
     ? Math.floor(configuredActiveRequests)
     : 64;
-// This bounds only the tray's activity records. It must not cancel an operation
-// or release its admission slot: a healthy SSE turn can outlive presentation
-// bookkeeping and still retain real buffers and an upstream connection.
-const configuredActivityRecordRetentionMs = Number(
-  process.env.MODEL_ROUTER_ACTIVITY_RECORD_RETENTION_MS ||
-    process.env.CODEX_ROUTER_ACTIVITY_RECORD_RETENTION_MS ||
-    15 * 60_000,
-);
-const ACTIVITY_RECORD_RETENTION_MS =
-  Number.isFinite(configuredActivityRecordRetentionMs) &&
-  configuredActivityRecordRetentionMs > 0
-    ? Math.floor(configuredActivityRecordRetentionMs)
-    : 15 * 60_000;
-// Execution has its own deliberately conservative deadline. Keeping it
-// independent from tray retention prevents a 15-minute accounting cleanup from
-// becoming a compatibility-breaking timeout for long reasoning or SSE turns.
+// Keep a conservative execution deadline for long reasoning and SSE turns.
 const configuredRequestExecutionTimeoutMs = Number(
   process.env.MODEL_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS ||
     process.env.CODEX_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS ||
@@ -292,55 +273,16 @@ const agentPayloadCacheMetrics = {
   coalesced: 0,
 };
 
-let requestSequence = 0;
-const activityRecords = new Map();
-const inFlightRequests = new Map();
-let lastUsedProvider;
-let lastUsedModel;
-let lastUsedSessionName;
-let errorStatusUntil = 0;
+const inFlightRequests = new Set();
 
 if (!INTERNAL_KEY) throw new Error("CODEX_ROUTER_INTERNAL_KEY is required.");
 assertCallerSecret(CALLER_KEY);
-
-function pruneExpiredActivityRecords(now = Date.now()) {
-  for (const [requestId, entry] of activityRecords) {
-    if (now - (entry?.startedAt ?? 0) > ACTIVITY_RECORD_RETENTION_MS) {
-      activityRecords.delete(requestId);
-    }
-  }
-}
-
-function activityPayload() {
-  pruneExpiredActivityRecords();
-  const active = [...activityRecords.values()].filter(
-    (entry) => entry && typeof entry === "object" && entry.provider,
-  );
-  const latest = active.at(-1);
-  const provider = latest?.provider || lastUsedProvider;
-  const model = latest?.model || lastUsedModel;
-  const sessionName = latest?.sessionName || lastUsedSessionName;
-  return {
-    state:
-      activityRecords.size > 0
-        ? "generating"
-        : Date.now() < errorStatusUntil
-          ? "error"
-          : "idle",
-    activeCount: activityRecords.size,
-    active,
-    ...(provider ? { provider } : {}),
-    ...(model ? { model } : {}),
-    ...(sessionName ? { sessionName } : {}),
-  };
-}
 
 function resourceLimitsPayload() {
   purgeExpiredAgentPayloads();
   return {
     inFlightRequests: inFlightRequests.size,
     maxActiveRequests: MAX_ACTIVE_REQUESTS,
-    activityRecordRetentionMs: ACTIVITY_RECORD_RETENTION_MS,
     requestExecutionTimeoutMs: REQUEST_EXECUTION_TIMEOUT_MS,
     maxDecodedBodyBytes: MAX_DECODED_BODY_BYTES,
     maxBufferedResponseBytes: MAX_BUFFERED_RESPONSE_BYTES,
@@ -356,8 +298,7 @@ function resourceLimitsPayload() {
   };
 }
 
-function beginRequestActivity({ request, response, controller } = {}) {
-  pruneExpiredActivityRecords();
+function beginRequestExecution({ request, controller } = {}) {
   if (inFlightRequests.size >= MAX_ACTIVE_REQUESTS) {
     request?.resume?.();
     const error = new Error(
@@ -367,18 +308,15 @@ function beginRequestActivity({ request, response, controller } = {}) {
     error.code = "ERR_ROUTER_ACTIVE_REQUEST_LIMIT";
     throw error;
   }
-  const requestId = ++requestSequence;
-  const startedAt = Date.now();
+  const requestToken = {};
   let finished = false;
   let deadlineExceeded = false;
   let executionTimer;
-  const finish = (status) => {
+  const finish = () => {
     if (finished) return;
     finished = true;
     if (executionTimer) clearTimeout(executionTimer);
-    activityRecords.delete(requestId);
-    inFlightRequests.delete(requestId);
-    if (status >= 400) errorStatusUntil = Date.now() + ERROR_STATUS_DURATION_MS;
+    inFlightRequests.delete(requestToken);
   };
   const abortAtExecutionDeadline = () => {
     if (finished || deadlineExceeded) return;
@@ -397,28 +335,8 @@ function beginRequestActivity({ request, response, controller } = {}) {
     REQUEST_EXECUTION_TIMEOUT_MS + 1,
   );
   executionTimer.unref?.();
-  inFlightRequests.set(requestId, { startedAt });
-  activityRecords.set(requestId, { startedAt });
+  inFlightRequests.add(requestToken);
   return {
-    setRoute({ provider, model, sessionName, ...metadata } = {}) {
-      if (!provider || finished) return;
-      // Once presentation bookkeeping expires, later route updates must not
-      // resurrect it. The operation remains counted in `inFlightRequests`.
-      if (!activityRecords.has(requestId)) return;
-      const entry = {
-        ...(activityRecords.get(requestId) || {}),
-        id: String(requestId),
-        provider,
-        ...(model ? { model } : {}),
-        ...(sessionName ? { sessionName } : {}),
-        ...metadata,
-        startedAt,
-      };
-      activityRecords.set(requestId, entry);
-      lastUsedProvider = provider;
-      if (model) lastUsedModel = model;
-      if (sessionName) lastUsedSessionName = sessionName;
-    },
     finish,
     deadlineExceeded: () => deadlineExceeded,
   };
@@ -468,8 +386,8 @@ function parseBody(buffer) {
 }
 
 // Large Codex turns parse several megabytes of JSON on the event loop. Yield
-// first so an already-accepted GET /health can answer instead of sitting
-// behind that parse and looking like a dead router to the tray.
+// first so an already-accepted GET /health can answer without waiting behind
+// that parse.
 async function parseBodyAsync(buffer) {
   await new Promise((resolve) => setImmediate(resolve));
   return parseBody(buffer);
@@ -949,9 +867,8 @@ function timingMetric(value) {
   return Number.isFinite(value) ? String(value) : "unknown";
 }
 
-// Never gated on QUIET. A production LaunchAgent hard-sets `CODEX_ROUTER_QUIET=1`,
-// which suppresses the per-request status line, and a silent retry is worse
-// than no retry: a flaky upstream would look like an upstream that got better.
+// Never gated on QUIET. The Windows service suppresses the per-request status
+// line, and a silent retry would hide an intermittent upstream failure.
 // Response bodies are never logged, so a retry records the status or the
 // transport error's own name and code and nothing else.
 function logUpstreamRetry({ attempt, retries, status, error, delayMs }, model, routePath) {
@@ -973,8 +890,8 @@ function catalogModels() {
   }
 }
 
-// Shared across every /health request so a polling companion collapses into
-// one probe per service per window instead of three per poll.
+// Shared across every /health request so concurrent status and readiness calls
+// collapse into one probe per service per window.
 const healthCache = createHealthCache({ staleWhileRevalidate: true });
 
 function serviceHealth(url) {
@@ -1029,7 +946,6 @@ async function healthPayload() {
     version: VERSION,
     router: "ready",
     degraded,
-    activity: activityPayload(),
     resources: resourceLimitsPayload(),
     api,
     gateway,
@@ -2272,7 +2188,7 @@ function writeIdleNoProviderError(response) {
 async function handleResponses(request, response, requestUrl) {
   const startedAt = Date.now();
   const controller = new AbortController();
-  const activity = beginRequestActivity({ request, response, controller });
+  const execution = beginRequestExecution({ request, controller });
   let clientGone = false;
   let requestedModel = "";
   let route;
@@ -2300,8 +2216,6 @@ async function handleResponses(request, response, requestUrl) {
   let emptyCompletionPreludeLimit;
   let preludeLimitRetryable = false;
   let finalStatus;
-  let activityStatus;
-  let usageRecorded = false;
   bindClientAbort(request, response, () => {
     clientGone = true;
     controller.abort();
@@ -2334,13 +2248,6 @@ async function handleResponses(request, response, requestUrl) {
       writeIdleNoProviderError(response);
       return;
     }
-    // Activity and usage attribute protocol variants to their canonical
-    // family so the tray Island and graphs show one provider per subscription.
-    activity.setRoute({
-      provider: route ? canonicalProviderId(route.provider) : "openai",
-      model: route?.slug || requestedModel || undefined,
-      ...activityMetadataFromHeaders(request.headers),
-    });
     const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
     // Codex remote compaction V2 uses the ordinary Responses endpoint with a
     // terminal trigger. Detect the protocol shape before route dispatch so the
@@ -2363,8 +2270,6 @@ async function handleResponses(request, response, requestUrl) {
       recordCompactionUsage(compaction, route, startedAt);
       usage = compaction.usage;
       finalStatus = compaction.status;
-      activityStatus = compaction.status;
-      usageRecorded = true;
       route = compacted;
       if (!QUIET) {
         console.error(
@@ -2537,8 +2442,6 @@ async function handleResponses(request, response, requestUrl) {
         }),
       );
       finalStatus = translatedStatus;
-      activityStatus = translatedStatus;
-      usageRecorded = true;
       if (!QUIET) {
         console.error(
           `[codex-router] model=${requestedModel || "unknown"} provider=${route.provider} status=${upstream.status}`,
@@ -2871,8 +2774,6 @@ async function handleResponses(request, response, requestUrl) {
     // is already gone) and only rejects for an upstream that actually failed.
     // A cancel is not a router failure, so it meters as 0 rather than the
     // committed 200 that the client never finished reading.
-    usageRecorded = true;
-    activityStatus = finalStatus;
     if (!QUIET) {
       // The substitution is named in the log line as well as the usage event:
       // a router that quietly invents token counts is its own trap.
@@ -2892,13 +2793,8 @@ async function handleResponses(request, response, requestUrl) {
     }
   } catch (error) {
     upstreamLatencyMs ??= Date.now() - startedAt;
-    if (activity.deadlineExceeded()) {
+    if (execution.deadlineExceeded()) {
       finalStatus = 504;
-      activityStatus = 504;
-      if (!usageRecorded) {
-
-        usageRecorded = true;
-      }
       if (!response.headersSent) {
         writeJson(response, 504, {
           error: {
@@ -2915,15 +2811,12 @@ async function handleResponses(request, response, requestUrl) {
     }
     if (error?.code === "model_search_not_supported" && !response.headersSent) {
       finalStatus = error.status;
-      activityStatus = error.status;
       writeJson(response, error.status, {
         error: {
           type: error.code,
           message: error.message,
         },
       });
-
-      usageRecorded = true;
       return;
     }
     if (retryEmptyCompletionGuard?.hasContent()) emptyCompletion = false;
@@ -2943,11 +2836,6 @@ async function handleResponses(request, response, requestUrl) {
     // That is a successful terminal turn, not a canceled generation.
     if (!route && clientGone && usageTransform?.completedResponseObserved() === true) {
       finalStatus = upstreamStatus ?? response.statusCode;
-      activityStatus = finalStatus;
-      if (!usageRecorded) {
-
-        usageRecorded = true;
-      }
       if (!QUIET) {
         console.error(
           `[codex-router] model=${requestedModel || "unknown"} provider=openai status=${finalStatus}${
@@ -2965,11 +2853,6 @@ async function handleResponses(request, response, requestUrl) {
       // the terminal outcome of a turn the client canceled mid-retry.
       emptyCompletion = false;
       finalStatus = 0;
-      activityStatus = 0;
-      if (!usageRecorded) {
-
-        usageRecorded = true;
-      }
       return;
     }
     // A stream that died after committing its head is a 502 even though the
@@ -2977,17 +2860,12 @@ async function handleResponses(request, response, requestUrl) {
     // already observed; `streamAborted` distinguishes that partial stream from
     // an ordinary upstream or router failure before a head existed.
     finalStatus = response.headersSent ? 502 : httpErrorStatus(error);
-    activityStatus = finalStatus;
-    if (!usageRecorded) {
-
-      usageRecorded = true;
-    }
     throw error;
   } finally {
-    const status = activityStatus ?? finalStatus ?? response.statusCode;
-    activity.finish(status);
+    const status = finalStatus ?? response.statusCode;
+    execution.finish();
     // Timestamped per-request timing for latency diagnosis. Never gated on
-    // QUIET: the production LaunchAgent hard-sets CODEX_ROUTER_QUIET=1. A
+    // QUIET because the Windows service suppresses ordinary request logs. A
     // missing provider count is logged as unknown, not zero; an explicit zero
     // remains zero so a real cache miss is distinguishable from absent data.
     // `model` and `provider` always name the pair that served the turn.
@@ -3002,7 +2880,7 @@ async function handleResponses(request, response, requestUrl) {
 async function handleNativeRequest(request, response, requestUrl, defaultModel) {
   const startedAt = Date.now();
   const controller = new AbortController();
-  const activity = beginRequestActivity({ request, response, controller });
+  const execution = beginRequestExecution({ request, controller });
   let clientGone = false;
   let requestedModel = defaultModel;
   let servingProvider = "openai";
@@ -3054,11 +2932,6 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
     controller.signal.throwIfAborted();
     requestedModel =
       typeof payload.model === "string" ? payload.model : defaultModel;
-    activity.setRoute({
-      provider: "openai",
-      model: requestedModel,
-      ...activityMetadataFromHeaders(request.headers),
-    });
 
     // The same slug translation the turn path does, for the same reason: these
     // endpoints normally carry their own model ("gpt-image-2", the search
@@ -3101,7 +2974,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
       );
     }
   } catch (error) {
-    if (activity.deadlineExceeded()) {
+    if (execution.deadlineExceeded()) {
       const status = 504;
       if (!response.headersSent) {
         writeJson(response, status, {
@@ -3116,31 +2989,20 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
         });
       }
 
-      activity.finish(status);
       return;
     }
-    // A failure with no usage event is invisible to the diagnostic that
-    // separates "the upstream failed" from "the request died inside the
-    // router". Meter this path the way the
-    // turn path does: a departed client as 0, everything else by its status.
     if (clientGone) {
-
-      activity.finish(0);
       return;
     }
-    const status = response.headersSent ? 502 : httpErrorStatus(error);
-
-    activity.finish(status);
     throw error;
   } finally {
-    activity.finish(response.statusCode);
+    execution.finish();
   }
 }
 
 async function handleEmbeddings(request, response, requestUrl) {
-  const startedAt = Date.now();
   const controller = new AbortController();
-  const activity = beginRequestActivity({ request, response, controller });
+  const execution = beginRequestExecution({ request, controller });
   let clientGone = false;
   let requestedModel = "";
   let route;
@@ -3176,11 +3038,6 @@ async function handleEmbeddings(request, response, requestUrl) {
       });
       return;
     }
-    activity.setRoute({
-      provider: canonicalProviderId(route.provider),
-      model: route.slug,
-      ...activityMetadataFromHeaders(request.headers),
-    });
     if (!routeProviderEnabled(route.provider)) {
       status = 409;
       writeJson(response, status, {
@@ -3239,7 +3096,7 @@ async function handleEmbeddings(request, response, requestUrl) {
       status = 0;
       return;
     }
-    if (activity.deadlineExceeded()) {
+    if (execution.deadlineExceeded()) {
       status = 504;
       if (!response.headersSent) {
         writeJson(response, status, {
@@ -3255,10 +3112,7 @@ async function handleEmbeddings(request, response, requestUrl) {
     status = httpErrorStatus(error);
     throw error;
   } finally {
-    if (requestedModel) {
-
-    }
-    activity.finish(status);
+    execution.finish();
   }
 }
 
@@ -3274,7 +3128,6 @@ async function handleRequest(request, response) {
       service: health.service,
       version: health.version,
       degraded: health.degraded,
-      activity: health.activity,
     });
     return;
   }
