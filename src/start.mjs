@@ -79,7 +79,7 @@ const litellm = configuredLiteLlm || path.join(
 // interpreter instead; Python resolves the moved environment from its adjacent
 // pyvenv.cfg and does not retain the staging path.
 const litellmArgs = usesBundledVenv
-  ? ["-I", "-c", "from litellm import run_server; run_server()"]
+  ? ["-I", "-X", "utf8", "-c", "from litellm import run_server; run_server()"]
   : [];
 if (!existsSync(litellm)) {
   throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);

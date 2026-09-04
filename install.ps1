@@ -328,9 +328,9 @@ try {
     Move-Item -LiteralPath $PythonCandidate -Destination $RelocatedPythonCandidate
     $PythonCandidate = $RelocatedPythonCandidate
     $CandidatePython = Join-Path $PythonCandidate "Scripts\python.exe"
-    & $CandidatePython -I -c "import encodings, fastapi, litellm, rpds"
+    & $CandidatePython -I -X utf8 -c "import encodings, fastapi, litellm, rpds, sys; assert sys.stdout.encoding.lower().replace('-', '') == 'utf8'"
     if ($LASTEXITCODE -ne 0) { throw "The candidate LiteLLM environment failed its import probe." }
-    & $CandidatePython -I -c "from litellm import run_server; run_server()" --version | Out-Null
+    & $CandidatePython -I -X utf8 -c "from litellm import run_server; run_server()" --version | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The relocated candidate LiteLLM entry point failed its launch probe." }
   } elseif (Get-Command "uv" -ErrorAction SilentlyContinue) {
     $VenvHomeOk = (& node src/install-plan.mjs venv-home-ok 2>$null | Select-Object -Last 1) -eq "ok"

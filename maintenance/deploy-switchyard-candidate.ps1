@@ -89,6 +89,48 @@ function Invoke-RouterInstall([string]$Root) {
   if ($LASTEXITCODE -ne 0) { throw "Router install failed from $Root." }
 }
 
+function Prepare-RollbackRouter([string]$Root) {
+  # Rollback must not begin by downloading dependencies while the Router is
+  # already down. Prepare the exact rollback checkout against an isolated
+  # state directory before activation, then discard that generated state. The
+  # checkout's ignored node_modules and .venv remain ready for a fast install.
+  $prepareRoot = [IO.Path]::GetFullPath((
+    Join-Path $Root "generated\rollback-prepare-$([Guid]::NewGuid().ToString('N'))"
+  ))
+  $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "generated"))
+  if (-not [string]::Equals(
+    [IO.Path]::GetDirectoryName($prepareRoot),
+    $expectedParent,
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw "Unsafe rollback preparation path: $prepareRoot"
+  }
+  $savedModelState = $env:MODEL_ROUTER_STATE_DIR
+  $hadModelState = $null -ne (Get-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
+  $savedCodexState = $env:CODEX_ROUTER_STATE_DIR
+  $hadCodexState = $null -ne (Get-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
+  try {
+    $env:MODEL_ROUTER_STATE_DIR = $prepareRoot
+    $env:CODEX_ROUTER_STATE_DIR = $prepareRoot
+    & (Join-Path $Root "install.ps1") -CheckoutInstall -PrepareOnly -Target codex
+    if ($LASTEXITCODE -ne 0) { throw "Rollback Router dependency preparation failed from $Root." }
+  } finally {
+    if ($hadModelState) { $env:MODEL_ROUTER_STATE_DIR = $savedModelState }
+    else { Remove-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
+    if ($hadCodexState) { $env:CODEX_ROUTER_STATE_DIR = $savedCodexState }
+    else { Remove-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $prepareRoot -PathType Container) {
+      Remove-Item -LiteralPath $prepareRoot -Recurse -Force
+    }
+  }
+  foreach ($step in @("node-deps", "python-deps")) {
+    $status = (& node (Join-Path $Root "src\install-plan.mjs") status $step | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $status -ne "skip") {
+      throw "Rollback Router $step is not ready in $Root."
+    }
+  }
+}
+
 function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
   $stateRoot = Join-Path $codexHome "codex-router"
   $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
@@ -210,6 +252,8 @@ Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Ro
 $routerCommit = $expectedRouterCommit
 & git -C $repoRoot merge-base --is-ancestor $expectedRollbackCommit $expectedRouterCommit
 if ($LASTEXITCODE -ne 0) { throw "Rollback commit is not an ancestor of the Router candidate." }
+Prepare-RollbackRouter $rollbackRouterRoot
+Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Prepared rollback Router checkout"
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
 $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $lock.patch

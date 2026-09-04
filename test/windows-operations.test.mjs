@@ -85,6 +85,10 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
   assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
+  assert.match(
+    source,
+    /Prepare-RollbackRouter \$rollbackRouterRoot[\s\S]*Assert-CheckoutIdentity \$rollbackRouterRoot \$expectedRollbackCommit "Prepared rollback Router checkout"[\s\S]*ShouldProcess/u,
+  );
   assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
   assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /if \(-not \$activationStarted\)/);
@@ -114,7 +118,7 @@ test("Windows live dependency updates stage the Python environment and restore i
   );
   assert.match(
     readScript("src/start.mjs"),
-    /Scripts",\s*"python\.exe"[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*\.\.\.litellmArgs/u,
+    /Scripts",\s*"python\.exe"[\s\S]*"-I", "-X", "utf8"[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*\.\.\.litellmArgs/u,
   );
 });
 
