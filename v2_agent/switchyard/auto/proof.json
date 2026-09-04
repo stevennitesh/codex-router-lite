@@ -3,12 +3,12 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
-  "testedAt": "",
+  "testedAt": "2026-09-04T05:10:28.224Z",
   "routerVersion": "0.5.1",
   "codexVersion": "codex-cli 0.153.0",
   "executionSurface": "codex-desktop-native",
@@ -17,14 +17,34 @@
     "upstreamCommit": "4022b677b20e852de538e0a1a56f041d3ba39f1f",
     "patchSha256": "37e93a61f59cec1ac3ce5439cfa86fce644e13d41defdcb56d5635cb9a701778",
     "binarySha256": "52b8707a82edfceed313d5fc57e21406b2b9342640c0f3bd4715273c7c679e75",
-    "routerCommit": "",
+    "routerCommit": "06523bd4cbb51a3650d39e162061438ae875a73f",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },
   "checks": {
-    "streaming": { "outcome": "pending" },
-    "toolCall": { "outcome": "pending" },
-    "encryptedRelay": { "outcome": "pending" },
-    "markerReturn": { "outcome": "pending" },
-    "sameThreadFollowUp": { "outcome": "pending" }
+    "streaming": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-04T05:10:15.031Z"
+    },
+    "toolCall": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-04T05:10:15.031Z"
+    },
+    "encryptedRelay": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-04T05:10:17.961Z"
+    },
+    "markerReturn": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-04T05:10:20.037Z"
+    },
+    "sameThreadFollowUp": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-04T05:10:28.224Z"
+    }
   }
 }

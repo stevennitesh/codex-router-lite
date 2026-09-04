@@ -41,7 +41,7 @@
       ],
       "requestProfile": "switchyard-native",
       "behaviorTemplate": "gpt-5.6-sol",
-      "multiAgentVersion": "v1",
+      "multiAgentVersion": "v2",
       "serviceTiers": [
         {
           "id": "priority",
@@ -52,7 +52,7 @@
       "additionalSpeedTiers": [
         "fast"
       ],
-      "compHash": "switchyard-auto-v6"
+      "compHash": "switchyard-auto-v7"
     }
   ]
 }

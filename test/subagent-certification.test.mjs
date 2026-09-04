@@ -11,7 +11,7 @@ const certified = {
   multiAgentVersion: "v2",
 };
 const uncertified = {
-  slug: "switchyard/auto",
+  slug: "example/uncertified",
   multiAgentVersion: "v1",
 };
 
