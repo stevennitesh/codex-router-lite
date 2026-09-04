@@ -2,7 +2,7 @@
 
 Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds two routed model choices while leaving native Codex models under the installed Codex build's control:
 
-- `openrouter/glm-5.3-flash`, fixed to GLM-5.3-Flash on NovitaAI through OpenRouter
+- `openrouter/glm-5.3-flash`, sent through one explicitly selected and certified OpenRouter endpoint
 - `switchyard/auto`, which selects native Codex models through the pinned local Switchyard runtime
 
 The router also restores current Codex app function namespaces and supports exact-route subagents v2. It does not support other clients, platforms, provider catalogs, local-model managers, fallback models, a Router UI, or provider discovery.
@@ -61,6 +61,8 @@ Deployment owns file replacement and rollback.
 ## How it works
 
 Native GPT requests keep their Codex authentication and go to the native backend. OpenRouter requests replace caller credentials with the one protected OpenRouter key and strip Codex account metadata. Switchyard is loopback-only, requires a per-generation capability, and preserves native authorization for the native model it selects.
+
+The GLM route selects exactly one OpenRouter endpoint at a time with fallback disabled. NovitaAI is the checked-in and currently certified endpoint. Changing the endpoint is a configuration and certification change, not a code fork; update the endpoint compatibility flags and refresh the exact-route v2 proof before publishing it.
 
 Routed models see flattened app-function names. The response path restores the native namespace before the Codex app executes a call. The checked-in app-tool snapshot tracks the installed Codex contract.
 

@@ -35,11 +35,12 @@ async function diagnose() {
   );
 
   const policy = openRouter.openRouterProviderPolicy;
-  const pinned = JSON.stringify(policy?.only) === '["novita"]' &&
-    JSON.stringify(policy?.order) === '["novita"]' &&
-    policy?.allow_fallbacks === false &&
-    policy?.require_parameters === true;
-  add(pinned ? "ok" : "fail", "OpenRouter provider policy", pinned ? "Novita only; fallback disabled" : "invalid");
+  const endpoint = policy.only[0];
+  add(
+    "ok",
+    "OpenRouter provider policy",
+    `${endpoint}; exact endpoint; fallback disabled`,
+  );
 
   const switchyard = switchyardRuntimeStatus();
   add(

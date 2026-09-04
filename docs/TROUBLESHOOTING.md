@@ -22,9 +22,9 @@ The installed build owns native models. Do not repair drift by copying a catalog
 
 ## GLM fails
 
-Confirm the selected slug is `openrouter/glm-5.3-flash`, the OpenRouter key is present, and doctor reports the OpenRouter hop healthy. Preserve a sanitized response event order. Separate Router, LiteLLM, OpenRouter, NovitaAI, and model failures before editing.
+Confirm the selected slug is `openrouter/glm-5.3-flash`, the OpenRouter key is present, and doctor names the intended endpoint. Preserve a sanitized response event order. Separate Router, LiteLLM, OpenRouter, the selected endpoint, and model failures before editing.
 
-Do not turn on fallback or add a provider to hide an endpoint failure.
+Do not turn on fallback or select an unproved provider to hide an endpoint failure.
 
 ## App functions do not execute
 
@@ -37,5 +37,7 @@ Load `config/switchyard/README.md`. Verify the locked source, patch, binary, gen
 ## Windows task mismatch
 
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
+
+The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.

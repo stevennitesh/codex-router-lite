@@ -13,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { ensureProgramTreeReadable } from "../src/file-security.mjs";
 import {
   buildServiceProcessState,
   serviceProcessOwns,
@@ -96,6 +97,27 @@ test("Windows install refreshes the current Codex bundled catalog", () => {
   assert.doesNotMatch(source, /Test-NonEmptyFile/);
 });
 
+test("Windows live dependency updates stage the Python environment and restore it on failure", () => {
+  const source = readScript("install.ps1");
+  assert.match(
+    source,
+    /Install-PinnedPythonRequirements \$CandidatePython \$true[\s\S]*src\/service\.mjs stop[\s\S]*Move-Item -LiteralPath \$PythonCandidate -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
+  );
+  assert.match(
+    source,
+    /if \(\$PythonSwapStarted\)[\s\S]*Move-Item -LiteralPath \$PythonBackup -Destination \$PythonVenv[\s\S]*src\/service\.mjs install[\s\S]*src\/wait-health\.mjs/u,
+  );
+  assert.match(source, /Assert-TransientPythonVenvPath/u);
+  assert.match(
+    source,
+    /Move-Item -LiteralPath \$PythonCandidate -Destination \$RelocatedPythonCandidate[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*--version/u,
+  );
+  assert.match(
+    readScript("src/start.mjs"),
+    /Scripts",\s*"python\.exe"[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*\.\.\.litellmArgs/u,
+  );
+});
+
 test("the Windows restart helper uses the supported service transaction", () => {
   const source = readScript("restart-codex-router.ps1");
   assert.match(source, /SpecialFolder]::LocalApplicationData/);
@@ -116,6 +138,7 @@ test("Windows install and update retain one guarded service generation", () => {
   assert.match(installer, /src\/install-manifest\.mjs record[\s\S]*src\/service\.mjs install[\s\S]*src\/wait-health\.mjs/);
   assert.match(installer, /if \(\$ServiceInstalled -and -not \$ServiceWasInstalled\)/);
   assert.match(service, /-MultipleInstances IgnoreNew/);
+  assert.match(service, /ensureProgramTreeReadable\(SOURCE_ROOT\)[\s\S]*writeLaunchers\(\)/);
   assert.match(service, /if \(command === "restart"\) endTask\(\)/);
 
   const update = currentCheckoutInstaller("win32", "codex");
@@ -128,6 +151,41 @@ test("Windows install and update retain one guarded service generation", () => {
     force: true,
   });
 });
+
+test(
+  "Windows service installation grants its Limited task read access to the program tree",
+  { skip: process.platform !== "win32" },
+  () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-checkout-"));
+    try {
+      mkdirSync(path.join(directory, "src"));
+      const start = path.join(directory, "src", "start.mjs");
+      writeFileSync(start, "// fixture\n");
+      ensureProgramTreeReadable(directory);
+      const script = [
+        "$acl = [System.IO.File]::GetAccessControl($env:CODEX_ROUTER_START)",
+        "$users = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')",
+        "$rights = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute",
+        "$rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))",
+        "$match = $rules | Where-Object { $_.IdentityReference.Value -eq $users.Value -and $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights -band $rights) -eq $rights } | Select-Object -First 1",
+        "[Console]::Out.Write(($null -ne $match).ToString())",
+      ].join("; ");
+      const result = execFileSync(
+        "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          encoding: "utf8",
+          env: { ...process.env, CODEX_ROUTER_START: start },
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+        },
+      ).trim().toLowerCase();
+      assert.equal(result, "true");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {
   assert.equal(recognizedRepositoryUrl("https://github.com/stevennitesh/codex-router-lite.git"), true);

@@ -10,17 +10,19 @@ export function routedModelPreservesSearchContract(
   model,
   { requiredMode, hasSearchHistory = false } = {},
 ) {
+  if (hasSearchHistory && !requiredMode) {
+    return model?.supportsSearchHistory === true;
+  }
   return searchModePreservesSearchContract(
     routedModelSearchMode(model),
-    { requiredMode, hasSearchHistory },
+    { requiredMode },
   );
 }
 
 export function searchModePreservesSearchContract(
   searchMode,
-  { requiredMode, hasSearchHistory = false } = {},
+  { requiredMode } = {},
 ) {
-  if (hasSearchHistory && !requiredMode) return false;
   return !requiredMode || searchMode === requiredMode;
 }
 

@@ -12,7 +12,7 @@ import {
   effectivePickerHiddenModels,
 } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
-import { spawnableCommand } from "../src/codex-binary.mjs";
+import { spawnableCommand } from "../src/spawnable-command.mjs";
 import {
   applyMultiAgentCapabilities,
   readMultiAgentSettings,

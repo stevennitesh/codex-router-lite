@@ -50,3 +50,12 @@ test("the compatibility refresh stays read-only", () => {
   assert.doesNotMatch(refresh, /service\.mjs.*(?:install|start|stop|restart)/);
   assert.doesNotMatch(refresh, /provider-key|caller-key|codex exec/);
 });
+
+test("the current-Codex catalog check imports the Windows spawn owner", () => {
+  const source = readFileSync(
+    path.join(root, "scripts", "check-codex-catalog-compat.mjs"),
+    "utf8",
+  );
+  assert.match(source, /from "\.\.\/src\/spawnable-command\.mjs"/u);
+  assert.doesNotMatch(source, /spawnableCommand[^\n]+codex-binary\.mjs/u);
+});

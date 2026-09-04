@@ -54,17 +54,23 @@ function sanitizePayload(payload) {
   }
   const {
     client_metadata: _clientMetadata,
-    // Codex advertises and requests parallel tool calls, but Novita's current
-    // GLM-5.3-Flash endpoint does not. With OpenRouter's strict
-    // `require_parameters` routing, merely sending this optional flag removes
-    // the only allowed endpoint before the model sees the request. The model
-    // still receives the complete tool surface and may select one tool at a
-    // time; only the unsupported concurrency hint is omitted at this exact
-    // provider hop.
-    parallel_tool_calls: _parallelToolCalls,
     prompt_cache_retention: _promptCacheRetention,
     ...clean
   } = payload;
+  // Endpoint quirks belong to the selected and certified endpoint record. A
+  // provider change must update this flag and refresh exact-route proof rather
+  // than inheriting Novita's measured behavior by accident.
+  if (route.openRouterEndpointCompatibility.dropParallelToolCalls) {
+    delete clean.parallel_tool_calls;
+  }
+  // Codex sends an empty tool list on compaction and plain turns. Omitting it
+  // has the same meaning and avoids strict OpenAI-compatible validators that
+  // reject `tools: []`. Drop tool_choice only when that empty list was present;
+  // a request that never sent tools keeps its original choice contract.
+  if (Array.isArray(clean.tools) && clean.tools.length === 0) {
+    delete clean.tools;
+    delete clean.tool_choice;
+  }
   return {
     ...clean,
     model: route.upstreamModel,
@@ -90,8 +96,9 @@ async function handle(request, response) {
       ok: Boolean(credential?.value),
       provider: "openrouter",
       model: route.slug,
+      endpoint_provider: route.openRouterProviderPolicy.only[0],
       credential_present: Boolean(credential?.value),
-      fallback: false,
+      fallback: route.openRouterProviderPolicy.allow_fallbacks,
     });
     return;
   }

@@ -256,9 +256,9 @@ cannot certify a different runtime from the one Router starts.
 
 ## Switchyard v2 promotion
 
-`switchyard/auto` is currently v1 and has no certification application. When
-certification is authorized, create one from both templates under
-`v2_agent/_template/`. Read
+`switchyard/auto` is currently v1. Its draft application is under
+`v2_agent/switchyard/auto/`. Complete it only after deploying the exact
+candidate identities it records. Read
 [`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
 for the five general checks. Switchyard additionally requires the proof's
 runtime binding to record the deployed upstream commit, patch SHA-256, binary

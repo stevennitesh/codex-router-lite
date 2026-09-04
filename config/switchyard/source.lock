@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/NVIDIA-NeMo/Switchyard.git",
-  "commit": "7a72c0667774244d66a8b631e375c9d6e393bf57",
+  "commit": "4022b677b20e852de538e0a1a56f041d3ba39f1f",
   "patch": "patches/switchyard-codex-compat.patch",
   "patchSha256": "6626b990018c8f4086f87fe1b7117f566808f04ab21f25abae0fbacdbf7a38c7",
   "rustToolchain": "1.96.1",

@@ -59,13 +59,15 @@ The scheduled-task launcher, arguments, source root, ACL, generation, and runnin
 
 ## OpenRouter GLM-5.3-Flash
 
-The only OpenRouter route is `openrouter/glm-5.3-flash`, upstream `z-ai/glm-5.3-flash`, fixed to NovitaAI with fallback disabled. Read `config/openrouter/glm-5.3-flash.json` for its current context, efforts, modalities, and provider policy.
+The only OpenRouter route is `openrouter/glm-5.3-flash`, upstream `z-ai/glm-5.3-flash`. Its route record selects one endpoint with fallback disabled and records endpoint-specific request compatibility. NovitaAI is the checked-in certified endpoint, not a code-level requirement. To select another endpoint, update `order`, `only`, and the endpoint compatibility flags together, then refresh exact-route proof before publishing v2.
 
-The route uses LiteLLM to translate Codex Responses traffic. `src/zai-responses-compat.mjs` repairs the observed missing message lifecycle for this exact route. Keep repairs scoped to the owner that exhibits the defect.
+The route uses LiteLLM to translate Codex Responses traffic. `src/zai-responses-compat.mjs` repairs the observed missing message envelope and closes assistant text before an overlapping tool-call lifecycle for this exact route. Keep repairs scoped to the owner that exhibits the defect.
 
-For a compatibility failure, preserve a sanitized event sequence and identify the first divergence among Codex, Router, LiteLLM, OpenRouter, NovitaAI, and the model. Reproduce through an ordinary Codex caller. A direct endpoint success is not Codex compatibility proof.
+Completed `web_search_call` items may be replayed as input history through this route. That capability does not advertise or enable new hosted-search execution: fresh hosted-search tools and options remain unsupported and must stay rejected at the OpenRouter hop.
 
-Do not enable fallback or add another OpenRouter model as an outage response. A new provider or model is a separate product decision.
+For a compatibility failure, preserve a sanitized event sequence and identify the first divergence among Codex, Router, LiteLLM, OpenRouter, the selected endpoint, and the model. Reproduce through an ordinary Codex caller. A direct endpoint success is not Codex compatibility proof.
+
+Do not enable fallback or select an unproved endpoint as an outage response. A new endpoint or model is a separate product decision.
 
 ### Python dependency lock
 

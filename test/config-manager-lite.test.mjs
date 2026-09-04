@@ -19,15 +19,6 @@ function run(command, env) {
   return JSON.parse(result.stdout);
 }
 
-function runResult(command, env) {
-  return spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), command], {
-    cwd: root,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
-    windowsHide: true,
-  });
-}
-
 test("Codex config enable and disable preserve user TOML and restore the native catalog", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-lite-"));
   const codexHome = path.join(testRoot, "codex");
@@ -119,7 +110,7 @@ test("Codex config enable repairs a recognizable missing Router root end marker"
   }
 });
 
-test("Codex config enable refuses an ambiguous unterminated Router root block", () => {
+test("Codex config enable preserves a user root value after a recognizable managed prefix", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-refusal-"));
   const codexHome = path.join(testRoot, "codex");
   const state = path.join(testRoot, "state");
@@ -151,16 +142,17 @@ test("Codex config enable refuses an ambiguous unterminated Router root block", 
     CODEX_BIN: process.execPath,
   };
   try {
-    const result = runResult("enable", env);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Refusing to edit an unterminated managed block/u);
-    assert.equal(readFileSync(configPath, "utf8"), damaged);
+    const result = run("enable", env);
+    assert.equal(result.mode, "router");
+    const repaired = readFileSync(configPath, "utf8");
+    assert.match(repaired, /user_owned = true/u);
+    assert.equal((repaired.match(/# END codex-router-managed/gu) || []).length, 1);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }
 });
 
-test("Codex config enable refuses user content inside an unterminated Router block", () => {
+test("Codex config enable preserves user content after a recognizable managed prefix", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-owned-"));
   const codexHome = path.join(testRoot, "codex");
   const state = path.join(testRoot, "state");
@@ -180,15 +172,17 @@ test("Codex config enable refuses user content inside an unterminated Router blo
     "",
   ].join("\n");
   writeFileSync(configPath, damaged);
-  const result = runResult("enable", {
+  const result = run("enable", {
     CODEX_HOME: codexHome,
     MODEL_ROUTER_STATE_DIR: state,
     CODEX_BIN: process.execPath,
   });
   try {
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Refusing to edit an unterminated managed block/u);
-    assert.equal(readFileSync(configPath, "utf8"), damaged);
+    assert.equal(result.mode, "router");
+    const repaired = readFileSync(configPath, "utf8");
+    assert.match(repaired, /experimental_realtime_ws_base_url = "https:\/\/example\.test\/v1"/u);
+    assert.match(repaired, /# user-owned note/u);
+    assert.equal((repaired.match(/# END codex-router-managed/gu) || []).length, 1);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

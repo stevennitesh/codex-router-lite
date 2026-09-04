@@ -61,15 +61,26 @@ if (Object.keys(restoredProxy).length > 0) {
 
 const dependencyFix = "Run `./install.ps1 -CheckoutInstall -ForceDeps`";
 
-const litellm =
+const configuredLiteLlm =
   process.env.MODEL_ROUTER_LITELLM_BIN ||
-  process.env.CODEX_ROUTER_LITELLM_BIN ||
-  path.join(
-    SOURCE_ROOT,
-    ".venv",
-    "Scripts",
-    "litellm.exe",
-  );
+  process.env.CODEX_ROUTER_LITELLM_BIN;
+const usesBundledVenv = !configuredLiteLlm;
+const litellm = configuredLiteLlm || path.join(
+  SOURCE_ROOT,
+  ".venv",
+  "Scripts",
+  "python.exe",
+);
+// Windows console-script executables embed the absolute interpreter path they
+// were installed against. The installer deliberately builds dependencies in a
+// candidate venv and atomically moves it into `.venv`, so launching the
+// generated `litellm.exe` after activation fails with "Failed to canonicalize
+// script path". Invoke LiteLLM's declared console entry point through the venv
+// interpreter instead; Python resolves the moved environment from its adjacent
+// pyvenv.cfg and does not retain the staging path.
+const litellmArgs = usesBundledVenv
+  ? ["-I", "-c", "from litellm import run_server; run_server()"]
+  : [];
 if (!existsSync(litellm)) {
   throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
 }
@@ -82,19 +93,11 @@ if (!existsSync(litellm)) {
 // without the bundled `.venv`, and CI exercises startup with
 // MODEL_ROUTER_LITELLM_BIN=process.execPath on a fresh checkout that has no
 // venv at all.
-const usesBundledVenv = !process.env.MODEL_ROUTER_LITELLM_BIN &&
-  !process.env.CODEX_ROUTER_LITELLM_BIN;
 if (usesBundledVenv) {
-  const venvPython = path.join(
-    SOURCE_ROOT,
-    ".venv",
-    "Scripts",
-    "python.exe",
-  );
-  const venvProblem = venvRuntimeProblem(venvPython);
+  const venvProblem = venvRuntimeProblem(litellm);
   if (venvProblem) {
     throw new Error(
-      `The LiteLLM virtual environment is broken at ${venvPython} (${venvProblem}). ` +
+      `The LiteLLM virtual environment is broken at ${litellm} (${venvProblem}). ` +
         `${dependencyFix}.`,
     );
   }
@@ -155,11 +158,9 @@ let shuttingDown = false;
 // Every child goes through `spawnableCommand` for the one case that needs it:
 // a Windows `.cmd`/`.bat` launcher, which Node has refused to spawn without a
 // shell since the CVE-2024-27980 fix and answers with a bare EINVAL. The
-// installer produces `litellm.exe`, so the shipped path is untouched
-// pass-through -- but `MODEL_ROUTER_LITELLM_BIN` and `CODEX_ROUTER_LITELLM_BIN`
-// are operator-set, and a batch wrapper there used to take the whole service
-// down before it spawned anything, with an error naming neither the file nor
-// the reason. Our own Node children resolve to `process.execPath`, so they are
+// bundled gateway uses python.exe, while `MODEL_ROUTER_LITELLM_BIN` and
+// `CODEX_ROUTER_LITELLM_BIN` remain operator-set and may point at a batch
+// wrapper. Our own Node children resolve to `process.execPath`, so they are
 // pass-through on every platform.
 function run(command, args, extraEnv = {}) {
   const spawnable = spawnableCommand(command, args);
@@ -265,6 +266,7 @@ async function main() {
 
   const startGateway = () =>
     run(litellm, [
+      ...litellmArgs,
       "--config",
       LITELLM_CONFIG_PATH,
       "--host",

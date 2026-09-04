@@ -3,9 +3,10 @@
 This directory contains exact-route certification applications for models
 published as subagents v2.
 
-The current accepted application is:
+The current applications are:
 
-- `openrouter/glm-5.3-flash`
+- accepted: `openrouter/glm-5.3-flash`
+- draft: `switchyard/auto`
 
 Create or refresh an application by copying both `_template/proof.json` and
 `_template/proof.md`. The JSON file is the machine-readable authority. The

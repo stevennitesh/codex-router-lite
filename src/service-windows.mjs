@@ -20,7 +20,11 @@ import {
   readServiceProcessState,
   serviceProcessOwns,
 } from "./service-process.mjs";
-import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
+import {
+  ensureProgramTreeReadable,
+  protectPrivateFile,
+  writePrivateFile,
+} from "./file-security.mjs";
 import { serviceProxyEnvironment } from "./proxy-environment.mjs";
 import {
   skipServiceManagerCall,
@@ -564,6 +568,9 @@ if (command === "render") {
   assertOwnedTask(previousTask);
   const previousLaunchers = launcherSnapshot();
   try {
+    // The task runs at Limited integrity. Repair elevated-install ACLs before
+    // it tries to load src/start.mjs from this program tree.
+    ensureProgramTreeReadable(SOURCE_ROOT);
     // Writing the launchers belongs inside the try: renameSync over the .vbs
     // raises a sharing violation while a running wscript.exe still holds it
     // open, and that used to throw out of install with nothing to catch it.

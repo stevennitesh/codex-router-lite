@@ -71,6 +71,31 @@ test("leaves an already valid message stream byte-identical", async () => {
   assert.equal(await transformed([input]), input);
 });
 
+test("closes GLM assistant text before relaying an overlapping tool call", async () => {
+  const input = [
+    block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", status: "in_progress", role: "assistant", content: [] } }),
+    block({ type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg", delta: "Checking." }),
+    block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", call_id: "call_1", name: "lookup", arguments: "" } }),
+    block({ type: "response.function_call_arguments.done", output_index: 1, item_id: "call", call_id: "call_1", name: "lookup", arguments: "{}" }),
+    block({ type: "response.output_item.done", output_index: 1, item: { id: "call", type: "function_call", call_id: "call_1", name: "lookup", arguments: "{}" } }),
+    block({ type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "Checking.", annotations: [] }] } }),
+    block({ type: "response.completed", response: { id: "resp", status: "completed" } }),
+  ].join("");
+
+  const events = dataEvents(await transformed([input.slice(0, 211), input.slice(211)]));
+  assert.deepEqual(events.map((event) => `${event.type}:${event.output_index ?? "-"}`), [
+    "response.output_item.added:0",
+    "response.output_text.delta:0",
+    "response.output_item.done:0",
+    "response.output_item.added:1",
+    "response.function_call_arguments.done:1",
+    "response.output_item.done:1",
+    "response.completed:-",
+  ]);
+  assert.equal(events[4].arguments, "{}");
+  assert.equal(events[5].item.name, "lookup");
+});
+
 test("compatibility factory is scoped to proven malformed Responses routes", () => {
   assert.ok(
     zaiResponsesCompatTransform(

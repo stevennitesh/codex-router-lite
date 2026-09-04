@@ -71,8 +71,10 @@ function sanitizeMessageItem(item, fallbackText = "") {
 export class ZaiResponsesCompatTransform extends Transform {
   #decoder = new StringDecoder("utf8");
   #buffer = "";
+  #heldOutputItems = [];
   #maxOutputIndex = -1;
   #message;
+  #openOutputIndex;
 
   _transform(chunk, _encoding, callback) {
     this.#buffer += this.#decoder.write(chunk);
@@ -83,6 +85,7 @@ export class ZaiResponsesCompatTransform extends Transform {
   _flush(callback) {
     this.#buffer += this.#decoder.end();
     this.#emitCompleteBlocks(true);
+    this.#flushHeldOutputItems();
     callback();
   }
 
@@ -103,14 +106,84 @@ export class ZaiResponsesCompatTransform extends Transform {
         if (!flush) return;
         const block = this.#buffer;
         this.#buffer = "";
-        for (const piece of this.#rewriteBlock(block)) this.push(Buffer.from(piece));
+        for (const piece of this.#rewriteBlock(block)) {
+          this.#emitLifecycleBlock(piece, "");
+        }
         return;
       }
       const block = this.#buffer.slice(0, index);
       this.#buffer = this.#buffer.slice(index + separator.length);
       const pieces = this.#rewriteBlock(block);
-      for (const piece of pieces) this.push(Buffer.from(`${piece}${separator}`));
+      for (const piece of pieces) this.#emitLifecycleBlock(piece, separator);
     }
+  }
+
+  #pushBlock(block) {
+    this.push(Buffer.from(block));
+  }
+
+  #emitLifecycleBlock(piece, separator) {
+    const block = `${piece}${separator}`;
+    const parsed = eventBlock(piece);
+    const event = parsed?.event;
+    const type = event?.type;
+    const terminal = ["response.completed", "response.done"].includes(type) ||
+      piece.split(/\r?\n/u).some((line) => line.trim() === "data: [DONE]");
+    if (terminal) {
+      this.#flushHeldOutputItems();
+      this.#pushBlock(block);
+      return;
+    }
+
+    const outputIndex = Number.isInteger(event?.output_index)
+      ? event.output_index
+      : undefined;
+    if (outputIndex === undefined) {
+      this.#pushBlock(block);
+      return;
+    }
+    if (this.#openOutputIndex === undefined) {
+      this.#pushBlock(block);
+      if (type === "response.output_item.added") this.#openOutputIndex = outputIndex;
+      return;
+    }
+    if (outputIndex === this.#openOutputIndex) {
+      this.#pushBlock(block);
+      if (type === "response.output_item.done") {
+        this.#openOutputIndex = undefined;
+        this.#drainHeldOutputItems();
+      }
+      return;
+    }
+
+    let group = this.#heldOutputItems.find((entry) => entry.outputIndex === outputIndex);
+    if (!group) {
+      group = { outputIndex, blocks: [] };
+      this.#heldOutputItems.push(group);
+    }
+    group.blocks.push({ block, type });
+  }
+
+  #drainHeldOutputItems() {
+    while (this.#openOutputIndex === undefined && this.#heldOutputItems.length) {
+      const group = this.#heldOutputItems.shift();
+      for (const { block, type } of group.blocks) {
+        this.#pushBlock(block);
+        if (type === "response.output_item.added") {
+          this.#openOutputIndex = group.outputIndex;
+        } else if (type === "response.output_item.done") {
+          this.#openOutputIndex = undefined;
+        }
+      }
+    }
+  }
+
+  #flushHeldOutputItems() {
+    for (const group of this.#heldOutputItems) {
+      for (const { block } of group.blocks) this.#pushBlock(block);
+    }
+    this.#heldOutputItems = [];
+    this.#openOutputIndex = undefined;
   }
 
   #messageIndex(event) {

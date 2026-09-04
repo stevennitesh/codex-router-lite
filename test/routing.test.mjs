@@ -686,6 +686,67 @@ test("Switchyard preserves native requests and leaves compaction on the native b
   }
 });
 
+test("OpenRouter GLM replays completed search history without enabling hosted search", async () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-search-history-"));
+  const stateDir = path.join(testRoot, "state");
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
+  );
+  const requests = [];
+  const gateway = await mockServer(async (request, response) => {
+    if (request.method === "GET") {
+      json(response, 200, { ok: true, credential_present: true, credential_source: "test" });
+      return;
+    }
+    requests.push(await bodyJson(request));
+    json(response, 200, {
+      id: "resp_search_history",
+      object: "response",
+      status: "completed",
+      output: [],
+    });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    CODEX_ROUTER_SHOW_ALL_MODELS: "0",
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const input = [
+    {
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "Codex Router compatibility" },
+    },
+    { type: "message", role: "user", content: "Use the completed search result." },
+  ];
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0].input, input);
+    assert.equal(requests[0].web_search_options, undefined);
+    assert.equal(requests[0].tools, undefined);
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
 test("router repairs malformed OpenRouter GLM-5.3-Flash message envelopes after LiteLLM translation", async () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-responses-compat-router-"));
   const stateDir = path.join(testRoot, "state");

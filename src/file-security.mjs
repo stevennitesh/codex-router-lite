@@ -74,10 +74,9 @@ function powershellPrivateScript() {
   ].join("\n");
 }
 
-function windowsPowerShellEnvironment(paths) {
-  // The helper only needs the Windows runtime and the private-file list. Do
-  // not copy provider API keys or other caller secrets into PowerShell's
-  // environment while applying an ACL.
+function windowsPowerShellRuntimeEnvironment(extra = {}) {
+  // ACL helpers need the Windows runtime and their task-specific values only.
+  // Do not copy provider keys or other caller secrets into PowerShell.
   const allowed = new Set(
     [
       "SystemRoot",
@@ -102,8 +101,13 @@ function windowsPowerShellEnvironment(paths) {
       ([name, value]) => allowed.has(name.toLowerCase()) && typeof value === "string",
     ),
   );
-  env.CODEX_ROUTER_PRIVATE_FILES = JSON.stringify(paths);
-  return env;
+  return { ...env, ...extra };
+}
+
+function windowsPowerShellEnvironment(paths) {
+  return windowsPowerShellRuntimeEnvironment({
+    CODEX_ROUTER_PRIVATE_FILES: JSON.stringify(paths),
+  });
 }
 
 function powershellPrivateArgs() {
@@ -304,6 +308,54 @@ export function writePrivateJson(target, value, { space = 2 } = {}) {
 export async function writePrivateJsonAsync(target, value, { space = 2 } = {}) {
   await writePrivateFileAsync(target, `${JSON.stringify(value, null, space)}\n`);
   return value;
+}
+
+// A scheduled task registered at Limited integrity must be able to traverse
+// the program tree. An elevated installer can create that tree with an ACL the
+// Limited task cannot read, which Windows reports to Node as MODULE_NOT_FOUND
+// even though src/start.mjs exists. Grant BUILTIN\Users read and execute on the
+// program tree only. Credentials and mutable state live elsewhere and retain
+// their owner-only ACLs.
+export function ensureProgramTreeReadable(programRoot) {
+  if (process.platform !== "win32") return;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "try {",
+    "  $path = $env:CODEX_ROUTER_PROGRAM_ROOT",
+    "  $users = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')",
+    "  $rights = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute",
+    "  $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit",
+    "  $propagation = [System.Security.AccessControl.PropagationFlags]::None",
+    "  $allow = [System.Security.AccessControl.AccessControlType]::Allow",
+    "  $acl = [System.IO.Directory]::GetAccessControl($path)",
+    "  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($users, $rights, $inheritance, $propagation, $allow)",
+    "  [void]$acl.AddAccessRule($rule)",
+    "  [System.IO.Directory]::SetAccessControl($path, $acl)",
+    "} catch {",
+    "  [Console]::Error.WriteLine($_.Exception.Message)",
+    "  exit 1",
+    "}",
+  ].join("\n");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  try {
+    execFileSync(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+      {
+        env: windowsPowerShellRuntimeEnvironment({
+          CODEX_ROUTER_PROGRAM_ROOT: programRoot,
+        }),
+        stdio: ["ignore", "ignore", "pipe"],
+        timeout: 15_000,
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    const detail = String(error?.stderr?.trim?.() || error?.message || "").trim();
+    console.warn(
+      `Warning: Could not grant Users read access to the Router program tree${detail ? `: ${detail}` : "."}`,
+    );
+  }
 }
 
 export function privateFileIsProtected(target) {

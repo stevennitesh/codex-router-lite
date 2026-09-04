@@ -205,6 +205,35 @@ $HadForeignStateOverride = $null -ne (Get-Item Env:\MODEL_ROUTER_ALLOW_FOREIGN_S
 $SavedForeignStateOverride = $env:MODEL_ROUTER_ALLOW_FOREIGN_STATE
 $ConfigWasEnabled = $false
 $ServiceWasInstalled = $false
+$PythonCandidate = $null
+$PythonBackup = $null
+$PythonSwapStarted = $false
+$PythonVenvActivated = $false
+
+function Assert-TransientPythonVenvPath([string]$Path) {
+  $Root = [IO.Path]::GetFullPath($ScriptDirectory).TrimEnd([char[]]@('\', '/'))
+  $Target = [IO.Path]::GetFullPath($Path)
+  $Parent = [IO.Path]::GetDirectoryName($Target).TrimEnd([char[]]@('\', '/'))
+  $Leaf = [IO.Path]::GetFileName($Target)
+  if (-not $Parent.Equals($Root, [StringComparison]::OrdinalIgnoreCase) -or
+      $Leaf -notmatch '^\.venv-(candidate|previous|failed)-[0-9a-f]{32}$') {
+    throw "Unsafe transient Python environment path: $Target"
+  }
+  return $Target
+}
+
+function Install-PinnedPythonRequirements(
+  [string]$Python,
+  [bool]$UseUv,
+  [string]$FailureMessage
+) {
+  if ($UseUv) {
+    & uv pip install --python $Python --require-hashes -r requirements/python.txt
+  } else {
+    & $Python -m pip install --require-hashes -r requirements/python.txt
+  }
+  if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
+}
 Push-Location $ScriptDirectory
 
 # What this run found before it changed anything, so the catch block can undo
@@ -253,9 +282,56 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Recording the Node dependency state failed." }
   }
 
-  $Python = Join-Path $ScriptDirectory ".venv\Scripts\python.exe"
+  $PythonVenv = Join-Path $ScriptDirectory ".venv"
+  $Python = Join-Path $PythonVenv "Scripts\python.exe"
   if ((Get-InstallStep "python-deps") -eq "skip") {
     Write-Host "LiteLLM already matches the pinned versions; skipping the Python install."
+  } elseif ($ServiceWasInstalled -and -not $PrepareOnly) {
+    # Windows locks imported native Python modules. Updating the active venv in
+    # place can therefore fail halfway through while LiteLLM is running. Build
+    # and verify a complete replacement first; it is activated only inside the
+    # service stop/start transaction below.
+    $PythonCandidate = Assert-TransientPythonVenvPath (
+      Join-Path $ScriptDirectory ".venv-candidate-$([Guid]::NewGuid().ToString('N'))"
+    )
+    $CandidatePython = Join-Path $PythonCandidate "Scripts\python.exe"
+    if (Get-Command "uv" -ErrorAction SilentlyContinue) {
+      & uv venv --python 3.12 $PythonCandidate
+      if ($LASTEXITCODE -ne 0) { throw "uv could not create the candidate Python environment." }
+      Install-PinnedPythonRequirements $CandidatePython $true "Candidate LiteLLM installation failed."
+    } else {
+      if (Get-Command "py" -ErrorAction SilentlyContinue) {
+        & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+        if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
+        & py -3 -m venv $PythonCandidate
+      } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
+        & python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+        if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
+        & python -m venv $PythonCandidate
+      } else {
+        throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
+      }
+      if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidatePython)) {
+        throw "The candidate Python virtual environment was not created."
+      }
+      & $CandidatePython -m pip install --upgrade pip
+      if ($LASTEXITCODE -ne 0) { throw "Candidate pip upgrade failed." }
+      Install-PinnedPythonRequirements $CandidatePython $false "Candidate LiteLLM installation failed."
+    }
+    # Prove that the environment is relocatable before touching the live
+    # service. Windows console-script launchers retain their original absolute
+    # interpreter path, while the bundled runtime intentionally launches the
+    # LiteLLM entry point through the moved venv's Python interpreter.
+    $RelocatedPythonCandidate = Assert-TransientPythonVenvPath (
+      Join-Path $ScriptDirectory ".venv-candidate-$([Guid]::NewGuid().ToString('N'))"
+    )
+    Move-Item -LiteralPath $PythonCandidate -Destination $RelocatedPythonCandidate
+    $PythonCandidate = $RelocatedPythonCandidate
+    $CandidatePython = Join-Path $PythonCandidate "Scripts\python.exe"
+    & $CandidatePython -I -c "import encodings, fastapi, litellm, rpds"
+    if ($LASTEXITCODE -ne 0) { throw "The candidate LiteLLM environment failed its import probe." }
+    & $CandidatePython -I -c "from litellm import run_server; run_server()" --version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The relocated candidate LiteLLM entry point failed its launch probe." }
   } elseif (Get-Command "uv" -ErrorAction SilentlyContinue) {
     $VenvHomeOk = (& node src/install-plan.mjs venv-home-ok 2>$null | Select-Object -Last 1) -eq "ok"
     $VenvRuntimeOk = $false
@@ -289,8 +365,7 @@ try {
     # only the two top-level packages were pinned and the rest was whatever
     # PyPI resolved that day. Regenerate with the documented uv command, never
     # by editing the compiled lock.
-    & uv pip install --python $Python --require-hashes -r requirements/python.txt
-    if ($LASTEXITCODE -ne 0) { throw "LiteLLM installation failed." }
+    Install-PinnedPythonRequirements $Python $true "LiteLLM installation failed."
     & node src/install-plan.mjs record python-deps
     if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
   } else {
@@ -330,8 +405,7 @@ try {
     & $Python -m pip install --upgrade pip
     if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
     # Same hash-verified lock as the uv branch above; both stay hash-checked.
-    & $Python -m pip install --require-hashes -r requirements/python.txt
-    if ($LASTEXITCODE -ne 0) { throw "LiteLLM installation failed." }
+    Install-PinnedPythonRequirements $Python $false "LiteLLM installation failed."
     & node src/install-plan.mjs record python-deps
     if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
   }
@@ -385,11 +459,36 @@ try {
   # the whole readiness budget while the ownership transfer never ran.
   & node src/install-manifest.mjs record | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Install-manifest recording failed." }
+  if ($PythonCandidate) {
+    $PythonBackup = Assert-TransientPythonVenvPath (
+      Join-Path $ScriptDirectory ".venv-previous-$([Guid]::NewGuid().ToString('N'))"
+    )
+    $PythonSwapStarted = $true
+    & node src/service.mjs stop
+    if ($LASTEXITCODE -ne 0) { throw "The running Router could not enter the dependency activation transaction." }
+    if (Test-Path -LiteralPath $PythonVenv -PathType Container) {
+      Move-Item -LiteralPath $PythonVenv -Destination $PythonBackup
+    }
+    Move-Item -LiteralPath $PythonCandidate -Destination $PythonVenv
+    $PythonCandidate = $null
+    $PythonVenvActivated = $true
+    & node src/install-plan.mjs record python-deps
+    if ($LASTEXITCODE -ne 0) { throw "Recording the activated Python dependency state failed." }
+  }
   $ServiceInstalled = $true
   & node src/service.mjs install
   if ($LASTEXITCODE -ne 0) { throw "Background-service installation failed." }
   & node src/wait-health.mjs
   if ($LASTEXITCODE -ne 0) { throw "The router did not become healthy." }
+
+  if ($PythonBackup -and (Test-Path -LiteralPath $PythonBackup -PathType Container)) {
+    try {
+      Remove-Item -LiteralPath $PythonBackup -Recurse -Force
+      $PythonBackup = $null
+    } catch {
+      Write-Warning "The previous inactive Python environment could not be removed: $PythonBackup"
+    }
+  }
 
   # Managed Codex skills are an integration convenience, not part of router
   # health. Refresh them after the service transaction and keep a failure from
@@ -406,6 +505,31 @@ try {
 
   Write-Host "Installed the selected external model routes. Fully quit and reopen Codex."
 } catch {
+  $InstallFailure = $_
+  if ($PythonSwapStarted) {
+    try {
+      & node src/service.mjs stop 2>$null | Out-Null
+      $FailedPythonVenv = Assert-TransientPythonVenvPath (
+        Join-Path $ScriptDirectory ".venv-failed-$([Guid]::NewGuid().ToString('N'))"
+      )
+      if ($PythonVenvActivated -and (Test-Path -LiteralPath $PythonVenv -PathType Container)) {
+        Move-Item -LiteralPath $PythonVenv -Destination $FailedPythonVenv
+      }
+      if ($PythonBackup -and (Test-Path -LiteralPath $PythonBackup -PathType Container)) {
+        Move-Item -LiteralPath $PythonBackup -Destination $PythonVenv
+        $PythonBackup = $null
+      }
+      if (Test-Path -LiteralPath $FailedPythonVenv -PathType Container) {
+        Remove-Item -LiteralPath $FailedPythonVenv -Recurse -Force
+      }
+      & node src/service.mjs install
+      if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
+      & node src/wait-health.mjs
+      if ($LASTEXITCODE -ne 0) { throw "The restored Router did not become healthy." }
+    } catch {
+      throw "Install failed ($($InstallFailure.Exception.Message)) and Python environment rollback failed ($($_.Exception.Message))."
+    }
+  }
   # Undo only what this run created. The router health wait can time out on a
   # cold-starting gateway with a large model set -- retryable, not broken -- and
   # tearing out a service and disabling a client config that were both working
@@ -418,8 +542,11 @@ try {
       & node $ConfigManager $ConfigDisableCommand 2>$null | Out-Null
     }
   }
-  throw
+  throw $InstallFailure
 } finally {
+  if ($PythonCandidate -and (Test-Path -LiteralPath $PythonCandidate -PathType Container)) {
+    Remove-Item -LiteralPath $PythonCandidate -Recurse -Force -ErrorAction SilentlyContinue
+  }
   # Restore the caller's environment exactly as it was found: a value this run
   # did not set is removed, and a pre-existing one is put back verbatim. The
   # scoped override must never outlive the install process that justified it.

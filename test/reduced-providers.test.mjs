@@ -72,7 +72,7 @@ test("LiteLLM owns only the OpenRouter GLM hop", () => {
   assert.doesNotMatch(config, /switchyard|fallback|failover/u);
 });
 
-test("OpenRouter hop applies Novita's exact request contract and rejects search", async () => {
+test("OpenRouter hop applies the selected endpoint contract and rejects search", async () => {
   const state = mkdtempSync(path.join(os.tmpdir(), "router-lite-provider-"));
   writeFileSync(path.join(state, "openrouter-api-key.secret"), "TEST_OPENROUTER_KEY\n", { mode: 0o600 });
   const seen = [];
@@ -153,6 +153,20 @@ test("OpenRouter hop applies Novita's exact request contract and rejects search"
       require_parameters: true,
     });
 
+    const emptyTools = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash",
+        tools: [],
+        tool_choice: "none",
+      }),
+    });
+    assert.equal(emptyTools.status, 200, await emptyTools.text());
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1].body.tools, undefined);
+    assert.equal(seen[1].body.tool_choice, undefined);
+
     const rejected = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
@@ -162,7 +176,7 @@ test("OpenRouter hop applies Novita's exact request contract and rejects search"
       }),
     });
     assert.equal(rejected.status, 400);
-    assert.equal(seen.length, 1, "unsupported search reached OpenRouter");
+    assert.equal(seen.length, 2, "unsupported search reached OpenRouter");
   } finally {
     await stop(child);
     await new Promise((resolve) => upstream.instance.close(resolve));
