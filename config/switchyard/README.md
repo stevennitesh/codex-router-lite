@@ -130,6 +130,17 @@ Diagnose the first failing owner instead of restarting blindly:
 | Router health reports `degraded: ["switchyard"]` | The selected child is unreachable. Inspect the supervised child exit and active config before any restart. |
 | Switchyard exits and the whole Router service exits | Expected generation ownership. Fix the child root cause; the service supervisor restarts the coherent stack. |
 
+Summarize only the latest supervised generation without copying request bodies,
+headers, capabilities, or raw agent identifiers:
+
+```powershell
+.\model-router.ps1 codex switchyard-trace
+```
+
+The summary reports status counts, selected targets, classifier failures, and
+agent/correlation cardinality. Use the raw log only when this redacted summary
+cannot distinguish the failing owner.
+
 Provider selection changes the supervised child set and therefore requires one
 guarded Router restart:
 
@@ -174,7 +185,7 @@ rustup toolchain install $lock.rustToolchain --profile minimal
 Push-Location $buildRoot
 rustup run $lock.rustToolchain cargo fmt --all --check
 rustup run $lock.rustToolchain cargo clippy --workspace --all-targets -- -D warnings
-rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server
+rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server -p switchyard-translation
 rustup run $lock.rustToolchain cargo build --release -p switchyard-server
 Pop-Location
 $candidateBinary = Join-Path $buildRoot ($lock.binary -replace '/', '\')
@@ -254,15 +265,19 @@ root, and restores through the detached checkout if activation fails. It
 refuses Switchyard path or address overrides so its file and health checks
 cannot certify a different runtime from the one Router starts.
 
+The transaction rejects an old candidate or rollback directory before it
+prepares dependencies. Its preflight report names the candidate, running, and
+rollback Router commits plus the v2 agents allowed by local subagent settings.
+If it reports no expected v2 agents, repair the allowlist before certification.
+
 ## Switchyard v2 promotion
 
-`switchyard/auto` is currently v1. Its draft application is under
-`v2_agent/switchyard/auto/`. Complete it only after deploying the exact
-candidate identities it records. Read
+`switchyard/auto` is accepted for v2 under `v2_agent/switchyard/auto/`. The
+acceptance belongs only to the exact runtime identities recorded there. Read
 [`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
-for the five general checks. Switchyard additionally requires the proof's
-runtime binding to record the deployed upstream commit, patch SHA-256, binary
-SHA-256, Router commit, and generated-routes SHA-256.
+for the five checks. Switchyard additionally requires the proof's runtime
+binding to record the deployed upstream commit, patch SHA-256, binary SHA-256,
+Router commit, and generated-routes SHA-256.
 
 Recertify after any change to one of those identities or to the native
 collaboration/tool namespace contract. Do not duplicate the general v2

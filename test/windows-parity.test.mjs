@@ -47,8 +47,30 @@ test("the compatibility refresh stays read-only", () => {
   assert.match(refresh, /src\/doctor\.mjs/);
   assert.match(refresh, /@\("run", "check"\)/);
   assert.match(refresh, /@\("test"\)/);
+  assert.match(refresh, /AnalyzeUpstream/);
+  assert.match(refresh, /upstream-router\.json/);
+  assert.match(refresh, /git -C \$analysisRoot apply --check/);
+  assert.match(refresh, /Codex app mismatch branch/);
   assert.doesNotMatch(refresh, /service\.mjs.*(?:install|start|stop|restart)/);
   assert.doesNotMatch(refresh, /provider-key|caller-key|codex exec/);
+});
+
+test("Router upstream review uses an explicit immutable baseline", () => {
+  const watch = JSON.parse(readFileSync(
+    path.join(root, "maintenance", "upstream-router.json"),
+    "utf8",
+  ));
+  assert.equal(watch.version, 1);
+  assert.equal(watch.repository, "https://github.com/duolahypercho/codex-router.git");
+  assert.equal(watch.branch, "main");
+  assert.equal(watch.remoteRef, "upstream/main");
+  assert.match(watch.lastReviewedCommit, /^[0-9a-f]{40}$/u);
+});
+
+test("the Windows command exposes the redacted Switchyard trace", () => {
+  const dispatcher = readFileSync(path.join(root, "model-router.ps1"), "utf8");
+  assert.match(dispatcher, /"switchyard-trace"/u);
+  assert.match(dispatcher, /src\\switchyard-trace\.mjs/u);
 });
 
 test("the current-Codex catalog check imports the Windows spawn owner", () => {

@@ -96,6 +96,9 @@ tool mismatch still requires one ordinary Windows app turn to compare the live
 tool registry. A Switchyard upstream change still requires review and a pinned
 rebuild rather than an automatic merge.
 
+When drift is reported, `-AnalyzeUpstream` shows the conditional original
+Router or Switchyard review without merging or deploying anything.
+
 `npm test` is the normal retained-product suite. It directly covers native Codex, GLM, Switchyard, app functions, namespace restoration, encrypted subagent relay, v2 promotion, and Windows lifecycle behavior.
 
 Load maintenance context only when it applies:

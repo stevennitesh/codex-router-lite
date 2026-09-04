@@ -89,6 +89,11 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     source,
     /Prepare-RollbackRouter \$rollbackRouterRoot[\s\S]*Assert-CheckoutIdentity \$rollbackRouterRoot \$expectedRollbackCommit "Prepared rollback Router checkout"[\s\S]*ShouldProcess/u,
   );
+  assert.match(
+    source,
+    /Filter "\.rollback-\*"[\s\S]*Get-SubagentPublicationPlan[\s\S]*Deployment preflight[\s\S]*Prepare-RollbackRouter \$rollbackRouterRoot/u,
+  );
+  assert.match(source, /expectedPublishedV2Agents/);
   assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
   assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /if \(-not \$activationStarted\)/);

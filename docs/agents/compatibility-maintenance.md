@@ -18,6 +18,19 @@ quota, or restart the service. Use `-SkipFetch` only when offline and
 `-SkipTests` only for a quick diagnostic that will not support a compatibility
 claim.
 
+The default run reports how many original Router commits remain unreviewed
+since `maintenance/upstream-router.json`. When either upstream moved, request
+the conditional detail only then:
+
+```powershell
+.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream
+```
+
+This groups relevant original-Router changes and, for a changed Switchyard
+head, uses a disposable checkout to list commits and test whether the canonical
+patch still applies. It does not merge, rebuild, deploy, or advance the review
+baseline.
+
 Before editing, confirm the report accounts for:
 
 1. The working tree, active branch, `HEAD`, `origin/main`, and `upstream/main`.
@@ -32,6 +45,18 @@ An app-tool snapshot version mismatch is a required manual branch, not an
 automatic failure. Inspect the official Codex release notes and diff, capture
 the live tool registry from an ordinary Windows app turn, then update the
 snapshot and its narrow relay regression only when the contract changed.
+
+For a changed Windows app or CLI build:
+
+1. Capture the native `codex_app` tool names and JSON schemas from an ordinary
+   Windows app turn.
+2. Compare that inventory with `src/codex-app-tools.mjs`; a version change alone
+   does not prove a tool change.
+3. Refresh the native catalog and run the catalog, app-tool, and
+   namespace-relay tests.
+4. Run one native routed tool call through GLM and Switchyard.
+5. Refresh both exact-route v2 proofs only when tool relay or child continuation
+   changed.
 
 Never copy a versioned Codex app path into source. Never print keys, bearer tokens, account IDs, capability values, or unredacted protected metadata.
 
@@ -89,6 +114,19 @@ upgrade; a successful resolution alone does not prove runtime compatibility.
 Fix the first owner that violates its contract. A compatibility transform is justified only when the upstream wire behavior cannot be changed here. It needs an exact scope predicate and a regression that fails without it. Delete transforms that current retained routes do not use.
 
 Do not retain adapters, aliases, migration journals, discovery code, or generic registries for hypothetical future products.
+
+## Original Router upstream
+
+The `upstream` remote is research input. Never merge it into Router Lite.
+`maintenance/upstream-router.json` records the last upstream commit whose
+changes were dispositioned. Review only the commits after that pointer, map
+useful fixes to retained Router Lite owners, and advance the pointer only after
+every reported commit is accepted, rejected, or recorded for later work.
+
+Prioritize changes involving routed Responses lifecycle, native account or
+catalog handling, Windows service behavior, namespace restoration, and the
+OpenRouter GLM route. Ignore providers, clients, UI code, and compatibility
+families outside this repository's product boundary.
 
 ## Proof
 

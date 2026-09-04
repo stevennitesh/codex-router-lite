@@ -59,12 +59,22 @@ export function setMultiAgentMode(mode) {
     throw new Error(`Unknown subagent mode "${mode}". Choose: ${SUBAGENT_MODES.join(", ")}`);
   }
   const current = readMultiAgentSettings();
-  const next =
-    mode === "all"
-      ? { ...current, version: 2, mode, disabled: [] }
-      : { ...current, version: 2, mode };
+  const next = settingsForMode(current, mode);
   writeSettings(next);
   return subagentSettingsSnapshot();
+}
+
+export function settingsForMode(current, mode) {
+  if (!SUBAGENT_MODES.includes(mode)) {
+    throw new Error(`Unknown subagent mode "${mode}". Choose: ${SUBAGENT_MODES.join(", ")}`);
+  }
+  if (mode === "all") {
+    return { ...current, version: 2, mode, enabled: [], disabled: [] };
+  }
+  if (mode === "proven") {
+    return { ...current, version: 2, mode, enabled: [] };
+  }
+  return { ...current, version: 2, mode };
 }
 
 export function setMultiAgentModel(slug, enabled) {

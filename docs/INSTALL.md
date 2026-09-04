@@ -58,6 +58,11 @@ run the compatibility refresh from the source repository:
 .\maintenance\refresh-compatibility-state.ps1
 ```
 
+If it reports upstream or app-version drift, follow the conditional branch in
+`docs/agents/compatibility-maintenance.md`. Use `-AnalyzeUpstream` only when an
+upstream head moved. The original Router remote is reviewed selectively and is
+never an installation or merge source.
+
 `maintenance/windows-package.json` is the complete installed file list.
 `deploy-codex-router.ps1` stages and hash-checks exactly those files, snapshots
 the previous managed generation, and removes only files recorded by the prior

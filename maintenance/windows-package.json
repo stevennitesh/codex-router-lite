@@ -98,6 +98,7 @@
     "src/start.mjs",
     "src/state-owner.mjs",
     "src/subagent-completion.mjs",
+    "src/switchyard-trace.mjs",
     "src/switchyard-runtime.mjs",
     "src/toml-structure.mjs",
     "src/tool-arguments.mjs",

@@ -22,7 +22,7 @@ if (-not $Root -or -not (Test-Path -LiteralPath (Join-Path $Root "src\start.mjs"
 $Commands = @(
   "install", "doctor", "status", "providers", "provider-key", "caller-key",
   "enable", "disable", "uninstall", "update", "rollback", "start", "stop",
-  "restart", "subagents", "refresh-catalog"
+  "restart", "subagents", "refresh-catalog", "switchyard-trace"
 )
 if ($Command -notin $Commands) {
   throw "Unknown command '$Command'. Choose: $($Commands -join ', ')."
@@ -68,6 +68,7 @@ switch ($Command) {
   "restart" { Invoke-RouterNode "src\service.mjs" @("restart") }
   "subagents" { Invoke-RouterNode "src\control.mjs" (@("subagents") + $CommandArguments) }
   "refresh-catalog" { Invoke-RouterNode "src\refresh-catalog.mjs" $CommandArguments }
+  "switchyard-trace" { Invoke-RouterNode "src\switchyard-trace.mjs" $CommandArguments }
 }
 
 exit $LASTEXITCODE

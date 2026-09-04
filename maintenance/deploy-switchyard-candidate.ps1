@@ -89,6 +89,31 @@ function Invoke-RouterInstall([string]$Root) {
   if ($LASTEXITCODE -ne 0) { throw "Router install failed from $Root." }
 }
 
+function Get-SubagentPublicationPlan {
+  $status = Invoke-NodeJson $repoRoot @(
+    (Join-Path $repoRoot "src\control.mjs"), "subagents", "status"
+  ) "Subagent publication status"
+  $picker = Invoke-NodeJson $repoRoot @(
+    (Join-Path $repoRoot "src\control.mjs"), "picker", "status"
+  ) "Model picker status"
+  $certified = @($status.routes | Where-Object { $_.multiAgentVersion -eq "v2" } | ForEach-Object { $_.slug })
+  $enabled = @($status.settings.enabled)
+  $disabled = @($status.settings.disabled)
+  $hidden = @($picker.hidden)
+  $expected = if ($status.settings.mode -eq "selected") {
+    @($certified | Where-Object { $_ -in $enabled -and $_ -notin $disabled -and $_ -notin $hidden })
+  } else {
+    @($certified | Where-Object { $_ -notin $disabled -and $_ -notin $hidden })
+  }
+  return [pscustomobject]@{
+    mode = $status.settings.mode
+    certified = $certified
+    expected = $expected
+    ignoredEnabled = @($enabled | Where-Object { $_ -notin $certified })
+    hiddenCertified = @($hidden | Where-Object { $_ -in $certified })
+  }
+}
+
 function Prepare-RollbackRouter([string]$Root) {
   # Rollback must not begin by downloading dependencies while the Router is
   # already down. Prepare the exact rollback checkout against an isolated
@@ -263,8 +288,12 @@ Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Ro
 $routerCommit = $expectedRouterCommit
 & git -C $repoRoot merge-base --is-ancestor $expectedRollbackCommit $expectedRouterCommit
 if ($LASTEXITCODE -ne 0) { throw "Rollback commit is not an ancestor of the Router candidate." }
-Prepare-RollbackRouter $rollbackRouterRoot
-Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Prepared rollback Router checkout"
+if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candidate-*" -ErrorAction SilentlyContinue).Count) {
+  throw "A Switchyard candidate staging directory already exists."
+}
+if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*" -ErrorAction SilentlyContinue).Count) {
+  throw "A Switchyard rollback directory already exists; resolve it before deploying another candidate."
+}
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
 $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $lock.patch
@@ -279,12 +308,25 @@ if ($LASTEXITCODE -ne 0) { throw "Codex configuration cannot accept the Router c
 $runningRouterRoot = Resolve-RunningRouterRoot @($repoRoot, $rollbackRouterRoot)
 Assert-RouterHealth $runningRouterRoot $expectedRollbackCommit
 Assert-SwitchyardHealth
-if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candidate-*").Count) {
-  throw "A Switchyard candidate staging directory already exists."
+$subagentPlan = Get-SubagentPublicationPlan
+$preflight = [ordered]@{
+  candidateRouterCommit = $expectedRouterCommit
+  runningRouterCommit = $expectedRollbackCommit
+  rollbackRouterCommit = $expectedRollbackCommit
+  runningRouterRoot = $runningRouterRoot
+  subagentMode = $subagentPlan.mode
+  certifiedV2Routes = @($subagentPlan.certified)
+  expectedPublishedV2Agents = @($subagentPlan.expected)
+  ignoredEnabledRoutes = @($subagentPlan.ignoredEnabled)
+  hiddenCertifiedRoutes = @($subagentPlan.hiddenCertified)
 }
-if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*").Count) {
-  throw "A Switchyard rollback directory already exists; resolve it before deploying another candidate."
+Write-Host "Deployment preflight: $($preflight | ConvertTo-Json -Compress)"
+if (@($subagentPlan.certified).Count -and -not @($subagentPlan.expected).Count) {
+  Write-Warning "Local subagent settings will publish no routed v2 agents. Fix the selected allowlist before certification."
 }
+
+Prepare-RollbackRouter $rollbackRouterRoot
+Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Prepared rollback Router checkout"
 
 if (-not $PSCmdlet.ShouldProcess($runtimeRoot, "deploy the Router and Switchyard candidate")) { return }
 

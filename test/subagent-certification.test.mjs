@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyMultiAgentCapabilities,
+  settingsForMode,
   subagentEligibleModels,
 } from "../src/multi-agent-state.mjs";
 
@@ -53,4 +54,25 @@ test("eligibility contains only certified routes left by local filtering", () =>
     subagentEligibleModels(filtered, settings).map(({ slug }) => slug),
     [certified.slug],
   );
+});
+
+test("broad subagent modes discard stale positive allowlists", () => {
+  const stale = {
+    version: 2,
+    mode: "selected",
+    enabled: ["gpt-5.6-sol"],
+    disabled: ["openrouter/glm-5.3-flash"],
+    efforts: { "switchyard/auto": "high" },
+  };
+  assert.deepEqual(settingsForMode(stale, "proven"), {
+    ...stale,
+    mode: "proven",
+    enabled: [],
+  });
+  assert.deepEqual(settingsForMode(stale, "all"), {
+    ...stale,
+    mode: "all",
+    enabled: [],
+    disabled: [],
+  });
 });

@@ -34,6 +34,23 @@ Compare the current Windows Codex tool definitions with `src/codex-app-tools.mjs
 
 Load `config/switchyard/README.md`. Verify the locked source, patch, binary, generated route, capability file, provenance, and health as one unit. Do not copy one artifact from another generation.
 
+Start with the redacted current-generation summary:
+
+```powershell
+.\model-router.ps1 codex switchyard-trace
+```
+
+| Observation | First owner to inspect |
+| --- | --- |
+| `Input must be a list` | Switchyard's Responses encoder emitted scalar `input`; keep native classifier input as a message list. |
+| `input[n].content` rejects an array | The hidden classifier received native content blocks; reduce it to one text-only user message. |
+| Judge HTTP 200 followed by a parse failure | The classifier saw conversation or tool-relay traffic instead of task-only text. Check route windowing and classifier input selection. |
+| `routed_agents: 0` with accepted v2 proofs | Local subagent mode or its selected allowlist filtered every certified exact route. Run `model-router.ps1 codex subagents status` before changing source. |
+| Deployment waits on dependency preparation, then rejects an old rollback | The deployment script is stale. Current source checks candidate and rollback directories before preparing dependencies. |
+
+The trace command reports counts and continuity only. It never prints request
+bodies, headers, capabilities, or raw agent identifiers.
+
 ## Windows task mismatch
 
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
