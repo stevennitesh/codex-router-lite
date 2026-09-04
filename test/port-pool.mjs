@@ -3,29 +3,9 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Reserving a port by binding :0, reading the number, and closing the socket
-// hands that number straight back to the ephemeral pool -- and whatever is
-// meant to use it does not bind for another few milliseconds. `node --test`
-// runs every test file in its own process, in parallel, so a second file's
-// bind(0) could be handed the same number inside that window and whichever
-// bound second died:
-//
-//     Error: listen EADDRINUSE: address already in use 127.0.0.1:35011
-//
-// It failed CI at random, most often in startup-cleanup.test.mjs, which
-// reserves five ports before it spawns anything and so holds five of those
-// windows open at once. Eight test files had their own copy of the same helper.
-//
-// The fix is to stop drawing from the pool everything else draws from. Each
-// test file gets a block of ports of its own, and the blocks sit *below* every
-// Windows ephemeral range (normally beginning at 49152),
-// so no other process's bind(0) can be handed one of ours and no other test
-// file using this helper shares a block. What remains is a leftover from an
-// earlier run of the same file, which the bind check catches by moving up the
-// block.
-//
-// Nothing here serializes: the blocks are disjoint by construction, so no test
-// file ever waits on another.
+// Binding port 0 and closing it creates a race before the caller binds again.
+// Give each parallel test file a disjoint block below the Windows ephemeral
+// range instead. The bind probe skips ports held by an earlier run.
 // Keep the pool comfortably above the privileged/system-service range while
 // leaving enough non-ephemeral space for large integration files. Windows can
 // reserve long contiguous ranges inside this space (Hyper-V currently commonly
@@ -102,14 +82,14 @@ const issued = new Set();
  * within a file, since the caller binds later and a second check would find
  * the port still free.
  */
-export async function freePort() {
+export async function openPort() {
   if (block === undefined) block = blockFor(process.argv[1] || "") ?? null;
   if (!block) return ephemeralPort();
   for (let offset = 0; offset < block.size; offset += 1) {
     const port = block.start + offset;
     if (issued.has(port)) continue;
     // Claimed before the probe, not after it. Callers draw several ports at
-    // once (`Promise.all(Array.from({ length: 6 }, freePort))`), and with the
+    // once (`Promise.all(Array.from({ length: 6 }, openPort))`), and with the
     // claim on the far side of the `await` every one of those starts at the
     // same offset and they sort themselves out only by colliding on the bind:
     // six draws deliberately provoke fifteen EADDRINUSE failures. That is
@@ -127,6 +107,3 @@ export async function freePort() {
       `block at ${block.start}; raise MAX_BLOCK in test/port-pool.mjs or free the leftovers`,
   );
 }
-
-// Both names were in use across the suite for the identical function.
-export { freePort as openPort };

@@ -77,12 +77,9 @@ function proxyEnvironmentDeclared(
 
 // The proxy settings the last install committed to the service.
 //
-// Repair runs from whatever launched it, and a desktop app started from the
-// Dock inherits no shell environment at all -- no HTTP_PROXY, no opt-in. Left
-// to `process.env` alone, such a repair rewrites the service without the proxy
-// the operator configured, and every upstream call begins timing out on a
-// network that requires one. The symptom is remote (a 502 from the router much
-// later), so the cause is close to unfindable from where it surfaces.
+// Install and repair may run without the configured proxy in their environment,
+// especially when launched from the Windows Codex app. Restore the recorded
+// values so the service does not silently lose its upstream connection.
 //
 // This reads the manifest file directly rather than through
 // install-manifest.mjs, which would import this module back and drag its
@@ -129,11 +126,8 @@ function redactUserinfo(value) {
   return `${scheme ? scheme[1] : ""}[REDACTED]@${rest.slice(at + 1)}`;
 }
 
-// A proxy URL may carry `user:password@`. The manifest that stores it is
-// owner-only, exactly like the service definition that already holds the same
-// value, but a support bundle is made to be sent to somebody else -- so the
-// credential has to come out of that copy without discarding the host and port
-// that make the field worth reporting at all.
+// Startup diagnostics show the restored proxy host and port. Strip URL
+// credentials before writing that address to stderr.
 export function redactProxyCredentials(values) {
   if (!values || typeof values !== "object") return values;
   const output = {};

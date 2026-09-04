@@ -8,7 +8,6 @@ import test from "node:test";
 // fixtures, so the machine's own models, credentials, and quota history must
 // not leak in; the imports are dynamic for that reason.
 const testRoot = mkdtempSync(path.join(os.tmpdir(), "glm-5.3-flash-test-"));
-process.env.MODEL_ROUTER_USER_MODELS = path.join(testRoot, "user-models.json");
 process.env.MODEL_ROUTER_STATE_DIR = path.join(testRoot, "state");
 
 const { MODEL_BY_SLUG } = await import("../src/routed-models.mjs");

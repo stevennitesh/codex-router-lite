@@ -56,10 +56,8 @@ function recordInstall() {
   // Derive the skills field from the checkout because install.ps1 records the
   // manifest before installing skills. Filesystem state still describes the
   // previous installation at this point.
-  const skills = {
-    names: packSkillNames(),
-    count: packSkillNames().length,
-  };
+  const names = packSkillNames();
+  const skills = { names, count: names.length };
   const current = {
     commit: gitValue(["rev-parse", "HEAD"]),
     branch: gitValue(["branch", "--show-current"]),

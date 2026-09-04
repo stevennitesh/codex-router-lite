@@ -867,13 +867,6 @@ export function packSkillNames() {
   }
 }
 
-export function managedSkillNames(codexHome) {
-  const ownership = readOwnership(codexHome);
-  return Object.keys(ownership.skills)
-    .filter((name) => ownershipEvidence(codexHome, name, ownership).owned)
-    .sort();
-}
-
 function externalEvidence(codexHome, name, ownership) {
   const record = ownership.external[name];
   if (!record) return { approved: false, reason: "not approved" };
