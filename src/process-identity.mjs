@@ -10,43 +10,34 @@ const WINDOWS_PROCESS_PROBE_TIMEOUT_MS = 5_000;
 // Service shutdown uses this check before signaling a recorded process.
 export function processStartIdentity(
   pid,
-  { spawn = spawnSync, platform = process.platform } = {},
+  { spawn = spawnSync } = {},
 ) {
-  const result = processStartIdentityProbe(pid, { spawn, platform });
+  const result = processStartIdentityProbe(pid, { spawn });
   return result.state === "alive" ? result.identity : undefined;
 }
 
 function processStartIdentityProbe(
   pid,
-  { spawn = spawnSync, platform = process.platform } = {},
+  { spawn = spawnSync } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid < 1) return { state: "unknown" };
   try {
-    if (platform === "win32") {
-      const script =
-        `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
-        "if ($null -eq $p) { exit 3 }; " +
-        `[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path)`;
-      const result = spawn(
-        "powershell.exe",
-        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-        {
-          encoding: "utf8",
-          windowsHide: true,
-          timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
-        },
-      );
-      const identity = String(result.stdout || "").trim();
-      if (result.status === 0 && identity) return { state: "alive", identity };
-      if (result.status === 3) return { state: "absent" };
-      return { state: "unknown" };
-    }
-    const result = spawn("ps", ["-p", String(pid), "-o", "lstart=", "-o", "comm="], {
-      encoding: "utf8",
-    });
+    const script =
+      `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+      "if ($null -eq $p) { exit 3 }; " +
+      `[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path)`;
+    const result = spawn(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
+      },
+    );
     const identity = String(result.stdout || "").trim();
     if (result.status === 0 && identity) return { state: "alive", identity };
-    if (result.status === 1) return { state: "absent" };
+    if (result.status === 3) return { state: "absent" };
     return { state: "unknown" };
   } catch {
     return { state: "unknown" };
@@ -59,34 +50,28 @@ function processStartIdentityProbe(
 // recursively terminates the router tree.
 export function processCommandLine(
   pid,
-  { spawn = spawnSync, platform = process.platform } = {},
+  { spawn = spawnSync } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid < 1) return undefined;
   try {
-    if (platform === "win32") {
-      const scripts = [
-        `$p = Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop; [Console]::Out.Write($p.CommandLine)`,
-        `$p = Get-WmiObject Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop; [Console]::Out.Write($p.CommandLine)`,
-      ];
-      for (const script of scripts) {
-        const result = spawn(
-          "powershell.exe",
-          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-          {
-            encoding: "utf8",
-            windowsHide: true,
-            timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
-          },
-        );
-        const value = String(result.stdout || "").trim();
-        if (result.status === 0 && value) return value;
-      }
-      return undefined;
+    const scripts = [
+      `$p = Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop; [Console]::Out.Write($p.CommandLine)`,
+      `$p = Get-WmiObject Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop; [Console]::Out.Write($p.CommandLine)`,
+    ];
+    for (const script of scripts) {
+      const result = spawn(
+        "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
+        },
+      );
+      const value = String(result.stdout || "").trim();
+      if (result.status === 0 && value) return value;
     }
-    const result = spawn("ps", ["-p", String(pid), "-o", "args="], {
-      encoding: "utf8",
-    });
-    return result.status === 0 ? String(result.stdout || "").trim() || undefined : undefined;
+    return undefined;
   } catch {
     return undefined;
   }

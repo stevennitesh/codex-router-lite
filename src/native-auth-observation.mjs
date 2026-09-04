@@ -212,7 +212,7 @@ async function observeNativeAuthOutcomeNow(state, {
     desktopGeneration: currentDesktop.generation,
   };
   try {
-    await writePrivateJsonAsync(filePath, value, { directoryMode: 0o700 });
+    await writePrivateJsonAsync(filePath, value);
   } catch {
     return { state: "unknown", desktop: currentDesktop };
   }

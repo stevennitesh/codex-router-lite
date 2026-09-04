@@ -26,7 +26,6 @@ function safePid(pid) {
 
 export function buildServiceProcessState({
   pid = process.pid,
-  platform = process.platform,
   identity = processStartIdentity,
   commandLine = processCommandLine,
   sourceRoot = SOURCE_ROOT,
@@ -35,8 +34,8 @@ export function buildServiceProcessState({
 } = {}) {
   const safe = safePid(pid);
   if (!safe) return undefined;
-  const processIdentity = identity(safe, { platform });
-  const liveCommandLine = commandLine(safe, { platform });
+  const processIdentity = identity(safe);
+  const liveCommandLine = commandLine(safe);
   if (!processIdentity || !liveCommandLine) return undefined;
   const entrypoint = entrypointFor(sourceRoot);
   if (!normalized(liveCommandLine).includes(entrypoint)) return undefined;
@@ -88,7 +87,6 @@ export function clearServiceProcessState(statePath = SERVICE_PROCESS_STATE_PATH)
 export function serviceProcessOwns(
   state,
   {
-    platform = process.platform,
     identity = processStartIdentity,
     commandLine = processCommandLine,
     sourceRoot = SOURCE_ROOT,
@@ -123,7 +121,7 @@ export function serviceProcessOwns(
   }
   const entrypoint = entrypointFor(state.sourceRoot);
   if (!normalized(state.commandLine).includes(entrypoint)) return false;
-  if (identity(pid, { platform }) !== state.processIdentity) return false;
-  const liveCommandLine = commandLine(pid, { platform });
+  if (identity(pid) !== state.processIdentity) return false;
+  const liveCommandLine = commandLine(pid);
   return Boolean(liveCommandLine && normalized(liveCommandLine).includes(entrypoint));
 }

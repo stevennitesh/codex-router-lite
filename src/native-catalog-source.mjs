@@ -22,9 +22,7 @@ import {
 export function catalogPathsEqual(left, right) {
   const normalizedLeft = path.normalize(String(left));
   const normalizedRight = path.normalize(String(right));
-  return process.platform === "win32"
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
+  return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
 }
 
 const BASIC_STRING_ESCAPES = new Map([

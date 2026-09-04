@@ -40,12 +40,9 @@ const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.96.0", "fastapi==0.139.2"];
 const PYTHON_LOCK = "requirements/python.txt";
 const PYTHON_LOCK_INPUT = "requirements/python.in";
 
-// The lock is universal: one file covering macOS, Linux, and Windows on
-// CPython 3.10+, with environment markers selecting per-platform entries. A
-// regeneration that drops `--universal` still produces a valid-looking file
-// that only resolves on the machine that generated it, so `pythonLockDrift`
-// checks the flags uv records in the header as well as the pins. The compile
-// Regenerate it with uv's universal, hash-generating compile mode.
+// The product runs on Windows, so the lock resolves only the Windows dependency
+// graph for CPython 3.10+. `pythonLockDrift` checks the platform and hash flags
+// uv records in the header as well as the direct pins.
 
 function repoPath(root, relative) {
   return path.join(root, ...relative.split("/"));
@@ -264,13 +261,16 @@ function pythonLockDrift(root = SOURCE_ROOT) {
     );
   }
 
-  // A lock compiled for one platform installs fine on that platform and fails
-  // everywhere else, so the recorded command is part of what has to match.
+  // The recorded command is part of the product boundary: a universal lock
+  // silently restores dependencies for operating systems this repo does not support.
   const header = contents.split("\n").slice(0, 8).join(" ");
-  for (const flag of ["--universal", "--generate-hashes"]) {
+  for (const flag of ["--python-platform windows", "--generate-hashes"]) {
     if (!header.includes(flag)) {
       problems.push(`${PYTHON_LOCK} was not generated with ${flag}`);
     }
+  }
+  if (header.includes("--universal")) {
+    problems.push(`${PYTHON_LOCK} must not include the unsupported universal dependency graph`);
   }
 
   const entries = parseLock(contents);

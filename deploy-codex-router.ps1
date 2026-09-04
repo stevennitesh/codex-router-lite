@@ -1,9 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-  [string]$InstallDir = $(
-    if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "codex-router" }
-    else { Join-Path $HOME ".local\share\codex-router" }
-  )
+  [string]$InstallDir = $(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "codex-router")
 )
 
 $ErrorActionPreference = "Stop"

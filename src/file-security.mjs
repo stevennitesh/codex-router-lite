@@ -1,12 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -251,38 +249,24 @@ function protectPrivateFilesWin32Async(paths) {
 }
 
 export function protectPrivateFile(target) {
-  chmodSync(target, 0o600);
-  if (process.platform === "win32") protectPrivateFilesWin32([target]);
+  protectPrivateFilesWin32([target]);
   return target;
 }
 
 // All private JSON state uses the same temp-file, owner-only, atomic replace.
 // Keeping it here prevents one state writer from drifting away from the rest.
-export function writePrivateFile(target, contents, { directoryMode } = {}) {
+export function writePrivateFile(target, contents) {
   const directory = path.dirname(target);
-  const createdDirectory = mkdirSync(directory, { recursive: true, mode: 0o700 });
-  // A caller may inject a credential path for an isolated test, but it never
-  // owns an already-existing parent such as /tmp or a project checkout. Only
-  // apply the requested directory mode to a directory this write created.
-  if (createdDirectory !== undefined && directoryMode !== undefined) {
-    chmodSync(directory, directoryMode);
-  }
+  mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
   try {
-    writeFileSync(temporary, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    if (process.platform === "win32") {
-      // One spawn hardens the temporary; the renameSync below then moves this
-      // exact file over the target, and MoveFile carries the source's DACL
-      // with it, so the destination inherits the same owner-only ACL without a
-      // second PowerShell cold start. A pre-existing target that is being
-      // replaced is discarded with the move, so it cannot leak permissions.
-      protectPrivateFilesWin32([temporary]);
-      renameSync(temporary, target);
-    } else {
-      protectPrivateFile(temporary);
-      renameSync(temporary, target);
-      protectPrivateFile(target);
-    }
+    writeFileSync(temporary, contents, { encoding: "utf8", flag: "wx" });
+    // One spawn hardens the temporary; the renameSync below then moves this
+    // exact file over the target, and MoveFile carries the source's DACL with
+    // it. A pre-existing target is discarded with the move, so it cannot leak
+    // permissions.
+    protectPrivateFilesWin32([temporary]);
+    renameSync(temporary, target);
   } catch (error) {
     try {
       const metadata = lstatSync(temporary);
@@ -299,14 +283,12 @@ export function writePrivateFile(target, contents, { directoryMode } = {}) {
 // This async form retains the exact same temporary-file/DACL/rename boundary
 // without blocking the event loop; each operation is independently bounded and
 // cannot strand later requests behind a persistent helper.
-async function writePrivateFileAsync(target, contents, { directoryMode } = {}) {
-  if (process.platform !== "win32") return writePrivateFile(target, contents, { directoryMode });
+async function writePrivateFileAsync(target, contents) {
   const directory = path.dirname(target);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  if (directoryMode !== undefined) chmodSync(directory, directoryMode);
+  mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
   try {
-    writeFileSync(temporary, contents, { encoding: "utf8", mode: 0o600 });
+    writeFileSync(temporary, contents, { encoding: "utf8" });
     await protectPrivateFilesWin32Async([temporary]);
     renameSync(temporary, target);
   } catch (error) {
@@ -316,19 +298,18 @@ async function writePrivateFileAsync(target, contents, { directoryMode } = {}) {
   return target;
 }
 
-export function writePrivateJson(target, value, { space = 2, directoryMode } = {}) {
-  writePrivateFile(target, `${JSON.stringify(value, null, space)}\n`, { directoryMode });
+export function writePrivateJson(target, value, { space = 2 } = {}) {
+  writePrivateFile(target, `${JSON.stringify(value, null, space)}\n`);
   return value;
 }
 
-export async function writePrivateJsonAsync(target, value, { space = 2, directoryMode } = {}) {
-  await writePrivateFileAsync(target, `${JSON.stringify(value, null, space)}\n`, { directoryMode });
+export async function writePrivateJsonAsync(target, value, { space = 2 } = {}) {
+  await writePrivateFileAsync(target, `${JSON.stringify(value, null, space)}\n`);
   return value;
 }
 
 export function privateFileIsProtected(target) {
   if (!existsSync(target)) return false;
-  if (process.platform !== "win32") return (statSync(target).mode & 0o777) === 0o600;
   const script = [
     // Get-Acl lazy-loads Microsoft.PowerShell.Security, which can fail under
     // concurrent Windows processes. The .NET API returns the same FileSecurity

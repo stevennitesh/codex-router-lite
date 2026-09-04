@@ -60,7 +60,7 @@ export function writeProviderCredential(providerOrId, value) {
     throw new Error("OpenRouter API key is empty or contains control characters.");
   }
   const target = primaryCredentialPath(provider);
-  writePrivateFile(target, `${secret}\n`, { directoryMode: 0o700 });
+  writePrivateFile(target, `${secret}\n`);
   protectPrivateFile(target);
   return target;
 }

@@ -46,7 +46,7 @@ export function beginCallerKeyRotationJournal({ targets, serviceWasRunning, prev
   if (readCallerKeyRotationJournal({ journalPath })) throw new Error("A caller capability rotation is already pending; recover it before starting another.");
   const value = { version: 1, phase: "prepared", operationId, targets: [...targets], serviceWasRunning: Boolean(serviceWasRunning), previousSecretSha256 };
   if (!validJournal(value)) throw new Error("Refusing to write an invalid caller capability rotation journal.");
-  return writePrivateJson(journalPath, value, { directoryMode: 0o700 });
+  return writePrivateJson(journalPath, value);
 }
 
 export function updateCallerKeyRotationJournal(current, phase, { journalPath = CALLER_KEY_ROTATION_JOURNAL_PATH, patch = {} } = {}) {
@@ -58,7 +58,7 @@ export function updateCallerKeyRotationJournal(current, phase, { journalPath = C
   }
   const next = { ...stored, ...patch, phase };
   if (!validJournal(next)) throw new Error("Refusing to write an invalid caller capability rotation journal update.");
-  writePrivateJson(journalPath, next, { directoryMode: 0o700 });
+  writePrivateJson(journalPath, next);
   return next;
 }
 

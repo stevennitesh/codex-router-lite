@@ -23,9 +23,8 @@ const WINDOWS_SPAWNABLE_EXTENSIONS = [".exe", ".com", ".cmd", ".bat"];
 
 // Ordered by preference: a real executable is spawned directly, and only a
 // batch shim has to pay for a cmd.exe hop.
-export function preferSpawnablePath(paths, platform = process.platform) {
+export function preferSpawnablePath(paths) {
   const found = (paths || []).map((value) => String(value).trim()).filter(Boolean);
-  if (platform !== "win32") return found[0];
   for (const extension of WINDOWS_SPAWNABLE_EXTENSIONS) {
     const match = found.find((value) => value.toLowerCase().endsWith(extension));
     if (match) return match;
@@ -37,23 +36,22 @@ export function preferSpawnablePath(paths, platform = process.platform) {
 // rather than whichever one the finder happened to print first.
 export function commandOnPath(
   name,
-  { platform = process.platform, exec = execFileSync } = {},
+  { exec = execFileSync } = {},
 ) {
-  const finder = platform === "win32" ? "where.exe" : "which";
   try {
-    const output = exec(finder, [name], {
+    const output = exec("where.exe", [name], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
     });
-    return preferSpawnablePath(String(output || "").split(/\r?\n/), platform) || undefined;
+    return preferSpawnablePath(String(output || "").split(/\r?\n/)) || undefined;
   } catch {
     return undefined;
   }
 }
 
-function isWindowsBatchShim(binary, platform = process.platform) {
-  return platform === "win32" && /\.(cmd|bat)$/i.test(String(binary || ""));
+function isWindowsBatchShim(binary) {
+  return /\.(cmd|bat)$/i.test(String(binary || ""));
 }
 
 // cmd.exe does not use the standard command-line parser, so an argument list
@@ -132,9 +130,9 @@ function escapeWindowsShellArgument(value, doubleEscape = false) {
 //   spawnSync(command, args, { ...options, encoding: "utf8" });
 //
 // Everything except a Windows batch shim passes through untouched.
-export function spawnableCommand(binary, args = [], platform = process.platform) {
+export function spawnableCommand(binary, args = []) {
   const argumentList = [...args];
-  if (!isWindowsBatchShim(binary, platform)) {
+  if (!isWindowsBatchShim(binary)) {
     return { command: binary, args: argumentList, options: {} };
   }
   assertSpawnablePath(binary);

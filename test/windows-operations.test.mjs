@@ -98,7 +98,8 @@ test("Windows install refreshes the current Codex bundled catalog", () => {
 
 test("the Windows restart helper uses the supported service transaction", () => {
   const source = readScript("restart-codex-router.ps1");
-  assert.match(source, /\$env:LOCALAPPDATA/);
+  assert.match(source, /SpecialFolder]::LocalApplicationData/);
+  assert.doesNotMatch(source, /\$HOME|\.local[\\/]share/);
   assert.match(source, /\$routerRoot\s*=\s*\[IO\.Path\]::GetFullPath\(\$InstallDir\)/);
   assert.match(source, /src\\service\.mjs"\) restart/);
   assert.match(source, /\$RestartExitCode\s*=\s*\$LASTEXITCODE/);

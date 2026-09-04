@@ -51,7 +51,7 @@ export function subagentSettingsSnapshot() {
 }
 
 function writeSettings(settings) {
-  writePrivateJson(MULTI_AGENT_STATE_PATH, settings, { directoryMode: 0o700 });
+  writePrivateJson(MULTI_AGENT_STATE_PATH, settings);
 }
 
 export function setMultiAgentMode(mode) {

@@ -48,7 +48,7 @@ export function readInstallManifest() {
 }
 
 function atomicWrite(value) {
-  writePrivateJson(INSTALL_MANIFEST_PATH, value, { directoryMode: 0o700 });
+  writePrivateJson(INSTALL_MANIFEST_PATH, value);
 }
 
 function recordInstall() {

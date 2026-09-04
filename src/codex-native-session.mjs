@@ -188,7 +188,6 @@ export function setNativeSessionSharingEnabled(enabled) {
   writePrivateJson(
     NATIVE_SESSION_CONSENT_PATH,
     { version: 1, sharing: "enabled" },
-    { directoryMode: 0o700 },
   );
   return true;
 }

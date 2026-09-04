@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
@@ -14,10 +13,8 @@ export { preferSpawnablePath, spawnableCommand };
 // changes on every app update, so scan for the newest installed version
 // instead of pinning a single path.
 function desktopAppBundledCodexCandidates({
-  platform = process.platform,
   localAppData = process.env.LOCALAPPDATA,
 } = {}) {
-  if (platform !== "win32") return [];
   if (!localAppData) return [];
   const binDir = path.join(localAppData, "OpenAI", "Codex", "bin");
   if (!existsSync(binDir)) return [];
@@ -31,18 +28,14 @@ function desktopAppBundledCodexCandidates({
   }
 }
 
-function codexCandidatePaths({
-  localAppData = process.env.LOCALAPPDATA,
-  home = os.homedir(),
-} = {}) {
+function codexCandidatePaths({ localAppData = process.env.LOCALAPPDATA } = {}) {
   return [
     process.env.CODEX_BIN,
     process.env.CODEX_INSTALL_DIR && path.join(process.env.CODEX_INSTALL_DIR, "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "codex.exe"),
     localAppData && path.join(localAppData, "Programs", "Codex", "resources", "app", "bin", "codex.exe"),
-    ...desktopAppBundledCodexCandidates({ platform: "win32", localAppData }),
-    path.join(home, ".local", "bin", "codex.exe"),
+    ...desktopAppBundledCodexCandidates({ localAppData }),
   ].filter(Boolean);
 }
 

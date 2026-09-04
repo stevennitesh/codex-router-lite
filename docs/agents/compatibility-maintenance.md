@@ -74,7 +74,7 @@ Load this branch only when changing the LiteLLM or FastAPI pins. Update
 together, then regenerate the compiled lock from the repository root:
 
 ```powershell
-uv pip compile --universal --generate-hashes --python-version 3.10 --output-file requirements/python.txt requirements/python.in
+uv pip compile --python-platform windows --generate-hashes --python-version 3.10 --output-file requirements/python.txt requirements/python.in
 ```
 
 Run `npm run check` afterward. It rejects mismatched direct pins, a lock without

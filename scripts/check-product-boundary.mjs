@@ -72,6 +72,8 @@ assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must c
 const packageManifest = JSON.parse(
   readFileSync(path.join(root, "maintenance", "windows-package.json"), "utf8"),
 );
+const nodeManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+assert.equal(nodeManifest.name, "codex-router-lite", "private package identity drifted");
 assert.equal(packageManifest.version, 1);
 assert.equal(new Set(packageManifest.files).size, packageManifest.files.length, "duplicate package path");
 for (const file of packageManifest.files) {
@@ -83,6 +85,23 @@ for (const file of packageManifest.files) {
 }
 for (const file of [...requiredEntrypoints, ...retainedConfig, "LICENSE", "NOTICE.md"]) {
   assert.ok(packageManifest.files.includes(file), `retained package file is absent: ${file}`);
+}
+
+const runtimeFiles = tracked.filter(
+  (file) => file.startsWith("src/") || /^(?:install|deploy-codex-router|restart-codex-router)\.ps1$/u.test(file),
+);
+const forbiddenRuntimeText = [
+  ["/dev/tty", "POSIX terminal input"],
+  ["/bin/stty", "POSIX terminal control"],
+  ['"which"', "POSIX PATH lookup"],
+  [".local\\share\\codex-router", "non-Windows install root"],
+  ['".local", "bin"', "non-Windows Codex binary path"],
+];
+for (const file of runtimeFiles) {
+  const source = readFileSync(path.join(root, file), "utf8");
+  for (const [marker, family] of forbiddenRuntimeText) {
+    assert.ok(!source.includes(marker), `${file} restored ${family}`);
+  }
 }
 
 console.log(`product boundary passed (${tracked.length} tracked files, ${packageManifest.files.length} packaged files)`);

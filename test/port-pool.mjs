@@ -27,13 +27,14 @@ import { fileURLToPath } from "node:url";
 // Nothing here serializes: the blocks are disjoint by construction, so no test
 // file ever waits on another.
 // Keep the pool comfortably above the privileged/system-service range while
-// leaving enough non-ephemeral space for large integration files. The routing
-// suite now needs 75 distinct listeners; starting at 20,000 divided the range
-// into only 74 ports once the Control Center tests were added.
+// leaving enough non-ephemeral space for large integration files. Windows can
+// reserve long contiguous ranges inside this space (Hyper-V currently commonly
+// claims blocks of roughly 1,000 ports), so each file's block must be wide
+// enough to step past one and still seat the routing suite's 75 listeners.
 const FIRST_PORT = 10_000;
 // Below the Windows ephemeral range.
 const LAST_PORT = 32_767;
-const MAX_BLOCK = 256;
+const MAX_BLOCK = 1_024;
 const MIN_BLOCK = 32;
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));

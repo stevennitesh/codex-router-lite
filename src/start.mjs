@@ -67,8 +67,8 @@ const litellm =
   path.join(
     SOURCE_ROOT,
     ".venv",
-    process.platform === "win32" ? "Scripts" : "bin",
-    process.platform === "win32" ? "litellm.exe" : "litellm",
+    "Scripts",
+    "litellm.exe",
   );
 if (!existsSync(litellm)) {
   throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
@@ -88,8 +88,8 @@ if (usesBundledVenv) {
   const venvPython = path.join(
     SOURCE_ROOT,
     ".venv",
-    process.platform === "win32" ? "Scripts" : "bin",
-    process.platform === "win32" ? "python.exe" : "python",
+    "Scripts",
+    "python.exe",
   );
   const venvProblem = venvRuntimeProblem(venvPython);
   if (venvProblem) {
@@ -340,12 +340,9 @@ try {
   // Task Scheduler can report its wscript host as stopped while the detached
   // cmd/node descendants still own every router port. Record the verified
   // start.mjs identity so the Windows service manager can terminate that tree
-  // before it launches a replacement. Other platforms keep their native
-  // supervisor semantics and do not need this marker.
-  if (process.platform === "win32") {
-    writeServiceProcessState();
-    serviceProcessRecorded = true;
-  }
+  // before it launches a replacement.
+  writeServiceProcessState();
+  serviceProcessRecorded = true;
   exitCode = await main();
 } catch (error) {
   if (!shuttingDown) {
