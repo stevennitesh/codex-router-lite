@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -22,12 +21,6 @@ import {
 } from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
-import {
-  CHECKPOINT_WARNING,
-  decodeCompaction,
-  encodeCheckpoint,
-  LEGACY_V1_SUMMARY_PREFIX,
-} from "../src/compaction-checkpoint.mjs";
 import { openPort } from "./port-pool.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

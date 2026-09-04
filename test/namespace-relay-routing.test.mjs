@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import http from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +9,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
-import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
 // request carrying the client's namespace toolset must reach the (mock)

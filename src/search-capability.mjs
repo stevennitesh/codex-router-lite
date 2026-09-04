@@ -1,29 +1,17 @@
-function sidecarSearchAvailable() {
-  return false;
-}
-
-// The catalog and the last provider-facing hop must answer this question from
-// the same evidence. A checked-in/user model can own search directly, while a
-// separately credentialed sidecar can add it to one exact routed slug. An
-// OpenAI-compatible endpoint alone proves neither capability.
-export function routedModelSearchAvailable(model, options) {
-  return routedModelSearchMode(model, options) !== undefined;
-}
-
-export function routedModelSearchMode(model, options) {
+// Search is available only when the checked-in route declares how it runs.
+export function routedModelSearchMode(model) {
   if (["hosted", "standalone"].includes(model?.searchTool?.mode)) {
     return model.searchTool.mode;
   }
-  return sidecarSearchAvailable(model, options) ? "standalone" : undefined;
+  return undefined;
 }
 
 export function routedModelPreservesSearchContract(
   model,
   { requiredMode, hasSearchHistory = false } = {},
-  options,
 ) {
   return searchModePreservesSearchContract(
-    routedModelSearchMode(model, options),
+    routedModelSearchMode(model),
     { requiredMode, hasSearchHistory },
   );
 }

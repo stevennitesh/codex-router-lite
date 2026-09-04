@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
@@ -8,16 +7,10 @@ import {
   NamespaceToolCallTransform,
   bridgeCustomTools,
   buildNamespaceLookups,
-  flattenNamespacedHistory,
   flattenNamespaceTools,
-  flattenToolChoice,
-  flattenToolSearchHistory,
-  recoverPreflattenedMcpTools,
-  rewriteNamespaceFunctionCall,
   rewriteNamespaceResponsePayload,
-  ToolSearchHistoryCapacityError,
 } from "../src/namespace-relay.mjs";
-import { CODEX_APP_TOOLS, mergeCodexAppTools } from "../src/codex-app-tools.mjs";
+import { mergeCodexAppTools } from "../src/codex-app-tools.mjs";
 
 function collect(stream) {
   return new Promise((resolve, reject) => {

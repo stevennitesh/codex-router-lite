@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
+import { commandOnPath, spawnableCommand } from "./spawnable-command.mjs";
 
 // The ChatGPT/Codex desktop app bundles its CLI under a version-hashed
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash

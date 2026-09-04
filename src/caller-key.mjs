@@ -129,10 +129,6 @@ function currentSecret(secretPath) {
   return assertCallerSecret(readFileSync(secretPath, "utf8").trim());
 }
 
-async function withCallerMutationLocks(operation) {
-  return withModelOverlayLock(operation);
-}
-
 function callerServiceLock(secretPath, override) {
   return override || ((operation) => withServiceOperationLock(operation, {
     stateDir: path.dirname(secretPath),
@@ -242,7 +238,7 @@ async function runCallerKeyRotation({
   readServiceStatus = () => readRouterServiceStatus(),
   runNode = runNodeCommand,
   withLock = withCallerKeyRotationLock,
-  withMutationLocks = withCallerMutationLocks,
+  withMutationLocks = withModelOverlayLock,
   withServiceLock,
   recoverPending = recoverPendingCallerKeyRotationUnlocked,
   rotateSecret = swapCallerCapability,

@@ -1805,10 +1805,8 @@ async function summarizeWith(
   // is unrelated to the compaction body.
   const searchCompatibility = routedSearchCompatibility(body, route);
   const serialized = JSON.stringify(searchCompatibility.payload);
-  // Candidate capability may depend on a sidecar credential or binding that
-  // changed while image bridging was in flight. Preserve both the mode used
-  // to construct this exact body and the live mode at the send boundary: a
-  // disappear/reappear cycle must not authorize an already-stripped request.
+  // Recheck the declared search mode at the send boundary so the built body
+  // still matches the selected route.
   if (
     !searchModePreservesSearchContract(searchCompatibility.searchMode, searchContract) ||
     !routedModelPreservesSearchContract(route, searchContract)
@@ -1825,12 +1823,8 @@ async function summarizeWith(
 }
 
 async function summarize(request, payload, route, signal) {
-  // The conversation's selected route owns the capability contract. Resolve
-  // it before normalization so a fallback cannot add back ambient search that
-  // the selected model never advertised. Compaction itself sends no tools or
-  // tool choice, so discard those turn-only declarations before checking the
-  // provider-bound compact shape; an impossible ordinary turn must fail, but
-  // an ambient choice that compaction never forwards must not end the session.
+  // Compaction sends no tools or tool choice. Remove those turn-only fields
+  // before checking the selected route's search contract.
   payload = { ...payload, tools: [] };
   delete payload.tool_choice;
   const searchSnapshot = snapshotRoutedSearch(payload, route);
@@ -1851,103 +1845,72 @@ async function summarize(request, payload, route, signal) {
   // decide which source types and machine outcomes enter a kcr2 checkpoint.
   const prepared = prepareCompaction(normalized);
 
-  const attempts = [route];
-  const failed = [];
-  let last;
-  for (let index = 0; index < attempts.length; index += 1) {
-    const attemptRoute = attempts[index];
-    if (
-      !routedModelPreservesSearchContract(attemptRoute, searchContract)
-    ) {
-      throw unsupportedSearchContractError(route.slug);
-    }
-    const sent = await summarizeWith(
-      request,
-      payload,
-      attemptRoute,
-      normalized,
-      prepared,
+  if (!routedModelPreservesSearchContract(route, searchContract)) {
+    throw unsupportedSearchContractError(route.slug);
+  }
+  const sent = await summarizeWith(
+    request,
+    payload,
+    route,
+    normalized,
+    prepared,
+    signal,
+    { searchContract },
+  );
+  if (sent.searchCapabilityChanged) {
+    throw unsupportedSearchContractError(route.slug);
+  }
+  let bytes;
+  try {
+    bytes = await readResponseBody(sent.upstream, {
+      maxBytes: 32 * 1024 * 1024,
       signal,
-      { searchContract },
-    );
-    if (sent.searchCapabilityChanged) {
-      throw unsupportedSearchContractError(route.slug);
-    }
-    let bytes;
-    try {
-      bytes = await readResponseBody(sent.upstream, {
-        maxBytes: 32 * 1024 * 1024,
-        signal,
-      });
-    } catch (error) {
-      if (error?.code === "ERR_UPSTREAM_RESPONSE_TOO_LARGE") {
-        return {
-          ok: false,
-          status: 502,
-          payload: { error: { message: "Compact response is too large." } },
-        };
-      }
-      throw error;
-    }
-    if (bytes.length > 32 * 1024 * 1024) {
+    });
+  } catch (error) {
+    if (error?.code === "ERR_UPSTREAM_RESPONSE_TOO_LARGE") {
       return {
         ok: false,
         status: 502,
         payload: { error: { message: "Compact response is too large." } },
       };
     }
-    const parsed = JSON.parse(bytes.toString("utf8"));
-    // Compaction is a plain non-streaming call, so the usage block (when the
-    // provider sends one) is already in hand. `tokenUsageFromPayload` returns
-    // fields entirely rather than metering an invented zero.
-    const usage = tokenUsageFromPayload(parsed);
-    if (sent.upstream.ok) {
-      const answer = extractResponseText(parsed);
-      // finalizeCheckpoint turns empty model output into a structurally valid
-      // checkpoint, so an upstream whose answer this router cannot read would
-      // otherwise report ok with nothing in it. Say so where an operator sees
-      // it rather than shipping a silently empty summary.
-      if (!answer.trim() && !QUIET) {
-        console.error(
-          `[codex-router] compaction read no model text model=${attemptRoute.slug} provider=${canonicalProviderId(attemptRoute.provider)}`,
-        );
-      }
-      return {
-        ok: true,
-        checkpoint: finalizeCheckpoint(answer, prepared),
-        input: originalInput,
-        usage,
-        route: attemptRoute,
-        failed,
-      };
-    }
-    // Each attempt that failed was still sent and still billed, so it is
-    // metered on its own row exactly as on the turn path -- otherwise a
-    // compaction the router rescued would leave no trace of the provider that
-    // could not serve it.
-    failed.push({ route: attemptRoute, status: sent.upstream.status, usage });
-    // The first failure is the one reported if every attempt fails: it came
-    // from the model the conversation is actually on, which is the one the
-    // operator can do something about.
-    last ??= {
+    throw error;
+  }
+  if (bytes.length > 32 * 1024 * 1024) {
+    return {
       ok: false,
-      status: sent.upstream.status,
-      payload: parsed,
-      usage,
-      route: attemptRoute,
+      status: 502,
+      payload: { error: { message: "Compact response is too large." } },
     };
-    return { ...last, failed };
   }
-  return last && { ...last, failed };
-}
-
-function recordCompactionUsage(result, route, startedAt) {
-  const servedRoute = result?.route || route;
-  const failed = (result?.failed || []).filter((entry) => entry.route !== servedRoute);
-  for (const attempt of failed) {
-
+  const parsed = JSON.parse(bytes.toString("utf8"));
+  // Compaction is a plain non-streaming call, so the usage block is already
+  // available when the provider sends one.
+  const usage = tokenUsageFromPayload(parsed);
+  if (sent.upstream.ok) {
+    const answer = extractResponseText(parsed);
+    // finalizeCheckpoint accepts empty model output. Log it instead of
+    // silently returning an empty summary.
+    if (!answer.trim() && !QUIET) {
+      console.error(
+        `[codex-router] compaction read no model text model=${route.slug} provider=${canonicalProviderId(route.provider)}`,
+      );
+    }
+    return {
+      ok: true,
+      checkpoint: finalizeCheckpoint(answer, prepared),
+      input: originalInput,
+      usage,
+      route,
+    };
   }
-
+  return {
+    ok: false,
+    status: sent.upstream.status,
+    payload: parsed,
+    usage,
+    route,
+  };
 }
 
 function compactionSnapshot(model, item, status = "completed") {
@@ -1984,8 +1947,7 @@ function writeCompactionSse(response, model, checkpoint) {
   response.end("data: [DONE]\n\n");
 }
 
-// Returns what the request path needs to meter and log the compaction, so a
-// routed compaction leaves the same telemetry trail as any other routed turn.
+// Returns the status, usage, and route needed by the request log.
 async function handleRoutedCompaction(
   request,
   response,
@@ -1995,19 +1957,12 @@ async function handleRoutedCompaction(
   v2,
 ) {
   const result = await summarize(request, payload, route, signal);
-  // A compaction moved to another model is metered against the model that
-  // actually produced the summary, the same as any other turn.
-  const served = {
-    route: result.route,
-    // Only the attempts that lost; the winner is metered by the caller.
-    failed: (result.failed || []).filter((entry) => entry.route !== result.route),
-  };
   if (!result.ok) {
     writeJson(response, result.status, result.payload);
     return {
       status: result.status,
       usage: result.usage,
-      ...served,
+      route: result.route,
     };
   }
   if (v2) {
@@ -2024,14 +1979,14 @@ async function handleRoutedCompaction(
     return {
       status: 200,
       usage: result.usage,
-      ...served,
+      route: result.route,
     };
   }
   writeJson(response, 200, { output: compactOutput(result.input, result.checkpoint) });
   return {
     status: 200,
     usage: result.usage,
-    ...served,
+    route: result.route,
   };
 }
 
@@ -2072,25 +2027,7 @@ function requireCodexTransport(request, response) {
   return true;
 }
 
-// Everything about a routed request that depends on which model is serving it.
-//
-// Extracted so it can run more than once for a single turn: a turn whose
-// provider reports it has no usage left is rebuilt for another model and sent
-// again, and that second build has to start from exactly what the first one
-// started from. Two things in here would quietly corrupt a second pass if it
-// did not.
-//
-//   - The tool list is rewritten for chat-completions providers (merged,
-//     flattened, schema-repaired). `flattenNamespaceTools` only recognizes
-//     items of `type: "namespace"`, so a second pass over already-flattened
-//     tools returns an *empty* namespace map -- shipping plausible tools with
-//     no way to map the model's calls back to the client's namespace shape.
-//   - `carryReasoningThroughInput` replaces `reasoning` items in place, so a
-//     responses-native second pass would find the reasoning already gone.
-//
-// Both are avoided the same way: nothing here writes to `payload` or to
-// `normalizedInput`. The tool list is local, and the input array is copied before
-// anything rewrites it.
+// Build the provider request without mutating the normalized client input.
 async function buildRoutedRequest({ request, payload, route, normalizedInput }) {
   const searchCompatibility = routedSearchCompatibility(payload, route);
   payload = searchCompatibility.payload;
@@ -2147,21 +2084,6 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     flattenedNamespaces,
     pendingInterrupts: pendingInterruptTargets(input, { namespaces: flattenedNamespaces }),
   };
-}
-
-// Build each routed request from the same normalized input.
-async function prepareRoutedRequest({
-  request,
-  payload,
-  route,
-  normalizedInput,
-}) {
-  return buildRoutedRequest({
-    request,
-    payload,
-    route,
-    normalizedInput,
-  });
 }
 
 async function handleResponses(request, response, requestUrl) {
@@ -2240,7 +2162,6 @@ async function handleResponses(request, response, requestUrl) {
         compactV2,
       );
       const compacted = compaction.route || route;
-      recordCompactionUsage(compaction, route, startedAt);
       usage = compaction.usage;
       finalStatus = compaction.status;
       route = compacted;
@@ -2272,7 +2193,7 @@ async function handleResponses(request, response, requestUrl) {
         controller.signal,
       );
       searchContract = routedSearchContract(searchSnapshot, normalizedInput);
-      const built = await prepareRoutedRequest({
+      const built = await buildRoutedRequest({
         request,
         payload,
         route,
@@ -2341,10 +2262,8 @@ async function handleResponses(request, response, requestUrl) {
     // attempt replays the identical bytes under the identical encoding. Nothing
     // here consumes a stream, which is what makes the request replayable at
     // all.
-    // The selected route is subject to the same immutable built-bytes and
-    // live capability contract as every fallback. This catches unsupported
-    // search history and sidecar changes after normalization before any
-    // provider-bound bytes leave the router.
+    // Confirm that the built request still matches the selected route before
+    // sending provider-bound bytes.
     if (route && !switchyard) {
       assertRoutedSearchContract(route, builtSearchMode, searchContract);
     }
@@ -2563,12 +2482,8 @@ async function handleResponses(request, response, requestUrl) {
       // the retry supplies the only head, response id, sequence space,
       // reasoning, and output the client ever receives.
       let upstream2;
-      // The held first response creates another asynchronous boundary: a
-      // sidecar can be disabled or lose its credential while that stream is
-      // being classified. Revalidate immediately before replaying the exact
-      // bytes so the repair path cannot outlive the contract they encode. The
-      // discarded attempt's staged headers are no longer authoritative even
-      // when this check fails and the router writes its own local response.
+      // Revalidate before replaying the exact bytes. The discarded attempt's
+      // staged headers are no longer authoritative if this check fails.
       clearStagedResponseHead(response);
       if (route) {
         assertRoutedSearchContract(route, builtSearchMode, searchContract);
@@ -2866,8 +2781,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
     let body;
     let payload;
     const searchRequest = defaultModel === "web-search";
-    // Native Codex owns its own web-search route. Routed search sidecars are
-    // not part of the reduced product.
+    // Native Codex owns its own web-search route.
     if (searchRequest) {
       const encoded = await readRequestBody(request, { signal: controller.signal });
       body = await decodeBody(encoded, request.headers["content-encoding"]);
