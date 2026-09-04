@@ -156,6 +156,11 @@ test("Switchyard's hidden Codex classifier satisfies the Responses-Lite reasonin
     "u",
   ).exec(template)?.[1];
   assert.ok(classifierTarget, `${targetName} target is missing`);
+  assert.doesNotMatch(
+    autoRoute,
+    /recent_turn_window\s*=/u,
+    "the hidden judge must use the task-only scalar input path",
+  );
   assert.match(
     classifierTarget,
     /body_overrides\s*=\s*\{[^\n]*reasoning\s*=\s*\{[^\n]*context\s*=\s*"all_turns"/u,

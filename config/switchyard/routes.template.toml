@@ -54,7 +54,10 @@ classifier_target = "luna_high"
 targets = ["luna_high", "luna_max", "sol_medium", "sol_high", "sol_xhigh"]
 default_target = "sol_medium"
 classify_trigger = "user_turn"
-recent_turn_window = 4
+# The classifier deliberately uses Switchyard's task-only view: one scalar
+# text input containing the opening request and latest textual update. A
+# conversation window replays Codex tool/relay state to the hidden judge and
+# can make it answer the conversation instead of returning its schema.
 max_output_tokens = 600
 context_window = 1050000
 tool_calling = true

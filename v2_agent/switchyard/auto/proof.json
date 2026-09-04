@@ -18,7 +18,7 @@
     "patchSha256": "d2cbf0f8221df491dfef483e17080d07409c044b9c6c61b6fa1e3a3655d727f5",
     "binarySha256": "5bf21fa1485764e566b1342538acb7793735b26ab0e4d1d1b6bf57a48b5c3556",
     "routerCommit": "",
-    "routesSha256": "8180b6a0d669dab76ed89c635b135b6f2cb344c3c0b759deff2ba24b5db42778"
+    "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },
   "checks": {
     "streaming": { "outcome": "pending" },
