@@ -307,6 +307,11 @@ async function main() {
     router,
   );
 
+  const catalogWatcher = run(
+    process.execPath,
+    [path.join(SOURCE_ROOT, "src", "catalog-auto-refresh.mjs")],
+  );
+
   console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
   // Only the gateway is supervised. The forwarders and the router are ours and
   // are restarted by rebuilding the whole service; the gateway is a third-party
@@ -316,6 +321,7 @@ async function main() {
   const result = await Promise.race([
     waitForExit(api, "API forwarder"),
     ...(switchyard ? [waitForExit(switchyard, "Switchyard")] : []),
+    waitForExit(catalogWatcher, "Catalog refresh watcher"),
     superviseGateway({
       label: "LiteLLM gateway",
       child: gateway,

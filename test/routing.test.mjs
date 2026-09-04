@@ -235,6 +235,7 @@ test("router preserves native auth and isolates every external route", async () 
 
     for (const [model, gatewayModel] of [
       ["openrouter/glm-5.3-flash", "openrouter-glm-5-3-flash"],
+      ["openrouter/glm-5.3-flash-gmicloud", "openrouter-glm-5-3-flash-gmicloud"],
     ]) {
       const response = await fetch(`${routerBase(routerPort)}/responses`, {
         method: "POST",
@@ -686,7 +687,135 @@ test("Switchyard preserves native requests and leaves compaction on the native b
   }
 });
 
-test("OpenRouter GLM replays completed search history without enabling hosted search", async () => {
+test("OpenRouter GLM sends fresh hosted search through the direct Responses hop", async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "openrouter-hosted-search-router-"));
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
+  );
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 500, { error: { message: "hosted search must bypass LiteLLM" } });
+  });
+  const apiRequests = [];
+  const api = await mockServer(async (request, response) => {
+    if (request.method === "GET") {
+      json(response, 200, { ok: true, credential_present: true });
+      return;
+    }
+    apiRequests.push({ headers: request.headers, body: await bodyJson(request) });
+    json(response, 200, {
+      id: "resp_hosted_search",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "openrouter:web_search",
+          id: "ws_live",
+          status: "completed",
+          action: {
+            type: "search",
+            query: "current docs",
+            sources: [{ type: "url", url: "https://openrouter.ai/docs" }],
+          },
+        },
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{
+            type: "output_text",
+            text: "Current.",
+            annotations: [{ type: "url_citation", url: "https://openrouter.ai/docs" }],
+          }],
+        },
+      ],
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        total_tokens: 15,
+        server_tool_use_details: { web_search_requests: 1 },
+      },
+    });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    CODEX_ROUTER_SHOW_ALL_MODELS: "0",
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${api.port}/v1`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${api.port}/health`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/glm-5.3-flash",
+        stream: false,
+        input: [
+          {
+            type: "web_search_call",
+            id: "ws_previous",
+            status: "completed",
+            action: { type: "search", query: "previous docs" },
+          },
+          { type: "message", role: "user", content: "Refresh it." },
+        ],
+        tools: [
+          { type: "web_search", search_context_size: "medium" },
+          { type: "function", name: "web_search", parameters: { type: "object" } },
+        ],
+        tool_choice: { type: "web_search" },
+        include: ["web_search_call.action.sources", "reasoning.encrypted_content"],
+      }),
+    });
+    const bodyText = await response.text();
+    assert.equal(response.status, 200, bodyText);
+    const body = JSON.parse(bodyText);
+    assert.equal(gatewayRequests.length, 0);
+    assert.equal(apiRequests.length, 1);
+    assert.equal(apiRequests[0].headers.authorization, `Bearer ${INTERNAL_KEY}`);
+    assert.equal(apiRequests[0].body.input[0].type, "openrouter:web_search");
+    assert.equal(apiRequests[0].body.tool_choice.type, "openrouter:web_search");
+    const serverSearch = apiRequests[0].body.tools.find(
+      (tool) => tool.type === "openrouter:web_search",
+    );
+    assert.deepEqual(serverSearch.parameters, {
+      engine: "exa",
+      mode: "fast",
+      max_results: 5,
+      max_total_results: 15,
+      max_uses: 3,
+      search_context_size: "medium",
+    });
+    assert.ok(apiRequests[0].body.tools.some(
+      (tool) => tool.type === "function" && tool.name === "web_search",
+    ));
+    assert.deepEqual(apiRequests[0].body.include, ["reasoning.encrypted_content"]);
+    assert.equal(apiRequests[0].body.max_tool_calls, 3);
+    assert.equal(body.output[0].type, "web_search_call");
+    assert.deepEqual(body.output[0].action.sources, [
+      { type: "url", url: "https://openrouter.ai/docs" },
+    ]);
+    assert.deepEqual(body.output[1].content[0].annotations, [
+      { type: "url_citation", url: "https://openrouter.ai/docs" },
+    ]);
+    assert.equal(body.usage.server_tool_use_details.web_search_requests, 1);
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(gateway.server), closeServer(api.server)]);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("OpenRouter GLM replays completed search history through the ordinary route", async () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-search-history-"));
   const stateDir = path.join(testRoot, "state");
   mkdirSync(stateDir, { recursive: true });

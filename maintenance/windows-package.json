@@ -3,6 +3,7 @@
   "description": "Files installed by the Windows Codex Router deployment transaction.",
   "files": [
     "config/openrouter/glm-5.3-flash.json",
+    "config/openrouter/glm-5.3-flash-gmicloud.json",
     "config/openrouter/openrouter.json",
     "config/switchyard/auto.json",
     "config/switchyard/patches/switchyard-codex-compat.patch",
@@ -33,6 +34,7 @@
     "src/caller-key-rotation-lock.mjs",
     "src/caller-key-rotation.mjs",
     "src/caller-key.mjs",
+    "src/catalog-auto-refresh.mjs",
     "src/catalog-publication-lock.mjs",
     "src/catalog.mjs",
     "src/chat-tool-surface.mjs",
@@ -69,6 +71,7 @@
     "src/native-catalog-source.mjs",
     "src/native-request-compat.mjs",
     "src/openai-endpoint-policy.mjs",
+    "src/openrouter-hosted-search.mjs",
     "src/paths.mjs",
     "src/process-identity.mjs",
     "src/provider-credentials.mjs",

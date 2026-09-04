@@ -18,7 +18,12 @@ import {
   NATIVE_CATALOG_PATH,
   PORTS,
 } from "./paths.mjs";
-import { codexAuthStatus, codexVersion, runCodex } from "./codex-binary.mjs";
+import {
+  codexAuthStatus,
+  codexVersion,
+  findCodexBinary,
+  runCodex,
+} from "./codex-binary.mjs";
 import { syncRoutedCodexAgents } from "./codex-agent-catalog.mjs";
 import {
   applyMultiAgentCapabilities,
@@ -29,6 +34,7 @@ import { modelPickerSnapshot, readHiddenModels, seedModelsHidden } from "./model
 import { assertStateOwnership } from "./state-owner.mjs";
 import { scanTomlDocument, tomlStringValue } from "./toml-structure.mjs";
 import {
+  catalogPathsEqual,
   readNativeCatalogFile,
   readNativeCatalogSource,
 } from "./native-catalog-source.mjs";
@@ -44,6 +50,7 @@ import {
 } from "./routed-models.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
+const refreshIfStale = process.argv.includes("--refresh-if-stale");
 
 function validNativeCatalog(parsed) {
   return parsed && Array.isArray(parsed.models) && parsed.models.length > 0;
@@ -278,9 +285,11 @@ function captureNative(source = {}) {
     );
   }
   const capturedWith = codexVersion();
+  const capturedFrom = findCodexBinary();
   const sourceFingerprint = source.fingerprint;
   atomicJson(NATIVE_CATALOG_PATH, {
     ...(capturedWith ? { captured_with: capturedWith } : {}),
+    ...(capturedFrom ? { captured_from: capturedFrom } : {}),
     ...(sourceFingerprint ? { native_source_fingerprint: sourceFingerprint } : {}),
     models: parsed.models,
   });
@@ -296,11 +305,18 @@ function nativeCatalogIsReusable(
   parsed,
   currentVersion,
   currentSourceFingerprint = undefined,
+  currentBinary = undefined,
 ) {
   if (!parsed || !Array.isArray(parsed.models) || parsed.models.length === 0) {
     return false;
   }
   if (currentVersion && parsed.captured_with !== currentVersion) return false;
+  if (
+    currentBinary &&
+    (!parsed.captured_from || !catalogPathsEqual(parsed.captured_from, currentBinary))
+  ) {
+    return false;
+  }
   if (
     currentSourceFingerprint &&
     parsed.native_source_fingerprint !== currentSourceFingerprint
@@ -308,6 +324,32 @@ function nativeCatalogIsReusable(
     return false;
   }
   return true;
+}
+
+export function nativeCatalogRefreshNeeded({
+  catalogPath = NATIVE_CATALOG_PATH,
+  source = readNativeCatalogSource(),
+  currentVersion = codexVersion(),
+  currentBinary = findCodexBinary(),
+} = {}) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(catalogPath, "utf8"));
+  } catch {
+    return true;
+  }
+  let sourceFingerprint;
+  if (source) {
+    const sourceCatalog = readNativeCatalogFile(source.path);
+    if (!sourceCatalog) return true;
+    sourceFingerprint = nativeCatalogFingerprint(sourceCatalog);
+  }
+  return !nativeCatalogIsReusable(
+    parsed,
+    currentVersion,
+    sourceFingerprint,
+    currentBinary,
+  );
 }
 
 export function nativeCatalog({ refreshNative = refresh } = {}) {
@@ -322,7 +364,12 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
     const fingerprint = nativeCatalogFingerprint(catalog);
     if (!refreshNative && existsSync(NATIVE_CATALOG_PATH)) {
       const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
-      if (nativeCatalogIsReusable(parsed, codexVersion(), fingerprint)) {
+      if (nativeCatalogIsReusable(
+        parsed,
+        codexVersion(),
+        fingerprint,
+        findCodexBinary(),
+      )) {
         return parsed;
       }
     }
@@ -333,7 +380,12 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
   }
   if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative();
   const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
-  if (nativeCatalogIsReusable(parsed, codexVersion())) {
+  if (nativeCatalogIsReusable(
+    parsed,
+    codexVersion(),
+    undefined,
+    findCodexBinary(),
+  )) {
     return parsed;
   }
   try {
@@ -613,7 +665,7 @@ export function routedModel(
     // absent declaration remains the conservative default.
     supports_search_tool: nativeRequestProfile
       ? behaviorTemplate.supports_search_tool === true
-      : false,
+      : model.searchTool?.mode === "hosted",
     supports_image_detail_original: nativeRequestProfile
       ? behaviorTemplate.supports_image_detail_original === true
       : model.supportsImageDetailOriginal === true,
@@ -943,11 +995,20 @@ export function applyPickerVisibility(
   });
 }
 
-function publishCatalog({ refreshNative = refresh, output = true } = {}) {
+function publishCatalog({
+  refreshNative = refresh,
+  onlyIfStale = refreshIfStale,
+  output = true,
+} = {}) {
   // The catalog is what Codex offers in its picker. Writing it from a checkout
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
+  if (onlyIfStale && !nativeCatalogRefreshNeeded()) {
+    const result = { changed: false, reason: "native_catalog_current" };
+    if (output) process.stdout.write(`${JSON.stringify(result)}\n`);
+    return result;
+  }
   const userSlugs = new Set();
   const selectedModels = LISTED_MODELS;
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
@@ -1079,6 +1140,7 @@ function publishCatalog({ refreshNative = refresh, output = true } = {}) {
     throw error;
   }
   const result = {
+    changed: true,
     path: MERGED_CATALOG_PATH,
     models: merged.length,
     routed_models: routedModels.length,
@@ -1102,7 +1164,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // The lock begins before the first ownership or mutable-state read and is
     // released only after probes and the coupled catalog-file transaction are
     // complete. Every app/CLI/autonomous caller executes this same entrypoint.
-    await withCatalogPublicationLock(() => publishCatalog());
+    await withCatalogPublicationLock(() => publishCatalog({
+      refreshNative: refresh || refreshIfStale,
+    }));
   } catch (error) {
     // Ownership conflicts are an operator mistake with a specific remedy, so
     // print the guidance rather than a stack trace.

@@ -21,7 +21,7 @@ async function diagnose() {
   const auth = codexAuthStatus();
   add(auth.authenticated ? "ok" : "warn", "Native Codex authentication", auth.authenticated ? "signed in" : auth.reason || "not signed in");
 
-  const openRouter = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+  const openRouterRoutes = [...MODEL_BY_SLUG.values()].filter((model) => model.provider === "openrouter");
   const credential = resolveProviderCredential("openrouter", { persistent: true });
   const credentialPath = primaryCredentialPath(PROVIDERS.get("openrouter"));
   const protectedCredential = credential?.value && existsSync(credentialPath)
@@ -34,13 +34,14 @@ async function diagnose() {
     "Run .\\model-router.ps1 provider-key openrouter set.",
   );
 
-  const policy = openRouter.openRouterProviderPolicy;
-  const endpoint = policy.only[0];
-  add(
-    "ok",
-    "OpenRouter provider policy",
-    `${endpoint}; exact endpoint; fallback disabled`,
-  );
+  for (const route of openRouterRoutes) {
+    const policy = route.openRouterProviderPolicy;
+    add(
+      "ok",
+      `OpenRouter provider policy (${route.slug})`,
+      `${policy.only[0]}; exact endpoint; fallback disabled`,
+    );
+  }
 
   const switchyard = switchyardRuntimeStatus();
   add(

@@ -59,6 +59,7 @@ test("checked-in routed config contains only GLM and Switchyard", () => {
   };
   walk(path.join(root, "config"));
   assert.deepEqual(jsonFiles.sort(), [
+    "config/openrouter/glm-5.3-flash-gmicloud.json",
     "config/openrouter/glm-5.3-flash.json",
     "config/openrouter/openrouter.json",
     "config/switchyard/auto.json",
@@ -66,13 +67,14 @@ test("checked-in routed config contains only GLM and Switchyard", () => {
   ]);
 });
 
-test("LiteLLM owns only the OpenRouter GLM hop", () => {
+test("LiteLLM config owns only the ordinary OpenRouter GLM hop", () => {
   const config = renderLiteLlmConfig();
   assert.match(config, /openrouter-glm-5-3-flash/u);
+  assert.match(config, /openrouter-glm-5-3-flash-gmicloud/u);
   assert.doesNotMatch(config, /switchyard|fallback|failover/u);
 });
 
-test("OpenRouter hop applies the selected endpoint contract and rejects search", async () => {
+test("OpenRouter hop applies the selected endpoint contract and accepts only translated search", async () => {
   const state = mkdtempSync(path.join(os.tmpdir(), "router-lite-provider-"));
   writeFileSync(path.join(state, "openrouter-api-key.secret"), "TEST_OPENROUTER_KEY\n", { mode: 0o600 });
   const seen = [];
@@ -80,7 +82,7 @@ test("OpenRouter hop applies the selected endpoint contract and rejects search",
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    seen.push({ headers: request.headers, body });
+    seen.push({ url: request.url, headers: request.headers, body });
     if (body.parallel_tool_calls !== undefined) {
       json(response, 404, {
         error: { message: "No endpoints found that can handle the requested parameters." },
@@ -167,6 +169,26 @@ test("OpenRouter hop applies the selected endpoint contract and rejects search",
     assert.equal(seen[1].body.tools, undefined);
     assert.equal(seen[1].body.tool_choice, undefined);
 
+    const gmiCloud = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash-gmicloud",
+        parallel_tool_calls: true,
+        tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+        tool_choice: "auto",
+      }),
+    });
+    assert.equal(gmiCloud.status, 200, await gmiCloud.text());
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2].body.parallel_tool_calls, undefined);
+    assert.deepEqual(seen[2].body.provider, {
+      order: ["gmicloud"],
+      only: ["gmicloud"],
+      allow_fallbacks: false,
+      require_parameters: true,
+    });
+
     const rejected = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
@@ -176,7 +198,58 @@ test("OpenRouter hop applies the selected endpoint contract and rejects search",
       }),
     });
     assert.equal(rejected.status, 400);
-    assert.equal(seen.length, 2, "unsupported search reached OpenRouter");
+    assert.equal(seen.length, 3, "unsupported search reached OpenRouter");
+
+    const hosted = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash",
+        input: "Current documentation",
+        tools: [{
+          type: "openrouter:web_search",
+          parameters: {
+            engine: "exa",
+            mode: "fast",
+            max_results: 5,
+            max_total_results: 15,
+            max_uses: 3,
+          },
+        }],
+        max_tool_calls: 3,
+      }),
+    });
+    assert.equal(hosted.status, 200, await hosted.text());
+    assert.equal(seen.length, 4);
+    assert.equal(seen[3].url, "/v1/responses");
+    assert.equal(seen[3].body.tools[0].type, "openrouter:web_search");
+    assert.deepEqual(seen[3].body.provider, {
+      order: ["novita"],
+      only: ["novita"],
+      allow_fallbacks: false,
+      require_parameters: true,
+    });
+
+    const overLimit = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter-glm-5-3-flash",
+        tools: [{
+          type: "openrouter:web_search",
+          parameters: {
+            engine: "exa",
+            mode: "fast",
+            max_results: 6,
+            max_total_results: 15,
+            max_uses: 3,
+          },
+        }],
+        max_tool_calls: 3,
+      }),
+    });
+    assert.equal(overLimit.status, 400);
+    assert.equal(seen.length, 4, "an unbounded hosted-search request reached OpenRouter");
   } finally {
     await stop(child);
     await new Promise((resolve) => upstream.instance.close(resolve));

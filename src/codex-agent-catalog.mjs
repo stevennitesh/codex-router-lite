@@ -79,12 +79,22 @@ function routedAgentDefinition(model) {
   const fileStem = `router-model-${safeIdentifier(slug, "-")}`;
   const agentName = `router_${safeIdentifier(slug, "_")}`;
   const displayName = String(model.displayName || model.display_name || slug).trim();
+  const defaultEffort = String(model.defaultEffort || "").trim();
+  const supportedEfforts = new Set(
+    (Array.isArray(model.reasoningLevels) ? model.reasoningLevels : [])
+      .map((level) => String(level?.effort || "").trim())
+      .filter(Boolean),
+  );
+  if (!defaultEffort || !supportedEfforts.has(defaultEffort)) {
+    throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`);
+  }
   const contents = [
     "# Managed by Codex Router. Refresh the model catalog to update this file.",
     `name = ${tomlString(agentName)}`,
     `description = ${tomlString(`${displayName} agent routed through an authenticated Codex Router provider.`)}`,
     'model_provider = "codex-router"',
     `model = ${tomlString(slug)}`,
+    `model_reasoning_effort = ${tomlString(defaultEffort)}`,
     "",
     'developer_instructions = """',
     "Complete the bounded task assigned by the parent agent.",

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
 import { LITELLM_CONFIG_PATH } from "./paths.mjs";
-import { MODEL_BY_SLUG } from "./routed-models.mjs";
+import { CHECKED_IN_MODELS } from "./routed-models.mjs";
 import { assertStateOwnership } from "./state-owner.mjs";
 
 function yamlString(value) {
@@ -11,17 +11,19 @@ function yamlString(value) {
 }
 
 export function renderLiteLlmConfig() {
-  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+  const models = CHECKED_IN_MODELS.filter((model) => model.provider === "openrouter");
   const lines = ["model_list:"];
-  lines.push(
-    `  - model_name: ${yamlString(model.gatewayModel)}`,
-    "    litellm_params:",
-    `      model: ${yamlString(`openai/${model.gatewayModel}`)}`,
-    '      api_base: "os.environ/CODEX_ROUTER_API_FORWARD_BASE_URL"',
-    '      api_key: "os.environ/CODEX_ROUTER_INTERNAL_KEY"',
-    "      use_chat_completions_api: true",
-    "",
-  );
+  for (const model of models) {
+    lines.push(
+      `  - model_name: ${yamlString(model.gatewayModel)}`,
+      "    litellm_params:",
+      `      model: ${yamlString(`openai/${model.gatewayModel}`)}`,
+      '      api_base: "os.environ/CODEX_ROUTER_API_FORWARD_BASE_URL"',
+      '      api_key: "os.environ/CODEX_ROUTER_INTERNAL_KEY"',
+      "      use_chat_completions_api: true",
+      "",
+    );
+  }
   lines.push(
     "litellm_settings:",
     "  drop_params: true",
@@ -54,5 +56,6 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = writeLiteLlmConfig();
-  process.stdout.write(`${JSON.stringify({ path: target, models: 1 })}\n`);
+  const models = CHECKED_IN_MODELS.filter((model) => model.provider === "openrouter").length;
+  process.stdout.write(`${JSON.stringify({ path: target, models })}\n`);
 }

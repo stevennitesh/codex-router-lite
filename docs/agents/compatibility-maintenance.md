@@ -76,6 +76,14 @@ The four routed JSON files under `config/openrouter` and `config/switchyard` own
 
 Native GPT entries come from the installed Codex catalog. Preserve unfamiliar fields generically. Never replace the native catalog with a copied list.
 
+The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
+a separate watcher process. The freshness identity is the resolved Codex
+binary path, its reported version, and the content fingerprint of an adopted
+native catalog when one exists. Publication uses the normal state-ownership
+guard, catalog lock, and rollback path. A failed refresh leaves Router serving
+and retries on the next interval. The watcher does not override native
+`visibility` or inspect undocumented account caches.
+
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 
 `src/codex-app-tools.mjs` is the captured app-function definition set. Routed tools are flattened for the model and restored to native namespaces before app execution. When Codex changes the tool set, capture it from an ordinary Windows app turn, update the paired Codex build and snapshot, then test a routed round trip.
@@ -84,11 +92,19 @@ The scheduled-task launcher, arguments, source root, ACL, generation, and runnin
 
 ## OpenRouter GLM-5.3-Flash
 
-The only OpenRouter route is `openrouter/glm-5.3-flash`, upstream `z-ai/glm-5.3-flash`. Its route record selects one endpoint with fallback disabled and records endpoint-specific request compatibility. NovitaAI is the checked-in certified endpoint, not a code-level requirement. To select another endpoint, update `order`, `only`, and the endpoint compatibility flags together, then refresh exact-route proof before publishing v2.
+Both OpenRouter routes use upstream `z-ai/glm-5.3-flash`. The canonical
+`openrouter/glm-5.3-flash` route is pinned to Novita. The explicit
+`openrouter/glm-5.3-flash-gmicloud` route is pinned to GMICloud. Each route
+selects one endpoint with fallback disabled and owns its endpoint compatibility
+flags and v2 proof. Do not turn the two records into an ordered fallback list.
+To add or replace an endpoint, create or update one exact route, then refresh
+that route's proof before publishing v2.
 
-The route uses LiteLLM to translate Codex Responses traffic. `src/zai-responses-compat.mjs` repairs the observed missing message envelope and closes assistant text before an overlapping tool-call lifecycle for this exact route. Keep repairs scoped to the owner that exhibits the defect.
+Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic. `src/zai-responses-compat.mjs` repairs the observed missing message envelope and closes assistant text before an overlapping tool-call lifecycle for this exact route. Keep repairs scoped to the owner that exhibits the defect.
 
-Completed `web_search_call` items may be replayed as input history through this route. That capability does not advertise or enable new hosted-search execution: fresh hosted-search tools and options remain unsupported and must stay rejected at the OpenRouter hop.
+Fresh hosted-search turns bypass the Chat Completions translation and use the internal OpenRouter forwarder's direct Responses path. `src/openrouter-hosted-search.mjs` maps only native `web_search` and `web_search_preview` tools to the bounded `openrouter:web_search` server tool, restores returned items to `web_search_call`, preserves citations and sources, and reverses completed search history on another direct-search turn. A plain function named `web_search` is unrelated and must remain unchanged. Keep the checked-in Exa engine, result and call limits, exact endpoint policy, and fallback prohibition together. OpenRouter reports live search usage under `server_tool_use_details`; tolerate the documented `server_tool_use` spelling in diagnostics, but never infer zero from an absent field.
+
+After a hosted-search change, test non-streaming output, split SSE item and terminal events, exact completed-history replay, citation/source preservation, mixed ordinary tools, and the internal forwarder's fail-closed bounds. A direct OpenRouter success is still not Windows Codex compatibility proof; deployment acceptance requires one ordinary app search turn and must treat a provider 429 as capacity rather than a schema failure.
 
 For a compatibility failure, preserve a sanitized event sequence and identify the first divergence among Codex, Router, LiteLLM, OpenRouter, the selected endpoint, and the model. Reproduce through an ordinary Codex caller. A direct endpoint success is not Codex compatibility proof.
 

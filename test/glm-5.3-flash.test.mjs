@@ -12,22 +12,39 @@ process.env.MODEL_ROUTER_STATE_DIR = path.join(testRoot, "state");
 
 const { MODEL_BY_SLUG, validateOpenRouterRoute } = await import("../src/routed-models.mjs");
 
-test("OpenRouter GLM owns its Codex prompt and selected endpoint policy", () => {
-  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+function assertGlmContract(slug, endpoint, multiAgentVersion) {
+  const model = MODEL_BY_SLUG.get(slug);
   assert.equal(model.behaviorTemplate, "gpt-5.6-sol");
   assert.equal(model.instructionProfile, "glm-5.3-flash-codex");
   assert.equal(model.supportsParallelToolCalls, undefined);
   assert.equal(model.supportsSearchHistory, true);
-  assert.equal(model.multiAgentVersion, "v2");
+  assert.deepEqual(model.searchTool, {
+    mode: "hosted",
+    serverType: "openrouter:web_search",
+    parameters: {
+      engine: "exa",
+      mode: "fast",
+      max_results: 5,
+      max_total_results: 15,
+      max_uses: 3,
+    },
+    maxToolCalls: 3,
+  });
+  assert.equal(model.multiAgentVersion, multiAgentVersion);
   assert.deepEqual(model.openRouterProviderPolicy, {
-    order: ["novita"],
-    only: ["novita"],
+    order: [endpoint],
+    only: [endpoint],
     allow_fallbacks: false,
     require_parameters: true,
   });
   assert.deepEqual(model.openRouterEndpointCompatibility, {
     dropParallelToolCalls: true,
   });
+}
+
+test("OpenRouter GLM routes own their exact endpoint contracts", () => {
+  assertGlmContract("openrouter/glm-5.3-flash", "novita", "v2");
+  assertGlmContract("openrouter/glm-5.3-flash-gmicloud", "gmicloud", "v2");
 });
 
 test("OpenRouter GLM accepts any one explicitly selected endpoint", () => {
@@ -58,5 +75,15 @@ test("OpenRouter GLM refuses unbounded or ambiguous endpoint routing", () => {
   assert.throws(
     () => validateOpenRouterRoute({ ...model, supportsSearchHistory: false }),
     /search-history replay/u,
+  );
+  assert.throws(
+    () => validateOpenRouterRoute({
+      ...model,
+      searchTool: {
+        ...model.searchTool,
+        parameters: { ...model.searchTool.parameters, max_uses: 30 },
+      },
+    }),
+    /bounded hosted search/u,
   );
 });

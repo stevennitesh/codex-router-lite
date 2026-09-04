@@ -20,9 +20,19 @@ node scripts/check-codex-catalog-compat.mjs <codex-executable>
 
 The installed build owns native models. Do not repair drift by copying a catalog from another version.
 
+The managed service checks for native catalog authority changes every five
+minutes and republishes only when one changed. A model whose native entry still
+has `visibility: "hide"` remains absent by design. Automatic refresh cannot
+turn a staged account rollout into an entitlement or infer it from private app
+caches.
+
 ## GLM fails
 
-Confirm the selected slug is `openrouter/glm-5.3-flash`, the OpenRouter key is present, and doctor names the intended endpoint. Preserve a sanitized response event order. Separate Router, LiteLLM, OpenRouter, the selected endpoint, and model failures before editing.
+Confirm the selected slug is `openrouter/glm-5.3-flash` for Novita or
+`openrouter/glm-5.3-flash-gmicloud` for GMICloud. Check that the OpenRouter key
+is present and Doctor names both exact endpoint policies. Preserve a sanitized
+response event order. Separate Router, LiteLLM, OpenRouter, the selected
+endpoint, and model failures before editing.
 
 Do not turn on fallback or select an unproved provider to hide an endpoint failure.
 

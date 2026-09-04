@@ -7,10 +7,14 @@ A route is spawnable only when its published model has `multiAgentVersion: "v2"`
 Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
-The current v2 routes are `openrouter/glm-5.3-flash` and `switchyard/auto`.
-Each has a checked-in accepted application for its exact route. Switchyard's
-application is additionally bound to its deployed source, patch, binary,
-generated routes, and Router commit.
+The accepted v2 routes are `openrouter/glm-5.3-flash`,
+`openrouter/glm-5.3-flash-gmicloud`, and `switchyard/auto`. Switchyard's
+application is also bound to its deployed source, patch, binary, generated
+routes, and Router commit.
+
+Generated routed-agent definitions pin each route's checked-in default effort.
+Do not inherit an unsupported parent effort into a routed child: Codex rejects
+that spawn before the request reaches the Router or provider.
 
 ## Required checks
 
@@ -32,6 +36,21 @@ declaration without an accepted exact-route application.
 
 Catalog publication exposes only exact eligible routes. Runtime observations
 are diagnostics; they do not create or revoke certification.
+
+## Certifying a new exact route
+
+Use a native Codex parent task whose current collaboration schema offers the
+candidate's generated `router_<provider>_<model>` agent type. Refresh the
+catalog and open a fresh parent task if the role was added after that task
+started. Spawn the role through native collaboration, record the first marker,
+then send the second marker to that same child. Do not substitute
+`codex_app.create_thread`: a separate app task is not the encrypted child relay
+being certified.
+
+The route may be published as v2 only for the authorized proof window. Keep its
+application draft until all five checks pass; accept the proof and registry
+claim together, then require `npm run check` to return green. If the native run
+does not complete, restore the route to v1 rather than committing a red gate.
 
 ## When to refresh proof
 

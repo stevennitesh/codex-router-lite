@@ -30,6 +30,7 @@ function Read-Git([string[]]$Arguments) {
 function Show-RouterUpstreamAnalysis([string]$Baseline, [string]$RemoteRef) {
   $watchedPaths = @(
     "config/openrouter/glm-5.3-flash.json",
+    "config/openrouter/glm-5.3-flash-gmicloud.json",
     "src/api-forwarder.mjs",
     "src/catalog.mjs",
     "src/codex-account-usage.mjs",
@@ -58,7 +59,7 @@ function Show-RouterUpstreamAnalysis([string]$Baseline, [string]$RemoteRef) {
     "Responses and tool lifecycle" = '^src/(?:api-forwarder|router|compaction-checkpoint|item-lifecycle-normalizer|namespace-relay|openai-adapters|error-translation|reasoning-tag-stripper|responses-websocket|target-integration)\.mjs$'
     "Native catalog and authentication" = '^src/(?:catalog|codex-account-usage|model-registry|file-security)\.mjs$'
     "Windows service" = '^src/service-windows\.mjs$'
-    "GLM and routed models" = '^(?:config/openrouter/glm-5\.3-flash\.json|test/glm-5\.3-flash\.test\.mjs|src/(?:rate-limit-headers|search-capability)\.mjs)$'
+    "GLM and routed models" = '^(?:config/openrouter/glm-5\.3-flash(?:-gmicloud)?\.json|test/glm-5\.3-flash\.test\.mjs|src/(?:rate-limit-headers|search-capability)\.mjs)$'
   }
   foreach ($entry in $groups.GetEnumerator()) {
     $matches = @($changed | Where-Object { $_ -match $entry.Value })

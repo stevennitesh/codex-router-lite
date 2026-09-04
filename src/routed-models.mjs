@@ -6,13 +6,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_FILES = Object.freeze([
   "config/openrouter/openrouter.json",
   "config/openrouter/glm-5.3-flash.json",
+  "config/openrouter/glm-5.3-flash-gmicloud.json",
   "config/switchyard/switchyard.json",
   "config/switchyard/auto.json",
 ]);
 const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
-const EXPECTED_MODELS = new Set(["openrouter/glm-5.3-flash", "switchyard/auto"]);
+const EXPECTED_MODELS = new Set([
+  "openrouter/glm-5.3-flash",
+  "openrouter/glm-5.3-flash-gmicloud",
+  "switchyard/auto",
+]);
 const EXPECTED_REQUEST_PROFILES = new Map([
   ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
+  ["openrouter/glm-5.3-flash-gmicloud", "glm-5.3-flash"],
   ["switchyard/auto", "switchyard-native"],
 ]);
 const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/u;
@@ -28,14 +34,9 @@ function exactIds(records, expected, label) {
   }
 }
 
-const providerRecords = [
-  ...load(CONFIG_FILES[0]).providers,
-  ...load(CONFIG_FILES[2]).providers,
-];
-const modelRecords = [
-  ...load(CONFIG_FILES[1]).models,
-  ...load(CONFIG_FILES[3]).models,
-];
+const records = CONFIG_FILES.map(load);
+const providerRecords = records.flatMap((record) => record.providers || []);
+const modelRecords = records.flatMap((record) => record.models || []);
 
 exactIds(providerRecords, EXPECTED_PROVIDERS, "Routed providers");
 exactIds(modelRecords, EXPECTED_MODELS, "Routed models");
@@ -54,16 +55,40 @@ export function validateOpenRouterRoute(model) {
   const order = Array.isArray(policy?.order) ? policy.order : [];
   const only = Array.isArray(policy?.only) ? policy.only : [];
   const oneEndpoint = order.length === 1 && only.length === 1 && order[0] === only[0];
+  const search = model?.searchTool;
+  const searchParameters = search?.parameters;
+  const validSearch =
+    search?.mode === "hosted" &&
+    search?.serverType === "openrouter:web_search" &&
+    Number.isInteger(search?.maxToolCalls) &&
+    search.maxToolCalls > 0 &&
+    search.maxToolCalls <= 3 &&
+    searchParameters?.engine === "exa" &&
+    searchParameters?.mode === "fast" &&
+    Number.isInteger(searchParameters?.max_results) &&
+    searchParameters.max_results > 0 &&
+    searchParameters.max_results <= 10 &&
+    Number.isInteger(searchParameters?.max_total_results) &&
+    searchParameters.max_total_results >= searchParameters.max_results &&
+    searchParameters.max_total_results <= 30 &&
+    Number.isInteger(searchParameters?.max_uses) &&
+    searchParameters.max_uses > 0 &&
+    searchParameters.max_uses <= 3 &&
+    Object.keys(search).every((key) =>
+      ["mode", "serverType", "parameters", "maxToolCalls"].includes(key)) &&
+    Object.keys(searchParameters || {}).every((key) =>
+      ["engine", "mode", "max_results", "max_total_results", "max_uses"].includes(key));
   if (
     model?.upstreamModel !== "z-ai/glm-5.3-flash" ||
     !oneEndpoint ||
     !OPENROUTER_PROVIDER_ID.test(String(only[0] || "")) ||
     policy?.allow_fallbacks !== false ||
     policy?.require_parameters !== true ||
-    model?.supportsSearchHistory !== true
+    model?.supportsSearchHistory !== true ||
+    !validSearch
   ) {
     throw new Error(
-      "OpenRouter GLM-5.3-Flash must select one endpoint provider with fallback disabled, parameter support required, and completed search-history replay enabled.",
+      "OpenRouter GLM-5.3-Flash must select one endpoint provider with fallback disabled, parameter support required, bounded hosted search, and completed search-history replay.",
     );
   }
   const endpointCompatibility = model.openRouterEndpointCompatibility;
@@ -79,9 +104,9 @@ export function validateOpenRouterRoute(model) {
   return model;
 }
 
-const openRouter = validateOpenRouterRoute(
-  modelRecords.find((model) => model.slug === "openrouter/glm-5.3-flash"),
-);
+for (const model of modelRecords.filter((candidate) => candidate.provider === "openrouter")) {
+  validateOpenRouterRoute(model);
+}
 
 export const PROVIDERS = new Map(providerRecords.map((provider) => [provider.id, Object.freeze(provider)]));
 export const CHECKED_IN_MODELS = Object.freeze(modelRecords.map((model) => Object.freeze(model)));

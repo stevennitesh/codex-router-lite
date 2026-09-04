@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { commandOnPath, spawnableCommand } from "./spawnable-command.mjs";
@@ -100,17 +100,36 @@ function codexBinaryVersion(binary) {
   }
 }
 
-function newestCodexBinary(candidatePaths, versionFor = codexBinaryVersion) {
+function modifiedMs(candidate) {
+  try {
+    return statSync(candidate).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+export function newestCodexBinary(
+  candidatePaths,
+  versionFor = codexBinaryVersion,
+  modifiedFor = modifiedMs,
+) {
   const existing = [...new Set(candidatePaths)]
     .filter((candidate) => candidate && existsSync(candidate));
   if (existing.length === 0) return undefined;
   let selected = existing[0];
   let selectedVersion = versionFor(selected);
+  let selectedModifiedMs = modifiedFor(selected);
   for (const candidate of existing.slice(1)) {
     const candidateVersion = versionFor(candidate);
-    if (compareCodexVersions(candidateVersion, selectedVersion) > 0) {
+    const versionOrder = compareCodexVersions(candidateVersion, selectedVersion);
+    const candidateModifiedMs = modifiedFor(candidate);
+    if (
+      versionOrder > 0 ||
+      (versionOrder === 0 && candidateModifiedMs > selectedModifiedMs)
+    ) {
       selected = candidate;
       selectedVersion = candidateVersion;
+      selectedModifiedMs = candidateModifiedMs;
     }
   }
   return selected;

@@ -77,6 +77,10 @@ import {
 } from "./empty-completion-guard.mjs";
 import { zaiResponsesCompatTransform } from "./zai-responses-compat.mjs";
 import {
+  OpenRouterHostedSearchTransform,
+  prepareOpenRouterHostedSearchRequest,
+} from "./openrouter-hosted-search.mjs";
+import {
   MERGED_CATALOG_PATH,
   NATIVE_CATALOG_PATH,
   PORTS,
@@ -2034,10 +2038,12 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
   const provider = providerForModel(route);
   const compatibleInput = normalizeProviderAppToolOutputs(normalizedInput);
   const input = Array.isArray(compatibleInput) ? [...compatibleInput] : compatibleInput;
+  const hostedSearch =
+    searchCompatibility.searchMode === "hosted" && payloadHasHostedSearchIntent(payload);
 
   // LiteLLM converts this route to Chat Completions. Preserve GLM reasoning
   // and flatten every Codex namespace so the app can execute restored calls.
-  carryReasoningThroughInput(input, { nativeThinking: true });
+  if (!hostedSearch) carryReasoningThroughInput(input, { nativeThinking: true });
   const flattened = chatProviderToolSurface(payload.tools, provider.id, {
     input,
     toolChoice: payload.tool_choice,
@@ -2061,7 +2067,7 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     routedInput = flattenNamespacedHistory(routedInput, flattenedNamespaces);
   }
 
-  const routed = {
+  let routed = {
     ...payload,
     tools,
     model: route.gatewayModel,
@@ -2075,11 +2081,13 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     routed.reasoning = { ...(routed.reasoning || {}), effort: childEffort };
   }
   delete routed.client_metadata;
+  if (hostedSearch) routed = prepareOpenRouterHostedSearchRequest(routed, route);
   return {
     body: Buffer.from(JSON.stringify(routed), "utf8"),
-    target: GATEWAY_BASE + "/responses",
+    target: (hostedSearch ? API_BASE : GATEWAY_BASE) + "/responses",
     headers: routedHeaders(),
     searchMode: searchCompatibility.searchMode,
+    hostedSearch,
     namespacesFlattened,
     flattenedNamespaces,
     pendingInterrupts: pendingInterruptTargets(input, { namespaces: flattenedNamespaces }),
@@ -2178,6 +2186,7 @@ async function handleResponses(request, response, requestUrl) {
     let routedBody;
     let builtSearchMode;
     let namespacesFlattened = false;
+    let openRouterHostedSearch = false;
     let flattenedNamespaces = new Map();
     // Normalize encrypted child payloads once before building the provider request.
     let normalizedInput;
@@ -2206,6 +2215,7 @@ async function handleResponses(request, response, requestUrl) {
       headers = built.headers;
       routedBody = built.body;
       builtSearchMode = built.searchMode;
+      openRouterHostedSearch = built.hostedSearch;
     } else {
       const native = { ...payload };
       const substitutedCaller = callerBroughtNoUpstreamCredential(request.headers, {
@@ -2360,6 +2370,9 @@ async function handleResponses(request, response, requestUrl) {
             : undefined,
       });
       const transforms = [usageObserver];
+      if (openRouterHostedSearch) {
+        transforms.push(new OpenRouterHostedSearchTransform(contentType));
+      }
       const envelopeCompat = route
         ? zaiResponsesCompatTransform(route.provider, contentType, route.slug)
         : undefined;

@@ -4,10 +4,11 @@ This repository is the source of truth for the installed Codex Router. Keep this
 file on the common path; load the detailed runbook only for the branch of work
 you are performing.
 
-The retained product is Windows Codex app and native Codex compatibility,
-`openrouter/glm-5.3-flash`, `switchyard/auto` over native Codex models, and
-exact-route subagents v2. Other clients, providers, platforms, Router UIs, and
-migration systems are outside the product and must not return.
+The retained product is Windows Codex app and native Codex compatibility, exact
+Novita and GMICloud routes for OpenRouter GLM-5.3-Flash, `switchyard/auto` over
+native Codex models, and exact-route subagents v2. Other clients, providers,
+platforms, Router UIs, and migration systems are outside the product and must
+not return.
 
 ## Before changing anything
 

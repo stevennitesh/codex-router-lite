@@ -6,7 +6,8 @@ published as subagents v2.
 The current applications are:
 
 - accepted: `openrouter/glm-5.3-flash`
-- draft: `switchyard/auto`
+- accepted: `openrouter/glm-5.3-flash-gmicloud`
+- accepted: `switchyard/auto`
 
 Create or refresh an application by copying both `_template/proof.json` and
 `_template/proof.md`. The JSON file is the machine-readable authority. The

@@ -1,6 +1,11 @@
 import { Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
+const COMPATIBLE_ROUTES = new Set([
+  "openrouter/glm-5.3-flash",
+  "openrouter/glm-5.3-flash-gmicloud",
+]);
+
 function eventBlock(block) {
   const newline = block.includes("\r\n") ? "\r\n" : "\n";
   const lines = block.split(/\r?\n/);
@@ -365,7 +370,7 @@ export class ZaiResponsesCompatTransform extends Transform {
 export function zaiResponsesCompatTransform(providerId, contentType = "", routeSlug = "") {
   if (
     String(providerId) !== "openrouter" ||
-    routeSlug !== "openrouter/glm-5.3-flash"
+    !COMPATIBLE_ROUTES.has(routeSlug)
   ) return undefined;
   if (!String(contentType).toLowerCase().includes("text/event-stream")) return undefined;
   return new ZaiResponsesCompatTransform();

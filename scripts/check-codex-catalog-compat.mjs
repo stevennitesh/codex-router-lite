@@ -46,7 +46,11 @@ function runCodex(binary, args, options = {}) {
   return result.stdout;
 }
 
-const routed = ["openrouter/glm-5.3-flash", "switchyard/auto"].map((slug) => {
+const routed = [
+  "openrouter/glm-5.3-flash",
+  "openrouter/glm-5.3-flash-gmicloud",
+  "switchyard/auto",
+].map((slug) => {
   const model = MODEL_BY_SLUG.get(slug);
   if (!model) throw new Error(`Missing checked-in route ${slug}`);
   return model;
@@ -75,7 +79,9 @@ function buildCandidate(binary, nativeOverride) {
     }),
   };
   const builtSwitchyard = catalog.models.find((model) => model.slug === "switchyard/auto");
-  const builtGlm = catalog.models.find((model) => model.slug === "openrouter/glm-5.3-flash");
+  const builtGlms = routed
+    .filter((model) => model.provider === "openrouter")
+    .map((model) => catalog.models.find((candidate) => candidate.slug === model.slug));
   const nativeSol = native.models.find((model) => model.slug === "gpt-5.6-sol");
 
   if (Object.prototype.hasOwnProperty.call(builtSwitchyard, "auto_compact_token_limit")) {
@@ -100,11 +106,13 @@ function buildCandidate(binary, nativeOverride) {
       );
     }
   }
-  assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
-  assert.equal("supports_reasoning_summaries" in builtGlm, false);
-  assert.equal("supports_parallel_tool_calls" in builtGlm, false);
-  assert.deepEqual(builtGlm.experimental_supported_tools, []);
-  assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
+  for (const builtGlm of builtGlms) {
+    assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
+    assert.equal("supports_reasoning_summaries" in builtGlm, false);
+    assert.equal("supports_parallel_tool_calls" in builtGlm, false);
+    assert.deepEqual(builtGlm.experimental_supported_tools, []);
+    assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
+  }
   return { binary, version, catalog };
 }
 
@@ -156,7 +164,7 @@ try {
   }
   process.stdout.write(
     `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
-      "GLM and Switchyard compatibility passed\n",
+      "GLM routes and Switchyard compatibility passed\n",
   );
 } finally {
   rmSync(temporaryHome, { recursive: true, force: true });

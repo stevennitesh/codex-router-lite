@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -14,9 +15,14 @@ import {
   applyPickerVisibility,
   effectivePickerHiddenModels,
   mergeNativeCatalogs,
+  nativeCatalogRefreshNeeded,
   promoteNativeMultiAgent,
   routedModel,
 } from "../src/catalog.mjs";
+import {
+  catalogRefreshIntervalMs,
+  refreshCatalogIfStale,
+} from "../src/catalog-auto-refresh.mjs";
 
 const template = {
   slug: "gpt-5.5",
@@ -49,6 +55,7 @@ const routeFixture = {
   inputModalities: ["text", "image"],
   compHash: "openrouter-glm-5-3-flash-test-v1",
   multiAgentVersion: "v2",
+  searchTool: { mode: "hosted" },
 };
 
 test("signed-in picker overlay cannot hide Codex native base entries", () => {
@@ -179,6 +186,7 @@ test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract",
   assert.deepEqual(model.model_messages.token_budget, {
     reminder_threshold_tokens: 6144,
   });
+  assert.equal(model.supports_search_tool, true);
 });
 
 test("routed models are native v2 spawn-agent model overrides", () => {
@@ -234,6 +242,58 @@ test("native catalog merge preserves account visibility and bundled-only models"
     },
     { slug: "gpt-bundled-only", visibility: "list" },
   ]);
+});
+
+test("automatic catalog refresh reacts only to native authority changes", async () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-refresh-"));
+  const catalogPath = path.join(testRoot, "native.json");
+  const sourcePath = path.join(testRoot, "source.json");
+  const source = { version: 1, path: sourcePath, status: "active" };
+  const sourceCatalog = { models: [{ slug: "gpt-native", visibility: "list" }] };
+  const sourceFingerprint = createHash("sha256")
+    .update(JSON.stringify(sourceCatalog.models))
+    .digest("hex");
+  writeFileSync(sourcePath, `${JSON.stringify(sourceCatalog)}\n`);
+  writeFileSync(catalogPath, `${JSON.stringify({
+    captured_with: "codex-cli 1.2.3",
+    captured_from: "C:\\Codex\\codex.exe",
+    native_source_fingerprint: sourceFingerprint,
+    models: sourceCatalog.models,
+  })}\n`);
+  try {
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath,
+      source,
+      currentVersion: "codex-cli 1.2.3",
+      currentBinary: "c:\\codex\\CODEX.EXE",
+    }), false);
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath,
+      source,
+      currentVersion: "codex-cli 1.2.4",
+      currentBinary: "C:\\Codex\\codex.exe",
+    }), true);
+    writeFileSync(sourcePath, `${JSON.stringify({ models: [
+      ...sourceCatalog.models,
+      { slug: "gpt-new", visibility: "list" },
+    ] })}\n`);
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath,
+      source,
+      currentVersion: "codex-cli 1.2.3",
+      currentBinary: "C:\\Codex\\codex.exe",
+    }), true);
+    assert.deepEqual(
+      await refreshCatalogIfStale({
+        execute: async () => '{"changed":false,"reason":"native_catalog_current"}\n',
+      }),
+      { changed: false, reason: "native_catalog_current" },
+    );
+    assert.equal(catalogRefreshIntervalMs("10000"), 10_000);
+    assert.equal(catalogRefreshIntervalMs("9999"), 5 * 60_000);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
 });
 
 test("configured native catalog refresh applies current bundled schema", {

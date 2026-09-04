@@ -1,11 +1,17 @@
 # Codex Router Lite
 
-Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds two routed model choices while leaving native Codex models under the installed Codex build's control:
+Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds three routed model choices while leaving native Codex models under the installed Codex build's control:
 
-- `openrouter/glm-5.3-flash`, sent through one explicitly selected and certified OpenRouter endpoint
+- `openrouter/glm-5.3-flash`, pinned to the certified Novita endpoint
+- `openrouter/glm-5.3-flash-gmicloud`, pinned to GMICloud and kept at v1 until its native v2 proof is accepted
 - `switchyard/auto`, which selects native Codex models through the pinned local Switchyard runtime
 
 The router also restores current Codex app function namespaces and supports exact-route subagents v2. It does not support other clients, platforms, provider catalogs, local-model managers, fallback models, a Router UI, or provider discovery.
+
+The managed service checks every five minutes for a different installed Codex
+binary or a changed adopted native catalog. It republishes the generated model
+catalog only when that authority changes. Fully quit and reopen Codex after an
+automatic refresh message to reload the model picker.
 
 ## Requirements
 
@@ -62,14 +68,21 @@ Deployment owns file replacement and rollback.
 
 Native GPT requests keep their Codex authentication and go to the native backend. OpenRouter requests replace caller credentials with the one protected OpenRouter key and strip Codex account metadata. Switchyard is loopback-only, requires a per-generation capability, and preserves native authorization for the native model it selects.
 
-The GLM route selects exactly one OpenRouter endpoint at a time with fallback disabled. NovitaAI is the checked-in and currently certified endpoint. Changing the endpoint is a configuration and certification change, not a code fork; update the endpoint compatibility flags and refresh the exact-route v2 proof before publishing it.
+Each GLM route selects one OpenRouter endpoint with fallback disabled. Choose
+the Novita or GMICloud entry directly in the Codex model picker. Their endpoint
+policies and v2 proofs stay separate, so one route cannot silently change the
+other's provider. Fresh Codex web-search turns use OpenRouter's bounded
+`openrouter:web_search` server tool over the direct Responses path; ordinary
+GLM turns continue through the LiteLLM compatibility path. No user
+`config.toml` customization is required.
 
 Routed models see flattened app-function names. The response path restores the native namespace before the Codex app executes a call. The checked-in app-tool snapshot tracks the installed Codex contract.
 
-Configuration lives in four JSON files:
+Configuration lives in five JSON files:
 
 - `config/openrouter/openrouter.json`
 - `config/openrouter/glm-5.3-flash.json`
+- `config/openrouter/glm-5.3-flash-gmicloud.json`
 - `config/switchyard/switchyard.json`
 - `config/switchyard/auto.json`
 

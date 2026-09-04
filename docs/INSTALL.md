@@ -37,6 +37,16 @@ Switchyard installation is maintainer work. Follow `config/switchyard/README.md`
 
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
+The model picker lists Novita and GMICloud as separate GLM routes. Selecting
+one changes only that request. Router never falls back from one endpoint to the
+other.
+
+The running service checks every five minutes for an installed Codex binary
+change or an adopted native catalog change. A successful automatic refresh
+does not restart Router. Fully quit and reopen the Codex app to reload its
+picker. Use `model-router.ps1 codex refresh-catalog` only for an immediate
+manual check.
+
 ## Update
 
 Check for or apply a published Router Lite update from `origin/main`:

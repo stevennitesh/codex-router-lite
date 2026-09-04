@@ -18,6 +18,7 @@ const requiredEntrypoints = [
   "src/doctor.mjs",
 ];
 const retainedConfig = [
+  "config/openrouter/glm-5.3-flash-gmicloud.json",
   "config/openrouter/glm-5.3-flash.json",
   "config/openrouter/openrouter.json",
   "config/switchyard/auto.json",

@@ -106,6 +106,13 @@ test("Windows install refreshes the current Codex bundled catalog", () => {
   assert.doesNotMatch(source, /Test-NonEmptyFile/);
 });
 
+test("the managed Router watches for Codex catalog authority changes", () => {
+  const start = readScript("src/start.mjs");
+  const packaged = JSON.parse(readScript("maintenance/windows-package.json"));
+  assert.match(start, /catalog-auto-refresh\.mjs/u);
+  assert.ok(packaged.files.includes("src/catalog-auto-refresh.mjs"));
+});
+
 test("Windows live dependency updates stage the Python environment and restore it on failure", () => {
   const source = readScript("install.ps1");
   assert.match(
