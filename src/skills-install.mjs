@@ -15,7 +15,6 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   constants,
-  chmodSync,
   cpSync,
   existsSync,
   fstatSync,
@@ -38,7 +37,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
-import { privateFileIsProtected, protectPrivateFile } from "./file-security.mjs";
+import {
+  privateFileIsProtected,
+  protectPrivateFile,
+  writePrivateJson,
+} from "./file-security.mjs";
 import { CODEX_HOME, SKILL_OWNERSHIP_PATH } from "./paths.mjs";
 
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -342,19 +345,9 @@ function readOwnership(codexHome) {
 }
 
 function writeOwnership(target, skills, external = emptySkills()) {
-  const stateDir = path.dirname(target);
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  chmodSync(stateDir, 0o700);
-  const temporary = `${target}.tmp.${process.pid}`;
   const state = { version: OWNERSHIP_VERSION, skills };
   if (Object.keys(external).length > 0) state.external = external;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  protectPrivateFile(temporary);
-  renameSync(temporary, target);
-  protectPrivateFile(target);
+  writePrivateJson(target, state);
 }
 
 function parseMarker(target) {
@@ -486,9 +479,8 @@ function preservedSkillPath(target) {
 }
 
 function restoreOrPreservePath(content, target) {
-  // Node has no cross-platform rename-no-replace primitive for directories;
-  // POSIX rename can silently replace a concurrently claimed empty directory.
-  // A fresh random sibling is therefore the only fail-closed destination.
+  // Never restore over a path another process may have claimed. A fresh random
+  // sibling preserves both trees and leaves the conflict visible to the user.
   const preserved = preservedSkillPath(target);
   renameSync(content, preserved);
   return { restored: false, preserved };
@@ -628,7 +620,6 @@ function beginSkillTransaction(
   mkdirSync(skillsDir, { recursive: true });
   const target = path.join(skillsDir, name);
   const quarantine = mkdtempSync(path.join(skillsDir, RETIRE_PREFIX));
-  chmodSync(quarantine, 0o700);
   const journal = path.join(quarantine, RETIRE_JOURNAL);
   const content = path.join(quarantine, RETIRE_CONTENT);
   try {
@@ -637,7 +628,6 @@ function beginSkillTransaction(
       retirementJournalContent(name, { publicationToken, managedToken, managedDigest }),
       {
         encoding: "utf8",
-        mode: 0o600,
         flag: "wx",
         flush: true,
       },
@@ -761,7 +751,6 @@ function commitRetirement(transaction) {
 
 function stageManagedSkill(source, target, name, token, provenance, { onStaged } = {}) {
   const staging = mkdtempSync(path.join(path.dirname(target), ".codex-router-install-"));
-  chmodSync(staging, 0o700);
   const content = path.join(staging, "content");
   try {
     cpSync(source, content, { recursive: true });
@@ -792,7 +781,7 @@ function discardStagedSkill(staged) {
 
 function publishStagedSkill(staged, target, publicationToken, { onPublicationClaimed } = {}) {
   try {
-    mkdirSync(target, { mode: 0o700 });
+    mkdirSync(target);
   } catch (error) {
     if (error?.code === "EEXIST") {
       return { published: false, reason: "target appeared during install" };
@@ -802,7 +791,6 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
   try {
     writeFileSync(path.join(target, PUBLISH_MARKER), `${publicationToken}\n`, {
       encoding: "utf8",
-      mode: 0o600,
       flag: "wx",
     });
     onPublicationClaimed?.({ target });
@@ -815,19 +803,17 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
     unlinkSync(path.join(target, PUBLISH_MARKER));
     return { published: true };
   } catch (error) {
-    // Claiming the path with mkdir is a true no-replace operation on every
-    // supported platform. If publication fails, remove only a directory that
-    // still carries this operation's random marker; otherwise preserve it.
+    // Claiming the path with mkdir does not replace an existing directory on
+    // Windows. If publication fails, remove only a directory that still carries
+    // this operation's random marker; otherwise preserve it.
     const marker = readBoundedStableFile(path.join(target, PUBLISH_MARKER), 256);
     if (marker?.toString("utf8") === `${publicationToken}\n`) {
       const cleanup = mkdtempSync(path.join(path.dirname(target), RETIRE_PREFIX));
-      chmodSync(cleanup, 0o700);
       const cleanupContent = path.join(cleanup, RETIRE_CONTENT);
       try {
         const cleanupJournal = path.join(cleanup, RETIRE_JOURNAL);
         writeFileSync(cleanupJournal, retirementJournalContent(path.basename(target)), {
           encoding: "utf8",
-          mode: 0o600,
           flag: "wx",
           flush: true,
         });

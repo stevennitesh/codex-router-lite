@@ -49,7 +49,7 @@ export function swapCallerCapability({
   const temporary = callerCapabilityTemporaryPath(secretPath, operationId);
   const backup = callerCapabilityBackupPath(secretPath, operationId);
   if (existsSync(temporary) || existsSync(backup)) throw new Error("Caller capability rotation generation already exists; recover it before retrying.");
-  writeFileSync(temporary, `${currentSecret}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  writeFileSync(temporary, `${currentSecret}\n`, { encoding: "utf8", flag: "wx" });
   try {
     protect(temporary);
   } catch (error) {

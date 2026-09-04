@@ -36,12 +36,7 @@ function assignmentValue(line, key, separator = "=") {
   return match ? decodeScalar(match[1]) : undefined;
 }
 
-function managedCodexBase(value, port, legacyPort) {
-  return isManagedCodexBaseUrl(value, port) ||
-    (legacyPort !== undefined && isManagedCodexBaseUrl(value, legacyPort));
-}
-
-function replaceRootCallerBase(contents, nextBase, port, legacyPort) {
+function replaceRootCallerBase(contents, nextBase, port) {
   const lines = contents.split("\n");
   const firstTable = lines.findIndex((line) => /^\s*\[/.test(line));
   const end = firstTable === -1 ? lines.length : firstTable;
@@ -53,14 +48,14 @@ function replaceRootCallerBase(contents, nextBase, port, legacyPort) {
     throw new Error("Codex caller capability refresh requires exactly one managed openai_base_url.");
   }
   const oldBase = assignmentValue(lines[matches[0]], "openai_base_url");
-  if (!managedCodexBase(oldBase, port, legacyPort)) {
+  if (!isManagedCodexBaseUrl(oldBase, port)) {
     throw new Error("Codex openai_base_url is not a managed router URL.");
   }
   lines[matches[0]] = replaceAssignmentLine(lines[matches[0]], "openai_base_url", nextBase);
   return lines.join("\n");
 }
 
-function replaceMarkedBase(contents, begin, end, nextBase, port, legacyPort) {
+function replaceMarkedBase(contents, begin, end, nextBase, port) {
   const lines = contents.split("\n");
   const starts = lines.flatMap((line, index) => line.trim() === begin ? [index] : []);
   const ends = lines.flatMap((line, index) => line.trim() === end ? [index] : []);
@@ -76,19 +71,19 @@ function replaceMarkedBase(contents, begin, end, nextBase, port, legacyPort) {
     throw new Error(`Managed caller capability block ${begin} has no unique base_url.`);
   }
   const oldBase = assignmentValue(lines[matches[0]], "base_url");
-  if (!managedCodexBase(oldBase, port, legacyPort)) {
+  if (!isManagedCodexBaseUrl(oldBase, port)) {
     throw new Error(`Managed Codex block ${begin} has an unmanaged base_url.`);
   }
   lines[matches[0]] = replaceAssignmentLine(lines[matches[0]], "base_url", nextBase);
   return lines.join("\n");
 }
 
-export function refreshCodexCallerCapabilityContents(contents, nextBase, { port, legacyPort } = {}) {
+export function refreshCodexCallerCapabilityContents(contents, nextBase, { port } = {}) {
   if (!isManagedCodexBaseUrl(nextBase, port)) {
     throw new Error("Refusing an invalid Codex router URL.");
   }
-  let next = replaceRootCallerBase(String(contents ?? ""), nextBase, port, legacyPort);
-  next = replaceMarkedBase(next, CODEX_PROVIDER_BEGIN, CODEX_PROVIDER_END, nextBase, port, legacyPort);
-  next = replaceMarkedBase(next, CODEX_SIGNED_BEGIN, CODEX_SIGNED_END, nextBase, port, legacyPort);
+  let next = replaceRootCallerBase(String(contents ?? ""), nextBase, port);
+  next = replaceMarkedBase(next, CODEX_PROVIDER_BEGIN, CODEX_PROVIDER_END, nextBase, port);
+  next = replaceMarkedBase(next, CODEX_SIGNED_BEGIN, CODEX_SIGNED_END, nextBase, port);
   return next;
 }

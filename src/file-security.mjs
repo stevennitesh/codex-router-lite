@@ -172,10 +172,8 @@ function protectPrivateFilesWin32(paths) {
         env: windowsPowerShellEnvironment(list),
         stdio: ["ignore", "ignore", "pipe"],
         timeout: 15_000,
-        // Every private write reaches this helper, including the ones a
-        // Control Center status refresh performs. A console child of a GUI
-        // parent gets its own window unless this is set, which is how a
-        // routine refresh produced a burst of visible PowerShell windows.
+        // A console child of the Windows app gets its own window unless this
+        // is set. The helper must stay invisible during routine state writes.
         // The script is non-interactive and its stdio is
         // already redirected, so nothing is hidden from the operator.
         windowsHide: true,

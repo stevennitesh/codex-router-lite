@@ -1,15 +1,12 @@
 import {
   existsSync,
-  mkdirSync,
   readFileSync,
-  renameSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { protectPrivateFile } from "./file-security.mjs";
+import { writePrivateJson } from "./file-security.mjs";
 import {
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
@@ -38,9 +35,8 @@ const BASIC_STRING_ESCAPES = new Map([
 // TOML basic strings are not JSON strings: TOML adds `\UXXXXXXXX`, and Windows
 // users routinely write an unescaped native path (`"C:\Users\me\models.json"`).
 // JSON.parse rejects both and the caller reads a rejected value as "no catalog
-// configured" — the one answer that clears migration to run over an
-// installation the router does not own. So decode the escapes TOML defines and
-// leave any other backslash standing as itself.
+// configured". That could overwrite an installation the router does not own,
+// so decode TOML escapes and leave any other backslash standing as itself.
 function decodeBasicString(body) {
   let decoded = "";
   for (let index = 0; index < body.length; index += 1) {
@@ -153,23 +149,7 @@ export function readNativeCatalogSource() {
 }
 
 function writeNativeCatalogSource(value) {
-  mkdirSync(path.dirname(NATIVE_CATALOG_SOURCE_PATH), {
-    recursive: true,
-    mode: 0o700,
-  });
-  const temporary = `${NATIVE_CATALOG_SOURCE_PATH}.tmp.${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  try {
-    protectPrivateFile(temporary);
-    renameSync(temporary, NATIVE_CATALOG_SOURCE_PATH);
-    protectPrivateFile(NATIVE_CATALOG_SOURCE_PATH);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
-  }
+  writePrivateJson(NATIVE_CATALOG_SOURCE_PATH, value);
 }
 
 function prepareNativeCatalogSourceFromConfig() {

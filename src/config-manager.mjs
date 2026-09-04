@@ -2,12 +2,9 @@ import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -16,7 +13,7 @@ import path from "node:path";
 import { findCodexBinary, spawnableCommand } from "./codex-binary.mjs";
 import { assertCallerSecret, isManagedCallerBaseUrl, redactCallerUrl } from "./caller-auth.mjs";
 import { refreshCodexCallerCapabilityContents } from "./caller-key-client-refresh.mjs";
-import { privateFileIsProtected, protectPrivateFile } from "./file-security.mjs";
+import { privateFileIsProtected, protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { catalogPathsEqual, readNativeCatalogSource } from "./native-catalog-source.mjs";
 import {
   BACKUP_PATH,
@@ -248,7 +245,7 @@ function installedCodexSupportsMultiAgentV2() {
     writeFileSync(
       path.join(probeHome, "config.toml"),
       `[features]\n${managedMultiAgentV2FeatureLine()}\n`,
-      { encoding: "utf8", mode: 0o600 },
+      { encoding: "utf8" },
     );
     const probe = spawnableCommand(binary, ["login", "status"]);
     const result = spawnSync(probe.command, probe.args, {
@@ -370,17 +367,7 @@ function snapshot(contents) {
 }
 
 function atomicWrite(contents) {
-  mkdirSync(path.dirname(CONFIG_PATH), { recursive: true, mode: 0o700 });
-  const temporary = `${CONFIG_PATH}.tmp.${process.pid}`;
-  writeFileSync(temporary, contents, { encoding: "utf8", mode: 0o600 });
-  try {
-    protectPrivateFile(temporary);
-    renameSync(temporary, CONFIG_PATH);
-    protectPrivateFile(CONFIG_PATH);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
-  }
+  writePrivateFile(CONFIG_PATH, contents);
 }
 
 const validCommands = new Set([

@@ -65,13 +65,13 @@ function acquire(target, { waitMs = MAX_WAIT_MS } = {}) {
     throw new TypeError("State lock wait must be a non-negative number of milliseconds.");
   }
   const pathname = lockPath(target);
-  mkdirSync(path.dirname(pathname), { recursive: true, mode: 0o700 });
+  mkdirSync(path.dirname(pathname), { recursive: true });
   const started = Date.now();
   while (true) {
     try {
-      mkdirSync(pathname, { recursive: false, mode: 0o700 });
+      mkdirSync(pathname, { recursive: false });
       try {
-        writeFileSync(`${pathname}/owner`, `${process.pid}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+        writeFileSync(`${pathname}/owner`, `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
       } catch {
         rmSync(pathname, { recursive: true, force: true });
         throw new Error(`Could not initialize state lock: ${pathname}`);

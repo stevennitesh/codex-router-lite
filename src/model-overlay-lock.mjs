@@ -63,7 +63,7 @@ export async function withModelOverlayLock(
     Math.ceil(normalizedWaitMs / normalizedRetryMs) - 1,
   );
 
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir, { recursive: true });
   const target = modelOverlayLockTarget(stateDir);
   let release;
   try {

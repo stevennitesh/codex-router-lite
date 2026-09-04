@@ -2,13 +2,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
-import { protectPrivateFile } from "./file-security.mjs";
+import { writePrivateFile } from "./file-security.mjs";
 import { CODEX_AGENTS_DIR } from "./paths.mjs";
 
 function safeIdentifier(value, separator) {
@@ -70,11 +68,7 @@ function managedAgentFiles(agentsDir) {
 }
 
 function writeManagedAgent(target, contents) {
-  const temporary = `${target}.tmp.${process.pid}`;
-  writeFileSync(temporary, contents, { encoding: "utf8", mode: 0o600 });
-  protectPrivateFile(temporary);
-  renameSync(temporary, target);
-  protectPrivateFile(target);
+  writePrivateFile(target, contents);
 }
 
 function routedAgentDefinition(model) {
@@ -110,7 +104,7 @@ function routedAgentDefinition(model) {
 // name, so a definition left behind keeps a model spawnable through
 // `agent_type` after the settings stopped allowing it.
 export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
-  mkdirSync(agentsDir, { recursive: true, mode: 0o700 });
+  mkdirSync(agentsDir, { recursive: true });
   const previous = new Map(
     managedAgentFiles(agentsDir).map((entry) => [
       entry,

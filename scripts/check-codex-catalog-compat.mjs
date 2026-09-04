@@ -119,7 +119,7 @@ try {
     ? JSON.parse(readFileSync(installedCatalogPath, "utf8"))
     : source.catalog;
   if (!installedCatalogPath) {
-    writeFileSync(catalogPath, `${JSON.stringify(checkedCatalog)}\n`, { mode: 0o600 });
+    writeFileSync(catalogPath, `${JSON.stringify(checkedCatalog)}\n`);
   }
   const checkedBySlug = new Map(checkedCatalog.models?.map((model) => [model.slug, model]) || []);
   const expectedBySlug = new Map(source.catalog.models.map((model) => [model.slug, model]));

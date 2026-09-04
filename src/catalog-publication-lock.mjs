@@ -35,9 +35,8 @@ function lockWaitError(waitMs, cause) {
   return error;
 }
 
-// Every catalog producer (CLI commands, the control center, and autonomous
-// refreshes) executes catalog.mjs in a separate process. The directory lock is
-// an atomic, cross-platform rendezvous for those processes. It spans the whole
+// Every catalog producer executes catalog.mjs in a separate process. The
+// directory lock serializes those Windows processes. It spans the whole
 // caller operation so mutable inputs, native probes, and the coupled catalog /
 // alias / announcement / agent publication observe one serialized snapshot.
 export async function withCatalogPublicationLock(
@@ -65,7 +64,7 @@ export async function withCatalogPublicationLock(
     Math.ceil(normalizedWaitMs / normalizedRetryMs) - 1,
   );
 
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir, { recursive: true });
   const target = catalogPublicationLockTarget(stateDir);
   let release;
   try {

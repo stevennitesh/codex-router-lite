@@ -3,9 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
@@ -22,7 +20,7 @@ import {
   readServiceProcessState,
   serviceProcessOwns,
 } from "./service-process.mjs";
-import { protectPrivateFile } from "./file-security.mjs";
+import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { serviceProxyEnvironment } from "./proxy-environment.mjs";
 import {
   skipServiceManagerCall,
@@ -147,25 +145,9 @@ function writeAtomic(target, contents) {
       // authoritative result when the existing file cannot be inspected.
     }
   }
-  const temporary = `${target}.tmp.${process.pid}`;
-  try {
-    writeFileSync(temporary, contents, { mode: 0o600 });
-    // Proxy URLs may contain credentials. Protect both the temporary file and
-    // the replaced launcher so Windows does not leave the secret readable via
-    // inherited ACLs (POSIX mode bits are kept in step for deterministic tests).
-    protectPrivateFile(temporary);
-    // renameSync replaces an existing destination on Windows, so reinstalling
-    // over an older launcher pair is a plain overwrite rather than a conflict.
-    renameSync(temporary, target);
-    protectPrivateFile(target);
-  } catch (error) {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // Best effort cleanup; preserve the original write/ACL error.
-    }
-    throw error;
-  }
+  // Proxy URLs may contain credentials. The shared writer protects the new
+  // file before replacing the old launcher.
+  writePrivateFile(target, contents);
 }
 
 function writeLaunchers() {

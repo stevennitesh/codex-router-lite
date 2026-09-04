@@ -27,7 +27,7 @@ export async function withCallerKeyRotationLock(operation, {
     positiveInteger(heartbeatMs, DEFAULT_HEARTBEAT_MS, 1_000), normalizedStaleMs / 2,
   );
   const retries = Math.max(0, Math.ceil(normalizedWaitMs / normalizedRetryMs) - 1);
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir, { recursive: true });
   const target = callerKeyRotationLockTarget(stateDir);
   let release;
   try {

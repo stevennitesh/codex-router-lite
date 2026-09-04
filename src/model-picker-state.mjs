@@ -1,14 +1,10 @@
 import {
-  chmodSync,
   existsSync,
-  mkdirSync,
   readFileSync,
-  renameSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
-import { protectPrivateFile } from "./file-security.mjs";
+import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
 const MODEL_PICKER_STATE_PATH =
@@ -62,29 +58,14 @@ export function readHiddenModels() {
 }
 
 function writePickerState({ hidden, visible, seeded, hasExplicitVisibility = true }) {
-  const stateDir = path.dirname(MODEL_PICKER_STATE_PATH);
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  chmodSync(stateDir, 0o700);
-  const temporary = `${MODEL_PICKER_STATE_PATH}.tmp.${process.pid}`;
-  writeFileSync(
-    temporary,
-    `${JSON.stringify(
-      {
-        version: 1,
-        hidden: [...hidden].sort(),
-        ...(hasExplicitVisibility
-          ? { visible: [...visible].filter((slug) => !hidden.has(slug)).sort() }
-          : {}),
-        seeded: [...seeded].sort(),
-      },
-      null,
-      2,
-    )}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  protectPrivateFile(temporary);
-  renameSync(temporary, MODEL_PICKER_STATE_PATH);
-  protectPrivateFile(MODEL_PICKER_STATE_PATH);
+  writePrivateJson(MODEL_PICKER_STATE_PATH, {
+    version: 1,
+    hidden: [...hidden].sort(),
+    ...(hasExplicitVisibility
+      ? { visible: [...visible].filter((slug) => !hidden.has(slug)).sort() }
+      : {}),
+    seeded: [...seeded].sort(),
+  });
   return modelPickerSnapshot();
 }
 

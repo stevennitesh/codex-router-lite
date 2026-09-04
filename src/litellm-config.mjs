@@ -1,8 +1,7 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { protectPrivateFile } from "./file-security.mjs";
+import { writePrivateFile } from "./file-security.mjs";
 import { LITELLM_CONFIG_PATH } from "./paths.mjs";
 import { MODEL_BY_SLUG } from "./routed-models.mjs";
 import { assertStateOwnership } from "./state-owner.mjs";
@@ -49,12 +48,7 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
   if (target === LITELLM_CONFIG_PATH) {
     assertStateOwnership("write the gateway routing config");
   }
-  mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  const temporary = `${target}.tmp.${process.pid}`;
-  writeFileSync(temporary, renderLiteLlmConfig(), { encoding: "utf8", mode: 0o600 });
-  protectPrivateFile(temporary);
-  renameSync(temporary, target);
-  protectPrivateFile(target);
+  writePrivateFile(target, renderLiteLlmConfig());
   return target;
 }
 

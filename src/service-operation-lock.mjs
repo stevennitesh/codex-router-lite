@@ -14,7 +14,7 @@ export async function withServiceOperationLock(
     staleMs = 90_000,
   } = {},
 ) {
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir, { recursive: true });
   const target = path.join(stateDir, "service-operation");
   const retries = Math.max(0, Math.ceil(waitMs / retryMs) - 1);
   let release;

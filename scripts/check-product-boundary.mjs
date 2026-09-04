@@ -96,6 +96,9 @@ const forbiddenRuntimeText = [
   ['"which"', "POSIX PATH lookup"],
   [".local\\share\\codex-router", "non-Windows install root"],
   ['".local", "bin"', "non-Windows Codex binary path"],
+  ["chmodSync", "POSIX permission mutation"],
+  ["mode: 0o", "POSIX permission mode"],
+  ["legacyPort", "retired caller-port compatibility"],
 ];
 for (const file of runtimeFiles) {
   const source = readFileSync(path.join(root, file), "utf8");
