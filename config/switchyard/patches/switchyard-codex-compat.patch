@@ -1137,3 +1137,65 @@ index 966edd97..fd6cb86a 100644
  
  ## `[routes.<name>]`
  
+diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
+index 03e11f1..8264da8 100644
+--- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
++++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
+@@ -1017,14 +1017,6 @@ fn encode_responses_input(
+     policy: &TranslationPolicy,
+     namespaces: Option<&Map<String, Value>>,
+ ) -> Result<Value> {
+-    if messages.len() == 1
+-        && matches!(messages[0].role, Role::User)
+-        && messages[0].content.len() == 1
+-        && matches!(messages[0].content[0], ContentBlock::Text { .. })
+-        && let ContentBlock::Text { text } = &messages[0].content[0]
+-    {
+-        return Ok(Value::String(text.clone()));
+-    }
+     let mut encoded = Vec::new();
+     for message in messages {
+         // Anthropic-signed thinking cannot be sent as Responses input.
+diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
+index d27b21c..ac04317 100644
+--- a/crates/switchyard-translation/tests/request_translation.rs
++++ b/crates/switchyard-translation/tests/request_translation.rs
+@@ -1523,6 +1523,37 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
+     Ok(())
+ }
+-
++
++// Codex's native ChatGPT Responses endpoint requires top-level input to be a
++// list, while rejecting content arrays on the hidden classifier's text-only
++// message. Keep the standard message-list form with scalar string content.
++#[test]
++fn chat_text_message_maps_to_a_responses_list_with_string_content() -> TestResult {
++    let engine = TranslationEngine::default();
++    let body = json!({
++        "model": "gpt-5",
++        "messages": [{"role": "user", "content": "Classify this task"}]
++    });
++
++    let output = engine
++        .translate_request(
++            WireFormat::OpenAiChat,
++            WireFormat::OpenAiResponses,
++            &body,
++            &TranslationPolicy::default(),
++        )?
++        .body;
++
++    assert_eq!(
++        output["input"],
++        json!([{
++            "type": "message",
++            "role": "user",
++            "content": "Classify this task"
++        }])
++    );
++    Ok(())
++}
++
+ // Verifies nested fields cannot override the Responses format discriminator.
+ #[test]
+ fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {

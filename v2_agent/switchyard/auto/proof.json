@@ -15,8 +15,8 @@
   "endpointProvider": "local-switchyard",
   "runtimeBinding": {
     "upstreamCommit": "4022b677b20e852de538e0a1a56f041d3ba39f1f",
-    "patchSha256": "d2cbf0f8221df491dfef483e17080d07409c044b9c6c61b6fa1e3a3655d727f5",
-    "binarySha256": "5bf21fa1485764e566b1342538acb7793735b26ab0e4d1d1b6bf57a48b5c3556",
+    "patchSha256": "37e93a61f59cec1ac3ce5439cfa86fce644e13d41defdcb56d5635cb9a701778",
+    "binarySha256": "52b8707a82edfceed313d5fc57e21406b2b9342640c0f3bd4715273c7c679e75",
     "routerCommit": "",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },

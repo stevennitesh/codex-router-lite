@@ -140,6 +140,10 @@ test("Switchyard source lock pins the canonical compatibility patch", () => {
   assert.match(lock.commit, /^[a-f0-9]{40}$/u);
   assert.equal(createHash("sha256").update(patchBytes).digest("hex"), lock.patchSha256);
   assert.match(patchBytes.toString("utf8"), /merge_override_value/);
+  assert.match(
+    patchBytes.toString("utf8"),
+    /chat_text_message_maps_to_a_responses_list_with_string_content/,
+  );
 });
 
 test("Switchyard's hidden Codex classifier satisfies the Responses-Lite reasoning contract", () => {
