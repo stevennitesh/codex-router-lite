@@ -1,6 +1,6 @@
 // Snapshot of the Codex app's native app-side tool definitions.
-// Source: the live Codex Desktop tool registry on 2026-09-04, paired with
-// Windows app 26.901.5003.0 and codex-cli 0.153.3. Keep this inventory
+// Source: the live Codex Desktop tool registry on 2026-09-05, paired with
+// Windows app 26.901.5280.0 and codex-cli 0.153.4. Keep this inventory
 // synchronized with the current app surface; client-provided definitions still
 // win when the app sends them.
 // The app registers these tools with deferLoading and executes the calls
@@ -10,9 +10,9 @@
 const CODEX_APP_NAMESPACE = "codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
-  capturedAt: "2026-09-04",
-  windowsAppVersion: "26.901.5003.0",
-  codexVersion: "codex-cli 0.153.3",
+  capturedAt: "2026-09-05",
+  windowsAppVersion: "26.901.5280.0",
+  codexVersion: "codex-cli 0.153.4",
 });
 
 // The full app toolset as the client offers it to native models.
@@ -784,7 +784,7 @@ export const CODEX_APP_TOOLS =
                               ]
                             },
                             "startingState": {
-                              "description": "Only specify this when the user explicitly asks to start from a particular existing git state. Use working-tree to include the current checkout and uncommitted changes. Use branch only for a branch or ref that already exists. Otherwise omit this field so the worktree starts from the project's default branch. Do not use this to name a new branch.",
+                              "description": "Only specify this when the user explicitly asks to start from a particular git state. Use working-tree to include the current checkout and uncommitted changes. Use branch for an existing branch or ref. To create a user-requested branch when it does not exist, set onMissing to \"create-branch\"; otherwise omission defaults to an error. Omit startingState to start from the project's default branch.",
                               "anyOf": [
                                 {
                                   "type": "object",
@@ -812,9 +812,11 @@ export const CODEX_APP_TOOLS =
                                       ]
                                     },
                                     "branchName": {
-                                      "type": "string"
+                                      "type": "string",
+                                      "description": "The branch or ref to start from. Never invent this value. It may name a new branch only when the user requested that exact name and onMissing is \"create-branch\"."
                                     },
                                     "onMissing": {
+                                      "description": "What to do when branchName does not exist. Omission is equivalent to \"error\". Use \"create-branch\" only when the user explicitly requested a new branch with this exact name; the branch is created from the project default branch.",
                                       "type": "string",
                                       "enum": [
                                         "error",

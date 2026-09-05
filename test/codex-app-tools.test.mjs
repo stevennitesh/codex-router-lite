@@ -111,6 +111,11 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
     (state) => state.properties.type.enum.includes("branch"),
   );
   assert.deepEqual(branch.properties.onMissing.enum, ["error", "create-branch"]);
+  assert.match(worktree.properties.startingState.description, /To create a user-requested branch/);
+  assert.doesNotMatch(worktree.properties.startingState.description, /Do not use this to name a new branch/);
+  assert.match(branch.properties.branchName.description, /user requested that exact name/);
+  assert.match(branch.properties.onMissing.description, /Omission is equivalent to "error"/);
+  assert.match(branch.properties.onMissing.description, /created from the project default branch/);
 
   const modelDescription = createThread.inputSchema.properties.model.description;
   assert.match(modelDescription, /validated on the destination host/);

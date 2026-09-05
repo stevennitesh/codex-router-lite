@@ -8,7 +8,10 @@
 - Router version: `0.5.1`, commit `83a142cc8172245723d0b1f53aab4cdb92e948e6`
 - Codex version/build: `codex-cli 0.153.3`
 - Execution surface: Codex desktop native orchestration on Windows
-- Current application status: accepted
+- Current application status: draft pending recertification of upstream `9a743e89223a0d5b14011f1226d5b068f730a3b8`
+
+The evidence below is historical and applies to the previous runtime only.
+The new source and patch require a fresh native deployment proof before acceptance.
 
 The exact pinned source, compatibility patch, release binary, Router commit,
 and generated routes recorded in `proof.json` were deployed together. A native

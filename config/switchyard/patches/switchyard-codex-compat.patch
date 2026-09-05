@@ -1,5 +1,5 @@
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 9f47828a..e6d7aa17 100644
+index 371fc586..bef80697 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -62,6 +62,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -48,7 +48,8 @@ index 9f47828a..e6d7aa17 100644
 +        self
 +    }
  }
- 
+-
++
  /// A model-bearing provider operation outside the normal completion endpoint.
 @@ -162,16 +189,9 @@ impl TranslatingLlmClient {
      /// format matches, otherwise a matching entry in `other_backends`; `None` when
@@ -68,7 +69,8 @@ index 9f47828a..e6d7aa17 100644
 +            .get(model)
 +            .and_then(|config| backend_for_config(config, format))
      }
- 
+-
++
      /// Whether `model` has a backend for `operation`.
 @@ -190,24 +210,30 @@ impl TranslatingLlmClient {
          operation: AuxiliaryOperation,
@@ -151,7 +153,8 @@ index 9f47828a..e6d7aa17 100644
              }
          })?;
 +        llm_request.model = Some(config.upstream_model.to_string());
- 
+-
++
          let http_response = self
              .send_encoded(
 @@ -454,7 +481,7 @@ impl TranslatingLlmClient {
@@ -166,7 +169,8 @@ index 9f47828a..e6d7aa17 100644
 @@ -581,6 +608,18 @@ impl TranslatingLlmClient {
      }
  }
- 
+-
++
 +fn backend_for_config(config: &ModelConfig, format: WireFormat) -> Option<&Backend> {
 +    if config.default_backend.wire_format() == format {
 +        Some(&config.default_backend)
@@ -185,7 +189,8 @@ index 9f47828a..e6d7aa17 100644
 @@ -829,6 +868,47 @@ fn merge_extra_body(body: &mut Value, extra_body: &BTreeMap<String, Value>) {
      }
  }
- 
+-
++
 +// Recursively applies target-owned values after caller fields and defaults.
 +// Object siblings survive, so overriding `reasoning.effort` does not erase a
 +// native caller's `reasoning.context`, summary controls, or future fields.
@@ -233,7 +238,8 @@ index 9f47828a..e6d7aa17 100644
 @@ -1457,6 +1537,73 @@ mod tests {
          Ok(())
      }
- 
+-
++
 +    #[tokio::test]
 +    async fn routing_alias_preserves_nested_reasoning_siblings_and_owns_effort()
 +    -> std::result::Result<(), Box<dyn Error + Sync + Send + 'static>> {
@@ -318,7 +324,7 @@ index 9d191644..a7f6e516 100644
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
 diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index 599e9f9..162364d 100644
+index 599e9f9e..162364d1 100644
 --- a/crates/libsy/src/algorithms/llm_class.rs
 +++ b/crates/libsy/src/algorithms/llm_class.rs
 @@ -148,16 +148,40 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
@@ -563,7 +569,8 @@ index 7c696aa4..f2ad0bb6 100644
 @@ -57,8 +57,36 @@ fn is_user_turn(message: &Message) -> bool {
              .all(|block| matches!(block, ContentBlock::ToolResult(_)))
  }
-
+-
++
 -pub(crate) fn has_new_user_turn(messages: &[Message]) -> bool {
 -    messages.last().is_some_and(is_user_turn)
 +const RESPONSES_TOOL_OUTPUT_TYPES: &[&str] = &[
@@ -597,7 +604,8 @@ index 7c696aa4..f2ad0bb6 100644
 +            .is_some_and(is_user_turn)
 +    })
  }
-
+-
++
  /// Retains a model per request identity and forces it on later matching requests.
 @@ -239,7 +267,7 @@ where
          };
@@ -611,7 +619,8 @@ index 7c696aa4..f2ad0bb6 100644
 @@ -836,6 +864,39 @@ mod tests {
          Ok(())
      }
-
+-
++
 +    #[tokio::test]
 +    async fn codex_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
 +        let router = AffinityRouter::new().with_release_on_user_turn();
@@ -653,7 +662,8 @@ index 0210bda2..9b9b56c2 100644
 --- a/crates/libsy/src/algorithms/util/llm_judge.rs
 +++ b/crates/libsy/src/algorithms/util/llm_judge.rs
 @@ -157,6 +157,13 @@ where
-
+-
++
      fn build_request(&self, state: &State, request: &Request) -> Request {
          let messages = self.input.build_messages(state, request);
 +        let mut extensions = request.llm_request.extensions.clone();
@@ -675,10 +685,10 @@ index 0210bda2..9b9b56c2 100644
              },
              raw_request: None,
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 4b211ae8..0dad01cc 100644
+index c1fea146..9722e904 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
-@@ -136,7 +136,7 @@ impl DeploymentConfig {
+@@ -140,7 +140,7 @@ impl DeploymentConfig {
          let client = self.llm_clients.get(&target.llm_client)?;
          Some(DecisionTarget {
              target: name.to_string(),
@@ -687,7 +697,7 @@ index 4b211ae8..0dad01cc 100644
              format: client.format.wire_format(),
              base_url: client.base_url.as_str().to_string(),
              extra_body: target.extra_body.clone(),
-@@ -155,10 +155,32 @@ impl DeploymentConfig {
+@@ -159,10 +159,32 @@ impl DeploymentConfig {
          for (target_name, target) in &self.targets {
              validate_value("target name", target_name)?;
              validate_value(&format!("target {target_name} id"), &target.id)?;
@@ -723,7 +733,7 @@ index 4b211ae8..0dad01cc 100644
                      target.llm_client
                  );
              }
-@@ -237,11 +259,16 @@ impl DeploymentConfig {
+@@ -241,11 +263,16 @@ impl DeploymentConfig {
                  .ok_or_else(|| {
                      RunnerError::configuration("validated llm client was not initialized")
                  })?;
@@ -743,9 +753,10 @@ index 4b211ae8..0dad01cc 100644
 +                .with_body_removals(target.body_removals.clone()),
 +            );
          }
- 
+-
++
          let mut clients = BTreeMap::new();
-@@ -258,7 +285,7 @@ impl DeploymentConfig {
+@@ -262,7 +289,7 @@ impl DeploymentConfig {
      fn build_targets(&self) -> BTreeMap<String, ModelId> {
          self.targets
              .iter()
@@ -753,8 +764,9 @@ index 4b211ae8..0dad01cc 100644
 +            .map(|(name, config)| (name.clone(), config.routing_id().clone()))
              .collect()
      }
- 
-@@ -293,7 +320,7 @@ impl DeploymentConfig {
+-
++
+@@ -297,7 +324,7 @@ impl DeploymentConfig {
                  caller_auth = Some(target_auth);
              }
              let client: Arc<dyn RoutedLlmClient> = client.clone();
@@ -763,7 +775,7 @@ index 4b211ae8..0dad01cc 100644
          }
          Ok((ClientRouter::new(by_model), caller_auth))
      }
-@@ -350,9 +377,9 @@ impl DeploymentConfig {
+@@ -354,9 +381,9 @@ impl DeploymentConfig {
          let target = self.targets.get(name)?;
          let client = clients.get(&target.llm_client)?;
          client
@@ -775,7 +787,7 @@ index 4b211ae8..0dad01cc 100644
                  client: client.clone(),
              })
      }
-@@ -416,9 +443,20 @@ struct LlmClientConfig {
+@@ -420,9 +447,20 @@ struct LlmClientConfig {
  #[serde(deny_unknown_fields)]
  struct TargetConfig {
      id: ModelId,
@@ -794,12 +806,14 @@ index 4b211ae8..0dad01cc 100644
 +        self.routing_id.as_ref().unwrap_or(&self.id)
 +    }
  }
- 
+-
++
  #[derive(Clone, Copy, Debug, Deserialize)]
-@@ -1199,6 +1237,70 @@ target = "azure"
+@@ -1203,6 +1241,70 @@ target = "azure"
          Ok(())
      }
- 
+-
++
 +    #[test]
 +    fn routing_ids_allow_effort_variants_of_one_upstream_model() -> RunnerResult<()> {
 +        const CONFIG: &str = r#"
@@ -868,13 +882,14 @@ index 4b211ae8..0dad01cc 100644
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index 3f59fd0a..00b1f284 100644
+index 87c28188..ec7349c3 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
 @@ -59,6 +59,12 @@ cargo install --locked switchyard-server
  switchyard-server --config routes.toml
  ```
-
+-
++
 +When Codex Router manages this server, it sets
 +`CODEX_ROUTER_SWITCHYARD_CAPABILITY` and binds a loopback address. In that mode
 +every endpoint except `/health` requires the same value in
@@ -883,7 +898,8 @@ index 3f59fd0a..00b1f284 100644
 +
  Ctrl+C and Unix `SIGTERM` stop new connections and allow active requests to drain for up to
  `--shutdown-timeout` (30 seconds by default) before they are terminated.
-
+-
++
 diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
 index 231d4e2b..42304412 100644
 --- a/crates/switchyard-server/src/cli.rs
@@ -897,7 +913,8 @@ index 231d4e2b..42304412 100644
 +    DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT, DEFAULT_LISTEN_BACKLOG, LOCAL_HOP_CAPABILITY_ENV,
 +    ServerError, ServerResult, ServerRunOptions, ServerState, TlsOptions, run_server,
  };
-
+-
++
  const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 @@ -72,6 +72,14 @@ impl ServerArgs {
          if let Some(path) = self.routing_log_file {
@@ -915,12 +932,13 @@ index 231d4e2b..42304412 100644
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 84493183..60291b83 100644
+index 8b6f06de..74d44886 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
 @@ -63,6 +63,10 @@ pub const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
  pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
-
+-
++
  const HEADER_SELECTED_MODEL: &str = "x-model-router-selected-model";
 +/// Environment variable and request header used by Codex Router to protect
 +/// the otherwise unauthenticated local Switchyard hop.
@@ -938,7 +956,8 @@ index 84493183..60291b83 100644
 +    // The decision endpoint is diagnostic; callers do not need the address.
 +    base_url: &'static str,
  }
-
+-
++
  /// Shared server state used by all endpoint handlers.
 @@ -142,6 +148,7 @@ pub struct ServerState {
      stats: StatsAccumulator,
@@ -946,7 +965,8 @@ index 84493183..60291b83 100644
      track_cache_eligibility: bool,
 +    local_hop_capability: Option<HeaderValue>,
  }
-
+-
++
  #[derive(Clone)]
 @@ -220,9 +227,22 @@ impl ServerState {
              stats,
@@ -955,7 +975,8 @@ index 84493183..60291b83 100644
 +            local_hop_capability: None,
          })
      }
-
+-
++
 +    /// Requires this capability on every endpoint except `/health`.
 +    pub fn with_local_hop_capability(mut self, capability: &str) -> ServerResult<Self> {
 +        if capability.is_empty() {
@@ -980,13 +1001,13 @@ index 84493183..60291b83 100644
              },
              extra_body: target.extra_body,
          };
-@@ -500,12 +520,40 @@ pub fn build_switchyard_router(state: ServerState) -> Router {
-     if state.routing_log.is_some() {
-         router = router.route("/v1/routing/session-stats", get(get_session_stats));
-     }
+@@ -519,11 +539,39 @@ fn primary_llm_routes() -> Router<ServerState> {
+-
++
+ // Applies the serving limits and request timing shared by both public router constructors.
+ fn finish_router(router: Router<ServerState>, state: ServerState) -> Router {
 -    router
-+    router = router
-         .fallback(proxy_unmatched)
++    let mut router = router
          .layer(DefaultBodyLimit::max(DEFAULT_MAX_REQUEST_BODY_BYTES))
          // `layer` only wraps routes registered before it, so this stays last.
 -        .layer(axum::middleware::from_fn(stamp_request_start))
@@ -1022,25 +1043,24 @@ index 84493183..60291b83 100644
 +    request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
 +    next.run(request).await
  }
-
+-
++
  fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 4fca26f0..d91f625f 100644
+index 43e6abf7..333e15bb 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
-@@ -25,7 +25,10 @@ use switchyard_llm_client::{
- use switchyard_protocol::ModelId;
+@@ -26,7 +26,8 @@ use switchyard_protocol::ModelId;
  use switchyard_protocol::RoutedLlmClient;
  use switchyard_server::config::load_server_state;
--use switchyard_server::{DEFAULT_MAX_REQUEST_BODY_BYTES, ServerState, build_switchyard_router};
-+use switchyard_server::{
-+    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState,
+ use switchyard_server::{
+-    DEFAULT_MAX_REQUEST_BODY_BYTES, ServerState, build_llm_router, build_switchyard_router,
++    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState, build_llm_router,
 +    build_switchyard_router,
-+};
+ };
  use tokio::net::TcpListener;
  use tokio::sync::Mutex;
- use tokio::task::JoinHandle;
-@@ -393,6 +396,7 @@ async fn upstream_responses_requires_forwarded_auth(
+@@ -395,6 +396,7 @@ async fn upstream_responses_requires_forwarded_auth(
              .get("x-openai-fedramp")
              .and_then(|value| value.to_str().ok())
              == Some("true")
@@ -1048,7 +1068,55 @@ index 4fca26f0..d91f625f 100644
          && !headers.contains_key("x-api-key")
          && !headers.contains_key("anthropic-beta");
      if !has_expected_headers {
-@@ -1132,7 +1136,7 @@ escalation = {{ confirmations = 1 }}
+@@ -566,6 +568,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+     Ok(())
+ }
+-
++
++#[tokio::test]
++async fn both_router_constructors_enforce_local_hop_authentication() -> TestResult {
++    let upstream = MockUpstream::start().await?;
++    for constructor in [build_llm_router, build_switchyard_router] {
++        let state = random_state(&upstream.base_url, &[(ROUTE_MODEL, &["model/a"])])?
++            .with_local_hop_capability("test-local-hop-capability")?;
++        let app = constructor(state);
++        for path in ["/v1/chat/completions", "/v1/messages", "/v1/responses"] {
++            assert_eq!(
++                send(&app, "POST", path, None).await?.status,
++                StatusCode::UNAUTHORIZED
++            );
++            assert_eq!(
++                send_with_headers(
++                    &app,
++                    "POST",
++                    path,
++                    None,
++                    &[(LOCAL_HOP_CAPABILITY_HEADER, "wrong")]
++                )
++                .await?
++                .status,
++                StatusCode::UNAUTHORIZED
++            );
++        }
++        let before = upstream.calls.lock().await.len();
++        let response = send_with_headers(
++            &app,
++            "POST",
++            "/v1/chat/completions",
++            Some(json!({"model": ROUTE_MODEL, "messages": [{"role": "user", "content": "hello"}]})),
++            &[(LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability")],
++        )
++        .await?;
++        assert_eq!(response.status, StatusCode::OK);
++        assert_eq!(upstream.calls.lock().await.len(), before + 1);
++    }
++    Ok(())
++}
++
+ fn empty_token_totals() -> Value {
+     json!({
+         "prompt": 0,
+@@ -1170,7 +1212,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -1057,7 +1125,7 @@ index 4fca26f0..d91f625f 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1141,7 +1145,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1179,7 +1221,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -1066,7 +1134,7 @@ index 4fca26f0..d91f625f 100644
                  },
                  "extra_body": {},
              }],
-@@ -2041,7 +2045,29 @@ target = "openai"
+@@ -2079,7 +2121,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -1094,10 +1162,11 @@ index 4fca26f0..d91f625f 100644
 +    .await?;
 +    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
 +    assert!(upstream.calls.lock().await.is_empty());
-
+-
++
      let response = send_with_headers(
          &app,
-@@ -2052,6 +2078,7 @@ target = "openai"
+@@ -2090,6 +2154,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -1105,7 +1174,7 @@ index 4fca26f0..d91f625f 100644
              ("x-api-key", "must-not-cross-providers"),
              ("anthropic-beta", "oauth-must-not-cross-providers"),
          ],
-@@ -2068,6 +2095,7 @@ target = "openai"
+@@ -2106,6 +2171,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -1113,7 +1182,7 @@ index 4fca26f0..d91f625f 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -2082,6 +2110,7 @@ target = "openai"
+@@ -2120,6 +2186,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -1121,24 +1190,8 @@ index 4fca26f0..d91f625f 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 966edd97..fd6cb86a 100644
---- a/docs/reference/toml_schema.md
-+++ b/docs/reference/toml_schema.md
-@@ -87,8 +87,11 @@ calls an upstream.
- | Key | Required | Default | Meaning |
- |---|:---:|---|---|
- | `id` | Yes | — | Exact model ID sent upstream. |
-+| `routing_id` | No | `id` | Unique local identity used by routing and observability. Set this when multiple targets send the same upstream model with different options. |
- | `llm_client` | Yes | — | Key under `[llm_clients]`. |
- | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
-+| `body_overrides` | No | `{}` | Values recursively merged after caller fields and `extra_body` defaults. Nested object siblings are preserved. Cannot set `model`; use `id`. |
-+| `remove_body_fields` | No | `[]` | Top-level request fields removed after defaults and overrides. Cannot remove `model`. |
- 
- ## `[routes.<name>]`
- 
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 03e11f1..8264da8 100644
+index 03e11f15..8264da8f 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
 @@ -1017,14 +1017,6 @@ fn encode_responses_input(
@@ -1157,7 +1210,7 @@ index 03e11f1..8264da8 100644
      for message in messages {
          // Anthropic-signed thinking cannot be sent as Responses input.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index d27b21c..ac04317 100644
+index d27b21cd..ac04317b 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
 @@ -1523,6 +1523,37 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
@@ -1199,3 +1252,21 @@ index d27b21c..ac04317 100644
  // Verifies nested fields cannot override the Responses format discriminator.
  #[test]
  fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {
+diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
+index 0193ca68..031adacd 100644
+--- a/docs/reference/toml_schema.md
++++ b/docs/reference/toml_schema.md
+@@ -87,8 +87,11 @@ calls an upstream.
+ | Key | Required | Default | Meaning |
+ |---|:---:|---|---|
+ | `id` | Yes | — | Exact model ID sent upstream. |
++| `routing_id` | No | `id` | Unique local identity used by routing and observability. Set this when multiple targets send the same upstream model with different options. |
+ | `llm_client` | Yes | — | Key under `[llm_clients]`. |
+ | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
++| `body_overrides` | No | `{}` | Values recursively merged after caller fields and `extra_body` defaults. Nested object siblings are preserved. Cannot set `model`; use `id`. |
++| `remove_body_fields` | No | `[]` | Top-level request fields removed after defaults and overrides. Cannot remove `model`. |
+-
++
+ ## `[routes.<name>]`
+-
++
