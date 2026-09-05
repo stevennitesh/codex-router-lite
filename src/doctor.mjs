@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,30 +7,43 @@ import { routedCatalogConfigured } from "./catalog.mjs";
 import { readControlHealth } from "./control-health.mjs";
 import { providerSelectionStatus, selectedConfiguredListedModels } from "./provider-selection.mjs";
 import { MODEL_BY_SLUG, PROVIDERS } from "./routed-models.mjs";
-import { primaryCredentialPath, resolveProviderCredential } from "./provider-credentials.mjs";
+import { credentialStatus, primaryCredentialPath } from "./provider-credentials.mjs";
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
+import { interpretWindowsTaskState, windowsScheduledTaskState } from "./windows-task-state.mjs";
 
 const checks = [];
 const add = (status, name, detail, fix) => checks.push({ status, name, detail, ...(fix ? { fix } : {}) });
 
-async function diagnose() {
+export async function diagnose() {
+  checks.length = 0;
   const binary = findCodexBinary();
   add(binary ? "ok" : "fail", "Codex binary", binary || "not found", "Install or update the Windows Codex app.");
   add(binary ? "ok" : "warn", "Codex version", binary ? codexVersion() : "unavailable");
   const auth = codexAuthStatus();
-  add(auth.authenticated ? "ok" : "warn", "Native Codex authentication", auth.authenticated ? "signed in" : auth.reason || "not signed in");
+  add(
+    auth.authenticated ? "ok" : auth.reason === "access-denied" ? "fail" : "warn",
+    "Native Codex authentication",
+    auth.authenticated ? "signed in" : auth.reason || "not signed in",
+  );
 
   const openRouterRoutes = [...MODEL_BY_SLUG.values()].filter((model) => model.provider === "openrouter");
-  const credential = resolveProviderCredential("openrouter", { persistent: true });
+  const credential = credentialStatus("openrouter", { persistent: true });
   const credentialPath = primaryCredentialPath(PROVIDERS.get("openrouter"));
-  const protectedCredential = credential?.value && existsSync(credentialPath)
+  const protectedCredential = credential.configured
     ? privateFileIsProtected(credentialPath)
     : false;
+  const credentialDenied = credential.fileStatus === "access-denied" || credential.fileStatus === "probe-failed";
   add(
-    credential?.value && protectedCredential ? "ok" : credential?.value ? "fail" : "warn",
+    credentialDenied ? "fail" : credential.configured && protectedCredential ? "ok" : credential.configured ? "fail" : "warn",
     "OpenRouter GLM credential",
-    credential?.value ? (protectedCredential ? "protected local file" : "credential file is not protected") : "not configured",
-    "Run .\\model-router.ps1 provider-key openrouter set.",
+    credentialDenied
+      ? `credential file access denied or probe failed${credential.code ? ` (${credential.code})` : ""}`
+      : credential.configured
+        ? (protectedCredential ? "protected local file" : "credential file is not protected")
+        : "not configured",
+    credentialDenied
+      ? `Inspect ownership and ACLs on ${credentialPath}; do not replace the credential to mask an access failure.`
+      : "Run .\\model-router.ps1 provider-key openrouter set.",
   );
 
   for (const route of openRouterRoutes) {
@@ -45,10 +57,19 @@ async function diagnose() {
 
   const switchyard = switchyardRuntimeStatus();
   add(
-    switchyard.ready ? "ok" : "warn",
+    switchyard.ready ? "ok" : switchyard.inaccessible.length ? "fail" : "warn",
     "Switchyard runtime",
-    switchyard.ready ? switchyard.binary : `not installed (${switchyard.missing.join(", ")})`,
+    switchyard.ready
+      ? switchyard.binary
+      : switchyard.inaccessible.length
+        ? `access denied or probe failed (${switchyard.inaccessible.map(({ target }) => target).join(", ")})`
+        : `not installed (${[...switchyard.missing, ...switchyard.invalid].join(", ")})`,
   );
+
+  if (process.platform === "win32") {
+    const task = interpretWindowsTaskState(await windowsScheduledTaskState());
+    add(task.healthy === true ? "ok" : "warn", "Windows scheduled task", task.detail);
+  }
 
   const selected = providerSelectionStatus();
   add("ok", "Routed providers", selected.providers.join(", ") || "none selected");

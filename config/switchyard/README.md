@@ -129,6 +129,7 @@ Diagnose the first failing owner instead of restarting blindly:
 | `local-hop capability is unavailable` | Router and Switchyard were not started as one supervised generation. Find the lifecycle/config split; do not paste a static capability into files. |
 | Router health reports `degraded: ["switchyard"]` | The selected child is unreachable. Inspect the supervised child exit and active config before any restart. |
 | Switchyard exits and the whole Router service exits | Expected generation ownership. Fix the child root cause; the service supervisor restarts the coherent stack. |
+| Task Scheduler reports `0x800710E0` while Router is healthy | The minute heartbeat tried to start the running task and `MultipleInstances=IgnoreNew` rejected the duplicate. Use Router health, managed task state, and process identity as authority. |
 
 Summarize only the latest supervised generation without copying request bodies,
 headers, capabilities, or raw agent identifiers:
@@ -140,6 +141,17 @@ headers, capabilities, or raw agent identifiers:
 The summary reports status counts, selected targets, classifier failures, and
 agent/correlation cardinality. Use the raw log only when this redacted summary
 cannot distinguish the failing owner.
+
+For a bounded certification packet that combines Router timings with the
+current generation's routing decisions, without emitting session, agent, or
+correlation identifiers, run:
+
+```powershell
+.\model-router.ps1 codex switchyard-certification-evidence --limit 20
+```
+
+Treat only successful entries from one clean window as proof. Cancellations and
+older generations remain diagnostics, not certification evidence.
 
 Provider selection changes the supervised child set and therefore requires one
 guarded Router restart:
@@ -258,12 +270,28 @@ do not weaken the no-standalone-stop rule to work around the missing owner.
 
 The repository-owned transaction is
 `maintenance/deploy-switchyard-candidate.ps1`. Pass the staged binary and
-route hashes, the clean candidate commit, and an already prepared detached
-rollback checkout for the exact running commit. The script validates Codex
-configuration before stopping Router, deploys from the active repository
-root, and restores through the detached checkout if activation fails. It
-refuses Switchyard path or address overrides so its file and health checks
-cannot certify a different runtime from the one Router starts.
+binary hash plus the clean candidate commit. Unless the candidate uses a new
+route file, omit the route and rollback arguments. The script then uses the
+installed private `routes.toml`, reads its expected hash from installed
+Switchyard provenance, reads the rollback commit from the installed Router
+manifest, and creates or reuses a detached rollback worktree under
+`generated/`. It rejects explicit route or rollback identities that disagree
+with those installed authorities.
+
+```powershell
+$routerCommit = (& git rev-parse HEAD).Trim()
+& .\maintenance\deploy-switchyard-candidate.ps1 `
+  -CandidateBinary $candidateBinary `
+  -ExpectedBinarySha256 $candidateHash `
+  -ExpectedRouterCommit $routerCommit
+```
+
+The script validates Codex configuration before stopping Router, deploys from
+the active repository root, and restores through the detached checkout if
+activation fails. It refuses Switchyard path or address overrides so its file
+and health checks cannot certify a different runtime from the one Router
+starts. Keep the generated rollback worktree and the active runtime rollback
+directory until the authorized acceptance checks pass.
 
 The transaction rejects an old candidate or rollback directory before it
 prepares dependencies. Its preflight report names the candidate, running, and
@@ -282,3 +310,9 @@ Router commit, and generated-routes SHA-256.
 Recertify after any change to one of those identities or to the native
 collaboration/tool namespace contract. Do not duplicate the general v2
 procedure here.
+
+Deployment and certification normally require two commits. Commit the clean
+Router and Switchyard candidate first because deployment binds the running
+generation to that commit. After the live v2 run passes, update and commit its
+proof separately. The proof must name the deployed candidate commit, not the
+later evidence-only commit.

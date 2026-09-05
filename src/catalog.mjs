@@ -1048,7 +1048,7 @@ function publishCatalog({
   // run at all we do not know, and guessing "signed out" is what silently
   // emptied the picker for Windows npm installs.
   const auth = codexAuthStatus();
-  if (auth.reason === "probe-failed") {
+  if (auth.reason === "probe-failed" || auth.reason === "access-denied") {
     throw new Error(
       `Could not ask Codex whether it is signed in (${auth.code || "spawn failed"} running ${auth.binary}). ` +
         "Refusing to rebuild the catalog, because assuming a signed-out session would remove every native model. " +

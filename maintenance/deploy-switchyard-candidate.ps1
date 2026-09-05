@@ -2,32 +2,69 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$CandidateBinary,
-  [Parameter(Mandatory = $true)]
   [string]$CandidateRoutes,
   [Parameter(Mandatory = $true)]
   [string]$ExpectedBinarySha256,
-  [Parameter(Mandatory = $true)]
   [string]$ExpectedRoutesSha256,
   [Parameter(Mandatory = $true)]
   [string]$ExpectedRouterCommit,
-  [Parameter(Mandatory = $true)]
   [string]$RollbackRouterRoot,
-  [Parameter(Mandatory = $true)]
   [string]$ExpectedRollbackRouterCommit,
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)
-$rollbackRouterRoot = [IO.Path]::GetFullPath($RollbackRouterRoot)
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+$stateRoot = [IO.Path]::GetFullPath((Join-Path $codexHome "codex-router"))
 $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $codexHome "switchyard"))
 $candidateBinary = [IO.Path]::GetFullPath($CandidateBinary)
-$candidateRoutes = [IO.Path]::GetFullPath($CandidateRoutes)
+$installedRoutes = [IO.Path]::GetFullPath((Join-Path $runtimeRoot "routes.toml"))
+$candidateRoutes = if ([string]::IsNullOrWhiteSpace($CandidateRoutes)) {
+  $installedRoutes
+} else {
+  [IO.Path]::GetFullPath($CandidateRoutes)
+}
 $expectedBinaryHash = $ExpectedBinarySha256.ToLowerInvariant()
-$expectedRoutesHash = $ExpectedRoutesSha256.ToLowerInvariant()
 $expectedRouterCommit = $ExpectedRouterCommit.ToLowerInvariant()
-$expectedRollbackCommit = $ExpectedRollbackRouterCommit.ToLowerInvariant()
+$installManifestPath = Join-Path $stateRoot "install-manifest.json"
+if (-not (Test-Path -LiteralPath $installManifestPath -PathType Leaf)) {
+  throw "Installed Router manifest is missing at $installManifestPath."
+}
+$installManifest = Get-Content -Raw -LiteralPath $installManifestPath | ConvertFrom-Json
+$installedRouterCommit = "$($installManifest.current.commit)".Trim().ToLowerInvariant()
+if ($installedRouterCommit -notmatch '^[0-9a-f]{40}$') {
+  throw "Installed Router manifest does not contain a valid current commit."
+}
+if (
+  -not [string]::IsNullOrWhiteSpace($ExpectedRollbackRouterCommit) -and
+  $ExpectedRollbackRouterCommit.ToLowerInvariant() -ne $installedRouterCommit
+) {
+  throw "Rollback Router commit must match the installed Router manifest commit $installedRouterCommit."
+}
+$expectedRollbackCommit = $installedRouterCommit
+$autoRollbackRouterRoot = [string]::IsNullOrWhiteSpace($RollbackRouterRoot)
+$rollbackRouterRoot = if ($autoRollbackRouterRoot) {
+  [IO.Path]::GetFullPath((Join-Path $repoRoot "generated\router-rollback-$($expectedRollbackCommit.Substring(0, 8))"))
+} else {
+  [IO.Path]::GetFullPath($RollbackRouterRoot)
+}
+
+if ([string]::IsNullOrWhiteSpace($ExpectedRoutesSha256)) {
+  if (-not [string]::Equals($candidateRoutes, $installedRoutes, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file."
+  }
+  $provenancePath = Join-Path $runtimeRoot "provenance.json"
+  if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
+    throw "Installed Switchyard provenance is missing at $provenancePath."
+  }
+  $installedProvenance = Get-Content -Raw -LiteralPath $provenancePath | ConvertFrom-Json
+  $ExpectedRoutesSha256 = "$($installedProvenance.routesSha256)".Trim()
+}
+$expectedRoutesHash = $ExpectedRoutesSha256.ToLowerInvariant()
+if ($expectedRoutesHash -notmatch '^[0-9a-f]{64}$') {
+  throw "Expected Switchyard routes SHA-256 is invalid."
+}
 $runtimeFiles = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
 $stageRoot = Join-Path $runtimeRoot ".candidate-$([Guid]::NewGuid().ToString('N'))"
 $rollbackRoot = Join-Path $runtimeRoot ".rollback-$([Guid]::NewGuid().ToString('N'))"
@@ -71,6 +108,33 @@ function Assert-CheckoutIdentity([string]$Root, [string]$ExpectedCommit, [string
   if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 0) {
     throw "$Label is not an exact clean checkout."
   }
+}
+
+function Ensure-RollbackRouterCheckout {
+  if (Test-Path -LiteralPath $rollbackRouterRoot -PathType Container) {
+    Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Router checkout"
+    return
+  }
+  if (-not $autoRollbackRouterRoot) {
+    throw "Explicit rollback Router checkout is missing at $rollbackRouterRoot."
+  }
+  if ($WhatIfPreference) {
+    throw "Generated rollback checkout is missing; run without WhatIf only when deployment is authorized."
+  }
+  $expectedParent = [IO.Path]::GetFullPath((Join-Path $repoRoot "generated"))
+  if (-not [string]::Equals(
+    [IO.Path]::GetDirectoryName($rollbackRouterRoot),
+    $expectedParent,
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw "Unsafe generated rollback checkout path: $rollbackRouterRoot"
+  }
+  New-Item -ItemType Directory -Force -Path $expectedParent | Out-Null
+  & git -C $repoRoot worktree add --detach $rollbackRouterRoot $expectedRollbackCommit
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not create the rollback Router checkout at commit $expectedRollbackCommit."
+  }
+  Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Generated rollback Router checkout"
 }
 
 function Invoke-NodeJson([string]$Root, [string[]]$Arguments, [string]$Label) {
@@ -264,7 +328,6 @@ function Restore-Switchyard([Collections.Generic.HashSet[string]]$Existing) {
 foreach ($path in @(
   (Join-Path $repoRoot "install.ps1"),
   (Join-Path $repoRoot "src\config-manager.mjs"),
-  (Join-Path $rollbackRouterRoot "install.ps1"),
   $candidateBinary,
   $candidateRoutes
 )) {
@@ -284,7 +347,6 @@ foreach ($name in @(
   }
 }
 Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
-Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Router checkout"
 $routerCommit = $expectedRouterCommit
 & git -C $repoRoot merge-base --is-ancestor $expectedRollbackCommit $expectedRouterCommit
 if ($LASTEXITCODE -ne 0) { throw "Rollback commit is not an ancestor of the Router candidate." }
@@ -305,6 +367,11 @@ if ($LASTEXITCODE -ne 0) { throw "Switchyard candidate dry-run failed." }
 
 & node (Join-Path $repoRoot "src\config-manager.mjs") validate-enable | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Codex configuration cannot accept the Router candidate." }
+Ensure-RollbackRouterCheckout
+Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Router checkout"
+if (-not (Test-Path -LiteralPath (Join-Path $rollbackRouterRoot "install.ps1") -PathType Leaf)) {
+  throw "Rollback Router checkout has no installer."
+}
 $runningRouterRoot = Resolve-RunningRouterRoot @($repoRoot, $rollbackRouterRoot)
 Assert-RouterHealth $runningRouterRoot $expectedRollbackCommit
 Assert-SwitchyardHealth

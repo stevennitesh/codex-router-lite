@@ -1,5 +1,28 @@
 import { execFile as execFileCallback } from "node:child_process";
 
+export const WINDOWS_TASK_DUPLICATE_IGNORED = 0x800710e0;
+
+export function interpretWindowsTaskState(state) {
+  if (!state) return { status: "inconclusive", healthy: undefined, detail: "query unavailable" };
+  const running = state.instanceCount > 0 && state.launcherAlive === true;
+  const resultHex = `0x${state.lastTaskResult.toString(16).toUpperCase().padStart(8, "0")}`;
+  if (running && state.lastTaskResult === WINDOWS_TASK_DUPLICATE_IGNORED) {
+    return {
+      status: "running",
+      healthy: true,
+      detail: `running; heartbeat duplicate ignored (${resultHex})`,
+    };
+  }
+  if (running) {
+    return { status: "running", healthy: true, detail: `running (${resultHex})` };
+  }
+  return {
+    status: "not-running",
+    healthy: false,
+    detail: `no live scheduled launcher (${resultHex})`,
+  };
+}
+
 // Task Scheduler's `State` can remain Running after its only instance has
 // gone, and the COM instance enumeration can outlive its process too. The
 // launcher process tree is therefore probed directly: the registered task's

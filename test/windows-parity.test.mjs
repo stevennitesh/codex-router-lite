@@ -73,6 +73,8 @@ test("the Windows command exposes the redacted Switchyard trace", () => {
   const dispatcher = readFileSync(path.join(root, "model-router.ps1"), "utf8");
   assert.match(dispatcher, /"switchyard-trace"/u);
   assert.match(dispatcher, /src\\switchyard-trace\.mjs/u);
+  assert.match(dispatcher, /"switchyard-certification-evidence"/u);
+  assert.match(dispatcher, /src\\switchyard-certification-evidence\.mjs/u);
 });
 
 test("the current-Codex catalog check imports the Windows spawn owner", () => {

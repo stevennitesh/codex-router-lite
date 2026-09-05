@@ -1,7 +1,8 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
+import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
 import { STATE_DIR } from "./paths.mjs";
 import { PROVIDERS } from "./routed-models.mjs";
 
@@ -15,22 +16,32 @@ export function primaryCredentialPath(provider = apiProvider("openrouter")) {
   return path.join(STATE_DIR, "openrouter-api-key.secret");
 }
 
-function fileCredential(provider) {
+function fileCredential(provider, { lstat, readFile = readFileSync } = {}) {
   const target = primaryCredentialPath(provider);
+  const probe = probeRegularFile(target, lstat ? { lstat } : {});
+  if (probe.status !== "present") return { credential: undefined, ...probe };
   try {
-    const stat = lstatSync(target);
-    if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
-    const value = readFileSync(target, "utf8").trim();
-    return value ? { value, source: `protected file (${target})`, persistent: true } : undefined;
-  } catch {
-    return undefined;
+    const value = readFile(target, "utf8").trim();
+    return {
+      credential: value
+        ? { value, source: `protected file (${target})`, persistent: true }
+        : undefined,
+      status: value ? "present" : "empty",
+    };
+  } catch (error) {
+    return {
+      credential: undefined,
+      status: fileProbeErrorReason(error),
+      ...(error?.code ? { code: error.code } : {}),
+    };
   }
 }
 
-export function resolveProviderCredential(providerOrId, { persistent = false } = {}) {
+export function resolveProviderCredential(providerOrId, options = {}) {
+  const { persistent = false } = options;
   const provider = typeof providerOrId === "string" ? apiProvider(providerOrId) : providerOrId;
   if (provider?.id !== "openrouter") throw new Error("Only the OpenRouter credential is supported.");
-  const stored = fileCredential(provider);
+  const stored = fileCredential(provider, options).credential;
   if (stored) return stored;
   if (!persistent) {
     const value = String(process.env.OPENROUTER_API_KEY || "").trim();
@@ -44,11 +55,20 @@ function credentialSetupHint() {
 }
 
 export function credentialStatus(providerOrId = "openrouter", options = {}) {
-  const resolved = resolveProviderCredential(providerOrId, options);
+  const provider = typeof providerOrId === "string" ? apiProvider(providerOrId) : providerOrId;
+  const stored = fileCredential(provider, options);
+  const environmentValue = !options.persistent
+    ? String(process.env.OPENROUTER_API_KEY || "").trim()
+    : "";
+  const resolved = stored.credential || (environmentValue
+    ? { value: environmentValue, source: "environment (OPENROUTER_API_KEY)", persistent: false }
+    : undefined);
   return {
     configured: Boolean(resolved?.value),
     persistent: resolved?.persistent === true,
     source: resolved?.source,
+    fileStatus: stored.status,
+    ...(stored.code ? { code: stored.code } : {}),
     setup: credentialSetupHint(),
   };
 }

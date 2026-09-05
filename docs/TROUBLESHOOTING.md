@@ -7,6 +7,12 @@ Start with read-only checks:
 .\model-router.ps1 codex doctor
 ```
 
+If a restricted shell reports that protected state is missing, Codex is signed
+out, or a provider runtime is unavailable, repeat the same read-only check with
+the local authority that owns `%CODEX_HOME%`. Treat the elevated result as the
+diagnostic authority. Do not repair ACLs or reinstall from the restricted
+shell's false negative.
+
 Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, prompt bodies, or unredacted logs into an issue.
 
 ## Codex native models are wrong
@@ -61,6 +67,13 @@ Start with the redacted current-generation summary:
 The trace command reports counts and continuity only. It never prints request
 bodies, headers, capabilities, or raw agent identifiers.
 
+When collecting certification evidence after the failure owner is resolved,
+use the bounded redacted view instead of copying either raw log:
+
+```powershell
+.\model-router.ps1 codex switchyard-certification-evidence --limit 20
+```
+
 ## Windows task mismatch
 
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
@@ -68,3 +81,23 @@ A task with the expected name but different launcher, arguments, source root, AC
 The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.
+
+The service task has a minute heartbeat and `MultipleInstances=IgnoreNew`.
+While Router is running, a duplicate heartbeat launch may set Task Scheduler's
+last result to `0x800710E0`. This means Windows rejected the duplicate task
+instance. Confirm Router health, task state, launcher identity, and the next
+heartbeat time before treating it as a failure.
+
+## Conversation cuts after restarting Codex
+
+Restarting the Windows Codex app closes its local app-server connection. An
+active turn may end with an interruption marker even when Router stayed
+healthy. Completed thread history remains stored and can resume after the app
+returns. Do not make Router keep a detached provider stream alive because the
+new app-server connection cannot reattach to it safely.
+
+A v2 child can also fail history hydration when the app tries to resume it
+before loading its parent. The desktop log states that the unloaded parent must
+resume first or the client must use `thread/read`. Open the parent task first,
+then inspect its child. Diagnose this as native app hydration unless Router
+health or the persisted thread file also failed.

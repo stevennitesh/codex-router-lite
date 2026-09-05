@@ -43,9 +43,12 @@ Use a native Codex parent task whose current collaboration schema offers the
 candidate's generated `router_<provider>_<model>` agent type. Refresh the
 catalog and open a fresh parent task if the role was added after that task
 started. Spawn the role through native collaboration, record the first marker,
-then send the second marker to that same child. Do not substitute
-`codex_app.create_thread`: a separate app task is not the encrypted child relay
-being certified.
+wait for that child turn to finish, then call `followup_task` on that same child
+for the second marker. Do not pair the follow-up with `interrupt_agent` and do
+not interrupt between markers. A client cancellation appears as Router
+`status=0`; discard that evidence window and start a clean sequence. Do not
+substitute `codex_app.create_thread`: a separate app task is not the encrypted
+child relay being certified.
 
 The route may be published as v2 only for the authorized proof window. Keep its
 application draft until all five checks pass; accept the proof and registry
@@ -69,3 +72,10 @@ Do not reuse another provider's or another slug's result. A local selection is o
 Certification can consume provider or ChatGPT quota. Never run it without explicit authority. A deterministic mock test cannot replace the native parent, child, and same-thread observations.
 
 After an accepted change, run `npm run check`, `npm test`, and the installed-Codex catalog check. For Switchyard, also bind the proof to the locked commit, patch hash, binary hash, generated route hash, and Router commit.
+
+For Switchyard evidence, run
+`.\model-router.ps1 codex switchyard-certification-evidence --limit 20`. The
+command understands the routing log's `ts`, `session_id`, `model`, and token
+fields, but emits no raw session, agent, or correlation identifiers. Select one
+bounded passing window and record its successful Router timings; earlier
+canceled attempts are not evidence for that window.

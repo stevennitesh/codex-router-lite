@@ -18,9 +18,12 @@ if (providerId !== "openrouter" || !new Set(["status", "set", "remove"]).has(com
   const provider = apiProvider("openrouter");
   if (command === "status") {
     const status = credentialStatus(provider);
-    process.stdout.write(status.configured
-      ? `OpenRouter API key is configured via ${status.source}.\n`
-      : "OpenRouter API key is not configured.\n");
+    const inaccessible = status.fileStatus === "access-denied" || status.fileStatus === "probe-failed";
+    process.stdout.write(inaccessible
+      ? `OpenRouter API key file cannot be accessed${status.code ? ` (${status.code})` : ""}.\n`
+      : status.configured
+        ? `OpenRouter API key is configured via ${status.source}.\n`
+        : "OpenRouter API key is not configured.\n");
     if (!status.configured) process.exitCode = 1;
   } else if (command === "set") {
     const value = promptForSecret("OpenRouter API key");

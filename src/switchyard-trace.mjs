@@ -6,6 +6,14 @@ import { LOG_PATH } from "./paths.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
 
+export function latestSwitchyardGeneration(contents) {
+  const text = String(contents || "");
+  const marker = text.lastIndexOf(SWITCHYARD_START);
+  if (marker < 0) return undefined;
+  const lineStart = text.lastIndexOf("\n", marker) + 1;
+  return text.slice(lineStart);
+}
+
 function increment(record, key) {
   record[key] = (record[key] || 0) + 1;
 }
@@ -21,13 +29,12 @@ function timestampFrom(line) {
 }
 
 export function summarizeSwitchyardTrace(contents) {
-  const text = String(contents || "");
-  const marker = text.lastIndexOf(SWITCHYARD_START);
-  if (marker < 0) {
+  const generation = latestSwitchyardGeneration(contents);
+  if (generation === undefined) {
     return { version: 1, generationFound: false };
   }
 
-  const lines = text.slice(marker).split(/\r?\n/u);
+  const lines = generation.split(/\r?\n/u);
   const summary = {
     version: 1,
     generationFound: true,

@@ -1,7 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { windowsScheduledTaskState } from "../src/windows-task-state.mjs";
+import {
+  interpretWindowsTaskState,
+  WINDOWS_TASK_DUPLICATE_IGNORED,
+  windowsScheduledTaskState,
+} from "../src/windows-task-state.mjs";
+
+test("a running task treats IgnoreNew heartbeat rejection as healthy", () => {
+  assert.deepEqual(interpretWindowsTaskState({
+    instanceCount: 1,
+    lastTaskResult: WINDOWS_TASK_DUPLICATE_IGNORED,
+    launcherAlive: true,
+  }), {
+    status: "running",
+    healthy: true,
+    detail: "running; heartbeat duplicate ignored (0x800710E0)",
+  });
+  assert.equal(interpretWindowsTaskState({
+    instanceCount: 0,
+    lastTaskResult: WINDOWS_TASK_DUPLICATE_IGNORED,
+    launcherAlive: false,
+  }).healthy, false);
+});
 
 test("parses the authoritative instance count, result, and launcher liveness", async () => {
   let invocation;

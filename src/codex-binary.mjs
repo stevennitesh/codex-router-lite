@@ -190,30 +190,39 @@ export function codexVersion() {
 // used to be indistinguishable, so one Windows spawn error silently stripped
 // every native model from the catalog. Report the reason so callers can refuse
 // to act on an unknown instead of treating it as a definite "logged out".
-export function codexAuthStatus() {
-  const binary = findCodexBinary();
+export function codexAuthStatus({
+  findBinary = findCodexBinary,
+  execute = execFileSync,
+} = {}) {
+  const binary = findBinary();
   if (!binary) return { authenticated: false, reason: "codex-not-found" };
   try {
     // Inside the try: a path this module refuses to hand to a shell is a probe
     // that could not run, which is the "unknown" this function exists to
     // report -- not an exception for every caller to learn to expect.
     const target = spawnableCommand(binary, ["login", "status"]);
-    execFileSync(target.command, target.args, {
+    execute(target.command, target.args, {
       ...target.options,
+      encoding: "utf8",
       timeout: 10_000,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     return { authenticated: true, reason: "authenticated", binary };
   } catch (error) {
-    // A numeric status means Codex ran and reported a signed-out session.
-    // Anything else (ENOENT, EACCES, timeout) means the probe never completed.
-    const probeFailed = typeof error?.status !== "number";
+    const detail = [error?.code, error?.message, error?.stderr]
+      .filter(Boolean)
+      .join(" ");
+    const accessDenied =
+      error?.code === "EACCES" ||
+      error?.code === "EPERM" ||
+      /access (?:is )?denied|permission denied|unauthorizedaccess/iu.test(detail);
+    const signedOut = /not (?:logged|signed) in|logged out|authentication required/iu.test(detail);
     return {
       authenticated: false,
-      reason: probeFailed ? "probe-failed" : "signed-out",
+      reason: accessDenied ? "access-denied" : signedOut ? "signed-out" : "probe-failed",
       binary,
-      ...(probeFailed && error?.code ? { code: error.code } : {}),
+      ...(error?.code ? { code: error.code } : {}),
     };
   }
 }

@@ -146,6 +146,19 @@ test("Switchyard source lock pins the canonical compatibility patch", () => {
   );
 });
 
+test("Switchyard runtime status does not misreport access denial as missing", () => {
+  const status = switchyardRuntimeStatus({
+    stateDir: "C:\\fixture\\codex-router",
+    env: { CODEX_HOME: "C:\\fixture" },
+    probe: (target) => target.endsWith(".exe")
+      ? { status: "access-denied", code: "EACCES" }
+      : { status: "present" },
+  });
+  assert.equal(status.ready, false);
+  assert.deepEqual(status.missing, []);
+  assert.equal(status.inaccessible[0].status, "access-denied");
+});
+
 test("Switchyard's hidden Codex classifier satisfies the Responses-Lite reasoning contract", () => {
   const template = readFileSync(
     path.join(root, "config", "switchyard", "routes.template.toml"),

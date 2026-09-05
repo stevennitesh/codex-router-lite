@@ -83,6 +83,14 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
+  assert.match(source, /install-manifest\.json/);
+  assert.match(source, /\$installManifest\.current\.commit/);
+  assert.match(source, /provenance\.json/);
+  assert.match(source, /\$installedProvenance\.routesSha256/);
+  assert.match(source, /if \(\$WhatIfPreference\)[\s\S]*worktree add --detach/);
+  assert.match(source, /worktree add --detach \$rollbackRouterRoot \$expectedRollbackCommit/);
+  assert.match(source, /ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file/);
+  assert.match(source, /Rollback Router commit must match the installed Router manifest commit/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
   assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
   assert.match(

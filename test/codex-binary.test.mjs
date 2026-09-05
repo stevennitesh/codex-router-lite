@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { newestCodexBinary } from "../src/codex-binary.mjs";
+import { codexAuthStatus, newestCodexBinary } from "../src/codex-binary.mjs";
 
 test("equal-version Codex app binaries select the newest installed build", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-binary-"));
@@ -28,4 +28,14 @@ test("equal-version Codex app binaries select the newest installed build", () =>
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }
+});
+
+test("Codex authentication distinguishes signed-out, access, and unknown failures", () => {
+  const failure = (message, properties = {}) => () => {
+    throw Object.assign(new Error(message), properties);
+  };
+  const options = { findBinary: () => "C:\\fixture\\codex.exe" };
+  assert.equal(codexAuthStatus({ ...options, execute: failure("Not logged in", { status: 1 }) }).reason, "signed-out");
+  assert.equal(codexAuthStatus({ ...options, execute: failure("Access is denied", { status: 1 }) }).reason, "access-denied");
+  assert.equal(codexAuthStatus({ ...options, execute: failure("unexpected", { status: 1 }) }).reason, "probe-failed");
 });
