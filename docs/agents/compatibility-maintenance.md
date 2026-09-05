@@ -48,7 +48,7 @@ snapshot and its narrow relay regression only when the contract changed.
 
 For a changed Windows app or CLI build:
 
-1. Capture the native `codex_app` tool names and JSON schemas from an ordinary
+1. Capture the native app namespace, tool names, and JSON schemas from an ordinary
    Windows app turn.
 2. Compare that inventory with `src/codex-app-tools.mjs`; a version change alone
    does not prove a tool change.
@@ -86,7 +86,17 @@ and retries on the next interval. The watcher does not override native
 
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 
-`src/codex-app-tools.mjs` is the captured app-function definition set. Routed tools are flattened for the model and restored to native namespaces before app execution. When Codex changes the tool set, capture it from an ordinary Windows app turn, update the paired Codex build and snapshot, then test a routed round trip.
+`src/codex-app-tools.mjs` is a reference snapshot for drift inspection. Runtime
+relay uses the caller's definitions and native tool-search discoveries, without
+adding snapshot tools. Current app tools use `mcp__codex_app`; legacy namespaces
+remain supported when explicitly supplied. Routed tools are flattened for the
+model and restored to those request-local identities before app execution.
+When Codex changes the tool set, capture it from an ordinary Windows app turn,
+update the paired build and snapshot, then test a routed round trip.
+
+Child completion and cancellation belong to Codex and the caller. Relay only
+model-authored collaboration calls; injecting an interrupt after a prior final
+answer can cancel a newly resumed child.
 
 The scheduled-task launcher, arguments, source root, ACL, generation, and running process form one service identity. A same-named foreign task is a conflict.
 
@@ -100,7 +110,12 @@ flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
 
-Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic. `src/zai-responses-compat.mjs` repairs the observed missing message envelope and closes assistant text before an overlapping tool-call lifecycle for this exact route. Keep repairs scoped to the owner that exhibits the defect.
+Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
+`src/zai-responses-compat.mjs` repairs missing message envelopes, separates
+message IDs reused from reasoning items, and closes assistant text before an
+overlapping tool-call lifecycle on the two exact GLM routes. Test these repairs
+through the namespace relay: a duplicate identity can disable restoration of
+a later app call. Keep the generic relay's identity checks intact.
 
 Fresh hosted-search turns bypass the Chat Completions translation and use the internal OpenRouter forwarder's direct Responses path. `src/openrouter-hosted-search.mjs` maps only native `web_search` and `web_search_preview` tools to the bounded `openrouter:web_search` server tool, restores returned items to `web_search_call`, preserves citations and sources, and reverses completed search history on another direct-search turn. A plain function named `web_search` is unrelated and must remain unchanged. Keep the checked-in Exa engine, result and call limits, exact endpoint policy, and fallback prohibition together. OpenRouter reports live search usage under `server_tool_use_details`; tolerate the documented `server_tool_use` spelling in diagnostics, but never infer zero from an absent field.
 

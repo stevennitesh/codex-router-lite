@@ -10,7 +10,7 @@ import {
   flattenNamespaceTools,
   rewriteNamespaceResponsePayload,
 } from "../src/namespace-relay.mjs";
-import { mergeCodexAppTools } from "../src/codex-app-tools.mjs";
+import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 
 function collect(stream) {
   return new Promise((resolve, reject) => {
@@ -176,9 +176,7 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
     { type: "function", name: "apply_patch" },
     { type: "function", name: "web_search" },
   ];
-  const merged = mergeCodexAppTools(inventory);
-  assert.equal(merged.merged, true);
-  const { tools, flattened } = flattenNamespaceTools(merged.tools);
+  const { tools, flattened } = flattenNamespaceTools([...inventory, ...CODEX_APP_TOOLS]);
   assert.equal(flattened, true);
   const names = tools.map((tool) => tool.name);
   // Nothing standard dropped.
@@ -203,9 +201,8 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
   for (const name of ["collaboration__spawn_agent", "collaboration__wait_agent"]) {
     assert.ok(names.includes(name), `${name} must survive`);
   }
-  // Thread + automation + app tools present (flattened) after the merge fills
-  // the deferred codex_app definitions.
-  for (const name of ["codex_app__create_thread", "codex_app__list_threads", "codex_app__automation_update", "codex_app__read_thread"]) {
+  // Explicitly supplied app tools remain available after flattening.
+  for (const name of ["mcp__codex_app__create_thread", "mcp__codex_app__list_threads", "mcp__codex_app__automation_update", "mcp__codex_app__read_thread"]) {
     assert.ok(names.includes(name), `${name} must survive`);
   }
   // MCP namespaces flattened too -- the old relay left them to the bridge,
@@ -215,8 +212,7 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
 });
 
 test("response transform restores flattened calls to the native namespace shape", async () => {
-  const merged = mergeCodexAppTools(clientRoutedTools());
-  const { namespaces } = flattenNamespaceTools(merged.tools);
+  const { namespaces } = flattenNamespaceTools([...clientRoutedTools(), ...CODEX_APP_TOOLS.map(tool => ({ ...tool, name: "codex_app" }))]);
   const events = [
     { type: "response.created" },
     {
@@ -315,18 +311,16 @@ test("response transform drops a spawn-agent model override not offered by the t
 });
 
 test("every flattened app tool reaches the provider with an object root", async () => {
-  const { mergeCodexAppTools } = await import("../src/codex-app-tools.mjs");
   const { hasObjectRoot } = await import("../src/tool-schema-root.mjs");
 
-  const merged = mergeCodexAppTools([{ type: "namespace", name: "codex_app", tools: [] }]);
-  const { tools } = flattenNamespaceTools(merged.tools);
+  const { tools } = flattenNamespaceTools(CODEX_APP_TOOLS);
 
   const unionRooted = tools
     .filter((tool) => tool.parameters && !hasObjectRoot(tool.parameters))
     .map((tool) => tool.name);
   assert.deepEqual(unionRooted, [], "a union root fails the whole request, not the one tool");
 
-  const automationUpdate = tools.find((tool) => tool.name === "codex_app__automation_update");
+  const automationUpdate = tools.find((tool) => tool.name === "mcp__codex_app__automation_update");
   assert.ok(automationUpdate, "automation_update is still relayed");
   assert.equal(automationUpdate.parameters.type, "object");
   assert.ok(

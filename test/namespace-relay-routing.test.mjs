@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
@@ -123,7 +124,7 @@ async function closeServer(server) {
 }
 
 // The namespace inventory the Codex client actually sends on routed requests
-// (captured live): plain tools, collaboration, a reduced codex_app, and MCP
+// (legacy namespace with explicit schemas): plain tools, collaboration, codex_app, and MCP
 // namespaces -- including mcp__node_repl, the in-app browser / computer-use
 // runtime, and a server whose namespace name contains the delimiter.
 function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash") {
@@ -170,7 +171,7 @@ function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash")
         type: "namespace",
         name: "codex_app",
         tools: [
-          { type: "function", name: "load_workspace_dependencies" },
+          ...CODEX_APP_TOOLS[0].tools,
           { type: "function", name: "navigate_to_codex_page" },
           { type: "function", name: "read_thread_terminal" },
         ],
@@ -537,7 +538,7 @@ test("routed request flattens every namespace to the gateway and restores calls 
   // including the MCP namespaces the bridge drops when left as namespace
   // entries.
   assert.ok(names.includes("collaboration__spawn_agent"), "collaboration flattened");
-  assert.ok(names.includes("codex_app__create_thread"), "merged codex_app tool flattened");
+  assert.ok(names.includes("codex_app__create_thread"), "supplied codex_app tool flattened");
   assert.ok(names.includes("mcp__node_repl__js"), "node_repl js flattened");
   assert.ok(names.includes("mcp__node_repl__js_reset"), "node_repl js_reset flattened");
   assert.ok(names.includes("tool_search"), "native tool_search exposed as a function");
@@ -557,7 +558,7 @@ test("routed request flattens every namespace to the gateway and restores calls 
   const toolSearch = outgoing.tools.find((tool) => tool.name === "tool_search");
   assert.equal(toolSearch.type, "function");
   assert.deepEqual(toolSearch.parameters.required, ["query"]);
-  // The merged codex_app tool definitions keep their schema.
+  // The supplied codex_app tool definitions keep their schema.
   const createThread = outgoing.tools.find((tool) => tool.name === "codex_app__create_thread");
   assert.ok(createThread?.inputSchema, "create_thread schema survives the relay");
   assert.equal(createThread.inputSchema.type, "object");
@@ -768,5 +769,51 @@ test("routed tool_search history declares discovered tools and restores their ca
       call_id: "delete-1",
       arguments: '{"id":"evt-1"}',
     });
+  }
+});
+
+// Live Codex 0.153.4 / LiteLLM regression: reasoning and assistant text reuse
+// one id, followed by a current app call. Preserve strict namespace validation.
+test("GLM message identity repair keeps current app calls dispatchable and never injects interrupts", async () => {
+  for (const model of ["openrouter/glm-5.3-flash", "openrouter/glm-5.3-flash-gmicloud"]) {
+    const message = { id: "shared", type: "message", role: "assistant", content: [{ type: "output_text", text: "Checking." }] };
+    const reasoning = { id: "shared", type: "reasoning", summary: [] };
+    const call = { id: "fc_app", type: "function_call", call_id: "call_app", name: "mcp__codex_app__list_projects", arguments: "{}" };
+    const followup = { id: "fc_followup", type: "function_call", call_id: "call_followup", name: "collaboration__followup_task", arguments: '{"target":"child","message":"continue"}' };
+    const events = [
+      { type: "response.output_item.added", output_index: 0, item: reasoning },
+      { type: "response.output_item.done", output_index: 0, item: reasoning },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "shared", delta: "Checking." },
+      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "shared", text: "Checking." },
+      { type: "response.output_item.done", output_index: 0, item: message },
+      { type: "response.output_item.added", output_index: 2, item: { ...call, arguments: "" } },
+      { type: "response.output_item.done", output_index: 2, item: call },
+      { type: "response.output_item.added", output_index: 3, item: { ...followup, arguments: "" } },
+      { type: "response.output_item.done", output_index: 3, item: followup },
+      { type: "response.completed", response: { status: "completed", output: [reasoning, message, call, followup] } },
+    ];
+    const result = await scenario(true, {
+      model,
+      sseBody: () => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      requestPayload: (stream, model) => ({ model, stream,
+        input: [{ type: "agent_message", content: "Message Type: FINAL_ANSWER\nSender: /root/child\nPayload: done" }],
+        tools: [
+          { type: "namespace", name: "mcp__codex_app", tools: [{ type: "function", name: "list_projects", parameters: { type: "object", properties: {} } }] },
+          { type: "namespace", name: "collaboration", tools: ["followup_task", "interrupt_agent"].map(name => ({ type: "function", name, parameters: { type: "object" } })) },
+        ],
+      }),
+    });
+    assert.deepEqual(result.gatewayBodies[0].tools.map(tool => tool.name), ["mcp__codex_app__list_projects", "collaboration__followup_task", "collaboration__interrupt_agent"]);
+    const received = result.clientBody.split("\n\n").filter(Boolean).map(block => JSON.parse(block.slice(6)));
+    const restored = received.filter(event => event.type === "response.output_item.done").map(event => event.item);
+    assert.equal(restored[0].id, "shared");
+    assert.notEqual(restored[1].id, "shared");
+    for (const event of received.filter(event => event.item_id && !event.type.includes("function_call"))) assert.equal(event.item_id, restored[1].id);
+    assert.equal(restored[2].namespace, "mcp__codex_app");
+    assert.equal(restored[2].name, "list_projects");
+    assert.equal(restored[3].name, "followup_task");
+    assert.equal(restored[3].namespace, "collaboration");
+    assert.deepEqual(received.at(-1).response.output, restored);
+    assert.doesNotMatch(result.clientBody, /interrupt_agent/);
   }
 });

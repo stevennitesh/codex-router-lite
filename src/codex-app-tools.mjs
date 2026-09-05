@@ -1,13 +1,10 @@
 // Snapshot of the Codex app's native app-side tool definitions.
 // Source: the live Codex Desktop tool registry on 2026-09-05, paired with
 // Windows app 26.901.5280.0 and codex-cli 0.153.4. Keep this inventory
-// synchronized with the current app surface; client-provided definitions still
-// win when the app sends them.
-// The app registers these tools with deferLoading and executes the calls
-// natively; the router relays the definitions to routed providers that
-// would otherwise never see them, and restores the namespace on the way back.
+// synchronized for drift inspection. Runtime relay uses only client-provided
+// definitions and discoveries; this snapshot does not add callable tools.
 
-const CODEX_APP_NAMESPACE = "codex_app";
+const CODEX_APP_NAMESPACE = "mcp__codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
   capturedAt: "2026-09-05",
@@ -20,7 +17,7 @@ export const CODEX_APP_TOOLS =
 [
   {
     "type": "namespace",
-    "name": "codex_app",
+    "name": "mcp__codex_app",
     "description": "Tools provided by the Codex app.",
     "tools": [
       {
@@ -1388,13 +1385,8 @@ export const CODEX_APP_TOOLS =
 ]
 ;
 
-// The Codex client registers the app toolset with deferLoading and executes
-// the calls natively even when the definitions were not in the request. The
-// router therefore relays the full set to routed providers (so the model can
-// see and call the tools); the generic namespace relay in namespace-relay.mjs
-// restores the namespace on the way back so the client dispatches them. The
-// router never executes an app tool itself: the app owns thread, automation,
-// and navigation state.
+// Reference snapshot for build-drift inspection and schema regression tests.
+// Runtime tool availability comes exclusively from the current Codex request.
 
 const NAMESPACE_BY_NAME = new Map();
 for (const entry of CODEX_APP_TOOLS) {
@@ -1410,65 +1402,11 @@ export const CODEX_APP_TOOL_NAMES = new Set(NAMESPACE_BY_NAME.keys());
 
 export function splitFlatCodexAppName(name) {
   if (typeof name !== "string") return undefined;
-  const prefix = `${CODEX_APP_NAMESPACE}${CODEX_APP_TOOL_DELIMITER}`;
-  if (!name.startsWith(prefix)) return undefined;
-  const toolName = name.slice(prefix.length);
-  return toolName ? { namespace: CODEX_APP_NAMESPACE, name: toolName } : undefined;
-}
-
-// The client sends a reduced codex_app namespace (three app tools) on routed
-// requests; the rest are deferred client-side. Merge the full app toolset in so
-// routed providers see the same tools a native model sees. Client-provided
-// definitions win; the snapshot fills in the tools the client deferred. When
-// the client omits an app namespace entirely, append the full one: the client
-// still executes these calls natively (deferLoading registration), so the
-// provider should still see them.
-export function mergeCodexAppTools(tools) {
-  if (!Array.isArray(tools)) return { tools, merged: false };
-  const namespaces = new Map();
-  for (const entry of CODEX_APP_TOOLS) {
-    if (entry?.type !== "namespace") continue;
-    const byName = new Map();
-    for (const fn of Array.isArray(entry.tools) ? entry.tools : []) {
-      if (fn?.name) byName.set(fn.name, fn);
-    }
-    namespaces.set(entry.name, byName);
+  for (const namespace of [CODEX_APP_NAMESPACE, "codex_app"]) {
+    const prefix = `${namespace}${CODEX_APP_TOOL_DELIMITER}`;
+    if (!name.startsWith(prefix)) continue;
+    const toolName = name.slice(prefix.length);
+    return toolName ? { namespace, name: toolName } : undefined;
   }
-  if (!namespaces.size) return { tools, merged: false };
-  const merged = [];
-  let changed = false;
-  const seenNamespaces = new Set();
-  for (const tool of tools) {
-    if (tool?.type === "namespace" && namespaces.has(tool.name)) {
-      // Namespace the client sent: keep its tools, add the deferred ones.
-      const full = namespaces.get(tool.name);
-      const seen = new Set();
-      const clientTools = [];
-      for (const fn of Array.isArray(tool.tools) ? tool.tools : []) {
-        if (!fn?.name) continue;
-        clientTools.push(fn);
-        seen.add(fn.name);
-      }
-      const missing = [...full.values()].filter((fn) => !seen.has(fn.name));
-      if (missing.length) {
-        clientTools.push(...missing);
-        changed = true;
-      }
-      merged.push({ ...tool, tools: clientTools });
-      seenNamespaces.add(tool.name);
-      continue;
-    }
-    merged.push(tool);
-  }
-  for (const [name, byName] of namespaces) {
-    if (seenNamespaces.has(name)) continue;
-    merged.push({
-      type: "namespace",
-      name,
-      description: `Tools provided by the Codex app.`,
-      tools: [...byName.values()],
-    });
-    changed = true;
-  }
-  return { tools: merged, merged: changed };
+  return undefined;
 }

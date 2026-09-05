@@ -5,9 +5,11 @@ description: Use current app-native Codex task, project, automation, sidebar, an
 
 # Codex app tasks
 
-Use the exact `codex_app` or flattened `codex_app__*` identities and argument
-schemas present in the current tool list. The live schemas are authoritative;
-do not rely on a copied operation or required-field inventory.
+Use the app-tool identities and argument schemas in the current tool list.
+Current builds use `mcp__codex_app` (flattened as `mcp__codex_app__*`). Use a
+legacy `codex_app` identity only when the caller actually supplies it. Discover
+deferred tools through the supplied tool-search control. The live schemas are
+authoritative; a reference snapshot does not establish tool availability.
 
 ## Durable behavior
 

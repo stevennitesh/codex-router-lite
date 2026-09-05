@@ -111,7 +111,6 @@ import {
   recoverPreflattenedMcpTools,
 } from "./namespace-relay.mjs";
 import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
-import { pendingInterruptTargets } from "./subagent-completion.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
 import { gatewayErrorStatus, translateGatewayError } from "./error-translation.mjs";
@@ -977,7 +976,7 @@ function messageItem(text) {
 function normalizeOrphanAppToolOutput(item) {
   if (
     item?.type !== "function_call_output" ||
-    item.namespace !== "codex_app" ||
+    !["codex_app", "mcp__codex_app"].includes(item.namespace) ||
     typeof item.name !== "string" ||
     !item.name ||
     (typeof item.call_id === "string" && item.call_id) ||
@@ -993,7 +992,7 @@ function normalizeOrphanAppToolOutput(item) {
   // continues to fail closed at the provider adapter.
   const output =
     typeof item.output === "string" ? item.output : JSON.stringify(item.output);
-  return messageItem(`[Codex app tool result: codex_app.${item.name}]\n${output}`);
+  return messageItem(`[Codex app tool result: ${item.namespace}.${item.name}]\n${output}`);
 }
 
 function normalizeProviderAppToolOutputs(input) {
@@ -2090,7 +2089,6 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     hostedSearch,
     namespacesFlattened,
     flattenedNamespaces,
-    pendingInterrupts: pendingInterruptTargets(input, { namespaces: flattenedNamespaces }),
   };
 }
 
@@ -2114,7 +2112,6 @@ async function handleResponses(request, response, requestUrl) {
   let retryUsage;
   let usage;
   let estimatedInputTokens;
-  let pendingInterrupts = [];
   let emptyCompletion = false;
   let emptyCompletionRetried = false;
   // An empty turn the router could not repair because the attempt was already
@@ -2210,7 +2207,6 @@ async function handleResponses(request, response, requestUrl) {
       });
       namespacesFlattened = built.namespacesFlattened;
       flattenedNamespaces = built.flattenedNamespaces;
-      pendingInterrupts = built.pendingInterrupts;
       target = built.target;
       headers = built.headers;
       routedBody = built.body;
@@ -2237,15 +2233,6 @@ async function handleResponses(request, response, requestUrl) {
           dropUnstoredReasoningReferences: substitutedCaller && !compactV1,
         });
       }
-      // SF and other native multi-agent parents hit this path (model_provider
-      // openai). They have the same Working-badge bug, so inventory the tools
-      // and queue missing interrupt_agent closes the same way as routed turns.
-      flattenedNamespaces = flattenNamespaceTools(payload.tools, {
-        bridgeToolSearch: false,
-      }).namespaces;
-      pendingInterrupts = pendingInterruptTargets(native.input ?? payload.input, {
-        namespaces: flattenedNamespaces,
-      });
       if (!compactV1) delete native.previous_response_id;
       if (substitutedCaller) {
         normalizeNativeForSubstitutedCaller(native, { compact: compactV1 });
@@ -2377,18 +2364,13 @@ async function handleResponses(request, response, requestUrl) {
         ? zaiResponsesCompatTransform(route.provider, contentType, route.slug)
         : undefined;
       if (envelopeCompat) transforms.push(envelopeCompat);
-      // Restore flattened namespace calls for routed chat-completions providers,
-      // and inject missing finished-child interrupts for both routed and native
-      // multi-agent parents (San Francisco uses native GPT).
-      if (route || pendingInterrupts.length > 0) {
+      // Restore only the calls authored by the routed provider.
+      if (route) {
         transforms.push(
           new NamespaceToolCallTransform(
             flattenedNamespaces,
             contentType,
             route?.slug,
-            // A native stream is attached only for the injection, so it must
-            // not pick up the routed-provider rewrites on the way through.
-            { pendingInterrupts, injectOnly: !route },
           ),
         );
       }

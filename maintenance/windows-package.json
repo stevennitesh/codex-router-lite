@@ -101,7 +101,6 @@
     "src/sse-prefix.mjs",
     "src/start.mjs",
     "src/state-owner.mjs",
-    "src/subagent-completion.mjs",
     "src/switchyard-certification-evidence.mjs",
     "src/switchyard-trace.mjs",
     "src/switchyard-runtime.mjs",

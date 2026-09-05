@@ -1,4 +1,5 @@
 import { Transform } from "node:stream";
+import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
 const COMPATIBLE_ROUTES = new Set([
@@ -80,6 +81,41 @@ export class ZaiResponsesCompatTransform extends Transform {
   #maxOutputIndex = -1;
   #message;
   #openOutputIndex;
+  #reasoningIds = new Set();
+  #messageIds = new Map();
+
+  // LiteLLM can reuse a reasoning id for the following assistant text. The
+  // synthesized message envelope must have its own identity, or the namespace
+  // relay correctly rejects the duplicate before any later app call arrives.
+  #separateMessageIdentity(event) {
+    if (event?.item?.type === "reasoning" && typeof event.item.id === "string") {
+      this.#reasoningIds.add(event.item.id);
+    }
+    const messageItem = (item) => {
+      if (item?.type !== "message" || !this.#reasoningIds.has(item.id)) return item;
+      if (!this.#messageIds.has(item.id)) this.#messageIds.set(item.id, `msg_${randomUUID().replaceAll("-", "")}`);
+      return { ...item, id: this.#messageIds.get(item.id) };
+    };
+    let next = event;
+    if (event?.item) {
+      const item = messageItem(event.item);
+      if (item !== event.item) next = { ...next, item };
+    }
+    if ((event?.type?.startsWith("response.output_text.") || event?.type?.startsWith("response.content_part.")) && this.#messageIds.has(event.item_id)) {
+      next = { ...next, item_id: this.#messageIds.get(event.item_id) };
+    }
+    if (Array.isArray(event?.response?.output)) {
+      // Terminal summaries can contain the reasoning and message together.
+      for (const item of event.response.output) {
+        if (item?.type === "reasoning" && typeof item.id === "string") this.#reasoningIds.add(item.id);
+      }
+      const output = event.response.output.map(messageItem);
+      if (output.some((item, index) => item !== event.response.output[index])) {
+        next = { ...next, response: { ...event.response, output } };
+      }
+    }
+    return next;
+  }
 
   _transform(chunk, _encoding, callback) {
     this.#buffer += this.#decoder.write(chunk);
@@ -128,6 +164,11 @@ export class ZaiResponsesCompatTransform extends Transform {
   }
 
   #emitLifecycleBlock(piece, separator) {
+    const source = eventBlock(piece);
+    if (source) {
+      const repaired = this.#separateMessageIdentity(source.event);
+      if (repaired !== source.event) piece = rewrittenBlock(source, repaired);
+    }
     const block = `${piece}${separator}`;
     const parsed = eventBlock(piece);
     const event = parsed?.event;

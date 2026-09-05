@@ -5,7 +5,6 @@ import {
   CODEX_APP_TOOL_SNAPSHOT,
   CODEX_APP_TOOL_NAMES,
   CODEX_APP_TOOLS,
-  mergeCodexAppTools,
   splitFlatCodexAppName,
 } from "../src/codex-app-tools.mjs";
 
@@ -14,33 +13,6 @@ test("the app tool snapshot records its paired Windows and Codex builds", () => 
   assert.match(CODEX_APP_TOOL_SNAPSHOT.codexVersion, /^codex-cli \d+\.\d+\.\d+/u);
   assert.match(CODEX_APP_TOOL_SNAPSHOT.capturedAt, /^\d{4}-\d{2}-\d{2}$/u);
 });
-
-// The reduced codex_app namespace the client actually sends on routed requests
-// (captured live: load_workspace_dependencies, navigate_to_codex_page,
-// read_thread_terminal).
-function clientRoutedTools() {
-  return [
-    { type: "function", name: "exec_command" },
-    { type: "function", name: "view_image" },
-    {
-      type: "namespace",
-      name: "collaboration",
-      tools: [
-        { type: "function", name: "spawn_agent" },
-        { type: "function", name: "wait_agent" },
-      ],
-    },
-    {
-      type: "namespace",
-      name: "codex_app",
-      tools: [
-        { type: "function", name: "load_workspace_dependencies" },
-        { type: "function", name: "navigate_to_codex_page" },
-        { type: "function", name: "read_thread_terminal" },
-      ],
-    },
-  ];
-}
 
 function fullAppToolNames(namespace) {
   const names = [];
@@ -53,7 +25,7 @@ function fullAppToolNames(namespace) {
 
 function appTool(name) {
   return CODEX_APP_TOOLS
-    .find((entry) => entry.name === "codex_app")
+    .find((entry) => entry.name === "mcp__codex_app")
     ?.tools.find((tool) => tool.name === name);
 }
 
@@ -91,7 +63,7 @@ const CURRENT_CODEX_APP_TOOLS = [
 ].sort();
 
 test("snapshot exactly matches the current native codex_app tool inventory", () => {
-  assert.deepEqual(fullAppToolNames("codex_app").sort(), CURRENT_CODEX_APP_TOOLS);
+  assert.deepEqual(fullAppToolNames("mcp__codex_app").sort(), CURRENT_CODEX_APP_TOOLS);
   for (const name of CURRENT_CODEX_APP_TOOLS) {
     assert.ok(CODEX_APP_TOOL_NAMES.has(name), `snapshot must carry ${name}`);
   }
@@ -135,68 +107,6 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
     /validated on the target host/,
   );
 
-});
-
-test("merge fills the deferred app tools into the reduced client namespace", () => {
-  const { tools, merged } = mergeCodexAppTools(clientRoutedTools());
-  assert.equal(merged, true);
-  const codexApp = tools.find((tool) => tool?.type === "namespace" && tool.name === "codex_app");
-  assert.ok(codexApp, "codex_app namespace present after merge");
-  const names = codexApp.tools.map((fn) => fn.name);
-  for (const name of fullAppToolNames("codex_app")) {
-    assert.ok(names.includes(name), `merged codex_app must include ${name}`);
-  }
-  // Nothing the client sent is dropped.
-  assert.ok(names.includes("load_workspace_dependencies"));
-  assert.ok(names.includes("navigate_to_codex_page"));
-  assert.ok(names.includes("read_thread_terminal"));
-  // Non-app tools are untouched.
-  assert.ok(tools.some((tool) => tool.name === "exec_command"));
-  assert.ok(
-    tools.some(
-      (tool) =>
-        tool?.type === "namespace" &&
-        tool.name === "collaboration" &&
-        tool.tools.some((fn) => fn.name === "spawn_agent"),
-    ),
-  );
-});
-
-test("merge appends the full app namespaces when the client omits them", () => {
-  const { tools, merged } = mergeCodexAppTools([
-    { type: "function", name: "exec_command" },
-  ]);
-  assert.equal(merged, true);
-  const codexApp = tools.find((tool) => tool?.type === "namespace" && tool.name === "codex_app");
-  assert.ok(codexApp, "codex_app appended when absent");
-  for (const name of fullAppToolNames("codex_app")) {
-    assert.ok(
-      codexApp.tools.some((fn) => fn.name === name),
-      `appended codex_app must include ${name}`,
-    );
-  }
-});
-
-test("merge preserves client-provided tool definitions", () => {
-  const clientTools = clientRoutedTools();
-  const clientDefinition = clientTools
-    .find((tool) => tool?.type === "namespace" && tool.name === "codex_app")
-    .tools.find((tool) => tool.name === "load_workspace_dependencies");
-  clientDefinition.description = "client-owned definition";
-  clientDefinition.inputSchema = {
-    type: "object",
-    properties: { refresh: { type: "boolean" } },
-    required: ["refresh"],
-  };
-  const { tools, merged } = mergeCodexAppTools(clientTools);
-  assert.equal(merged, true);
-  const codexApp = tools.find(
-    (tool) => tool?.type === "namespace" && tool.name === "codex_app",
-  );
-  assert.strictEqual(
-    codexApp.tools.find((tool) => tool.name === "load_workspace_dependencies"),
-    clientDefinition,
-  );
 });
 
 test("splitFlatCodexAppName parses flattened names only", () => {

@@ -132,7 +132,7 @@ test("router preserves native auth and isolates every external route", async () 
   const routedRequests = [];
   const native = await mockServer(async (request, response) => {
     nativeRequests.push({ url: request.url, headers: request.headers, body: await bodyJson(request) });
-    json(response, 200, { route: "native" });
+    json(response, 200, { route: "native", output: [] });
   });
   const gateway = await mockServer(async (request, response) => {
     const body = await bodyJson(request);
@@ -277,6 +277,17 @@ test("router preserves native auth and isolates every external route", async () 
       workspace: "caller-owned",
       "x-codex-turn-metadata": "native-canonical-turn-metadata",
     });
+    const completedChildResponse = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: callerHeaders,
+      body: JSON.stringify({
+        model: "gpt-5.6-sol",
+        input: [{ type: "agent_message", content: "Message Type: FINAL_ANSWER\nSender: /root/child\nPayload: done" }],
+        tools: [{ type: "namespace", name: "collaboration", tools: [{ type: "function", name: "interrupt_agent" }] }],
+      }),
+    });
+    assert.deepEqual(await completedChildResponse.json(), { route: "native", output: [] },
+      "Router must not add child interrupts to a native response");
     for (const request of routedRequests) {
       assert.equal(request.headers.authorization, `Bearer ${INTERNAL_KEY}`);
       assert.equal(request.headers["chatgpt-account-id"], undefined);
