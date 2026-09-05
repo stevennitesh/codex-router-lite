@@ -10,35 +10,36 @@
     "https://openrouter.ai/z-ai/glm-5.3-flash",
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
   ],
-  "testedAt": "2026-09-02T00:25:51.641Z",
+  "testedAt": "2026-09-05T09:31:33.737Z",
   "routerVersion": "0.5.1",
-  "codexVersion": "0.153.0-alpha.5",
+  "codexVersion": "codex-cli 0.153.4",
   "executionSurface": "codex-desktop-native",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-02T00:24:34.026Z"
+      "observedAt": "2026-09-05T09:30:56.278Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-02T00:24:34.026Z"
+      "observedAt": "2026-09-05T09:30:56.278Z"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-02T00:25:20.938Z"
+      "observedAt": "2026-09-05T09:30:56.278Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-02T00:25:20.938Z"
+      "observedAt": "2026-09-05T09:31:08.029Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-02T00:25:51.641Z"
+      "observedAt": "2026-09-05T09:31:33.737Z"
     }
-  }
+  },
+  "routerCommit": "fdd056f7b06c0bc1e01bbff8c235e9d121d7968c"
 }
