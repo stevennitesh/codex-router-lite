@@ -8,43 +8,43 @@
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
-  "testedAt": "2026-09-04T05:10:28.224Z",
+  "testedAt": "2026-09-05T00:13:15.097Z",
   "routerVersion": "0.5.1",
-  "codexVersion": "codex-cli 0.153.0",
+  "codexVersion": "codex-cli 0.153.3",
   "executionSurface": "codex-desktop-native",
   "endpointProvider": "local-switchyard",
   "runtimeBinding": {
-    "upstreamCommit": "4022b677b20e852de538e0a1a56f041d3ba39f1f",
+    "upstreamCommit": "4eae4bf1e464bd778f1e68c4d5824bc195c3e692",
     "patchSha256": "37e93a61f59cec1ac3ce5439cfa86fce644e13d41defdcb56d5635cb9a701778",
-    "binarySha256": "52b8707a82edfceed313d5fc57e21406b2b9342640c0f3bd4715273c7c679e75",
-    "routerCommit": "06523bd4cbb51a3650d39e162061438ae875a73f",
+    "binarySha256": "a0215a081d09a1ce2fa111d565f253fffdc02f77bb79e659b90993e7a61c51bb",
+    "routerCommit": "83a142cc8172245723d0b1f53aab4cdb92e948e6",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-04T05:10:15.031Z"
+      "observedAt": "2026-09-05T00:12:58.403Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-04T05:10:15.031Z"
+      "observedAt": "2026-09-05T00:12:58.403Z"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-04T05:10:17.961Z"
+      "observedAt": "2026-09-05T00:12:58.403Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-04T05:10:20.037Z"
+      "observedAt": "2026-09-05T00:13:01.433Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-04T05:10:28.224Z"
+      "observedAt": "2026-09-05T00:13:15.097Z"
     }
   }
 }
