@@ -50,6 +50,8 @@ test("the compatibility refresh stays read-only", () => {
   assert.match(refresh, /AnalyzeUpstream/);
   assert.match(refresh, /upstream-router\.json/);
   assert.match(refresh, /git -C \$analysisRoot apply --check/);
+  assert.match(refresh, /GetTempPath\(\)\)\.TrimEnd/);
+  assert.match(refresh, /GetDirectoryName\(\$analysisRoot\)/);
   assert.match(refresh, /Codex app mismatch branch/);
   assert.doesNotMatch(refresh, /service\.mjs.*(?:install|start|stop|restart)/);
   assert.doesNotMatch(refresh, /provider-key|caller-key|codex exec/);

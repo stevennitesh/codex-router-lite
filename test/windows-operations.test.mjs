@@ -154,6 +154,9 @@ test("Windows install and update retain one guarded service generation", () => {
   assert.match(installer, /src\/install-manifest\.mjs record[\s\S]*src\/service\.mjs install[\s\S]*src\/wait-health\.mjs/);
   assert.match(installer, /if \(\$ServiceInstalled -and -not \$ServiceWasInstalled\)/);
   assert.match(service, /-MultipleInstances IgnoreNew/);
+  assert.match(service, /New-ScheduledTaskTrigger -Once[\s\S]*-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(service, /-StartWhenAvailable/);
+  assert.match(service, /-Trigger @\(\$logon, \$heartbeat\)/);
   assert.match(service, /ensureProgramTreeReadable\(SOURCE_ROOT\)[\s\S]*writeLaunchers\(\)/);
   assert.match(service, /if \(command === "restart"\) endTask\(\)/);
 

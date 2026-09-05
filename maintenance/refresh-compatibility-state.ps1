@@ -205,7 +205,9 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
   if ($upstreamHead -ne $sourceLock.commit) {
     Write-Host "Review is available. Do not update the pin until the upstream diff and canonical patch pass the Switchyard runbook."
     if ($AnalyzeUpstream) {
-      $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+      # GetTempPath ends with a separator, while GetDirectoryName does not.
+      # Normalize both sides before enforcing direct-child cleanup.
+      $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char[]]@('\', '/'))
       $analysisRoot = [IO.Path]::GetFullPath((Join-Path $tempParent "switchyard-upstream-$([Guid]::NewGuid().ToString('N'))"))
       if (-not [string]::Equals([IO.Path]::GetDirectoryName($analysisRoot), $tempParent, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Unsafe Switchyard analysis path: $analysisRoot"
