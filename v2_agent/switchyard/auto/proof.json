@@ -3,48 +3,48 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
-  "testedAt": "2026-09-05T00:13:15.097Z",
+  "testedAt": "2026-09-05T09:02:10.912Z",
   "routerVersion": "0.5.1",
-  "codexVersion": "codex-cli 0.153.3",
+  "codexVersion": "codex-cli 0.153.4",
   "executionSurface": "codex-desktop-native",
   "endpointProvider": "local-switchyard",
   "runtimeBinding": {
-    "upstreamCommit": "4eae4bf1e464bd778f1e68c4d5824bc195c3e692",
-    "patchSha256": "37e93a61f59cec1ac3ce5439cfa86fce644e13d41defdcb56d5635cb9a701778",
-    "binarySha256": "a0215a081d09a1ce2fa111d565f253fffdc02f77bb79e659b90993e7a61c51bb",
-    "routerCommit": "83a142cc8172245723d0b1f53aab4cdb92e948e6",
+    "upstreamCommit": "9a743e89223a0d5b14011f1226d5b068f730a3b8",
+    "patchSha256": "dd8ff723de803d2e2cacc5204577b15b81b90f6609977b5a4e5a36d594318f3f",
+    "binarySha256": "8e857fb738e063f56ee8a0f1d27a74cc78191e62c3f9867ca2dd9b0b69d36bb7",
+    "routerCommit": "c939e3abb060d46ae5abbc17bb673d47b4f00232",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T00:12:58.403Z"
+      "observedAt": "2026-09-05T09:01:43.328Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T00:12:58.403Z"
+      "observedAt": "2026-09-05T09:01:43.328Z"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T00:12:58.403Z"
+      "observedAt": "2026-09-05T09:01:43.328Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T00:13:01.433Z"
+      "observedAt": "2026-09-05T09:01:47.003Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T00:13:15.097Z"
+      "observedAt": "2026-09-05T09:02:10.912Z"
     }
   }
 }
