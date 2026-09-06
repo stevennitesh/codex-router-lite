@@ -27,10 +27,11 @@ node scripts/check-codex-catalog-compat.mjs <codex-executable>
 The installed build owns native models. Do not repair drift by copying a catalog from another version.
 
 The managed service checks for native catalog authority changes every five
-minutes and republishes only when one changed. A model whose native entry still
-has `visibility: "hide"` remains absent by design. Automatic refresh cannot
-turn a staged account rollout into an entitlement or infer it from private app
-caches.
+minutes, refreshes the signed-in account cache from the fixed ChatGPT model
+endpoint, and republishes only when its content or the installed binary
+identity changed. A failed account read preserves the previous cache. A model
+whose native entry still has `visibility: "hide"` remains absent by design;
+automatic refresh cannot turn a staged account rollout into an entitlement.
 
 ## GLM fails
 

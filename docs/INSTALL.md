@@ -41,11 +41,12 @@ The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
 other.
 
-The running service checks every five minutes for an installed Codex binary
-change or an adopted native catalog change. A successful automatic refresh
-does not restart Router. Fully quit and reopen the Codex app to reload its
-picker. Use `model-router.ps1 codex refresh-catalog` only for an immediate
-manual check.
+The running service checks every five minutes for an installed Codex binary or
+native account-catalog change. When signed in, it refreshes account visibility
+from Codex's fixed ChatGPT model endpoint and preserves the last cache if that
+read fails. A successful automatic refresh does not restart Router. Fully quit
+and reopen the Codex app to reload its picker. Use `model-router.ps1 codex
+refresh-catalog` only for an immediate manual check.
 
 ## Update
 

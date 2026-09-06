@@ -20,10 +20,15 @@ import {
 } from "./paths.mjs";
 import {
   codexAuthStatus,
+  codexBinaryFingerprint,
   codexVersion,
   findCodexBinary,
   runCodex,
 } from "./codex-binary.mjs";
+import {
+  readModelsCache,
+  refreshNativeAccountCatalogUnlocked,
+} from "./native-account-catalog.mjs";
 import { syncRoutedCodexAgents } from "./codex-agent-catalog.mjs";
 import {
   applyMultiAgentCapabilities,
@@ -255,9 +260,11 @@ function restoreFileSnapshot(target, snapshot) {
 }
 
 function captureNative(source = {}) {
-  // The configured Windows app capture owns account visibility. Without one,
-  // use Codex's bundled catalog and do not inspect account cache files.
-  const account = source.catalog;
+  // An explicitly adopted source owns account visibility. Otherwise use the
+  // fixed-endpoint-refreshed cache that Codex itself owns. Bundled models still
+  // supply build-specific schema and provide a safe fallback when unavailable.
+  const accountSource = source.catalog ? source : readModelsCache();
+  const account = accountSource.catalog;
   let fallback;
   let fallbackError;
   // The bundled source supplies schema fields that the account catalog may
@@ -286,10 +293,14 @@ function captureNative(source = {}) {
   }
   const capturedWith = codexVersion();
   const capturedFrom = findCodexBinary();
-  const sourceFingerprint = source.fingerprint;
+  const capturedBinaryFingerprint = codexBinaryFingerprint(capturedFrom);
+  const sourceFingerprint = accountSource.fingerprint;
   atomicJson(NATIVE_CATALOG_PATH, {
     ...(capturedWith ? { captured_with: capturedWith } : {}),
     ...(capturedFrom ? { captured_from: capturedFrom } : {}),
+    ...(capturedBinaryFingerprint
+      ? { captured_binary_fingerprint: capturedBinaryFingerprint }
+      : {}),
     ...(sourceFingerprint ? { native_source_fingerprint: sourceFingerprint } : {}),
     models: parsed.models,
   });
@@ -306,6 +317,7 @@ function nativeCatalogIsReusable(
   currentVersion,
   currentSourceFingerprint = undefined,
   currentBinary = undefined,
+  currentBinaryFingerprint = undefined,
 ) {
   if (!parsed || !Array.isArray(parsed.models) || parsed.models.length === 0) {
     return false;
@@ -314,6 +326,12 @@ function nativeCatalogIsReusable(
   if (
     currentBinary &&
     (!parsed.captured_from || !catalogPathsEqual(parsed.captured_from, currentBinary))
+  ) {
+    return false;
+  }
+  if (
+    currentBinaryFingerprint
+    && parsed.captured_binary_fingerprint !== currentBinaryFingerprint
   ) {
     return false;
   }
@@ -331,6 +349,8 @@ export function nativeCatalogRefreshNeeded({
   source = readNativeCatalogSource(),
   currentVersion = codexVersion(),
   currentBinary = findCodexBinary(),
+  currentBinaryFingerprint = codexBinaryFingerprint(currentBinary),
+  accountCache = readModelsCache,
 } = {}) {
   let parsed;
   try {
@@ -343,12 +363,15 @@ export function nativeCatalogRefreshNeeded({
     const sourceCatalog = readNativeCatalogFile(source.path);
     if (!sourceCatalog) return true;
     sourceFingerprint = nativeCatalogFingerprint(sourceCatalog);
+  } else {
+    sourceFingerprint = accountCache().fingerprint;
   }
   return !nativeCatalogIsReusable(
     parsed,
     currentVersion,
     sourceFingerprint,
     currentBinary,
+    currentBinaryFingerprint,
   );
 }
 
@@ -369,6 +392,7 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
         codexVersion(),
         fingerprint,
         findCodexBinary(),
+        codexBinaryFingerprint(),
       )) {
         return parsed;
       }
@@ -378,13 +402,15 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
     // same current bundled capture used for Codex's account catalog.
     return captureNative({ catalog, fingerprint });
   }
+  const accountFingerprint = readModelsCache().fingerprint;
   if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative();
   const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
   if (nativeCatalogIsReusable(
     parsed,
     codexVersion(),
-    undefined,
+    accountFingerprint,
     findCodexBinary(),
+    codexBinaryFingerprint(),
   )) {
     return parsed;
   }
@@ -995,7 +1021,7 @@ export function applyPickerVisibility(
   });
 }
 
-function publishCatalog({
+async function publishCatalog({
   refreshNative = refresh,
   onlyIfStale = refreshIfStale,
   output = true,
@@ -1004,8 +1030,15 @@ function publishCatalog({
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
+  const nativeAccountRefresh = await refreshNativeAccountCatalogUnlocked({
+    force: refreshNative,
+  });
   if (onlyIfStale && !nativeCatalogRefreshNeeded()) {
-    const result = { changed: false, reason: "native_catalog_current" };
+    const result = {
+      changed: false,
+      reason: "native_catalog_current",
+      native_account_refresh: nativeAccountRefresh.status,
+    };
     if (output) process.stdout.write(`${JSON.stringify(result)}\n`);
     return result;
   }
@@ -1153,6 +1186,7 @@ function publishCatalog({
     openai_authenticated: openaiAuthenticated,
     openai_auth_reason: auth.reason,
     native_publication: nativePublication,
+    native_account_refresh: nativeAccountRefresh.status,
     selected_model: selectedModel() || null,
   };
   if (output) process.stdout.write(`${JSON.stringify(result)}\n`);

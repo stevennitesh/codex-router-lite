@@ -8,7 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { codexAuthStatus, newestCodexBinary } from "../src/codex-binary.mjs";
+import {
+  codexAuthStatus,
+  codexBinaryFingerprint,
+  newestCodexBinary,
+} from "../src/codex-binary.mjs";
 
 test("equal-version Codex app binaries select the newest installed build", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-binary-"));
@@ -25,6 +29,22 @@ test("equal-version Codex app binaries select the newest installed build", () =>
       ),
       newBinary,
     );
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("Codex binary identity changes for a same-version runtime replacement", () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-binary-identity-"));
+  const binary = path.join(testRoot, "codex.exe");
+  try {
+    writeFileSync(binary, "first runtime");
+    const before = codexBinaryFingerprint(binary);
+    writeFileSync(binary, "replacement runtime with different bytes");
+    const after = codexBinaryFingerprint(binary);
+    assert.match(before, /^[a-f0-9]{64}$/u);
+    assert.match(after, /^[a-f0-9]{64}$/u);
+    assert.notEqual(after, before);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

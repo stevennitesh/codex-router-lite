@@ -78,11 +78,15 @@ Native GPT entries come from the installed Codex catalog. Preserve unfamiliar fi
 
 The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
 a separate watcher process. The freshness identity is the resolved Codex
-binary path, its reported version, and the content fingerprint of an adopted
-native catalog when one exists. Publication uses the normal state-ownership
-guard, catalog lock, and rollback path. A failed refresh leaves Router serving
-and retries on the next interval. The watcher does not override native
-`visibility` or inspect undocumented account caches.
+binary path, file identity, reported version, and the content fingerprint of
+the current account or explicitly adopted native catalog. While signed in, the
+locked refresh may update Codex's own `models_cache.json` only from the fixed
+ChatGPT account-model endpoint. It bounds the response, rechecks account
+identity before writing, never stores credentials, and preserves the prior
+cache on every network, schema, or account-switch failure. Publication uses
+the normal state-ownership guard, catalog lock, and rollback path. A failed
+refresh leaves Router serving and retries on the next interval. The watcher
+does not override native `visibility` or manufacture account entitlements.
 
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 

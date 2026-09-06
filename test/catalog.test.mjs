@@ -257,6 +257,7 @@ test("automatic catalog refresh reacts only to native authority changes", async 
   writeFileSync(catalogPath, `${JSON.stringify({
     captured_with: "codex-cli 1.2.3",
     captured_from: "C:\\Codex\\codex.exe",
+    captured_binary_fingerprint: "build-a",
     native_source_fingerprint: sourceFingerprint,
     models: sourceCatalog.models,
   })}\n`);
@@ -266,12 +267,44 @@ test("automatic catalog refresh reacts only to native authority changes", async 
       source,
       currentVersion: "codex-cli 1.2.3",
       currentBinary: "c:\\codex\\CODEX.EXE",
+      currentBinaryFingerprint: "build-a",
     }), false);
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath,
+      source,
+      currentVersion: "codex-cli 1.2.3",
+      currentBinary: "C:\\Codex\\codex.exe",
+      currentBinaryFingerprint: "build-b",
+    }), true);
     assert.equal(nativeCatalogRefreshNeeded({
       catalogPath,
       source,
       currentVersion: "codex-cli 1.2.4",
       currentBinary: "C:\\Codex\\codex.exe",
+    }), true);
+    const accountCatalogPath = path.join(testRoot, "account-native.json");
+    writeFileSync(accountCatalogPath, `${JSON.stringify({
+      captured_with: "codex-cli 1.2.3",
+      captured_from: "C:\\Codex\\codex.exe",
+      captured_binary_fingerprint: "build-a",
+      native_source_fingerprint: "account-a",
+      models: sourceCatalog.models,
+    })}\n`);
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath: accountCatalogPath,
+      source: null,
+      currentVersion: "codex-cli 1.2.3",
+      currentBinary: "C:\\Codex\\codex.exe",
+      currentBinaryFingerprint: "build-a",
+      accountCache: () => ({ fingerprint: "account-a" }),
+    }), false);
+    assert.equal(nativeCatalogRefreshNeeded({
+      catalogPath: accountCatalogPath,
+      source: null,
+      currentVersion: "codex-cli 1.2.3",
+      currentBinary: "C:\\Codex\\codex.exe",
+      currentBinaryFingerprint: "build-a",
+      accountCache: () => ({ fingerprint: "account-b" }),
     }), true);
     writeFileSync(sourcePath, `${JSON.stringify({ models: [
       ...sourceCatalog.models,

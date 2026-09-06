@@ -25,6 +25,7 @@ after(() => {
 });
 
 const {
+  nativeAccountCatalogHeaders,
   nativeSessionSharingEnabled,
   nativeSessionAvailable,
   nativeSessionHeaders,
@@ -94,6 +95,16 @@ test("a signed-in session stays private until the user authorizes sharing once",
     assert.equal(statSync(NATIVE_SESSION_CONSENT_PATH).mode & 0o777, 0o600);
   }
   assert.doesNotMatch(readFileSync(NATIVE_SESSION_CONSENT_PATH, "utf8"), /access|account/i);
+});
+
+test("account model discovery uses the signed-in session without enabling model spending", async () => {
+  writeAuth({ access_token: ACCESS, account_id: ACCOUNT });
+  assert.deepEqual(await nativeAccountCatalogHeaders(), {
+    authorization: `Bearer ${ACCESS}`,
+    "chatgpt-account-id": ACCOUNT,
+  });
+  assert.equal(nativeSessionSharingEnabled(), false);
+  assert.equal(nativeSessionHeaders(), undefined);
 });
 
 test("shared native session reconstructs the FedRAMP header from Codex identity claims", () => {

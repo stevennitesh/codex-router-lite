@@ -122,6 +122,26 @@ function readSession() {
   return sessionFromAuthDocument(readAuthDocument());
 }
 
+/**
+ * Credential headers for the fixed, read-only ChatGPT account-model request.
+ *
+ * This does not require shared-session consent: refreshing Codex's own model
+ * visibility cannot spend a model or widen what the Router caller key may do.
+ * The consumer must keep the destination fixed in source.
+ */
+export async function nativeAccountCatalogHeaders() {
+  let session = readSession();
+  if (session?.expired) {
+    await refreshViaCodex();
+    session = readSession();
+  }
+  if (!session || session.expired) return undefined;
+  return {
+    authorization: `Bearer ${session.accessToken}`,
+    ...(session.accountId ? { "chatgpt-account-id": session.accountId } : {}),
+  };
+}
+
 // Authenticate a bearer that claims to be the already-signed-in Codex client.
 // This never enables session sharing; it only verifies the caller's own token.
 export function nativeSessionTokenMatches(token) {

@@ -32,11 +32,14 @@ function appTool(name) {
 const CURRENT_CODEX_APP_TOOLS = [
   "automation_update",
   "capture_screen_context",
+  "complete_conversational_onboarding_task",
+  "complete_sidebar_onboarding_checklist_task",
   "consume_usage_reset",
   "create_sidebar_section",
   "create_thread",
   "delete_sidebar_section",
   "end_realtime_voice_call",
+  "fire_confetti",
   "fork_thread",
   "get_handoff_status",
   "get_usage_limits",
@@ -51,14 +54,18 @@ const CURRENT_CODEX_APP_TOOLS = [
   "open_in_codex",
   "read_thread",
   "read_thread_terminal",
+  "request_onboarding_input",
+  "request_option_picker",
   "rename_sidebar_section",
   "reorder_section",
   "reorder_sidebar_projects",
   "reorder_sidebar_sections",
   "send_message_to_thread",
+  "setup_codex_step",
   "set_thread_archived",
   "set_thread_title",
   "share_thread",
+  "transfer_voice_call",
   "wait_threads",
 ].sort();
 
@@ -105,6 +112,20 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
   assert.match(
     sendMessage.inputSchema.properties.model.description,
     /validated on the target host/,
+  );
+
+  assert.deepEqual(
+    appTool("setup_codex_step").inputSchema.properties.step.enum,
+    ["role", "task", "complete"],
+  );
+  assert.equal(
+    appTool("transfer_voice_call").inputSchema.oneOf[1].properties.return.const,
+    true,
+  );
+  assert.equal(
+    appTool("complete_conversational_onboarding_task").inputSchema.oneOf[0]
+      .properties.outcome.const,
+    "completed",
   );
 
 });

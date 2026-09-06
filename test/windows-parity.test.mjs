@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { MAX_BODY_BYTES } from "../src/http-utils.mjs";
 
 // Windows command resolution and process-spawn defects can be misread as
 // unrelated failures, so invariants that do not require service mutation are
@@ -13,6 +14,10 @@ const sourceDir = path.join(root, "src");
 const sources = readdirSync(sourceDir)
   .filter((name) => name.endsWith(".mjs"))
   .map((name) => ({ name, text: readFileSync(path.join(sourceDir, name), "utf8") }));
+
+test("Codex request handling permits native histories up to 128 MiB", () => {
+  assert.equal(MAX_BODY_BYTES, 128 * 1024 * 1024);
+});
 
 test("every detached worker is spawned without a console window", () => {
   // A detached child gets its own console on Windows. The vision-model worker
@@ -67,6 +72,7 @@ test("Router upstream review uses an explicit immutable baseline", () => {
   assert.equal(watch.branch, "main");
   assert.equal(watch.remoteRef, "upstream/main");
   assert.match(watch.lastReviewedCommit, /^[0-9a-f]{40}$/u);
+  assert.deepEqual(watch.deferredCandidates, []);
 });
 
 test("the Windows command exposes the redacted Switchyard trace", () => {

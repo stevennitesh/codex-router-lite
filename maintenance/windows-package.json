@@ -68,6 +68,7 @@
     "src/model-picker-state.mjs",
     "src/multi-agent-state.mjs",
     "src/namespace-relay.mjs",
+    "src/native-account-catalog.mjs",
     "src/native-auth-observation.mjs",
     "src/native-catalog-source.mjs",
     "src/native-request-compat.mjs",

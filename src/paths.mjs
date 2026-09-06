@@ -26,6 +26,7 @@ function managedStateDir() {
 export const STATE_DIR = process.env.MODEL_ROUTER_STATE_DIR || managedStateDir();
 export const CONFIG_PATH = path.join(CODEX_HOME, "config.toml");
 export const CODEX_AGENTS_DIR = path.join(CODEX_HOME, "agents");
+export const MODELS_CACHE_PATH = path.join(CODEX_HOME, "models_cache.json");
 export const NATIVE_CATALOG_PATH = path.join(STATE_DIR, "native-models.json");
 export const NATIVE_CATALOG_SOURCE_PATH = path.join(
   STATE_DIR,

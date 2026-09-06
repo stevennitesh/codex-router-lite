@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -151,6 +152,27 @@ export function findCodexBinary() {
   return newestCodexBinary([...candidates(), found]);
 }
 
+// Catalog reuse needs a build identity as well as `codex --version`. Desktop
+// can replace a runtime without changing its version string, and an explicit
+// CODEX_BIN can keep the same path. Hash only stable file metadata: reading a
+// large signed executable on every five-minute catalog check is unnecessary.
+export function codexBinaryFingerprint(binary = findCodexBinary()) {
+  if (!binary) return undefined;
+  try {
+    const stats = statSync(binary);
+    return createHash("sha256")
+      .update(JSON.stringify({
+        path: path.resolve(binary),
+        size: stats.size,
+        mtimeMs: stats.mtimeMs,
+        ctimeMs: stats.ctimeMs,
+      }))
+      .digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 function requireCodexBinary() {
   const binary = findCodexBinary();
   if (!binary) {
@@ -170,9 +192,9 @@ export function runCodex(args, options = {}) {
   });
 }
 
-// The version tells catalog code whether a cached native capture came from
-// the currently installed build. Undefined means "could not ask", which
-// callers must treat as unknown rather than as a mismatch.
+// Version and codexBinaryFingerprint() jointly identify the installed build.
+// Undefined means "could not ask", which callers treat as unknown rather than
+// as a mismatch.
 export function codexVersion() {
   try {
     const output = runCodex(["--version"], {
