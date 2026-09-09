@@ -58,6 +58,13 @@ const routeFixture = {
   searchTool: { mode: "hosted" },
 };
 
+test("external routes do not inherit legacy native summary or parallel-tool flags", () => {
+  const native = { ...template, supports_reasoning_summaries: true, supports_parallel_tool_calls: true };
+  const model = routedModel(native, routeFixture, native);
+  assert.equal(Object.hasOwn(model, "supports_reasoning_summaries"), false);
+  assert.equal(Object.hasOwn(model, "supports_parallel_tool_calls"), false);
+});
+
 test("signed-in picker overlay cannot hide Codex native base entries", () => {
   const hidden = new Set(["gpt-5.6-luna", "gpt-5.6-sol-1m", "openrouter/glm-5.3-flash"]);
   const native = new Set(["gpt-5.6-luna", "gpt-5.6-sol"]);

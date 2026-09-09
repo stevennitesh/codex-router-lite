@@ -747,6 +747,10 @@ export function routedModel(
       ? [...model.experimentalSupportedTools]
       : [];
     delete next.multi_agent_reasoning_effort;
+    // Account catalogs can still carry legacy native capability spellings.
+    // GLM owns its supported summary and tool policy, not the native template.
+    delete next.supports_reasoning_summaries;
+    delete next.supports_parallel_tool_calls;
   }
   if (typeof next.base_instructions === "string" && !nativeRequestProfile) {
     next.base_instructions = applyInstructionOverlay(
