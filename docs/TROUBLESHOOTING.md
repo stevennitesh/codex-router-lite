@@ -49,7 +49,11 @@ Compare the current Windows Codex tool definitions with `src/codex-app-tools.mjs
 
 ## Switchyard is unavailable
 
-Load `config/switchyard/README.md`. Verify the locked source, patch, binary, generated route, capability file, provenance, and health as one unit. Do not copy one artifact from another generation.
+Read the [Switchyard boundaries](../config/switchyard/README.md) and
+[runtime diagnosis](../config/switchyard/runtime.md). Load the build/deployment
+branch only if replacement is needed. Verify the locked source, patch, binary,
+generated route, capability file, provenance, and health as one unit. Do not
+copy one artifact from another generation.
 
 Start with the redacted current-generation summary:
 

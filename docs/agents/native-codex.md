@@ -1,0 +1,45 @@
+# Native Codex compatibility
+
+Read for native catalog, app-tool namespaces, encrypted child handoffs, or native
+credential forwarding. Start with the [compatibility refresh](compatibility-maintenance.md)
+for installed-version or upstream drift. For a GLM-specific wire failure, also
+read [OpenRouter GLM](openrouter-glm.md).
+
+## Native Codex and the Windows app
+
+Native GPT entries come from the installed Codex catalog. Preserve unfamiliar fields generically. Never replace the native catalog with a copied list.
+
+The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
+a separate watcher process. The freshness identity is the resolved Codex
+binary path, file identity, reported version, and the content fingerprint of
+the current account or explicitly adopted native catalog. While signed in, the
+locked refresh may update Codex's own `models_cache.json` only from the fixed
+ChatGPT account-model endpoint. It bounds the response, rechecks account
+identity before writing, never stores credentials, and preserves the prior
+cache on every network, schema, or account-switch failure. Cache validators
+belong to one CLI version: upgrades fetch unconditionally and older clients
+cannot overwrite newer caches. Publication uses
+the normal state-ownership guard, catalog lock, and rollback path. A failed
+refresh leaves Router serving and retries on the next interval. The watcher
+does not override native `visibility` or manufacture account entitlements.
+
+Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
+
+`src/codex-app-tools.mjs` is a reference snapshot for drift inspection. Runtime
+relay uses the caller's definitions and native tool-search discoveries, without
+adding snapshot tools. Current app tools use `mcp__codex_app`; legacy namespaces
+remain supported when explicitly supplied. Routed tools are flattened for the
+model and restored to those request-local identities before app execution.
+When Codex changes the tool set, capture it from an ordinary Windows app turn,
+update the paired build and snapshot, then test a routed round trip.
+
+Child completion and cancellation belong to Codex and the caller. Relay only
+model-authored collaboration calls; injecting an interrupt after a prior final
+answer can cancel a newly resumed child.
+
+Encrypted child handoffs preserve native 401 and 429 failures. A 429 suppresses
+repeat handoffs for the same account-scoped payload for 60 seconds, with at most
+128 failure entries. Native compaction metadata may be absent, null, or numeric;
+compatibility checks must compare against the current native model contract.
+
+The scheduled-task launcher, arguments, source root, ACL, generation, and running process form one service identity. A same-named foreign task is a conflict.

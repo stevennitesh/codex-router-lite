@@ -26,7 +26,9 @@ Set the OpenRouter credential with the protected prompt:
 .\model-router.ps1 codex provider-key openrouter set
 ```
 
-Switchyard installation is maintainer work. Follow `config/switchyard/README.md` only when building or deploying that runtime.
+Switchyard installation is maintainer work. Read its
+[integration boundaries](../config/switchyard/README.md), then
+[build and deployment](../config/switchyard/maintenance.md) only when that task applies.
 
 ## Verify
 
@@ -80,11 +82,17 @@ the previous managed generation, and removes only files recorded by the prior
 deployment manifest. If install or Doctor fails, it restores, reinstalls, and
 checks the previous generation before returning the candidate failure.
 
-Deploy edited source from the current checkout with:
+For a separate installed directory, deploy edited source from the current checkout with:
 
 ```powershell
 .\deploy-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
+
+When the active service runs directly from this checkout with Switchyard, use
+the [checkout deployment transaction](../config/switchyard/maintenance.md#deploy-and-roll-back).
+It retains an unchanged Switchyard binary when supplied as the candidate and
+restores Router through an exact previous checkout on failure. The separate-directory
+deployer above rejects overlapping source and destination paths.
 
 Restart the existing installed files only when a configuration or provider
 selection change requires it:

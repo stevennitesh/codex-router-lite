@@ -10,7 +10,7 @@ native Codex models, and exact-route subagents v2. Other clients, providers,
 platforms, Router UIs, and migration systems are outside the product and must
 not return.
 
-## Before changing anything
+## Before code or runtime changes
 
 - Inspect `git status`, the active branch, and the configured runtime paths.
   Preserve unrelated user changes.
@@ -19,19 +19,27 @@ not return.
 
 ## Route to the detailed runbook
 
-- Codex native catalog, app functions/tools, namespace relay, installed-version
-  drift, Windows Codex app, OpenRouter, or GLM-5.3-Flash work: read
+- Installed Windows app/CLI drift or upstream review: start with
   [`docs/agents/compatibility-maintenance.md`](docs/agents/compatibility-maintenance.md).
-- Switchyard source, routes, rebuilds, startup, health, or deployment: after the
-  compatibility guide, read [`config/switchyard/README.md`](config/switchyard/README.md).
+- Native catalog, app functions/tools, namespace relay, or encrypted handoffs:
+  read [native Codex compatibility](docs/agents/native-codex.md).
+- GLM endpoint policy, Responses repair, hosted search, or Python pins:
+  read [OpenRouter GLM compatibility](docs/agents/openrouter-glm.md).
+- Switchyard source, routes, rebuilds, startup, health, or deployment: read
+  [`config/switchyard/README.md`](config/switchyard/README.md), then only its
+  applicable runtime or maintenance branch.
   Its checked-in patch, route template, and `source.lock` are authoritative;
   the installed runtime is generated output.
 - Installation, update, or deployment work: read
   [`docs/INSTALL.md`](docs/INSTALL.md). Service failure or rollback work: read
   [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) before touching a live
   runtime.
-- Credential, proxy, or remote-endpoint work: read the
-  matching security boundary and preserve its fail-closed behavior.
+- Credential or remote-endpoint work: read the forwarding boundary in
+  [native Codex](docs/agents/native-codex.md), the exact-endpoint policy in
+  [OpenRouter GLM](docs/agents/openrouter-glm.md), or the local-hop boundary in
+  [Switchyard](config/switchyard/README.md#security-and-request-flow), according
+  to the affected hop. Preserve fail-closed behavior. For proxy changes, trace
+  `src/proxy-environment.mjs` and `src/fetch-transport.mjs` as the current owners.
 - Subagent claims, selection semantics, proof artifacts, or v2 declarations:
   read [`docs/SUBAGENT-CERTIFICATION.md`](docs/SUBAGENT-CERTIFICATION.md). Bind
   registry acceptance to exact route and runtime evidence.

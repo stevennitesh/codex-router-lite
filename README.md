@@ -3,7 +3,7 @@
 Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds three routed model choices while leaving native Codex models under the installed Codex build's control:
 
 - `openrouter/glm-5.3-flash`, pinned to the certified Novita endpoint
-- `openrouter/glm-5.3-flash-gmicloud`, pinned to GMICloud and kept at v1 until its native v2 proof is accepted
+- `openrouter/glm-5.3-flash-gmicloud`, pinned to the separately certified GMICloud endpoint
 - `switchyard/auto`, which selects native Codex models through the pinned local Switchyard runtime
 
 The router also restores current Codex app function namespaces and supports exact-route subagents v2. It does not support other clients, platforms, provider catalogs, local-model managers, fallback models, a Router UI, or provider discovery.
@@ -58,8 +58,8 @@ self-update and installer transaction:
 .\model-router.ps1 codex update
 ```
 
-To deploy edited source from the current checkout, use
-`.\deploy-codex-router.ps1 -InstallDir <installed-router-directory>`. Use
+For edited source deployment, choose the separate-directory or active-checkout
+transaction in [installation and updates](docs/INSTALL.md#update). Use
 `.\restart-codex-router.ps1 -InstallDir <installed-router-directory>` only to
 restart the files already installed. Do not stop the service separately.
 Deployment owns file replacement and rollback.
