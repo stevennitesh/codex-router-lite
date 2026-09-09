@@ -132,6 +132,13 @@ test("Switchyard inherits the native Codex request and compaction contract", () 
   assert.equal(model.context_window, 272000);
   assert.equal(model.max_context_window, 872000);
   assert.equal("auto_compact_token_limit" in model, false);
+  for (const limit of [null, 200000]) {
+    const inherited = routedModel(template, {
+      ...routeFixture, slug: "switchyard/auto", requestProfile: "switchyard-native",
+    }, { ...behaviorTemplate, auto_compact_token_limit: limit });
+    assert.equal(Object.hasOwn(inherited, "auto_compact_token_limit"), true);
+    assert.equal(inherited.auto_compact_token_limit, limit);
+  }
   assert.equal("supports_reasoning_summaries" in model, false);
   assert.equal("default_reasoning_summary" in model, false);
   assert.equal(model.support_verbosity, true);

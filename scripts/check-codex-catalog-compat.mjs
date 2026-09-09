@@ -84,9 +84,10 @@ function buildCandidate(binary, nativeOverride) {
     .map((model) => catalog.models.find((candidate) => candidate.slug === model.slug));
   const nativeSol = native.models.find((model) => model.slug === "gpt-5.6-sol");
 
-  if (Object.prototype.hasOwnProperty.call(builtSwitchyard, "auto_compact_token_limit")) {
-    throw new Error(`${version} source catalog did not retain Switchyard native compaction`);
-  }
+  assert.equal(Object.hasOwn(builtSwitchyard, "auto_compact_token_limit"),
+    Object.hasOwn(nativeSol, "auto_compact_token_limit"), `${version} changed native compaction presence`);
+  assert.equal(builtSwitchyard.auto_compact_token_limit, nativeSol.auto_compact_token_limit,
+    `${version} changed native compaction value`);
   assert.deepEqual(
     builtSwitchyard.model_messages,
     nativeSol.model_messages,
@@ -159,9 +160,9 @@ try {
     }
   }
   const switchyard = bySlug.get("switchyard/auto");
-  if (Object.prototype.hasOwnProperty.call(switchyard, "auto_compact_token_limit")) {
-    throw new Error(`${source.version} did not preserve Switchyard native compaction`);
-  }
+  assert.equal(switchyard.auto_compact_token_limit ?? undefined,
+    expectedBySlug.get("switchyard/auto").auto_compact_token_limit ?? undefined,
+    `${source.version} did not preserve Switchyard native compaction`);
   process.stdout.write(
     `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
       "GLM routes and Switchyard compatibility passed\n",
