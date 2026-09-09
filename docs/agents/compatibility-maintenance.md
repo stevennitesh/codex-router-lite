@@ -83,7 +83,9 @@ the current account or explicitly adopted native catalog. While signed in, the
 locked refresh may update Codex's own `models_cache.json` only from the fixed
 ChatGPT account-model endpoint. It bounds the response, rechecks account
 identity before writing, never stores credentials, and preserves the prior
-cache on every network, schema, or account-switch failure. Publication uses
+cache on every network, schema, or account-switch failure. Cache validators
+belong to one CLI version: upgrades fetch unconditionally and older clients
+cannot overwrite newer caches. Publication uses
 the normal state-ownership guard, catalog lock, and rollback path. A failed
 refresh leaves Router serving and retries on the next interval. The watcher
 does not override native `visibility` or manufacture account entitlements.
@@ -101,6 +103,11 @@ update the paired build and snapshot, then test a routed round trip.
 Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final
 answer can cancel a newly resumed child.
+
+Encrypted child handoffs preserve native 401 and 429 failures. A 429 suppresses
+repeat handoffs for the same account-scoped payload for 60 seconds, with at most
+128 failure entries. Native compaction metadata may be absent, null, or numeric;
+compatibility checks must compare against the current native model contract.
 
 The scheduled-task launcher, arguments, source root, ACL, generation, and running process form one service identity. A same-named foreign task is a conflict.
 

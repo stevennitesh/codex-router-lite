@@ -1,26 +1,20 @@
-# v2 agent application: `switchyard/auto`
+# v2 agent application: switchyard/auto
 
 - Status: accepted
-- Endpoint: Switchyard; fallback disabled
-- Router: `0.5.1`, deployed candidate `fdd056f7b06c0bc1e01bbff8c235e9d121d7968c`
-- Codex: `codex-cli 0.153.4`, Windows app `26.901.5280.0`
-- Execution: Windows Codex desktop native collaboration
+- Router candidate: acd5fc1b02f1c8a66b2045d71ccf60e5355c495f
+- Windows app: 26.903.8094.0; CLI: 0.153.4
+- Execution: Windows Codex native collaboration; exact endpoint unchanged
 
-The source, patch, binary, and routes remain at the accepted upstream update. This run refreshes the Router binding after removing unsolicited child interrupts and repairing the GLM tool surface. The exact runtime hashes are recorded in `proof.json`.
+The deployed candidate preserves native authentication and rate-limit failures during encrypted child handoff, bounds repeated rate-limited handoffs, and isolates legacy native capability flags from GLM. Native catalog upgrade caching, Windows heartbeat stop behavior, and Undici were also updated.
 
 ## Evidence
 
-| Check | Result | Router completion time |
-| --- | --- | --- |
-| Streaming and native app tool | pass; HTTP 200 | 2026-09-05T09:31:04.557Z |
-| Encrypted parent-to-child relay | pass; native child executed the app call | 2026-09-05T09:31:04.557Z |
-| First marker | `SWITCHYARD_APP_FDD056F7_ONE` | 2026-09-05T09:31:06.884Z |
-| Same-child follow-up | `SWITCHYARD_APP_FDD056F7_TWO` | 2026-09-05T09:31:39.831Z |
+- Native list_projects call and successful result: 2026-09-09T12:14:18.489Z
+- First marker: SWITCHYARD_ACD5FC1B_ONE at 2026-09-09T12:14:23.514Z
+- Same-child follow-up: SWITCHYARD_ACD5FC1B_TWO at 2026-09-09T12:14:39.385Z
 
-The child executed `list_projects` through the native `functions.exec` tool surface. All three Router requests returned HTTP 200. Switchyard selected `sol-medium` twice and `luna-high` once, with no classifier errors, parse failures, or fallback. The second marker came from the same child without interruption.
+All recorded route requests returned HTTP 200. Native child rollouts confirm app tool execution; the same child returned both markers without interruption. Switchyard selected luna-high twice and sol-medium once, with no classifier, parse, HTTP, or fallback errors in its three-request window. Its unchanged binary, patch, source and route hashes are bound in proof.json.
 
 ## Validation and limits
 
-The retained suite passed 133 tests, including the live-shaped reasoning/message ID collision followed by app dispatch on both exact GLM routes, request-owned tool availability, native response preservation, and absence of injected interrupts. Syntax, product-boundary, dependency-lock, installed-Codex catalog parsing, and live Doctor checks passed. Installed source, patch, binary, and routes matched deployment provenance.
-
-This bounded run proves the app tool call and native child continuation shown above. It does not execute every app action or certify every future provider response. Earlier unsupported-call probes are excluded. Repository evidence retains no project data, raw session identifiers, credentials, or decrypted relay payloads. Repeat the five native checks after changing the compatibility behavior or runtime binding.
+All 146 retained tests, product checks, installed catalog parsing (16 models), runtime health, and deployment provenance checks passed. The transaction restored the prior runtime on two rejected acceptance checks before the corrected candidate passed. This bounded run proves the stated tool and continuation paths, not every app action. No credentials, project contents, raw session IDs, or decrypted payloads are retained here.

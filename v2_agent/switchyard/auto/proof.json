@@ -8,7 +8,7 @@
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
-  "testedAt": "2026-09-05T09:31:39.831Z",
+  "testedAt": "2026-09-09T12:14:39.385Z",
   "routerVersion": "0.5.1",
   "codexVersion": "codex-cli 0.153.4",
   "executionSurface": "codex-desktop-native",
@@ -17,35 +17,36 @@
     "upstreamCommit": "9a743e89223a0d5b14011f1226d5b068f730a3b8",
     "patchSha256": "dd8ff723de803d2e2cacc5204577b15b81b90f6609977b5a4e5a36d594318f3f",
     "binarySha256": "8e857fb738e063f56ee8a0f1d27a74cc78191e62c3f9867ca2dd9b0b69d36bb7",
-    "routerCommit": "fdd056f7b06c0bc1e01bbff8c235e9d121d7968c",
+    "routerCommit": "acd5fc1b02f1c8a66b2045d71ccf60e5355c495f",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   },
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T09:31:04.557Z"
+      "observedAt": "2026-09-09T12:14:18.489Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T09:31:04.557Z"
+      "observedAt": "2026-09-09T12:14:18.489Z"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T09:31:04.557Z"
+      "observedAt": "2026-09-09T12:14:18.489Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T09:31:06.884Z"
+      "observedAt": "2026-09-09T12:14:23.514Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-05T09:31:39.831Z"
+      "observedAt": "2026-09-09T12:14:39.385Z"
     }
   },
-  "routerCommit": "fdd056f7b06c0bc1e01bbff8c235e9d121d7968c"
+  "routerCommit": "acd5fc1b02f1c8a66b2045d71ccf60e5355c495f",
+  "windowsAppVersion": "26.903.8094.0"
 }
