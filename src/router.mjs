@@ -266,6 +266,10 @@ const AGENT_PAYLOAD_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 const AGENT_PAYLOAD_CACHE_MAX_ENTRIES = 256;
 const agentPayloadCache = new Map();
 const agentPayloadCacheInFlight = new Map();
+// Keys include native account scope; failures must never suppress another account.
+const agentPayloadRelayFailures = new Map();
+const AGENT_RELAY_FAILURE_TTL_MS = 60_000;
+const AGENT_RELAY_FAILURE_MAX_ENTRIES = 128;
 let agentPayloadCacheBytes = 0;
 const agentPayloadCacheMetrics = {
   hits: 0,
@@ -1204,6 +1208,9 @@ function evictAgentPayload(key, { expired = false, evicted = false } = {}) {
 }
 
 function purgeExpiredAgentPayloads(now = Date.now()) {
+  for (const [key, expiresAt] of agentPayloadRelayFailures) {
+    if (expiresAt <= now) agentPayloadRelayFailures.delete(key);
+  }
   for (const [key, entry] of agentPayloadCache) {
     if (entry.expiresAt <= now) evictAgentPayload(key, { expired: true });
   }
@@ -1290,10 +1297,18 @@ async function relayEncryptedAgentPayloadOnce(
     signal,
   });
   if (!upstream.ok) {
+    if (upstream.status === 429) {
+      purgeExpiredAgentPayloads();
+      agentPayloadRelayFailures.delete(cacheKey);
+      agentPayloadRelayFailures.set(cacheKey, Date.now() + AGENT_RELAY_FAILURE_TTL_MS);
+      while (agentPayloadRelayFailures.size > AGENT_RELAY_FAILURE_MAX_ENTRIES) {
+        agentPayloadRelayFailures.delete(agentPayloadRelayFailures.keys().next().value);
+      }
+    }
     const error = new Error(
       `Native collaboration payload relay failed with HTTP ${upstream.status}.`,
     );
-    error.status = 502;
+    error.status = [401, 429].includes(upstream.status) ? upstream.status : 502;
     throw error;
   }
   if (bytes.length > 4 * 1024 * 1024) {
@@ -1363,6 +1378,11 @@ async function relayEncryptedAgentPayload(request, item, encrypted, signal) {
   const key = agentPayloadCacheKey(encrypted, accountScope);
   const cached = cachedAgentPayload(key);
   if (cached !== undefined) return cached;
+  if (agentPayloadRelayFailures.has(key)) {
+    const error = new Error("Native collaboration payload relay is rate limited; retry after the cooldown.");
+    error.status = 429;
+    throw error;
+  }
   const pending = agentPayloadCacheInFlight.get(key);
   if (pending) {
     agentPayloadCacheMetrics.coalesced += 1;

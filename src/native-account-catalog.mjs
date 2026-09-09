@@ -146,10 +146,19 @@ export async function refreshNativeAccountCatalogUnlocked({
     return { status: "fresh", fingerprint: current.fingerprint };
   }
 
+  const safeCurrent = validCatalog(current.catalog) && !containsRoutedSlugs(current.catalog);
+  const triple = (value) => /^(\d+)\.(\d+)\.(\d+)/u.exec(String(value || ""))?.slice(1).map(Number);
+  const candidate = triple(clientVersion);
+  const previous = triple(current.catalog?.client_version);
+  const differing = candidate && previous && candidate.findIndex((part, index) => part !== previous[index]);
+  if (safeCurrent && differing >= 0 && candidate[differing] < previous[differing]) {
+    return { status: "stale-client", fingerprint: current.fingerprint };
+  }
   const accountHeaders = await headersProvider();
   if (!accountHeaders?.authorization) return { status: "unavailable" };
-  const safeCurrent = validCatalog(current.catalog) && !containsRoutedSlugs(current.catalog);
-  const etag = safeCurrent ? safeEtag(current.catalog.etag) : undefined;
+  // Validators belong to the client version that obtained the model list.
+  const etag = safeCurrent && current.catalog.client_version === clientVersion
+    ? safeEtag(current.catalog.etag) : undefined;
   const url = new URL(ACCOUNT_CATALOG_URL);
   url.searchParams.set("client_version", clientVersion);
   const headers = {
@@ -172,18 +181,9 @@ export async function refreshNativeAccountCatalogUnlocked({
       signal: AbortSignal.timeout(timeoutMs),
       ...(dispatcher ? { dispatcher } : {}),
     });
-    if (response.status === 304 && safeCurrent) {
+    if (response.status === 304) {
       await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
-      if (current.catalog.client_version !== clientVersion) {
-        if (!sameAccountSession(accountHeaders, await headersProvider())) {
-          return { status: "failed" };
-        }
-        await writeCache(cachePath, {
-          ...current.catalog,
-          fetched_at: new Date(now).toISOString(),
-          client_version: clientVersion,
-        });
-      }
+      if (!etag) return { status: "failed" };
       return { status: "not-modified", fingerprint: current.fingerprint };
     }
     if (!response.ok || response.status >= 300) {

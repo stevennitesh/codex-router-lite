@@ -42,8 +42,8 @@ not return.
 - Settled domain meaning or ADR work: read
   [`docs/agents/domain.md`](docs/agents/domain.md), then load only the context
   record or ADR it points to.
-- Load [`docs/agents/engineering-contract.md`](docs/agents/engineering-contract.md)
-  only when an invoked engineering skill requires shared design judgment.
+- For substantive code design, implementation, debugging, refactoring, or review,
+  read [`docs/agents/engineering-contract.md`](docs/agents/engineering-contract.md).
 
 ## Commands
 

@@ -506,7 +506,49 @@ test("router fails closed when an encrypted subagent payload cannot be relayed",
         ],
       }),
     });
-    assert.equal(response.status, 502);
+    assert.equal(response.status, 401);
+    assert.equal(gatewayRequests, 0);
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+  }
+});
+
+test("rate-limited child handoffs cool down per account without reaching the gateway", async () => {
+  let nativeRequests = 0;
+  let gatewayRequests = 0;
+  const native = await mockServer(async (_request, response) => {
+    nativeRequests += 1;
+    json(response, 429, { error: { message: "quota" } });
+  });
+  const gateway = await mockServer(async (_request, response) => {
+    gatewayRequests += 1;
+    json(response, 200, {});
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    for (const account of ["account-a", "account-a", "account-b"]) {
+      const response = await fetch(`${routerBase(routerPort)}/responses`, {
+        method: "POST",
+        headers: { Authorization: "Bearer test-session", "chatgpt-account-id": account, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: [{
+          type: "agent_message", content: [
+            { type: "input_text", text: "Message Type: MESSAGE\nPayload:\n" },
+            { type: "encrypted_content", encrypted_content: "gAAAAA-rate-limited=" },
+          ],
+        }] }),
+      });
+      assert.equal(response.status, 429);
+      await response.text();
+    }
+    assert.equal(nativeRequests, 2);
     assert.equal(gatewayRequests, 0);
   } finally {
     await stopChild(router);

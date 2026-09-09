@@ -214,6 +214,26 @@ test(
   },
 );
 
+test("Windows stop disables heartbeat before ending the task and start reenables it", () => {
+  const source = readScript("src/service-windows.mjs");
+  const branch = source.slice(source.indexOf('} else if (command === "stop") {') + 7);
+  const execute = new Function("command", "taskSnapshot", "assertOwnedTask", "schtasks", "endTask", "process", "taskName", branch);
+  for (const command of ["stop", "start", "restart"]) {
+    const calls = [];
+    execute(command, () => ({ exists: true, owned: true }),
+      (task) => { assert.equal(task.owned, true); calls.push("owned"); },
+      (args) => calls.push(args.at(-1)), () => calls.push("end"),
+      { stdout: { write() {} } }, "Codex Router");
+    assert.deepEqual(calls, command === "stop" ? ["owned", "/DISABLE", "end"]
+      : command === "start" ? ["owned", "/ENABLE", "Codex Router"]
+        : ["owned", "end", "/ENABLE", "Codex Router"]);
+  }
+  assert.throws(() => execute("stop", () => ({ exists: true }),
+    () => { throw new Error("foreign task"); },
+    () => assert.fail("must not mutate foreign task"), () => assert.fail("must not stop foreign task"),
+    { stdout: { write() {} } }, "Codex Router"), /foreign task/u);
+});
+
 test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {
   assert.equal(recognizedRepositoryUrl("https://github.com/stevennitesh/codex-router-lite.git"), true);
   assert.equal(recognizedRepositoryUrl("git@github.com:stevennitesh/codex-router-lite.git"), true);

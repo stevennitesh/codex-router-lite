@@ -47,6 +47,37 @@ const writeCache = async (target, value) => {
   writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 };
 
+test("client upgrades refetch without old validators and reject unsolicited 304", () =>
+  withCache(async (cachePath) => {
+    const original = JSON.stringify(fixture([{ slug: "gpt-old" }], { client_version: "0.150.0" }));
+    for (const status of [304, 200]) {
+      writeFileSync(cachePath, original);
+      const result = await refreshNativeAccountCatalogUnlocked({
+        cachePath, version: "0.153.4", headersProvider: async () => headers(), writeCache,
+        fetchImpl: async (_url, init) => {
+          assert.equal(init.headers["if-none-match"], undefined);
+          return new Response(status === 304 ? null : JSON.stringify({ models: [{ slug: "gpt-new" }] }), { status });
+        },
+      });
+      assert.equal(result.status, status === 304 ? "failed" : "updated");
+      if (status === 304) assert.equal(readFileSync(cachePath, "utf8"), original);
+      else assert.equal(JSON.parse(readFileSync(cachePath, "utf8")).models[0].slug, "gpt-new");
+    }
+  }));
+
+test("older clients cannot narrow a newer cache, including forced refresh", () =>
+  withCache(async (cachePath) => {
+    const original = JSON.stringify(fixture([{ slug: "gpt-new" }]));
+    writeFileSync(cachePath, original);
+    const forbidden = () => { throw new Error("unexpected account operation"); };
+    const result = await refreshNativeAccountCatalogUnlocked({
+      cachePath, version: "0.150.0", force: true,
+      headersProvider: forbidden, fetchImpl: forbidden, writeCache: forbidden,
+    });
+    assert.equal(result.status, "stale-client");
+    assert.equal(readFileSync(cachePath, "utf8"), original);
+  }));
+
 test("fixed account endpoint updates only a still-current signed-in session", () =>
   withCache(async (cachePath) => {
     const oldModels = [{ slug: "gpt-old", visibility: "list" }];

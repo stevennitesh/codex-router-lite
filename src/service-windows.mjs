@@ -643,12 +643,16 @@ if (command === "render") {
   // or already idle is the state the caller asked for, not an error to raise.
   const previousTask = taskSnapshot();
   assertOwnedTask(previousTask);
-  if (previousTask.exists) endTask();
+  if (previousTask.exists) {
+    schtasks(["/Change", "/TN", taskName, "/DISABLE"], { quiet: true, mutating: true });
+    endTask();
+  }
   process.stdout.write(`${JSON.stringify({ state: "stopped" })}\n`);
 } else {
   const previousTask = taskSnapshot();
   assertOwnedTask(previousTask);
   if (command === "restart") endTask();
+  schtasks(["/Change", "/TN", taskName, "/ENABLE"], { quiet: true, mutating: true });
   schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
   process.stdout.write(`${JSON.stringify({ state: "running" })}\n`);
 }
