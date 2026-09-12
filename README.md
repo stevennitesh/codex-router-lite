@@ -8,10 +8,12 @@ Codex Router Lite is a Windows-only compatibility layer for the Codex desktop ap
 
 The router also restores current Codex app function namespaces and supports exact-route subagents v2. It does not support other clients, platforms, provider catalogs, local-model managers, fallback models, a Router UI, or provider discovery.
 
-The managed service checks every five minutes for a different installed Codex
-binary or a changed adopted native catalog. It republishes the generated model
-catalog only when that authority changes. Fully quit and reopen Codex after an
-automatic refresh message to reload the model picker.
+The managed service checks every five minutes for an installed Codex binary or
+native account-catalog change. When signed in, it refreshes account visibility
+from Codex's fixed ChatGPT model endpoint and preserves the previous cache if
+that read fails. It republishes the generated catalog when its authority changes.
+Fully quit and reopen Codex after an automatic refresh message to reload the
+model picker.
 
 ## Requirements
 
@@ -21,7 +23,9 @@ automatic refresh message to reload the model picker.
 - Python 3.10 or newer, or `uv`
 - Codex desktop or Codex CLI
 
-Switchyard has a separate Rust build procedure. You do not need Rust for OpenRouter-only use.
+Switchyard requires a separately built and deployed runtime; follow its
+[build and deployment guide](config/switchyard/maintenance.md). You do not need
+Rust for OpenRouter-only use.
 
 ## Install
 
@@ -76,7 +80,23 @@ other's provider. Fresh Codex web-search turns use OpenRouter's bounded
 GLM turns continue through the LiteLLM compatibility path. No user
 `config.toml` customization is required.
 
-Routed models see flattened app-function names. The response path restores the native namespace before the Codex app executes a call. The checked-in app-tool snapshot tracks the installed Codex contract.
+GLM tools use flattened names that Router restores to the caller's native app
+or harness namespace before execution. Runtime relay uses the client's actual
+tool declarations; the [app-tool snapshot](src/codex-app-tools.mjs) is a dated
+reference for drift inspection. Router also repairs GLM custom-tool streams,
+supplies missing commentary/final-answer phases, and removes optional foreign
+item IDs when replaying routed history to native Codex. Unknown provider-prefixed
+model names fail locally instead of reaching the native backend.
+
+Switchyard uses Luna High to classify tasks among five Luna/Sol effort targets.
+Its [routing policy and integration guide](config/switchyard/README.md) explains
+the choices and deliberately pinned upstream version.
+
+All three routed choices have [exact-route v2 certification](docs/SUBAGENT-CERTIFICATION.md).
+The checked-in [proofs](v2_agent/) record native tool execution, encrypted child
+handoffs, and same-child continuation. Acceptance belongs to the recorded route
+and runtime; an upstream update requires fresh evidence where those contracts
+change.
 
 Configuration lives in five JSON files:
 
@@ -116,11 +136,11 @@ Router or Switchyard review without merging or deploying anything.
 
 Load maintenance context only when it applies:
 
-- Codex, Windows app, OpenRouter, or GLM work: `docs/agents/compatibility-maintenance.md`
-- Switchyard source, build, or deployment: `config/switchyard/README.md`
-- Subagents v2 evidence: `docs/SUBAGENT-CERTIFICATION.md`
-- Installation details: `docs/INSTALL.md`
-- Failures and recovery: `docs/TROUBLESHOOTING.md`
+- Codex, Windows app, OpenRouter, or GLM work: [compatibility maintenance](docs/agents/compatibility-maintenance.md)
+- Switchyard source, build, or deployment: [Switchyard integration](config/switchyard/README.md)
+- Subagents v2 evidence: [certification](docs/SUBAGENT-CERTIFICATION.md)
+- Installation details: [installation and updates](docs/INSTALL.md)
+- Failures and recovery: [troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## Security
 

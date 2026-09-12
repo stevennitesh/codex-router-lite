@@ -57,9 +57,9 @@ expose target base URLs, credentials, account headers, or capabilities.
 
 ## Why the canonical patch exists
 
-The locked upstream identifies targets by model ID and lets caller fields win
-over target defaults. That cannot safely represent several effort variants of
-the same native model. The patch adds and tests:
+The locked upstream supports target reasoning effort but still identifies
+targets by model ID. Router needs distinct effort variants of the same native
+model and control over additional request fields. The patch adds and tests:
 
 - `routing_id` as the local target identity while `id` remains the upstream
   model;
