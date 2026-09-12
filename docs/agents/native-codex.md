@@ -37,6 +37,19 @@ Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final
 answer can cancel a newly resumed child.
 
+When replaying routed history to native Codex, omit optional foreign item IDs
+on messages, function calls, and custom calls. Preserve native IDs and every
+`call_id`; tool outputs must remain paired with their calls. Unknown
+provider-prefixed model names fail locally instead of falling through to the
+native account endpoint.
+
+Preflattened MCP and harness function/custom declarations can recover their
+namespace from reserved turn metadata only when the exact declaration is
+present and unambiguous. Metadata never grants an additional tool. Routed
+assistant SSE messages receive missing commentary/final phases from item order;
+provider phases win, reasoning alone does not imply commentary, and malformed,
+ambiguous, oversized, or unsuccessful streams receive no inferred final answer.
+
 Encrypted child handoffs preserve native 401 and 429 failures. A 429 suppresses
 repeat handoffs for the same account-scoped payload for 60 seconds, with at most
 128 failure entries. Native compaction metadata may be absent, null, or numeric;

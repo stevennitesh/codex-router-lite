@@ -1,5 +1,12 @@
 # OpenRouter GLM compatibility
 
+The custom-tool relay follows the pinned LiteLLM input conversion: unwrap a
+string `content`, otherwise retain raw arguments, including its one-million
+Unicode-code-point parse limit. Reject incompatible non-string content and
+any disagreement between streamed, completed, and closed input. Fragmented
+response preludes may exceed the normal staging budget within the bounded
+10 MiB event limit; the empty-completion verdict still applies.
+
 Read for exact GLM endpoint policy, LiteLLM Responses repair, hosted search, or
 Python dependency changes. For app-tool or encrypted handoff failures, also read
 [native Codex compatibility](native-codex.md). Shared refresh, diagnosis and proof

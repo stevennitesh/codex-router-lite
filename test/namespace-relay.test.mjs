@@ -9,8 +9,29 @@ import {
   buildNamespaceLookups,
   flattenNamespaceTools,
   rewriteNamespaceResponsePayload,
+  restorePreflattenedToolNamespaces,
 } from "../src/namespace-relay.mjs";
 import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
+
+test("preflattened identities require a unique declared tool and preserve literal plain names", () => {
+  const declaration = { type: "custom", name: "harness__exec", format: { type: "text" } };
+  const metadata = (ordinary = {}) => ({ "x-codex-turn-metadata": JSON.stringify({ tool_namespaces_info: {
+    harness: { name: "harness", functions: {
+      exec: { name: "exec", direct: true, source: { kind: "harness" } },
+      absent: { name: "absent", direct: true, source: { kind: "harness" } },
+    } },
+    functions: { name: "functions", functions: ordinary },
+  } }) });
+  assert.deepEqual(restorePreflattenedToolNamespaces([declaration], metadata()), [
+    { type: "namespace", name: "harness", tools: [{ ...declaration, name: "exec" }] },
+  ]);
+  const tools = [declaration];
+  assert.equal(restorePreflattenedToolNamespaces(tools, metadata({ "harness__exec": { name: "harness__exec" } })), tools);
+  const duplicates = [declaration, { type: "function", name: declaration.name, parameters: {} }];
+  assert.equal(restorePreflattenedToolNamespaces(duplicates, metadata()), duplicates);
+  assert.deepEqual(restorePreflattenedToolNamespaces([], metadata()), []);
+  assert.equal(restorePreflattenedToolNamespaces(tools, {}), tools);
+});
 
 function collect(stream) {
   return new Promise((resolve, reject) => {
@@ -465,4 +486,96 @@ test("native custom-tool streams accept LiteLLM content-wrapped legacy argument 
   );
   assert.equal(payloads.at(-1).item.input, input);
   assert.doesNotMatch(output, /response\.function_call_arguments/u);
+});
+
+function litellmNativeCustomEvents(id, argumentsText, completedInput, chunkSize = 1) {
+  const deltas = [];
+  for (let index = 0; index < argumentsText.length; index += chunkSize) {
+    deltas.push(argumentsText.slice(index, index + chunkSize));
+  }
+  return [
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "custom_tool_call", id, call_id: id, name: "apply_patch", status: "in_progress", input: "" },
+    },
+    ...deltas.map((delta) => ({
+      type: "response.function_call_arguments.delta",
+      item_id: id,
+      output_index: 0,
+      delta,
+    })),
+    { type: "response.function_call_arguments.done", item_id: id, output_index: 0, arguments: argumentsText },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: { type: "custom_tool_call", id, call_id: id, name: "apply_patch", status: "completed", input: completedInput },
+    },
+  ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
+// LiteLLM 1.96 unwrap_custom_tool_arguments(): a string `content` from a JSON
+// object, otherwise the provider arguments verbatim. Each case pairs the
+// provider arguments with the input LiteLLM puts on the completed item.
+const PATCH_FIXTURE = "*** Begin Patch\n*** Update File: src/a.js\n@@\n-const a = 1;\n+const re = /\\d+/;\n*** End Patch";
+
+test("native custom-tool arguments LiteLLM keeps verbatim relay as its completed input", async () => {
+  for (const [name, argumentsText, completedInput] of [
+    ["content after another key", JSON.stringify({ path: "src/a.js", content: PATCH_FIXTURE }), PATCH_FIXTURE],
+    ["input key instead of content", JSON.stringify({ input: PATCH_FIXTURE }), JSON.stringify({ input: PATCH_FIXTURE })],
+    ["empty object", "{}", "{}"],
+    ["raw patch text", PATCH_FIXTURE, PATCH_FIXTURE],
+    ["bare JSON string", JSON.stringify(PATCH_FIXTURE), JSON.stringify(PATCH_FIXTURE)],
+  ]) {
+    const id = `call_${name.replaceAll(" ", "_")}`;
+    const output = await collect(
+      Readable.from(litellmNativeCustomEvents(id, argumentsText, completedInput))
+        .pipe(new NamespaceToolCallTransform(new Map(), "text/event-stream")),
+    );
+    const payloads = output.split(/\n\n/).filter(Boolean)
+      .map((block) => JSON.parse(block.split("\n").find((line) => line.startsWith("data: ")).slice(6)));
+    assert.equal(
+      payloads.find((event) => event.type === "response.custom_tool_call_input.done")?.input,
+      completedInput,
+      name,
+    );
+    assert.equal(payloads.at(-1).item.input, completedInput, name);
+    // The decoder follows only a leading content wrapper; nothing it could not
+    // decode reaches the client as streamed input.
+    assert.equal(
+      payloads.some((event) => event.type === "response.custom_tool_call_input.delta"),
+      false,
+      name,
+    );
+    assert.doesNotMatch(output, /response\.function_call_arguments/u, name);
+  }
+});
+
+test("native custom input follows LiteLLM's code-point size limit", async () => {
+  for (const content of ["x".repeat(1_000_001), "😀".repeat(500_001)]) {
+    const args = JSON.stringify({ path: "x", content });
+    const expected = [...args].length > 1_000_000 ? args : content;
+    const output = await collect(Readable.from(litellmNativeCustomEvents("large", args, expected, 65536))
+      .pipe(new NamespaceToolCallTransform(new Map(), "text/event-stream")));
+    assert.ok(output.includes(JSON.stringify(expected)));
+  }
+});
+
+test("native custom-tool arguments still fail closed where LiteLLM's input cannot be matched", async () => {
+  for (const [name, argumentsText, completedInput, reason] of [
+    // Python str() of a non-string content has no faithful JavaScript form.
+    ["non-string content", JSON.stringify({ content: null }), "None", /invalid custom tool arguments done/u],
+    // The completed item must carry the input the relay already committed.
+    ["completed item disagrees", JSON.stringify({ input: "one" }), "two", /custom tool call input changed before close/u],
+    // Decoded text already streamed cannot be contradicted by the final input.
+    ["streamed text then invalid", '{"content": "*** Begin Patch"}', '{"content": "*** Begin Patch"}',
+      /incomplete custom tool argument delta sequence/u],
+  ]) {
+    let error;
+    try { await collect(Readable.from(litellmNativeCustomEvents(`call_${name.replaceAll(" ", "_")}`, argumentsText, completedInput))
+      .pipe(new NamespaceToolCallTransform(new Map(), "text/event-stream"))); }
+    catch (caught) { error = caught; }
+    assert.equal(error?.code, "ERR_NAMESPACE_RELAY_COMMITTED_STREAM", name);
+    assert.match(error.message, reason, name);
+  }
 });

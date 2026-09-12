@@ -27,6 +27,14 @@ Load only the branch needed for the task:
 An installed hash or proof is evidence about one deployment. It never overrides
 the checked-in lock, patch, template, or current Router source.
 
+The September 12 update selects upstream `a70a1fba`, including native freeform
+tools, Responses input/reasoning fixes, target reasoning effort, and transport
+URL redaction. The local patch retains exact routing IDs, native credentials,
+loopback protection, classifier task-only input, and the five existing effort
+targets. Target-specific prompts also key by routing ID so effort variants do
+not collide. The later `1e912482` category redesign changes classifier policy
+and is intentionally deferred; it needs a separate routing-quality evaluation.
+
 ## Security and request flow
 
 1. Codex sends `switchyard/auto` to Codex Router. Native Sol, Terra, Luna,

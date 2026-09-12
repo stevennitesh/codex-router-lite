@@ -3,6 +3,33 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "a2f58d7cf41eeaaf956100122ae24ea4cfd37807",
-  "deferredCandidates": []
+  "lastReviewedCommit": "a71312d75284872d62b27f3e0ce8e21df6fa125c",
+  "deferredCandidates": [],
+  "reviewedAt": "2026-09-12",
+  "disposition": {
+    "integrated": [
+      "7ecf3962: unknown provider route rejection",
+      "c8e9134a and 4bc8d50b: message phases with conservative stream bounds",
+      "e29bcdd8: LiteLLM custom input conversion with Python Unicode length parity",
+      "db9990a9 and 128b7d48: foreign native replay item IDs",
+      "c5d6e85e: fragmented bounded preludes",
+      "3419d7ad and a4bf239d: declared MCP and harness namespace restoration"
+    ],
+    "alreadyCovered": [
+      "4a10f260: WebSocket failure terminals",
+      "7c0ba7ea and e4aaa77b: Lite catalog refresh and owned config detection",
+      "2822965f: undici 8.10.2",
+      "4f7c56be: Windows heartbeat stop intent",
+      "b944249d and b5c12e03: exact generated child roles and startup publication",
+      "59a22116 and 148968dd: native encrypted relay auth and bounded quota handling"
+    ],
+    "excluded": [
+      "Grok, DeepSeek, Muse, Command Code, Ollama, alternate clients and provider research",
+      "UI, tray, dashboard, usage-account aggregation, diagnostics and generic migration systems",
+      "b215d1f6: reserved transport-marker retry belongs to excluded upstream forwarder/failover owners",
+      "ae7ab5cf: GLM hosted search uses the direct Responses history owner",
+      "a3e0dafe: injected child interrupts remain outside the retained model-authored collaboration contract",
+      "upstream-only tests, development dependencies, CI, documentation and merge commits"
+    ]
+  }
 }

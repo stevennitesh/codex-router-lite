@@ -1,3 +1,4 @@
+import { messagePhaseTransform } from "./message-phase.mjs";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
@@ -108,7 +109,7 @@ import {
   flattenNamespacedHistory,
   flattenNamespaceTools,
   flattenToolSearchHistory,
-  recoverPreflattenedMcpTools,
+  restorePreflattenedToolNamespaces,
 } from "./namespace-relay.mjs";
 import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
@@ -1645,6 +1646,11 @@ function sanitizeCollaborationForNative(item) {
   };
 }
 
+// Only optional foreign item IDs are omitted; call_id still pairs tool results.
+const NATIVE_ITEM_ID_PREFIXES = new Map([
+  ["function_call", "fc"], ["custom_tool_call", "ctc"], ["message", "msg"],
+]);
+
 function normalizeNativeInput(
   input,
   { statelessReasoning = false, dropUnstoredReasoningReferences = false } = {},
@@ -1667,6 +1673,11 @@ function normalizeNativeInput(
       // `rs_` reference against. Full reasoning items with encrypted content
       // remain above; bare references cannot be made stateless and are dropped.
       return [];
+    }
+    const prefix = NATIVE_ITEM_ID_PREFIXES.get(item?.type);
+    if (prefix && typeof item.id === "string" && !item.id.startsWith(prefix)) {
+      const { id: _foreignId, ...rest } = item;
+      item = rest;
     }
     if (item?.type !== "compaction") return [sanitizeCollaborationForNative(item)];
     return [isRouterCompactionValue(item.encrypted_content)
@@ -2063,16 +2074,14 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
   // LiteLLM converts this route to Chat Completions. Preserve GLM reasoning
   // and flatten every Codex namespace so the app can execute restored calls.
   if (!hostedSearch) carryReasoningThroughInput(input, { nativeThinking: true });
-  const flattened = chatProviderToolSurface(payload.tools, provider.id, {
+  const clientTools = restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata);
+  const flattened = chatProviderToolSurface(clientTools, provider.id, {
     input,
     toolChoice: payload.tool_choice,
   });
-  let tools = flattened.flattened ? flattened.tools : payload.tools;
+  let tools = flattened.flattened ? flattened.tools : clientTools;
   const flattenedNamespaces = flattened.namespaces;
   let namespacesFlattened = flattened.flattened;
-  if (recoverPreflattenedMcpTools(tools, payload.client_metadata, flattenedNamespaces)) {
-    namespacesFlattened = true;
-  }
 
   const searchHistory = flattenToolSearchHistory(
     input,
@@ -2154,6 +2163,13 @@ async function handleResponses(request, response, requestUrl) {
     controller.signal.throwIfAborted();
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
+    if (!registeredRoute && requestedModel.includes("/")) {
+      writeJson(response, 400, { error: {
+        type: "invalid_request_error", code: "unrouted_model", param: "model",
+        message: "The requested provider-prefixed model has no registered Router Lite route.",
+      } });
+      return;
+    }
     route = registeredRoute && routeProviderEnabled(registeredRoute.provider)
       ? registeredRoute
       : undefined;
@@ -2409,6 +2425,9 @@ async function handleResponses(request, response, requestUrl) {
           }),
         );
       }
+      // GLM's envelope repair runs first; native providers preserve their own phase.
+      const phase = route ? messagePhaseTransform(contentType) : undefined;
+      if (phase) transforms.push(phase);
       return { transforms, usageObserver, guard };
     };
     const firstPipeline = createResponsePipeline(upstreamContentType);

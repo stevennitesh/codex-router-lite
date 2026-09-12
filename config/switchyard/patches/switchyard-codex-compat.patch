@@ -1,9 +1,8 @@
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 371fc586..bef80697 100644
+index 2dacc638..8a9ba0a4 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
-@@ -61,8 +61,11 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
- /// pin a wire format, plus any `other_backends` reachable over additional formats.
+@@ -62,6 +62,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
  #[derive(Clone, Debug)]
  pub struct ModelConfig {
      model_name: ModelId,
@@ -13,9 +12,7 @@ index 371fc586..bef80697 100644
      default_backend: Backend,
      other_backends: Option<Vec<Backend>>,
  }
-
-@@ -73,14 +76,38 @@ impl ModelConfig {
-         model_name: impl Into<ModelId>,
+@@ -74,12 +77,36 @@ impl ModelConfig {
          default_backend: Backend,
          other_backends: Option<Vec<Backend>>,
      ) -> Self {
@@ -51,11 +48,9 @@ index 371fc586..bef80697 100644
 +        self
 +    }
  }
-
+ 
  /// A model-bearing provider operation outside the normal completion endpoint.
- #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-@@ -161,18 +188,11 @@ impl TranslatingLlmClient {
-     /// The backend serving `model` over `format` — the default backend when its
+@@ -162,16 +189,9 @@ impl TranslatingLlmClient {
      /// format matches, otherwise a matching entry in `other_backends`; `None` when
      /// the model is unknown or has no backend for `format`.
      pub fn backend_for(&self, model: &ModelId, format: WireFormat) -> Option<&Backend> {
@@ -73,11 +68,9 @@ index 371fc586..bef80697 100644
 +            .get(model)
 +            .and_then(|config| backend_for_config(config, format))
      }
-
+ 
      /// Whether `model` has a backend for `operation`.
-     pub fn supports_auxiliary(&self, model: &ModelId, operation: AuxiliaryOperation) -> bool {
-@@ -189,26 +209,32 @@ impl TranslatingLlmClient {
-         request: Request,
+@@ -190,24 +210,30 @@ impl TranslatingLlmClient {
          operation: AuxiliaryOperation,
      ) -> Result<Value> {
          let wire_format = operation.wire_format();
@@ -112,9 +105,7 @@ index 371fc586..bef80697 100644
                  UpstreamEndpoint::Auxiliary(operation),
              )
              .await?;
-         let EncodedResponse::Buffered { body, .. } = http_response else {
-@@ -236,11 +262,12 @@ impl TranslatingLlmClient {
-         backend: &Backend,
+@@ -237,9 +263,10 @@ impl TranslatingLlmClient {
          wire_format: WireFormat,
          llm_request: LlmRequest,
          metadata: Option<&Metadata>,
@@ -126,20 +117,17 @@ index 371fc586..bef80697 100644
          let mut body = encode_request(&llm_request, wire_format)
              .map_err(|error| LlmClientError::RequestEncoding(error.to_string()))?;
          // `encode_request` round-trips a preserved same-format body verbatim,
-         // which keeps the caller's original `model`; force the resolved model so
-@@ -252,8 +279,10 @@ impl TranslatingLlmClient {
-             strip_anthropic_incompatible_fields(&mut body);
-             strip_unsigned_thinking_blocks(&mut body);
-         }
+@@ -258,7 +285,9 @@ impl TranslatingLlmClient {
          merge_extra_body(&mut body, backend.extra_body());
+         // After the merge on purpose: the effort override must win over both the caller's
+         // value and any `reasoning` default a target set through `extra_body`.
 +        apply_body_overrides(&mut body, &model_config.body_overrides);
+         apply_reasoning_effort(&mut body, backend);
 +        apply_body_removals(&mut body, &model_config.body_removals);
          if matches!(backend, Backend::Anthropic(_)) {
              enable_anthropic_prompt_caching(&mut body);
          }
-         if matches!(backend, Backend::OpenAiChat(_)) {
-@@ -430,32 +459,30 @@ impl TranslatingLlmClient {
-             .or_else(|| llm_request.model.map(ModelId::from))
+@@ -437,22 +466,20 @@ impl TranslatingLlmClient {
              .ok_or_else(|| LlmClientError::InvalidRequest {
                  message: "no model given".to_string(),
              })?;
@@ -164,10 +152,10 @@ index 371fc586..bef80697 100644
              }
          })?;
 +        llm_request.model = Some(config.upstream_model.to_string());
-
+ 
          let http_response = self
              .send_encoded(
-                 backend,
+@@ -460,7 +487,7 @@ impl TranslatingLlmClient {
                  wire_format,
                  llm_request,
                  metadata.as_ref(),
@@ -176,12 +164,10 @@ index 371fc586..bef80697 100644
                  UpstreamEndpoint::Completion,
              )
              .await?;
-
-@@ -580,8 +607,20 @@ impl TranslatingLlmClient {
-         }
+@@ -579,6 +606,18 @@ impl TranslatingLlmClient {
      }
  }
-
+ 
 +fn backend_for_config(config: &ModelConfig, format: WireFormat) -> Option<&Backend> {
 +    if config.default_backend.wire_format() == format {
 +        Some(&config.default_backend)
@@ -197,12 +183,10 @@ index 371fc586..bef80697 100644
  #[async_trait]
  impl RoutedLlmClient for TranslatingLlmClient {
      async fn call(&self, request: Request) -> Result<Response> {
-         self.call_rewrite_model(request, None).await
-@@ -828,8 +867,49 @@ fn merge_extra_body(body: &mut Value, extra_body: &BTreeMap<String, Value>) {
-         object.entry(key.clone()).or_insert_with(|| value.clone());
+@@ -984,6 +1023,47 @@ fn merge_extra_body(body: &mut Value, extra_body: &BTreeMap<String, Value>) {
      }
  }
-
+ 
 +// Recursively applies target-owned values after caller fields and defaults.
 +// Object siblings survive, so overriding `reasoning.effort` does not erase a
 +// native caller's `reasoning.context`, summary controls, or future fields.
@@ -247,12 +231,10 @@ index 371fc586..bef80697 100644
  // Anthropic and Bedrock both cap a request at four blocks carrying
  // `cache_control`, counting tools, system blocks and message blocks together.
  const MAX_CACHE_CONTROL_BLOCKS: usize = 4;
-
-@@ -1456,8 +1536,75 @@ mod tests {
-             .await?;
+@@ -1731,6 +1811,73 @@ mod tests {
          Ok(())
      }
-
+ 
 +    #[tokio::test]
 +    async fn routing_alias_preserves_nested_reasoning_siblings_and_owns_effort()
 +    -> std::result::Result<(), Box<dyn Error + Sync + Send + 'static>> {
@@ -323,13 +305,11 @@ index 371fc586..bef80697 100644
      // A weak OpenAI-format tier emits thinking blocks with no signature. Replaying
      // them to Anthropic is rejected (Bedrock reports it as a SigV4 mismatch), so
      // the Anthropic leg must drop them while keeping signed ones.
-     #[tokio::test]
 diff --git a/crates/libsy/src/algorithms/composite.rs b/crates/libsy/src/algorithms/composite.rs
-index 9d191644..a7f6e516 100644
+index af75f7b6..cbf1867d 100644
 --- a/crates/libsy/src/algorithms/composite.rs
 +++ b/crates/libsy/src/algorithms/composite.rs
-@@ -43,9 +43,9 @@ impl TierSetter {
-     /// Two requests for one identity can both pass this and both judge, since a
+@@ -44,7 +44,7 @@ impl TierSetter {
      /// judge call sits between here and [`retain`](Self::retain). The later wins.
      fn is_due(&self, identity: Option<&RoutingIdentity>, request: &Request) -> bool {
          match self.trigger {
@@ -338,16 +318,14 @@ index 9d191644..a7f6e516 100644
              // Unkeyed requests cannot be told apart, so every one is a new session.
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
-             }
 diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index 599e9f9e..162364d1 100644
+index e247566e..b9a485c9 100644
 --- a/crates/libsy/src/algorithms/llm_class.rs
 +++ b/crates/libsy/src/algorithms/llm_class.rs
-@@ -147,18 +147,42 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
-     }
+@@ -148,16 +148,40 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
      counted
  }
-
+ 
 -/// Keeps the opening task and the latest user follow-up when they differ.
 +/// Keeps the textual opening task and latest user follow-up as one clean text
 +/// message. Responses tool and relay envelopes can be normalized as user
@@ -390,12 +368,10 @@ index 599e9f9e..162364d1 100644
      }
 +    vec![Message::text(Role::User, text)]
  }
-
+ 
  /// Selects the task messages shown to capability and custom-schema classifiers.
- struct TaskInput {
-@@ -816,10 +840,10 @@ mod tests {
-     use serde_json::Value;
-
+@@ -851,8 +875,8 @@ mod tests {
+ 
      use super::*;
      use switchyard_protocol::{
 -        ContentBlock, InstructionBlock, LlmClientError, LlmRequest, Metadata, ToolCall, ToolResult,
@@ -403,14 +379,12 @@ index 599e9f9e..162364d1 100644
 +        ContentBlock, ImageSource, InstructionBlock, LlmClientError, LlmRequest, Metadata,
 +        ToolCall, ToolResult, completion_text, text_request, text_response,
      };
-
+ 
      use crate::algorithms::util::llm_judge::Judge;
-     use crate::core::testing::{Serve, test_drive};
-@@ -1289,8 +1313,54 @@ mod tests {
-             JudgeRuntimeConfig::new(DEFAULT_JUDGE_MAX_OUTPUT_TOKENS)?,
+@@ -1324,6 +1348,52 @@ mod tests {
          ))
      }
-
+ 
 +    #[test]
 +    fn classifier_keeps_only_the_common_fast_service_tier() -> Result<()> {
 +        let judge = capability_judge(None)?;
@@ -460,9 +434,7 @@ index 599e9f9e..162364d1 100644
      fn judged_contents(recent_turn_window: usize) -> Result<Vec<String>> {
          let judge = capability_judge(Some(recent_turn_window))?;
          let request = Request {
-             llm_request: LlmRequest {
-@@ -1533,18 +1603,19 @@ mod tests {
-                 content: Message::text(Role::System, judge.contract().system_prompt()).content,
+@@ -1636,16 +1706,17 @@ mod tests {
              }
              .content,
          );
@@ -484,12 +456,10 @@ index 599e9f9e..162364d1 100644
          assert!(!contents.contains(&"client instructions".to_string()));
          assert_eq!(
              judge_request.llm_request.output.response_format,
-             Some(judge.contract().response_format().clone())
-@@ -1555,8 +1626,96 @@ mod tests {
-         );
+@@ -1658,6 +1729,94 @@ mod tests {
          Ok(())
      }
-
+ 
 +    #[test]
 +    fn capability_judge_excludes_native_tool_envelopes_from_task_input() -> Result<()> {
 +        let judge = capability_judge(None)?;
@@ -581,16 +551,14 @@ index 599e9f9e..162364d1 100644
      fn sample_value(spec: &Value) -> Value {
          if let Some(first) = spec
              .get("enum")
-             .and_then(Value::as_array)
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
-index 7c696aa4..f2ad0bb6 100644
+index f557a28d..f2eef35d 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
 +++ b/crates/libsy/src/algorithms/util/affinity.rs
-@@ -56,10 +56,38 @@ fn is_user_turn(message: &Message) -> bool {
-             .iter()
+@@ -57,8 +57,36 @@ fn is_user_turn(message: &Message) -> bool {
              .all(|block| matches!(block, ContentBlock::ToolResult(_)))
  }
-
+ 
 -pub(crate) fn has_new_user_turn(messages: &[Message]) -> bool {
 -    messages.last().is_some_and(is_user_turn)
 +const RESPONSES_TOOL_OUTPUT_TYPES: &[&str] = &[
@@ -624,11 +592,9 @@ index 7c696aa4..f2ad0bb6 100644
 +            .is_some_and(is_user_turn)
 +    })
  }
-
+ 
  /// Retains a model per request identity and forces it on later matching requests.
- ///
-@@ -238,9 +266,9 @@ where
-             return Ok((Classification::Scores(Vec::new()), None));
+@@ -239,7 +267,7 @@ where
          };
          // Abstaining rather than clearing keeps this read path free of writes, so the judge
          // decides the turn whatever order concurrent latches land in.
@@ -637,12 +603,10 @@ index 7c696aa4..f2ad0bb6 100644
              return Ok((Classification::Scores(Vec::new()), None));
          }
          let assigned = self.assignments.lock().get(&key).cloned();
-         Ok((
-@@ -835,8 +863,41 @@ mod tests {
-         assert!(scores(&router, &mut state, &mut spoke).await?.is_empty());
+@@ -841,6 +869,39 @@ mod tests {
          Ok(())
      }
-
+ 
 +    #[tokio::test]
 +    async fn codex_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
 +        let router = AffinityRouter::new().with_release_on_user_turn();
@@ -679,14 +643,12 @@ index 7c696aa4..f2ad0bb6 100644
      #[tokio::test]
      async fn latch_only_retains_matching_models() -> Result<(), BoxErr> {
          let router = AffinityRouter::new().with_latch_only(["strong"]);
-         let mut state = ();
 diff --git a/crates/libsy/src/algorithms/util/llm_judge.rs b/crates/libsy/src/algorithms/util/llm_judge.rs
-index 0210bda2..9b9b56c2 100644
+index a99fb82e..5fc27b70 100644
 --- a/crates/libsy/src/algorithms/util/llm_judge.rs
 +++ b/crates/libsy/src/algorithms/util/llm_judge.rs
-@@ -156,8 +156,15 @@ where
-     type Verdict = D::Verdict;
-
+@@ -157,6 +157,13 @@ where
+ 
      fn build_request(&self, state: &State, request: &Request) -> Request {
          let messages = self.input.build_messages(state, request);
 +        let mut extensions = request.llm_request.extensions.clone();
@@ -699,9 +661,7 @@ index 0210bda2..9b9b56c2 100644
          Request {
              llm_request: LlmRequest {
                  model: request.llm_request.model.clone(),
-                 instructions: vec![InstructionBlock {
-@@ -169,8 +176,9 @@ where
-                 output: OutputParams {
+@@ -170,6 +177,7 @@ where
                      max_output_tokens: Some(self.runtime.max_output_tokens),
                      response_format: Some(self.contract.response_format().clone()),
                  },
@@ -709,13 +669,11 @@ index 0210bda2..9b9b56c2 100644
                  ..LlmRequest::default()
              },
              raw_request: None,
-             metadata: request.metadata.clone(),
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index c1fea146..9722e904 100644
+index 867a8e53..82e282e0 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
-@@ -139,9 +139,9 @@ impl DeploymentConfig {
-         let target = self.targets.get(name)?;
+@@ -145,7 +145,7 @@ impl DeploymentConfig {
          let client = self.llm_clients.get(&target.llm_client)?;
          Some(DecisionTarget {
              target: name.to_string(),
@@ -724,13 +682,11 @@ index c1fea146..9722e904 100644
              format: client.format.wire_format(),
              base_url: client.base_url.as_str().to_string(),
              extra_body: target.extra_body.clone(),
-         })
-@@ -158,12 +158,34 @@ impl DeploymentConfig {
-         let mut seen_client_model_ids = HashSet::new();
+@@ -169,7 +169,26 @@ impl DeploymentConfig {
          for (target_name, target) in &self.targets {
              validate_value("target name", target_name)?;
              validate_value(&format!("target {target_name} id"), &target.id)?;
--            if !seen_client_model_ids.insert((target.llm_client.as_str(), target.id.as_str())) {
+-            match seen_client_model_ids.entry((target.llm_client.as_str(), target.id.as_str())) {
 +            validate_value(
 +                &format!("target {target_name} routing_id"),
 +                target.routing_id(),
@@ -741,42 +697,52 @@ index c1fea146..9722e904 100644
 +                    field,
 +                )?;
 +            }
-+            if target.body_overrides.contains_key("model") {
-+                return Err(RunnerError::configuration(format!(
-+                    "target {target_name} body_overrides cannot set model; use id instead"
-+                )));
-+            }
-+            if target.body_removals.iter().any(|field| field == "model") {
-+                return Err(RunnerError::configuration(format!(
-+                    "target {target_name} body_removals cannot remove model; use id instead"
-+                )));
-+            }
-+            if !seen_client_model_ids
-+                .insert((target.llm_client.as_str(), target.routing_id().as_str()))
++            if target.body_overrides.contains_key("model")
++                || target.body_removals.iter().any(|field| field == "model")
 +            {
-                 tracing::warn!(
--                    "target {target_name} reuses model id {} on llm client {}; only one target per id is kept and the other is dropped. Give each target a unique model id, or point both routes at one target.",
--                    target.id,
-+                    "target {target_name} reuses routing id {} on llm client {}; only one target per routing id is kept and the other is dropped. Give each target a unique routing_id, or point both routes at one target.",
-+                    target.routing_id(),
-                     target.llm_client
-                 );
++                return Err(RunnerError::configuration(format!(
++                    "target {target_name} cannot override or remove model; use id instead"
++                )));
++            }
++            match seen_client_model_ids
++                .entry((target.llm_client.as_str(), target.routing_id().as_str()))
++            {
+                 std::collections::hash_map::Entry::Vacant(slot) => {
+                     slot.insert((target_name, target));
+                 }
+@@ -177,6 +196,9 @@ impl DeploymentConfig {
+                     let (first_name, first) = slot.get();
+                     if first.reasoning_effort != target.reasoning_effort
+                         || first.extra_body != target.extra_body
++                        || first.id != target.id
++                        || first.body_overrides != target.body_overrides
++                        || first.body_removals != target.body_removals
+                     {
+                         return Err(RunnerError::configuration(format!(
+                             "targets {first_name} and {target_name} both name model {} on llm client {} but with different reasoning_effort or extra_body; one target per model id is kept, so give each its own model id or llm client",
+@@ -277,16 +299,21 @@ impl DeploymentConfig {
+                     )));
+                 }
              }
-         }
-@@ -240,13 +262,18 @@ impl DeploymentConfig {
-                 .get_mut(&target.llm_client)
-                 .ok_or_else(|| {
-                     RunnerError::configuration("validated llm client was not initialized")
-                 })?;
 -            model_configs.push(ModelConfig::new(
 -                target.id.clone(),
--                build_backend(&target.llm_client, client_config, &target.extra_body)?,
+-                build_backend(
+-                    &target.llm_client,
+-                    client_config,
+-                    &target.extra_body,
+-                    target.reasoning_effort.clone(),
+-                )?,
 -                None,
 -            ));
 +            model_configs.push(
 +                ModelConfig::new(
 +                    target.routing_id().clone(),
-+                    build_backend(&target.llm_client, client_config, &target.extra_body)?,
++                    build_backend(
++                        &target.llm_client,
++                        client_config,
++                        &target.extra_body,
++                        target.reasoning_effort.clone(),
++                    )?,
 +                    None,
 +                )
 +                .with_upstream_model(target.id.clone())
@@ -784,11 +750,9 @@ index c1fea146..9722e904 100644
 +                .with_body_removals(target.body_removals.clone()),
 +            );
          }
-
+ 
          let mut clients = BTreeMap::new();
-         for (name, model_configs) in models_by_client {
-@@ -261,9 +288,9 @@ impl DeploymentConfig {
-
+@@ -303,7 +330,7 @@ impl DeploymentConfig {
      fn build_targets(&self) -> BTreeMap<String, ModelId> {
          self.targets
              .iter()
@@ -796,21 +760,58 @@ index c1fea146..9722e904 100644
 +            .map(|(name, config)| (name.clone(), config.routing_id().clone()))
              .collect()
      }
-
-     fn build_route_clients(
-@@ -296,9 +323,9 @@ impl DeploymentConfig {
-                 }
+ 
+@@ -338,7 +365,7 @@ impl DeploymentConfig {
                  caller_auth = Some(target_auth);
              }
              let client: Arc<dyn RoutedLlmClient> = client.clone();
 -            by_model.insert(target.id.clone(), client);
 +            by_model.insert(target.routing_id().clone(), client);
          }
-         Ok((ClientRouter::new(by_model), caller_auth))
+         let TargetPromptPolicy {
+             prompts,
+@@ -363,7 +390,7 @@ impl DeploymentConfig {
+             })?;
+             let prompt = target.system_prompt.as_deref();
+             if aliases
+-                .insert(&target.id, prompt)
++                .insert(target.routing_id(), prompt)
+                 .is_some_and(|configured| configured != prompt)
+             {
+                 return Err(RunnerError::configuration(format!(
+@@ -372,7 +399,7 @@ impl DeploymentConfig {
+                 )));
+             }
+             if let Some(prompt) = prompt {
+-                prompts.insert(target.id.clone(), prompt.to_string());
++                prompts.insert(target.routing_id().clone(), prompt.to_string());
+             }
+         }
+         let mut policy = TargetPromptPolicy {
+@@ -387,19 +414,19 @@ impl DeploymentConfig {
+         let response = self.targets.get(response_name).ok_or_else(|| {
+             RunnerError::configuration(format!("route references unknown target {response_name}"))
+         })?;
+-        if !policy.prompts.contains_key(&response.id) {
++        if !policy.prompts.contains_key(response.routing_id()) {
+             return Ok(policy);
+         }
+         let dependency = self.targets.get(dependency_name).ok_or_else(|| {
+             RunnerError::configuration(format!("route references unknown target {dependency_name}"))
+         })?;
+-        if response.id == dependency.id {
++        if response.routing_id() == dependency.routing_id() {
+             return Err(RunnerError::configuration(format!(
+                 "route {route_name} cannot apply system_prompt to target {response_name}: model {} is also used by routing-only target {dependency_name}",
+                 response.id,
+             )));
+         }
+-        policy.routing_answer_target = Some(response.id.clone());
++        policy.routing_answer_target = Some(response.routing_id().clone());
+         Ok(policy)
      }
-
-@@ -353,11 +380,11 @@ impl DeploymentConfig {
-     ) -> Option<AuxiliaryTarget> {
+ 
+@@ -455,9 +482,9 @@ impl DeploymentConfig {
          let target = self.targets.get(name)?;
          let client = clients.get(&target.llm_client)?;
          client
@@ -822,35 +823,37 @@ index c1fea146..9722e904 100644
                  client: client.clone(),
              })
      }
- }
-@@ -419,11 +446,22 @@ struct LlmClientConfig {
- #[derive(Debug, Deserialize)]
+@@ -521,8 +548,13 @@ struct LlmClientConfig {
  #[serde(deny_unknown_fields)]
  struct TargetConfig {
      id: ModelId,
 +    routing_id: Option<ModelId>,
      llm_client: String,
      #[serde(default)]
-     extra_body: BTreeMap<String, Value>,
-+    #[serde(default)]
 +    body_overrides: BTreeMap<String, Value>,
 +    #[serde(default, rename = "remove_body_fields")]
 +    body_removals: Vec<String>,
-+}
-+
++    #[serde(default)]
+     extra_body: BTreeMap<String, Value>,
+     system_prompt: Option<String>,
+     /// Reasoning effort forced on every request to this target, replacing the caller's value.
+@@ -530,6 +562,12 @@ struct TargetConfig {
+     reasoning_effort: Option<String>,
+ }
+ 
 +impl TargetConfig {
 +    fn routing_id(&self) -> &ModelId {
 +        self.routing_id.as_ref().unwrap_or(&self.id)
 +    }
- }
-
++}
++
  #[derive(Clone, Copy, Debug, Deserialize)]
  enum ClientFormat {
-@@ -1202,8 +1240,72 @@ target = "azure"
-         );
+     #[serde(rename = "openai_chat")]
+@@ -1450,6 +1488,84 @@ target = "azure"
          Ok(())
      }
-
+ 
 +    #[test]
 +    fn routing_ids_allow_effort_variants_of_one_upstream_model() -> RunnerResult<()> {
 +        const CONFIG: &str = r#"
@@ -864,6 +867,7 @@ index c1fea146..9722e904 100644
 +id = "gpt-5.6-luna"
 +routing_id = "switchyard/luna-high"
 +llm_client = "responses"
++system_prompt = "High effort target"
 +body_overrides = { reasoning = { effort = "high" } }
 +remove_body_fields = ["max_output_tokens"]
 +
@@ -871,6 +875,7 @@ index c1fea146..9722e904 100644
 +id = "gpt-5.6-luna"
 +routing_id = "switchyard/luna-max"
 +llm_client = "responses"
++system_prompt = "Maximum effort target"
 +body_overrides = { reasoning = { effort = "max" } }
 +
 +[routes.random]
@@ -885,6 +890,18 @@ index c1fea146..9722e904 100644
 +        let targets = config.build_targets();
 +        assert_eq!(targets["luna_high"], "switchyard/luna-high");
 +        assert_eq!(targets["luna_max"], "switchyard/luna-max");
++        let prompts = config.build_route_target_prompts("random", &config.routes["random"])?;
++        assert_eq!(prompts.prompts.len(), 2);
++        assert_eq!(
++            prompts.prompts["switchyard/luna-high"],
++            "High effort target"
++        );
++        assert_eq!(
++            prompts.prompts["switchyard/luna-max"],
++            "Maximum effort target"
++        );
++        let conflicting = CONFIG.replace("switchyard/luna-max", "switchyard/luna-high");
++        assert!(runner_from_toml(&conflicting).is_err());
 +        assert_eq!(
 +            config.targets["luna_max"].body_overrides["reasoning"]["effort"],
 +            "max"
@@ -918,16 +935,14 @@ index c1fea146..9722e904 100644
      #[test]
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
-             RunnerError::configuration(format!("failed to parse default config: {error}"))
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index 87c28188..ec7349c3 100644
+index b4631b26..012197f8 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
-@@ -58,8 +58,14 @@ export API_KEY="..."
- cargo install --locked switchyard-server
+@@ -65,6 +65,12 @@ cargo install --locked switchyard-server
  switchyard-server --config routes.toml
  ```
-
+ 
 +When Codex Router manages this server, it sets
 +`CODEX_ROUTER_SWITCHYARD_CAPABILITY` and binds a loopback address. In that mode
 +every endpoint except `/health` requires the same value in
@@ -936,14 +951,12 @@ index 87c28188..ec7349c3 100644
 +
  Ctrl+C and Unix `SIGTERM` stop new connections and allow active requests to drain for up to
  `--shutdown-timeout` (30 seconds by default) before they are terminated.
-
- The server logs exactly one structured terminal event per LLM request: successful responses at
+ 
 diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
 index 231d4e2b..42304412 100644
 --- a/crates/switchyard-server/src/cli.rs
 +++ b/crates/switchyard-server/src/cli.rs
-@@ -8,10 +8,10 @@ use std::path::PathBuf;
-
+@@ -9,8 +9,8 @@ use std::path::PathBuf;
  use clap::Parser;
  use switchyard_server::config::load_server_state;
  use switchyard_server::{
@@ -952,11 +965,9 @@ index 231d4e2b..42304412 100644
 +    DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT, DEFAULT_LISTEN_BACKLOG, LOCAL_HOP_CAPABILITY_ENV,
 +    ServerError, ServerResult, ServerRunOptions, ServerState, TlsOptions, run_server,
  };
-
+ 
  const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
- const DEFAULT_PORT: u16 = 4000;
-@@ -71,8 +71,16 @@ impl ServerArgs {
-         let mut state = load_server_state(&self.config)?;
+@@ -72,6 +72,14 @@ impl ServerArgs {
          if let Some(path) = self.routing_log_file {
              state = state.with_routing_log(path)?;
          }
@@ -971,15 +982,13 @@ index 231d4e2b..42304412 100644
          let tls = match (self.tls_cert, self.tls_key) {
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
-                     return Err(ServerError::new(format!(
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 8b6f06de..74d44886 100644
+index 69fc5e4f..237a5616 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
-@@ -62,8 +62,12 @@ pub const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
- /// Maximum buffered JSON request size accepted by the LLM endpoints.
+@@ -63,6 +63,10 @@ pub const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
  pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
-
+ 
  const HEADER_SELECTED_MODEL: &str = "x-model-router-selected-model";
 +/// Environment variable and request header used by Codex Router to protect
 +/// the otherwise unauthenticated local Switchyard hop.
@@ -988,9 +997,7 @@ index 8b6f06de..74d44886 100644
  const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
  /// Non-standard status used only in logs and metrics for a request whose
  /// downstream client disconnected before any response was written.
- const CLIENT_CLOSED_REQUEST: u16 = 499;
-@@ -129,9 +133,11 @@ struct DecisionTargetResponse {
- /// Non-secret client settings needed to call a selected model.
+@@ -130,7 +134,9 @@ struct DecisionTargetResponse {
  #[derive(Serialize)]
  struct DecisionLlmClientResponse {
      format: WireFormat,
@@ -999,28 +1006,24 @@ index 8b6f06de..74d44886 100644
 +    // The decision endpoint is diagnostic; callers do not need the address.
 +    base_url: &'static str,
  }
-
+ 
  /// Shared server state used by all endpoint handlers.
- #[derive(Clone)]
-@@ -141,8 +147,9 @@ pub struct ServerState {
-     metrics: prometheus::Registry,
+@@ -142,6 +148,7 @@ pub struct ServerState {
      stats: StatsAccumulator,
      routing_log: Option<SharedRoutingLog>,
      track_cache_eligibility: bool,
 +    local_hop_capability: Option<HeaderValue>,
  }
-
+ 
  #[derive(Clone)]
- struct SharedRoutingLog {
-@@ -219,11 +226,24 @@ impl ServerState {
-             metrics,
+@@ -220,9 +227,22 @@ impl ServerState {
              stats,
              routing_log: None,
              track_cache_eligibility: tracking_enabled_from_env(),
 +            local_hop_capability: None,
          })
      }
-
+ 
 +    /// Requires this capability on every endpoint except `/health`.
 +    pub fn with_local_hop_capability(mut self, capability: &str) -> ServerResult<Self> {
 +        if capability.is_empty() {
@@ -1036,9 +1039,7 @@ index 8b6f06de..74d44886 100644
      /// Enables durable per-request routing records at `path`.
      pub fn with_routing_log(mut self, path: impl Into<PathBuf>) -> ServerResult<Self> {
          self.routing_log = Some(SharedRoutingLog::new(path.into())?);
-         Ok(self)
-@@ -257,9 +277,9 @@ impl ServerState {
-             target: target.target,
+@@ -258,7 +278,7 @@ impl ServerState {
              model: target.model,
              llm_client: DecisionLlmClientResponse {
                  format: target.format,
@@ -1047,10 +1048,8 @@ index 8b6f06de..74d44886 100644
              },
              extra_body: target.extra_body,
          };
-         Some(DecisionResponse {
-@@ -518,13 +538,41 @@ fn primary_llm_routes() -> Router<ServerState> {
- }
-
+@@ -519,11 +539,39 @@ fn primary_llm_routes() -> Router<ServerState> {
+ 
  // Applies the serving limits and request timing shared by both public router constructors.
  fn finish_router(router: Router<ServerState>, state: ServerState) -> Router {
 -    router
@@ -1090,15 +1089,13 @@ index 8b6f06de..74d44886 100644
 +    request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
 +    next.run(request).await
  }
-
+ 
  fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
-     let socket = if addr.is_ipv4() {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 43e6abf7..333e15bb 100644
+index 19adfb1f..d8edf7fa 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
-@@ -25,9 +25,10 @@ use switchyard_llm_client::{
- use switchyard_protocol::ModelId;
+@@ -26,7 +26,8 @@ use switchyard_protocol::ModelId;
  use switchyard_protocol::RoutedLlmClient;
  use switchyard_server::config::load_server_state;
  use switchyard_server::{
@@ -1108,9 +1105,7 @@ index 43e6abf7..333e15bb 100644
  };
  use tokio::net::TcpListener;
  use tokio::sync::Mutex;
- use tokio::task::JoinHandle;
-@@ -394,8 +395,9 @@ async fn upstream_responses_requires_forwarded_auth(
-         && headers
+@@ -410,6 +411,7 @@ async fn upstream_responses_requires_forwarded_auth(
              .get("x-openai-fedramp")
              .and_then(|value| value.to_str().ok())
              == Some("true")
@@ -1118,12 +1113,10 @@ index 43e6abf7..333e15bb 100644
          && !headers.contains_key("x-api-key")
          && !headers.contains_key("anthropic-beta");
      if !has_expected_headers {
-         return (
-@@ -565,8 +567,48 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
-     }
+@@ -582,6 +584,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
-
+ 
 +#[tokio::test]
 +async fn both_router_constructors_enforce_local_hop_authentication() -> TestResult {
 +    let upstream = MockUpstream::start().await?;
@@ -1167,9 +1160,7 @@ index 43e6abf7..333e15bb 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-         "completion": 0,
-@@ -1169,18 +1211,18 @@ escalation = {{ confirmations = 1 }}
-                 "target": "economy",
+@@ -1190,7 +1232,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -1178,8 +1169,7 @@ index 43e6abf7..333e15bb 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-             "fallbacks": [{
-                 "target": "quality",
+@@ -1199,7 +1241,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -1188,9 +1178,7 @@ index 43e6abf7..333e15bb 100644
                  },
                  "extra_body": {},
              }],
-         })
-@@ -2078,9 +2120,31 @@ type = "passthrough"
- target = "openai"
+@@ -2323,7 +2365,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -1218,12 +1206,10 @@ index 43e6abf7..333e15bb 100644
 +    .await?;
 +    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
 +    assert!(upstream.calls.lock().await.is_empty());
-
+ 
      let response = send_with_headers(
          &app,
-         "POST",
-@@ -2089,8 +2153,9 @@ target = "openai"
-         &[
+@@ -2334,6 +2398,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -1231,9 +1217,7 @@ index 43e6abf7..333e15bb 100644
              ("x-api-key", "must-not-cross-providers"),
              ("anthropic-beta", "oauth-must-not-cross-providers"),
          ],
-     )
-@@ -2105,8 +2170,9 @@ target = "openai"
-         &[
+@@ -2350,6 +2415,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -1241,9 +1225,7 @@ index 43e6abf7..333e15bb 100644
              ("x-test-redirect", "1"),
          ],
      )
-     .await?;
-@@ -2119,8 +2185,9 @@ target = "openai"
-         "/v1/responses",
+@@ -2364,6 +2430,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -1251,16 +1233,14 @@ index 43e6abf7..333e15bb 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-     .await?;
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 03e11f15..8264da8f 100644
+index 3db15320..bf01a936 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-@@ -1016,16 +1016,8 @@ fn encode_responses_input(
-     diagnostics: &mut Vec<TranslationDiagnostic>,
-     policy: &TranslationPolicy,
-     namespaces: Option<&Map<String, Value>>,
- ) -> Result<Value> {
+@@ -1124,14 +1124,6 @@ fn encode_responses_input(
+     // answers, and Responses history always lists the call before its output, so recording ids
+     // as calls are encoded is enough to type the outputs that follow.
+     let mut custom_call_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 -    if messages.len() == 1
 -        && matches!(messages[0].role, Role::User)
 -        && messages[0].content.len() == 1
@@ -1270,18 +1250,16 @@ index 03e11f15..8264da8f 100644
 -        return Ok(Value::String(text.clone()));
 -    }
      let mut encoded = Vec::new();
-     for message in messages {
-         // Anthropic-signed thinking cannot be sent as Responses input.
-         let content = message
+     // Some upstream translators (Kimi K3) resolve a tool output by an explicit
+     // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index d27b21cd..ac04317b 100644
+index 0c3565cb..1f9d5bf8 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
-@@ -1522,8 +1522,39 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
-     );
+@@ -1621,6 +1621,37 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
      Ok(())
  }
-
+ 
 +// Codex's native ChatGPT Responses endpoint requires top-level input to be a
 +// list, while rejecting content arrays on the hidden classifier's text-only
 +// message. Keep the standard message-list form with scalar string content.
@@ -1316,22 +1294,17 @@ index d27b21cd..ac04317b 100644
  // Verifies nested fields cannot override the Responses format discriminator.
  #[test]
  fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {
-     let output = translate_chat_response_format_to_responses(json!({
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 0193ca68..031adacd 100644
+index 92733bd5..b2ffa67a 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
-@@ -86,10 +86,13 @@ calls an upstream.
-
+@@ -87,6 +87,9 @@ calls an upstream.
  | Key | Required | Default | Meaning |
  |---|:---:|---|---|
  | `id` | Yes | — | Exact model ID sent upstream. |
-+| `routing_id` | No | `id` | Unique local identity used by routing and observability. Set this when multiple targets send the same upstream model with different options. |
++| `routing_id` | No | `id` | Unique local routing identity for targets sharing an upstream model. |
++| `body_overrides` | No | `{}` | Recursive overrides after caller fields and defaults; target reasoning_effort then wins. Cannot set model. |
++| `remove_body_fields` | No | `[]` | Top-level fields removed after overrides. Cannot remove model. |
  | `llm_client` | Yes | — | Key under `[llm_clients]`. |
+ | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
  | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
-+| `body_overrides` | No | `{}` | Values recursively merged after caller fields and `extra_body` defaults. Nested object siblings are preserved. Cannot set `model`; use `id`. |
-+| `remove_body_fields` | No | `[]` | Top-level request fields removed after defaults and overrides. Cannot remove `model`. |
-
- ## `[routes.<name>]`
-
- Every route takes the common keys below, plus the keys for its type.

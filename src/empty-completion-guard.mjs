@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 
+const MAX_INCOMPLETE_EVENT_BYTES = 10 * 1024 * 1024;
 const MAX_PRECONTENT_BYTES = 1024 * 1024;
 const MAX_PRECONTENT_MS = 30_000;
 
@@ -475,7 +476,7 @@ export class EmptyCompletionGuard extends Transform {
         this.#consumeBlocks();
         if (
           !this.#settled() &&
-          Buffer.byteLength(this.#parseBuffer) > this.#maxPreludeBytes
+          Buffer.byteLength(this.#parseBuffer) > MAX_INCOMPLETE_EVENT_BYTES
         ) {
           this.#failPrelude("bytes");
         }
@@ -488,15 +489,20 @@ export class EmptyCompletionGuard extends Transform {
     this.#parseBuffer += this.#decoder.write(bytes);
     this.#consumeBlocks();
     if (!this.#released && this.#bufferedBytes > this.#maxPreludeBytes) {
+      const pendingBytes = Buffer.byteLength(this.#parseBuffer);
+      // Allow one bounded fragmented event, not an unbounded completed prefix.
+      if (!this.#sawTerminal && pendingBytes > 0 &&
+          pendingBytes <= MAX_INCOMPLETE_EVENT_BYTES &&
+          this.#bufferedBytes - pendingBytes <= this.#maxPreludeBytes) return;
       // A large but well-framed prologue is not a broken stream. Providers can
       // echo substantial response metadata before the first delta; relaying a
       // completed JSON event bounds our staging memory while parsing behind
       // the relay preserves the eventual empty/content verdict. An unframed or
-      // unparseable body still fails closed at the same byte limit.
+      // unparseable body still fails closed at the incomplete-event bound.
       if (
         this.#sawParseableEvent &&
         !this.#sawTerminal &&
-        Buffer.byteLength(this.#parseBuffer) <= this.#maxPreludeBytes
+        pendingBytes <= MAX_INCOMPLETE_EVENT_BYTES
       ) {
         this.#release({ preludeLimit: "bytes" });
       } else {

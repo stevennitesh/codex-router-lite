@@ -31,6 +31,109 @@ function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
 }
 
+test("native replay removes only foreign item IDs and unknown routed models stay local", async () => {
+  const seen = [];
+  const native = await mockServer(async (request, response) => {
+    seen.push(await bodyJson(request));
+    json(response, 200, { output: [] });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const input = [
+    { type: "message", role: "assistant", id: "chatcmpl_foreign", content: [] },
+    { type: "function_call", id: "call_foreign", call_id: "paired", name: "lookup", arguments: "{}" },
+    { type: "function_call_output", call_id: "paired", output: "ok" },
+    { type: "custom_tool_call", id: "tool_foreign", call_id: "custom_paired", name: "exec", input: "1" },
+    { type: "custom_tool_call_output", call_id: "custom_paired", output: "1" },
+    { type: "message", role: "assistant", id: "msg_native", phase: "final_answer", content: [] },
+    { type: "function_call", id: "fc_native", call_id: "native", name: "lookup", arguments: "{}" },
+    { type: "custom_tool_call", id: "ctc_native", call_id: "native_custom", name: "exec", input: "1" },
+    { type: "item_reference", id: "msg_reference" },
+  ];
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    for (const endpoint of ["responses", "responses/compact"]) {
+      const response = await fetch(`${routerBase(port)}/${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer fixture-native" },
+        body: JSON.stringify({ model: "gpt-5.6-sol", input }),
+      });
+      assert.equal(response.status, 200, router.testErrors());
+      await response.arrayBuffer();
+      assert.deepEqual(seen.at(-1).input, input.map((item, index) => {
+        if (![0, 1, 3].includes(index)) return item;
+        const { id: _id, ...rest } = item;
+        return rest;
+      }));
+    }
+    const count = seen.length;
+    for (const model of ["openrouter/missing", "switchyard/missing", "unknown/model"]) {
+      const response = await fetch(`${routerBase(port)}/responses`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, input: "must stay local" }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.code, "unrouted_model");
+    }
+    assert.equal(seen.length, count);
+  } finally {
+    await stopChild(router);
+    await closeServer(native.server);
+  }
+});
+
+test("GLM restores preflattened harness tools after a fragmented prelude and labels messages", async () => {
+  const bodies = [];
+  const msg = { type: "message", role: "assistant", id: "msg_fixture", content: [{ type: "output_text", text: "Checking" }] };
+  const call = { type: "function_call", id: "fc_fixture", call_id: "paired", name: "harness__lookup", arguments: "{}" };
+  const gateway = await mockServer(async (request, response) => {
+    bodies.push(await bodyJson(request));
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    const frame = event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+    const prelude = frame({ type: "response.created", response: { id: "resp_fixture", metadata: { padding: "x".repeat(1100000) } } });
+    response.write(prelude.slice(0, 1050000));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    response.write(prelude.slice(1050000));
+    for (const item of [msg, call]) {
+      response.write(frame({ type: "response.output_item.added", item }));
+      response.write(frame({ type: "response.output_item.done", item }));
+    }
+    response.end(frame({ type: "response.completed", response: { id: "resp_fixture", output: [msg, call] } }));
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port), CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    const response = await fetch(`${routerBase(port)}/responses`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", stream: true, input: "lookup",
+        tools: [{ type: "function", name: "harness__lookup", parameters: { type: "object" } }],
+        client_metadata: { "x-codex-turn-metadata": JSON.stringify({ tool_namespaces_info: {
+          harness: { name: "harness", functions: { lookup: { name: "lookup", direct: true, source: { kind: "harness" } } } },
+        } }) },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    const events = text.split("\n\n").filter(Boolean).map(frame => JSON.parse(frame.split("\n").find(line => line.startsWith("data: ")).slice(6)));
+    const items = events.filter(event => event.type === "response.output_item.done").map(event => event.item);
+    assert.equal(items[0].phase, "commentary");
+    assert.equal(items[1].namespace, "harness");
+    assert.equal(items[1].name, "lookup");
+    assert.equal(bodies.length, 1, "a legitimate fragmented prelude must not trigger a retry");
+    assert.equal(bodies[0].client_metadata, undefined);
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
 function json(response, status, payload) {
   const body = Buffer.from(JSON.stringify(payload), "utf8");
   response.writeHead(status, {

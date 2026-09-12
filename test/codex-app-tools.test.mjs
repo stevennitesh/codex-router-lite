@@ -78,6 +78,14 @@ test("snapshot exactly matches the current native codex_app tool inventory", () 
 });
 
 test("snapshot carries current task, sidebar, and routed-model contracts", () => {
+  const reset = appTool("consume_usage_reset");
+  assert.match(reset.description, /explicit user confirmation for each credit/);
+  assert.match(reset.description, /10% or less remaining/);
+  assert.deepEqual(reset.inputSchema.required, ["idempotencyKey"]);
+  const browser = appTool("open_in_codex").inputSchema.properties.target.anyOf.find(
+    (target) => target.properties.type.const === "browser",
+  );
+  assert.match(browser.properties.url.description, /codex:\/\/review/);
   const createThread = appTool("create_thread");
   assert.match(createThread.description, /user-visible message/);
   const project = createThread.inputSchema.properties.target.anyOf.find(

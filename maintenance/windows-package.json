@@ -65,6 +65,7 @@
     "src/json-number-rewrite.mjs",
     "src/litellm-config.mjs",
     "src/model-overlay-lock.mjs",
+    "src/message-phase.mjs",
     "src/model-picker-state.mjs",
     "src/multi-agent-state.mjs",
     "src/namespace-relay.mjs",

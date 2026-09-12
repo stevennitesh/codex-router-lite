@@ -1,15 +1,17 @@
 // Snapshot of the Codex app's native app-side tool definitions.
-// Source: the live Codex Desktop tool registry on 2026-09-05, paired with
-// Windows app 26.901.6511.0 and codex-cli 0.153.4. Keep this inventory
+// Source: the live Codex Desktop tool registry on 2026-09-12, paired with
+// Windows app 26.908.4834.0 and codex-cli 0.154.0-alpha.6.2. Keep this inventory
 // synchronized for drift inspection. Runtime relay uses only client-provided
 // definitions and discoveries; this snapshot does not add callable tools.
+// This capture verified the 30 ordinary app tools. Conditional entries retain
+// their prior definitions until the client exposes them for a fresh capture.
 
 const CODEX_APP_NAMESPACE = "mcp__codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
-  capturedAt: "2026-09-05",
-  windowsAppVersion: "26.901.6511.0",
-  codexVersion: "codex-cli 0.153.4",
+  capturedAt: "2026-09-12",
+  windowsAppVersion: "26.908.4834.0",
+  codexVersion: "codex-cli 0.154.0-alpha.6.2",
 });
 
 // The full app toolset as the client offers it to native models.
@@ -465,7 +467,8 @@ export const CODEX_APP_TOOLS =
                     },
                     "url": {
                       "type": "string",
-                      "format": "uri"
+                      "format": "uri",
+                      "description": "Browser URL, or a codex://review PR link or codex://threads/<threadId>?view=review link to open a review panel in the selected thread. Other Codex deep links are unsupported; this tool does not navigate the app."
                     },
                     "tabId": {
                       "type": "string",
@@ -1075,7 +1078,7 @@ export const CODEX_APP_TOOLS =
       {
         "type": "function",
         "name": "consume_usage_reset",
-        "description": "Redeem one existing Codex usage-reset credit for the ChatGPT account signed in on this task's host. Use only when the user explicitly asks to use a reset or has already authorized using one. The backend chooses an available credit and enforces eligibility. This tool cannot purchase credits, grant resets, or reset another account. Returns the redemption outcome and refreshed usage when available. Only reset means a new reset was applied; alreadyRedeemed means this attempt was already used. noCredit and nothingToReset do not apply a reset. After an uncertain response, retry only with the same idempotencyKey.",
+        "description": "Redeem one existing Codex reset credit for the ChatGPT account signed in on this task's host. Get explicit user confirmation for each credit; a successful UI or tool reset fulfills that request. Every call checks fresh core usage: either the five-hour or weekly window must have 10% or less remaining. Retry uncertain attempts only with the same idempotencyKey. reset applies a new reset; alreadyRedeemed means this attempt was already used. Both complete the attempt even if usage refresh fails. noCredit/nothingToReset apply no reset. Use get_usage_limits for follow-up checks.",
         "inputSchema": {
           "type": "object",
           "additionalProperties": false,
