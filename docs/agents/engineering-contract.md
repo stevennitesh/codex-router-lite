@@ -6,8 +6,10 @@ meaning. Apply a conditional practice only when its condition is present.
 
 ## Understand the behavior
 
-Trace the request through the owning code, real callers, data flow, and existing
-tests. Distinguish intended behavior from an implementation accident. Preserve
+Trace enough of the owning code and affected callers to establish the changed
+behavior and its consequences. Investigate further when uncertainty, shared
+impact, or failure risk warrants it. Distinguish intended behavior from an
+implementation accident. Preserve
 accepted contracts and unrelated work; resolve consequential ambiguity from
 the user or the source that owns the decision.
 
@@ -17,8 +19,8 @@ then complete the outcome. The probe is evidence, not completion.
 
 ## Choose a design callers can use
 
-Sketch real usage when changing an interface. Include the relevant errors,
-ordering, and state transitions, not just the successful signature. Keep behavior
+Evaluate interface changes from real caller usage, including relevant errors,
+ordering, and state transitions. Keep behavior
 in its current owner unless moving it solves a demonstrated design problem.
 
 Subtract or reuse before adding machinery. Prefer language, platform, and
@@ -99,6 +101,9 @@ remain valid. Broaden verification for shared impact, repository policy, or an
 unresolved risk. If execution is unavailable, report the strongest available
 evidence and the unproved claim. Completion follows the requested outcome,
 not merely a successful command or an exhausted budget.
+Continue through implementation, verification, and necessary corrections within
+the authorized scope. An intermediate finding or passing check is not a stopping
+point unless the requested outcome or an explicit gate makes it one.
 
 ## Handle effects where they occur
 
