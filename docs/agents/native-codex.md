@@ -37,6 +37,13 @@ Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final
 answer can cancel a newly resumed child.
 
+For ordinary Responses turns with existing instructions, Router appends one
+scoped delegated-agent waiting policy. While a child has exclusive custody, it
+exempts event-driven agent waits from general 60-second wait and commentary
+cadences, allows the active workflow to select the interval, and suppresses
+unchanged timeout narration. The exception ends when custody returns or local
+work resumes. Compaction and transport-relay prompts remain untouched.
+
 When replaying routed history to native Codex, omit optional foreign item IDs
 on messages, function calls, and custom calls. Preserve native IDs and every
 `call_id`; tool outputs must remain paired with their calls. Unknown
