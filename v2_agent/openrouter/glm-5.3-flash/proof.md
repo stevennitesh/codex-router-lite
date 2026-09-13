@@ -1,5 +1,8 @@
 # openrouter/glm-5.3-flash v2 certification
 
+Status: draft. The evidence below predates the managed native root-agent hint
+and remains historical until the current candidate passes all five checks.
+
 Accepted on Windows Codex app 26.908.4834.0 with codex-cli 0.154.0-alpha.6.2
 and deployed Router commit `69b4d0af39af9cf56d33fd5d874545be2247ce2b`.
 

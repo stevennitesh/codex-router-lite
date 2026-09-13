@@ -37,6 +37,12 @@ Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final
 answer can cancel a newly resumed child.
 
+The installer supplies delegated-wait and finished-child cleanup guidance through
+the managed `multi_agent_v2.root_agent_usage_hint_text`. Desktop root tasks can
+replace the generic `developer_instructions` value while assembling app context,
+but they retain this native root-agent hint. Keep wait policy here rather than in
+the Responses proxy or a skill; the active delegation workflow owns its interval.
+
 When replaying routed history to native Codex, omit optional foreign item IDs
 on messages, function calls, and custom calls. Preserve native IDs and every
 `call_id`; tool outputs must remain paired with their calls. Unknown

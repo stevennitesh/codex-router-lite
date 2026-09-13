@@ -37,8 +37,14 @@ const providerEndMarker = "# END codex-router-provider-managed";
 const multiAgentStartMarker = "# BEGIN codex-router-multi-agent-v2-managed";
 const multiAgentEndMarker = "# END codex-router-multi-agent-v2-managed";
 const managedAgentMaxConcurrency = 6;
-const managedSubagentCompletionHint =
-  "When a child agent finishes (FINAL_ANSWER, task_complete, or an idle/errored wait snapshot), call interrupt_agent on that child so Codex can mark it done. Do not leave finished children in the working state.";
+const managedRootAgentUsageHint = `## Delegated-agent waiting
+While a delegated agent has exclusive custody and an event-driven agent wait is available:
+- Treat the pending wait as delegation progress rather than active local work. A general 60-second commentary cadence or limit on blocking waits does not apply to this event-driven wait.
+- Use the longest practical event-driven interval allowed by the active workflow and runtime. Agent events and new user input can wake the wait early.
+- Do not send commentary solely because time elapsed or a wait returned without a meaningful state change. Wait again without commentary. Report only a consequential question, blocker, error, custody transfer, completed candidate, meaningful state change, or user-requested status.
+This exception ends when custody returns or useful local work resumes.
+
+When a child agent finishes (FINAL_ANSWER, task_complete, or an idle/errored wait snapshot), call interrupt_agent on that child so Codex can mark it done. Do not leave finished children in the working state.`;
 
 const markerPairs = [
   [startMarker, endMarker],
@@ -54,7 +60,7 @@ function managedMultiAgentV2FeatureLine() {
   return (
     `multi_agent_v2 = { enabled = true, max_concurrent_threads_per_session = ${managedAgentMaxConcurrency}, ` +
     `expose_spawn_agent_model_overrides = true, usage_hint_enabled = true, ` +
-    `root_agent_usage_hint_text = ${tomlValue(managedSubagentCompletionHint)} }`
+    `root_agent_usage_hint_text = ${tomlValue(managedRootAgentUsageHint)} }`
   );
 }
 

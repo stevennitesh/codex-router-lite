@@ -35,7 +35,7 @@ test("Codex config enable and disable preserve user TOML and restore the native 
   );
   writeFileSync(
     path.join(codexHome, "config.toml"),
-    `model_catalog_json = ${JSON.stringify(nativeCatalog)}\n\n[features]\napps = true\n\n[desktop]\nnotifications = true\n`,
+    `model_catalog_json = ${JSON.stringify(nativeCatalog)}\ndeveloper_instructions = "USER_POLICY"\n\n[features]\napps = true\n\n[desktop]\nnotifications = true\n`,
   );
   const env = {
     CODEX_HOME: codexHome,
@@ -49,7 +49,21 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     assert.match(routed, /# BEGIN codex-router-managed/u);
     assert.match(routed, /# BEGIN codex-router-provider-managed/u);
     assert.match(routed, /# BEGIN codex-router-multi-agent-v2-managed/u);
+    assert.match(routed, /## Delegated-agent waiting/u);
+    assert.match(routed, /Wait again without commentary/u);
+    assert.match(routed, /call interrupt_agent on that child/u);
+    assert.match(routed, /developer_instructions = "USER_POLICY"/u);
     assert.match(routed, /\[desktop\]\nnotifications = true/u);
+
+    writeFileSync(
+      path.join(codexHome, "config.toml"),
+      routed.replace("## Delegated-agent waiting", "OLD_ROUTER_HINT"),
+    );
+    run("enable", env);
+    const refreshed = readFileSync(path.join(codexHome, "config.toml"), "utf8");
+    assert.match(refreshed, /## Delegated-agent waiting/u);
+    assert.doesNotMatch(refreshed, /OLD_ROUTER_HINT/u);
+    assert.match(refreshed, /developer_instructions = "USER_POLICY"/u);
 
     const disabled = run("disable", env);
     assert.equal(disabled.mode, "native");

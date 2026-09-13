@@ -88,6 +88,11 @@ supplies missing commentary/final-answer phases, and removes optional foreign
 item IDs when replaying routed history to native Codex. Unknown provider-prefixed
 model names fail locally instead of reaching the native backend.
 
+Router configures Codex's native root-agent usage hint so delegated custody can
+use the active workflow's event-driven wait interval without unchanged timeout
+commentary. This avoids request mutation and reaches desktop root tasks whose app
+context replaces generic developer instructions.
+
 Switchyard uses Luna High to classify tasks among five Luna/Sol effort targets.
 Its [routing policy and integration guide](config/switchyard/README.md) explains
 the choices and deliberately pinned upstream version.
