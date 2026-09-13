@@ -3,7 +3,7 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash",
-  "status": "draft",
+  "status": "accepted",
   "endpointProvider": "novita",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash?endpoint=7e1222fc-b9ab-4299-b75a-dd80e1ccd206#providers",
@@ -17,31 +17,31 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T02:15:09.691Z"
+      "observedAt": "2026-09-13T22:09:57.712Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T02:15:09.672Z",
+      "observedAt": "2026-09-13T22:09:57.688Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T02:15:09.691Z"
+      "observedAt": "2026-09-13T22:09:57.712Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T02:15:16.908Z"
+      "observedAt": "2026-09-13T22:10:04.048Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T02:15:42.344Z"
+      "observedAt": "2026-09-13T22:10:34.892Z"
     }
   },
   "windowsAppVersion": "26.908.4834.0",
-  "testedAt": "2026-09-13T02:15:42.344Z",
-  "routerCommit": "69b4d0af39af9cf56d33fd5d874545be2247ce2b"
+  "testedAt": "2026-09-13T22:10:34.892Z",
+  "routerCommit": "26b4af5d86f87c00dfd45cd437d27e74dde54217"
 }
