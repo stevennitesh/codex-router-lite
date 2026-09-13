@@ -3,7 +3,7 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
@@ -16,38 +16,38 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T01:08:19.859Z"
+      "observedAt": "2026-09-13T02:15:16.329Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T01:08:19.760Z",
+      "observedAt": "2026-09-13T02:15:16.290Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T01:08:19.859Z"
+      "observedAt": "2026-09-13T02:15:16.329Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T01:08:22.599Z"
+      "observedAt": "2026-09-13T02:15:18.699Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-13T01:08:57.438Z"
+      "observedAt": "2026-09-13T02:15:47.592Z"
     }
   },
   "windowsAppVersion": "26.908.4834.0",
-  "testedAt": "2026-09-13T01:08:57.438Z",
-  "routerCommit": "1f359654d864640e30b403d32599ce086234cc74",
+  "testedAt": "2026-09-13T02:15:47.592Z",
+  "routerCommit": "69b4d0af39af9cf56d33fd5d874545be2247ce2b",
   "runtimeBinding": {
     "upstreamCommit": "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
     "patchSha256": "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
     "binarySha256": "b3233e478e4aabbe2bb30baf6ec3074ab1ef84415614c090bbd0b13bbf93e740",
-    "routerCommit": "1f359654d864640e30b403d32599ce086234cc74",
+    "routerCommit": "69b4d0af39af9cf56d33fd5d874545be2247ce2b",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   }
 }
