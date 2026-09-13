@@ -88,11 +88,6 @@ supplies missing commentary/final-answer phases, and removes optional foreign
 item IDs when replaying routed history to native Codex. Unknown provider-prefixed
 model names fail locally instead of reaching the native backend.
 
-For delegated work, Router adds a narrow instruction exception while a child
-agent has exclusive custody: event-driven waits may use the active workflow's
-interval, and unchanged waits stay silent. Normal progress updates resume when
-custody returns or useful local work continues.
-
 Switchyard uses Luna High to classify tasks among five Luna/Sol effort targets.
 Its [routing policy and integration guide](config/switchyard/README.md) explains
 the choices and deliberately pinned upstream version.

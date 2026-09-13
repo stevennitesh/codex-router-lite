@@ -59,7 +59,7 @@ test("native replay removes only foreign item IDs and unknown routed models stay
     for (const endpoint of ["responses", "responses/compact"]) {
       const response = await fetch(`${routerBase(port)}/${endpoint}`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer fixture-native" },
-        body: JSON.stringify({ model: "gpt-5.6-sol", input, instructions: "NATIVE_BASE" }),
+        body: JSON.stringify({ model: "gpt-5.6-sol", input }),
       });
       assert.equal(response.status, 200, router.testErrors());
       await response.arrayBuffer();
@@ -68,12 +68,6 @@ test("native replay removes only foreign item IDs and unknown routed models stay
         const { id: _id, ...rest } = item;
         return rest;
       }));
-      if (endpoint === "responses") {
-        assert.match(seen.at(-1).instructions, /## Delegated-agent waiting/u);
-        assert.match(seen.at(-1).instructions, /^NATIVE_BASE/u);
-      } else {
-        assert.equal(seen.at(-1).instructions, "NATIVE_BASE");
-      }
     }
     const count = seen.length;
     for (const model of ["openrouter/missing", "switchyard/missing", "unknown/model"]) {
@@ -119,7 +113,6 @@ test("GLM restores preflattened harness tools after a fragmented prelude and lab
     const response = await fetch(`${routerBase(port)}/responses`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openrouter/glm-5.3-flash", stream: true, input: "lookup",
-        instructions: "ROUTED_BASE",
         tools: [{ type: "function", name: "harness__lookup", parameters: { type: "object" } }],
         client_metadata: { "x-codex-turn-metadata": JSON.stringify({ tool_namespaces_info: {
           harness: { name: "harness", functions: { lookup: { name: "lookup", direct: true, source: { kind: "harness" } } } },
@@ -135,8 +128,6 @@ test("GLM restores preflattened harness tools after a fragmented prelude and lab
     assert.equal(items[1].name, "lookup");
     assert.equal(bodies.length, 1, "a legitimate fragmented prelude must not trigger a retry");
     assert.equal(bodies[0].client_metadata, undefined);
-    assert.match(bodies[0].instructions, /^ROUTED_BASE/u);
-    assert.match(bodies[0].instructions, /## Delegated-agent waiting/u);
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);
@@ -777,7 +768,6 @@ test("Switchyard preserves native requests and leaves compaction on the native b
         input,
         tools,
         reasoning: { effort: "xhigh" },
-        instructions: "SWITCHYARD_BASE",
         ...nativeControls,
         stream: false,
       }),
@@ -796,8 +786,6 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.deepEqual(switchyardRequests[0].body.input, input);
     assert.deepEqual(switchyardRequests[0].body.tools, tools);
     assert.deepEqual(switchyardRequests[0].body.reasoning, { effort: "xhigh" });
-    assert.match(switchyardRequests[0].body.instructions, /^SWITCHYARD_BASE/u);
-    assert.match(switchyardRequests[0].body.instructions, /## Delegated-agent waiting/u);
     for (const [field, value] of Object.entries(nativeControls)) {
       assert.deepEqual(switchyardRequests[0].body[field], value);
     }
@@ -828,14 +816,13 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     const compact = await fetch(`${routerBase(routerPort)}/responses/compact`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: "switchyard/auto", input, instructions: "COMPACTION_BASE" }),
+      body: JSON.stringify({ model: "switchyard/auto", input }),
     });
     assert.equal(compact.status, 200);
     assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 1);
     assert.equal(nativeRequests[0].url, "/backend-api/codex/responses/compact");
     assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
-    assert.equal(nativeRequests[0].body.instructions, "COMPACTION_BASE");
     assert.equal(nativeRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
 
     const health = await fetch(`${routerBase(routerPort)}/health`);

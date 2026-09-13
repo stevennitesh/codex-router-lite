@@ -1,5 +1,8 @@
 # switchyard/auto v2 certification
 
+Status: draft. The evidence below belongs to the previous Router request policy
+and remains historical until the native-config candidate passes all five checks.
+
 Accepted on Windows Codex app 26.908.4834.0 with codex-cli 0.154.0-alpha.6.2
 and deployed Router commit `1f359654d864640e30b403d32599ce086234cc74`.
 

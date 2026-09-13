@@ -135,7 +135,6 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
-import { applyDelegatedAgentWaitPolicy } from "./instruction-overlays.mjs";
 
 installStableFetchTransport();
 
@@ -2192,9 +2191,6 @@ async function handleResponses(request, response, requestUrl) {
     const compactV2 =
       Array.isArray(payload.input) &&
       payload.input.at(-1)?.type === "compaction_trigger";
-    if (!compactV1 && !compactV2) {
-      payload.instructions = applyDelegatedAgentWaitPolicy(payload.instructions);
-    }
     const switchyard = isSwitchyardRoute(route);
 
     if (route && !switchyard && (compactV1 || compactV2)) {

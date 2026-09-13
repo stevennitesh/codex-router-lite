@@ -3,7 +3,7 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash",
-  "status": "accepted",
+  "status": "draft",
   "endpointProvider": "novita",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash?endpoint=7e1222fc-b9ab-4299-b75a-dd80e1ccd206#providers",
