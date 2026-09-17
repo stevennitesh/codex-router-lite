@@ -16,31 +16,31 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:04.806Z"
+      "observedAt": "2026-09-17T20:57:55.472Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:04.806Z",
+      "observedAt": "2026-09-17T20:58:01.819Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:04.806Z"
+      "observedAt": "2026-09-17T20:57:55.472Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:14.635Z"
+      "observedAt": "2026-09-17T20:58:10.692Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:32.650Z"
+      "observedAt": "2026-09-17T20:58:49.960Z"
     }
   },
   "windowsAppVersion": "26.911.7940.0",
-  "testedAt": "2026-09-17T00:33:32.650Z",
-  "routerCommit": "3a8fc31ab4ece7a4c7732c789c7a789a7becbe6f"
+  "testedAt": "2026-09-17T20:58:49.960Z",
+  "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35"
 }

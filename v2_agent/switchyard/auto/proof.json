@@ -16,38 +16,38 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:04.986Z"
+      "observedAt": "2026-09-17T20:57:59.720Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:10.013Z",
+      "observedAt": "2026-09-17T20:57:59.651Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:04.986Z"
+      "observedAt": "2026-09-17T20:57:59.720Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:12.437Z"
+      "observedAt": "2026-09-17T20:58:02.790Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T00:33:22.950Z"
+      "observedAt": "2026-09-17T20:58:51.509Z"
     }
   },
   "windowsAppVersion": "26.911.7940.0",
-  "testedAt": "2026-09-17T00:33:22.950Z",
-  "routerCommit": "3a8fc31ab4ece7a4c7732c789c7a789a7becbe6f",
+  "testedAt": "2026-09-17T20:58:51.509Z",
+  "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35",
   "runtimeBinding": {
     "upstreamCommit": "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
     "patchSha256": "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
     "binarySha256": "b3233e478e4aabbe2bb30baf6ec3074ab1ef84415614c090bbd0b13bbf93e740",
-    "routerCommit": "3a8fc31ab4ece7a4c7732c789c7a789a7becbe6f",
+    "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   }
 }
