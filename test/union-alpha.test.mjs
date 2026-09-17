@@ -23,7 +23,8 @@ test("Union Alpha advertises its measured contract without guessed identity and 
   assert.equal(validateOpenRouterRoute(route), route);
   const built = routedModel({ base_instructions: "You are Codex.", model_messages: {} }, route);
   assert.equal(built.context_window, 262144);
-  assert.ok(built.auto_compact_token_limit + 131072 < built.context_window * 0.95);
+  assert.equal(built.auto_compact_token_limit, 220000);
+  assert.ok(built.auto_compact_token_limit < Math.floor(built.context_window * 0.9));
   assert.equal(built.default_reasoning_level, "none");
   assert.equal(built.supports_reasoning_summary_parameter, false);
   assert.equal(built.support_verbosity, false);

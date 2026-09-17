@@ -13,7 +13,7 @@
       "defaultEffort": "none",
       "reasoningLevels": [{ "effort": "none", "description": "Provider-controlled; no reasoning-effort parameter" }],
       "contextWindow": 262144,
-      "autoCompact": 115000,
+      "autoCompact": 220000,
       "inputModalities": ["text", "image"],
       "supportsToolSearch": true,
       "requestProfile": "union-alpha",

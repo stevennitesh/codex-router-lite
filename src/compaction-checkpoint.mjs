@@ -35,6 +35,14 @@ with this shape and no prose or markdown:
 }
 
 Rules:
+- Use at most 32 references TOTAL across requirement_refs, attempt_refs, and observation_refs.
+  List only the most useful evidence, in priority order; do not inventory every tool call.
+- Use at most 16 unverified entries, with at most 8 references each; at most 32 unknowns
+  and 16 blockers. Keep objective and next_step within 2048 UTF-8 bytes each and each
+  list text within 512 UTF-8 bytes. Empty lists are valid.
+- Preserve the bounded assignment, completed checks, rejected leads and remaining work.
+  Stated maximums are limits, not targets. Do not restart
+  completed investigation merely because the conversation is being compacted.
 - Select source IDs only. Never write a prose field claiming that work is confirmed.
 - U proves only what the user requested. C proves only that the model requested a tool call;
   it does not prove that execution started or completed.
@@ -875,7 +883,7 @@ function modelObject(value) {
   for (const text of candidates) {
     try {
       const parsed = JSON.parse(text);
-      if (plainObject(parsed) && modelContractErrors(parsed).length === 0) valid.push(parsed);
+      if (plainObject(parsed) && modelContractErrors(parsed, false).length === 0) valid.push(parsed);
     } catch {
       // A complete brace pair may still contain non-JSON prose; ignore it.
     }
@@ -884,7 +892,7 @@ function modelObject(value) {
   return valid.length === 1 ? valid[0] : undefined;
 }
 
-function modelContractErrors(value) {
+function modelContractErrors(value, enforceLimits = true) {
   if (!plainObject(value)) return ["response is not a JSON object"];
   const errors = [];
   const requireString = (key) => {
@@ -896,7 +904,7 @@ function modelContractErrors(value) {
       errors.push(`${key} must be an array of strings`);
       return;
     }
-    if (entries.length > max) errors.push(`${key} exceeds ${max} entries`);
+    if (enforceLimits && entries.length > max) errors.push(`${key} exceeds ${max} entries`);
   };
 
   requireString("objective");
@@ -910,10 +918,10 @@ function modelContractErrors(value) {
   if (!Array.isArray(value.unverified)) {
     errors.push("unverified must be an array");
   } else {
-    if (value.unverified.length > MAX_UNVERIFIED) {
+    if (enforceLimits && value.unverified.length > MAX_UNVERIFIED) {
       errors.push(`unverified exceeds ${MAX_UNVERIFIED} entries`);
     }
-    value.unverified.slice(0, MAX_UNVERIFIED + 1).forEach((entry, index) => {
+    value.unverified.forEach((entry, index) => {
       if (
         !plainObject(entry) ||
         typeof entry.text !== "string" ||
@@ -921,7 +929,7 @@ function modelContractErrors(value) {
         entry.refs.some((ref) => typeof ref !== "string")
       ) {
         errors.push(`unverified[${index}] must contain string text and string-array refs`);
-      } else if (entry.refs.length > 8) {
+      } else if (enforceLimits && entry.refs.length > 8) {
         errors.push(`unverified[${index}].refs exceeds 8 entries`);
       }
     });
@@ -932,7 +940,7 @@ function modelContractErrors(value) {
     value.attempt_refs,
     value.observation_refs,
   ].reduce((total, entries) => total + (Array.isArray(entries) ? entries.length : 0), 0);
-  if (totalTrustedRefs > MAX_REFERENCED_SOURCES) {
+  if (enforceLimits && totalTrustedRefs > MAX_REFERENCED_SOURCES) {
     errors.push(`trusted references exceed ${MAX_REFERENCED_SOURCES} entries in total`);
   }
   return errors;
@@ -1038,8 +1046,11 @@ function fitCheckpoint(checkpoint) {
 
 export function finalizeCheckpoint(rawModelText, prepared) {
   const candidate = modelObject(rawModelText);
-  const contractErrors = modelContractErrors(candidate);
+  // Structural failures remain untrusted. List-budget overflow is recoverable:
+  // the selection below independently checks source identity and bounds every list.
+  const contractErrors = modelContractErrors(candidate, false);
   const parsed = contractErrors.length === 0 ? candidate : undefined;
+  const budgetErrors = parsed ? modelContractErrors(parsed) : [];
   const invalid = [];
   const remaining = { value: MAX_REFERENCED_SOURCES };
   const refsFrom = (value) => (Array.isArray(value) ? value : []);
@@ -1136,6 +1147,7 @@ export function finalizeCheckpoint(rawModelText, prepared) {
   );
   const unknowns = uniqueStrings(
     [
+      ...(budgetErrors.length ? ["Some model-selected entries were omitted to satisfy checkpoint limits; retained evidence is incomplete."] : []),
       ...prepared.previous.unknowns,
       ...(Array.isArray(parsed?.unknowns)
         ? parsed.unknowns.map((entry) => boundedString(entry, MAX_LIST_TEXT_BYTES))

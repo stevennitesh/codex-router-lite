@@ -22,6 +22,12 @@ is not valid provider replay on this route.
 
 ## Maintained behavior
 
+The catalog uses Sol's native Codex behavior template; this is a compatibility
+choice, not evidence about Union's underlying model or the optimal prompt.
+Native child sessions may inherit their parent's base instructions. Bounded
+task execution and continuation guidance therefore belongs in the generated routed-agent
+developer instructions, which also reach those children.
+
 These adaptations follow the dated evidence linked below:
 
 - Text and image input, streaming Responses, developer messages, ordinary
@@ -37,7 +43,10 @@ These adaptations follow the dated evidence linked below:
   Codex omitted the default `functions` namespace. Do not repair this mismatch
   by adding retries, guessing model families, or parsing calls from prose.
 - The advertised window is 262,144 tokens, with up to 131,072 output tokens.
-  Compact at 115,000 input tokens to reserve output and framing headroom.
+  Compact at 220,000 tokens, below Codex's 90% context-window ceiling, to retain
+  history with about 42,000 tokens of total-window headroom;
+  it does not reserve the provider's maximum output allowance. Large tool
+  results or long generations can still exhaust the remaining window.
   Tiny output caps on plain requests were not consistently reflected in usage;
   they are not a reliable cost or model-identity probe.
 - This route has an [exact-route v2 proof](../../v2_agent/openrouter/union-alpha/proof.md)
@@ -50,6 +59,11 @@ own public capabilities. Recheck them and the ordinary caller after endpoint
 changes; a preview's internals can change without a new slug.
 
 ## History, compaction, and cancellation
+
+Compaction prompts state the checkpoint reference and list limits. Structurally
+valid summaries that exceed those budgets retain bounded navigation and a
+verified subset of exposed sources, with an omission notice. Malformed summaries
+remain untrusted; missing, wrong-kind and unexposed references never gain authority.
 
 Undeclared Union historical function names outside the provider-safe alphabet/length receive
 collision-safe, reversible aliases. Preserve call IDs, arguments, and results;
