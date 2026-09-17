@@ -28,9 +28,9 @@ response boundary that requires them, not as scattered slug checks.
 | Change | Owner and condition |
 | --- | --- |
 | Public metadata, limits, effort, modalities, endpoint policy | `config/openrouter/<model>.json`; reuse an existing provider record |
-| Registration, profile, transport, exact-route validation | `src/routed-models.mjs`; validate the new route explicitly |
+| Registration, profile, transport, exact-route validation | `src/routed-models.mjs`; register its transport/validator together; reject duplicate slugs or gateway IDs |
 | Request/history conversion | `src/routed-request.mjs`; [preparation contract](request-preparation.md) |
-| Provider send boundary | `src/api-forwarder.mjs`; preserve exact policy and credential isolation even for internal callers |
+| Provider send boundary | `src/openrouter-request.mjs` for payload policy, `src/api-forwarder.mjs` for transport; preserve exact policy and credential isolation even for internal callers |
 | Chat translation | `src/litellm-config.mjs` only for chat profiles; [GLM/Python guide](openrouter-glm.md) if that path changes |
 | Response event repair | Existing transform owner, only if a reproduced wire defect requires it; keep request-local restoration paired |
 | Catalog behavior | `src/catalog.mjs` and catalog tests if existing metadata cannot express it; inherit native fields rather than copy a catalog |

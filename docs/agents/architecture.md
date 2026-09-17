@@ -28,7 +28,8 @@ Update explicit allowlists for an authorized addition; never disable their check
 3. Ordinary GLM requests use `src/litellm-config.mjs` and the pinned Python gateway
    for Responses-to-chat translation. Direct Responses routes and GLM hosted search
    bypass that translation. Both external paths use `src/api-forwarder.mjs` for
-   final validation and the protected OpenRouter credential.
+   the protected OpenRouter credential. `src/openrouter-request.mjs` owns its
+   final payload validation and endpoint policy.
 4. Response transforms restore native tool identities and event structure before
    Codex executes tools. Router does not execute the returned app tools itself.
 5. Switchyard is a separate authenticated loopback hop: it selects a native target

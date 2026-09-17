@@ -16,12 +16,14 @@ const CONFIG_FILES = ["config/openrouter/openrouter.json", "config/switchyard/sw
 const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
 const EXPECTED_MODELS = new Set(MODEL_REGISTRATIONS.map(([slug]) => slug));
 const EXPECTED_REQUEST_PROFILES = new Map(MODEL_REGISTRATIONS.map(([slug, profile]) => [slug, profile]));
-const TRANSPORTS = new Map([
-  ["glm-5.3-flash", "chat"], ["union-alpha", "responses"], ["switchyard-native", "native"],
+const REQUEST_PROFILES = new Map([
+  ["glm-5.3-flash", { transport: "chat", validate: validateGlmRoute }],
+  ["union-alpha", { transport: "responses", validate: validateUnionRoute }],
+  ["switchyard-native", { transport: "native" }],
 ]);
 
 export function routedTransport(route) {
-  const transport = TRANSPORTS.get(route?.requestProfile);
+  const transport = REQUEST_PROFILES.get(route?.requestProfile)?.transport;
   if (!transport) throw new Error(`Unknown routed request profile: ${route?.requestProfile}`);
   return transport;
 }
@@ -33,7 +35,7 @@ function load(relativePath) {
 
 function exactIds(records, expected, label) {
   const ids = records.map((record) => String(record.id || record.slug || ""));
-  if (ids.length !== expected.size || ids.some((id) => !expected.has(id))) {
+  if (ids.length !== expected.size || new Set(ids).size !== ids.length || ids.some((id) => !expected.has(id))) {
     throw new Error(`${label} must contain exactly: ${[...expected].join(", ")}.`);
   }
 }
@@ -42,32 +44,42 @@ const records = CONFIG_FILES.map(load);
 const providerRecords = records.flatMap((record) => record.providers || []);
 const modelRecords = records.flatMap((record) => record.models || []);
 
-exactIds(providerRecords, EXPECTED_PROVIDERS, "Routed providers");
-exactIds(modelRecords, EXPECTED_MODELS, "Routed models");
-
-for (const model of modelRecords) {
-  if (!EXPECTED_PROVIDERS.has(model.provider)) {
-    throw new Error(`Routed model ${model.slug} names unsupported provider ${model.provider}.`);
-  }
-  if (model.requestProfile !== EXPECTED_REQUEST_PROFILES.get(model.slug)) {
-    throw new Error(`Routed model ${model.slug} has unsupported request profile ${model.requestProfile}.`);
+// Validate before constructing maps: duplicate keys must never silently select a route.
+export function validateRoutedRegistry(providers, models) {
+  exactIds(providers, EXPECTED_PROVIDERS, "Routed providers");
+  exactIds(models, EXPECTED_MODELS, "Routed models");
+  const gatewayIds = new Set();
+  for (const model of models) {
+    if (!EXPECTED_PROVIDERS.has(model.provider) || !model.slug.startsWith(`${model.provider}/`)) {
+      throw new Error(`Routed model ${model.slug} names unsupported provider ${model.provider}.`);
+    }
+    if (model.requestProfile !== EXPECTED_REQUEST_PROFILES.get(model.slug)) {
+      throw new Error(`Routed model ${model.slug} has unsupported request profile ${model.requestProfile}.`);
+    }
+    if (typeof model.gatewayModel !== "string" || !model.gatewayModel.trim() || gatewayIds.has(model.gatewayModel) ||
+        (EXPECTED_MODELS.has(model.gatewayModel) && model.gatewayModel !== model.slug)) {
+      throw new Error(`Routed model ${model.slug} needs a unique nonempty gatewayModel.`);
+    }
+    gatewayIds.add(model.gatewayModel);
+    if (model.provider === "openrouter") validateOpenRouterRoute(model);
   }
 }
 
-export function validateOpenRouterRoute(model) {
-  if (model?.slug === "openrouter/union-alpha") {
-    const policy = model.openRouterProviderPolicy;
-    if (model.upstreamModel !== "stealth/union-alpha" ||
-        policy?.only?.length !== 1 || policy.only[0] !== "stealth" ||
-        policy?.order?.length !== 1 || policy.order[0] !== "stealth" ||
-        policy.allow_fallbacks !== false || policy.require_parameters !== true ||
-        model.requestProfile !== "union-alpha" ||
-        model.openRouterEndpointCompatibility?.dropParallelToolCalls !== true ||
-        model.searchTool !== undefined || model.supportsSearchHistory === true) {
-      throw new Error("Union Alpha must select the exact Stealth endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
-    }
-    return model;
+function validateUnionRoute(model) {
+  const policy = model.openRouterProviderPolicy;
+  if (model.upstreamModel !== "stealth/union-alpha" ||
+      policy?.only?.length !== 1 || policy.only[0] !== "stealth" ||
+      policy?.order?.length !== 1 || policy.order[0] !== "stealth" ||
+      policy.allow_fallbacks !== false || policy.require_parameters !== true ||
+      model.requestProfile !== "union-alpha" ||
+      model.openRouterEndpointCompatibility?.dropParallelToolCalls !== true ||
+      model.searchTool !== undefined || model.supportsSearchHistory === true) {
+    throw new Error("Union Alpha must select the exact Stealth endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
   }
+  return model;
+}
+
+function validateGlmRoute(model) {
   const policy = model?.openRouterProviderPolicy;
   const order = Array.isArray(policy?.order) ? policy.order : [];
   const only = Array.isArray(policy?.only) ? policy.only : [];
@@ -121,9 +133,15 @@ export function validateOpenRouterRoute(model) {
   return model;
 }
 
-for (const model of modelRecords.filter((candidate) => candidate.provider === "openrouter")) {
-  validateOpenRouterRoute(model);
+export function validateOpenRouterRoute(model) {
+  const validate = REQUEST_PROFILES.get(model?.requestProfile)?.validate;
+  if (model?.provider !== "openrouter" || !validate) {
+    throw new Error(`Unsupported OpenRouter request profile: ${model?.requestProfile}`);
+  }
+  return validate(model);
 }
+
+validateRoutedRegistry(providerRecords, modelRecords);
 
 export const PROVIDERS = new Map(providerRecords.map((provider) => [provider.id, Object.freeze(provider)]));
 export const CHECKED_IN_MODELS = Object.freeze(modelRecords.map((model) => Object.freeze(model)));
@@ -131,6 +149,9 @@ const MODELS = CHECKED_IN_MODELS;
 export const LISTED_MODELS = Object.freeze(MODELS.filter((model) => model.listed));
 export const MODEL_BY_SLUG = new Map(MODELS.map((model) => [model.slug, model]));
 export const MODEL_BY_GATEWAY_ID = new Map(MODELS.map((model) => [model.gatewayModel, model]));
+export const OPENROUTER_MODELS = Object.freeze(MODELS.filter((model) => model.provider === "openrouter"));
+// Canonical identity for health and the legacy upstream-model alias, never a fallback.
+export const CANONICAL_OPENROUTER_ROUTE = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
 
 export function providerForModel(model) {
   const provider = PROVIDERS.get(model?.provider);

@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
 import { isManagedCodexBaseUrl } from "./caller-auth.mjs";
-import { applyInstructionOverlay } from "./instruction-overlays.mjs";
 import { instructionProfile } from "./instruction-profiles.mjs";
 import {
   ANNOUNCED_MODELS_PATH,
@@ -752,19 +751,10 @@ export function routedModel(
     delete next.supports_parallel_tool_calls;
   }
   if (typeof next.base_instructions === "string" && !nativeRequestProfile) {
-    next.base_instructions = applyInstructionOverlay(
-      rewriteIdentity(next.base_instructions, model),
-      model.instructionOverlay,
-    );
+    next.base_instructions = rewriteIdentity(next.base_instructions, model);
   }
   if (next.model_messages && !nativeRequestProfile) {
     next.model_messages = rewriteModelMessages(next.model_messages, model);
-    if (typeof next.model_messages?.instructions_template === "string") {
-      next.model_messages.instructions_template = applyInstructionOverlay(
-        next.model_messages.instructions_template,
-        model.instructionOverlay,
-      );
-    }
   }
   return next;
 }
