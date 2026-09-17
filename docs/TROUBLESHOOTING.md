@@ -51,6 +51,14 @@ Confirm the selected slug and exact Stealth endpoint. Follow the
 [debugging](agents/debugging.md) to locate the first divergence. Do not apply
 GLM repairs based on an inferred model identity.
 
+## Unsupported verbosity warning
+
+`model_verbosity is set but ignored` means a global or task override requested a
+control the selected model does not support. Remove that override to use each
+model's catalog default. External routes correctly advertise no verbosity
+support; do not change their capability flags to silence the warning. Preserve
+an intentional verbosity preference in a native-only configuration when needed.
+
 ## App functions do not execute
 
 Compare the current Windows Codex tool definitions with `src/codex-app-tools.mjs`. Check the flattened call and restored namespace as a pair. A provider returning plausible JSON does not prove the app received a native tool call.

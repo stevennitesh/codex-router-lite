@@ -163,3 +163,64 @@ The final targeted pass on 2026-09-17 found no further reproducible defect:
 This pass strengthened regression coverage and evidence without adding another
 runtime workaround. Deployment, desktop reload validation, and fresh exact-route
 v2 certification remain separate work.
+
+## Native warnings and retry behavior, 2026-09-17
+
+Historical investigation against Windows app 26.911.7940.0 and CLI
+0.155.0-alpha.2.6. The earlier sandbox fixture repair is recorded in the
+[Union proof](../../v2_agent/openrouter/union-alpha/proof.md).
+
+### Unsupported verbosity
+
+The global configuration explicitly set `model_verbosity = "low"`. Native
+`client.rs` warns when that setting is present and `support_verbosity` is false,
+then omits it. The route capability was correct. Removing the global override
+restored model-specific defaults; the local configuration was backed up first.
+Astra, Sol, Terra, Luna and Switchyard currently default to low. Hidden
+Daybreak Red defaults to high, so removing the global override also restores
+that model's own default rather than promising every native model remains low.
+Fresh Union and Sol CLI probes emitted no verbosity warning.
+
+### Repeated setup failures
+
+Union repeated an identical pre-execution failure and then increased timeout.
+Neither changed the failing Windows ACL operation. External catalog instructions
+now distinguish pre-execution failure from a running command: inspect the cause
+or report the blocker, retry after a relevant change, and respect approvals.
+The rule reaches both base instructions and the personality template; it leaves
+native and Switchyard profiles untouched. A candidate-catalog Union decision
+probe correctly distinguished unchanged setup failure, a running session, and a
+verified environment repair. This is a synthetic behavior check, not a guarantee
+against every future retry.
+
+### Terminal rollout flush warning: upstream correction outstanding
+
+One CLI run emitted `failed to flush rollout after emitting terminal turn event:
+thread ... not found` after its successful final response. The saved rollout
+contains the completed tool outputs and final response. Two subsequent fresh
+Union/Sol probes did not reproduce the warning; no warning suppression was added.
+
+The inspected upstream source at
+`fa8cf449858c7fffc83d9e3604894852344962a1` exposes a shutdown race consistent with
+that error:
+
+1. `core/src/tasks/mod.rs` emits TurnComplete, marks the turn idle, then flushes.
+2. `exec/src/event_processor_with_jsonl_output.rs` returns InitiateShutdown upon
+   TurnCompleted; `exec/src/lib.rs` immediately unsubscribes and shuts down.
+3. `thread-store/src/local/live_writer.rs` serializes writes, shuts down the
+   recorder and removes it from the live map. A later flush looks up that map
+   and returns ThreadNotFound.
+
+The required upstream correction is to synchronize terminal-event durability
+with teardown: finish the terminal flush before the writer can be removed and
+before completion causes CLI teardown, retaining real persistence errors.
+A regression should force shutdown between completion publication and the final
+flush, then verify terminal event persistence and absence of a late lookup error.
+Cover interrupted turns too, which have the same post-terminal flush pattern.
+
+This explains a viable causal mechanism in current source, but the exact losing
+interleaving in the installed binary was not instrumented. No patched Codex
+binary was built or installed. Router cannot order these in-process operations;
+adding network delays, retries, or model instructions would hide the symptom.
+The upstream lifecycle correction remains open. Source reference:
+[terminal flush](https://github.com/openai/codex/blob/fa8cf449858c7fffc83d9e3604894852344962a1/codex-rs/core/src/tasks/mod.rs#L813).

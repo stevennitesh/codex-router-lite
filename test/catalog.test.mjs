@@ -428,3 +428,17 @@ test("native listed models retain the installed catalog's collaboration capabili
   // Hidden native entries are never advertised as spawn targets.
   assert.equal(promoted[2].multi_agent_version, "v1");
 });
+
+test("external recovery guidance reaches both prompt surfaces without duplication or native mutation", () => {
+  const original = structuredClone(template);
+  const first = routedModel(template, routeFixture);
+  for (const text of [first.base_instructions, first.model_messages.instructions_template]) {
+    assert.match(text, /Changing the command timeout does not repair a setup failure/);
+    assert.match(text, /actually starts and times out is a different case/);
+    assert.equal(text.split("## Tool failure recovery").length, 2);
+  }
+  const second = routedModel(first, routeFixture);
+  assert.equal(second.base_instructions.split("## Tool failure recovery").length, 2);
+  assert.equal(second.model_messages.instructions_template.split("## Tool failure recovery").length, 2);
+  assert.deepEqual(template, original);
+});

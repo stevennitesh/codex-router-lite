@@ -64,6 +64,17 @@ Use the printed prompt in a fresh native desktop task, or a fresh native
 Keep the sandbox and approval mechanism enabled. Inspect actual tool output,
 child handoffs and timings; a parent's PASS text alone is not evidence.
 
+On Windows, create a fresh CLI working directory from the normal Windows user
+context before launching the parent. A directory created by a sandboxed tool can
+be owned by `CodexSandboxOnline` or `CodexSandboxOffline`; using it as a new
+workspace root can prevent Codex's setup helper from configuring its write ACL.
+Check `Get-Acl <working-directory>` before the run. If setup fails before a command
+starts, inspect the matching timestamp in `%CODEX_HOME%/.sandbox/sandbox*.log`.
+Do not treat an approved unsandboxed retry as proof of sandbox reliability. For
+an empty disposable fixture, recreate it from the normal user context; preserve
+nonempty workspaces and diagnose their permissions separately. Do not reset ACLs
+or weaken sandbox policy as part of certification.
+
 
 Use a native Codex parent task whose current collaboration schema offers the
 candidate's generated `router_<provider>_<model>` agent type. Refresh the

@@ -17,3 +17,13 @@ const PROFILES = Object.freeze({
 export function instructionProfile(name) {
   return typeof name === "string" ? PROFILES[name] : undefined;
 }
+
+const TOOL_FAILURE_GUIDANCE = `## Tool failure recovery
+If a tool reports sandbox setup, process creation, or permission failure before execution, inspect the reported cause or report the blocker to the parent/user. Changing the command timeout does not repair a setup failure. Retry after a relevant input, permission, or environment change; use the approval mechanism only when allowed by the active policy. Do not repeat an unchanged failed call without evidence that the failure is transient. A command that actually starts and times out is a different case: inspect its progress before deciding whether to wait or retry.`;
+
+export function withToolFailureGuidance(instructions) {
+  if (typeof instructions !== "string" || !instructions.trim()) return instructions;
+  return instructions.includes(TOOL_FAILURE_GUIDANCE)
+    ? instructions
+    : `${instructions}\n\n${TOOL_FAILURE_GUIDANCE}`;
+}

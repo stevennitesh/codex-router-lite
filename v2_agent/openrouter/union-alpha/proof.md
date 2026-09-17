@@ -34,5 +34,28 @@ which exited successfully. Those failures are retained in the child history;
 all six provider requests completed with HTTP 200. No running child was interrupted.
 This proves tool execution and error/result replay, not arbitrary shell reliability.
 
+### Sandbox investigation, 2026-09-17
+
+The setup log at 21:07:04, 21:07:10 and 21:07:13 UTC identifies the same
+failure: granting the write ACE on the synthetic `generated/union-alpha/v2-parent`
+workspace returned `SetNamedSecurityInfoW failed: 5`. The empty directory was
+owned by `CodexSandboxOnline`, whereas the checkout was owned by the interactive
+Windows user. The helper could not configure the new workspace's permissions.
+
+Recreating only that empty fixture from the normal Windows user context restored
+the expected owner without resetting ACLs or changing sandbox policy. A fresh
+Union CLI session using the same binary, workspace path and `workspace-write`
+policy then completed three native `exec_command` calls with `use_default`:
+two arithmetic calls returned 42, and a file create/read/delete probe returned
+42 and left no file. All three exited zero. The sandbox log at 21:21:37 UTC
+records the formerly failing write grant succeeding; setup refreshes at
+21:21:37, 21:21:41 and 21:21:43 all report `errors=[]`.
+
+This is a direct Union shell retest, not a replacement collaboration proof.
+It isolates the fixture setup defect; no Router compatibility change was needed.
+The retest also emitted a terminal rollout-flush warning after successful tool
+execution; the rollout and completed outputs were present. That separate warning
+was not investigated here and is not evidence of a sandbox failure.
+
 The endpoint's model identity remains undisclosed. This proof does not establish
 its underlying weights, hosted-search capability, or behavior on another endpoint.
