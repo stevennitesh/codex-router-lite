@@ -302,6 +302,16 @@ export function bridgeCustomTools(
   }
   if (!nativeNames.length) return { tools, input, toolChoice, bridged: false };
 
+  // Once native custom-tool history is rewritten as a function call, its
+  // optional item id must obey the function-call id contract. Strict Responses
+  // endpoints reject ctc_/ctco_ ids on function-shaped items. call_id still
+  // pairs each call with its output, while an already-compatible fc id is safe.
+  const withoutIncompatibleFunctionItemId = (item) => {
+    if (typeof item?.id !== "string" || item.id.startsWith("fc")) return item;
+    const { id: _id, ...rest } = item;
+    return rest;
+  };
+
   const ordinaryTools = Array.isArray(tools)
     ? tools.filter((tool) => !(tool?.type === "custom" && shouldBridge(tool.name)))
     : tools;
@@ -390,12 +400,12 @@ export function bridgeCustomTools(
         bridgedCallIds.add(item.call_id);
       }
       changedInput = true;
-      const routedCall = {
+      const routedCall = withoutIncompatibleFunctionItemId({
         ...rest,
         type: "function_call",
         name: providerName,
         arguments: JSON.stringify({ [CUSTOM_TOOL_INPUT_PROPERTY]: customInput }),
-      };
+      });
       SPECIAL_FUNCTION_REFERENCES.add(routedCall);
       return routedCall;
     }
@@ -405,7 +415,7 @@ export function bridgeCustomTools(
       bridgedCallIds.has(item.call_id)
     ) {
       changedInput = true;
-      return { ...item, type: "function_call_output" };
+      return withoutIncompatibleFunctionItemId({ ...item, type: "function_call_output" });
     }
     return item;
   });

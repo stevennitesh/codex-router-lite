@@ -1,6 +1,6 @@
 // Snapshot of the Codex app's native app-side tool definitions.
-// Source: the live Codex Desktop tool registry on 2026-09-12, paired with
-// Windows app 26.908.4834.0 and codex-cli 0.154.0-alpha.6.2. Keep this inventory
+// Source: the live Codex Desktop tool registry on 2026-09-16, paired with
+// Windows app 26.911.7940.0 and codex-cli 0.155.0-alpha.2.6. Keep this inventory
 // synchronized for drift inspection. Runtime relay uses only client-provided
 // definitions and discoveries; this snapshot does not add callable tools.
 // This capture verified the 30 ordinary app tools. Conditional entries retain
@@ -9,9 +9,9 @@
 const CODEX_APP_NAMESPACE = "mcp__codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
-  capturedAt: "2026-09-12",
-  windowsAppVersion: "26.908.4834.0",
-  codexVersion: "codex-cli 0.154.0-alpha.6.2",
+  capturedAt: "2026-09-16",
+  windowsAppVersion: "26.911.7940.0",
+  codexVersion: "codex-cli 0.155.0-alpha.2.6",
 });
 
 // The full app toolset as the client offers it to native models.
@@ -403,7 +403,7 @@ export const CODEX_APP_TOOLS =
               "description": "Optional automation destination. Use thread for heartbeat automations attached to the current local thread."
             },
             "__schema18": {
-              "description": "Target thread id for heartbeat automations. Prefer destination=thread for the current local thread instead of inventing or copying raw thread ids.",
+              "description": "Target thread UUID for heartbeat automations. Prefer destination=thread for the current local thread instead of inventing or copying raw thread ids.",
               "$ref": "#/$defs/__schema1"
             },
             "__schema19": {
@@ -888,7 +888,7 @@ export const CODEX_APP_TOOLS =
             },
             "model": {
               "type": "string",
-              "description": "Codex threads only. Do not specify a model unless the user explicitly requests a specific model. Otherwise omit this field so the new thread uses the user's configured default model. Omit for ChatGPT Work cloud threads. Model availability and supported reasoning combinations are validated on the destination host when the tool runs."
+              "description": "Codex threads only. Do not specify a model unless the user explicitly requests a specific model. Otherwise omit this field so the new thread uses the user's configured default model. Omit for ChatGPT Work cloud threads."
             },
             "thinking": {
               "type": "string",
@@ -1042,7 +1042,7 @@ export const CODEX_APP_TOOLS =
             },
             "model": {
               "type": "string",
-              "description": "Optional model override. Omit it to keep the target task's current model. Model availability and supported reasoning combinations are validated on the target host when the tool runs."
+              "description": "Optional model override."
             },
             "thinking": {
               "type": "string",
@@ -1298,7 +1298,7 @@ export const CODEX_APP_TOOLS =
       {
         "type": "function",
         "name": "reorder_sidebar_sections",
-        "description": "Reorder custom sidebar sections. Include every existing custom section id exactly once.",
+        "description": "Reorder sidebar sections. Include every custom section exactly once and any built-in sections to move. Omitted built-in sections keep their positions.",
         "inputSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -1306,7 +1306,7 @@ export const CODEX_APP_TOOLS =
             "sectionIds": {
               "type": "array",
               "items": { "type": "string" },
-              "description": "All custom section ids in their desired display order."
+              "description": "Every custom section id, plus any built-in headings to move: \"pinned\" (Pinned), \"agents\" (Agents), \"chats\" (Tasks), or \"projects\" (Projects). List them in the desired order; omitted built-in headings keep their positions."
             }
           },
           "required": [

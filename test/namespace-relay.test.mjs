@@ -398,7 +398,12 @@ test("custom-tool bridge maps apply_patch definitions and paired history lossles
         name: "apply_patch",
         input: patch,
       },
-      { type: "custom_tool_call_output", call_id: "call_patch_1", output: "Done!" },
+      {
+        type: "custom_tool_call_output",
+        id: "ctco_1",
+        call_id: "call_patch_1",
+        output: "Done!",
+      },
       unrelatedCall,
     ],
     namespaces,
@@ -413,15 +418,43 @@ test("custom-tool bridge maps apply_patch definitions and paired history lossles
   assert.deepEqual(bridged.tools[1], ordinary);
   assert.deepEqual(bridged.toolChoice, { type: "function", name: "apply_patch" });
   assert.deepEqual(bridged.input[0], {
-    id: "ctc_1",
     call_id: "call_patch_1",
     type: "function_call",
     name: "apply_patch",
     arguments: JSON.stringify({ input: patch }),
   });
-  assert.equal(bridged.input[1].type, "function_call_output");
+  assert.deepEqual(bridged.input[1], {
+    type: "function_call_output",
+    call_id: "call_patch_1",
+    output: "Done!",
+  });
   assert.deepEqual(bridged.input[2], unrelatedCall);
   assert.equal(buildNamespaceLookups(namespaces).customTools.get("apply_patch"), "apply_patch");
+});
+
+test("custom-tool bridge preserves function-compatible item ids", () => {
+  const namespaces = new Map();
+  const bridged = bridgeCustomTools(
+    [{ type: "custom", name: "apply_patch" }],
+    [
+      {
+        type: "custom_tool_call",
+        id: "fc_keep",
+        call_id: "call_keep",
+        name: "apply_patch",
+        input: "*** Begin Patch\n*** End Patch",
+      },
+      {
+        type: "custom_tool_call_output",
+        id: "fc_keep_output",
+        call_id: "call_keep",
+        output: "Done!",
+      },
+    ],
+    namespaces,
+  );
+  assert.equal(bridged.input[0].id, "fc_keep");
+  assert.equal(bridged.input[1].id, "fc_keep_output");
 });
 
 test("native custom-tool streams accept LiteLLM content-wrapped legacy argument events", async () => {

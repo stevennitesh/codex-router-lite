@@ -105,8 +105,9 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
   assert.match(branch.properties.onMissing.description, /created from the project default branch/);
 
   const modelDescription = createThread.inputSchema.properties.model.description;
-  assert.match(modelDescription, /validated on the destination host/);
+  assert.match(modelDescription, /uses the user's configured default model/);
   assert.doesNotMatch(modelDescription, /gpt-5|switchyard|openrouter/);
+  assert.doesNotMatch(modelDescription, /validated on the destination host/);
 
   const moveThread = appTool("move_thread_to_sidebar_section");
   assert.ok(moveThread.inputSchema.required.includes("sectionId"));
@@ -117,10 +118,7 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
 
   const sendMessage = appTool("send_message_to_thread");
   assert.match(sendMessage.description, /user-visible message/);
-  assert.match(
-    sendMessage.inputSchema.properties.model.description,
-    /validated on the target host/,
-  );
+  assert.equal(sendMessage.inputSchema.properties.model.description, "Optional model override.");
 
   assert.deepEqual(
     appTool("setup_codex_step").inputSchema.properties.step.enum,
@@ -134,6 +132,13 @@ test("snapshot carries current task, sidebar, and routed-model contracts", () =>
     appTool("complete_conversational_onboarding_task").inputSchema.oneOf[0]
       .properties.outcome.const,
     "completed",
+  );
+
+  const reorderSections = appTool("reorder_sidebar_sections");
+  assert.match(reorderSections.description, /built-in sections/);
+  assert.match(
+    reorderSections.inputSchema.properties.sectionIds.description,
+    /"pinned".*"agents".*"chats".*"projects"/,
   );
 
 });
