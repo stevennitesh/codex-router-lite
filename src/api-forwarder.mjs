@@ -16,6 +16,7 @@ import { resolveProviderCredential } from "./provider-credentials.mjs";
 import { fetchWithRetry } from "./upstream-retry.mjs";
 import { zaiCacheUsageTransform } from "./zai-cache-usage.mjs";
 import { installStableFetchTransport } from "./fetch-transport.mjs";
+import { prepareUnionAlphaRequest } from "./union-alpha-compat.mjs";
 
 installStableFetchTransport();
 
@@ -44,6 +45,7 @@ function hasNativeSearch(payload) {
 }
 
 function validHostedSearchTool(tool, route) {
+  if (route.searchTool?.mode !== "hosted") return false;
   const parameters = tool?.parameters;
   const limits = route.searchTool.parameters;
   if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) return false;
@@ -83,6 +85,7 @@ function sanitizePayload(payload) {
   if (!routes.includes(selected)) {
     throw new Error(`Only ${routes.map((route) => route.slug).join(" and ")} are supported.`);
   }
+  payload = prepareUnionAlphaRequest(payload, selected);
   if (hasNativeSearch(payload)) {
     const error = new Error("Codex hosted-search fields must be translated before the OpenRouter hop.");
     error.code = "model_search_not_supported";
@@ -186,31 +189,45 @@ async function handle(request, response) {
   }
 
   const abort = new AbortController();
-  request.once("aborted", () => abort.abort(new Error("Caller disconnected.")));
-  let upstream;
+  const onAborted = () => abort.abort(new Error("Caller disconnected."));
+  const onClosed = () => {
+    if (!response.writableFinished) onAborted();
+  };
+  request.once("aborted", onAborted);
+  response.once("close", onClosed);
   try {
-    ({ response: upstream } = await fetchWithRetry(targetFor(request.url), {
-      method: "POST",
-      headers: upstreamHeaders(credential),
-      body: JSON.stringify(payload),
-      signal: abort.signal,
-    }, {
-      retries: 1,
-      signal: abort.signal,
-    }));
-  } catch (error) {
-    if (abort.signal.aborted) return;
-    writeJson(response, 502, {
-      error: {
-        type: "provider_transport_error",
-        message: error instanceof Error ? error.message : String(error),
-      },
-    });
-    return;
+    // The POST body may already be complete when its caller disconnects. The
+    // request's aborted event then never fires; response close owns cancellation
+    // during both the wait for provider headers and the response body.
+    if (request.aborted || response.destroyed) return;
+    let upstream;
+    try {
+      ({ response: upstream } = await fetchWithRetry(targetFor(request.url), {
+        method: "POST",
+        headers: upstreamHeaders(credential),
+        body: JSON.stringify(payload),
+        signal: abort.signal,
+      }, {
+        retries: 1,
+        signal: abort.signal,
+      }));
+    } catch (error) {
+      if (abort.signal.aborted) return;
+      writeJson(response, 502, {
+        error: {
+          type: "provider_transport_error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return;
+    }
+    const contentType = upstream.headers.get("content-type") || "";
+    const transform = zaiCacheUsageTransform("openrouter", contentType);
+    await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS, transform);
+  } finally {
+    request.off("aborted", onAborted);
+    response.off("close", onClosed);
   }
-  const contentType = upstream.headers.get("content-type") || "";
-  const transform = zaiCacheUsageTransform("openrouter", contentType);
-  await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS, transform);
 }
 
 const server = http.createServer((request, response) => {

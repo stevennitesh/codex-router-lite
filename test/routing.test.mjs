@@ -31,6 +31,40 @@ function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
 }
 
+test("GLM keeps colliding tool identities distinct in declarations, forced choices, and replay", async () => {
+  const seen = [];
+  const gateway = await mockServer(async (request, response) => {
+    const body = await bodyJson(request); seen.push(body);
+    const choice = body.tool_choice?.tools?.[0] ?? body.tool_choice;
+    json(response, 200, { status: "completed", output: [
+      { type: "function_call", name: choice.name, call_id: "forced_fixture", arguments: "{}" },
+    ] });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", { CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`, CODEX_ROUTER_QUIET: "1" });
+  const tools = [{ type: "function", name: "fixture__read", parameters: { type: "object" } },
+    { type: "namespace", name: "fixture", tools: [{ type: "function", name: "read", parameters: { type: "object" } }] }];
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    for (const choice of [{ type: "function", name: "fixture__read" }, { type: "function", namespace: "fixture", name: "read" }]) {
+      let history = [{ role: "user", content: "Synthetic tool identity test" }];
+      for (const tool_choice of [choice, { type: "allowed_tools", mode: "required", tools: [choice] }]) {
+        const response = await fetch(`${routerBase(port)}/responses`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openrouter/glm-5.3-flash", tools, tool_choice, input: history, stream: false }) });
+        assert.equal(response.status, 200);
+        const [call] = (await response.json()).output;
+        assert.equal(call.name, choice.name); assert.equal(call.namespace, choice.namespace);
+        const sent = seen.at(-1), index = choice.namespace ? 1 : 0;
+        assert.equal(new Set(sent.tools.map(tool => tool.name)).size, 2);
+        assert.equal((sent.tool_choice.tools?.[0] ?? sent.tool_choice).name, sent.tools[index].name);
+        if (history.length > 1) assert.equal(sent.input[1].name, sent.tools[index].name);
+        history = [history[0], call, { type: "function_call_output", call_id: call.call_id, output: "fixture" }];
+      }
+    }
+  } finally { await stopChild(router); await closeServer(gateway.server); }
+});
+
 test("native replay removes only foreign item IDs and unknown routed models stay local", async () => {
   const seen = [];
   const native = await mockServer(async (request, response) => {

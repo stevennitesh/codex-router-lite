@@ -685,13 +685,12 @@ export function routedModel(
     // Capability toggles come from the registry entry, never from the native
     // template: an absent flag keeps the conservative default so a routed
     // model only advertises what its slug's gateway path actually verified.
-    // Both search paths are explicit registry capabilities. Hosted search is
-    // executed by the provider backend; standalone search is executed by
-    // Codex and its result is replayed through the routed conversation. An
-    // absent declaration remains the conservative default.
+    // This native field gates client-side tool_search and deferred dynamic
+    // tool exposure, not hosted web search. Keep discovery independent from
+    // the registry's web-search execution policy.
     supports_search_tool: nativeRequestProfile
       ? behaviorTemplate.supports_search_tool === true
-      : model.searchTool?.mode === "hosted",
+      : model.supportsToolSearch === true,
     supports_image_detail_original: nativeRequestProfile
       ? behaviorTemplate.supports_image_detail_original === true
       : model.supportsImageDetailOriginal === true,

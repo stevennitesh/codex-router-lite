@@ -48,7 +48,7 @@ async function stop(child) {
   await new Promise((resolve) => child.once("exit", resolve));
 }
 
-test("checked-in routed config contains only GLM and Switchyard", () => {
+test("checked-in routed config contains only GLM, Union Alpha, and Switchyard", () => {
   const jsonFiles = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -62,6 +62,7 @@ test("checked-in routed config contains only GLM and Switchyard", () => {
     "config/openrouter/glm-5.3-flash-gmicloud.json",
     "config/openrouter/glm-5.3-flash.json",
     "config/openrouter/openrouter.json",
+    "config/openrouter/union-alpha.json",
     "config/switchyard/auto.json",
     "config/switchyard/switchyard.json",
   ]);
@@ -71,7 +72,7 @@ test("LiteLLM config owns only the ordinary OpenRouter GLM hop", () => {
   const config = renderLiteLlmConfig();
   assert.match(config, /openrouter-glm-5-3-flash/u);
   assert.match(config, /openrouter-glm-5-3-flash-gmicloud/u);
-  assert.doesNotMatch(config, /switchyard|fallback|failover/u);
+  assert.doesNotMatch(config, /union-alpha|switchyard|fallback|failover/u);
 });
 
 test("OpenRouter hop applies the selected endpoint contract and accepts only translated search", async () => {

@@ -43,6 +43,10 @@ The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
 other.
 
+Union Alpha is a separate preview entry pinned to Stealth. It has automatic
+tool selection and provider-controlled reasoning; it is not v2 certified. See
+its [endpoint contract](agents/union-alpha.md) for measured capabilities.
+
 The running service checks every five minutes for an installed Codex binary or
 native account-catalog change. When signed in, it refreshes account visibility
 from Codex's fixed ChatGPT model endpoint and preserves the last cache if that

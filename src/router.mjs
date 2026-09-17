@@ -1,6 +1,7 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
 import { readFileSync } from "node:fs";
 import http from "node:http";
+import { isUnionAlphaRoute, prepareUnionAlphaRequest } from "./union-alpha-compat.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   brotliDecompress,
@@ -106,7 +107,10 @@ import {
 import { fetchWithRetry } from "./upstream-retry.mjs";
 import {
   NamespaceToolCallTransform,
+  aliasHistoricalFunctionNames,
+  bridgeCustomTools,
   flattenNamespacedHistory,
+  flattenNamespacedToolChoice,
   flattenNamespaceTools,
   flattenToolSearchHistory,
   restorePreflattenedToolNamespaces,
@@ -584,7 +588,7 @@ function routedSearchCompatibility(payload, route) {
   const searchMode = routedModelSearchMode(route);
   // GLM Flash has no provider-owned hosted-search contract. Switchyard may
   // preserve native search fields even when Codex does not advertise them.
-  const stripsUnsupportedSearch = route.requestProfile === "glm-5.3-flash";
+  const stripsUnsupportedSearch = route.requestProfile === "glm-5.3-flash" || isUnionAlphaRoute(route);
   const compatiblePayload = !stripsUnsupportedSearch || searchMode !== undefined
     ? payload
     : stripUnsupportedHostedSearch(payload, { model: route.slug });
@@ -1818,7 +1822,20 @@ async function summarizeWith(
   signal,
   { searchContract } = {},
 ) {
-  const providerInput = normalizeProviderAppToolOutputs(input);
+  let providerInput = normalizeProviderAppToolOutputs(input);
+  // Compaction disables fresh tool discovery but still replays its history.
+  // Recover the historical declarations for consistent call identities, then
+  // remove native discovery control pairs the provider cannot consume. The
+  // source catalog above retains their evidence; no recovered tool is enabled.
+  const historicalNamespaces = new Map();
+  const searchHistory = flattenToolSearchHistory(providerInput, [], historicalNamespaces, { recoverWithoutRelay: true });
+  providerInput = flattenNamespacedHistory(searchHistory.input, historicalNamespaces);
+  if (isUnionAlphaRoute(route)) {
+    // The direct Responses endpoint also needs function-shaped historical
+    // custom calls when compaction disables fresh tool use.
+    providerInput = bridgeCustomTools(searchHistory.tools, providerInput, historicalNamespaces, undefined, [], { bridgeAll: true }).input;
+    providerInput = aliasHistoricalFunctionNames(providerInput, historicalNamespaces);
+  }
   const body = {
     ...payload,
     model: route.gatewayModel,
@@ -1847,7 +1864,7 @@ async function summarizeWith(
   ) {
     return { searchCapabilityChanged: true };
   }
-  const upstream = await fetch(`${GATEWAY_BASE}/responses`, {
+  const upstream = await fetch(`${isUnionAlphaRoute(route) ? API_BASE : GATEWAY_BASE}/responses`, {
     method: "POST",
     headers: routedHeaders(),
     body: serialized,
@@ -1917,11 +1934,42 @@ async function summarize(request, payload, route, signal) {
       payload: { error: { message: "Compact response is too large." } },
     };
   }
-  const parsed = JSON.parse(bytes.toString("utf8"));
+  let parsed;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    // A proxy can return HTML or truncated JSON with an otherwise successful
+    // status. That is a failed provider envelope, not a model summary.
+  }
   // Compaction is a plain non-streaming call, so the usage block is already
   // available when the provider sends one.
   const usage = tokenUsageFromPayload(parsed);
   if (sent.upstream.ok) {
+    // HTTP success only acknowledges transport. A failed, incomplete, or
+    // still-pending Responses result cannot replace the caller's history.
+    // The deterministic checkpoint fallback is for completed model output
+    // that missed the summary format, not for unsuccessful provider execution.
+    if (parsed?.error || (typeof parsed?.status === "string" && parsed.status !== "completed")) {
+      const incomplete = parsed?.status === "incomplete";
+      return {
+        ok: false,
+        status: 502,
+        usage,
+        route,
+        payload: { error: {
+          type: "provider_error",
+          code: incomplete ? "compaction_incomplete" : "compaction_failed",
+          message: `The provider ${incomplete ? "did not finish" : "failed"} compaction. Conversation history was not compacted.`,
+        } },
+      };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.output)) {
+      return {
+        ok: false, status: 502, usage, route,
+        payload: { error: { type: "provider_error", code: "compaction_invalid_response",
+          message: "The provider returned an invalid compaction response. Conversation history was not compacted." } },
+      };
+    }
     const answer = extractResponseText(parsed);
     // finalizeCheckpoint accepts empty model output. Log it instead of
     // silently returning an empty summary.
@@ -1941,7 +1989,8 @@ async function summarize(request, payload, route, signal) {
   return {
     ok: false,
     status: sent.upstream.status,
-    payload: parsed,
+    payload: parsed ?? { error: { type: "provider_error", code: "compaction_upstream_error",
+      message: `The provider rejected compaction (HTTP ${sent.upstream.status}).` } },
     usage,
     route,
   };
@@ -2073,7 +2122,7 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
 
   // LiteLLM converts this route to Chat Completions. Preserve GLM reasoning
   // and flatten every Codex namespace so the app can execute restored calls.
-  if (!hostedSearch) carryReasoningThroughInput(input, { nativeThinking: true });
+  if (!hostedSearch && !isUnionAlphaRoute(route)) carryReasoningThroughInput(input, { nativeThinking: true });
   const clientTools = restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata);
   const flattened = chatProviderToolSurface(clientTools, provider.id, {
     input,
@@ -2087,6 +2136,7 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     input,
     tools,
     flattenedNamespaces,
+    { toolChoice: payload.tool_choice },
   );
   let routedInput = searchHistory.input;
   tools = searchHistory.tools;
@@ -2100,7 +2150,16 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     tools,
     model: route.gatewayModel,
     input: routedInput,
+    tool_choice: flattenNamespacedToolChoice(payload.tool_choice, flattenedNamespaces),
   };
+  if (isUnionAlphaRoute(route)) {
+    const bridged = bridgeCustomTools(tools, routedInput, flattenedNamespaces, routed.tool_choice, [], { bridgeAll: true });
+    routed = { ...routed, tools: bridged.tools, input: bridged.input, tool_choice: bridged.toolChoice };
+    if (bridged.bridged) namespacesFlattened = true;
+    const aliasedInput = aliasHistoricalFunctionNames(routed.input, flattenedNamespaces);
+    if (aliasedInput !== routed.input) namespacesFlattened = true;
+    routed.input = aliasedInput;
+  }
   const childEffort = request.headers["x-openai-subagent"]
     ? subagentEffort(route.slug)
     : undefined;
@@ -2109,10 +2168,11 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput }) 
     routed.reasoning = { ...(routed.reasoning || {}), effort: childEffort };
   }
   delete routed.client_metadata;
+  routed = prepareUnionAlphaRequest(routed, route);
   if (hostedSearch) routed = prepareOpenRouterHostedSearchRequest(routed, route);
   return {
     body: Buffer.from(JSON.stringify(routed), "utf8"),
-    target: (hostedSearch ? API_BASE : GATEWAY_BASE) + "/responses",
+    target: (hostedSearch || isUnionAlphaRoute(route) ? API_BASE : GATEWAY_BASE) + "/responses",
     headers: routedHeaders(),
     searchMode: searchCompatibility.searchMode,
     hostedSearch,
@@ -2731,7 +2791,7 @@ async function handleResponses(request, response, requestUrl) {
       }
       return;
     }
-    if (error?.code === "model_search_not_supported" && !response.headersSent) {
+    if (["model_search_not_supported", "unsupported_tool_choice"].includes(error?.code) && !response.headersSent) {
       finalStatus = error.status;
       writeJson(response, error.status, {
         error: {

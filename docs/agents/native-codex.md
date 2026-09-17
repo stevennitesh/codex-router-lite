@@ -30,8 +30,23 @@ relay uses the caller's definitions and native tool-search discoveries, without
 adding snapshot tools. Current app tools use `mcp__codex_app`; legacy namespaces
 remain supported when explicitly supplied. Routed tools are flattened for the
 model and restored to those request-local identities before app execution.
+Custom calls retain both namespace and name. Codex may omit its default
+`functions` namespace in stored custom calls; resolve that shorthand against
+the current declaration so replay uses the same provider spelling. An exact
+plain declaration wins, and other namespaces must not be guessed.
 When Codex changes the tool set, capture it from an ordinary Windows app turn,
 update the paired build and snapshot, then test a routed round trip.
+
+The catalog's `supports_search_tool` gates client-side deferred tool discovery,
+not hosted web search. External routes declare `supportsToolSearch` separately
+from their `searchTool` web-search policy. Conflating these hides deferred app
+tools before Router sees the request. This distinction is defined by native
+[Codex tool planning](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/tools/spec_plan.rs#L599).
+
+Flattened tool names must remain unique even when a plain function has the same
+spelling as a namespace child. Use the request-local alias map consistently for
+declarations, forced/allowed tool choices, returned calls, and replay. Native
+requests do not pass through this external-provider name translation.
 
 Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final

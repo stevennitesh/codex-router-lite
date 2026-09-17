@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   NamespaceToolCallTransform,
+  aliasHistoricalFunctionNames,
   bridgeCustomTools,
   buildNamespaceLookups,
   flattenNamespaceTools,
@@ -12,6 +13,29 @@ import {
   restorePreflattenedToolNamespaces,
 } from "../src/namespace-relay.mjs";
 import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
+
+test("invalid historical function names retain rejected calls, results, and reversible identity without granting tools", () => {
+  const flat = flattenNamespaceTools([{ type: "function", name: "available", parameters: {} }], { maxNameLength: 64 });
+  const call = { type: "function_call", name: "desktop_probe.list_projects", arguments: "{}", call_id: "rejected" };
+  const result = { type: "function_call_output", call_id: "rejected", output: "unsupported call: desktop_probe.list_projects" };
+  const first = aliasHistoricalFunctionNames([call, result], flat.namespaces);
+  assert.match(first[0].name, /^[a-zA-Z0-9_-]{1,64}$/);
+  assert.equal(first[0].call_id, call.call_id);
+  assert.equal(first[0].arguments, call.arguments);
+  assert.equal(first[1], result);
+  assert.deepEqual(flat.tools.map(t => t.name), ["available"]);
+  assert.equal(call.name, "desktop_probe.list_projects");
+  const restored = rewriteNamespaceResponsePayload({ output: [{ ...first[0], call_id: "new-attempt" }] }, buildNamespaceLookups(flat.namespaces));
+  assert.equal(restored.output[0].name, call.name);
+  assert.equal(restored.output[0].call_id, "new-attempt");
+  assert.equal(aliasHistoricalFunctionNames(first, flat.namespaces), first);
+  const occupied = flattenNamespaceTools([{ type: "function", name: first[0].name, parameters: {} }]);
+  const collision = aliasHistoricalFunctionNames([call, result, { ...call, name: first[0].name, call_id: "valid" }], occupied.namespaces);
+  assert.notEqual(collision[0].name, first[0].name);
+  assert.equal(collision[2].name, first[0].name);
+  const declaredOnly = flattenNamespaceTools([{ type: "function", name: first[0].name, parameters: {} }]);
+  assert.notEqual(aliasHistoricalFunctionNames([call, result], declaredOnly.namespaces)[0].name, first[0].name);
+});
 
 test("preflattened identities require a unique declared tool and preserve literal plain names", () => {
   const declaration = { type: "custom", name: "harness__exec", format: { type: "text" } };
@@ -429,7 +453,7 @@ test("custom-tool bridge maps apply_patch definitions and paired history lossles
     output: "Done!",
   });
   assert.deepEqual(bridged.input[2], unrelatedCall);
-  assert.equal(buildNamespaceLookups(namespaces).customTools.get("apply_patch"), "apply_patch");
+  assert.deepEqual(buildNamespaceLookups(namespaces).customTools.get("apply_patch"), { name: "apply_patch" });
 });
 
 test("custom-tool bridge preserves function-compatible item ids", () => {
@@ -455,6 +479,85 @@ test("custom-tool bridge preserves function-compatible item ids", () => {
   );
   assert.equal(bridged.input[0].id, "fc_keep");
   assert.equal(bridged.input[1].id, "fc_keep_output");
+});
+
+test("namespaced freeform tools retain native identity through collisions and produced-history replay", async () => {
+  const tools = [
+    { type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec" }] },
+    { type: "namespace", name: "other", tools: [{ type: "custom", name: "exec" }] },
+    { type: "custom", name: "exec" },
+    { type: "function", name: "functions__exec", parameters: { type: "object" } },
+  ];
+  const flat = flattenNamespaceTools(tools);
+  const bridged = bridgeCustomTools(flat.tools, [], flat.namespaces, undefined, [], { bridgeAll: true });
+  assert.equal(new Set(bridged.tools.map(tool => tool.name)).size, 4);
+  const input = 'text("你好 🌙");\n';
+  const calls = bridged.tools.slice(0, 3).map((tool, i) => ({
+    type: "function_call", id: `fc_${i}`, call_id: `call_${i}`, name: tool.name,
+    namespace: null, arguments: JSON.stringify({ input }),
+  }));
+  const json = JSON.parse(await collect(Readable.from([JSON.stringify({ status: "completed", output: calls })])
+    .pipe(new NamespaceToolCallTransform(flat.namespaces, "application/json"))));
+  assert.deepEqual(json.output.map(item => [item.type, item.namespace, item.name, item.input]), [
+    ["custom_tool_call", "functions", "exec", input],
+    ["custom_tool_call", "other", "exec", input],
+    ["custom_tool_call", undefined, "exec", input],
+  ]);
+  const history = json.output.flatMap(item => [item,
+    { type: "custom_tool_call_output", call_id: item.call_id, output: "OK" }]);
+  const next = flattenNamespaceTools(tools);
+  const replay = bridgeCustomTools(next.tools, history, next.namespaces, undefined, [], { bridgeAll: true });
+  for (let i = 0; i < calls.length; i++) {
+    assert.equal(replay.input[i * 2].name, bridged.tools[i].name);
+    assert.equal(replay.input[i * 2].namespace, undefined);
+    assert.equal(replay.input[i * 2].arguments, JSON.stringify({ input }));
+    assert.equal(replay.input[i * 2 + 1].type, "function_call_output");
+    assert.equal(replay.input[i * 2 + 1].call_id, calls[i].call_id);
+  }
+});
+
+test("native default-namespace freeform history cites its declared provider tool", () => {
+  const flat = flattenNamespaceTools([{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec" }] }]);
+  const history = [{ type: "custom_tool_call", name: "exec", call_id: "native", input: "text(42);" }, { type: "custom_tool_call_output", call_id: "native", output: "42" }];
+  const result = bridgeCustomTools(flat.tools, history, flat.namespaces, undefined, [], { bridgeAll: true });
+  assert.equal(result.input[0].name, result.tools[0].name);
+  assert.equal(result.input[0].name, "functions__exec");
+  assert.equal(result.input[1].call_id, "native");
+  assert.equal(history[0].namespace, undefined);
+  const other = flattenNamespaceTools([{ type: "namespace", name: "other", tools: [{ type: "custom", name: "exec" }] }]);
+  const unrelated = bridgeCustomTools(other.tools, history, other.namespaces, undefined, [], { bridgeAll: true });
+  assert.equal(unrelated.input[0].name, "exec");
+});
+
+test("fragmented freeform streams preserve namespace and reject identity changes", async () => {
+  const flat = flattenNamespaceTools([{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec" }] }]);
+  const bridged = bridgeCustomTools(flat.tools, [], flat.namespaces, undefined, [], { bridgeAll: true });
+  const input = 'text("quoted \\\"value\\\" 🌙");\n';
+  const item = { type: "function_call", id: "fc_stream", call_id: "stream", name: bridged.tools[0].name, arguments: JSON.stringify({ input }) };
+  const events = [
+    { type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } },
+    ...[...item.arguments].map(delta => ({ type: "response.function_call_arguments.delta", output_index: 0, item_id: item.id, delta })),
+    { type: "response.function_call_arguments.done", output_index: 0, item_id: item.id, arguments: item.arguments },
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response: { status: "completed", output: [item] } },
+  ];
+  const wire = events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+  const output = await collect(Readable.from([...Buffer.from(wire)].map(b => Buffer.from([b])))
+    .pipe(new NamespaceToolCallTransform(flat.namespaces, "text/event-stream")));
+  const parsed = output.trim().split(/\n\n/).map(block => JSON.parse(block.split("\n").find(l => l.startsWith("data: ")).slice(6)));
+  const restored = parsed.find(e => e.type === "response.output_item.done").item;
+  assert.equal(restored.namespace, "functions");
+  assert.equal(restored.name, "exec");
+  assert.equal(restored.input, input);
+  assert.equal(parsed.filter(e => e.type === "response.custom_tool_call_input.delta").map(e => e.delta).join(""), input);
+  assert.deepEqual(parsed.at(-1).response.output, [restored]);
+  // Once a bridged opening has been emitted, a provider cannot change owners
+  // in the closing event. Untouched native streams remain native-owned.
+  const changed = [
+    { type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } },
+    { type: "response.output_item.done", output_index: 0, item: { ...item, namespace: "other" } },
+  ].map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+  await assert.rejects(collect(Readable.from([changed]).pipe(new NamespaceToolCallTransform(flat.namespaces, "text/event-stream"))), /unsafe|identity|namespace/i);
 });
 
 test("native custom-tool streams accept LiteLLM content-wrapped legacy argument events", async () => {

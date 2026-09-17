@@ -66,6 +66,7 @@ Never copy a versioned Codex app path into source. Never print keys, bearer toke
 | --- | --- |
 | Native catalog, credential forwarding, app tools, namespace relay, or encrypted handoff | [Native Codex](native-codex.md) |
 | GLM endpoint policy, Responses repair, hosted search, or Python dependency pins | [OpenRouter GLM](openrouter-glm.md) |
+| Union Alpha endpoint behavior or direct Responses | [Union Alpha](union-alpha.md) |
 | Switchyard source, routes, build, health, or deployment | [Switchyard integration](../../config/switchyard/README.md) |
 | Exact-route subagents v2 | [Subagent certification](../SUBAGENT-CERTIFICATION.md) |
 | Windows installation or update | [Installation](../INSTALL.md) |

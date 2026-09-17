@@ -729,10 +729,11 @@ test("routed tool_search history declares discovered tools and restores their ca
       (item) =>
         item.call_id === "search-history-1" && item.type === "function_call_output",
     );
-    assert.deepEqual(
-      JSON.parse(historyOutput.output).tools.map((tool) => tool.name),
-      ["mcp__calendar__delete_event"],
-    );
+    const discovered = JSON.parse(historyOutput.output).tools;
+    assert.equal(discovered.length, 2, "a distinct namespaced identity cannot be shadowed by a plain wire spelling");
+    assert.notEqual(discovered[0].name, "mcp__calendar__create_event");
+    assert.equal(discovered[1].name, "mcp__calendar__delete_event");
+    assert.ok(outgoing.tools.some(tool => tool.name === discovered[0].name));
     const secondHistoryOutput = outgoing.input.find(
       (item) =>
         item.call_id === "search-history-2" && item.type === "function_call_output",
@@ -751,7 +752,7 @@ test("routed tool_search history declares discovered tools and restores their ca
     assert.equal(
       outgoing.tools.filter((tool) => tool.name === "mcp__calendar__create_event").length,
       1,
-      "live top-level schemas take precedence over searched history",
+      "the live plain schema retains its name beside the distinct discovered namespace identity",
     );
     assert.ok(
       outgoing.tools.some((tool) => tool.name === "mcp__calendar__delete_event"),

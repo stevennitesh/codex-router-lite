@@ -94,6 +94,14 @@ function textValue(value) {
   }
 }
 
+function isMessage(item) {
+  // Responses accepts easy-input messages with the discriminator omitted.
+  // Explicit non-message types must never acquire user-source authority.
+  return item?.type === "message" ||
+    (item?.type === undefined && ["user", "assistant", "system", "developer"].includes(item?.role) &&
+      (typeof item.content === "string" || Array.isArray(item.content)));
+}
+
 function messageText(item) {
   if (typeof item?.content === "string") return item.content;
   if (!Array.isArray(item?.content)) return "";
@@ -220,7 +228,7 @@ function storedSource(source) {
 }
 
 function sourcePrefix(item) {
-  if (item?.type === "message") {
+  if (isMessage(item)) {
     if (item.role === "user") return "U";
     if (item.role === "assistant") return "A";
   }
@@ -533,12 +541,12 @@ function checkpointFromRenderedText(text) {
 }
 
 function renderedCheckpointFromMessage(item) {
-  if (item?.type !== "message" || item.role !== "user") return undefined;
+  if (!isMessage(item) || item.role !== "user") return undefined;
   return checkpointFromRenderedText(messageText(item));
 }
 
 function legacySummaryFromMessage(item) {
-  if (item?.type !== "message" || item.role !== "user") return undefined;
+  if (!isMessage(item) || item.role !== "user") return undefined;
   const text = messageText(item);
   if (text.startsWith(LEGACY_WARNING)) return text.slice(LEGACY_WARNING.length).trim();
   if (text.startsWith(LEGACY_V1_SUMMARY_PREFIX)) {
@@ -557,7 +565,7 @@ function priorState(input) {
       if (decoded?.kind === "legacy") legacy.push(decoded.summary);
       continue;
     }
-    if (item?.type !== "message") continue;
+    if (!isMessage(item)) continue;
     const checkpoint = renderedCheckpointFromMessage(item);
     if (checkpoint) checkpoints.push(checkpoint);
     else {

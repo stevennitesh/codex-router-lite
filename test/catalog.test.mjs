@@ -55,8 +55,18 @@ const routeFixture = {
   inputModalities: ["text", "image"],
   compHash: "openrouter-glm-5-3-flash-test-v1",
   multiAgentVersion: "v2",
+  supportsToolSearch: true,
   searchTool: { mode: "hosted" },
 };
+
+test("deferred tool discovery is independent of hosted web search", () => {
+  for (const supportsToolSearch of [false, true]) {
+    for (const searchTool of [undefined, { mode: "hosted" }]) {
+      const model = routedModel(template, { ...routeFixture, supportsToolSearch, searchTool });
+      assert.equal(model.supports_search_tool, supportsToolSearch);
+    }
+  }
+});
 
 test("external routes do not inherit legacy native summary or parallel-tool flags", () => {
   const native = { ...template, supports_reasoning_summaries: true, supports_parallel_tool_calls: true };

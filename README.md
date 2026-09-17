@@ -1,9 +1,10 @@
 # Codex Router Lite
 
-Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds three routed model choices while leaving native Codex models under the installed Codex build's control:
+Codex Router Lite is a Windows-only compatibility layer for the Codex desktop app and native Codex CLI. It adds four routed model choices while leaving native Codex models under the installed Codex build's control:
 
-- `openrouter/glm-5.3-flash`, pinned to the certified Novita endpoint
-- `openrouter/glm-5.3-flash-gmicloud`, pinned to the separately certified GMICloud endpoint
+- `openrouter/glm-5.3-flash`, pinned to the Novita endpoint
+- `openrouter/glm-5.3-flash-gmicloud`, pinned to the GMICloud endpoint
+- `openrouter/union-alpha`, pinned to the anonymous Stealth endpoint (preview; not v2 certified)
 - `switchyard/auto`, which selects native Codex models through the pinned local Switchyard runtime
 
 The router also restores current Codex app function namespaces and supports exact-route subagents v2. It does not support other clients, platforms, provider catalogs, local-model managers, fallback models, a Router UI, or provider discovery.
@@ -80,6 +81,13 @@ other's provider. Fresh Codex web-search turns use OpenRouter's bounded
 GLM turns continue through the LiteLLM compatibility path. No user
 `config.toml` customization is required.
 
+Union Alpha uses OpenRouter's direct Responses API with the same credential
+isolation. Router translates native tools and removes unsupported reasoning,
+verbosity, and parallel-tool controls. Tool selection is automatic; forced tool
+choices fail locally. The underlying model or models are undisclosed, so its
+[compatibility contract](docs/agents/union-alpha.md) follows measured endpoint
+behavior. It supports text and images, with no hosted-search or v2 claim.
+
 GLM tools use flattened names that Router restores to the caller's native app
 or harness namespace before execution. Runtime relay uses the client's actual
 tool declarations; the [app-tool snapshot](src/codex-app-tools.mjs) is a dated
@@ -97,17 +105,20 @@ Switchyard uses Luna High to classify tasks among five Luna/Sol effort targets.
 Its [routing policy and integration guide](config/switchyard/README.md) explains
 the choices and deliberately pinned upstream version.
 
-All three routed choices have [exact-route v2 certification](docs/SUBAGENT-CERTIFICATION.md).
-The checked-in [proofs](v2_agent/) record native tool execution, encrypted child
-handoffs, and same-child continuation. Acceptance belongs to the recorded route
-and runtime; an upstream update requires fresh evidence where those contracts
-change.
+Both GLM routes and Switchyard have recorded
+[exact-route v2 proofs](docs/SUBAGENT-CERTIFICATION.md) for their prior deployed
+runtime. These [historical proofs](v2_agent/) cover native tool execution,
+encrypted child handoffs, and same-child continuation. The current Union
+compatibility candidate changes shared protocol handling and still requires
+fresh runtime-bound certification before deployment acceptance; passing the
+local suite does not renew those proofs. Union remains a v1 preview.
 
-Configuration lives in five JSON files:
+Configuration lives in six JSON files:
 
 - `config/openrouter/openrouter.json`
 - `config/openrouter/glm-5.3-flash.json`
 - `config/openrouter/glm-5.3-flash-gmicloud.json`
+- `config/openrouter/union-alpha.json`
 - `config/switchyard/switchyard.json`
 - `config/switchyard/auto.json`
 
@@ -137,11 +148,12 @@ rebuild rather than an automatic merge.
 When drift is reported, `-AnalyzeUpstream` shows the conditional original
 Router or Switchyard review without merging or deploying anything.
 
-`npm test` is the normal retained-product suite. It directly covers native Codex, GLM, Switchyard, app functions, namespace restoration, encrypted subagent relay, v2 promotion, and Windows lifecycle behavior.
+`npm test` is the normal retained-product suite. It directly covers native Codex, GLM, Union Alpha, Switchyard, app functions, namespace restoration, encrypted subagent relay, v2 promotion, and Windows lifecycle behavior.
 
 Load maintenance context only when it applies:
 
 - Codex, Windows app, OpenRouter, or GLM work: [compatibility maintenance](docs/agents/compatibility-maintenance.md)
+- Union Alpha endpoint work: [Union Alpha compatibility](docs/agents/union-alpha.md)
 - Switchyard source, build, or deployment: [Switchyard integration](config/switchyard/README.md)
 - Subagents v2 evidence: [certification](docs/SUBAGENT-CERTIFICATION.md)
 - Installation details: [installation and updates](docs/INSTALL.md)

@@ -43,6 +43,9 @@ const MCP_NAMESPACE_PREFIX = "mcp__";
 const SPAWN_AGENT_MODELS = new WeakMap();
 const TOOL_SEARCH_RELAYS = new WeakMap();
 const CUSTOM_TOOL_RELAYS = new WeakMap();
+// Preserve the native identity while a namespaced freeform declaration is
+// flattened. Its provider spelling is not the name Codex dispatches.
+const CUSTOM_TOOL_IDENTITIES = new WeakMap();
 const NAME_ALIASES = new WeakMap();
 const PLAIN_TOOL_NAMES = new WeakMap();
 // A provider-facing function reference can retain the same spelling as a
@@ -277,30 +280,56 @@ export function bridgeCustomTools(
   }
   const requested = new Set(names);
   const shouldBridge = (name) => bridgeAll || requested.has(name);
-  const nativeNames = [];
-  const remember = (name) => {
+  const declaredIdentity = (item) => CUSTOM_TOOL_IDENTITIES.get(item) || {
+    name: item.name,
+    ...(typeof item.namespace === "string" ? { namespace: item.namespace } : {}),
+  };
+  const keyOf = (identity) => nativeToolKey(identity.namespace, identity.name);
+  const declaredCustom = new Map();
+  const plainNames = new Set(PLAIN_TOOL_NAMES.get(namespaces) || []);
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    if (tool?.type !== "custom") continue;
+    const native = declaredIdentity(tool);
+    declaredCustom.set(keyOf(native), native);
+    if (native.namespace === undefined) plainNames.add(native.name);
+  }
+  const identityOf = (item) => {
+    const native = declaredIdentity(item);
+    // Native Codex can omit its default `functions` namespace in produced
+    // custom calls. Resolve that shorthand against the actual declaration,
+    // otherwise replay teaches the provider a different tool name. An exact
+    // plain declaration wins; never guess another namespace from a bare name.
+    if (native.namespace === undefined && !plainNames.has(native.name)) {
+      return declaredCustom.get(nativeToolKey("functions", native.name)) || native;
+    }
+    return native;
+  };
+  const nativeNames = new Map();
+  const remember = (item) => {
+    const native = identityOf(item);
+    const { name } = native;
     if (
       typeof name === "string" &&
       name &&
       shouldBridge(name) &&
-      !nativeNames.includes(name)
+      !nativeNames.has(keyOf(native))
     ) {
-      nativeNames.push(name);
+      nativeNames.set(keyOf(native), native);
     }
   };
   if (Array.isArray(tools)) {
-    for (const tool of tools) if (tool?.type === "custom") remember(tool.name);
+    for (const tool of tools) if (tool?.type === "custom") remember(tool);
   }
   if (Array.isArray(input)) {
-    for (const item of input) if (item?.type === "custom_tool_call") remember(item.name);
+    for (const item of input) if (item?.type === "custom_tool_call") remember(item);
   }
-  if (toolChoice?.type === "custom") remember(toolChoice.name);
+  if (toolChoice?.type === "custom") remember(toolChoice);
   if (toolChoice?.type === "allowed_tools" && Array.isArray(toolChoice.tools)) {
     for (const choice of toolChoice.tools) {
-      if (choice?.type === "custom") remember(choice.name);
+      if (choice?.type === "custom") remember(choice);
     }
   }
-  if (!nativeNames.length) return { tools, input, toolChoice, bridged: false };
+  if (!nativeNames.size) return { tools, input, toolChoice, bridged: false };
 
   // Once native custom-tool history is rewritten as a function call, its
   // optional item id must obey the function-call id contract. Strict Responses
@@ -313,23 +342,24 @@ export function bridgeCustomTools(
   };
 
   const ordinaryTools = Array.isArray(tools)
-    ? tools.filter((tool) => !(tool?.type === "custom" && shouldBridge(tool.name)))
+    ? tools.filter((tool) => !(tool?.type === "custom" && shouldBridge(identityOf(tool).name)))
     : tools;
   const visibleNames = providerVisibleToolNames(ordinaryTools);
   const nativeToProvider = new Map();
   const providerToNative = new Map();
-  for (const nativeName of nativeNames) {
-    const availableName = availableCustomToolName(nativeName, visibleNames);
+  for (const [nativeKey, native] of nativeNames) {
+    const wireName = native.namespace === undefined ? native.name : `${native.namespace}${NAMESPACE_DELIMITER}${native.name}`;
+    const availableName = availableCustomToolName(wireName, visibleNames);
     const providerName = Number.isInteger(maxNameLength)
       ? reserveSpecialProviderName(
           namespaces,
-          `custom:${nativeName}`,
+          `custom:${nativeKey}`,
           availableName,
         )
       : availableName;
     visibleNames.add(providerName);
-    nativeToProvider.set(nativeName, providerName);
-    providerToNative.set(providerName, nativeName);
+    nativeToProvider.set(nativeKey, providerName);
+    providerToNative.set(providerName, native);
   }
   CUSTOM_TOOL_RELAYS.set(namespaces, providerToNative);
 
@@ -337,7 +367,7 @@ export function bridgeCustomTools(
   const routedTools = Array.isArray(tools)
     ? tools.map((tool) => {
         const providerName =
-          tool?.type === "custom" ? nativeToProvider.get(tool.name) : undefined;
+          tool?.type === "custom" ? nativeToProvider.get(keyOf(identityOf(tool))) : undefined;
         if (!providerName) return tool;
         changedTools = true;
         const description = bridgedCustomToolDescription(tool);
@@ -362,18 +392,20 @@ export function bridgeCustomTools(
 
   let routedToolChoice = toolChoice;
   const providerChoiceName =
-    toolChoice?.type === "custom" ? nativeToProvider.get(toolChoice.name) : undefined;
+    toolChoice?.type === "custom" ? nativeToProvider.get(keyOf(identityOf(toolChoice))) : undefined;
   if (providerChoiceName) {
-    routedToolChoice = { ...toolChoice, type: "function", name: providerChoiceName };
+    const { namespace: _namespace, ...rest } = toolChoice;
+    routedToolChoice = { ...rest, type: "function", name: providerChoiceName };
     SPECIAL_FUNCTION_REFERENCES.add(routedToolChoice);
   } else if (toolChoice?.type === "allowed_tools" && Array.isArray(toolChoice.tools)) {
     let changed = false;
     const choices = toolChoice.tools.map((choice) => {
       const providerName =
-        choice?.type === "custom" ? nativeToProvider.get(choice.name) : undefined;
+        choice?.type === "custom" ? nativeToProvider.get(keyOf(identityOf(choice))) : undefined;
       if (!providerName) return choice;
       changed = true;
-      const routedChoice = { ...choice, type: "function", name: providerName };
+      const { namespace: _namespace, ...rest } = choice;
+      const routedChoice = { ...rest, type: "function", name: providerName };
       SPECIAL_FUNCTION_REFERENCES.add(routedChoice);
       return routedChoice;
     });
@@ -393,9 +425,9 @@ export function bridgeCustomTools(
   let changedInput = false;
   const routedInput = input.map((item) => {
     const providerName =
-      item?.type === "custom_tool_call" ? nativeToProvider.get(item.name) : undefined;
+      item?.type === "custom_tool_call" ? nativeToProvider.get(keyOf(identityOf(item))) : undefined;
     if (providerName && typeof item.input === "string") {
-      const { type: _type, input: customInput, name: _name, ...rest } = item;
+      const { type: _type, input: customInput, name: _name, namespace: _namespace, ...rest } = item;
       if (typeof item.call_id === "string" && item.call_id) {
         bridgedCallIds.add(item.call_id);
       }
@@ -808,11 +840,13 @@ function flattenNamespaceChild(namespace, fn, providerName) {
   const clientSchema = fn.parameters ?? fn.inputSchema;
   const parameters =
     clientSchema === undefined ? undefined : providerToolSchema(clientSchema);
-  return {
+  const flattened = {
     ...fn,
     name: providerName ?? `${namespace}${NAMESPACE_DELIMITER}${fn.name}`,
     ...(parameters === undefined ? {} : { parameters }),
   };
+  if (fn.type === "custom") CUSTOM_TOOL_IDENTITIES.set(flattened, { namespace, name: fn.name });
+  return flattened;
 }
 
 // Flatten every namespace entry into plain functions named
@@ -1547,6 +1581,60 @@ export function flattenNamespacedHistory(input, namespaces) {
   });
 }
 
+export function flattenNamespacedToolChoice(choice, namespaces) {
+  if (choice?.type === "allowed_tools" && Array.isArray(choice.tools)) {
+    return { ...choice, tools: choice.tools.map(tool => flattenNamespacedToolChoice(tool, namespaces)) };
+  }
+  if (choice?.type !== "function") return choice;
+  const [reference] = flattenNamespacedHistory([{ ...choice, type: "function_call" }], namespaces);
+  return { ...reference, type: "function" };
+}
+
+// A rejected, undeclared native call can remain in persisted history. Some
+// providers reject punctuation in that name even though no such tool is
+// enabled. Alias its wire spelling without deleting the attempt/result or
+// inventing a declaration. The existing reverse map preserves native identity
+// if the model repeats it; Codex still decides whether the call is available.
+export function aliasHistoricalFunctionNames(input, namespaces) {
+  if (!Array.isArray(input)) return input;
+  const declaredNames = new Set([
+    ...(PLAIN_TOOL_NAMES.get(namespaces) || []),
+    ...(CUSTOM_TOOL_RELAYS.get(namespaces)?.keys() || []),
+    ...[...namespaces].flatMap(([namespace, names]) => [...names].map(name => `${namespace}${NAMESPACE_DELIMITER}${name}`)),
+  ]);
+  const search = TOOL_SEARCH_RELAYS.get(namespaces);
+  if (search) declaredNames.add(search.providerName);
+  const invalid = input.filter(item => item?.type === "function_call" &&
+    !SPECIAL_FUNCTION_REFERENCES.has(item) && !declaredNames.has(item.name) &&
+    typeof item.name === "string" && !/^[a-zA-Z0-9_-]{1,64}$/.test(item.name));
+  if (!invalid.length) return input;
+  const relay = NAME_ALIASES.get(namespaces) || initializeNameAliases(namespaces, [], 64);
+  for (const name of declaredNames) {
+    if (!relay.providerOwners.has(name)) relay.providerOwners.set(name, `declared:${name}`);
+  }
+  // Reserve valid historical names too, including tools no longer declared.
+  for (const item of input) {
+    if (item?.type === "function_call" && typeof item.name === "string" &&
+        /^[a-zA-Z0-9_-]{1,64}$/.test(item.name) && !relay.providerOwners.has(item.name)) {
+      relay.providerOwners.set(item.name, nativeToolKey(item.namespace, item.name));
+    }
+  }
+  const aliases = new Map();
+  for (const item of [...invalid].sort((a, b) => nativeToolKey(a.namespace, a.name).localeCompare(nativeToolKey(b.namespace, b.name)))) {
+    const identity = nativeToolKey(item.namespace, item.name);
+    const wireName = item.name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48) || "historical_tool";
+    aliases.set(identity, assignProviderName(relay, identity, wireName,
+      { name: item.name, ...(item.namespace === undefined ? {} : { namespace: item.namespace }) }, { forceAlias: true }));
+  }
+  return input.map(item => {
+    if (item?.type !== "function_call") return item;
+    const name = aliases.get(nativeToolKey(item.namespace, item.name));
+    if (!name) return item;
+    const { namespace: _namespace, ...rest } = item;
+    return { ...rest, name };
+  });
+}
+
 // Reverse lookups for restoring calls: flattened name -> native
 // { namespace, name }, and bare tool name -> namespaces that own it.
 export function buildNamespaceLookups(namespaces) {
@@ -1701,18 +1789,19 @@ function litellmCustomToolInput(argumentsText) {
 function rewriteCustomToolFunctionCallItem(item, lookups, allowPlaceholder) {
   if (
     item?.type !== "function_call" ||
-    item.namespace !== undefined ||
+    item.namespace != null ||
     !(lookups.customTools instanceof Map)
   ) {
     return undefined;
   }
-  const nativeName = lookups.customTools.get(item.name);
-  if (!nativeName) return undefined;
+  const native = lookups.customTools.get(item.name);
+  if (!native) return undefined;
   const input = customToolInput(item.arguments, allowPlaceholder);
   if (input === undefined) return undefined;
   const {
     type: _type,
     name: _name,
+    namespace: _namespace,
     arguments: _arguments,
     encrypted_function_args: _encryptedFunctionArgs,
     ...rest
@@ -1720,7 +1809,7 @@ function rewriteCustomToolFunctionCallItem(item, lookups, allowPlaceholder) {
   return {
     ...rest,
     type: "custom_tool_call",
-    name: nativeName,
+    ...native,
     ...(allowPlaceholder && input === "" ? {} : { input }),
   };
 }
@@ -2496,7 +2585,8 @@ export class NamespaceToolCallTransform extends Transform {
     }
     if (
       (kind === "custom" &&
-        (typeof item.name !== "string" || !item.name || item.namespace !== undefined)) ||
+        (typeof item.name !== "string" || !item.name ||
+          (item.namespace != null && (typeof item.namespace !== "string" || !item.namespace)))) ||
       (kind === "tool_search" &&
         (item.name !== undefined ||
           item.namespace !== undefined ||
@@ -2586,21 +2676,22 @@ export class NamespaceToolCallTransform extends Transform {
       if (
         typeof item.name !== "string" ||
         !item.name ||
-        item.namespace !== undefined ||
+        (item.namespace != null && (typeof item.namespace !== "string" || !item.namespace)) ||
         typeof item.input !== "string"
       ) {
         return "incomplete atomic custom tool call";
       }
       if (sourceItem.type === "function_call") {
-        const expectedName = this.#lookups.customTools?.get(sourceItem.name);
+        const expected = this.#lookups.customTools?.get(sourceItem.name);
         if (
-          expectedName !== item.name ||
+          expected?.name !== item.name || expected?.namespace !== item.namespace ||
           customToolInput(sourceItem.arguments) !== item.input
         ) {
           return "atomic custom tool call was not restored consistently";
         }
       } else if (
         sourceItem.name !== item.name ||
+        sourceItem.namespace !== item.namespace ||
         sourceItem.input !== item.input
       ) {
         return "atomic custom tool call changed native content";

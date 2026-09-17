@@ -5,8 +5,9 @@ file on the common path; load the detailed runbook only for the branch of work
 you are performing.
 
 The retained product is Windows Codex app and native Codex compatibility, exact
-Novita and GMICloud routes for OpenRouter GLM-5.3-Flash, `switchyard/auto` over
-native Codex models, and exact-route subagents v2. Other clients, providers,
+Novita and GMICloud routes for OpenRouter GLM-5.3-Flash, Union Alpha through
+OpenRouter's Stealth endpoint, `switchyard/auto` over native Codex models, and
+certified exact-route subagents v2. Other clients, providers,
 platforms, Router UIs, and migration systems are outside the product and must
 not return.
 
@@ -25,6 +26,8 @@ not return.
   read [native Codex compatibility](docs/agents/native-codex.md).
 - GLM endpoint policy, Responses repair, hosted search, or Python pins:
   read [OpenRouter GLM compatibility](docs/agents/openrouter-glm.md).
+- Union Alpha endpoint behavior, identity evidence, or direct Responses:
+  read [Union Alpha compatibility](docs/agents/union-alpha.md).
 - Switchyard source, routes, rebuilds, startup, health, or deployment: read
   [`config/switchyard/README.md`](config/switchyard/README.md), then only its
   applicable runtime or maintenance branch.

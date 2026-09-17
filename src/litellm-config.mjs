@@ -11,7 +11,7 @@ function yamlString(value) {
 }
 
 export function renderLiteLlmConfig() {
-  const models = CHECKED_IN_MODELS.filter((model) => model.provider === "openrouter");
+  const models = CHECKED_IN_MODELS.filter((model) => model.requestProfile === "glm-5.3-flash");
   const lines = ["model_list:"];
   for (const model of models) {
     lines.push(
@@ -56,6 +56,6 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = writeLiteLlmConfig();
-  const models = CHECKED_IN_MODELS.filter((model) => model.provider === "openrouter").length;
+  const models = CHECKED_IN_MODELS.filter((model) => model.requestProfile === "glm-5.3-flash").length;
   process.stdout.write(`${JSON.stringify({ path: target, models })}\n`);
 }

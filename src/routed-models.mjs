@@ -7,6 +7,7 @@ const CONFIG_FILES = Object.freeze([
   "config/openrouter/openrouter.json",
   "config/openrouter/glm-5.3-flash.json",
   "config/openrouter/glm-5.3-flash-gmicloud.json",
+  "config/openrouter/union-alpha.json",
   "config/switchyard/switchyard.json",
   "config/switchyard/auto.json",
 ]);
@@ -14,11 +15,13 @@ const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
 const EXPECTED_MODELS = new Set([
   "openrouter/glm-5.3-flash",
   "openrouter/glm-5.3-flash-gmicloud",
+  "openrouter/union-alpha",
   "switchyard/auto",
 ]);
 const EXPECTED_REQUEST_PROFILES = new Map([
   ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
   ["openrouter/glm-5.3-flash-gmicloud", "glm-5.3-flash"],
+  ["openrouter/union-alpha", "union-alpha"],
   ["switchyard/auto", "switchyard-native"],
 ]);
 const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/u;
@@ -51,6 +54,19 @@ for (const model of modelRecords) {
 }
 
 export function validateOpenRouterRoute(model) {
+  if (model?.slug === "openrouter/union-alpha") {
+    const policy = model.openRouterProviderPolicy;
+    if (model.upstreamModel !== "stealth/union-alpha" ||
+        policy?.only?.length !== 1 || policy.only[0] !== "stealth" ||
+        policy?.order?.length !== 1 || policy.order[0] !== "stealth" ||
+        policy.allow_fallbacks !== false || policy.require_parameters !== true ||
+        model.requestProfile !== "union-alpha" ||
+        model.openRouterEndpointCompatibility?.dropParallelToolCalls !== true ||
+        model.searchTool !== undefined || model.supportsSearchHistory === true) {
+      throw new Error("Union Alpha must select the exact Stealth endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
+    }
+    return model;
+  }
   const policy = model?.openRouterProviderPolicy;
   const order = Array.isArray(policy?.order) ? policy.order : [];
   const only = Array.isArray(policy?.only) ? policy.only : [];

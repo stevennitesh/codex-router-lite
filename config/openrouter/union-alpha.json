@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "slug": "openrouter/union-alpha",
+      "gatewayModel": "openrouter-union-alpha",
+      "upstreamModel": "stealth/union-alpha",
+      "provider": "openrouter",
+      "listed": true,
+      "displayName": "Union Alpha (OpenRouter)",
+      "description": "Anonymous Union Alpha preview through OpenRouter's Stealth endpoint. Automatic tool selection; provider-controlled reasoning. Underlying models are undisclosed.",
+      "priority": 104,
+      "defaultEffort": "none",
+      "reasoningLevels": [{ "effort": "none", "description": "Provider-controlled; no reasoning-effort parameter" }],
+      "contextWindow": 262144,
+      "autoCompact": 115000,
+      "inputModalities": ["text", "image"],
+      "supportsToolSearch": true,
+      "requestProfile": "union-alpha",
+      "behaviorTemplate": "gpt-5.6-sol",
+      "openRouterProviderPolicy": {
+        "order": ["stealth"],
+        "only": ["stealth"],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      },
+      "openRouterEndpointCompatibility": { "dropParallelToolCalls": true },
+      "compHash": "openrouter-union-alpha-v1"
+    }
+  ]
+}

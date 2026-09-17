@@ -32,6 +32,7 @@
         "image"
       ],
       "supportsSearchHistory": true,
+      "supportsToolSearch": true,
       "searchTool": {
         "mode": "hosted",
         "serverType": "openrouter:web_search",

@@ -21,6 +21,7 @@ const retainedConfig = [
   "config/openrouter/glm-5.3-flash-gmicloud.json",
   "config/openrouter/glm-5.3-flash.json",
   "config/openrouter/openrouter.json",
+  "config/openrouter/union-alpha.json",
   "config/switchyard/auto.json",
   "config/switchyard/switchyard.json",
 ];
@@ -69,7 +70,7 @@ for (const provider of ["openrouter", "switchyard"]) {
     if (name.endsWith(".json")) actualConfig.push(`config/${provider}/${name}`);
   }
 }
-assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must contain only GLM and Switchyard");
+assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must contain only GLM, Union Alpha, and Switchyard");
 
 const packageManifest = JSON.parse(
   readFileSync(path.join(root, "maintenance", "windows-package.json"), "utf8"),
