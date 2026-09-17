@@ -44,7 +44,7 @@ one changes only that request. Router never falls back from one endpoint to the
 other.
 
 Union Alpha is a separate preview entry pinned to Stealth. It has automatic
-tool selection and provider-controlled reasoning; it is not v2 certified. See
+tool selection and provider-controlled reasoning, with an exact-route v2 proof. See
 its [endpoint contract](agents/union-alpha.md) for measured capabilities.
 
 The running service checks every five minutes for an installed Codex binary or

@@ -29,7 +29,7 @@ native CLI, with a small, explicit set of routes.
 | Switchyard Auto | Native Codex → Luna / Sol | [Routing policy](config/switchyard/README.md#routing-policy) |
 
 Union Alpha's underlying model is undisclosed. It supports automatic tool selection
-and has no hosted-search or v2 subagent certification claim. GLM and Switchyard have
+and has no hosted-search capability. Union, GLM and Switchyard have
 [recorded v2 proofs](v2_agent/README.md), each valid only for its named runtime.
 
 ## Quick start

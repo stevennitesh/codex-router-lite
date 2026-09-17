@@ -17,6 +17,7 @@
       "inputModalities": ["text", "image"],
       "supportsToolSearch": true,
       "requestProfile": "union-alpha",
+      "multiAgentVersion": "v2",
       "behaviorTemplate": "gpt-5.6-sol",
       "openRouterProviderPolicy": {
         "order": ["stealth"],

@@ -19,7 +19,7 @@ const caller = "union-fixture-caller-capability-long-enough";
 const internal = "union-fixture-internal-capability-long-enough";
 const fn = { type: "function", name: "lookup", parameters: { type: "object", properties: {} } };
 
-test("Union Alpha advertises its measured contract without guessed identity or v2", () => {
+test("Union Alpha advertises its measured contract without guessed identity and with exact-route v2", () => {
   assert.equal(validateOpenRouterRoute(route), route);
   const built = routedModel({ base_instructions: "You are Codex.", model_messages: {} }, route);
   assert.equal(built.context_window, 262144);
@@ -29,7 +29,7 @@ test("Union Alpha advertises its measured contract without guessed identity or v
   assert.equal(built.support_verbosity, false);
   assert.equal(built.supports_search_tool, true);
   assert.equal(route.searchTool, undefined);
-  assert.equal(built.multi_agent_version, "v1");
+  assert.equal(built.multi_agent_version, "v2");
   assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, only: ["novita"] } }), /exact Stealth/);
   assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, allow_fallbacks: true } }), /fallback disabled/);
 });

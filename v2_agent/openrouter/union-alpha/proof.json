@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "provider": "openrouter",
+  "model": "stealth/union-alpha",
+  "slug": "openrouter/union-alpha",
+  "status": "accepted",
+  "officialSources": [
+    "https://openrouter.ai/stealth/union-alpha",
+    "https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints"
+  ],
+  "testedAt": "2026-09-17T21:07:45.555Z",
+  "routerVersion": "0.5.1",
+  "endpointProvider": "stealth",
+  "checks": {
+    "streaming": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-17T21:07:03.986Z"
+    },
+    "toolCall": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-17T21:07:20.387Z",
+      "mode": "auto"
+    },
+    "encryptedRelay": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-17T21:07:03.986Z"
+    },
+    "markerReturn": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-17T21:07:30.736Z"
+    },
+    "sameThreadFollowUp": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-17T21:07:45.555Z"
+    }
+  },
+  "codexVersion": "codex-cli 0.155.0-alpha.2.6",
+  "windowsAppVersion": "26.911.7940.0",
+  "executionSurface": "codex-cli",
+  "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35"
+}

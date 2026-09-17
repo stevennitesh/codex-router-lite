@@ -40,9 +40,9 @@ These adaptations follow the dated evidence linked below:
   Compact at 115,000 input tokens to reserve output and framing headroom.
   Tiny output caps on plain requests were not consistently reflected in usage;
   they are not a reliable cost or model-identity probe.
-- This route has no exact-route v2 proof and stays at v1. Native CLI execution
-  and native app-server tests do not certify encrypted child handoffs or a
-  deployed desktop runtime.
+- This route has an [exact-route v2 proof](../../v2_agent/openrouter/union-alpha/proof.md)
+  for native child tool execution, encrypted handoffs and same-child continuation.
+  It applies only to the recorded runtime and does not identify the backend model.
 
 The official [model page](https://openrouter.ai/stealth/union-alpha) and
 [endpoint API](https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints)

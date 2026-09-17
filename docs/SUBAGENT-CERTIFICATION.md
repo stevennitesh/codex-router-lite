@@ -8,7 +8,7 @@ Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
 The accepted v2 routes are `openrouter/glm-5.3-flash`,
-`openrouter/glm-5.3-flash-gmicloud`, and `switchyard/auto`. Switchyard's
+`openrouter/glm-5.3-flash-gmicloud`, `openrouter/union-alpha`, and `switchyard/auto`. Switchyard's
 application is also bound to its deployed source, patch, binary, generated
 routes, and Router commit.
 
@@ -38,6 +38,32 @@ Catalog publication exposes only exact eligible routes. Runtime observations
 are diagnostics; they do not create or revoke certification.
 
 ## Certifying a new exact route
+
+Start with one read-only readiness check:
+
+```powershell
+node maintenance/certification-preflight.mjs openrouter/union-alpha
+```
+
+Replace the slug with the exact candidate. The report checks source eligibility,
+local visibility, published catalog, generated role contents and deployed commit.
+It prints the exact role, pinned effort and a reusable synthetic parent prompt.
+Access errors are not evidence of missing configuration; use the state owner's
+local authority. This command does not publish a route, spend quota or accept proof.
+
+For a v1 candidate, copy the proof templates into the reported application path,
+fill its exact identity, and keep status draft. During the authorized proof window,
+set the route's `multiAgentVersion` to `v2`, show it if hidden using the reported
+picker command, and refresh the catalog. Run preflight again before starting a
+fresh native parent. This window may temporarily fail the accepted-proof gate;
+never commit that intermediate state. On failure restore v1, refresh the catalog,
+and restore any visibility changed solely for the test.
+
+Use the printed prompt in a fresh native desktop task, or a fresh native
+`codex exec` parent if the current desktop task cannot discover the new role.
+Keep the sandbox and approval mechanism enabled. Inspect actual tool output,
+child handoffs and timings; a parent's PASS text alone is not evidence.
+
 
 Use a native Codex parent task whose current collaboration schema offers the
 candidate's generated `router_<provider>_<model>` agent type. Refresh the

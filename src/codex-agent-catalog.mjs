@@ -71,7 +71,7 @@ function writeManagedAgent(target, contents) {
   writePrivateFile(target, contents);
 }
 
-function routedAgentDefinition(model) {
+export function routedAgentDefinition(model) {
   const slug = String(model?.slug || "").trim();
   if (!slug || !slug.includes("/")) {
     throw new Error(`Cannot create a routed agent for invalid model slug: ${slug || "<empty>"}`);
