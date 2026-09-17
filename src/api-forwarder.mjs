@@ -2,6 +2,7 @@ import http from "node:http";
 
 import {
   applyKeepAliveTimeouts,
+  endStreamedResponse,
   HOP_BY_HOP_HEADERS,
   installGracefulShutdown,
   pipeResponse,
@@ -136,7 +137,7 @@ const server = http.createServer((request, response) => {
         error: { type: "provider_error", message: error instanceof Error ? error.message : String(error) },
       });
     } else {
-      response.end();
+      endStreamedResponse(response, { message: "The OpenRouter provider response stream disconnected before completion." });
     }
   });
 });

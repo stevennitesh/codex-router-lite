@@ -49,7 +49,7 @@ function runCodex(binary, args, options = {}) {
 const routed = [
   "openrouter/glm-5.3-flash",
   "openrouter/glm-5.3-flash-gmicloud",
-  "openrouter/union-alpha",
+  "openrouter/pareto",
   "switchyard/auto",
 ].map((slug) => {
   const model = MODEL_BY_SLUG.get(slug);
@@ -166,7 +166,7 @@ try {
     `${source.version} did not preserve Switchyard native compaction`);
   process.stdout.write(
     `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
-      "GLM, Union Alpha, and Switchyard compatibility passed\n",
+      "GLM, Pareto, and Switchyard compatibility passed\n",
   );
 } finally {
   rmSync(temporaryHome, { recursive: true, force: true });

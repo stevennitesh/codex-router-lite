@@ -10,7 +10,7 @@ The current applications are:
 
 - accepted: `openrouter/glm-5.3-flash`
 - accepted: `openrouter/glm-5.3-flash-gmicloud`
-- accepted: `openrouter/union-alpha`
+- retired historical acceptance: `openrouter/union-alpha` (does not certify Pareto)
 - accepted: `switchyard/auto`
 
 Create or refresh an application by copying both `_template/proof.json` and

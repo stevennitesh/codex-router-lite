@@ -7,8 +7,9 @@ A route is spawnable only when its published model has `multiAgentVersion: "v2"`
 Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
-The accepted v2 routes are `openrouter/glm-5.3-flash`,
-`openrouter/glm-5.3-flash-gmicloud`, `openrouter/union-alpha`, and `switchyard/auto`. Switchyard's
+The accepted active v2 routes are `openrouter/glm-5.3-flash`,
+`openrouter/glm-5.3-flash-gmicloud`, and `switchyard/auto`. The retired Union Alpha
+application remains historical evidence and does not certify `openrouter/pareto`. Switchyard's
 application is also bound to its deployed source, patch, binary, generated
 routes, and Router commit.
 
@@ -42,7 +43,7 @@ are diagnostics; they do not create or revoke certification.
 Start with one read-only readiness check:
 
 ```powershell
-node maintenance/certification-preflight.mjs openrouter/union-alpha
+node maintenance/certification-preflight.mjs openrouter/pareto
 ```
 
 Replace the slug with the exact candidate. The report checks source eligibility,

@@ -43,9 +43,9 @@ The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
 other.
 
-Union Alpha is a separate preview entry pinned to Stealth. It has automatic
-tool selection and provider-controlled reasoning, with an exact-route v2 proof. See
-its [endpoint contract](agents/union-alpha.md) for measured capabilities.
+Pareto is a separate v1 entry pinned to the exact Unbiased endpoint. It has
+automatic tool selection and provider-controlled reasoning. See its
+[endpoint contract](agents/pareto.md) for measured capabilities.
 
 The running service checks every five minutes for an installed Codex binary or
 native account-catalog change. When signed in, it refreshes account visibility

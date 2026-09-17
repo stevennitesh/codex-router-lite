@@ -1,7 +1,7 @@
 // Final external-send policy. This module has no listener, credentials or network effects.
 // Internal gateway callers must pass the same validation as front-Router callers.
 import { OPENROUTER_MODELS as routes, CANONICAL_OPENROUTER_ROUTE as defaultRoute, MODEL_BY_GATEWAY_ID, MODEL_BY_SLUG } from "./routed-models.mjs";
-import { prepareUnionAlphaRequest } from "./union-alpha-compat.mjs";
+import { prepareParetoRequest } from "./pareto-compat.mjs";
 
 function hasNativeSearch(payload) {
   return payload?.web_search_options !== undefined ||
@@ -51,7 +51,7 @@ export function prepareOpenRouterRequest(payload) {
   if (!routes.includes(selected)) {
     throw new Error(`Only ${routes.map((route) => route.slug).join(" and ")} are supported.`);
   }
-  payload = prepareUnionAlphaRequest(payload, selected);
+  payload = prepareParetoRequest(payload, selected);
   if (hasNativeSearch(payload)) {
     const error = new Error("Codex hosted-search fields must be translated before the OpenRouter hop.");
     error.code = "model_search_not_supported";

@@ -3,13 +3,14 @@
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "Windows compatibility router for native Codex, OpenRouter GLM-5.3-Flash and Union Alpha, and Switchyard",
+  "description": "Windows compatibility router for native Codex, OpenRouter GLM-5.3-Flash and Pareto, and Switchyard",
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "check": "node scripts-check.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:stress": "node --test test/router-stress.test.mjs"
   },
   "dependencies": {
     "proper-lockfile": "4.1.2",

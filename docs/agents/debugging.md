@@ -54,3 +54,26 @@ compaction or native/model switching. Include the relevant negative path and an
 unaffected route for shared changes. Follow [verification](architecture.md#verification).
 State what was reproduced, the repaired owner, and remaining uncertainty. Store
 dated investigation evidence separately from the maintained behavior guide.
+
+## Bounded stress checks
+
+Run `npm run test:stress` for the deterministic offline Router stress suite. It
+uses isolated loopback fixtures, synthetic prompts and credentials, and consumes
+no provider quota. The suite covers representative native, OpenRouter, and
+Switchyard boundaries plus shared stream, retry, history, compaction,
+concurrency, and cancellation behavior. It is intentionally not a live-provider
+certification or a full Cartesian product of models and faults.
+
+For a manual live soak, first run the offline suite and the normal verification
+checks. Then use the installed Router with a new synthetic conversation and send
+at most six requests over at most ten minutes: one short ordinary request through
+each configured OpenRouter GLM route, one short direct-Responses request, one
+Switchyard request, and one tool-call continuation plus compaction on a currently
+available route. Use no private history, files, credentials in prompts, or
+destructive tools. Stop immediately on an unexpected retry, duplicate tool call,
+lost call identity, false successful completion, credential/header disclosure,
+or failure to cancel. Accept only when every request has one terminal outcome,
+history and tool identity survive the continuation/compaction, and Router health
+returns to zero in-flight requests. Close the synthetic conversation afterward;
+do not retain provider responses as repository fixtures or modify the installed
+runtime during the soak.

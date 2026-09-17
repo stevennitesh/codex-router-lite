@@ -1,6 +1,12 @@
-# Union Alpha compatibility
+# Union Alpha compatibility (retired historical contract)
 
-Read for the exact `openrouter/union-alpha` route. Its owner is
+Union Alpha is no longer registered as an active route. This file preserves its
+measured contract under the original identity so the historical investigation
+and accepted v2 proof remain intelligible. That proof certifies only
+`openrouter/union-alpha` at `stealth/union-alpha`; it does not certify Pareto or
+make the retired slug callable.
+
+The retired route was `openrouter/union-alpha`. Its owner was
 `config/openrouter/union-alpha.json`; `src/union-alpha-compat.mjs` owns measured
 request adaptations. Native credential isolation and namespace relay remain
 owned by [native Codex compatibility](native-codex.md).

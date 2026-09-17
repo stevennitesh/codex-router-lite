@@ -23,6 +23,13 @@ const SHA256 = /^[0-9a-f]{64}$/i;
 const RESERVED_SOURCE_HOST =
   /(?:^|\.)(?:example\.(?:com|net|org)|example|invalid|localhost|test)$/i;
 const PRE_WORKFLOW_V2_ROUTES = new Set();
+// Accepted proof remains immutable historical evidence after a route retires.
+// Keeping the exact old identity here lets the checker validate that record
+// without making it an active registry certification or grandfathering a new
+// model that replaced it.
+const RETIRED_ACCEPTED_ROUTES = new Map([
+  [JSON.stringify(["openrouter/union-alpha", "openrouter", "stealth/union-alpha"]), "stealth"],
+]);
 
 function fail(message) {
   throw new Error(`v2-agent application: ${message}`);
@@ -169,7 +176,18 @@ function checkAcceptedProof(proof, location, models) {
     model.upstreamModel === proof.model
   );
   if (!route) {
-    fail(`${location}: accepted application does not match an exact registry route`);
+    const retiredEndpoint = RETIRED_ACCEPTED_ROUTES.get(routeIdentity({
+      slug: proof.slug,
+      provider: proof.provider,
+      upstreamModel: proof.model,
+    }));
+    if (!retiredEndpoint) {
+      fail(`${location}: accepted application does not match an exact registry route`);
+    }
+    if (proof.endpointProvider !== retiredEndpoint) {
+      fail(`${location}: retired accepted application changed its exact endpointProvider`);
+    }
+    return;
   }
   if (route.multiAgentVersion !== "v2") {
     fail(`${location}: accepted application requires the exact registry route to declare multiAgentVersion v2`);

@@ -10,7 +10,7 @@ function chatProviderToolSurface(tools) {
 import { buildNamespaceLookups, rewriteNamespaceFunctionCall } from "../src/namespace-relay.mjs";
 
 test("one request preparer preserves profile-specific turns and tool-disabled compaction without mutation", () => {
-  for (const slug of ["openrouter/glm-5.3-flash", "openrouter/glm-5.3-flash-gmicloud", "openrouter/union-alpha"]) {
+  for (const slug of ["openrouter/glm-5.3-flash", "openrouter/glm-5.3-flash-gmicloud", "openrouter/pareto"]) {
     const selected = MODEL_BY_SLUG.get(slug);
     const original = { input: [
       { type: "reasoning", summary: [{ type: "summary_text", text: "Earlier reasoning" }] },
@@ -21,7 +21,7 @@ test("one request preparer preserves profile-specific turns and tool-disabled co
     const turn = prepareRoutedRequest(original, selected, { childEffort: "max" });
     const compact = prepareRoutedRequest(original, selected, { compaction: true, compactionMessages: [{ role: "user", content: "Summarize" }] });
     assert.deepEqual(original, saved);
-    assert.equal(turn.transport, slug.includes("union") ? "responses" : "chat");
+    assert.equal(turn.transport, slug.includes("pareto") ? "responses" : "chat");
     assert.equal(compact.transport, turn.transport);
     assert.deepEqual(turn.payload.tools.map(tool => tool.name), ["app__read"]);
     assert.deepEqual(compact.payload.tools, []);
@@ -30,7 +30,7 @@ test("one request preparer preserves profile-specific turns and tool-disabled co
     assert.equal(compact.payload.stream, false);
     assert.deepEqual(compact.payload.input.slice(0, 2), original.input);
     assert.equal(turn.payload.client_metadata, undefined);
-    if (slug.includes("union")) {
+    if (slug.includes("pareto")) {
       assert.deepEqual(turn.payload.input, original.input);
       assert.equal(turn.payload.reasoning, undefined);
     } else {

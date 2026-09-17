@@ -1,7 +1,8 @@
 # Union Alpha investigation history — 2026-09-17
 
 Historical evidence for the initial candidate, not current runtime certification.
-Use [the active guide](../agents/union-alpha.md) for maintained behavior. Reuse a probe only
+Use the [retired Union contract](../agents/union-alpha.md) for its historical behavior
+and the [active Pareto guide](../agents/pareto.md) for the current route. Reuse a probe only
 while its relevant code, endpoint, and environment remain applicable.
 
 ## Historical identity investigation

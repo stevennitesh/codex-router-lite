@@ -104,6 +104,14 @@ test("native replay removes only foreign item IDs and unknown routed models stay
       }));
     }
     const count = seen.length;
+    const retired = await fetch(`${routerBase(port)}/responses`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openrouter/union-alpha", input: "must stay local" }),
+    });
+    assert.equal(retired.status, 400);
+    const retiredError = (await retired.json()).error;
+    assert.equal(retiredError.code, "retired_model");
+    assert.match(retiredError.message, /retired.*openrouter\/pareto/is);
     for (const model of ["openrouter/missing", "switchyard/missing", "unknown/model"]) {
       const response = await fetch(`${routerBase(port)}/responses`, {
         method: "POST", headers: { "Content-Type": "application/json" },

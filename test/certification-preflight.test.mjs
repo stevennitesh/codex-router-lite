@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { certificationPreflight } from "../maintenance/certification-preflight.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
-const route = MODEL_BY_SLUG.get("openrouter/union-alpha");
+const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
 test("certification preflight distinguishes source claims from native role readiness", () => {
   const state = {catalogEntry:{visibility:"list",multi_agent_version:"v2"},roleContents:routedAgentDefinition(route).contents,deployedCommit:"a".repeat(40)};
   assert.equal(certificationPreflight(route,state).readyForFreshParent,true);
@@ -12,4 +12,17 @@ test("certification preflight distinguishes source claims from native role readi
   }
   assert.equal(certificationPreflight({...route,multiAgentVersion:"v1"},state).readyForFreshParent,false);
   assert.throws(()=>certificationPreflight(undefined),/exact registered route/);
+});
+
+test("Pareto remains v1 and cannot reuse the retired Union application", () => {
+  const pareto = MODEL_BY_SLUG.get("openrouter/pareto");
+  const state = {
+    catalogEntry: { visibility: "list", multi_agent_version: "v1" },
+    roleContents: routedAgentDefinition(pareto).contents,
+    deployedCommit: "a".repeat(40),
+  };
+  const report = certificationPreflight(pareto, state);
+  assert.equal(report.readyForFreshParent, false);
+  assert.match(report.blockers.join("\n"), /Source route is v1/);
+  assert.equal(report.application, "v2_agent/openrouter/pareto/");
 });

@@ -44,10 +44,10 @@ endpoint, and model failures before editing.
 
 Do not turn on fallback or select an unproved provider to hide an endpoint failure.
 
-## Union fails
+## Pareto fails
 
-Confirm the selected slug and exact Stealth endpoint. Follow the
-[Union contract](agents/union-alpha.md) for supported controls and replay, then
+Confirm the selected slug and exact Unbiased endpoint. Follow the
+[Pareto contract](agents/pareto.md) for supported controls and replay, then
 [debugging](agents/debugging.md) to locate the first divergence. Do not apply
 GLM repairs based on an inferred model identity.
 

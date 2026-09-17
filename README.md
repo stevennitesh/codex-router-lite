@@ -25,12 +25,12 @@ native CLI, with a small, explicit set of routes.
 | --- | --- | --- |
 | GLM-5.3-Flash | OpenRouter → Novita | [Compatibility](docs/agents/openrouter-glm.md) |
 | GLM-5.3-Flash | OpenRouter → GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
-| Union Alpha | OpenRouter → Stealth | [Preview limitations](docs/agents/union-alpha.md) |
+| Pareto | OpenRouter → Unbiased | [Compatibility](docs/agents/pareto.md) |
 | Switchyard Auto | Native Codex → Luna / Sol | [Routing policy](config/switchyard/README.md#routing-policy) |
 
-Union Alpha's underlying model is undisclosed. It supports automatic tool selection
-and has no hosted-search capability. Union, GLM and Switchyard have
-[recorded v2 proofs](v2_agent/README.md), each valid only for its named runtime.
+Pareto supports automatic tool selection and has no hosted-search capability.
+It is a v1 route. GLM and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
+each valid only for its named runtime; Union Alpha's proof is retained as history.
 
 ## Quick start
 

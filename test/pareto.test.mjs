@@ -1,25 +1,22 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { routedModel } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG, validateOpenRouterRoute } from "../src/routed-models.mjs";
-import { prepareUnionAlphaRequest } from "../src/union-alpha-compat.mjs";
+import { prepareParetoRequest } from "../src/pareto-compat.mjs";
 import { openPort } from "./port-pool.mjs";
+import { launch, ready, stop, responseJson } from "./router-fixture.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const route = MODEL_BY_SLUG.get("openrouter/union-alpha");
-const caller = "union-fixture-caller-capability-long-enough";
-const internal = "union-fixture-internal-capability-long-enough";
+const route = MODEL_BY_SLUG.get("openrouter/pareto");
+const caller = "pareto-fixture-caller-capability-long-enough";
+const internal = "pareto-fixture-internal-capability-long-enough";
 const fn = { type: "function", name: "lookup", parameters: { type: "object", properties: {} } };
 
-test("Union Alpha advertises its measured contract without guessed identity and with exact-route v2", () => {
+test("Pareto advertises its measured exact-route contract as v1", () => {
   assert.equal(validateOpenRouterRoute(route), route);
   const built = routedModel({ base_instructions: "You are Codex.", model_messages: {} }, route);
   assert.equal(built.context_window, 262144);
@@ -30,59 +27,44 @@ test("Union Alpha advertises its measured contract without guessed identity and 
   assert.equal(built.support_verbosity, false);
   assert.equal(built.supports_search_tool, true);
   assert.equal(route.searchTool, undefined);
-  assert.equal(built.multi_agent_version, "v2");
-  assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, only: ["novita"] } }), /exact Stealth/);
+  assert.equal(built.multi_agent_version, "v1");
+  assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, only: ["novita"] } }), /exact Unbiased/);
   assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, allow_fallbacks: true } }), /fallback disabled/);
 });
 
-test("Union Alpha strips unsupported controls and implements none without weakening forced choices", () => {
-  const original = { tools: [fn], tool_choice: "auto", reasoning: { effort: "max" }, reasoning_effort: "max", text: { verbosity: "high", format: { type: "json_object" } }, max_output_tokens: 256, parallel_tool_calls: true };
-  const next = prepareUnionAlphaRequest(original, route);
+test("Pareto strips unsupported controls and implements none without weakening forced choices", () => {
+  const original = { tools: [fn], tool_choice: "auto", reasoning: { effort: "max" }, reasoning_effort: "max", text: { verbosity: "high" }, max_output_tokens: 256, parallel_tool_calls: true };
+  const next = prepareParetoRequest(original, route);
   assert.equal(next.reasoning, undefined);
   assert.equal(next.reasoning_effort, undefined);
-  assert.deepEqual(next.text, { format: { type: "json_object" } });
+  assert.equal(next.text, undefined);
   assert.equal(next.max_output_tokens, 256);
   assert.equal(next.parallel_tool_calls, true);
   assert.equal(original.text.verbosity, "high");
   assert.deepEqual(original.reasoning, { effort: "max" });
-  const noTools = prepareUnionAlphaRequest({ ...original, tool_choice: "none" }, route);
+  const plainText = prepareParetoRequest({ ...original, text: { verbosity: "high", format: { type: "text" } } }, route);
+  assert.equal(plainText.text, undefined);
+  for (const format of [
+    { type: "json_object" },
+    { type: "json_schema", name: "result", schema: { type: "object" } },
+    { type: "unknown" },
+  ]) {
+    assert.throws(
+      () => prepareParetoRequest({ ...original, text: { format } }, route),
+      { code: "unsupported_response_format", status: 400 },
+    );
+  }
+  const noTools = prepareParetoRequest({ ...original, tool_choice: "none" }, route);
   assert.equal(noTools.tools, undefined);
   assert.equal(noTools.tool_choice, undefined);
   for (const tool_choice of ["required", { type: "function", name: "lookup" }, { type: "allowed_tools", mode: "required", tools: [fn] }]) {
-    assert.throws(() => prepareUnionAlphaRequest({ ...original, tool_choice }, route), { code: "unsupported_tool_choice", status: 400 });
+    assert.throws(() => prepareParetoRequest({ ...original, tool_choice }, route), { code: "unsupported_tool_choice", status: 400 });
   }
-  assert.equal(prepareUnionAlphaRequest(original, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash")), original);
+  assert.equal(prepareParetoRequest(original, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash")), original);
 });
 
-function launch(script, env) {
-  const child = spawn(process.execPath, [path.join(root, "src", script)], {
-    cwd: root, env: { ...process.env, ...env }, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
-  });
-  let errors = "";
-  child.stderr.on("data", bytes => { errors += bytes; });
-  child.errors = () => errors;
-  return child;
-}
-async function ready(url, child, headers = {}) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    assert.equal(child.exitCode, null, child.errors());
-    try { if ((await fetch(url, { headers })).status < 500) return; } catch {}
-    await new Promise(resolve => setTimeout(resolve, 20));
-  }
-  throw new Error("Isolated service not ready: " + child.errors());
-}
-async function stop(child) {
-  if (child.exitCode === null && child.signalCode === null) {
-    const ended = once(child, "exit"); child.kill(); await ended;
-  }
-}
-function responseJson(response, value) {
-  response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify(value));
-}
-
-test("Union Alpha uses the authenticated direct Responses hop for native tools, replay, and compaction", async () => {
-  const state = mkdtempSync(path.join(os.tmpdir(), "union-router-"));
+test("Pareto uses the authenticated direct Responses hop for native tools, replay, and compaction", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "pareto-router-"));
   const seen = [];
   const upstream = http.createServer(async (request, response) => {
     const chunks = [];
@@ -147,10 +129,10 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
     }
     const custom = body.tools?.find(tool => tool.parameters?.properties?.input);
     const call = custom
-      ? { type: "function_call", id: "fc_fixture", call_id: "union_custom", name: custom.name, arguments: JSON.stringify({ input: "*** Begin Patch\n*** End Patch" }) }
+      ? { type: "function_call", id: "fc_fixture", call_id: "pareto_custom", name: custom.name, arguments: JSON.stringify({ input: "*** Begin Patch\n*** End Patch" }) }
       : body.tools?.some(tool => tool.name === "mcp__codex_app__list_projects")
-        ? { type: "function_call", id: "fc_fixture", call_id: "union_app", name: "mcp__codex_app__list_projects", arguments: "{}" }
-        : { type: "message", id: "msg_fixture", role: "assistant", content: [{ type: "output_text", text: "UNION_DONE" }] };
+        ? { type: "function_call", id: "fc_fixture", call_id: "pareto_app", name: "mcp__codex_app__list_projects", arguments: "{}" }
+        : { type: "message", id: "msg_fixture", role: "assistant", content: [{ type: "output_text", text: "PARETO_DONE" }] };
     if (!body.stream) return responseJson(response, { id: "resp_fixture", status: "completed", output: [call] });
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const events = [
@@ -174,7 +156,7 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
     CODEX_ROUTER_API_PORT: String(apiPort), CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${apiPort}/v1`,
     CODEX_ROUTER_GATEWAY_BASE_URL: "http://127.0.0.1:1/v1", CODEX_ROUTER_QUIET: "1", CODEX_ROUTER_SHOW_ALL_MODELS: "1",
-    OPENROUTER_API_KEY: "UNION_SYNTHETIC_CREDENTIAL", OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1` };
+    OPENROUTER_API_KEY: "PARETO_SYNTHETIC_CREDENTIAL", OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1` };
   const forwarder = launch("api-forwarder.mjs", env);
   const router = launch("router.mjs", env);
   const base = callerBaseUrl(routerPort, caller);
@@ -194,18 +176,18 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
     assert.equal(appCall.namespace, "mcp__codex_app");
     assert.equal(appCall.name, "list_projects");
     assert.equal(seen[0].path, "/v1/responses");
-    assert.equal(seen[0].body.model, "stealth/union-alpha");
+    assert.equal(seen[0].body.model, "unbiased/pareto");
     assert.deepEqual(seen[0].body.provider, route.openRouterProviderPolicy);
     assert.equal(seen[0].body.reasoning, undefined);
     assert.equal(seen[0].body.parallel_tool_calls, undefined);
     assert.equal(seen[0].body.text, undefined);
-    assert.equal(seen[0].headers.authorization, "Bearer UNION_SYNTHETIC_CREDENTIAL");
+    assert.equal(seen[0].headers.authorization, "Bearer PARETO_SYNTHETIC_CREDENTIAL");
     assert.equal(seen[0].headers["chatgpt-account-id"], undefined);
     const replay = await post({ tools, tool_choice: "none", input: [appCall, { type: "function_call_output", call_id: appCall.call_id, output: "[]" }] });
     assert.equal(replay.status, 200);
     await replay.text();
     assert.equal(seen[1].body.input[0].name, "mcp__codex_app__list_projects");
-    assert.equal(seen[1].body.input[1].call_id, "union_app");
+    assert.equal(seen[1].body.input[1].call_id, "pareto_app");
     assert.equal(seen[1].body.tools, undefined);
     assert.equal(seen[1].body.tool_choice, undefined);
     const collisionTools = [{ ...fn, name: "fixture__read" },
@@ -242,6 +224,15 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
     assert.deepEqual(JSON.parse(seen.at(-1).body.input[0].arguments), { input: customCall.input });
     assert.equal(seen.at(-1).body.input[1].call_id, customCall.call_id);
     const count = seen.length;
+    for (const endpoint of ["responses", "responses/compact"]) {
+      const structured = await post({ text: { format: {
+        type: "json_schema", name: "result", strict: true,
+        schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
+      } } }, endpoint);
+      assert.equal(structured.status, 400);
+      assert.equal((await structured.json()).error.code, "unsupported_response_format");
+    }
+    assert.equal(seen.length, count, "structured response format must fail before provider traffic");
     for (const tool_choice of ["required", { type: "function", name: "lookup" }]) {
       const rejected = await post({ tools: [fn], tool_choice });
       assert.equal(rejected.status, 400);
@@ -390,8 +381,8 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
   }
 });
 
-test("OpenRouter forwarder cancels Union and GLM work before headers and during streaming", async () => {
-  const state = mkdtempSync(path.join(os.tmpdir(), "union-cancel-"));
+test("OpenRouter forwarder cancels Pareto and GLM work before headers and during streaming", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "pareto-cancel-"));
   let receivedResolve, closedResolve;
   let sendHeaders = false, upstreamRequests = 0;
   const upstream = http.createServer(async (request, response) => {
@@ -408,7 +399,7 @@ test("OpenRouter forwarder cancels Union and GLM work before headers and during 
   const apiPort = await openPort();
   const forwarder = launch("api-forwarder.mjs", { MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_INTERNAL_KEY: internal, CODEX_ROUTER_API_PORT: String(apiPort), CODEX_ROUTER_QUIET: "1",
-    OPENROUTER_API_KEY: "UNION_SYNTHETIC_CREDENTIAL", OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1` });
+    OPENROUTER_API_KEY: "PARETO_SYNTHETIC_CREDENTIAL", OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1` });
   let controller;
   let timer;
   try {

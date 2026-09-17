@@ -38,7 +38,7 @@ response boundary that requires them, not as scattered slug checks.
 | Tests and public guidance | Endpoint regression, routing/catalog coverage, README model list and a focused endpoint guide |
 | Subagent eligibility | Leave uncertified routes at v1; load [certification](../SUBAGENT-CERTIFICATION.md) only when claiming v2 |
 
-Existing contracts: [GLM](openrouter-glm.md), [Union](union-alpha.md), and
+Existing contracts: [GLM](openrouter-glm.md), [Pareto](pareto.md), and
 [Switchyard](../../config/switchyard/README.md). Read only the one being reused
 or changed. Their provider-specific repairs are not default settings for a new model.
 

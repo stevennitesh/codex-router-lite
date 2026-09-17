@@ -185,6 +185,12 @@ const EMBEDDINGS_MAX_RESPONSE_BYTES = positiveByteLimit(
 // operator who would rather see the provider's own numbers can turn it off
 // without downgrading the router.
 const ZERO_INPUT_ESTIMATE = process.env.CODEX_ROUTER_ZERO_INPUT_ESTIMATE !== "0";
+const RETIRED_ROUTED_MODELS = new Map([
+  [
+    "openrouter/union-alpha",
+    "The openrouter/union-alpha route is retired. Select openrouter/pareto explicitly; the old slug is not a paid alias.",
+  ],
+]);
 // Kill switch for the empty-completion guard and its single retry. It is on
 // because an empty completion is otherwise invisible -- the client records the
 // turn as a silent success -- but the retry re-sends the whole prompt, so an
@@ -1963,6 +1969,14 @@ async function handleResponses(request, response, requestUrl) {
     controller.signal.throwIfAborted();
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
+    const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
+    if (!registeredRoute && retiredMessage) {
+      writeJson(response, 400, { error: {
+        type: "invalid_request_error", code: "retired_model", param: "model",
+        message: retiredMessage,
+      } });
+      return;
+    }
     if (!registeredRoute && requestedModel.includes("/")) {
       writeJson(response, 400, { error: {
         type: "invalid_request_error", code: "unrouted_model", param: "model",

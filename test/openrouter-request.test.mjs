@@ -66,7 +66,7 @@ test("registry rejects ambiguous identities before creating route maps", () => {
   wrongProvider[0].provider = "switchyard";
   assert.throws(() => validateRoutedRegistry(providers, wrongProvider), /unsupported provider/);
   const wrongProfile = structuredClone(CHECKED_IN_MODELS);
-  wrongProfile[0].requestProfile = "union-alpha";
+  wrongProfile[0].requestProfile = "pareto";
   assert.throws(() => validateRoutedRegistry(providers, wrongProfile), /unsupported request profile/);
   assert.throws(() => validateOpenRouterRoute({ ...externalRoutes[0], requestProfile: "unknown" }), /Unsupported OpenRouter request profile/);
 });

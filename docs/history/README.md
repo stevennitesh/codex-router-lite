@@ -5,6 +5,7 @@ instructions or live status. Read it only for provenance or a specific past fail
 Current work starts at [the repository entry](../../AGENTS.md).
 
 - [Union Alpha investigation, 2026-09-17](2026-09-17-union-alpha.md)
+- [Pareto investigation, 2026-09-17](2026-09-17-pareto.md)
 - [Switchyard pin review, 2026-09-12](2026-09-12-switchyard-pin.md)
 
 Exact-route proof records remain in [v2_agent](../../v2_agent/README.md) because

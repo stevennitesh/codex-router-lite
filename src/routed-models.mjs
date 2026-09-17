@@ -8,7 +8,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MODEL_REGISTRATIONS = [
   ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
   ["openrouter/glm-5.3-flash-gmicloud", "glm-5.3-flash"],
-  ["openrouter/union-alpha", "union-alpha"],
+  ["openrouter/pareto", "pareto"],
   ["switchyard/auto", "switchyard-native"],
 ];
 const CONFIG_FILES = ["config/openrouter/openrouter.json", "config/switchyard/switchyard.json",
@@ -18,7 +18,7 @@ const EXPECTED_MODELS = new Set(MODEL_REGISTRATIONS.map(([slug]) => slug));
 const EXPECTED_REQUEST_PROFILES = new Map(MODEL_REGISTRATIONS.map(([slug, profile]) => [slug, profile]));
 const REQUEST_PROFILES = new Map([
   ["glm-5.3-flash", { transport: "chat", validate: validateGlmRoute }],
-  ["union-alpha", { transport: "responses", validate: validateUnionRoute }],
+  ["pareto", { transport: "responses", validate: validateParetoRoute }],
   ["switchyard-native", { transport: "native" }],
 ]);
 
@@ -65,16 +65,16 @@ export function validateRoutedRegistry(providers, models) {
   }
 }
 
-function validateUnionRoute(model) {
+function validateParetoRoute(model) {
   const policy = model.openRouterProviderPolicy;
-  if (model.upstreamModel !== "stealth/union-alpha" ||
-      policy?.only?.length !== 1 || policy.only[0] !== "stealth" ||
-      policy?.order?.length !== 1 || policy.order[0] !== "stealth" ||
+  if (model.upstreamModel !== "unbiased/pareto" ||
+      policy?.only?.length !== 1 || policy.only[0] !== "unbiased" ||
+      policy?.order?.length !== 1 || policy.order[0] !== "unbiased" ||
       policy.allow_fallbacks !== false || policy.require_parameters !== true ||
-      model.requestProfile !== "union-alpha" ||
+      model.requestProfile !== "pareto" ||
       model.openRouterEndpointCompatibility?.dropParallelToolCalls !== true ||
       model.searchTool !== undefined || model.supportsSearchHistory === true) {
-    throw new Error("Union Alpha must select the exact Stealth endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
+    throw new Error("Pareto must select the exact Unbiased endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
   }
   return model;
 }

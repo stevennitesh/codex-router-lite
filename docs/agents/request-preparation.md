@@ -13,7 +13,7 @@ response. These values belong to one request and must travel together.
 | Capabilities, exact endpoint restrictions, limits | `config/openrouter/*.json` and their registry validation |
 | Preparation order, ordinary/compaction differences | `src/routed-request.mjs` |
 | Tool identity, discovery, custom call conversion, streaming restoration | `src/namespace-relay.mjs` |
-| Union parameter restrictions | `src/union-alpha-compat.mjs` |
+| Pareto parameter restrictions | `src/pareto-compat.mjs` |
 | Hosted-search conversion and bounds | `src/openrouter-hosted-search.mjs` and `src/search-capability.mjs` |
 | Native authentication, encrypted handoff resolution, HTTP lifecycle, retries | `src/router.mjs` and its existing transport helpers |
 | Final outbound payload and endpoint policy | `src/openrouter-request.mjs` |
