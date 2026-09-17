@@ -36,6 +36,13 @@ and HTTP status in sanitized evidence. Locate the earliest violated contract:
 
 ## Repair and close
 
+For empty ordinary function calls, `tool-protocol` warnings record only source,
+restored, streamed-delta and arguments-done character counts. Zero source and
+restored counts locate an empty provider close; nonzero delta/done counts expose
+a contradictory stream. Missing counters mean the corresponding events were not
+observed. These diagnostics do not retain arguments or repair calls. Pair them
+with request timing and the authorized local rollout before attributing a failure.
+
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
 scope predicate and a regression that fails without it. Remove unused transforms.

@@ -14,6 +14,33 @@ import {
 } from "../src/namespace-relay.mjs";
 import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
 
+test("ordinary empty-call diagnostics locate the boundary without inventing arguments or logging content", async () => {
+  const flat = flattenNamespaceTools([{ type: "namespace", name: "collaboration", tools: [
+    { type: "function", name: "send_message", parameters: { type: "object" } },
+  ] }]);
+  for (const [streamed, completed] of [["", ""], ['{"message":"PRIVATE_FIXTURE"}', ""], ['{"message":"PRIVATE_FIXTURE"}', '{"message":"PRIVATE_FIXTURE"}']]) {
+    const call = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: flat.tools[0].name, arguments: "" };
+    const events = [
+      { type: "response.output_item.added", item: call },
+      { type: "response.function_call_arguments.delta", item_id: call.id, delta: streamed },
+      { type: "response.function_call_arguments.done", item_id: call.id, arguments: streamed },
+      { type: "response.output_item.done", item: { ...call, arguments: completed } },
+    ];
+    const wire = events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+    const transform = new NamespaceToolCallTransform(flat.namespaces, "text/event-stream");
+    const diagnostics = [];
+    transform.on("diagnostic", diagnostic => diagnostics.push(diagnostic));
+    const output = await collect(Readable.from([...Buffer.from(wire)].map(b => Buffer.from([b]))).pipe(transform));
+    const restored = output.trim().split("\n\n").map(frame => JSON.parse(frame.split("\n").find(line => line.startsWith("data:")).slice(5)));
+    assert.equal(restored.at(-1).item.arguments, completed);
+    assert.equal(restored.at(-1).item.namespace, "collaboration");
+    assert.equal(diagnostics.length, completed ? 0 : 1);
+    if (!completed) assert.deepEqual(diagnostics[0], { code: "empty_function_arguments", sourceCharacters: 0,
+      restoredCharacters: 0, deltaCharacters: streamed.length, doneCharacters: streamed.length });
+    assert.ok(!JSON.stringify(diagnostics).includes("PRIVATE_FIXTURE"));
+  }
+});
+
 test("invalid historical function names retain rejected calls, results, and reversible identity without granting tools", () => {
   const flat = flattenNamespaceTools([{ type: "function", name: "available", parameters: {} }], { maxNameLength: 64 });
   const call = { type: "function_call", name: "desktop_probe.list_projects", arguments: "{}", call_id: "rejected" };

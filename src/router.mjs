@@ -2200,13 +2200,13 @@ async function handleResponses(request, response, requestUrl) {
       if (envelopeCompat) transforms.push(envelopeCompat);
       // Restore only the calls authored by the routed provider.
       if (route) {
-        transforms.push(
-          new NamespaceToolCallTransform(
-            flattenedNamespaces,
-            contentType,
-            route?.slug,
-          ),
+        const namespaceRelay = new NamespaceToolCallTransform(
+          flattenedNamespaces, contentType, route.slug,
         );
+        namespaceRelay.on("diagnostic", (diagnostic) => {
+          console.warn(`[codex-router] tool-protocol at=${new Date().toISOString()} model=${route.slug} ${JSON.stringify(diagnostic)}`);
+        });
+        transforms.push(namespaceRelay);
       }
       const guard =
         route && EMPTY_COMPLETION_RETRY

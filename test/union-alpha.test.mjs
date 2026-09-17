@@ -89,6 +89,16 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks));
     seen.push({ body, headers: request.headers, path: request.url });
+    if (body.max_output_tokens === 20) {
+      const item = { type: "function_call", id: "empty_fixture", call_id: "empty_fixture", name: body.tools[0].name, arguments: "" };
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      const events = [{ type: "response.output_item.done", item }, { type: "response.completed", response: { status: "completed", output: [item] } }];
+      return response.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+    }
+    if (body.max_output_tokens === 19) {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      return response.end('event: error\ndata: {"type":"error","code":"provider_error","message":"Synthetic stream failure"}\n\ndata: [DONE]\n\n');
+    }
     if (body.max_output_tokens === 11) {
       return responseJson(response, { status: "completed", output: body.tools.map((tool, index) =>
         ({ type: "function_call", name: tool.name, call_id: `collision_${index}`, arguments: "{}" })) });
@@ -336,6 +346,20 @@ test("Union Alpha uses the authenticated direct Responses hop for native tools, 
       assert.ok(!wire.includes("empty_completion"));
       assert.equal(seen.length, before + 1, "explicit failure must not be retried as empty success");
     }
+    const beforeError = seen.length;
+    const emptyCall = await post({ tools, stream: true, max_output_tokens: 20 });
+    assert.equal(emptyCall.status, 200);
+    assert.match(await emptyCall.text(), /"arguments":""/);
+    // The warning precedes response completion but crosses a separate stderr pipe.
+    for (let i = 0; i < 50 && !router.errors().includes("empty_function_arguments"); i++)
+      await new Promise(resolve => setTimeout(resolve, 10));
+    assert.match(router.errors(), /tool-protocol.*"sourceCharacters":0,"restoredCharacters":0,"deltaCharacters":null,"doneCharacters":null/);
+    const providerError = await post({ stream: true, max_output_tokens: 19 });
+    assert.equal(providerError.status, 200);
+    const errorWire = await providerError.text();
+    assert.match(errorWire, /"code":"provider_error"/);
+    assert.ok(!errorWire.includes("empty_completion"));
+    assert.equal(seen.length, beforeError + 2, "empty calls and generic SSE errors must not trigger extra provider requests");
     const beforeEmpty = seen.length;
     const empty = await post({ stream: true, max_output_tokens: 7 });
     assert.equal(empty.status, 502);

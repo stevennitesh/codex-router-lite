@@ -224,3 +224,52 @@ binary was built or installed. Router cannot order these in-process operations;
 adding network delays, retries, or model instructions would hide the symptom.
 The upstream lifecycle correction remains open. Source reference:
 [terminal flush](https://github.com/openai/codex/blob/fa8cf449858c7fffc83d9e3604894852344962a1/codex-rs/core/src/tasks/mod.rs#L813).
+
+## Reviewer follow-up: compaction state, errors and completion
+
+Historical investigation of three Union reviewers on deployed `cb724aec`,
+compared with the earlier `e6f61fb6` reviewers. This is not fresh v2 certification.
+
+- The second round made 83 tool calls versus 156, returned about 523K tool-output
+  characters versus 1.326M, and consumed about 1.959M cumulative input tokens
+  versus 4.839M. It performed no compactions; the earlier round performed three.
+  Narrower assignments and supplied prior findings confound the comparison.
+  Every second-round peak input was below the old 115K threshold, so it does not
+  demonstrate the benefit of the new 220K threshold or exercise overflow recovery.
+- A repeated-checkpoint reproduction exposed a separate state bug: prior
+  hypotheses, unknowns and blockers were always prepended to the next summary.
+  Sixteen old hypotheses exhausted the budget and a cleared blocker survived.
+  Valid summaries now replace current orientation lists; malformed summaries
+  retain prior state. Source selection and provenance validation remain intact.
+- A generic SSE `error` followed by `[DONE]` was classified as empty success,
+  suppressing the original diagnostic and permitting a retry. The guard now
+  preserves that error. The real Router fixture verifies one upstream request;
+  genuine empty successes retain their existing bounded retry.
+- Two second-round `collaboration.send_message` calls had empty arguments; three
+  also occurred in the first round. The saved native transcripts lack raw
+  provider frames, so they cannot identify the first faulty boundary. Ordinary
+  argument restoration does not synthesize missing JSON. Five small live paired
+  plain/namespaced calls preserved arguments through the relay and completed
+  after empty tool results; a sixth request returned HTTP 504. The failure was
+  not reproduced. Payload-free `tool-protocol` diagnostics now record source,
+  restored, delta and arguments-done lengths for an empty ordinary call close.
+  No argument guessing, silent retry or speculative stream repair was added.
+- The compatibility reviewer's continuation after its 22:22:48 UTC message
+  corresponds to a 300014 ms upstream timeout. At final interruption another
+  request had been pending 5509 ms. The correctness reviewer's last request was
+  interrupted after 75534 ms. Thus parent cancellation and upstream stalls
+  confound claims that either model simply forgot to finish. Matching is by
+  rollout timestamps and Router timings, which lack per-task correlation IDs.
+  Generic child guidance now distinguishes messaging from final completion and
+  avoids an unnecessary message round trip. Three synthetic cases using the
+  generated guidance returned final answers without another message call,
+  including replay of empty and nonempty message-tool results. These small probes
+  do not prove long-session reliability or repair upstream latency.
+- One reviewer still used excessive read budgets and a PowerShell quoting form
+  that failed before execution. Existing bounded-read and literal-quoting
+  instructions already cover these; the next call corrected the quoting.
+  No extra model-specific instruction or shell-rewriting workaround was added.
+
+Local regressions and the complete 199-test suite passed, along with syntax,
+product-boundary and installed-CLI catalog compatibility checks. These source
+changes require a separate deployment/catalog refresh to affect live tasks.

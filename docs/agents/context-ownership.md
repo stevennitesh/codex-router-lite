@@ -36,6 +36,7 @@ These are product behavior, not extra repo instructions to preload while coding:
 | External-model tool failure recovery | `src/instruction-profiles.mjs`, appended by catalog generation to both external prompt surfaces; native profiles retain their own instructions |
 | Root delegation wait/cleanup hint | `src/config-manager.mjs` writes managed `multi_agent_v2.root_agent_usage_hint_text`; [native behavior](native-codex.md) |
 | Routed app/tool skills | `skills/*/SKILL.md`, installed by `src/skills-install.mjs`; companion skills are task-conditional |
+| Routed child task and completion guidance | `src/codex-agent-catalog.mjs`, generated into managed agent definitions during catalog refresh |
 | Switchyard classifier | `config/switchyard/routes.template.toml`; [policy](../../config/switchyard/README.md#routing-policy) |
 | Optional named worker | `config/switchyard/switchyard_worker.toml`; installed only when requested |
 

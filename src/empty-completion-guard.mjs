@@ -727,7 +727,8 @@ export class EmptyCompletionGuard extends Transform {
     // Explicit unsuccessful terminals are actionable client content for every
     // Responses provider. A following [DONE] must not hide their diagnostic
     // behind an empty-success retry, even when output is empty.
-    if ((type === "response.incomplete" && data?.response?.status === "incomplete") ||
+    if (type === "error" || data?.type === "error" ||
+        (type === "response.incomplete" && data?.response?.status === "incomplete") ||
         (type === "response.failed" && data?.response?.status === "failed")) return true;
     return isContentEvent(type, data);
   }

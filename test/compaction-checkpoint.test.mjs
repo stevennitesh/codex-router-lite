@@ -2,6 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareCompaction, finalizeCheckpoint, renderCheckpoint } from "../src/compaction-checkpoint.mjs";
 
+test("valid successive summaries replace resolved orientation; malformed summaries retain prior state", () => {
+  const base = { objective: "Synthetic task", requirement_refs: ["U001"], attempt_refs: [], observation_refs: [],
+    unverified: [], unknowns: [], blockers: [], next_step: "Continue" };
+  const old = { ...base, blockers: ["Old blocker"], unknowns: ["Old question"],
+    unverified: Array.from({ length: 16 }, (_, i) => ({ text: `Old hypothesis ${i}`, refs: [] })) };
+  const first = finalizeCheckpoint(JSON.stringify(old), prepareCompaction([{ role: "user", content: "Request" }]));
+  const replay = prepareCompaction([{ role: "user", content: renderCheckpoint(first) }]);
+  const fresh = { ...base, unverified: [{ text: "New hypothesis", refs: ["U001"] }] };
+  const next = finalizeCheckpoint(JSON.stringify(fresh), replay);
+  assert.deepEqual(next.orientation.blockers, []);
+  assert.deepEqual(next.orientation.unknowns, []);
+  assert.deepEqual(next.orientation.unverified, fresh.unverified);
+  assert.deepEqual(next.source_refs.requirements, ["U001"]);
+  const replayAgain = prepareCompaction([{ role: "user", content: renderCheckpoint(next) }]);
+  assert.deepEqual(replayAgain.previous.unverified, fresh.unverified);
+  const fallback = finalizeCheckpoint('{"blockers":42}', replay);
+  assert.deepEqual(fallback.orientation.blockers, old.blockers);
+  assert.ok(fallback.orientation.unknowns.includes("Old question"));
+  assert.equal(fallback.orientation.unverified[0].text, "Old hypothesis 0");
+});
+
 test("compaction preserves easy-input messages and replays their produced checkpoint without promoting other items", () => {
   const input = [{ role: "user", content: "Keep SYNTHETIC_REQUIREMENT_739." },
     { role: "assistant", content: [{ type: "output_text", text: "Unverified model statement." }] }];

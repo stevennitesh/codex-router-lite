@@ -1081,7 +1081,10 @@ export function finalizeCheckpoint(rawModelText, prepared) {
     remaining,
   );
 
-  const unverified = [...prepared.previous.unverified];
+  // A valid summary describes current state, including deliberately empty lists.
+  // Unioning prior orientation resurrects resolved blockers and can fill the
+  // budget before any fresh hypotheses survive. Fall back only on invalid output.
+  const unverified = parsed ? [] : [...prepared.previous.unverified];
   if (Array.isArray(parsed?.unverified)) {
     for (const entry of parsed.unverified.slice(0, MAX_UNVERIFIED)) {
       if (!plainObject(entry)) continue;
@@ -1148,10 +1151,9 @@ export function finalizeCheckpoint(rawModelText, prepared) {
   const unknowns = uniqueStrings(
     [
       ...(budgetErrors.length ? ["Some model-selected entries were omitted to satisfy checkpoint limits; retained evidence is incomplete."] : []),
-      ...prepared.previous.unknowns,
       ...(Array.isArray(parsed?.unknowns)
         ? parsed.unknowns.map((entry) => boundedString(entry, MAX_LIST_TEXT_BYTES))
-        : []),
+        : prepared.previous.unknowns),
       ...(!parsed ? ["Task state must be reconstructed from retained evidence."] : []),
       ...(prepared.catalogTruncated
         ? [
@@ -1163,10 +1165,9 @@ export function finalizeCheckpoint(rawModelText, prepared) {
   );
   const blockers = uniqueStrings(
     [
-      ...prepared.previous.blockers,
       ...(Array.isArray(parsed?.blockers)
         ? parsed.blockers.map((entry) => boundedString(entry, MAX_LIST_TEXT_BYTES))
-        : []),
+        : prepared.previous.blockers),
     ],
     MAX_BLOCKERS,
   );

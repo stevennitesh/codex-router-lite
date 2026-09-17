@@ -2874,6 +2874,32 @@ export class NamespaceToolCallTransform extends Transform {
     return { state };
   }
 
+  // Observe ordinary calls without repairing or retaining argument content.
+  // A completed empty call is invalid even for a no-argument JSON tool ({}).
+  // Lengths distinguish a provider-empty close from lost deltas or relay loss.
+  #observeOrdinaryArguments(sourceEvent, event) {
+    const sourceItem = sourceEvent.item;
+    const state = this.#callsByItemId.get(sourceEvent.item_id ?? sourceItem?.id);
+    if (state?.kind || (state && state.sourceType !== "function_call")) return;
+    if (state && sourceEvent.type === "response.function_call_arguments.delta" &&
+        typeof sourceEvent.delta === "string") {
+      state.ordinaryDeltaCharacters = (state.ordinaryDeltaCharacters ?? 0) + sourceEvent.delta.length;
+    } else if (state && sourceEvent.type === "response.function_call_arguments.done") {
+      state.ordinaryDoneCharacters = typeof sourceEvent.arguments === "string"
+        ? sourceEvent.arguments.length : null;
+    } else if (sourceEvent.type === "response.output_item.done" &&
+        sourceItem?.type === "function_call" && event.item?.type === "function_call" &&
+        (sourceItem.arguments === "" || event.item.arguments === "")) {
+      this.emit("diagnostic", {
+        code: "empty_function_arguments",
+        sourceCharacters: typeof sourceItem.arguments === "string" ? sourceItem.arguments.length : null,
+        restoredCharacters: typeof event.item.arguments === "string" ? event.item.arguments.length : null,
+        deltaCharacters: state?.ordinaryDeltaCharacters ?? null,
+        doneCharacters: state?.ordinaryDoneCharacters ?? null,
+      });
+    }
+  }
+
   #customDeltaMismatch(state, inputFingerprint) {
     if (!state.sawArgumentDelta) return undefined;
     // If no decoded text reached Codex, the completed input cannot contradict it.
@@ -3261,6 +3287,7 @@ export class NamespaceToolCallTransform extends Transform {
         event = next;
         changed = true;
       }
+      this.#observeOrdinaryArguments(sourceEvent, event);
       if (sourceEvent?.type === "response.output_item.added") {
         const reason = this.#registerCall(sourceEvent.item, event.item);
         if (reason) return this.#unsafeSseFrame(frame, reason);
