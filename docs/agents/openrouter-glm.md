@@ -1,16 +1,9 @@
 # OpenRouter GLM compatibility
 
-The custom-tool relay follows the pinned LiteLLM input conversion: unwrap a
-string `content`, otherwise retain raw arguments, including its one-million
-Unicode-code-point parse limit. Reject incompatible non-string content and
-any disagreement between streamed, completed, and closed input. Fragmented
-response preludes may exceed the normal staging budget within the bounded
-10 MiB event limit; the empty-completion verdict still applies.
-
 Read for exact GLM endpoint policy, LiteLLM Responses repair, hosted search, or
 Python dependency changes. For app-tool or encrypted handoff failures, also read
-[native Codex compatibility](native-codex.md). Shared refresh, diagnosis and proof
-requirements live in [compatibility maintenance](compatibility-maintenance.md).
+[native Codex compatibility](native-codex.md). Use [debugging](debugging.md) for wire failures and
+[compatibility maintenance](compatibility-maintenance.md) for app/upstream drift.
 
 ## OpenRouter GLM-5.3-Flash
 
@@ -21,6 +14,13 @@ selects one endpoint with fallback disabled and owns its endpoint compatibility
 flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
+
+The custom-tool relay follows the pinned LiteLLM input conversion: unwrap a
+string `content`, otherwise retain raw arguments, including its one-million
+Unicode-code-point parse limit. Reject incompatible non-string content and
+any disagreement between streamed, completed, and closed input. Fragmented
+response preludes may exceed the normal staging budget within the bounded
+10 MiB event limit; the empty-completion verdict still applies.
 
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
 `src/zai-responses-compat.mjs` repairs missing message envelopes, separates
@@ -33,7 +33,8 @@ Fresh hosted-search turns bypass the Chat Completions translation and use the in
 
 After a hosted-search change, test non-streaming output, split SSE item and terminal events, exact completed-history replay, citation/source preservation, mixed ordinary tools, and the internal forwarder's fail-closed bounds. A direct OpenRouter success is still not Windows Codex compatibility proof; deployment acceptance requires one ordinary app search turn and must treat a provider 429 as capacity rather than a schema failure.
 
-For a compatibility failure, preserve a sanitized event sequence and identify the first divergence among Codex, Router, LiteLLM, OpenRouter, the selected endpoint, and the model. Reproduce through an ordinary Codex caller. A direct endpoint success is not Codex compatibility proof.
+For a compatibility failure follow [debugging](debugging.md), tracing LiteLLM
+as well as Router and OpenRouter. A direct endpoint success is not Codex proof.
 
 Do not enable fallback or select an unproved endpoint as an outage response. A new endpoint or model is a separate product decision.
 

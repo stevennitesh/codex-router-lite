@@ -17,9 +17,8 @@ Ordinary and compaction requests use the internal OpenRouter forwarder's direct
 Responses hop. They do not pass through LiteLLM. Existing request-local relays
 flatten namespaces, translate native freeform tools into a string-valued
 function, and restore calls and their replayed results for Codex.
-Compaction translates historical custom calls too: raw native patch history
-caused HTTP 200 with `status: failed`, while function-shaped history produced a
-valid checkpoint in the paired live probe.
+Compaction translates historical custom calls too; raw native custom history
+is not valid provider replay on this route.
 
 ## Maintained behavior
 
@@ -69,15 +68,15 @@ The OpenRouter forwarder cancels provider requests when its caller disconnects,
 including after the complete POST body but before response headers. Successful
 response completion does not trigger cancellation.
 
-## Validation and remaining release work
+## Validation
 
 Run the Union, namespace-relay, compaction-checkpoint, and empty-completion-guard
 tests, then the retained suite, npm run check, and current native catalog check.
-[Historical investigation and candidate proofs](union-alpha-history.md) record
+[Historical investigation and candidate proofs](../history/2026-09-17-union-alpha.md) record
 the original observations and controlled comparisons; they are not live status.
 Keep scratch payloads and logs under generated/union-alpha with no credentials
 or private project-file contents.
 
-The candidate still needs deployment validation and exact-route v2 certification.
-Existing GLM and Switchyard proof records describe their prior deployed runtime;
-shared protocol changes require fresh runtime-bound proofs before release claims.
+Deployment acceptance requires installed-runtime validation. Shared protocol changes
+require fresh affected runtime-bound proofs before release claims; see
+[certification](../SUBAGENT-CERTIFICATION.md). Source tests alone do not promote this route.

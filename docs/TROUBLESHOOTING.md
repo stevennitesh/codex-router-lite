@@ -1,6 +1,7 @@
 # Troubleshooting
 
-Start with read-only checks:
+For request, replay, tool or stream defects use [debugging](agents/debugging.md).
+This guide owns service and operator diagnosis. Start with read-only checks:
 
 ```powershell
 .\model-router.ps1 codex status
@@ -42,6 +43,13 @@ response event order. Separate Router, LiteLLM, OpenRouter, the selected
 endpoint, and model failures before editing.
 
 Do not turn on fallback or select an unproved provider to hide an endpoint failure.
+
+## Union fails
+
+Confirm the selected slug and exact Stealth endpoint. Follow the
+[Union contract](agents/union-alpha.md) for supported controls and replay, then
+[debugging](agents/debugging.md) to locate the first divergence. Do not apply
+GLM repairs based on an inferred model identity.
 
 ## App functions do not execute
 

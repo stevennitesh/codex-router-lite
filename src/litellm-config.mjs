@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
 import { LITELLM_CONFIG_PATH } from "./paths.mjs";
-import { CHECKED_IN_MODELS } from "./routed-models.mjs";
+import { CHECKED_IN_MODELS, routedTransport } from "./routed-models.mjs";
 import { assertStateOwnership } from "./state-owner.mjs";
 
 function yamlString(value) {
@@ -11,7 +11,7 @@ function yamlString(value) {
 }
 
 export function renderLiteLlmConfig() {
-  const models = CHECKED_IN_MODELS.filter((model) => model.requestProfile === "glm-5.3-flash");
+  const models = CHECKED_IN_MODELS.filter((model) => routedTransport(model) === "chat");
   const lines = ["model_list:"];
   for (const model of models) {
     lines.push(
@@ -56,6 +56,6 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = writeLiteLlmConfig();
-  const models = CHECKED_IN_MODELS.filter((model) => model.requestProfile === "glm-5.3-flash").length;
+  const models = CHECKED_IN_MODELS.filter((model) => routedTransport(model) === "chat").length;
   process.stdout.write(`${JSON.stringify({ path: target, models })}\n`);
 }

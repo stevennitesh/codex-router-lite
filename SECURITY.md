@@ -6,7 +6,13 @@ Native Codex requests retain Codex authorization and account headers. OpenRouter
 
 Switchyard is the only external routing exception. It is a local, capability-protected hop that preserves native Codex authorization for the native model it selects. It must strip the Router capability before its upstream request and must not log authorization, account data, route prompts, or unredacted decisions.
 
-Protected state uses owner-only ACLs. Do not put credentials in source, config JSON, command arguments, logs, fixtures, support text, or generated route files. Treat the full managed loopback URL as sensitive.
+Protected state uses owner-only ACLs. Do not put provider or native credentials
+in source, config JSON, command arguments, logs, fixtures, support text, or
+generated route files. The private Switchyard route file necessarily contains
+the managed Router caller capability; follow its
+[staging and ACL procedure](config/switchyard/maintenance.md#stage-and-validate).
+The separate per-generation Switchyard hop capability must not be written there.
+Treat the full managed loopback URL as sensitive.
 
 Do not expose a listener on `0.0.0.0`, tunnel it, or place it on a shared network. Loopback capabilities do not protect against malicious code already running as the same Windows user.
 

@@ -1,10 +1,16 @@
 # Compatibility maintenance
 
-Use this guide for installed Codex drift, Windows Codex app behavior, OpenRouter GLM-5.3-Flash, or shared routing code. Do not load the Switchyard build guide or subagent certification unless that branch applies.
+Use this guide after a Codex app/CLI update or for an upstream review. An app
+update includes both native compatibility verification and review of relevant
+Router and Switchyard upstream changes; a passing catalog check alone is not
+completion. For adding a model use [onboarding](model-onboarding.md); for a wire
+failure use [debugging](debugging.md). Load build or certification guides only
+when the selected change requires them.
 
 ## Refresh current authority
 
-From the repository root, run the read-only refresh first:
+From the repository root, run the diagnostic refresh first (it fetches Git refs
+and writes disposable analysis evidence, but does not mutate the live runtime):
 
 ```powershell
 .\maintenance\refresh-compatibility-state.ps1
@@ -13,7 +19,7 @@ From the repository root, run the read-only refresh first:
 It fetches repository heads, resolves and signature-checks the current Windows
 Codex build, compares it with the checked-in app-tool snapshot, checks the
 current native catalog, reads Router health, runs the retained suite, and
-reports Switchyard upstream drift. It does not edit files, consume provider
+reports Switchyard upstream drift. It does not edit product source, consume provider
 quota, or restart the service. Use `-SkipFetch` only when offline and
 `-SkipTests` only for a quick diagnostic that will not support a compatibility
 claim.
@@ -54,9 +60,10 @@ For a changed Windows app or CLI build:
    does not prove a tool change.
 3. Refresh the native catalog and run the catalog, app-tool, and
    namespace-relay tests.
-4. Run one native routed tool call through GLM and Switchyard.
-5. Refresh both exact-route v2 proofs only when tool relay or child continuation
-   changed.
+4. With quota authority, run an ordinary native routed tool call through the
+   affected external profiles and Switchyard; include Union when shared relay changes.
+5. Refresh affected exact-route proofs when a bound contract changed, using
+   [the certification refresh conditions](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
 
 Never copy a versioned Codex app path into source. Never print keys, bearer tokens, account IDs, capability values, or unredacted protected metadata.
 
@@ -74,11 +81,10 @@ Never copy a versioned Codex app path into source. Never print keys, bearer toke
 
 The route and provider JSON files under `config/openrouter` and `config/switchyard` own checked-in route metadata. `maintenance/windows-package.json` owns the installed file set. Generated catalogs, installed files, logs, and proof records are evidence, not source.
 
-## Root-cause rule
+## When a defect is found
 
-Fix the first owner that violates its contract. A compatibility transform is justified only when the upstream wire behavior cannot be changed here. It needs an exact scope predicate and a regression that fails without it. Delete transforms that current retained routes do not use.
-
-Do not retain adapters, aliases, migration journals, discovery code, or generic registries for hypothetical future products.
+Use the [debugging procedure](debugging.md) to isolate the failing owner before
+applying an upstream idea. Keep additions within the [product boundary](architecture.md#product-and-source-authority).
 
 ## Original Router upstream
 
@@ -86,11 +92,16 @@ The `upstream` remote is research input. Never merge it into Router Lite.
 `maintenance/upstream-router.json` records the last upstream commit whose
 changes were dispositioned. Review only the commits after that pointer, map
 useful fixes to retained Router Lite owners, and advance the pointer only after
-every reported commit is accepted, rejected, or recorded for later work.
+every reported commit is accepted, rejected, or recorded for later work. An
+app-update review must report native compatibility findings and both upstream
+dispositions, including unchanged heads. Keep dated review evidence in
+[history](../history/README.md) or the authorized tracker; maintained guides own
+only the resulting durable behavior. If fetch is unavailable, report that gap
+rather than declaring upstream current.
 
 Prioritize changes involving routed Responses lifecycle, native account or
 catalog handling, Windows service behavior, namespace restoration, and the
-OpenRouter GLM route. Ignore providers, clients, UI code, and compatibility
+retained OpenRouter routes. Ignore providers, clients, UI code, and compatibility
 families outside this repository's product boundary.
 
 ## Proof

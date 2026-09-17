@@ -48,6 +48,11 @@ spelling as a namespace child. Use the request-local alias map consistently for
 declarations, forced/allowed tool choices, returned calls, and replay. Native
 requests do not pass through this external-provider name translation.
 
+Ordinary external turns and compaction share `src/routed-request.mjs`, which
+returns the prepared payload and its matching namespace context. For changes
+to this ownership or the preparation order, read
+[request preparation](request-preparation.md).
+
 Child completion and cancellation belong to Codex and the caller. Relay only
 model-authored collaboration calls; injecting an interrupt after a prior final
 answer can cancel a newly resumed child.

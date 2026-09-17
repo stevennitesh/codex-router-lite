@@ -38,7 +38,7 @@
     "src/catalog-auto-refresh.mjs",
     "src/catalog-publication-lock.mjs",
     "src/catalog.mjs",
-    "src/chat-tool-surface.mjs",
+    "src/routed-request.mjs",
     "src/codex-agent-catalog.mjs",
     "src/codex-app-tools.mjs",
     "src/codex-binary.mjs",

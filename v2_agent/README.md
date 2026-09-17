@@ -1,7 +1,10 @@
 # v2 route applications
 
 This directory contains exact-route certification applications for models
-published as subagents v2.
+published as subagents v2. The records are runtime-bound historical evidence,
+not current instructions or proof of a later candidate. Keep these paths because
+the application checker consumes them; the maintained procedure is
+[certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The current applications are:
 

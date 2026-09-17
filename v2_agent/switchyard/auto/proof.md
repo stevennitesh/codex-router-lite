@@ -1,5 +1,8 @@
 # switchyard/auto v2 certification
 
+Historical proof for the exact identities below, not a claim about a later runtime.
+Current procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
+
 Accepted on Windows Codex app 26.911.7940.0 with codex-cli 0.155.0-alpha.2.6
 and deployed Router commit `3a8fc31ab4ece7a4c7732c789c7a789a7becbe6f`.
 

@@ -1,7 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chatProviderToolSurface } from "../src/chat-tool-surface.mjs";
+import { prepareRoutedRequest } from "../src/routed-request.mjs";
+import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
+const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+function chatProviderToolSurface(tools) {
+  const prepared = prepareRoutedRequest({ tools, input: [] }, route);
+  return { tools: prepared.payload.tools, namespaces: prepared.namespaces };
+}
 import { buildNamespaceLookups, rewriteNamespaceFunctionCall } from "../src/namespace-relay.mjs";
+
+test("one request preparer preserves profile-specific turns and tool-disabled compaction without mutation", () => {
+  for (const slug of ["openrouter/glm-5.3-flash", "openrouter/glm-5.3-flash-gmicloud", "openrouter/union-alpha"]) {
+    const selected = MODEL_BY_SLUG.get(slug);
+    const original = { input: [
+      { type: "reasoning", summary: [{ type: "summary_text", text: "Earlier reasoning" }] },
+      { type: "message", role: "assistant", content: "Earlier answer" },
+    ], tools: [{ type: "namespace", name: "app", tools: [{ type: "function", name: "read", parameters: { type: "object" } }] }],
+    reasoning: { effort: "high" }, previous_response_id: "previous", client_metadata: { unused: "metadata" } };
+    const saved = structuredClone(original);
+    const turn = prepareRoutedRequest(original, selected, { childEffort: "max" });
+    const compact = prepareRoutedRequest(original, selected, { compaction: true, compactionMessages: [{ role: "user", content: "Summarize" }] });
+    assert.deepEqual(original, saved);
+    assert.equal(turn.transport, slug.includes("union") ? "responses" : "chat");
+    assert.equal(compact.transport, turn.transport);
+    assert.deepEqual(turn.payload.tools.map(tool => tool.name), ["app__read"]);
+    assert.deepEqual(compact.payload.tools, []);
+    assert.equal(compact.payload.previous_response_id, undefined);
+    assert.equal(compact.payload.tool_choice, undefined);
+    assert.equal(compact.payload.stream, false);
+    assert.deepEqual(compact.payload.input.slice(0, 2), original.input);
+    assert.equal(turn.payload.client_metadata, undefined);
+    if (slug.includes("union")) {
+      assert.deepEqual(turn.payload.input, original.input);
+      assert.equal(turn.payload.reasoning, undefined);
+    } else {
+      assert.equal(turn.payload.reasoning.effort, "max");
+      assert.equal(turn.payload.input[1].content[0].type, "thinking");
+      assert.equal(compact.payload.reasoning.effort, "high");
+    }
+  }
+  assert.throws(() => prepareRoutedRequest({ input: [] }, MODEL_BY_SLUG.get("switchyard/auto")), /Native requests/);
+});
 
 test("current app tools use the caller's namespace and schema without snapshot additions", () => {
   const parameters = { type: "object", properties: { live: { type: "boolean" } } };

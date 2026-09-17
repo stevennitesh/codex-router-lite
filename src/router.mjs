@@ -1,7 +1,6 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
 import { readFileSync } from "node:fs";
 import http from "node:http";
-import { isUnionAlphaRoute, prepareUnionAlphaRequest } from "./union-alpha-compat.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   brotliDecompress,
@@ -44,9 +43,7 @@ import {
 } from "./routed-models.mjs";
 import {
   routedModelPreservesSearchContract,
-  routedModelSearchMode,
   searchModePreservesSearchContract,
-  stripUnsupportedHostedSearch,
   unsupportedSearchContractError,
 } from "./search-capability.mjs";
 import {
@@ -80,7 +77,6 @@ import {
 import { zaiResponsesCompatTransform } from "./zai-responses-compat.mjs";
 import {
   OpenRouterHostedSearchTransform,
-  prepareOpenRouterHostedSearchRequest,
 } from "./openrouter-hosted-search.mjs";
 import {
   MERGED_CATALOG_PATH,
@@ -105,17 +101,8 @@ import {
   tokenUsageFromPayload,
 } from "./response-usage.mjs";
 import { fetchWithRetry } from "./upstream-retry.mjs";
-import {
-  NamespaceToolCallTransform,
-  aliasHistoricalFunctionNames,
-  bridgeCustomTools,
-  flattenNamespacedHistory,
-  flattenNamespacedToolChoice,
-  flattenNamespaceTools,
-  flattenToolSearchHistory,
-  restorePreflattenedToolNamespaces,
-} from "./namespace-relay.mjs";
-import { chatProviderToolSurface } from "./chat-tool-surface.mjs";
+import { NamespaceToolCallTransform } from "./namespace-relay.mjs";
+import { prepareRoutedRequest, routedSearchCompatibility, payloadHasHostedSearchIntent } from "./routed-request.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
 import { gatewayErrorStatus, translateGatewayError } from "./error-translation.mjs";
@@ -584,32 +571,8 @@ function routedHeaders() {
   };
 }
 
-function routedSearchCompatibility(payload, route) {
-  const searchMode = routedModelSearchMode(route);
-  // GLM Flash has no provider-owned hosted-search contract. Switchyard may
-  // preserve native search fields even when Codex does not advertise them.
-  const stripsUnsupportedSearch = route.requestProfile === "glm-5.3-flash" || isUnionAlphaRoute(route);
-  const compatiblePayload = !stripsUnsupportedSearch || searchMode !== undefined
-    ? payload
-    : stripUnsupportedHostedSearch(payload, { model: route.slug });
-  return { payload: compatiblePayload, searchMode };
-}
-
 function inputHasWebSearchHistory(input) {
   return Array.isArray(input) && input.some((item) => item?.type === "web_search_call");
-}
-
-function payloadHasHostedSearchIntent(payload) {
-  const tools = Array.isArray(payload?.tools) ? payload.tools : [];
-  const include = Array.isArray(payload?.include) ? payload.include : [];
-  return Boolean(
-    payload?.web_search_options !== undefined ||
-    tools.some((tool) => ["web_search", "web_search_preview"].includes(tool?.type)) ||
-    ["web_search", "web_search_preview"].includes(payload?.tool_choice?.type) ||
-    include.some(
-      (entry) => typeof entry === "string" && entry.startsWith("web_search_call."),
-    )
-  );
 }
 
 function snapshotRoutedSearch(payload, route) {
@@ -980,33 +943,6 @@ function messageItem(text) {
     role: "user",
     content: [{ type: "input_text", text }],
   };
-}
-
-function normalizeOrphanAppToolOutput(item) {
-  if (
-    item?.type !== "function_call_output" ||
-    !["codex_app", "mcp__codex_app"].includes(item.namespace) ||
-    typeof item.name !== "string" ||
-    !item.name ||
-    (typeof item.call_id === "string" && item.call_id) ||
-    item.output === undefined
-  ) {
-    return item;
-  }
-  // Codex app-server can persist a standalone app-tool result without the
-  // originating call. A synthetic call_id would still have no matching call,
-  // while strict Responses providers reject the original item outright.
-  // Preserve the result as ordinary readable history instead. Scope the
-  // recovery to named codex_app outputs so every other malformed tool item
-  // continues to fail closed at the provider adapter.
-  const output =
-    typeof item.output === "string" ? item.output : JSON.stringify(item.output);
-  return messageItem(`[Codex app tool result: ${item.namespace}.${item.name}]\n${output}`);
-}
-
-function normalizeProviderAppToolOutputs(input) {
-  if (!Array.isArray(input)) return input;
-  return input.map(normalizeOrphanAppToolOutput);
 }
 
 function normalizeRoutedInput(input) {
@@ -1442,108 +1378,6 @@ async function normalizeRoutedAgentInput(request, input, signal) {
   return output;
 }
 
-// LiteLLM's Responses-to-chat translation drops `reasoning`
-// input items entirely (`_transform_responses_api_input_item_to_chat_completion_message`
-// returns nothing for an item whose `content` is null, which is the shape
-// Codex stores), so the reasoning text never reaches the provider at all.
-// Carry each run of reasoning items onto the assistant turn it belongs to, and
-// the translation keeps it as that message's content. In-place, no-op when
-// there is nothing to carry.
-//
-// Every assistant turn needs covering, not only the ones that call a tool.
-// This used to carry the reasoning solely into a following `function_call` or
-// an empty assistant filler, which is the shape of a tool loop -- so a turn
-// that answers in prose lost its reasoning, and the provider refused the
-// next request because its reasoning history is missing.
-function carryReasoningThroughInput(input, { nativeThinking = false } = {}) {
-  if (!Array.isArray(input) || input.length < 2) return;
-  for (let index = 0; index < input.length - 1; index += 1) {
-    if (input[index]?.type !== "reasoning") continue;
-    // One assistant turn can emit several reasoning items in a row, and they
-    // all belong to the turn that follows. Carrying only the item nearest the
-    // turn dropped everything the model thought before it.
-    let end = index;
-    const texts = [];
-    while (end < input.length && input[end]?.type === "reasoning") {
-      const text = reasoningItemText(input[end]);
-      if (text) texts.push(text);
-      end += 1;
-    }
-    const text = texts.join("\n");
-    const next = input[end];
-    // Only the last item of the run is rewritten. The earlier ones stay
-    // `reasoning` items, which the translation drops -- their text is already
-    // in the joined value, and leaving them in place keeps the array the same
-    // length for every other pass over it.
-    if (text && next) {
-      if (next.type === "function_call" || next.type === "custom_tool_call") {
-        input[end - 1] = assistantTextItem(text, nativeThinking);
-      } else if (next.type === "message" && next.role === "assistant") {
-        // Merged into the assistant message rather than inserted in front of
-        // it. A separate message would put two assistant turns back to back,
-        // which the same strict chat-completions providers reject outright --
-        // and the tool-call branch above ends up merged anyway, because
-        // LiteLLM folds a following function_call into the assistant message
-        // it already emitted.
-        input[end] = mergeAssistantText(next, text, nativeThinking);
-      }
-    }
-    index = end - 1;
-  }
-}
-
-function assistantTextItem(text, nativeThinking = false) {
-  return {
-    type: "message",
-    role: "assistant",
-    content: [{ type: nativeThinking ? "thinking" : "output_text", text }],
-  };
-}
-
-// The reasoning goes in front of the answer it produced. `content` is an array
-// of parts on everything Codex stores, but a bare string is equally legal on
-// the Responses API, so both shapes are handled rather than assumed away.
-function mergeAssistantText(item, text, nativeThinking = false) {
-  const part = { type: nativeThinking ? "thinking" : "output_text", text };
-  if (typeof item.content === "string") {
-    return {
-      ...item,
-      content: item.content
-        ? [part, { type: "output_text", text: item.content }]
-        : [part],
-    };
-  }
-  return {
-    ...item,
-    content: [part, ...(Array.isArray(item.content) ? item.content : [])],
-  };
-}
-
-function reasoningItemText(item) {
-  const summary = item.summary;
-  if (typeof summary === "string" && summary) return summary;
-  if (Array.isArray(summary)) {
-    const text = summary
-      .map((part) => (part && typeof part.text === "string" ? part.text : undefined))
-      .filter(Boolean)
-      .join("\n");
-    if (text) return text;
-  }
-  const content = item.content;
-  if (typeof content === "string" && content) return content;
-  // Reasoning may use an array of output_text parts rather than a summary string.
-  // Without this, the reasoning never reaches the chat history and the
-  // following tool-call turn 400s for missing `reasoning_content`.
-  if (Array.isArray(content)) {
-    const text = content
-      .map((part) => (part && typeof part.text === "string" ? part.text : undefined))
-      .filter(Boolean)
-      .join("\n");
-    if (text) return text;
-  }
-  return undefined;
-}
-
 // Credential-bearing callers keep the historical format repair below: they
 // can fall back to the native stored-item namespace after an unreadable
 // encrypted payload is removed. A substituted caller has no such namespace,
@@ -1810,11 +1644,8 @@ function extractResponseText(payload) {
   return typeof chatText === "string" ? chatText : "";
 }
 
-// The models a compaction may be tried on, best first, without sending
-// anything. The conversation's own model leads unless it has already said it
-// is empty, in which case asking it again only buys the same rejection.
+// Prepare a tool-disabled summary on the conversation's own route.
 async function summarizeWith(
-  request,
   payload,
   route,
   input,
@@ -1822,55 +1653,26 @@ async function summarizeWith(
   signal,
   { searchContract } = {},
 ) {
-  let providerInput = normalizeProviderAppToolOutputs(input);
-  // Compaction disables fresh tool discovery but still replays its history.
-  // Recover the historical declarations for consistent call identities, then
-  // remove native discovery control pairs the provider cannot consume. The
-  // source catalog above retains their evidence; no recovered tool is enabled.
-  const historicalNamespaces = new Map();
-  const searchHistory = flattenToolSearchHistory(providerInput, [], historicalNamespaces, { recoverWithoutRelay: true });
-  providerInput = flattenNamespacedHistory(searchHistory.input, historicalNamespaces);
-  if (isUnionAlphaRoute(route)) {
-    // The direct Responses endpoint also needs function-shaped historical
-    // custom calls when compaction disables fresh tool use.
-    providerInput = bridgeCustomTools(searchHistory.tools, providerInput, historicalNamespaces, undefined, [], { bridgeAll: true }).input;
-    providerInput = aliasHistoricalFunctionNames(providerInput, historicalNamespaces);
-  }
-  const body = {
-    ...payload,
-    model: route.gatewayModel,
-    stream: false,
-    // An empty tool list disables tool use; omit the redundant tool choice.
-    tools: [],
-    input: [
-      ...providerInput,
-      messageItem(prepared.catalogText),
-      messageItem(COMPACTION_PROMPT),
-    ],
-  };
-  delete body.tool_choice;
-  delete body.previous_response_id;
-  delete body.client_metadata;
-  // Compaction re-enters the same provider as the routed turn. Strict Chat
-  // Completions surfaces reject this OpenAI search parameter even though it
-  // is unrelated to the compaction body.
-  const searchCompatibility = routedSearchCompatibility(body, route);
-  const serialized = JSON.stringify(searchCompatibility.payload);
+  const preparedRequest = prepareRoutedRequest(payload, route, {
+    input, compaction: true,
+    compactionMessages: [messageItem(prepared.catalogText), messageItem(COMPACTION_PROMPT)],
+  });
+  const serialized = JSON.stringify(preparedRequest.payload);
   // Recheck the declared search mode at the send boundary so the built body
   // still matches the selected route.
   if (
-    !searchModePreservesSearchContract(searchCompatibility.searchMode, searchContract) ||
+    !searchModePreservesSearchContract(preparedRequest.searchMode, searchContract) ||
     !routedModelPreservesSearchContract(route, searchContract)
   ) {
     return { searchCapabilityChanged: true };
   }
-  const upstream = await fetch(`${isUnionAlphaRoute(route) ? API_BASE : GATEWAY_BASE}/responses`, {
+  const upstream = await fetch(`${preparedRequest.transport === "responses" ? API_BASE : GATEWAY_BASE}/responses`, {
     method: "POST",
     headers: routedHeaders(),
     body: serialized,
     signal,
   });
-  return { upstream, bridged: providerInput, bytes: Buffer.byteLength(serialized, "utf8") };
+  return { upstream };
 }
 
 async function summarize(request, payload, route, signal) {
@@ -1881,15 +1683,9 @@ async function summarize(request, payload, route, signal) {
   const searchSnapshot = snapshotRoutedSearch(payload, route);
   payload = searchSnapshot.payload;
   const originalInput = Array.isArray(payload.input) ? payload.input : [];
-  // Compaction replays the whole conversation, so any image still in it would
-  // reach the text-only model unbridged and fail the compaction rather than
-  // the turn. The evidence is already cached from the turn that pasted it.
-  //
-  // It replays the collaboration items too, so the agent-payload resolution a
-  // routed turn performs has to happen here as well -- otherwise a compaction
-  // inside a `/goal` or subagent session summarizes opaque payloads. The relay
-  // is cached by ciphertext, so a conversation whose turns already resolved
-  // costs nothing extra here.
+  // Resolve encrypted collaboration payloads before source extraction, using
+  // the same authenticated relay as an ordinary turn. Its ciphertext cache
+  // avoids repeating already-resolved handoffs during compaction.
   const normalized = await normalizeRoutedAgentInput(request, originalInput, signal);
   const searchContract = routedSearchContract(searchSnapshot, normalized);
   // The summarizer may select source IDs, but only this deterministic pass can
@@ -1900,7 +1696,6 @@ async function summarize(request, payload, route, signal) {
     throw unsupportedSearchContractError(route.slug);
   }
   const sent = await summarizeWith(
-    request,
     payload,
     route,
     normalized,
@@ -2111,73 +1906,18 @@ function requireCodexTransport(request, response) {
 }
 
 // Build the provider request without mutating the normalized client input.
-async function buildRoutedRequest({ request, payload, route, normalizedInput }) {
-  const searchCompatibility = routedSearchCompatibility(payload, route);
-  payload = searchCompatibility.payload;
-  const provider = providerForModel(route);
-  const compatibleInput = normalizeProviderAppToolOutputs(normalizedInput);
-  const input = Array.isArray(compatibleInput) ? [...compatibleInput] : compatibleInput;
-  const hostedSearch =
-    searchCompatibility.searchMode === "hosted" && payloadHasHostedSearchIntent(payload);
-
-  // LiteLLM converts this route to Chat Completions. Preserve GLM reasoning
-  // and flatten every Codex namespace so the app can execute restored calls.
-  if (!hostedSearch && !isUnionAlphaRoute(route)) carryReasoningThroughInput(input, { nativeThinking: true });
-  const clientTools = restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata);
-  const flattened = chatProviderToolSurface(clientTools, provider.id, {
-    input,
-    toolChoice: payload.tool_choice,
+function buildRoutedRequest({ request, payload, route, normalizedInput }) {
+  const prepared = prepareRoutedRequest(payload, route, {
+    input: normalizedInput,
+    childEffort: request.headers["x-openai-subagent"] ? subagentEffort(route.slug) : undefined,
   });
-  let tools = flattened.flattened ? flattened.tools : clientTools;
-  const flattenedNamespaces = flattened.namespaces;
-  let namespacesFlattened = flattened.flattened;
-
-  const searchHistory = flattenToolSearchHistory(
-    input,
-    tools,
-    flattenedNamespaces,
-    { toolChoice: payload.tool_choice },
-  );
-  let routedInput = searchHistory.input;
-  tools = searchHistory.tools;
-  if (searchHistory.flattened) namespacesFlattened = true;
-  if (namespacesFlattened) {
-    routedInput = flattenNamespacedHistory(routedInput, flattenedNamespaces);
-  }
-
-  let routed = {
-    ...payload,
-    tools,
-    model: route.gatewayModel,
-    input: routedInput,
-    tool_choice: flattenNamespacedToolChoice(payload.tool_choice, flattenedNamespaces),
-  };
-  if (isUnionAlphaRoute(route)) {
-    const bridged = bridgeCustomTools(tools, routedInput, flattenedNamespaces, routed.tool_choice, [], { bridgeAll: true });
-    routed = { ...routed, tools: bridged.tools, input: bridged.input, tool_choice: bridged.toolChoice };
-    if (bridged.bridged) namespacesFlattened = true;
-    const aliasedInput = aliasHistoricalFunctionNames(routed.input, flattenedNamespaces);
-    if (aliasedInput !== routed.input) namespacesFlattened = true;
-    routed.input = aliasedInput;
-  }
-  const childEffort = request.headers["x-openai-subagent"]
-    ? subagentEffort(route.slug)
-    : undefined;
-  if (childEffort) {
-    routed.reasoning_effort = childEffort;
-    routed.reasoning = { ...(routed.reasoning || {}), effort: childEffort };
-  }
-  delete routed.client_metadata;
-  routed = prepareUnionAlphaRequest(routed, route);
-  if (hostedSearch) routed = prepareOpenRouterHostedSearchRequest(routed, route);
   return {
-    body: Buffer.from(JSON.stringify(routed), "utf8"),
-    target: (hostedSearch || isUnionAlphaRoute(route) ? API_BASE : GATEWAY_BASE) + "/responses",
+    body: Buffer.from(JSON.stringify(prepared.payload), "utf8"),
+    target: (prepared.transport === "responses" ? API_BASE : GATEWAY_BASE) + "/responses",
     headers: routedHeaders(),
-    searchMode: searchCompatibility.searchMode,
-    hostedSearch,
-    namespacesFlattened,
-    flattenedNamespaces,
+    searchMode: prepared.searchMode,
+    hostedSearch: prepared.hostedSearch,
+    flattenedNamespaces: prepared.namespaces,
   };
 }
 
@@ -2278,7 +2018,6 @@ async function handleResponses(request, response, requestUrl) {
     let headers;
     let routedBody;
     let builtSearchMode;
-    let namespacesFlattened = false;
     let openRouterHostedSearch = false;
     let flattenedNamespaces = new Map();
     // Normalize encrypted child payloads once before building the provider request.
@@ -2301,7 +2040,6 @@ async function handleResponses(request, response, requestUrl) {
         route,
         normalizedInput,
       });
-      namespacesFlattened = built.namespacesFlattened;
       flattenedNamespaces = built.flattenedNamespaces;
       target = built.target;
       headers = built.headers;

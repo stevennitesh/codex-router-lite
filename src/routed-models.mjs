@@ -3,27 +3,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CONFIG_FILES = Object.freeze([
-  "config/openrouter/openrouter.json",
-  "config/openrouter/glm-5.3-flash.json",
-  "config/openrouter/glm-5.3-flash-gmicloud.json",
-  "config/openrouter/union-alpha.json",
-  "config/switchyard/switchyard.json",
-  "config/switchyard/auto.json",
-]);
-const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
-const EXPECTED_MODELS = new Set([
-  "openrouter/glm-5.3-flash",
-  "openrouter/glm-5.3-flash-gmicloud",
-  "openrouter/union-alpha",
-  "switchyard/auto",
-]);
-const EXPECTED_REQUEST_PROFILES = new Map([
+// One explicit registration per retained model. Catalog data stays in JSON;
+// the independent product-boundary check still controls the allowed file set.
+const MODEL_REGISTRATIONS = [
   ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
   ["openrouter/glm-5.3-flash-gmicloud", "glm-5.3-flash"],
   ["openrouter/union-alpha", "union-alpha"],
   ["switchyard/auto", "switchyard-native"],
+];
+const CONFIG_FILES = ["config/openrouter/openrouter.json", "config/switchyard/switchyard.json",
+  ...MODEL_REGISTRATIONS.map(([slug]) => `config/${slug}.json`)];
+const EXPECTED_PROVIDERS = new Set(["openrouter", "switchyard"]);
+const EXPECTED_MODELS = new Set(MODEL_REGISTRATIONS.map(([slug]) => slug));
+const EXPECTED_REQUEST_PROFILES = new Map(MODEL_REGISTRATIONS.map(([slug, profile]) => [slug, profile]));
+const TRANSPORTS = new Map([
+  ["glm-5.3-flash", "chat"], ["union-alpha", "responses"], ["switchyard-native", "native"],
 ]);
+
+export function routedTransport(route) {
+  const transport = TRANSPORTS.get(route?.requestProfile);
+  if (!transport) throw new Error(`Unknown routed request profile: ${route?.requestProfile}`);
+  return transport;
+}
 const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/u;
 
 function load(relativePath) {
