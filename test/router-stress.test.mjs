@@ -52,7 +52,7 @@ function requestBody(bytes, headers) {
   return JSON.parse(decoded.toString("utf8"));
 }
 
-async function fixture(t, handler) {
+async function fixture(t, handler, extraEnv = {}) {
   const state = mkdtempSync(path.join(os.tmpdir(), "router-stress-"));
   const switchyardRoot = path.join(state, "switchyard-runtime");
   mkdirSync(switchyardRoot);
@@ -95,7 +95,8 @@ async function fixture(t, handler) {
     CODEX_NATIVE_BASE_URL: `${upstreamRoot}/backend-api/codex`, CODEX_ROUTER_SWITCHYARD_BASE_URL: `${upstreamRoot}/v1`,
     CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
     CODEX_ROUTER_SWITCHYARD_CAPABILITY: SWITCHYARD_CAPABILITY, CODEX_ROUTER_QUIET: "1", CODEX_ROUTER_SHOW_ALL_MODELS: "1",
-    OPENROUTER_API_KEY: SECRET, OPENROUTER_API_BASE_URL: `${upstreamRoot}/v1` };
+    OPENROUTER_API_KEY: SECRET, OPENROUTER_API_BASE_URL: `${upstreamRoot}/v1`,
+    ...extraEnv };
   const forwarder = launch("api-forwarder.mjs", env); children.push(forwarder);
   const router = launch("router.mjs", env); children.push(router);
   const base = callerBaseUrl(routerPort, CALLER);
@@ -157,6 +158,73 @@ test("stress: representative routes preserve their distinct boundaries", { timeo
   assert.equal(switchyardSeen.headers.authorization, "Bearer SYNTHETIC_NATIVE_PRIVATE");
 });
 
+test("stress: routed POSTs reject redirects without replaying prompts or credentials", { timeout: 20000 }, async t => {
+  const crossOriginRequests = [];
+  const redirectTarget = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      crossOriginRequests.push({
+        method: request.method,
+        headers: request.headers,
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      responseJson(response, {
+        id: "resp_cross_origin", status: "completed", output: [message("redirect followed")],
+      });
+    });
+  });
+  await new Promise((resolve, reject) => {
+    redirectTarget.once("error", reject);
+    redirectTarget.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    if (redirectTarget.listening) {
+      await new Promise(resolve => redirectTarget.close(resolve));
+    }
+  });
+  const crossOrigin = `http://127.0.0.1:${redirectTarget.address().port}/redirected`;
+  const f = await fixture(t, (entry, response) => {
+    if (entry.path === "/redirected") {
+      return responseJson(response, {
+        id: "resp_redirected", status: "completed", output: [message("redirect followed")],
+      });
+    }
+    response.writeHead(entry.body.metadata?.redirect_status || 307, {
+      Location: entry.body.metadata?.cross_origin ? crossOrigin : "/redirected",
+    });
+    response.end();
+  });
+  for (const [model, metadata] of [
+    [GLM, { redirect_status: 307 }],
+    [PARETO, { redirect_status: 308, cross_origin: true }],
+    [SWITCHYARD, { redirect_status: 308, cross_origin: true }],
+  ]) {
+    const before = f.seen.length;
+    const response = await f.post({ model, metadata, input: `redirect control for ${model}` });
+    await response.arrayBuffer();
+    assert.equal(response.status, 502);
+    assert.equal(f.seen.length - before, 1, `${model} must not replay a redirected POST`);
+    assert.notEqual(f.seen.at(-1).path, "/redirected");
+  }
+  for (const [model, metadata] of [
+    [GLM, { redirect_status: 307, cross_origin: true }],
+    [PARETO, { redirect_status: 308 }],
+  ]) {
+    const before = f.seen.length;
+    const response = await f.post({
+      model,
+      metadata,
+      input: [{ role: "user", content: `compact redirect control for ${model}` }],
+    }, "responses/compact");
+    await response.arrayBuffer();
+    assert.equal(response.status, 502);
+    assert.equal(f.seen.length - before, 1, `${model} compaction must not replay a redirected POST`);
+    assert.notEqual(f.seen.at(-1).path, "/redirected");
+  }
+  assert.deepEqual(crossOriginRequests, []);
+});
+
 test("stress: provider stream failures remain failures after partial output", { timeout: 20000 }, async t => {
   let release = deferred(), scenario = "disconnect";
   const f = await fixture(t, async (_entry, response) => {
@@ -184,6 +252,45 @@ test("stress: provider stream failures remain failures after partial output", { 
   assert.match(explicitWire, /fixture_failure/u);
   assert.doesNotMatch(explicitWire, /response\.completed|final_answer/u);
   assert.equal(f.seen.length, 2);
+});
+
+test("stress: canceling a routed body after response.completed keeps successful accounting", { timeout: 20000 }, async t => {
+  const release = deferred();
+  const upstreamClosed = deferred();
+  const f = await fixture(t, (_entry, response) => {
+    response.once("close", upstreamClosed.resolve);
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write(frame({
+      type: "response.output_text.delta", item_id: "msg_terminal_accounting", delta: "done",
+    }));
+    response.write(frame({
+      type: "response.completed",
+      response: { id: "resp_terminal_accounting", status: "completed", output: [] },
+    }));
+    return release.promise;
+  });
+  t.after(release.resolve);
+  const response = await f.post({ stream: true, metadata: { scenario: "terminal-accounting" } });
+  const reader = response.body.getReader();
+  let wire = "";
+  while (!wire.includes("response.completed")) {
+    const part = await bounded(reader.read(), "completed terminal reaches caller");
+    assert.equal(part.done, false);
+    wire += Buffer.from(part.value).toString("utf8");
+  }
+  await reader.cancel();
+  await bounded(upstreamClosed.promise, "completed upstream closes after caller cancel");
+  let timing;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    timing = f.errors().split(/\r?\n/u).find(line =>
+      line.includes(`model=${PARETO}`) && line.includes("provider=openrouter")
+    );
+    if (timing) break;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.match(timing || "", /status=200\b/u);
+  assert.doesNotMatch(timing || "", /status=0\b/u);
+  release.resolve();
 });
 
 test("stress: seeded function arguments preserve identity and never invent content", { timeout: 30000 }, async t => {
@@ -233,6 +340,39 @@ test("stress: retryable status attempts are bounded and preserve request identit
     assert.ok((await response.json()).error); assert.equal(f.seen.length - before, attempts);
     for (const attempt of f.seen.slice(before)) assert.deepEqual(attempt.body, f.seen[before].body);
   }
+});
+
+test("stress: caller cancellation during provider backoff prevents a duplicate attempt", { timeout: 20000 }, async t => {
+  const answered = deferred();
+  const attempts = new Map();
+  const f = await fixture(t, ({ body }, response) => {
+    const scenario = body.metadata?.scenario;
+    const attempt = (attempts.get(scenario) || 0) + 1;
+    attempts.set(scenario, attempt);
+    if (scenario === "positive-control" && attempt === 2) {
+      return responseJson(response, {
+        id: "resp_retry_control", status: "completed", output: [message("retried")],
+      });
+    }
+    response.writeHead(504, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "synthetic retryable response" } }));
+    if (scenario === "cancel-during-backoff") answered.resolve();
+  }, { CODEX_ROUTER_NATIVE_RETRY_BACKOFF_MS: "40" });
+  const controller = f.controller();
+  const request = f.post({ metadata: { scenario: "cancel-during-backoff" } }, "responses", controller.signal);
+  const rejected = assert.rejects(request, { name: "AbortError" });
+  await bounded(answered.promise, "first retryable response returned");
+  await setImmediate();
+  controller.abort();
+  await rejected;
+  // Observe beyond the configured retry window. A broken cancellation path
+  // would have reached the provider again by now.
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(attempts.get("cancel-during-backoff"), 1);
+  const control = await f.post({ metadata: { scenario: "positive-control" } });
+  assert.equal(control.status, 200);
+  await control.arrayBuffer();
+  assert.equal(attempts.get("positive-control"), 2);
 });
 
 function checkpointText(body) { return body.output.at(-1).content.at(-1).text; }

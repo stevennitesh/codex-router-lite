@@ -560,6 +560,18 @@ function continuationState(input, output, maxBytes) {
   return encoded.length <= maxBytes ? { input, output } : undefined;
 }
 
+function validCompletedResponse(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    value.status === "completed" &&
+    Array.isArray(value.output)
+  );
+}
+
 function continuationItemKey(item) {
   if (typeof item?.call_id === "string" && item.call_id) return `call:${item.call_id}`;
   if (typeof item?.id === "string" && item.id) return `id:${item.id}`;
@@ -1031,6 +1043,7 @@ class ResponsesWebSocketPeer {
     const onClose = () => controller.abort(this.abortController.signal.reason);
     this.abortController.signal.addEventListener("abort", onClose, { once: true });
     let upstream;
+    let terminalSeen = false;
     try {
       upstream = await this.options.fetchImpl(this.options.responsesUrl, {
         method: "POST",
@@ -1043,6 +1056,9 @@ class ResponsesWebSocketPeer {
         ),
         body: encoded,
         signal: controller.signal,
+        // This is a fixed loopback re-entry into the Router. A redirect would
+        // replay the complete request outside the authenticated path owner.
+        redirect: "error",
       });
       if (!upstream.ok) {
         const body = await readResponseBody(upstream, {
@@ -1095,15 +1111,8 @@ class ResponsesWebSocketPeer {
           });
           return;
         }
-        if (
-          !completedResponse ||
-          typeof completedResponse !== "object" ||
-          Array.isArray(completedResponse) ||
-          typeof completedResponse.id !== "string" ||
-          completedResponse.id.length === 0 ||
-          completedResponse.status !== "completed" ||
-          !Array.isArray(completedResponse.output)
-        ) {
+        if (!validCompletedResponse(completedResponse)) {
+          this.continuations.clear();
           this.sendError(502, {
             type: "local_router_protocol_error",
             message: "The internal Responses endpoint returned an invalid completed response.",
@@ -1139,12 +1148,13 @@ class ResponsesWebSocketPeer {
       const outputItems = [];
       let outputItemsBytes = 0;
       let continuationOverflow = false;
-      let completed;
-      let terminalFailure = false;
-      let terminalSeen = false;
       await relaySse(
         upstream.body,
         async (data) => {
+          // The first terminal ends the logical response. The accepted outcome
+          // is committed below, then the remaining body is canceled so trailers
+          // cannot block this serialized queue or replace that outcome.
+          if (terminalSeen) return true;
           let event;
           try {
             event = JSON.parse(data);
@@ -1154,11 +1164,18 @@ class ResponsesWebSocketPeer {
             throw error;
           }
           if (!event || typeof event !== "object" || Array.isArray(event)) return true;
-          // Match the Responses client: the first terminal event ends the
-          // logical response. Drain the HTTP body for clean accounting and
-          // connection reuse, but never graft a provider trailer onto the next
-          // continuation baseline.
-          if (terminalSeen) return true;
+          if (event.type === "response.completed" && !validCompletedResponse(event.response)) {
+            // A completion without a usable id cannot become the baseline for
+            // the next WebSocket frame. Reject it before the client observes a
+            // successful terminal and discard any older baseline so a later
+            // incremental frame cannot replay stale history accidentally.
+            this.continuations.clear();
+            const error = new Error(
+              "The internal Responses endpoint emitted an invalid completed response.",
+            );
+            error.code = "local_router_protocol_error";
+            throw error;
+          }
           if (!(await this.sendJsonWithBackpressure(event))) return false;
           if (event.type === "response.output_item.done" && event.item) {
             const itemBytes = Buffer.byteLength(JSON.stringify(event.item), "utf8");
@@ -1170,14 +1187,25 @@ class ResponsesWebSocketPeer {
             }
           }
           if (event.type === "response.completed") {
-            completed = event.response;
             terminalSeen = true;
-            return true;
+            const output = reconciledContinuationOutput(event.response.output, outputItems);
+            this.continuations.clear();
+            const continuation = !continuationOverflow
+              ? continuationState(
+                fullRequest.input,
+                output,
+                this.options.maxContinuationBytes,
+              )
+              : undefined;
+            if (continuation) this.continuations.set(event.response.id, continuation);
+            // The terminal is complete and the continuation is committed.
+            // Cancel the remaining HTTP body so this serialized WebSocket can
+            // accept its next frame even if an upstream keeps the stream open.
+            return false;
           }
           if (["error", "response.failed", "response.incomplete"].includes(event.type)) {
-            terminalFailure = true;
             terminalSeen = true;
-            return true;
+            return false;
           }
           return true;
         },
@@ -1186,25 +1214,14 @@ class ResponsesWebSocketPeer {
           maxEventBytes: this.options.maxEventBytes,
         },
       );
-      if (completed?.id && !terminalFailure) {
-        const output = reconciledContinuationOutput(completed.output, outputItems);
-        this.continuations.clear();
-        const continuation = !continuationOverflow
-          ? continuationState(
-            fullRequest.input,
-            output,
-            this.options.maxContinuationBytes,
-          )
-          : undefined;
-        if (continuation) this.continuations.set(completed.id, continuation);
-      } else if (!terminalFailure && !this.closed) {
+      if (!terminalSeen && !this.closed) {
         this.sendError(502, {
           type: "local_router_stream_failed",
           message: "The internal Responses stream ended before response.completed.",
         });
       }
     } catch (error) {
-      if (!this.closed && !controller.signal.aborted) {
+      if (!terminalSeen && !this.closed && !controller.signal.aborted) {
         this.sendError(502, {
           type: error?.code || "local_router_stream_failed",
           message: "The local router lost the internal Responses stream.",

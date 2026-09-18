@@ -613,6 +613,86 @@ test("router relays encrypted Codex subagent payloads before external routing", 
   }
 });
 
+test("encrypted payload relay coalesces concurrent waiters when one caller cancels", async () => {
+  const relayStarted = Promise.withResolvers();
+  const releaseRelay = Promise.withResolvers();
+  let nativeRequests = 0;
+  const native = await mockServer(async (request, response) => {
+    nativeRequests += 1;
+    await bodyJson(request);
+    relayStarted.resolve();
+    await releaseRelay.promise;
+    json(response, 200, { output: [{
+      type: "function_call",
+      name: "relay_external_agent_payload",
+      arguments: JSON.stringify({ payload: "COALESCED_PAYLOAD" }),
+    }] });
+  });
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, { status: "completed", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const body = JSON.stringify({
+    model: "openrouter/glm-5.3-flash",
+    input: [{
+      type: "agent_message",
+      content: [
+        { type: "input_text", text: "Message Type: MESSAGE\nPayload:\n" },
+        { type: "encrypted_content", encrypted_content: "gAAAAA-coalesced-payload=" },
+      ],
+    }],
+  });
+  const headers = {
+    Authorization: "Bearer shared-session",
+    "ChatGPT-Account-Id": "shared-account",
+    "Content-Type": "application/json",
+  };
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const canceledController = new AbortController();
+    const canceled = fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST", headers, body, signal: canceledController.signal,
+    });
+    const canceledResult = assert.rejects(canceled, { name: "AbortError" });
+    await relayStarted.promise;
+    const survivor = fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST", headers, body,
+    });
+    let coalesced = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const health = await fetch(`${routerBase(routerPort)}/health`);
+      const resources = (await health.json()).resources;
+      if (resources.inFlightRequests === 2 && resources.agentPayloadCache.inFlight === 1) {
+        coalesced = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(coalesced, true, router.testErrors());
+    canceledController.abort();
+    await canceledResult;
+    releaseRelay.resolve();
+    const response = await survivor;
+    const responseBody = await response.text();
+    assert.equal(response.status, 200, responseBody);
+    assert.equal(nativeRequests, 1);
+    assert.equal(gatewayRequests.length, 1);
+    assert.equal(gatewayRequests[0].input[0].content.at(-1).text, "COALESCED_PAYLOAD");
+  } finally {
+    releaseRelay.resolve();
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+  }
+});
+
 test("router fails closed when an encrypted subagent payload cannot be relayed", async () => {
   const native = await mockServer(async (_request, response) => {
     json(response, 401, { error: { message: "native sign-in required" } });

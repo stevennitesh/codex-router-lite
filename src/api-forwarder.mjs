@@ -107,6 +107,9 @@ async function handle(request, response) {
         headers: upstreamHeaders(credential),
         body: JSON.stringify(payload),
         signal: abort.signal,
+        // OpenRouter's endpoint is fixed by the provider registry. Following
+        // a 307/308 would replay a billable prompt outside that contract.
+        redirect: "error",
       }, {
         retries: 1,
         signal: abort.signal,
