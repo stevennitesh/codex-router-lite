@@ -99,3 +99,9 @@ namespace shape, encrypted relay, request policy, compatibility transform, or
 Switchyard artifact changed, the certification refresh conditions were not met;
 the earlier exact-route proofs remain historical evidence for their recorded
 runtime and were not rewritten for this snapshot-only candidate.
+
+Deployed Router 598bf7bdb3ef267613050639e3146db42949cba7. Fresh ordinary
+native CLI smokes passed through GLM/Novita, GLM/GMICloud, Pareto, and
+Switchyard: each route made one default-sandbox PowerShell tool call, observed
+42, and returned its exact marker. This is app-update transport evidence, not a
+replacement for the five-check v2 certification procedure.
