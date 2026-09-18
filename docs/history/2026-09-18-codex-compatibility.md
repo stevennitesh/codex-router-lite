@@ -69,3 +69,20 @@ this review does not itself renew older proofs.
 
 Repository bootstrap also refreshes the inherited engineering contract from its
 current template, retaining repository-specific policy at the existing owners.
+
+### Delivered result
+
+Deployed Router 4189cbfc1c64886335c506df37f673dd963697a1 successfully.
+All 227 tests, source/product checks and the installed 14-model catalog check
+passed. Fresh CLI v2 evidence passed for GLM/Novita, GLM/GMICloud and Switchyard.
+Their proof records bind this candidate to codex-cli 0.155.0-alpha.9.
+
+Pareto was not recertified: during 2026-09-18T13:11:26Z..13:12:13Z OpenRouter
+rejected the configured 65,536-token output reservation with HTTP 402 because
+the key's remaining weekly allowance could afford only 54,906 tokens. Native
+client retries produced 18 such responses across the two attempted child turns;
+no successful tool call or marker occurred. No provider limit or output contract
+was changed to make the test pass. The existing Pareto proof remains evidence
+for its earlier runtime, not this deployment. Retry fresh certification after
+the key allowance is restored or explicitly adjusted. No account/key identifiers
+or private payloads are retained in this record.
