@@ -10,44 +10,43 @@
   ],
   "routerVersion": "0.5.1",
   "codexVersion": "codex-cli 0.155.0-alpha.2.6",
-  "executionSurface": "codex-desktop-native",
+  "executionSurface": "codex-cli",
   "endpointProvider": "local-switchyard",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:57:59.720Z"
+      "observedAt": "2026-09-18T11:43:06.371Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:57:59.651Z",
+      "observedAt": "2026-09-18T11:43:00.107Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:57:59.720Z"
+      "observedAt": "2026-09-18T11:42:42.178Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:58:02.790Z"
+      "observedAt": "2026-09-18T11:43:06.282Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:58:51.509Z"
+      "observedAt": "2026-09-18T11:43:19.802Z"
     }
   },
-  "windowsAppVersion": "26.911.7940.0",
-  "testedAt": "2026-09-17T20:58:51.509Z",
-  "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35",
+  "testedAt": "2026-09-18T11:43:32.179Z",
+  "routerCommit": "934caf23233a8ef5da8d71caf1339cc6b6f3dc05",
   "runtimeBinding": {
     "upstreamCommit": "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
     "patchSha256": "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
     "binarySha256": "b3233e478e4aabbe2bb30baf6ec3074ab1ef84415614c090bbd0b13bbf93e740",
-    "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35",
+    "routerCommit": "934caf23233a8ef5da8d71caf1339cc6b6f3dc05",
     "routesSha256": "2276f8646c6e849e3757632cd482b5a56cad3aaaa3702dc7995c688066d95e97"
   }
 }

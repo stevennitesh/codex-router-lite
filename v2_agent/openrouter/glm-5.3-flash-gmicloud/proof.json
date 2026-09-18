@@ -11,36 +11,35 @@
   ],
   "routerVersion": "0.5.1",
   "codexVersion": "codex-cli 0.155.0-alpha.2.6",
-  "executionSurface": "codex-desktop-native",
+  "executionSurface": "codex-cli",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:57:55.472Z"
+      "observedAt": "2026-09-18T11:41:39.336Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:58:01.819Z",
+      "observedAt": "2026-09-18T11:41:30.031Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:57:55.472Z"
+      "observedAt": "2026-09-18T11:41:14.649Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:58:10.692Z"
+      "observedAt": "2026-09-18T11:41:39.360Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-17T20:58:49.960Z"
+      "observedAt": "2026-09-18T11:41:51.580Z"
     }
   },
-  "windowsAppVersion": "26.911.7940.0",
-  "testedAt": "2026-09-17T20:58:49.960Z",
-  "routerCommit": "76739f826bc170f8a9a4076dcb1f1ac82307bf35"
+  "testedAt": "2026-09-18T11:41:58.155Z",
+  "routerCommit": "934caf23233a8ef5da8d71caf1339cc6b6f3dc05"
 }

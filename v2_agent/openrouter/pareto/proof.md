@@ -1,39 +1,39 @@
-# Pareto v2 certification
+# openrouter/pareto v2 certification
 
-Accepted for `openrouter/pareto` → `unbiased/pareto`, pinned to the Unbiased
-endpoint with provider fallback disabled.
+Accepted exact-route evidence for deployed Router `934caf23233a8ef5da8d71caf1339cc6b6f3dc05`.
+Historical evidence is bound to this runtime, not a later candidate.
+Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
 
-On 2026-09-18, a fresh native Sol parent using Codex CLI
-`0.155.0-alpha.2.6` spawned the generated `router_openrouter_pareto` role.
-The run used deployed Router `0.5.1`, commit
-`5547e5ec14328d11aee16caeadad695c24d27c82`, with v2 eligibility published
-for the authorized certification window. Runtime code was unchanged.
+A fresh Sol medium parent using codex-cli 0.155.0-alpha.2.6 spawned
+`router_openrouter_pareto` with no inherited conversation. Both turns used
+`openrouter/pareto`. This run used the native CLI collaboration path.
 
-- Window: `00:22:18.819Z` through `00:22:52.469Z`.
-- Both child turns selected `openrouter/pareto`.
-- Two encrypted handoffs arrived at `00:22:26.003Z` and `00:22:41.337Z`.
-- The child called native `exec_command` with `Write-Output (19+23)`.
-  The default sandbox succeeded on its first attempt: exit 0, output `42`.
-- Streamed completion returned `PARETO_V2_FIRST_OK` at `00:22:34.670Z`.
-- Native `followup_task` targeted that same child and returned
-  `PARETO_V2_SECOND_OK` at `00:22:45.582Z`.
-- The parent interrupted the child only after the second marker and exited 0
-  with `PARETO_V2_PARENT_PASS`.
-- All three Pareto Router requests completed with HTTP 200, in 6,328 ms,
-  1,269 ms, and 4,223 ms. There were no canceled requests in this window.
+- Window: 2026-09-18T11:41:58.156Z through 2026-09-18T11:42:31.692Z.
+- Two encrypted handoffs: 2026-09-18T11:42:07.162Z and 2026-09-18T11:42:19.533Z.
+- One native exec_command call executed PowerShell arithmetic and returned
+  42 with exit code 0 in the default sandbox, without an unsandboxed retry.
+- First marker: `PARETO_934CAF_FIRST_OK` at 2026-09-18T11:42:16.518Z.
+- Same-child follow-up: `PARETO_934CAF_SECOND_OK` at 2026-09-18T11:42:23.627Z.
+- Parent cleanup occurred only after the second marker; the parent exited 0.
+- All 3 exact-route requests completed with HTTP 200, with no cancellation.
 
-Evidence was checked against native parent and child rollout events, actual tool
-output, Router timings, and the installed commit manifest. Local scratch summaries
-live under `generated/pareto/`; private logs and encrypted payloads are not part
-of this application.
+| Router completion (UTC) | Duration (ms) | Status |
+| --- | ---: | ---: |
+| 2026-09-18T11:42:14.431Z | 7247 | 200 |
+| 2026-09-18T11:42:16.495Z | 1199 | 200 |
+| 2026-09-18T11:42:23.621Z | 4072 | 200 |
 
-## Scope and limitations
+Evidence was reconciled against parent and child rollout events, actual tool
+results, Router timings, and the deployed manifest. Only sanitized summaries
+are recorded here; no encrypted payloads or private conversations are included.
 
-This proves the native CLI collaboration path, including encrypted relay and
-same-child continuation. It does not claim a desktop GUI run or identify Pareto's
-underlying models. The retired Union proof is not used. The CLI emitted unrelated
-PowerShell snapshot and documentation-MCP startup warnings; neither prevented
-the tool or collaboration checks. Refresh this proof when the exact endpoint,
-request policy, relay behavior, or relevant runtime changes.
+The unbiased endpoint remained pinned with fallback disabled.
+This proof does not apply to another endpoint or the retired Union route.
+
+## Limits
+
+This is native CLI v2 certification, not a desktop GUI WebSocket soak or an
+exhaustive provider fault test. Shared lifecycle and redirect regressions are
+covered separately by the offline suite. Refresh after relevant runtime changes.
