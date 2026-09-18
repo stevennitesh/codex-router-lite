@@ -40,7 +40,7 @@ records the earlier integration decision.
    A fresh per-service-generation capability authenticates every Switchyard
    endpoint except `/health`; Router removes that header before any upstream
    request.
-3. Switchyard classifies the turn, chooses a configured Luna or Sol target and
+3. Switchyard classifies the turn, chooses a configured Luna, Sol, or Astra target and
    effort, and sends the native request back through Router's capability-gated
    Responses endpoint.
 4. `forward_auth = true` preserves the original Codex authorization and account
@@ -74,22 +74,40 @@ Every target sets `store = false`, `stream = true`, and removes
 
 ## Routing policy
 
-- `luna-high`: closed, low-risk work with cheap verification.
-- `luna-max`: difficult but tightly specified and strongly verifiable work.
-- `sol-medium`: ambiguity, weak verification, or judgment.
-- `sol-high`: hard diagnosis, architecture, large refactors, security, and
-  consequential review.
-- `sol-xhigh`: exceptional quality-first or recovery work.
+Luna High remains the hidden classifier and is never an answer target. The
+classifier chooses the dominant bottleneck of the whole request with this
+precedence:
+
+- `astra-xhigh`: positively justified exceptional difficulty, consequential
+  subtle correctness, or recovery after a strong failed attempt.
+- `astra-medium`: planning, review, architecture, interpretation, synthesis,
+  or uncertain diagnosis where judgment dominates.
+- `sol-medium`: implementation, bounded debugging, and routine local decisions;
+  this is the fallback when classification is uncertain.
+- `luna-max`: bounded exploration, source-grounded extraction or summarization,
+  and tiny fully specified mechanical work.
 
 The classifier prompt and schema live only in `routes.template.toml`.
 
 ## Codex compatibility
 
-The public `switchyard/auto` entry derives its context, compaction behavior,
-instructions, model messages, modalities, tools, service tiers, and other
-native capabilities from the current installed Sol behavior template. Its
-authored picker effort ladder remains Switchyard-owned. Do not freeze a copied
-native field list here or in the route fragment.
+The public `switchyard/auto` entry keeps Sol's native behavioral instructions
+with only their model-identifying first sentence neutralized. Its capabilities
+are the explicit common contract of the installed Luna, Sol, and Astra entries:
+optional tools and tiers are intersected, context bounds use the smallest common
+value, and strict review or disabling flags win. Catalog generation reads the
+checked route metadata and never parses Switchyard TOML at runtime.
+
+The public slug, local dispatch model, selected target, and native provider model
+are separate identities. Ordinary turns send `switchyard-auto` to Switchyard;
+native V1/V2 compaction continues to use `gpt-5.6-sol`. Responses restore the
+public `switchyard/auto` identity while routing diagnostics retain the selected
+target. The authored picker effort ladder is accepted for client compatibility;
+each target's configured effort overrides it.
+
+The four-target candidate advertises multi-agent v1 until its deployed policy
+passes fresh exact-route certification. The prior v2 evidence remains historical
+draft material and cannot promote this candidate.
 
 Router keeps Codex compaction requests on the native public route rather than
 sending them through Switchyard's auxiliary compaction endpoint. The optional

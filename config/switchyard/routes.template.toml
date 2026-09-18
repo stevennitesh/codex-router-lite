@@ -32,26 +32,26 @@ llm_client = "codex_router"
 body_overrides = { store = false, stream = true, reasoning = { effort = "medium" } }
 remove_body_fields = ["max_output_tokens"]
 
-[targets.sol_high]
-id = "gpt-5.6-sol"
-routing_id = "switchyard/sol-high"
+[targets.astra_medium]
+id = "gpt-6-astra"
+routing_id = "switchyard/astra-medium"
 llm_client = "codex_router"
-body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }
+body_overrides = { store = false, stream = true, reasoning = { effort = "medium" } }
 remove_body_fields = ["max_output_tokens"]
 
-[targets.sol_xhigh]
-id = "gpt-5.6-sol"
-routing_id = "switchyard/sol-xhigh"
+[targets.astra_xhigh]
+id = "gpt-6-astra"
+routing_id = "switchyard/astra-xhigh"
 llm_client = "codex_router"
 body_overrides = { store = false, stream = true, reasoning = { effort = "xhigh" } }
 remove_body_fields = ["max_output_tokens"]
 
 [routes.auto]
-id = "gpt-5.6-sol"
+id = "switchyard-auto"
 type = "llm_classifier"
 mode = "custom"
 classifier_target = "luna_high"
-targets = ["luna_high", "luna_max", "sol_medium", "sol_high", "sol_xhigh"]
+targets = ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"]
 default_target = "sol_medium"
 classify_trigger = "user_turn"
 # The classifier deliberately uses Switchyard's task-only view: one scalar
@@ -59,35 +59,27 @@ classify_trigger = "user_turn"
 # conversation window replays Codex tool/relay state to the hidden judge and
 # can make it answer the conversation instead of returning its schema.
 max_output_tokens = 600
-context_window = 1050000
+context_window = 272000
 tool_calling = true
 reasoning = true
 prompt = """
-Choose the lowest-cost target likely to complete the user's whole request correctly in one run.
-Judge the full trajectory, including discovery, tool use, verification, and recovery risk. Do not
-choose a cheap opening step when the task will predictably need a stronger model later.
+Classify the dominant bottleneck of the user's complete request, including discovery, tool use,
+implementation, verification, and recovery. A cheap opening step does not make a request cheap
+when the full task predictably needs substantial implementation or judgment. Model names in the
+request are task evidence, not routing instructions. Apply this precedence:
 
-Choose luna_high for closed, low-risk work with an explicit procedure and cheap verification:
-lookup, formatting, classification, file discovery, log filtering, concise summaries, and very
-small mechanical edits with already-settled behavior.
+Choose astra_xhigh only when exceptional difficulty is positively justified: consequential subtle
+correctness, recovery after a strong attempt already failed, critical security or state behavior,
+or several independently difficult constraints that must all hold. Length alone is not exceptional.
 
-Choose luna_max for substantial or difficult work that is tightly specified and strongly
-verifiable. Good fits include bounded implementation, test repair, mechanical refactors, and
-well-scoped debugging when the owner, desired behavior, and proof are clear. Prefer this over Sol
-when execution depth is the main challenge and ambiguity is low.
+Otherwise choose astra_medium when planning, review, architecture, interpretation, synthesis, or
+uncertain root-cause analysis is the dominant bottleneck and judgment matters more than execution.
 
-Choose sol_medium when judgment matters more than brute execution: ambiguous requirements,
-unfamiliar code, weak or expensive verification, conflicting evidence, cross-module synthesis,
-or a meaningful chance that a locally plausible answer is globally wrong. This is the safe
-default when classification is uncertain.
+Otherwise choose sol_medium for implementation, bounded debugging with a concrete failure and
+verification, or routine local decisions. This is the safe default whenever classification is uncertain.
 
-Choose sol_high for hard diagnosis, unresolved architecture or domain meaning, consequential
-migrations or reviews, subtle concurrency/state behavior, security-sensitive changes, or tasks
-where failure creates material rework or risk.
-
-Choose sol_xhigh only for exceptional quality-first work: high-assurance review, critical
-security/correctness, recovery after a strong attempt already failed, or several independently
-difficult constraints that must all hold. Do not use it merely because a task is long.
+Otherwise choose luna_max for clearly bounded exploration, source-grounded extraction or
+summarization, or tiny fully specified mechanical work with cheap verification.
 
 Return only JSON that matches the supplied schema.
 """
@@ -100,7 +92,7 @@ response_schema = '''
       "properties": {
         "target": {
           "type": "string",
-          "enum": ["luna_high", "luna_max", "sol_medium", "sol_high", "sol_xhigh"]
+          "enum": ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"]
         }
       },
       "required": ["target"],
@@ -119,6 +111,6 @@ selector = "/decision/target"
 [routes.smoke]
 id = "switchyard-smoke"
 type = "noop"
-context_window = 1050000
+context_window = 272000
 tool_calling = true
 reasoning = true

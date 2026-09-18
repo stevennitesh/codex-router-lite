@@ -1,0 +1,1039 @@
+{
+  "schemaVersion": 2,
+  "checkpoint": "SY-A2",
+  "date": "2026-09-18T18:10:29.542Z",
+  "candidate": {
+    "routerBaseCommit": "f4638f7f0006551eac2c0d8d58292a6fd38dbb32",
+    "templateSha256": "b8dfbb60133b2097615f0ff161292c6e3110bd7d33b7f31db7a07ed09aa2a01e",
+    "binarySha256": "b3233e478e4aabbe2bb30baf6ec3074ab1ef84415614c090bbd0b13bbf93e740",
+    "sourceCommit": "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
+    "patchSha256": "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
+    "caseSetSha256": "9f0e64884048368130968421d10d5fe05cb8ca19097d62a8249d20853b6ae047",
+    "routerSourceSha256": {
+      "src/catalog.mjs": "78db980bc0b5bb7acf3dee50986318145d5e32b8e13cda019c5e7820cba29c63",
+      "src/namespace-relay.mjs": "bc6274696a5e42a10fba9cdc22519169655a46a03d827eeb0d3004d90ba3c95b",
+      "src/routed-models.mjs": "6c55fe613d37d4f934b89626435692a043f16a60f6858622694b6261afbf772d",
+      "src/router.mjs": "5efc86cc0fd517429507beaf42f1023360b076cb40131ea02bc1154905359e32"
+    },
+    "routedInstructionsSha256": "a824a4fc8616b52b0ba0dbfca4bdc3be7de82220647576efecac062b7a8bb499",
+    "donorInstructionsSha256": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a"
+  },
+  "method": {
+    "isolatedRuntime": true,
+    "runtimeScope": "candidate Switchyard configuration calling the already-installed Router service",
+    "installedRouter": {
+      "service": "codex-router",
+      "version": "0.5.1"
+    },
+    "candidateRouterExecutedEndToEnd": false,
+    "installedServiceChanged": false,
+    "protectedDecisionPath": true,
+    "fullPromptsOrResponsesRetained": false,
+    "boundedSyntheticJudgmentExcerptsRetained": true,
+    "donorTerminalEventsRequired": true,
+    "priorTransportRowsRetainedWithoutRerun": true,
+    "semanticRecheckFixtures": [
+      "DX1"
+    ],
+    "checkerRepairNotes": [
+      "Equivalent synthetic wording such as second charge and numeric one was added after the first checker run exposed overly narrow keyword patterns.",
+      "The XHigh cancellation criterion was corrected from a naive local recheck to serialized or atomic commit/cancel ordering after both answers identified the stronger invariant."
+    ],
+    "classifierCases": 28,
+    "mediumDonorPairs": 5,
+    "xhighDonorPairs": 1
+  },
+  "preflightDiagnostics": [
+    {
+      "stage": "caller-only authentication probe",
+      "classifierCases": 28,
+      "selectedFallback": "sol_medium",
+      "fallbackCount": 28,
+      "answerStatus": 401,
+      "disposition": "discarded as classifier-quality evidence; reran with the explicitly authorized signed-in Codex session"
+    },
+    {
+      "stage": "native Responses request-shape probes",
+      "statuses": [
+        400,
+        400
+      ],
+      "disposition": "corrected input to list form and enabled required streaming before retaining answer evidence"
+    }
+  ],
+  "classification": [
+    {
+      "id": "L01",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 1635
+    },
+    {
+      "id": "L02",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 2945
+    },
+    {
+      "id": "L03",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 2819
+    },
+    {
+      "id": "L04",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 3120
+    },
+    {
+      "id": "L05",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 3066
+    },
+    {
+      "id": "L06",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 2115
+    },
+    {
+      "id": "S01",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 3691
+    },
+    {
+      "id": "S02",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 4376
+    },
+    {
+      "id": "S03",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 3820
+    },
+    {
+      "id": "S04",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "luna_max",
+      "pass": false,
+      "latencyMs": 2113
+    },
+    {
+      "id": "S05",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 2260
+    },
+    {
+      "id": "S06",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 3735
+    },
+    {
+      "id": "S07",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 2938
+    },
+    {
+      "id": "A01",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 2175
+    },
+    {
+      "id": "A02",
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 2775
+    },
+    {
+      "id": "A03",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 1482
+    },
+    {
+      "id": "A04",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 2728
+    },
+    {
+      "id": "A05",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 3445
+    },
+    {
+      "id": "A06",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 9949
+    },
+    {
+      "id": "A07",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 2090
+    },
+    {
+      "id": "X01",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 2401
+    },
+    {
+      "id": "X02",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 2413
+    },
+    {
+      "id": "X03",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 2627
+    },
+    {
+      "id": "X04",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 2486
+    },
+    {
+      "id": "M01",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 3719
+    },
+    {
+      "id": "M02",
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 4094
+    },
+    {
+      "id": "M03",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 3124
+    },
+    {
+      "id": "M04",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 1975
+    }
+  ],
+  "forced": [
+    {
+      "target": "luna_max",
+      "status": 200,
+      "latencyMs": 3232,
+      "selected": "switchyard/luna-max",
+      "completed": true,
+      "outputChars": 20,
+      "marker": true
+    },
+    {
+      "target": "sol_medium",
+      "status": 200,
+      "latencyMs": 1938,
+      "selected": "switchyard/sol-medium",
+      "completed": true,
+      "outputChars": 20,
+      "marker": true
+    },
+    {
+      "target": "astra_medium",
+      "status": 200,
+      "latencyMs": 3615,
+      "selected": "switchyard/astra-medium",
+      "completed": true,
+      "outputChars": 20,
+      "marker": true
+    },
+    {
+      "target": "astra_xhigh",
+      "status": 200,
+      "latencyMs": 1727,
+      "selected": "switchyard/astra-xhigh",
+      "completed": true,
+      "outputChars": 20,
+      "marker": true
+    }
+  ],
+  "ordinary": [
+    {
+      "target": "luna_max",
+      "sourceCase": "L01",
+      "status": 200,
+      "latencyMs": 3144,
+      "selected": "switchyard/luna-max",
+      "completed": true,
+      "outputChars": 30
+    },
+    {
+      "target": "sol_medium",
+      "sourceCase": "S01",
+      "status": 200,
+      "latencyMs": 9698,
+      "selected": "switchyard/sol-medium",
+      "completed": true,
+      "outputChars": 247
+    },
+    {
+      "target": "astra_medium",
+      "sourceCase": "A01",
+      "status": 200,
+      "latencyMs": 13988,
+      "selected": "switchyard/astra-medium",
+      "completed": true,
+      "outputChars": 599
+    },
+    {
+      "target": "astra_xhigh",
+      "sourceCase": "A02",
+      "status": 200,
+      "latencyMs": 18126,
+      "selected": "switchyard/astra-xhigh",
+      "completed": true,
+      "outputChars": 547
+    }
+  ],
+  "transitions": [
+    {
+      "id": "L01",
+      "selected": "luna_max",
+      "status": 200,
+      "latencyMs": 1831
+    },
+    {
+      "id": "S01",
+      "selected": "sol_medium",
+      "status": 200,
+      "latencyMs": 2783
+    },
+    {
+      "id": "A01",
+      "selected": "astra_medium",
+      "status": 200,
+      "latencyMs": 2434
+    },
+    {
+      "id": "X01",
+      "selected": "astra_xhigh",
+      "status": 200,
+      "latencyMs": 2484
+    },
+    {
+      "id": "A03",
+      "selected": "astra_medium",
+      "status": 200,
+      "latencyMs": 2352
+    },
+    {
+      "id": "S02",
+      "selected": "sol_medium",
+      "status": 200,
+      "latencyMs": 2485
+    },
+    {
+      "id": "L02",
+      "selected": "luna_max",
+      "status": 200,
+      "latencyMs": 3989
+    }
+  ],
+  "affinity": [
+    {
+      "itemType": "message",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "function_call_output",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "custom_tool_call_output",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "computer_call_output",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "local_shell_call_output",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "tool_search_output",
+      "selected": "sol_medium",
+      "status": 200
+    }
+  ],
+  "donorComparisons": [
+    {
+      "id": "D01",
+      "effort": "medium",
+      "expectedChecks": [
+        {
+          "id": "unknown_commit_duplicate",
+          "description": "identifies retry after a committed timeout as a duplicate-charge hazard"
+        },
+        {
+          "id": "stable_operation_key",
+          "description": "requires one stable idempotency key for the logical operation"
+        },
+        {
+          "id": "failure_test",
+          "description": "tests a committed first attempt whose response times out"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 9986,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1353,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "unknown_commit_duplicate",
+            "description": "identifies retry after a committed timeout as a duplicate-charge hazard",
+            "pass": true
+          },
+          {
+            "id": "stable_operation_key",
+            "description": "requires one stable idempotency key for the logical operation",
+            "pass": true
+          },
+          {
+            "id": "failure_test",
+            "description": "tests a committed first attempt whose response times out",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding:** Each attempt generates a new key. If the gateway commits the first charge but its response times out, the retry uses a different key and can create a second charge for the same payment. A timeout leaves the outcome unknown; it does not establish failure. **Invariant:** All attempts for one logical payment must use the same idempotency key, and the gateway must enforce that key atomically so they produce at most one charge. **Remediation:** Generate the key once before the loop and reuse it for both attempts, retaining the two-attempt bound. This fixes retries within this invocation, assuming the gateway supports idempotency. If the same logical payment can be resubmitted through another invocation or after a restart, persist its key before the first request and reuse it there too. After the final timeout, treat the payment as unresolved and reconcile using that identity rather than retrying with a fresh key. **Verification:** Use an idempotency-aware fake gateway that commits the first charge, then throws a timeout. On the retry, have it return the existing charge for the same key but create another charge for a different key. Assert exactly two requests, identical keys, exactly one committed charge, and a returned result identifying that charge. The supplied implementation fails this test by committing two charges."
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 10509,
+        "selected": "switchyard/astra-medium",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1381,
+        "selectedExpected": "switchyard/astra-medium",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "unknown_commit_duplicate",
+            "description": "identifies retry after a committed timeout as a duplicate-charge hazard",
+            "pass": true
+          },
+          {
+            "id": "stable_operation_key",
+            "description": "requires one stable idempotency key for the logical operation",
+            "pass": true
+          },
+          {
+            "id": "failure_test",
+            "description": "tests a committed first attempt whose response times out",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding Each attempt generates a new idempotency key. If the gateway commits the first charge but its response times out, the retry uses a different key and can create a second charge for the same order. A timeout means the outcome is unknown, not that the charge failed. ### Invariant All attempts for one logical payment must use the same idempotency key and identical charge parameters. The gateway must guarantee that requests with that key cannot create multiple charges. ### Remediation Generate the key once before the retry loop and reuse it for both attempts. Keep the two-attempt limit. This prevents this loop’s duplicate-charge hazard, provided the gateway enforces idempotency. If callers can invoke `submit` again for the same logical payment, persist the key with that payment and reuse it across invocations. After exhausted timeouts, report an unknown outcome requiring reconciliation; do not start a fresh payment with a new key. ### Verification Use an idempotency-aware fake gateway that commits the first charge, then throws a timeout. On the second request, it returns the previously committed charge when the key matches, otherwise creates another charge. Assert that exactly two requests use the same key, exactly one charge exists, and `submit` returns that original charge. The supplied implementation fails this test by creating two charges."
+      },
+      "pairPass": true
+    },
+    {
+      "id": "D02",
+      "effort": "medium",
+      "expectedChecks": [
+        {
+          "id": "cross_tenant_cache",
+          "description": "identifies that a document-only cache key can reuse another tenant's decision"
+        },
+        {
+          "id": "trusted_tenant",
+          "description": "uses the authenticated tenant rather than the request body tenant"
+        },
+        {
+          "id": "tenant_keyed_test",
+          "description": "tests the same document identity under two tenants"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 10863,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1439,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "cross_tenant_cache",
+            "description": "identifies that a document-only cache key can reuse another tenant's decision",
+            "pass": true
+          },
+          {
+            "id": "trusted_tenant",
+            "description": "uses the authenticated tenant rather than the request body tenant",
+            "pass": true
+          },
+          {
+            "id": "tenant_keyed_test",
+            "description": "tests the same document identity under two tenants",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding:** The cache key contains only `doc.id`, so the first cached decision for a document is reused across users and tenants. If one account receives `true`, another account requesting that document receives `true` without an ACL lookup—even if its own ACL decision would be `false`. A cached `false` can likewise deny an authorized account. Separately, the ACL lookup trusts the caller-controlled `req.body.tenantId` instead of the authenticated tenant, allowing the caller to select the tenant context on a cache miss. **Invariant:** Every decision must apply to the authenticated tenant, authenticated user, and requested document. A cached decision may be reused only for the same authorization context, and access must respect the document’s tenant boundary. **Remediation:** Obtain the tenant from `req.auth.tenantId` and key the cache by an unambiguous tuple of tenant, authenticated user ID, and document ID. Ensure the ACL lookup enforces document membership in that tenant. Body input must not override the authenticated tenant. **Verification:** Warm the cache with an allowed request from tenant A/user A. Then request the same document ID as tenant B/user B, whose ACL result is denied, while submitting tenant A in the body. Assert denial and an ACL lookup using tenant B/user B. Also test two users within one tenant with opposite permissions; this distinguishes the complete correction from a tenant-only cache key."
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 24171,
+        "selected": "switchyard/astra-medium",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1464,
+        "selectedExpected": "switchyard/astra-medium",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "cross_tenant_cache",
+            "description": "identifies that a document-only cache key can reuse another tenant's decision",
+            "pass": true
+          },
+          {
+            "id": "trusted_tenant",
+            "description": "uses the authenticated tenant rather than the request body tenant",
+            "pass": true
+          },
+          {
+            "id": "tenant_keyed_test",
+            "description": "tests the same document identity under two tenants",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding The cache keys authorization decisions only by `doc.id`, although decisions depend on tenant, user, and document. If user A is allowed to read document D, that cached `true` is returned to user B requesting D—even in another tenant—without checking B’s ACL. A cached denial can likewise incorrectly deny another authorized user. Separately, `req.body.tenantId` is attacker-controlled. On a cache miss, it lets the caller choose the tenant passed to the ACL instead of using the tenant authenticated by the signed token. ### Invariant Every returned decision must apply to the authenticated tenant, authenticated user, and requested document. A cached decision may be reused only for that same authorization context, while its underlying permissions remain valid. ### Remediation Use `req.auth.tenantId` as the tenant authority. Key the cache with an unambiguous tuple of authenticated tenant, authenticated user ID, and document ID. Ensure document resolution or the ACL enforces document membership in that tenant. Invalidate cached decisions when relevant permissions change. ### Verification Warm the cache with an allowed request from tenant A/user A for D. Then request the same document ID as tenant B/user B, whose ACL denies access, while submitting tenant A in the body. Expect denial and an ACL lookup using authenticated tenant B. The original code returns cached `true`; a document-only cache fix still exposes the body-tenant flaw."
+      },
+      "pairPass": true
+    },
+    {
+      "id": "D03",
+      "effort": "medium",
+      "expectedChecks": [
+        {
+          "id": "absence_only_legacy",
+          "description": "defaults to legacy only when the v1 field is absent"
+        },
+        {
+          "id": "unknown_rejected",
+          "description": "rejects an explicitly supplied unknown mode"
+        },
+        {
+          "id": "compatibility_matrix",
+          "description": "covers omitted v1, valid v2, and unknown explicit values"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 11745,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1533,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "absence_only_legacy",
+            "description": "defaults to legacy only when the v1 field is absent",
+            "pass": true
+          },
+          {
+            "id": "unknown_rejected",
+            "description": "rejects an explicitly supplied unknown mode",
+            "pass": true
+          },
+          {
+            "id": "compatibility_matrix",
+            "description": "covers omitted v1, valid v2, and unknown explicit values",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding** The compatibility boundary must distinguish an omitted `mode` from an explicitly supplied value. Defaulting unknown values to `\"legacy\"` would incorrectly accept invalid records. **Invariant** Version 1 records that omit `mode` remain readable and normalize to `{ mode: \"legacy\" }`. Version 2 accepts only an explicitly supplied `\"strict\"` or `\"relaxed\"` mode. Legacy fallback applies exclusively to version 1 records with an absent `mode`. **Remediation** Use version-specific validation: - **Version 1:** Accept an absent `mode` and normalize it to `\"legacy\"`. Reject a supplied `mod..."
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 11783,
+        "selected": "switchyard/astra-medium",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1482,
+        "selectedExpected": "switchyard/astra-medium",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "absence_only_legacy",
+            "description": "defaults to legacy only when the v1 field is absent",
+            "pass": true
+          },
+          {
+            "id": "unknown_rejected",
+            "description": "rejects an explicitly supplied unknown mode",
+            "pass": true
+          },
+          {
+            "id": "compatibility_matrix",
+            "description": "covers omitted v1, valid v2, and unknown explicit values",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding The compatibility risk is treating a missing `mode` and an explicitly invalid `mode` as equivalent. A default such as “unrecognized mode → legacy” would silently accept invalid records. ### Invariant Parsing must depend on the record’s version and whether `mode` is present: - **Version 1:** If `mode` is absent, accept and normalize to `{ mode: \"legacy\" }`. - **Version 2:** Require `mode` to be exactly the string `\"strict\"` or `\"relaxed\"`; preserve that value. - Reject unsupported or missing versions unless the format separately defines a version-defaulting rule. ### Remediation ..."
+      },
+      "pairPass": true
+    },
+    {
+      "id": "D04",
+      "effort": "medium",
+      "expectedChecks": [
+        {
+          "id": "trace_sequence",
+          "description": "uses the trace's committed append, lost acknowledgement, and redelivery"
+        },
+        {
+          "id": "effect_idempotency",
+          "description": "makes the ledger effect idempotent by stable operation identity"
+        },
+        {
+          "id": "replay_test",
+          "description": "replays after the lost acknowledgement and requires one append"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 11649,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1317,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "trace_sequence",
+            "description": "uses the trace's committed append, lost acknowledgement, and redelivery",
+            "pass": true
+          },
+          {
+            "id": "effect_idempotency",
+            "description": "makes the ledger effect idempotent by stable operation identity",
+            "pass": true
+          },
+          {
+            "id": "replay_test",
+            "description": "replays after the lost acknowledgement and requires one append",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding:** D04 shows the first ledger append committed, but the acknowledgment was lost. The queue redelivered the message with the same `operationId`. Because append is non-idempotent, the second delivery appended again, producing two ledger effects for one operation. **Invariant:** Each `operationId` may produce at most one committed ledger effect, regardless of delivery count or acknowledgment loss. Acknowledge only after the effect is durably committed or confirmed already committed. **Remediation:** Make the ledger write atomically idempotent by `operationId`. Enforce a durable uniqueness constraint and treat a duplicate operation as successful without applying its amount again. If deduplication uses a separate record, commit that record and the ledger effect in the same transaction. Keep acknowledgment after this operation; moving it earlier risks losing the effect. **Verification:** Start with an empty ledger. Deliver an operation, allow its ledger transaction to commit, then drop its acknowledgment and force redelivery with the same `operationId`. Assert exactly one committed ledger effect, a balance change equal to the amount once, and successful acknowledgment of the redelivery. Also replay concurrent deliveries of that operation to verify the uniqueness enforcement prevents races.",
+        "toolRoundTrip": {
+          "requested": true,
+          "callCompleted": true,
+          "correctTool": true,
+          "validArguments": true,
+          "resultSupplied": true,
+          "observedOutputKinds": [
+            {
+              "type": "message",
+              "name": null
+            },
+            {
+              "type": "function_call",
+              "name": "inspect_synthetic_trace"
+            }
+          ],
+          "finalCompleted": true
+        }
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 9662,
+        "selected": "switchyard/astra-medium",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1410,
+        "selectedExpected": "switchyard/astra-medium",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "trace_sequence",
+            "description": "uses the trace's committed append, lost acknowledgement, and redelivery",
+            "pass": true
+          },
+          {
+            "id": "effect_idempotency",
+            "description": "makes the ledger effect idempotent by stable operation identity",
+            "pass": true
+          },
+          {
+            "id": "replay_test",
+            "description": "replays after the lost acknowledgement and requires one append",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding The trace shows that the first ledger append committed, but the first delivery’s acknowledgment was lost. The message was redelivered with the same `operationId`. Because append is non-idempotent, the second delivery appended again, producing two ledger effects for one operation. ### Invariant For each `operationId`, at most one ledger effect may commit, regardless of redelivery or acknowledgment loss. A delivery may be acknowledged only after its effect is durably committed or confirmed as already committed. ### Remediation Make the ledger append idempotent using `operationId` as a durable unique key. Atomically commit the deduplication record and ledger effect in the same transaction; retries of an already committed operation must return success without another effect. Keep acknowledgment after that transaction. A separate “already processed” check is insufficient: concurrent deliveries can both pass it, and non-atomic recording introduces crash windows. ### Verification Replay the fixture deterministically: commit the first append, lose its acknowledgment, then redeliver with the same `operationId`. Assert exactly one ledger entry and one amount contribution, with the retry completing successfully and being acknowledged. Repeat with concurrent deliveries and a process restart after commit but before acknowledgment; the durable ledger effect must remain exactly one.",
+        "toolRoundTrip": {
+          "requested": true,
+          "callCompleted": true,
+          "correctTool": true,
+          "validArguments": true,
+          "resultSupplied": true,
+          "observedOutputKinds": [
+            {
+              "type": "message",
+              "name": null
+            },
+            {
+              "type": "function_call",
+              "name": "inspect_synthetic_trace"
+            }
+          ],
+          "finalCompleted": true
+        }
+      },
+      "pairPass": true
+    },
+    {
+      "id": "D05",
+      "effort": "medium",
+      "expectedChecks": [
+        {
+          "id": "rollback_condition",
+          "description": "permits rollback only while old readers can consume every new write"
+        },
+        {
+          "id": "unsafe_drop",
+          "description": "identifies dropping old_name as the irreversible compatibility break"
+        },
+        {
+          "id": "evidence_gate",
+          "description": "requires verified backfill and old-field coverage before removal"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 10608,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1546,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "rollback_condition",
+            "description": "permits rollback only while old readers can consume every new write",
+            "pass": true
+          },
+          {
+            "id": "unsafe_drop",
+            "description": "identifies dropping old_name as the irreversible compatibility break",
+            "pass": true
+          },
+          {
+            "id": "evidence_gate",
+            "description": "requires verified backfill and old-field coverage before removal",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding:** Step 4, immediately dropping `old_name`, makes rollback to old application binaries unsafe: those binaries read only `old_name`. Rolling back the application after the drop does not restore the field or its data. **Invariant:** Rollback to an old binary is safe only while `old_name` exists and contains complete, current, semantically valid data for every record that binary may read. Every write accepted before or during rollback must maintain that invariant. Dual-writing alone is insufficient unless failures and divergence are handled. **Remediation:** Keep `old_name` and maint..."
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 10605,
+        "selected": "switchyard/astra-medium",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1518,
+        "selectedExpected": "switchyard/astra-medium",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "rollback_condition",
+            "description": "permits rollback only while old readers can consume every new write",
+            "pass": true
+          },
+          {
+            "id": "unsafe_drop",
+            "description": "identifies dropping old_name as the irreversible compatibility break",
+            "pass": true
+          },
+          {
+            "id": "evidence_gate",
+            "description": "requires verified backfill and old-field coverage before removal",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding Step 4, immediately dropping `old_name`, makes rollback unsafe. Old application binaries read only `old_name`; rolling back the application cannot restore the dropped field or its data. Completing the backfill alone does not establish rollback safety. ### Invariant Rollback to an old binary is safe only while `old_name` remains readable, contains all data that binary requires, and stays current with every relevant write—including writes made after rollback. Once `old_name` is dropped, application-only rollback to those binaries is unsafe. ### Remediation Insert an evidence gate ..."
+      },
+      "pairPass": true
+    },
+    {
+      "id": "DX1",
+      "effort": "xhigh",
+      "expectedChecks": [
+        {
+          "id": "cross_tenant_interleaving",
+          "description": "identifies one request overwriting the shared credential before another publishes"
+        },
+        {
+          "id": "request_owned_credential",
+          "description": "keeps credentials request scoped through publication"
+        },
+        {
+          "id": "effect_boundary_ordering",
+          "description": "defines serialized or atomic cancellation/publication ordering at the irreversible boundary"
+        },
+        {
+          "id": "concurrency_tests",
+          "description": "tests forced interleavings and cancellation at await boundaries"
+        }
+      ],
+      "direct": {
+        "status": 200,
+        "latencyMs": 27878,
+        "selected": null,
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1690,
+        "selectedExpected": null,
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "cross_tenant_interleaving",
+            "description": "identifies one request overwriting the shared credential before another publishes",
+            "pass": true
+          },
+          {
+            "id": "request_owned_credential",
+            "description": "keeps credentials request scoped through publication",
+            "pass": true
+          },
+          {
+            "id": "effect_boundary_ordering",
+            "description": "defines serialized or atomic cancellation/publication ordering at the irreversible boundary",
+            "pass": true
+          },
+          {
+            "id": "concurrency_tests",
+            "description": "tests forced interleavings and cancellation at await boundaries",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "**Finding:** A stores tenant A’s credential and suspends in rendering. B stores tenant B’s credential and suspends. A resumes, observes no cancellation, and publishes A’s draft using B’s credential. Separately, cancellation while `remote.publish` is pending cannot revoke an irreversible publication through the existing local check. **Invariant:** Each publication must use an immutable, operation-owned credential authorized for that job’s tenant. Accepted cancellation and committed publication must be mutually exclusive. Cancellation that wins before the defined commit boundary prevents publication; cancellation after that boundary must report “too late.” **Remediation:** Remove shared credential storage. Bind the job, tenant, credential, and cancellation state to one operation context. Serialize cancellation against an atomic transition from pending to either cancelled or committing. A local transition before dispatch supports cancellation only until dispatch. If cancellation must remain effective until the remote irreversible commit, the remote service must atomically enforce the cancellation/commit decision; another local check cannot provide that guarantee. **Verification:** Use deterministic barriers to test: - Both tenants overlapping, with rendering completing in either order; assert each draft’s credential and tenant match. - Cancellation before rendering, during rendering, and before the commit transition; assert no publication. - Cancellation racing the commit transition, forcing each winner. - Cancellation during remote execution and after commit; assert behavi..."
+      },
+      "routed": {
+        "status": 200,
+        "latencyMs": 27041,
+        "selected": "switchyard/astra-xhigh",
+        "terminalType": "response.completed",
+        "responseStatus": "completed",
+        "completed": true,
+        "outputChars": 1788,
+        "selectedExpected": "switchyard/astra-xhigh",
+        "selectedMatches": true,
+        "semanticChecks": [
+          {
+            "id": "cross_tenant_interleaving",
+            "description": "identifies one request overwriting the shared credential before another publishes",
+            "pass": true
+          },
+          {
+            "id": "request_owned_credential",
+            "description": "keeps credentials request scoped through publication",
+            "pass": true
+          },
+          {
+            "id": "effect_boundary_ordering",
+            "description": "defines serialized or atomic cancellation/publication ordering at the irreversible boundary",
+            "pass": true
+          },
+          {
+            "id": "concurrency_tests",
+            "description": "tests forced interleavings and cancellation at await boundaries",
+            "pass": true
+          }
+        ],
+        "semanticPass": true,
+        "judgmentExcerpt": "### Finding Concrete interleaving: A stores tenant A’s credential and suspends in `render`; B stores tenant B’s credential and suspends; A resumes, finds itself uncancelled, and publishes A’s draft using B’s credential. The shared mutable credential breaks tenant isolation. ### Invariant Each publication must use an immutable credential bound to that invocation’s tenant, never another invocation’s ambient state. Cancellation and publication authorization must have one defined ordering: if cancellation wins, no publication occurs; if publication authorization wins, cancellation cannot be reported as successful. Once the irreversible effect occurs, cancellation cannot undo it. ### Remediation Give each invocation exclusive ownership of its draft, tenant-bound credential, and lifecycle state. Keep credentials invocation-local; snapshot mutable credential data. Use a per-job coordinator to serialize cancellation against the transition from pending to committing. Dispatch only when that transition succeeds. Define the cancellation cutoff explicitly. A local transition can establish a dispatch cutoff, but cannot guarantee cancellation until the remote irreversible effect. That stronger guarantee requires remote atomic cancellation/commit arbitration. Aborting a request is not proof of non-publication. ### Verification Use controlled promises/barriers to test: - Both render completion orders: each draft uses its own tenant’s credential. - Cancellation before execution, during rendering, and before commit authorization: zero publish calls. - Cancellation racing commit authorizat..."
+      },
+      "pairPass": true
+    }
+  ],
+  "summary": {
+    "classificationAcceptable": 27,
+    "classificationTotal": 28,
+    "selectedCounts": {
+      "luna_max": 8,
+      "sol_medium": 7,
+      "astra_medium": 7,
+      "astra_xhigh": 6
+    },
+    "forcedPassed": 4,
+    "ordinaryCompleted": 4,
+    "affinityStable": true,
+    "donorPairsComplete": 6,
+    "semanticDonorPairsPassed": 6,
+    "toolRoundTripLegsPassed": 2,
+    "classifierBoundaryDisagreements": [
+      "S04"
+    ],
+    "requiredFailures": [],
+    "requiredCasesPassed": true,
+    "decisionLatency": {
+      "count": 35,
+      "medianMs": 2728,
+      "p95Ms": 4094
+    },
+    "answerLatency": {
+      "count": 20,
+      "medianMs": 10605,
+      "p95Ms": 27041
+    }
+  },
+  "limitations": [
+    "Synthetic sanity evidence is not a statistical accuracy estimate.",
+    "Semantic checks cover predeclared facts in six bounded fixtures; they do not establish general model quality.",
+    "The isolated runtime exercised candidate Switchyard configuration against the installed Router; candidate Router source hashes are provenance for A3 and are not end-to-end execution proof.",
+    "No private conversation, repository payload, deployment, or v2 certification was exercised."
+  ]
+}

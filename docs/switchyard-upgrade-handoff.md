@@ -1,9 +1,17 @@
 # Future Switchyard implementation handoff
 
-Status: prepared, not dispatched. User requested planning only on 2026-09-18.
+Status: checkpoints A1 and A2 were accepted after their review-repair rounds.
+Checkpoint A3 is preparing the clean v1 candidate for transactional deployment
+and fresh exact-route certification. Its A2 proof covers candidate Switchyard
+configuration through the installed Router; candidate Router hashes are
+provenance for the A3 end-to-end run. Phase B remains pending.
 
-Revision 3: feedback reconciliation only. Use revision 3 of the linked plan for
-future assignments. Implementation remains unstarted.
+Revision 3 remains the outcome authority. The later execution authorization
+supersedes this document's original plan-only boundary for assigned checkpoints;
+it does not authorize deployment, provider calls, certification, commit, or push
+during A1. The later A2 assignment explicitly authorized its bounded synthetic
+native quota validation; it did not authorize deployment, certification,
+commit, push, private task-data egress, or TypeSafe work.
 
 Outcome authority: [Switchyard upgrade plan](switchyard-upgrade-plan.md).
 Read applicable `AGENTS.md` and the plan's conditional owner documents. The

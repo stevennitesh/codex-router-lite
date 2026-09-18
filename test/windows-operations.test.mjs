@@ -90,9 +90,11 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /if \(\$WhatIfPreference\)[\s\S]*worktree add --detach/);
   assert.match(source, /worktree add --detach \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file/);
-  assert.match(source, /Rollback Router commit must match the installed Router manifest commit/);
+  assert.match(source, /Preserved runtime rollback must be directly under/);
+  assert.match(source, /Preserved runtime rollback must be the one existing Switchyard rollback directory/);
+  assert.match(source, /Preserved rollback metadata names an unsupported file/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
-  assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$expectedRollbackCommit[\s\S]*ShouldProcess/);
+  assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$installedRouterCommit[\s\S]*ShouldProcess/);
   assert.match(
     source,
     /Prepare-RollbackRouter \$rollbackRouterRoot[\s\S]*Assert-CheckoutIdentity \$rollbackRouterRoot \$expectedRollbackCommit "Prepared rollback Router checkout"[\s\S]*ShouldProcess/u,

@@ -8,6 +8,7 @@ param(
   [string]$ExpectedRoutesSha256,
   [Parameter(Mandatory = $true)]
   [string]$ExpectedRouterCommit,
+  [string]$PreservedRuntimeRollbackRoot,
   [string]$RollbackRouterRoot,
   [string]$ExpectedRollbackRouterCommit,
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)
@@ -36,15 +37,45 @@ $installedRouterCommit = "$($installManifest.current.commit)".Trim().ToLowerInva
 if ($installedRouterCommit -notmatch '^[0-9a-f]{40}$') {
   throw "Installed Router manifest does not contain a valid current commit."
 }
+$preservingRollback = -not [string]::IsNullOrWhiteSpace($PreservedRuntimeRollbackRoot)
+$preservedRollback = if ($preservingRollback) {
+  [IO.Path]::GetFullPath($PreservedRuntimeRollbackRoot)
+} else { $null }
+$preservedMetadata = if ($preservingRollback) {
+  $expectedParent = [IO.Path]::GetFullPath($runtimeRoot)
+  if (-not [string]::Equals([IO.Path]::GetDirectoryName($preservedRollback), $expectedParent, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Preserved runtime rollback must be directly under $runtimeRoot."
+  }
+  if ([IO.Path]::GetFileName($preservedRollback) -notmatch '^\.rollback-[a-f0-9]{32}$') {
+    throw "Preserved runtime rollback has an invalid directory name."
+  }
+  $metadataPath = Join-Path $preservedRollback "rollback.json"
+  if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+    throw "Preserved runtime rollback metadata is missing."
+  }
+  Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+} else { $null }
+$expectedRollbackCommit = if ($preservingRollback) {
+  "$($preservedMetadata.previousRouterCommit)".Trim().ToLowerInvariant()
+} else { $installedRouterCommit }
+if ($expectedRollbackCommit -notmatch '^[0-9a-f]{40}$') {
+  throw "Rollback Router commit is invalid."
+}
 if (
   -not [string]::IsNullOrWhiteSpace($ExpectedRollbackRouterCommit) -and
-  $ExpectedRollbackRouterCommit.ToLowerInvariant() -ne $installedRouterCommit
+  $ExpectedRollbackRouterCommit.ToLowerInvariant() -ne $expectedRollbackCommit
 ) {
-  throw "Rollback Router commit must match the installed Router manifest commit $installedRouterCommit."
+  throw "Expected rollback Router commit does not match $expectedRollbackCommit."
 }
-$expectedRollbackCommit = $installedRouterCommit
-$autoRollbackRouterRoot = [string]::IsNullOrWhiteSpace($RollbackRouterRoot)
-$rollbackRouterRoot = if ($autoRollbackRouterRoot) {
+$autoRollbackRouterRoot = [string]::IsNullOrWhiteSpace($RollbackRouterRoot) -and -not $preservingRollback
+$rollbackRouterRoot = if ($preservingRollback) {
+  $metadataRoot = [IO.Path]::GetFullPath("$($preservedMetadata.rollbackRouterRoot)")
+  if (-not [string]::IsNullOrWhiteSpace($RollbackRouterRoot) -and
+      -not [string]::Equals([IO.Path]::GetFullPath($RollbackRouterRoot), $metadataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Explicit rollback Router root does not match preserved rollback metadata."
+  }
+  $metadataRoot
+} elseif ($autoRollbackRouterRoot) {
   [IO.Path]::GetFullPath((Join-Path $repoRoot "generated\router-rollback-$($expectedRollbackCommit.Substring(0, 8))"))
 } else {
   [IO.Path]::GetFullPath($RollbackRouterRoot)
@@ -67,7 +98,7 @@ if ($expectedRoutesHash -notmatch '^[0-9a-f]{64}$') {
 }
 $runtimeFiles = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
 $stageRoot = Join-Path $runtimeRoot ".candidate-$([Guid]::NewGuid().ToString('N'))"
-$rollbackRoot = Join-Path $runtimeRoot ".rollback-$([Guid]::NewGuid().ToString('N'))"
+$rollbackRoot = if ($preservingRollback) { $preservedRollback } else { Join-Path $runtimeRoot ".rollback-$([Guid]::NewGuid().ToString('N'))" }
 $keepRollback = $false
 $activationStarted = $false
 
@@ -353,7 +384,13 @@ if ($LASTEXITCODE -ne 0) { throw "Rollback commit is not an ancestor of the Rout
 if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candidate-*" -ErrorAction SilentlyContinue).Count) {
   throw "A Switchyard candidate staging directory already exists."
 }
-if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*" -ErrorAction SilentlyContinue).Count) {
+$rollbackDirectories = @(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*" -ErrorAction SilentlyContinue)
+if ($preservingRollback) {
+  if ($rollbackDirectories.Count -ne 1 -or
+      -not [string]::Equals($rollbackDirectories[0].FullName, $rollbackRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Preserved runtime rollback must be the one existing Switchyard rollback directory."
+  }
+} elseif ($rollbackDirectories.Count) {
   throw "A Switchyard rollback directory already exists; resolve it before deploying another candidate."
 }
 
@@ -373,12 +410,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $rollbackRouterRoot "install.ps1") -
   throw "Rollback Router checkout has no installer."
 }
 $runningRouterRoot = Resolve-RunningRouterRoot @($repoRoot, $rollbackRouterRoot)
-Assert-RouterHealth $runningRouterRoot $expectedRollbackCommit
+Assert-RouterHealth $runningRouterRoot $installedRouterCommit
 Assert-SwitchyardHealth
 $subagentPlan = Get-SubagentPublicationPlan
 $preflight = [ordered]@{
   candidateRouterCommit = $expectedRouterCommit
-  runningRouterCommit = $expectedRollbackCommit
+  runningRouterCommit = $installedRouterCommit
   rollbackRouterCommit = $expectedRollbackCommit
   runningRouterRoot = $runningRouterRoot
   subagentMode = $subagentPlan.mode
@@ -399,27 +436,38 @@ if (-not $PSCmdlet.ShouldProcess($runtimeRoot, "deploy the Router and Switchyard
 
 $existing = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 try {
-  New-Item -ItemType Directory -Force -Path $stageRoot, $rollbackRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+  if (-not $preservingRollback) { New-Item -ItemType Directory -Force -Path $rollbackRoot | Out-Null }
   Copy-Item -LiteralPath $candidateBinary -Destination (Join-Path $stageRoot "switchyard-server.exe") -Force
   Copy-Item -LiteralPath $candidateRoutes -Destination (Join-Path $stageRoot "routes.toml") -Force
   Protect-PrivateFile (Join-Path $stageRoot "routes.toml")
   Assert-FileHash (Join-Path $stageRoot "switchyard-server.exe") $expectedBinaryHash "Staged Switchyard binary"
   Assert-FileHash (Join-Path $stageRoot "routes.toml") $expectedRoutesHash "Staged Switchyard routes"
-  foreach ($name in $runtimeFiles) {
-    if (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) {
+  if ($preservingRollback) {
+    foreach ($name in @($preservedMetadata.files)) {
+      if ($runtimeFiles -notcontains $name) { throw "Preserved rollback metadata names an unsupported file: $name" }
+      if (-not (Test-Path -LiteralPath (Join-Path $rollbackRoot $name) -PathType Leaf)) {
+        throw "Preserved rollback file is missing: $name"
+      }
       [void]$existing.Add($name)
-      Copy-RuntimeFile $runtimeRoot $rollbackRoot $name
-      if ($name -eq "routes.toml") { Protect-PrivateFile (Join-Path $rollbackRoot $name) }
     }
+  } else {
+    foreach ($name in $runtimeFiles) {
+      if (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) {
+        [void]$existing.Add($name)
+        Copy-RuntimeFile $runtimeRoot $rollbackRoot $name
+        if ($name -eq "routes.toml") { Protect-PrivateFile (Join-Path $rollbackRoot $name) }
+      }
+    }
+    @{
+      version = 1
+      previousRouterCommit = $expectedRollbackCommit
+      previousRouterRoot = $runningRouterRoot
+      rollbackRouterRoot = $rollbackRouterRoot
+      files = @($existing)
+      createdAt = (Get-Date).ToUniversalTime().ToString("o")
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8
   }
-  @{
-    version = 1
-    previousRouterCommit = $expectedRollbackCommit
-    previousRouterRoot = $runningRouterRoot
-    rollbackRouterRoot = $rollbackRouterRoot
-    files = @($existing)
-    createdAt = (Get-Date).ToUniversalTime().ToString("o")
-  } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8
 
   try {
     # Canonicalize the managed block while the known-good service is still up.
@@ -495,7 +543,7 @@ try {
   }
 } finally {
   if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
-  if (-not $keepRollback -and (Test-Path -LiteralPath $rollbackRoot)) {
+  if (-not $preservingRollback -and -not $keepRollback -and (Test-Path -LiteralPath $rollbackRoot)) {
     Remove-Item -LiteralPath $rollbackRoot -Recurse -Force
   }
 }

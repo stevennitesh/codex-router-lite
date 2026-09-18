@@ -21,7 +21,6 @@ const REQUEST_PROFILES = new Map([
   ["pareto", { transport: "responses", validate: validateParetoRoute }],
   ["switchyard-native", { transport: "native" }],
 ]);
-
 export function routedTransport(route) {
   const transport = REQUEST_PROFILES.get(route?.requestProfile)?.transport;
   if (!transport) throw new Error(`Unknown routed request profile: ${route?.requestProfile}`);
@@ -62,6 +61,23 @@ export function validateRoutedRegistry(providers, models) {
     }
     gatewayIds.add(model.gatewayModel);
     if (model.provider === "openrouter") validateOpenRouterRoute(model);
+    if (model.provider === "switchyard") validateSwitchyardRoute(model);
+  }
+}
+
+function validateSwitchyardRoute(model) {
+  const compatibilityModels = model?.compatibilityModels;
+  if (
+    !Array.isArray(compatibilityModels) ||
+    compatibilityModels.length === 0 ||
+    new Set(compatibilityModels).size !== compatibilityModels.length ||
+    compatibilityModels.some((slug) =>
+      typeof slug !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(slug))
+  ) {
+    throw new Error(
+      `Switchyard route ${model.slug} needs nonempty unique compatibilityModels with valid model ids.`,
+    );
   }
 }
 

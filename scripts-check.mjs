@@ -3,6 +3,11 @@ import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  readSwitchyardConfigContract,
+  validateSwitchyardConfigContract,
+} from "./scripts/switchyard-config-contract.mjs";
+
 const root = path.dirname(fileURLToPath(import.meta.url));
 const directories = [
   root,
@@ -31,5 +36,7 @@ execFileSync(process.execPath, [path.join(root, "scripts", "check-product-bounda
 execFileSync(process.execPath, [path.join(root, "scripts", "check-v2-agent-applications.mjs")], {
   stdio: "inherit",
 });
+
+validateSwitchyardConfigContract(readSwitchyardConfigContract(root));
 
 console.log("syntax checks passed");

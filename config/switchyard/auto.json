@@ -8,7 +8,7 @@
       "provider": "switchyard",
       "listed": true,
       "displayName": "Switchyard Auto",
-      "description": "Automatically routes each turn across Luna high/max and Sol medium/high/xhigh using a Luna High classifier.",
+      "description": "Automatically routes each turn across Luna Max, Sol Medium, Astra Medium, and Astra XHigh using a Luna High classifier.",
       "priority": 80,
       "defaultEffort": "medium",
       "reasoningLevels": [
@@ -41,18 +41,23 @@
       ],
       "requestProfile": "switchyard-native",
       "behaviorTemplate": "gpt-5.6-sol",
-      "multiAgentVersion": "v2",
+      "compatibilityModels": [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-6-astra"
+      ],
+      "multiAgentVersion": "v1",
       "serviceTiers": [
         {
           "id": "priority",
           "name": "Fast",
-          "description": "1.5x speed, increased usage"
+          "description": "Faster processing, increased usage"
         }
       ],
       "additionalSpeedTiers": [
         "fast"
       ],
-      "compHash": "switchyard-auto-v7"
+      "compHash": "switchyard-auto-v8"
     }
   ]
 }

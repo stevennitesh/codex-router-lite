@@ -1,15 +1,17 @@
 # Switchyard four-target upgrade delivery plan
 
-Status: proposed, implementation not started. Prepared 2026-09-18 against Router
-`363032953c22ac6b7839c79231e57f35d88d5ba6`.
+Status: execution authorized. Checkpoints A1 and A2 were accepted. Checkpoint A3
+is preparing the clean v1 candidate for transactional deployment and fresh
+exact-route certification. Phase B has not started.
 
-Revision 3 reconciles follow-up feedback against the committed plan at `d81269ae`.
-This revision changes planning documents only; it does not start execution.
+Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae`
+before execution began. The A1 status notes below record the later authorized
+implementation without changing the remaining checkpoint contracts.
 
-This is a delivery proposal, not current runtime documentation or authorization
-to execute. The user requested analysis and planning only. Revalidate mutable
-facts before execution. The [execution handoff](switchyard-upgrade-handoff.md)
-defines the requested cost-aware, ponytail implementation workflow.
+The user subsequently authorized execution through the cost-aware, ponytail
+implementation workflow defined in the
+[execution handoff](switchyard-upgrade-handoff.md). Runtime remains unchanged
+until a later checkpoint authorizes and performs deployment.
 
 ## Outcome and boundary
 
@@ -221,6 +223,11 @@ the contract. Each checkpoint ends with a reviewer decision, not self-approval.
 
 ### A1 — Four-target candidate and common native contract
 
+Status: accepted after two review-repair rounds on 2026-09-18. No runtime
+publication, provider calls, certification, commit, or push were performed in
+A1. The candidate is explicitly v1; the earlier runtime-bound Switchyard proof
+is draft historical evidence until A3 performs fresh certification.
+
 Boundary: configuration, catalog, nearest tests, and candidate documentation.
 
 Implement the target policy and catalog projection together before publishing.
@@ -240,6 +247,33 @@ Run the affected tests and installed-Codex catalog check. No live publication.
 Reason: correct the client-visible contract before any request can reach Astra.
 
 ### A2 — Integrated behavior and classifier evaluation
+
+Status: bounded synthetic evaluation and its first review repair completed in an
+isolated local runtime on 2026-09-18; awaiting lead review. The installed service
+and catalog were not changed. This is candidate Switchyard configuration against
+the already-installed Router, not end-to-end proof of the new Router candidate;
+candidate Router source and instruction hashes were captured for A3. The
+protected decision path selected an acceptable role for 27 of 28
+adversarial sanity cases and exercised every role. Four forced-target and four
+ordinary automatic-route answers returned output with the intended selected
+identity in the initial A2 run; those unrelated rows were retained without a
+quota rerun during this repair.
+The seven-step user-turn sequence covered every adjacent role transition, and
+function, custom, computer, local-shell, and tool-search output continuations
+retained affinity. Five Astra Medium donor pairs and one XHigh pair completed on
+both direct and routed legs with successful terminal events and passed all
+predeclared factual checks for retry duplication, authorization isolation,
+compatibility parsing, idempotent redelivery, rollback safety, and credential/
+cancellation concurrency. The redelivery fixture also completed a real function
+call and result round trip on both legs with the same tool schema. Bounded
+synthetic answer excerpts and structured judgments are retained for review. See
+the redacted
+[A2 evidence](history/2026-09-18-switchyard-a2-evidence.json) and its
+[reproducible harness](../scripts/evaluate-switchyard-a2.mjs). One strict-label
+miss (`S04`, Luna Max instead of Sol Medium) is a low-risk boundary disagreement
+for a tiny fully specified CLI edit and is informational rather than a required
+case failure. The harness now exits nonzero for failed required cases. This is
+sanity evidence, not a statistical accuracy or general semantic-equivalence claim.
 
 Boundary: existing stress/transport harness and bounded synthetic live tests,
 only after execution and quota authorization.
@@ -275,6 +309,9 @@ target-share quotas or treat the old classifier as ground truth.
 Reason: separate target compatibility from routing quality.
 
 ### A3 — Deploy Phase A and restore subagent eligibility
+
+Status: candidate preparation in progress. Deployment and fresh v2 proof remain
+required before this checkpoint can be accepted.
 
 Boundary: a reviewed clean candidate, generated private routes, live publication,
 exact-route proof, rollback, and final integrated review.

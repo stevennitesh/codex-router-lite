@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   applyPickerVisibility,
@@ -18,8 +19,13 @@ import {
   readMultiAgentSettings,
 } from "../src/multi-agent-state.mjs";
 import { modelPickerSnapshot, readHiddenModels } from "../src/model-picker-state.mjs";
+import {
+  readSwitchyardConfigContract,
+  validateSwitchyardConfigContract,
+} from "./switchyard-config-contract.mjs";
 
 const binary = process.argv[2];
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const installedCatalogPath = process.argv[3] === "--catalog" ? process.argv[4] : undefined;
 if (
   !binary ||
@@ -83,30 +89,107 @@ function buildCandidate(binary, nativeOverride) {
   const builtGlms = routed
     .filter((model) => model.provider === "openrouter")
     .map((model) => catalog.models.find((candidate) => candidate.slug === model.slug));
-  const nativeSol = native.models.find((model) => model.slug === "gpt-5.6-sol");
-
-  assert.equal(Object.hasOwn(builtSwitchyard, "auto_compact_token_limit"),
-    Object.hasOwn(nativeSol, "auto_compact_token_limit"), `${version} changed native compaction presence`);
-  assert.equal(builtSwitchyard.auto_compact_token_limit, nativeSol.auto_compact_token_limit,
-    `${version} changed native compaction value`);
-  assert.deepEqual(
-    builtSwitchyard.model_messages,
-    nativeSol.model_messages,
-    `${version} lost native Sol model_messages`,
+  const switchyardRoute = MODEL_BY_SLUG.get("switchyard/auto");
+  const compatibilityMembers = switchyardRoute.compatibilityModels.map((slug) => {
+    const member = native.models.find((model) => model.slug === slug);
+    assert.ok(member, `${version} is missing Switchyard compatibility model ${slug}`);
+    return member;
+  });
+  const nativeSol = compatibilityMembers.find((model) => model.slug === "gpt-5.6-sol");
+  const commonArray = (field) => compatibilityMembers.slice(1).reduce(
+    (values, member) => values.filter((value) => (member[field] || []).includes(value)),
+    [...(compatibilityMembers[0][field] || [])],
   );
+  assert.deepEqual(builtSwitchyard.input_modalities, commonArray("input_modalities"));
+  assert.deepEqual(
+    builtSwitchyard.experimental_supported_tools,
+    commonArray("experimental_supported_tools"),
+  );
+  assert.equal(
+    builtSwitchyard.context_window,
+    Math.min(...compatibilityMembers.map((model) => model.context_window)),
+  );
+  assert.equal(
+    builtSwitchyard.max_context_window,
+    Math.min(...compatibilityMembers.map((model) => model.max_context_window)),
+  );
+  assert.equal(
+    builtSwitchyard.effective_context_window_percent,
+    Math.min(...compatibilityMembers.map((model) => model.effective_context_window_percent)),
+  );
+  assert.equal(
+    builtSwitchyard.node_repl_auto_review_required,
+    compatibilityMembers.some((model) => model.node_repl_auto_review_required === true),
+  );
+  assert.equal(
+    builtSwitchyard.supports_parallel_tool_calls,
+    compatibilityMembers.every((model) => model.supports_parallel_tool_calls === true),
+  );
+  const webSearchToolTypes = compatibilityMembers.map(
+    (model) => model.web_search_tool_type ?? "text",
+  );
+  const commonWebSearchToolType = webSearchToolTypes.every(
+    (value) => value === "text_and_image",
+  ) ? "text_and_image" : "text";
+  assert.equal(builtSwitchyard.web_search_tool_type, commonWebSearchToolType);
+  assert.equal("multi_agent_reasoning_effort" in builtSwitchyard, false);
   for (const field of [
     "include_apps_usage_instructions",
     "include_plugin_usage_instructions",
-    "node_repl_auto_review_required",
-    "node_repl_disabled",
+    "supports_search_tool",
+    "supports_image_detail_original",
+    "use_responses_lite",
   ]) {
-    if (Object.prototype.hasOwnProperty.call(nativeSol, field)) {
-      assert.deepEqual(
-        builtSwitchyard[field],
-        nativeSol[field],
-        `${version} lost native Sol ${field}`,
-      );
-    }
+    assert.equal(
+      builtSwitchyard[field],
+      compatibilityMembers.every((model) => model[field] === true),
+      `${version} published incompatible Switchyard ${field}`,
+    );
+  }
+  const compactValues = compatibilityMembers
+    .filter((model) => Object.hasOwn(model, "auto_compact_token_limit"))
+    .map((model) => model.auto_compact_token_limit)
+    .filter((value) => value !== null);
+  const compactPresent = compatibilityMembers.some(
+    (model) => Object.hasOwn(model, "auto_compact_token_limit"),
+  );
+  assert.equal(Object.hasOwn(builtSwitchyard, "auto_compact_token_limit"), compactPresent);
+  if (compactPresent) {
+    assert.equal(
+      builtSwitchyard.auto_compact_token_limit,
+      compactValues.length ? Math.min(...compactValues) : null,
+    );
+  }
+  const nativeIdentity = /^You are Codex, an agent based on GPT-\d+(?:\.\d+)*(?:[-\s][A-Za-z0-9]+)?\./u;
+  const neutralIdentity = "You are Codex, a routed coding agent.";
+  assert.equal(
+    builtSwitchyard.base_instructions,
+    nativeSol.base_instructions.replace(nativeIdentity, neutralIdentity),
+    `${version} changed more than the native Sol identity sentence`,
+  );
+  assert.deepEqual(
+    builtSwitchyard.model_messages,
+    {
+      ...nativeSol.model_messages,
+      instructions_template: nativeSol.model_messages.instructions_template.replace(
+        nativeIdentity,
+        neutralIdentity,
+      ),
+    },
+    `${version} changed more than the native Sol model_messages identity`,
+  );
+
+  const switchyardContract = validateSwitchyardConfigContract(
+    readSwitchyardConfigContract(repositoryRoot),
+  );
+  for (const target of [switchyardContract.classifier, ...switchyardContract.answers]) {
+    const supported = native.models.find((model) => model.slug === target.model)
+      ?.supported_reasoning_levels?.some((level) => level.effort === target.effort);
+    assert.equal(
+      supported,
+      true,
+      `${version} does not support ${target.model} ${target.effort} for ${target.name}`,
+    );
   }
   for (const builtGlm of builtGlms) {
     assert.equal(builtGlm.supports_reasoning_summary_parameter, false);

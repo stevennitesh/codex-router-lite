@@ -1,7 +1,8 @@
-# switchyard/auto v2 certification
+# switchyard/auto prior v2 evidence
 
-Accepted exact-route evidence for deployed Router `4189cbfc1c64886335c506df37f673dd963697a1`.
-Historical evidence is bound to this runtime, not a later candidate.
+Historical exact-route evidence for deployed Router `4189cbfc1c64886335c506df37f673dd963697a1`.
+The four-target A1 candidate changes routing policy, so this application is now
+draft and cannot certify the candidate. A fresh A3 run is required after deployment.
 Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
@@ -34,7 +35,7 @@ its verified binary, patch, generated-route hashes and deployed Router commit.
 
 ## Limits
 
-This is native CLI v2 certification, not a desktop GUI WebSocket soak or an
+This was native CLI v2 evidence, not a desktop GUI WebSocket soak or an
 exhaustive provider fault test. App-tool contract round trips and shared lifecycle
 regressions are covered separately by the offline suite. Refresh after relevant
 runtime changes.

@@ -2072,7 +2072,7 @@ async function handleResponses(request, response, requestUrl) {
       // Switchyard's public route maps to the native model selected by its
       // local runtime. Native GPT requests keep their original model.
       if (switchyard) {
-        native.model = route.upstreamModel;
+        native.model = compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel;
       }
       normalizeNativePromptCacheCompatibility(native);
       if (Array.isArray(payload.input)) {
@@ -2222,7 +2222,10 @@ async function handleResponses(request, response, requestUrl) {
       // Restore only the calls authored by the routed provider.
       if (route) {
         const namespaceRelay = new NamespaceToolCallTransform(
-          flattenedNamespaces, contentType, route.slug,
+          flattenedNamespaces,
+          contentType,
+          route.slug,
+          { responseModel: switchyard ? route.slug : undefined },
         );
         namespaceRelay.on("diagnostic", (diagnostic) => {
           console.warn(`[codex-router] tool-protocol at=${new Date().toISOString()} model=${route.slug} ${JSON.stringify(diagnostic)}`);
@@ -2230,7 +2233,7 @@ async function handleResponses(request, response, requestUrl) {
         transforms.push(namespaceRelay);
       }
       const guard =
-        route && EMPTY_COMPLETION_RETRY
+        route && !compactV1 && !compactV2 && EMPTY_COMPLETION_RETRY
           ? new EmptyCompletionGuard(contentType, {
               maxPreludeBytes: EMPTY_COMPLETION_PRELUDE_BYTES,
               maxPreludeMs: EMPTY_COMPLETION_PRELUDE_MS,

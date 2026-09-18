@@ -12,6 +12,10 @@ import {
   switchyardRuntimeStatus,
   switchyardSelectedForStartup,
 } from "../src/switchyard-runtime.mjs";
+import {
+  readSwitchyardConfigContract,
+  validateSwitchyardConfigContract,
+} from "../scripts/switchyard-config-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -186,4 +190,11 @@ test("Switchyard's hidden Codex classifier satisfies the Responses-Lite reasonin
     classifierTarget,
     /body_overrides\s*=\s*\{[^\n]*parallel_tool_calls\s*=\s*false/u,
   );
+});
+
+test("Switchyard answer targets match the checked catalog compatibility families", () => {
+  const contract = readSwitchyardConfigContract(root);
+  assert.equal(validateSwitchyardConfigContract(contract), contract);
+  assert.equal(contract.dispatchId, contract.routeModel.gatewayModel);
+  assert.equal(contract.answers.length, 4);
 });

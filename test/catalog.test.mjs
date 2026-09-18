@@ -13,12 +13,14 @@ import test from "node:test";
 
 import {
   applyPickerVisibility,
+  buildMergedCatalog,
   effectivePickerHiddenModels,
   mergeNativeCatalogs,
   nativeCatalogRefreshNeeded,
   promoteNativeMultiAgent,
   routedModel,
 } from "../src/catalog.mjs";
+import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 import {
   catalogRefreshIntervalMs,
   refreshCatalogIfStale,
@@ -105,77 +107,166 @@ test("picker visibility projection hides only unselected routed entries", () => 
   ]);
 });
 
-test("Switchyard inherits the native Codex request and compaction contract", () => {
-  const behaviorTemplate = {
+function switchyardNative(slug, overrides = {}) {
+  return {
     ...template,
-    slug: "gpt-5.6-sol",
-    base_instructions: "You are Codex, an agent based on GPT-5.6. NATIVE_BEHAVIOR",
+    slug,
+    base_instructions: "You are Codex, an agent based on GPT-5.6-Sol. SOL_BEHAVIOR",
     model_messages: {
-      instructions_template: "You are Codex, an agent based on GPT-5.6. NATIVE_TEMPLATE",
+      instructions_template: "You are Codex, an agent based on GPT-5.6-Sol. SOL_TEMPLATE",
       collaboration_modes: { default: "native collaboration" },
-      permissions: { guidance: "native permissions" },
-      multi_agent: { guidance: "native multi-agent" },
       token_budget: { reminder_threshold_tokens: 6144 },
     },
     input_modalities: ["text", "image"],
-    context_window: 272000,
-    max_context_window: 872000,
+    context_window: 300000,
+    max_context_window: 900000,
+    effective_context_window_percent: 95,
     support_verbosity: true,
-    default_verbosity: "low",
     supports_search_tool: true,
+    supports_parallel_tool_calls: true,
+    web_search_tool_type: "text_and_image",
     supports_image_detail_original: true,
     use_responses_lite: true,
     tool_mode: "code_mode_only",
     include_skills_usage_instructions: false,
     include_plugin_usage_instructions: true,
+    include_apps_usage_instructions: true,
     node_repl_auto_review_required: false,
     node_repl_disabled: false,
+    experimental_supported_tools: ["shared"],
+    additional_speed_tiers: ["fast"],
+    service_tiers: [{ id: "priority", name: "Fast" }],
+    ...overrides,
   };
-  const model = routedModel(template, {
-    ...routeFixture,
-    slug: "switchyard/auto",
-    displayName: "Switchyard Auto",
-    requestProfile: "switchyard-native",
-    inputModalities: ["text"],
-    serviceTiers: [
-      { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
-    ],
-    additionalSpeedTiers: ["fast"],
-  }, behaviorTemplate);
+}
 
-  assert.equal(model.base_instructions, behaviorTemplate.base_instructions);
-  assert.equal(model.model_messages, behaviorTemplate.model_messages);
-  assert.deepEqual(model.input_modalities, ["text", "image"]);
+function mergedSwitchyard(nativeOverrides = {}) {
+  const native = {
+    models: [
+      switchyardNative("gpt-5.6-luna", {
+        context_window: 272000,
+        max_context_window: 872000,
+        ...nativeOverrides.luna,
+      }),
+      switchyardNative("gpt-5.6-sol", {
+        service_tiers: [
+          { id: "priority", name: "Fast" },
+          { id: "ultrafast", name: "Ultrafast" },
+        ],
+        ...nativeOverrides.sol,
+      }),
+      switchyardNative("gpt-6-astra", {
+        context_window: 280000,
+        max_context_window: 880000,
+        effective_context_window_percent: 90,
+        input_modalities: ["text"],
+        include_plugin_usage_instructions: false,
+        include_apps_usage_instructions: false,
+        supports_parallel_tool_calls: false,
+        node_repl_auto_review_required: true,
+        experimental_supported_tools: ["shared", "clock"],
+        multi_agent_reasoning_effort: "xhigh",
+        ...nativeOverrides.astra,
+      }),
+    ],
+  };
+  return buildMergedCatalog(native, [MODEL_BY_SLUG.get("switchyard/auto")])
+    .find((model) => model.slug === "switchyard/auto");
+}
+
+test("Switchyard publishes the common native contract with neutral Sol instructions", () => {
+  const model = mergedSwitchyard();
+  assert.match(model.base_instructions, /^You are Codex, a routed coding agent\. SOL_BEHAVIOR/u);
+  assert.match(
+    model.model_messages.instructions_template,
+    /^You are Codex, a routed coding agent\. SOL_TEMPLATE/u,
+  );
+  assert.deepEqual(model.model_messages.collaboration_modes, { default: "native collaboration" });
+  assert.deepEqual(model.input_modalities, ["text"]);
+  assert.deepEqual(model.experimental_supported_tools, ["shared"]);
   assert.equal(model.context_window, 272000);
   assert.equal(model.max_context_window, 872000);
+  assert.equal(model.effective_context_window_percent, 90);
   assert.equal("auto_compact_token_limit" in model, false);
-  for (const limit of [null, 200000]) {
-    const inherited = routedModel(template, {
-      ...routeFixture, slug: "switchyard/auto", requestProfile: "switchyard-native",
-    }, { ...behaviorTemplate, auto_compact_token_limit: limit });
-    assert.equal(Object.hasOwn(inherited, "auto_compact_token_limit"), true);
-    assert.equal(inherited.auto_compact_token_limit, limit);
-  }
-  assert.equal("supports_reasoning_summaries" in model, false);
-  assert.equal("default_reasoning_summary" in model, false);
-  assert.equal(model.support_verbosity, true);
-  assert.equal(model.default_verbosity, "low");
-  assert.equal(model.supports_search_tool, true);
-  assert.equal(model.supports_image_detail_original, true);
-  assert.equal("supports_parallel_tool_calls" in model, false);
-  assert.equal(model.use_responses_lite, true);
-  assert.equal(model.tool_mode, "code_mode_only");
-  assert.equal(model.include_skills_usage_instructions, false);
-  assert.equal(model.include_plugin_usage_instructions, true);
-  assert.equal(model.node_repl_auto_review_required, false);
+  assert.equal(model.include_plugin_usage_instructions, false);
+  assert.equal(model.include_apps_usage_instructions, false);
+  assert.equal(model.node_repl_auto_review_required, true);
   assert.equal(model.node_repl_disabled, false);
+  assert.equal(model.supports_parallel_tool_calls, false);
+  assert.equal(model.web_search_tool_type, "text_and_image");
+  assert.equal("multi_agent_reasoning_effort" in model, false);
   assert.deepEqual(model.service_tiers, [
-    { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+    { id: "priority", name: "Fast", description: "Faster processing, increased usage" },
   ]);
   assert.deepEqual(model.additional_speed_tiers, ["fast"]);
-  assert.equal(model.slug, "switchyard/auto");
-  assert.equal(model.display_name, "Switchyard Auto");
-  assert.deepEqual(model.supported_reasoning_levels, routeFixture.reasoningLevels);
+});
+
+test("Switchyard conservatively projects nullable tools and common tiers", () => {
+  const nullablePatch = mergedSwitchyard({
+    luna: { apply_patch_tool_type: null },
+    sol: { apply_patch_tool_type: null },
+    astra: { apply_patch_tool_type: null },
+  });
+  assert.equal(Object.hasOwn(nullablePatch, "apply_patch_tool_type"), true);
+  assert.equal(nullablePatch.apply_patch_tool_type, null);
+
+  const differentSearch = mergedSwitchyard({
+    astra: { web_search_tool_type: "text" },
+  });
+  assert.equal(differentSearch.supports_search_tool, true);
+  assert.equal(differentSearch.web_search_tool_type, "text");
+
+  const fallbackSearch = mergedSwitchyard({
+    luna: { web_search_tool_type: undefined },
+    sol: { web_search_tool_type: null },
+    astra: { web_search_tool_type: "text" },
+  });
+  assert.equal(fallbackSearch.supports_search_tool, true);
+  assert.equal(fallbackSearch.web_search_tool_type, "text");
+
+  const noDeferredDiscovery = mergedSwitchyard({
+    astra: { supports_search_tool: false },
+  });
+  assert.equal(noDeferredDiscovery.supports_search_tool, false);
+  assert.equal(noDeferredDiscovery.web_search_tool_type, "text_and_image");
+
+  const noCommonFast = mergedSwitchyard({
+    astra: { additional_speed_tiers: [], service_tiers: [] },
+  });
+  assert.deepEqual(noCommonFast.additional_speed_tiers, []);
+  assert.deepEqual(noCommonFast.service_tiers, []);
+});
+
+test("Switchyard reconciles absent, null, and explicit native compaction limits", () => {
+  assert.equal("auto_compact_token_limit" in mergedSwitchyard(), false);
+  assert.equal(mergedSwitchyard({
+    luna: { auto_compact_token_limit: null },
+    sol: { auto_compact_token_limit: null },
+    astra: { auto_compact_token_limit: null },
+  }).auto_compact_token_limit, null);
+  assert.equal(mergedSwitchyard({
+    luna: { auto_compact_token_limit: 220000 },
+    sol: { auto_compact_token_limit: null },
+    astra: { auto_compact_token_limit: 210000 },
+  }).auto_compact_token_limit, 210000);
+});
+
+test("Switchyard rejects missing or incompatible native compatibility members", () => {
+  assert.throws(
+    () => buildMergedCatalog({ models: [
+      switchyardNative("gpt-5.6-luna"),
+      switchyardNative("gpt-5.6-sol"),
+    ] }, [MODEL_BY_SLUG.get("switchyard/auto")]),
+    /missing compatibility model gpt-6-astra/u,
+  );
+  assert.throws(
+    () => mergedSwitchyard({ astra: { tool_mode: "different" } }),
+    /requires compatible tool_mode/u,
+  );
+  assert.throws(
+    () => mergedSwitchyard({ astra: { context_window: undefined } }),
+    /requires valid context_window/u,
+  );
 });
 
 test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract", () => {

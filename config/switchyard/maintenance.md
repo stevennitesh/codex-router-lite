@@ -142,12 +142,21 @@ prepares dependencies. Its preflight report names the candidate, running, and
 rollback Router commits plus the v2 agents allowed by local subagent settings.
 If it reports no expected v2 agents, repair the allowlist before certification.
 
+If a live acceptance check finds a candidate defect before the retained rollback
+is accepted, repair and commit the candidate, then pass that exact existing
+runtime rollback with `-PreservedRuntimeRollbackRoot`. The transaction validates
+its metadata, files, rollback checkout, ancestry, and singular ownership before
+activation; a repair deployment failure restores the original pre-candidate
+generation. Do not delete the retained rollback to make a second deployment pass.
+
 ## Switchyard v2 promotion
 
-`switchyard/auto` is accepted for v2 under `v2_agent/switchyard/auto/`. The
-acceptance belongs only to the exact runtime identities recorded there. Read
+`switchyard/auto` is currently a v1 candidate. The material under
+`v2_agent/switchyard/auto/` is draft historical evidence for the superseded
+policy and does not certify the four-target candidate. Read
 [`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
-for the five checks. Switchyard additionally requires the proof's runtime
+for the five checks before a future v2 promotion. Switchyard additionally
+requires the new proof's runtime
 binding to record the deployed upstream commit, patch SHA-256, binary SHA-256,
 Router commit, and generated-routes SHA-256.
 

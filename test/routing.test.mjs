@@ -21,11 +21,13 @@ import {
 } from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { readSwitchyardConfigContract } from "../scripts/switchyard-config-contract.mjs";
 import { openPort } from "./port-pool.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INTERNAL_KEY = "test-internal-service-key-with-sufficient-length";
 const CALLER_KEY = "test-router-caller-capability-with-sufficient-length";
+const SWITCHYARD_CONTRACT = readSwitchyardConfigContract(root);
 
 function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
@@ -815,12 +817,12 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.end(
         'data: {"type":"response.output_text.delta","delta":"switchyard-stream"}\n\n' +
-        'data: {"type":"response.completed","response":{"id":"switchyard-stream","output":[]}}\n\n' +
+        'data: {"type":"response.completed","response":{"id":"switchyard-stream","model":"gpt-6-astra","output":[]}}\n\n' +
         "data: [DONE]\n\n",
       );
       return;
     }
-    json(response, 200, { id: "switchyard-response", output: [] });
+    json(response, 200, { id: "switchyard-response", model: "gpt-6-astra", output: [] });
   });
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
@@ -828,11 +830,35 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       json(response, 200, { ok: true });
       return;
     }
-    nativeRequests.push({
+    const observed = {
       url: request.url,
       headers: request.headers,
       body: await bodyJson(request),
-    });
+    };
+    nativeRequests.push(observed);
+    if (observed.body.input?.at(-1)?.type === "compaction_trigger") {
+      const item = { id: "cmp_switchyard", type: "compaction", encrypted_content: "gAAAAA-compacted=" };
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(
+        `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item })}\n\n` +
+        `data: ${JSON.stringify({ type: "response.completed", response: { id: "native-v2-compaction", status: "completed", model: "gpt-5.6-sol", output: [item] } })}\n\n` +
+        "data: [DONE]\n\n",
+      );
+      return;
+    }
+    if (observed.body.model === "gpt-6-astra") {
+      json(response, 200, {
+        id: "astra-direct",
+        model: "gpt-6-astra",
+        output: [{
+          id: "rs_astra_history",
+          type: "reasoning",
+          encrypted_content: "gAAAAA-astra-history=",
+          summary: [],
+        }],
+      });
+      return;
+    }
     json(response, 200, { id: "native-compaction", output: [] });
   });
   const gatewayRequests = [];
@@ -862,6 +888,15 @@ test("Switchyard preserves native requests and leaves compaction on the native b
 
   try {
     await waitFor(`${routerBase(routerPort)}/models`, router);
+    const directAstra = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "gpt-6-astra", input: "produce Astra history" }),
+    });
+    assert.equal(directAstra.status, 200);
+    const directAstraBody = await directAstra.json();
+    assert.equal(directAstraBody.model, "gpt-6-astra");
+    assert.equal(nativeRequests[0].body.model, "gpt-6-astra");
     const input = [{
       type: "message",
       role: "user",
@@ -869,7 +904,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
         { type: "input_text", text: `route me ${"x".repeat(20_000)}` },
         { type: "input_image", image_url: "data:image/png;base64,AAAA", detail: "original" },
       ],
-    }];
+    }, ...directAstraBody.output];
     const tools = [
       { type: "function", name: "mcp__example__read", description: "Read", parameters: { type: "object" } },
       { type: "custom", name: "apply_patch", description: "Patch", format: { type: "text" } },
@@ -895,6 +930,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       }),
     });
     assert.equal(turn.status, 200);
+    assert.equal((await turn.json()).model, "switchyard/auto");
     assert.equal(switchyardRequests.length, 1);
     assert.equal(switchyardRequests[0].url, "/v1/responses");
     assert.equal(switchyardRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
@@ -904,7 +940,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       "test-switchyard-local-hop-capability",
     );
     assert.equal(switchyardRequests[0].headers["content-encoding"], undefined);
-    assert.equal(switchyardRequests[0].body.model, "gpt-5.6-sol");
+    assert.equal(switchyardRequests[0].body.model, SWITCHYARD_CONTRACT.dispatchId);
     assert.deepEqual(switchyardRequests[0].body.input, input);
     assert.deepEqual(switchyardRequests[0].body.tools, tools);
     assert.deepEqual(switchyardRequests[0].body.reasoning, { effort: "xhigh" });
@@ -919,7 +955,10 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       body: JSON.stringify({ model: "switchyard/auto", input, stream: true }),
     });
     assert.equal(streamed.status, 200);
-    assert.match(await streamed.text(), /switchyard-stream/);
+    const streamedText = await streamed.text();
+    assert.match(streamedText, /switchyard-stream/);
+    assert.match(streamedText, /"model":"switchyard\/auto"/u);
+    assert.doesNotMatch(streamedText, /"model":"gpt-6-astra"/u);
     assert.equal(switchyardRequests.length, 2);
 
     const rateLimited = await fetch(`${routerBase(routerPort)}/responses`, {
@@ -942,10 +981,27 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     });
     assert.equal(compact.status, 200);
     assert.equal(switchyardRequests.length, 3);
-    assert.equal(nativeRequests.length, 1);
-    assert.equal(nativeRequests[0].url, "/backend-api/codex/responses/compact");
-    assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
-    assert.equal(nativeRequests[0].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+    assert.equal(nativeRequests.length, 2);
+    assert.equal(nativeRequests[1].url, "/backend-api/codex/responses/compact");
+    assert.equal(nativeRequests[1].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[1].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+
+    const compactV2 = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "switchyard/auto",
+        input: [...input, { type: "compaction_trigger" }],
+        stream: true,
+      }),
+    });
+    assert.equal(compactV2.status, 200);
+    assert.match(await compactV2.text(), /cmp_switchyard/u);
+    assert.equal(switchyardRequests.length, 3);
+    assert.equal(nativeRequests.length, 3);
+    assert.equal(nativeRequests[2].url, "/backend-api/codex/responses");
+    assert.equal(nativeRequests[2].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[2].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
 
     const health = await fetch(`${routerBase(routerPort)}/health`);
     assert.equal(health.status, 503);

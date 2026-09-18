@@ -578,6 +578,180 @@ function owns(object, field) {
   return Object.prototype.hasOwnProperty.call(object || {}, field);
 }
 
+const SWITCHYARD_COMMON_BOOLEAN_FIELDS = Object.freeze([
+  "supports_reasoning_summary_parameter",
+  "support_verbosity",
+  "supports_search_tool",
+  "supports_parallel_tool_calls",
+  "supports_image_detail_original",
+  "supports_experimental_context",
+  "use_responses_lite",
+  "include_skills_usage_instructions",
+  "include_plugin_usage_instructions",
+  "include_apps_usage_instructions",
+]);
+const SWITCHYARD_STRICT_BOOLEAN_FIELDS = Object.freeze([
+  "node_repl_auto_review_required",
+  "node_repl_disabled",
+]);
+const SWITCHYARD_AGREEMENT_FIELDS = Object.freeze([
+  "apply_patch_tool_type",
+  "tool_mode",
+]);
+
+function compatibleArray(members, field) {
+  const arrays = members.map((member) => Array.isArray(member[field]) ? member[field] : []);
+  const common = arrays.slice(1).reduce(
+    (values, next) => values.filter((value) => next.includes(value)),
+    [...arrays[0]],
+  );
+  return common;
+}
+
+function compatibleServiceTiers(members) {
+  const tierMaps = members.map((member) => new Map(
+    (Array.isArray(member.service_tiers) ? member.service_tiers : [])
+      .map((tier) => [String(tier?.id || ""), tier]),
+  ));
+  return [...tierMaps[0].keys()].filter(
+    (id) => id && tierMaps.slice(1).every((tiers) => tiers.has(id)),
+  );
+}
+
+function requiredPositiveNumber(member, field, routeSlug) {
+  const value = member[field];
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `Routed model ${routeSlug} requires valid ${field} from compatibility model ${member.slug}.`,
+    );
+  }
+  return value;
+}
+
+function compatibleAutoCompactLimit(members, commonContext, routeSlug) {
+  const explicit = [];
+  let present = false;
+  for (const member of members) {
+    if (!owns(member, "auto_compact_token_limit")) continue;
+    present = true;
+    const value = member.auto_compact_token_limit;
+    if (value === null) continue;
+    if (!Number.isFinite(value) || value <= 0 || value > commonContext) {
+      throw new Error(
+        `Routed model ${routeSlug} received invalid auto_compact_token_limit from compatibility model ${member.slug}.`,
+      );
+    }
+    explicit.push(value);
+  }
+  if (explicit.length) return { present: true, value: Math.min(...explicit) };
+  return { present, value: null };
+}
+
+function neutralSwitchyardInstructions(text, routeSlug, field) {
+  if (typeof text !== "string") return text;
+  const identity = /^You are Codex, an agent based on GPT-\d+(?:\.\d+)*(?:[-\s][A-Za-z0-9]+)?\./u;
+  if (!identity.test(text)) {
+    throw new Error(
+      `Routed model ${routeSlug} cannot neutralize changed native identity in ${field}.`,
+    );
+  }
+  return text.replace(identity, "You are Codex, a routed coding agent.");
+}
+
+function switchyardCompatibilityTemplate(nativeModels, model, donor) {
+  if (model.requestProfile !== "switchyard-native") return donor;
+  const members = model.compatibilityModels.map((slug) => {
+    const member = nativeModels.find((candidate) => candidate.slug === slug);
+    if (!member) {
+      throw new Error(`Routed model ${model.slug} requires missing compatibility model ${slug}.`);
+    }
+    return member;
+  });
+  const projected = { ...donor };
+  projected.input_modalities = compatibleArray(members, "input_modalities");
+  projected.experimental_supported_tools = compatibleArray(
+    members,
+    "experimental_supported_tools",
+  );
+  for (const field of SWITCHYARD_COMMON_BOOLEAN_FIELDS) {
+    projected[field] = members.every((member) => member[field] === true);
+  }
+  // Codex defaults an omitted hosted-search type to text. Treat null from an
+  // older/intermediate catalog as the same fallback and advertise image search
+  // only when every member explicitly supports it. Deferred tool discovery is
+  // owned independently by supports_search_tool above.
+  const webSearchToolTypes = members.map(
+    (member) => member.web_search_tool_type ?? "text",
+  );
+  projected.web_search_tool_type = webSearchToolTypes.every(
+    (value) => value === "text_and_image",
+  ) ? "text_and_image" : "text";
+  if (!projected.supports_reasoning_summary_parameter) {
+    delete projected.default_reasoning_summary;
+  }
+  if (!projected.support_verbosity) delete projected.default_verbosity;
+  for (const field of SWITCHYARD_STRICT_BOOLEAN_FIELDS) {
+    projected[field] = members.some((member) => member[field] === true);
+  }
+  for (const field of SWITCHYARD_AGREEMENT_FIELDS) {
+    const values = members.map((member) => member[field]);
+    if (values.some((value) => value !== values[0])) {
+      throw new Error(
+        `Routed model ${model.slug} requires compatible ${field} across ${model.compatibilityModels.join(", ")}.`,
+      );
+    }
+    if (values[0] === undefined) delete projected[field];
+    else projected[field] = values[0];
+  }
+  projected.context_window = Math.min(
+    ...members.map((member) => requiredPositiveNumber(member, "context_window", model.slug)),
+  );
+  projected.max_context_window = Math.min(
+    ...members.map((member) => requiredPositiveNumber(member, "max_context_window", model.slug)),
+  );
+  projected.effective_context_window_percent = Math.min(
+    ...members.map((member) =>
+      requiredPositiveNumber(member, "effective_context_window_percent", model.slug)),
+  );
+  if (
+    projected.context_window > projected.max_context_window ||
+    projected.effective_context_window_percent > 100
+  ) {
+    throw new Error(`Routed model ${model.slug} received incompatible native context bounds.`);
+  }
+  const compact = compatibleAutoCompactLimit(members, projected.context_window, model.slug);
+  if (compact.present) projected.auto_compact_token_limit = compact.value;
+  else delete projected.auto_compact_token_limit;
+
+  const commonSpeedTiers = compatibleArray(members, "additional_speed_tiers");
+  const commonServiceTiers = compatibleServiceTiers(members);
+  projected.additional_speed_tiers = commonSpeedTiers;
+  projected.service_tiers = commonServiceTiers.map((id) => ({ id }));
+
+  projected.base_instructions = neutralSwitchyardInstructions(
+    donor.base_instructions,
+    model.slug,
+    "base_instructions",
+  );
+  if (
+    donor.model_messages &&
+    typeof donor.model_messages === "object" &&
+    !Array.isArray(donor.model_messages) &&
+    typeof donor.model_messages.instructions_template === "string"
+  ) {
+    projected.model_messages = {
+      ...donor.model_messages,
+      instructions_template: neutralSwitchyardInstructions(
+        donor.model_messages.instructions_template,
+        model.slug,
+        "model_messages.instructions_template",
+      ),
+    };
+  }
+  delete projected.multi_agent_reasoning_effort;
+  return projected;
+}
+
 export function routedModel(
   template,
   model,
@@ -625,7 +799,9 @@ export function routedModel(
         ? behaviorTemplate.max_context_window
         : model.contextWindow
       : model.contextWindow,
-    effective_context_window_percent: 95,
+    effective_context_window_percent: nativeRequestProfile
+      ? behaviorTemplate.effective_context_window_percent
+      : 95,
     auto_compact_token_limit: nativeRequestProfile
       ? behaviorTemplate.auto_compact_token_limit
       : model.autoCompact,
@@ -636,16 +812,24 @@ export function routedModel(
       : model.inputModalities,
     comp_hash: model.compHash,
     additional_speed_tiers: Array.isArray(model.additionalSpeedTiers)
-      ? model.additionalSpeedTiers.map((tier) => tier.trim())
+      ? model.additionalSpeedTiers
+        .map((tier) => tier.trim())
+        .filter((tier) =>
+          !nativeRequestProfile || behaviorTemplate.additional_speed_tiers?.includes(tier))
       : [],
     service_tiers: Array.isArray(model.serviceTiers)
-      ? model.serviceTiers.map((tier) => ({
-          id: tier.id.trim(),
-          name: tier.name.trim(),
-          ...(typeof tier.description === "string" && tier.description.trim()
-            ? { description: tier.description.trim() }
-            : {}),
-        }))
+      ? model.serviceTiers
+        .filter((tier) =>
+          !nativeRequestProfile || behaviorTemplate.service_tiers?.some(
+            (compatible) => compatible?.id === tier.id,
+          ))
+        .map((tier) => ({
+            id: tier.id.trim(),
+            name: tier.name.trim(),
+            ...(typeof tier.description === "string" && tier.description.trim()
+              ? { description: tier.description.trim() }
+              : {}),
+          }))
       : [],
     // Never inherit a native template's paid tier as the routed default.
     // Declared tiers are opt-in choices; standard provider service stays the
@@ -701,7 +885,7 @@ export function routedModel(
     // Responses, for example) must opt out explicitly; null is the only value
     // that suppresses the tool without making the catalog unparseable.
     apply_patch_tool_type: nativeRequestProfile
-      ? behaviorTemplate.apply_patch_tool_type ?? "freeform"
+      ? behaviorTemplate.apply_patch_tool_type
       : model.supportsApplyPatchTool === false
         ? null
         : "freeform",
@@ -961,7 +1145,11 @@ export function buildMergedCatalog(
   const ordered = routedPickerPriorities(native.models, routedModelsList);
   const published = publishedPickerPriorities(native.models, ordered);
   for (const model of ordered) {
-    const behaviorTemplate = behaviorTemplateFor(native.models, model, template);
+    const behaviorTemplate = switchyardCompatibilityTemplate(
+      native.models,
+      model,
+      behaviorTemplateFor(native.models, model, template),
+    );
     const entry = routedModel(template, model, behaviorTemplate);
     models.set(
       model.slug,

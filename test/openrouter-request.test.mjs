@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHECKED_IN_MODELS, PROVIDERS, validateRoutedRegistry, validateOpenRouterRoute } from "../src/routed-models.mjs";
+import {
+  CHECKED_IN_MODELS,
+  PROVIDERS,
+  validateOpenRouterRoute,
+  validateRoutedRegistry,
+} from "../src/routed-models.mjs";
 import { prepareOpenRouterRequest } from "../src/openrouter-request.mjs";
+import {
+  readSwitchyardConfigContract,
+  validateSwitchyardConfigContract,
+} from "../scripts/switchyard-config-contract.mjs";
 
 const externalRoutes = CHECKED_IN_MODELS.filter(route => route.provider === "openrouter");
 
@@ -69,4 +78,34 @@ test("registry rejects ambiguous identities before creating route maps", () => {
   wrongProfile[0].requestProfile = "pareto";
   assert.throws(() => validateRoutedRegistry(providers, wrongProfile), /unsupported request profile/);
   assert.throws(() => validateOpenRouterRoute({ ...externalRoutes[0], requestProfile: "unknown" }), /Unsupported OpenRouter request profile/);
+  for (const compatibilityModels of [
+    undefined,
+    [],
+    ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-sol"],
+    ["gpt-5.6-luna", "bad model"],
+  ]) {
+    const models = structuredClone(CHECKED_IN_MODELS);
+    models.find((model) => model.slug === "switchyard/auto").compatibilityModels = compatibilityModels;
+    assert.throws(() => validateRoutedRegistry(providers, models), /nonempty unique compatibilityModels/u);
+  }
+  const reordered = structuredClone(CHECKED_IN_MODELS);
+  reordered.find((model) => model.slug === "switchyard/auto").compatibilityModels.reverse();
+  assert.doesNotThrow(() => validateRoutedRegistry(providers, reordered));
+});
+
+test("Switchyard target declarations fail closed on model, effort, or identity drift", () => {
+  const declaration = readSwitchyardConfigContract();
+  assert.doesNotThrow(() => validateSwitchyardConfigContract(declaration));
+  for (const [field, value] of [
+    ["model", "gpt-5.6-sol"],
+    ["routingId", "switchyard/astra-medium"],
+    ["effort", "max"],
+  ]) {
+    const changed = structuredClone(declaration);
+    changed.answers[3][field] = value;
+    assert.throws(
+      () => validateSwitchyardConfigContract(changed),
+      /Switchyard target astra_xhigh/u,
+    );
+  }
 });

@@ -1914,10 +1914,34 @@ function embeddedFunctionArgumentsAreUnambiguous(payload, rawCustomArguments = f
 // array instead of SSE `item` events. Restore both shapes through the same
 // exact request-local lookup so stream mode cannot change dispatch semantics.
 // Returns a copy only when at least one call was restored.
-export function rewriteNamespaceResponsePayload(payload, lookups, sessionModel) {
+export function rewriteNamespaceResponsePayload(
+  payload,
+  lookups,
+  sessionModel,
+  responseModel,
+) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
   let rewritten = rewriteNamespaceFunctionCall(payload, lookups, sessionModel) || payload;
   let changed = rewritten !== payload;
+
+  if (typeof responseModel === "string" && responseModel) {
+    if (typeof rewritten.model === "string" && rewritten.model !== responseModel) {
+      rewritten = { ...rewritten, model: responseModel };
+      changed = true;
+    }
+    if (
+      rewritten.response &&
+      typeof rewritten.response === "object" &&
+      typeof rewritten.response.model === "string" &&
+      rewritten.response.model !== responseModel
+    ) {
+      rewritten = {
+        ...rewritten,
+        response: { ...rewritten.response, model: responseModel },
+      };
+      changed = true;
+    }
+  }
 
   if (payload.type === "response.function_call_arguments.done") {
     const argumentsText = jsonArgumentsAreUnambiguous(rewritten.arguments, {
@@ -2086,6 +2110,7 @@ export class NamespaceToolCallTransform extends Transform {
   #semanticMutationCommitted = false;
   #lookups;
   #sessionModel;
+  #responseModel;
   // Every observed output-item identity reserves both ids. Special relays keep
   // their source and native shapes here until terminal validation so a stream
   // cannot change owners or fall back to raw function-call events after its
@@ -2099,6 +2124,7 @@ export class NamespaceToolCallTransform extends Transform {
     super();
     this.#lookups = buildNamespaceLookups(namespaces);
     this.#sessionModel = sessionModel;
+    this.#responseModel = options.responseModel;
     this.#maxJsonCaptureBytes =
       Number.isInteger(options.maxJsonCaptureBytes) && options.maxJsonCaptureBytes > 0
         ? options.maxJsonCaptureBytes
@@ -2213,6 +2239,7 @@ export class NamespaceToolCallTransform extends Transform {
         original,
         this.#lookups,
         this.#sessionModel,
+        this.#responseModel,
       ) || original;
       // Parsing is only permission to inspect. A response the transform did
       // not semantically change retains its exact original representation.
@@ -3282,7 +3309,12 @@ export class NamespaceToolCallTransform extends Transform {
           changed = true;
         }
       }
-      const next = rewriteNamespaceResponsePayload(event, this.#lookups, this.#sessionModel);
+      const next = rewriteNamespaceResponsePayload(
+        event,
+        this.#lookups,
+        this.#sessionModel,
+        this.#responseModel,
+      );
       if (next) {
         event = next;
         changed = true;

@@ -7,6 +7,7 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { zstdDecompressSync } from "node:zlib";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { readSwitchyardConfigContract } from "../scripts/switchyard-config-contract.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, responseJson, stop } from "./router-fixture.mjs";
 
@@ -14,6 +15,7 @@ const PARETO = "openrouter/pareto";
 const GLM = "openrouter/glm-5.3-flash";
 const GLM_GMICLOUD = "openrouter/glm-5.3-flash-gmicloud";
 const SWITCHYARD = "switchyard/auto";
+const SWITCHYARD_DISPATCH = readSwitchyardConfigContract().dispatchId;
 const CALLER = "stress-fixture-caller-capability-long-enough";
 const INTERNAL = "stress-fixture-internal-capability-long-enough";
 const SWITCHYARD_CAPABILITY = "stress-switchyard-local-hop-capability";
@@ -153,7 +155,7 @@ test("stress: representative routes preserve their distinct boundaries", { timeo
   assert.deepEqual(paretoSeen.body.provider.only, ["unbiased"]);
   for (const external of [gatewaySeen, novitaSeen, gmiSeen, paretoSeen])
     assert.equal(external.headers["chatgpt-account-id"], undefined);
-  assert.equal(switchyardSeen.body.model, "gpt-5.6-sol");
+  assert.equal(switchyardSeen.body.model, SWITCHYARD_DISPATCH);
   assert.equal(switchyardSeen.headers["x-codex-router-switchyard-capability"], SWITCHYARD_CAPABILITY);
   assert.equal(switchyardSeen.headers.authorization, "Bearer SYNTHETIC_NATIVE_PRIVATE");
 });
