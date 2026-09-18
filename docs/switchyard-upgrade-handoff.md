@@ -2,6 +2,9 @@
 
 Status: prepared, not dispatched. User requested planning only on 2026-09-18.
 
+Revision 2: feedback reconciliation only. Use revision 2 of the linked plan for
+future assignments. Implementation remains unstarted.
+
 Outcome authority: [Switchyard upgrade plan](switchyard-upgrade-plan.md).
 Read applicable `AGENTS.md` and the plan's conditional owner documents. The
 plan is a proposal; runtime guides remain authoritative for existing behavior.
@@ -30,8 +33,14 @@ The worker must verify and read its execution skill itself:
 - Planning-time SHA-256:
   `ADC416210EF7F062EF0B302A519267D3B188FA01155B44D475F9789677D5CCFF`
 
-If the hash changes, inspect the skill change and refresh the handoff before
-using it. The lead need not load worker-only instructions into its own context.
+If the path is absent or its hash changed, rediscover the current sibling skill
+in the same managed pack, verify path/hash, and refresh the assignment before
+dispatch. This is a recoverable prerequisite, not failure of technical delivery.
+Do not silently substitute another method or install without authority. If the
+selection cannot be resolved, pause dispatch and report the prerequisite. A
+worker detecting drift returns with stopped processes and explicit custody
+release; no repair attempt is consumed. The lead need not load worker-only
+instructions; the worker verifies and reads the refreshed selection.
 Re-read the cost-aware-coding assignment and planned-delivery references at
 dispatch if their requirements or this environment have changed.
 
@@ -39,6 +48,9 @@ dispatch if their requirements or this environment have changed.
 
 Use plan checkpoints A1–A3, then conditional B1–B3. Do not silently authorize all
 phases by assigning A1. The same worker handles execution and subsequent repairs.
+Once whole-plan delivery is authorized, advance through passing checkpoints
+without repeated approval; only unresolved scope or effect boundaries pause
+dependent work. Carry actual current authorization into every assignment.
 Each checkpoint report identifies the candidate, changed owners, behavior
 proven, tests actually run, remaining uncertainty, and required next authority.
 
