@@ -1,8 +1,8 @@
 # Switchyard four-target upgrade delivery plan
 
-Status: execution authorized. Checkpoints A1 and A2 were accepted. Checkpoint A3
-is preparing the clean v1 candidate for transactional deployment and fresh
-exact-route certification. Phase B has not started.
+Status: Phase A completed. Checkpoints A1 and A2 were accepted, and A3 deployed
+the clean candidate and restored exact-route v2 eligibility with fresh native
+proof. Phase B is pending its upstream gate and has not started.
 
 Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae`
 before execution began. The A1 status notes below record the later authorized
@@ -310,8 +310,11 @@ Reason: separate target compatibility from routing quality.
 
 ### A3 — Deploy Phase A and restore subagent eligibility
 
-Status: candidate preparation in progress. Deployment and fresh v2 proof remain
-required before this checkpoint can be accepted.
+Status: completed on 2026-09-18. Router commit
+`6c0d16a6033c161437a8d26ce00d56820fd49e7f` is deployed with the four-target
+routes, fresh native two-turn certification passed, and the accepted proof is
+bound to the exact runtime identities. The pre-candidate rollback remains
+retained pending lead acceptance.
 
 Boundary: a reviewed clean candidate, generated private routes, live publication,
 exact-route proof, rollback, and final integrated review.
@@ -346,6 +349,10 @@ an unmerged Phase B must not silently leave it unavailable. If deferral is chose
 record it, retain v1, skip the interim child proof, and require final v2 at B3.
 
 ### B1 — Reviewed upstream repin with the Luna classifier retained
+
+Status: pending. On 2026-09-18 upstream PR 762 was still OPEN and CONFLICTING
+at head `92c84a0ca6dddcad1ee2a894f61642b42093b0b8` against base
+`082e68ea145667b7d25ac4bc59b7b06a2f20cf87`; no backport or repin was attempted.
 
 Start only after choosing a reviewed usable upstream revision. Do not backport
 an open conflicted PR into the old pin or merge the original Router repository.

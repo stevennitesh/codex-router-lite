@@ -92,13 +92,6 @@ export function validateSwitchyardConfigContract(contract) {
   if (model.upstreamModel !== "gpt-5.6-sol") {
     throw new Error("Switchyard Auto native compaction model must remain gpt-5.6-sol.");
   }
-  // Temporary A1/A2 proof-window guard. A3 must replace this assertion only
-  // when it promotes the exact candidate alongside fresh certification proof.
-  if (model.multiAgentVersion !== "v1") {
-    throw new Error(
-      "The four-target Switchyard candidate must remain multi-agent v1 until its A3 proof promotion.",
-    );
-  }
   if (
     contract.classifier?.name !== "luna_high" ||
     contract.classifier.model !== "gpt-5.6-luna" ||

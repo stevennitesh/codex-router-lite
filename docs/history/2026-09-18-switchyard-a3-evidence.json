@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-A3",
+  "date": "2026-09-18T18:38:42.343Z",
+  "candidate": {
+    "routerCommit": "6c0d16a6033c161437a8d26ce00d56820fd49e7f",
+    "upstreamCommit": "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
+    "patchSha256": "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
+    "binarySha256": "b3233e478e4aabbe2bb30baf6ec3074ab1ef84415614c090bbd0b13bbf93e740",
+    "routesSha256": "c71348b5a6170fdb555b8ee54e4a4e6c101e117876098d32a7b731816c0431fe"
+  },
+  "deployment": {
+    "transactional": true,
+    "installedServiceChanged": true,
+    "rollbackRetained": false,
+    "rollbackRouterCommit": "598bf7bdb3ef267613050639e3146db42949cba7",
+    "rollbackCleanup": {
+      "completedAt": "2026-09-18T18:48:14.648Z",
+      "runtimeRollbackRemoved": true,
+      "detachedRouterWorktreeRemoved": true,
+      "managedServiceStopped": false
+    },
+    "repair": {
+      "finding": "The initial live V2 compaction probe bypassed Switchyard but the answer-only empty-completion guard rejected the native compaction item.",
+      "resolution": "Compaction turns now bypass the answer-only guard, with a distinguishing regression. The amended candidate was redeployed while preserving and validating the original pre-candidate rollback."
+    }
+  },
+  "liveVerification": {
+    "ordinary": {
+      "status": 200,
+      "terminal": "response.completed",
+      "responseStatus": "completed",
+      "publicModel": "switchyard/auto",
+      "selectedModel": "switchyard/luna-max",
+      "switchyardRoutingEvents": 1
+    },
+    "nativeCompactionV2": {
+      "status": 200,
+      "terminal": "response.completed",
+      "switchyardRoutingEvents": 0,
+      "eventTypes": [
+        "response.created",
+        "response.in_progress",
+        "response.output_item.added",
+        "response.compaction.compacting",
+        "response.output_item.done",
+        "response.completed"
+      ]
+    },
+    "protectedEndpointStatuses": {
+      "models": 401,
+      "decision": 401,
+      "responses": 401
+    },
+    "health": {
+      "routerOk": true,
+      "routerDegraded": [],
+      "switchyardStatus": 200
+    }
+  },
+  "certification": {
+    "executionSurface": "codex-cli",
+    "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+    "parentModel": "gpt-5.6-sol",
+    "parentEffort": "medium",
+    "sandbox": "workspace-write with automatic approval review",
+    "parentExitCode": 0,
+    "childRole": "router_switchyard_auto",
+    "forkTurns": "none",
+    "handoffCount": 2,
+    "sameChildFollowUp": true,
+    "tool": {
+      "name": "exec",
+      "result": 42,
+      "unsandboxedRetry": false
+    },
+    "firstMarker": {
+      "value": "CERT_FIRST_OK",
+      "observedAt": "2026-09-18T18:29:04.675Z"
+    },
+    "secondMarker": {
+      "value": "CERT_SECOND_OK",
+      "observedAt": "2026-09-18T18:29:17.366Z"
+    },
+    "cleanupAfterSecondMarker": true,
+    "routerCompletions": [
+      { "at": "2026-09-18T18:29:01.630Z", "status": 200, "totalMs": 10429 },
+      { "at": "2026-09-18T18:29:04.674Z", "status": 200, "totalMs": 2014 },
+      { "at": "2026-09-18T18:29:17.388Z", "status": 200, "totalMs": 7363 }
+    ],
+    "selectedModels": {
+      "switchyard/luna-max": 3
+    },
+    "failureCounts": {
+      "http": 0,
+      "judgeUnavailable": 0,
+      "parse": 0,
+      "fallback": 0
+    }
+  },
+  "phaseB": {
+    "status": "pending",
+    "pullRequest": 762,
+    "state": "OPEN",
+    "mergeable": "CONFLICTING",
+    "head": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "base": "082e68ea145667b7d25ac4bc59b7b06a2f20cf87",
+    "backported": false
+  },
+  "privacy": {
+    "checkedEvidenceIncludesRawPrompts": false,
+    "checkedEvidenceIncludesRawResponses": false,
+    "checkedEvidenceIncludesThreadIdentifiers": false,
+    "checkedEvidenceIncludesCredentials": false
+  },
+  "limitations": [
+    "Certification is a bounded synthetic native CLI run, not a desktop GUI WebSocket soak.",
+    "Phase B remains gated on a reviewed usable upstream revision."
+  ]
+}

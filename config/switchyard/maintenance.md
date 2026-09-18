@@ -151,12 +151,11 @@ generation. Do not delete the retained rollback to make a second deployment pass
 
 ## Switchyard v2 promotion
 
-`switchyard/auto` is currently a v1 candidate. The material under
-`v2_agent/switchyard/auto/` is draft historical evidence for the superseded
-policy and does not certify the four-target candidate. Read
+`switchyard/auto` is v2 only while its accepted application under
+`v2_agent/switchyard/auto/` matches the exact deployed four-target policy. Read
 [`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
-for the five checks before a future v2 promotion. Switchyard additionally
-requires the new proof's runtime
+for the five checks before any future proof refresh. Switchyard additionally
+requires the proof's runtime
 binding to record the deployed upstream commit, patch SHA-256, binary SHA-256,
 Router commit, and generated-routes SHA-256.
 

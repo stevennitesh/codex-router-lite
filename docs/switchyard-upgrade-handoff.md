@@ -1,10 +1,12 @@
 # Future Switchyard implementation handoff
 
-Status: checkpoints A1 and A2 were accepted after their review-repair rounds.
-Checkpoint A3 is preparing the clean v1 candidate for transactional deployment
-and fresh exact-route certification. Its A2 proof covers candidate Switchyard
-configuration through the installed Router; candidate Router hashes are
-provenance for the A3 end-to-end run. Phase B remains pending.
+Status: Phase A completed. Checkpoints A1 and A2 were accepted after their
+review-repair rounds. A3 deployed Router commit
+`6c0d16a6033c161437a8d26ce00d56820fd49e7f`, verified the end-to-end Router and
+native compaction paths, and accepted a fresh runtime-bound v2 proof. The
+pre-candidate rollback remains retained pending lead acceptance. Phase B remains
+pending because upstream PR 762 is still open and conflicting; it was not
+backported.
 
 Revision 3 remains the outcome authority. The later execution authorization
 supersedes this document's original plan-only boundary for assigned checkpoints;

@@ -105,9 +105,11 @@ public `switchyard/auto` identity while routing diagnostics retain the selected
 target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
-The four-target candidate advertises multi-agent v1 until its deployed policy
-passes fresh exact-route certification. The prior v2 evidence remains historical
-draft material and cannot promote this candidate.
+The four-target policy advertises multi-agent v2 only with the accepted
+runtime-bound application under `v2_agent/switchyard/auto`. Its fresh A3 proof
+binds the deployed Router commit, upstream source, patch, binary, and generated
+routes. Any change to those identities or the native collaboration contract
+requires recertification.
 
 Router keeps Codex compaction requests on the native public route rather than
 sending them through Switchyard's auxiliary compaction endpoint. The optional
