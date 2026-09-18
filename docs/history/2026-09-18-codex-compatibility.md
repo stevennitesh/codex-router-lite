@@ -86,3 +86,16 @@ was changed to make the test pass. The existing Pareto proof remains evidence
 for its earlier runtime, not this deployment. Retry fresh certification after
 the key allowance is restored or explicitly adjusted. No account/key identifiers
 or private payloads are retained in this record.
+
+### Patch-build verification
+
+Windows package 26.915.4065.0 updated the bundled CLI to
+0.155.0-alpha.9.2. Its ordinary live app registry contains the same 34 tools as
+26.915.3509.0; every exposed description and TypeScript declaration matched the
+prior capture. The current catalog parsed successfully, all retained checks
+passed, and neither original Router upstream nor Switchyard moved. The app-tool
+snapshot was rebound to the exact installed build. Because no app-function or
+namespace shape, encrypted relay, request policy, compatibility transform, or
+Switchyard artifact changed, the certification refresh conditions were not met;
+the earlier exact-route proofs remain historical evidence for their recorded
+runtime and were not rewritten for this snapshot-only candidate.

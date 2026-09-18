@@ -1,6 +1,6 @@
 // Snapshot of the Codex app's native app-side tool definitions.
 // Source: the live Codex Desktop tool registry on 2026-09-18, paired with
-// Windows app 26.915.3509.0 and codex-cli 0.155.0-alpha.9. Keep this inventory
+// Windows app 26.915.4065.0 and codex-cli 0.155.0-alpha.9.2. Keep this inventory
 // synchronized for drift inspection. Runtime relay uses only client-provided
 // definitions and discoveries; this snapshot does not add callable tools.
 // This capture verified the 34 ordinary app tools. Conditional entries retain
@@ -10,8 +10,8 @@ const CODEX_APP_NAMESPACE = "mcp__codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
   capturedAt: "2026-09-18",
-  windowsAppVersion: "26.915.3509.0",
-  codexVersion: "codex-cli 0.155.0-alpha.9",
+  windowsAppVersion: "26.915.4065.0",
+  codexVersion: "codex-cli 0.155.0-alpha.9.2",
 });
 
 // The full app toolset as the client offers it to native models.
