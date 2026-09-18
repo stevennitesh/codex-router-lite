@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 3,
+  "checkpoint": "SY-B1-R1",
+  "date": "2026-09-18T19:51:05.062Z",
+  "candidate": {
+    "installedRouterCommit": "6c0d16a6033c161437a8d26ce00d56820fd49e7f",
+    "templateSha256": "4de10be9753112ae1fa6dbff7c7d44e86fa2f94fa070e151d4a2ac56a3ed2fb7",
+    "configSelection": "candidate",
+    "switchyardSource": {
+      "selection": "candidate",
+      "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+      "orderedPatches": [
+        {
+          "role": "reviewed-upstream-contribution",
+          "sourceCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+          "sha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a"
+        },
+        {
+          "role": "router-compatibility",
+          "sha256": "5372a70b201d6213e85ba9efc021e6f80030e13950d3fd74f24c0fcfe8d3ef22"
+        }
+      ],
+      "binarySha256": "6759212e53f4b3c5604b83c8da082eca7318b6f5cccc9a95128536d35ffea7e4",
+      "rustToolchain": "1.96.1",
+      "provenanceSource": "source.lock"
+    },
+    "caseSetSha256": "9f0e64884048368130968421d10d5fe05cb8ca19097d62a8249d20853b6ae047",
+    "routerSourceSha256": {
+      "src/catalog.mjs": "78db980bc0b5bb7acf3dee50986318145d5e32b8e13cda019c5e7820cba29c63",
+      "src/namespace-relay.mjs": "bc6274696a5e42a10fba9cdc22519169655a46a03d827eeb0d3004d90ba3c95b",
+      "src/routed-models.mjs": "6c55fe613d37d4f934b89626435692a043f16a60f6858622694b6261afbf772d",
+      "src/router.mjs": "cb4d93e32579b090b3921220e14853ab1ce4459547cd4088394c740690e76600"
+    },
+    "routedInstructionsSha256": "a824a4fc8616b52b0ba0dbfca4bdc3be7de82220647576efecac062b7a8bb499",
+    "donorInstructionsSha256": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a"
+  },
+  "method": {
+    "isolatedRuntime": true,
+    "runtimeScope": "candidate Switchyard binary with candidate configuration calling the installed Router service",
+    "installedRouter": {
+      "service": "codex-router",
+      "version": "0.5.1"
+    },
+    "candidateRouterExecutedEndToEnd": false,
+    "installedServiceChanged": false,
+    "protectedDecisionPath": true,
+    "fullPromptsOrResponsesRetained": false,
+    "boundedSyntheticJudgmentExcerptsRetained": false,
+    "donorTerminalEventsRequired": false,
+    "priorTransportRowsRetainedWithoutRerun": false,
+    "semanticRecheckFixtures": [],
+    "checkerRepairNotes": [],
+    "b1Smoke": true,
+    "classifierCases": 4,
+    "mediumDonorPairs": 0,
+    "xhighDonorPairs": 0
+  },
+  "preflightDiagnostics": [],
+  "classification": [
+    {
+      "id": "L01",
+      "acceptable": [
+        "luna_max"
+      ],
+      "selected": "luna_max",
+      "pass": true,
+      "latencyMs": 1456
+    },
+    {
+      "id": "S01",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "selected": "sol_medium",
+      "pass": true,
+      "latencyMs": 2823
+    },
+    {
+      "id": "A01",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "selected": "astra_medium",
+      "pass": true,
+      "latencyMs": 2693
+    },
+    {
+      "id": "X01",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "selected": "astra_xhigh",
+      "pass": true,
+      "latencyMs": 3350
+    }
+  ],
+  "forced": [],
+  "ordinary": [
+    {
+      "target": "luna_max",
+      "sourceCase": "L01",
+      "status": 200,
+      "latencyMs": 2834,
+      "selected": "switchyard/luna-max",
+      "terminalType": "response.completed",
+      "responseStatus": "completed",
+      "completed": true,
+      "outputChars": 30
+    },
+    {
+      "target": "sol_medium",
+      "sourceCase": "S01",
+      "status": 200,
+      "latencyMs": 6247,
+      "selected": "switchyard/sol-medium",
+      "terminalType": "response.completed",
+      "responseStatus": "completed",
+      "completed": true,
+      "outputChars": 211
+    },
+    {
+      "target": "astra_medium",
+      "sourceCase": "A01",
+      "status": 200,
+      "latencyMs": 10669,
+      "selected": "switchyard/astra-medium",
+      "terminalType": "response.completed",
+      "responseStatus": "completed",
+      "completed": true,
+      "outputChars": 578
+    },
+    {
+      "target": "astra_xhigh",
+      "sourceCase": "X01",
+      "status": 200,
+      "latencyMs": 21908,
+      "selected": "switchyard/astra-xhigh",
+      "terminalType": "response.completed",
+      "responseStatus": "completed",
+      "completed": true,
+      "outputChars": 621
+    }
+  ],
+  "transitions": [],
+  "affinity": [
+    {
+      "itemType": "message",
+      "selected": "sol_medium",
+      "status": 200
+    },
+    {
+      "itemType": "function_call_output",
+      "selected": "sol_medium",
+      "status": 200
+    }
+  ],
+  "donorComparisons": [],
+  "summary": {
+    "classificationAcceptable": 4,
+    "classificationTotal": 4,
+    "selectedCounts": {
+      "luna_max": 1,
+      "sol_medium": 1,
+      "astra_medium": 1,
+      "astra_xhigh": 1
+    },
+    "forcedPassed": 0,
+    "ordinaryCompleted": 4,
+    "ordinaryTargetIdentitiesPassed": 4,
+    "affinityStable": true,
+    "donorPairsComplete": 0,
+    "semanticDonorPairsPassed": 0,
+    "toolRoundTripLegsPassed": 0,
+    "classifierBoundaryDisagreements": [],
+    "requiredFailures": [],
+    "requiredCasesPassed": true,
+    "decisionLatency": {
+      "count": 4,
+      "medianMs": 2693,
+      "p95Ms": 2823
+    },
+    "answerLatency": {
+      "count": 4,
+      "medianMs": 6247,
+      "p95Ms": 10669
+    }
+  },
+  "limitations": [
+    "Synthetic sanity evidence is not a statistical accuracy estimate.",
+    "The isolated runtime exercised the selected Switchyard binary and configuration against the unchanged installed Router; the Router source hashes are not a new Router deployment claim.",
+    "No private conversation, repository payload, deployment, or v2 certification was exercised."
+  ]
+}

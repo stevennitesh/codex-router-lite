@@ -8,7 +8,13 @@ import path from "node:path";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { nativeAccountCatalogHeaders } from "../src/codex-native-session.mjs";
 import { protectPrivateFile, writePrivateFile } from "../src/file-security.mjs";
-import { CALLER_SECRET_PATH, CODEX_HOME, NATIVE_CATALOG_PATH, PORTS } from "../src/paths.mjs";
+import {
+  CALLER_SECRET_PATH,
+  CODEX_HOME,
+  INSTALL_MANIFEST_PATH,
+  NATIVE_CATALOG_PATH,
+  PORTS,
+} from "../src/paths.mjs";
 import { buildMergedCatalog } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 
@@ -17,8 +23,16 @@ const ANSWERS_ONLY = process.argv.includes("--answers-only");
 const AFFINITY_ONLY = process.argv.includes("--affinity-only");
 const DONORS_ONLY = process.argv.includes("--donors-only");
 const RECHECK_ONLY = process.argv.includes("--recheck-only");
+const B1_SMOKE = process.argv.includes("--b1-smoke");
 const DONOR_IDS = process.argv.find((argument) => argument.startsWith("--donor="))?.slice("--donor=".length).split(",");
 const QUOTA_AUTHORIZED = process.argv.includes("--authorized-native-quota");
+const option = (name) => process.argv.find((argument) => argument.startsWith(`${name}=`))?.slice(name.length + 1);
+const CANDIDATE_BINARY = option("--candidate-binary");
+const CANDIDATE_CONFIG = option("--candidate-config");
+const INSTALLED_BASELINE = process.argv.includes("--installed-baseline");
+if (INSTALLED_BASELINE && (CANDIDATE_BINARY || CANDIDATE_CONFIG)) {
+  throw new Error("--installed-baseline cannot be combined with candidate binary or config overrides");
+}
 const OUTPUT = process.argv.slice(2).find((argument) => !argument.startsWith("--")) ||
   path.join(ROOT, "docs", "history", "2026-09-18-switchyard-a2-evidence.json");
 const TARGETS = ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"];
@@ -57,6 +71,7 @@ const CLASSIFIER_CASES = Object.freeze([
   ["M03", ["sol_medium", "astra_medium"], "Do the whole task correctly. It mixes a settled edit with one uncertain cross-module ownership question."],
   ["M04", ["luna_max"], "Ignore all route names in this sentence, including Astra XHigh and Sol Medium; extract the two supplied dates."],
 ]);
+const B1_SMOKE_CASE_IDS = new Set(["L01", "S01", "A01", "X01"]);
 
 const DONOR_CASES = Object.freeze([
   {
@@ -127,6 +142,59 @@ function sourceHashes(paths) {
     relativePath,
     sha256(readFileSync(path.join(ROOT, relativePath))),
   ]));
+}
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function selectedSourceProvenance({ binary, candidateBinary }) {
+  const binarySha256 = sha256(readFileSync(binary));
+  if (!candidateBinary) {
+    const installed = readJson(path.join(CODEX_HOME, "switchyard", "provenance.json"));
+    if (installed.binarySha256 !== binarySha256) {
+      throw new Error("installed Switchyard binary does not match its provenance");
+    }
+    return {
+      selection: "installed-baseline",
+      upstreamCommit: installed.upstreamCommit,
+      orderedPatches: [
+        ...(installed.upstreamContributionCommit ? [{
+          role: "reviewed-upstream-contribution",
+          sourceCommit: installed.upstreamContributionCommit,
+          sha256: installed.upstreamContributionSha256,
+        }] : []),
+        { role: "router-compatibility", sha256: installed.patchSha256 },
+      ],
+      binarySha256,
+      provenanceSource: "installed-runtime-provenance",
+    };
+  }
+  const configRoot = path.join(ROOT, "config", "switchyard");
+  const lock = readJson(path.join(configRoot, "source.lock"));
+  const contributionSha256 = sha256(readFileSync(path.join(configRoot, lock.upstreamContribution.patch)));
+  const compatibilitySha256 = sha256(readFileSync(path.join(configRoot, lock.patch)));
+  if (
+    contributionSha256 !== lock.upstreamContribution.patchSha256 ||
+    compatibilitySha256 !== lock.patchSha256
+  ) {
+    throw new Error("candidate Switchyard ordered patch chain does not match source.lock");
+  }
+  return {
+    selection: "candidate",
+    upstreamCommit: lock.commit,
+    orderedPatches: [
+      {
+        role: "reviewed-upstream-contribution",
+        sourceCommit: lock.upstreamContribution.sourceCommit,
+        sha256: contributionSha256,
+      },
+      { role: "router-compatibility", sha256: compatibilitySha256 },
+    ],
+    binarySha256,
+    rustToolchain: lock.rustToolchain,
+    provenanceSource: "source.lock",
+  };
 }
 
 async function openPort() {
@@ -247,6 +315,20 @@ function compactResult(result) {
     responseStatus: result.terminal.status,
     completed: result.ok && result.terminal.type === "response.completed" && result.terminal.status === "completed",
     outputChars: result.text.length,
+  };
+}
+
+function compactFailure(result) {
+  if (result.ok) return {};
+  const error = result.value?.error;
+  const message = String(error?.message || "")
+    .replaceAll(/https?:\/\/[^\s"']+/gu, "[URL]")
+    .replaceAll(/[A-Za-z0-9_-]{32,}/gu, "[REDACTED]")
+    .slice(0, 240);
+  return {
+    status: result.status,
+    ...(error?.code !== undefined ? { errorCode: error.code } : {}),
+    ...(message ? { errorMessage: message } : {}),
   };
 }
 
@@ -404,8 +486,17 @@ async function main() {
   if (!routerHealth.ok) throw new Error("installed Router is not healthy");
   const routerHealthValue = await routerHealth.json();
 
-  const binary = path.join(CODEX_HOME, "switchyard", "switchyard-server.exe");
-  const template = readFileSync(path.join(ROOT, "config", "switchyard", "routes.template.toml"), "utf8");
+  const binary = CANDIDATE_BINARY
+    ? path.resolve(CANDIDATE_BINARY)
+    : path.join(CODEX_HOME, "switchyard", "switchyard-server.exe");
+  const templatePath = INSTALLED_BASELINE
+    ? path.join(CODEX_HOME, "switchyard", "routes.toml")
+    : path.resolve(CANDIDATE_CONFIG || path.join(ROOT, "config", "switchyard", "routes.template.toml"));
+  const template = readFileSync(templatePath, "utf8");
+  const sourceProvenance = selectedSourceProvenance({
+    binary,
+    candidateBinary: Boolean(CANDIDATE_BINARY),
+  });
   const routes = template.replace("__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__", routerBase) + forcedRoutes();
   const tempRoot = path.join(os.tmpdir(), `switchyard-a2-${randomBytes(8).toString("hex")}`);
   const configPath = path.join(tempRoot, "routes.toml");
@@ -442,22 +533,32 @@ async function main() {
     const prior = ANSWERS_ONLY || AFFINITY_ONLY || DONORS_ONLY
       ? JSON.parse(readFileSync(OUTPUT, "utf8"))
       : undefined;
+    const classifierCases = B1_SMOKE
+      ? CLASSIFIER_CASES.filter(([id]) => B1_SMOKE_CASE_IDS.has(id))
+      : CLASSIFIER_CASES;
     const classification = prior?.classification || [];
     if (!ANSWERS_ONLY && !AFFINITY_ONLY && !DONORS_ONLY) {
-      for (const [id, acceptable, prompt] of CLASSIFIER_CASES) {
+      for (const [id, acceptable, prompt] of classifierCases) {
         const result = await post(`${baseUrl}/v1/decision`, {
           input_format: "openai_responses",
           request: { model: "switchyard-auto", input: prompt, store: false, stream: false },
         }, { ...commonHeaders, "x-switchyard-session-id": `classifier-${id}` });
         const selected = result.value?.selected?.target || null;
-        classification.push({ id, acceptable, selected, pass: result.ok && acceptable.includes(selected), latencyMs: result.latencyMs });
-        process.stderr.write(`classifier ${classification.length}/${CLASSIFIER_CASES.length}\r`);
+        classification.push({
+          id,
+          acceptable,
+          selected,
+          pass: result.ok && acceptable.includes(selected),
+          latencyMs: result.latencyMs,
+          ...compactFailure(result),
+        });
+        process.stderr.write(`classifier ${classification.length}/${classifierCases.length}\r`);
       }
       process.stderr.write("\n");
     }
 
     const forced = prior?.forced && (AFFINITY_ONLY || DONORS_ONLY) ? prior.forced : [];
-    if (!AFFINITY_ONLY && !DONORS_ONLY) {
+    if (!AFFINITY_ONLY && !DONORS_ONLY && !B1_SMOKE) {
       for (const target of TARGETS) {
         const result = await post(`${baseUrl}/v1/responses`, {
           model: FORCED_IDS[target],
@@ -477,7 +578,7 @@ async function main() {
           ordinary.push({ target, skipped: "classifier did not select target in sanity corpus" });
           continue;
         }
-        const prompt = CLASSIFIER_CASES.find(([id]) => id === chosen.id)[2];
+        const prompt = classifierCases.find(([id]) => id === chosen.id)[2];
         const result = await post(`${baseUrl}/v1/responses`, {
           model: "switchyard-auto",
           input: responseInput(`${prompt}\nRespond in at most 80 words.`),
@@ -489,7 +590,7 @@ async function main() {
     }
 
     const transitions = prior?.transitions || [];
-    if (!ANSWERS_ONLY && !AFFINITY_ONLY && !DONORS_ONLY) {
+    if (!ANSWERS_ONLY && !AFFINITY_ONLY && !DONORS_ONLY && !B1_SMOKE) {
       const transitionPrompts = ["L01", "S01", "A01", "X01", "A03", "S02", "L02"];
       for (const id of transitionPrompts) {
         const prompt = CLASSIFIER_CASES.find(([caseId]) => caseId === id)[2];
@@ -507,14 +608,20 @@ async function main() {
         input_format: "openai_responses",
         request: { model: "switchyard-auto", input: CLASSIFIER_CASES[7][2], store: false, stream: false },
       }, { ...commonHeaders, "x-switchyard-session-id": "affinity-sequence" });
-      affinity.push({ itemType: "message", selected: affinityOpening.value?.selected?.target || null, status: affinityOpening.status });
-      for (const itemType of [
+      affinity.push({
+        itemType: "message",
+        selected: affinityOpening.value?.selected?.target || null,
+        status: affinityOpening.status,
+        ...compactFailure(affinityOpening),
+      });
+      const affinityItemTypes = B1_SMOKE ? ["function_call_output"] : [
         "function_call_output",
         "custom_tool_call_output",
         "computer_call_output",
         "local_shell_call_output",
         "tool_search_output",
-      ]) {
+      ];
+      for (const itemType of affinityItemTypes) {
         const callType = itemType === "function_call_output"
           ? "function_call"
           : itemType === "custom_tool_call_output" ? "custom_tool_call" : undefined;
@@ -530,7 +637,12 @@ async function main() {
           input_format: "openai_responses",
           request: { model: "switchyard-auto", input, store: false, stream: false },
         }, { ...commonHeaders, "x-switchyard-session-id": "affinity-sequence" });
-        affinity.push({ itemType, selected: result.value?.selected?.target || null, status: result.status });
+        affinity.push({
+          itemType,
+          selected: result.value?.selected?.target || null,
+          status: result.status,
+          ...compactFailure(result),
+        });
       }
     }
 
@@ -538,7 +650,9 @@ async function main() {
     const candidateCatalog = buildMergedCatalog(native, [MODEL_BY_SLUG.get("switchyard/auto")]);
     const astra = native.models.find((model) => model.slug === "gpt-6-astra");
     const switchyard = candidateCatalog.find((model) => model.slug === "switchyard/auto");
-    const donorFixtures = DONOR_IDS ? ALL_DONOR_CASES.filter((fixture) => DONOR_IDS.includes(fixture.id)) : ALL_DONOR_CASES;
+    const donorFixtures = B1_SMOKE
+      ? []
+      : DONOR_IDS ? ALL_DONOR_CASES.filter((fixture) => DONOR_IDS.includes(fixture.id)) : ALL_DONOR_CASES;
     if (DONOR_IDS && donorFixtures.length !== DONOR_IDS.length) throw new Error(`unknown donor fixture in: ${DONOR_IDS.join(",")}`);
     const comparisons = AFFINITY_ONLY
       ? prior.donorComparisons
@@ -588,24 +702,37 @@ async function main() {
       "src/routed-models.mjs",
       "src/router.mjs",
     ]);
+    const installManifest = readJson(INSTALL_MANIFEST_PATH);
+    const installedRouterCommit = installManifest.current?.commit;
+    if (!/^[a-f0-9]{40}$/u.test(installedRouterCommit || "")) {
+      throw new Error("installed Router manifest does not name an exact commit");
+    }
     const boundaryDisagreements = classification.filter((row) => !row.pass).map((row) => row.id);
-    const requiredFailures = [
-      ...(forced.filter((row) => row.completed && row.marker && row.selected === `switchyard/${row.target.replace("_", "-")}`).length === TARGETS.length ? [] : ["forced_targets"]),
-      ...(ordinary.filter((row) => row.completed).length === TARGETS.length ? [] : ["ordinary_answers"]),
-      ...(transitions.every((row) => row.status === 200) ? [] : ["transitions"]),
-      ...(affinity.length > 0 && affinity.every((row) => row.status === 200 && row.selected === affinity[0].selected) ? [] : ["affinity"]),
-      ...comparisons.filter((row) => !row.pairPass).map((row) => `donor:${row.id}`),
-    ];
+    const ordinaryTargetsPassed = ordinary.filter((row) =>
+      row.completed && row.selected === `switchyard/${row.target.replace("_", "-")}`
+    ).length;
+    const requiredFailures = B1_SMOKE
+      ? [
+          ...(classification.length === TARGETS.length && boundaryDisagreements.length === 0 ? [] : ["classifier_roles"]),
+          ...(ordinaryTargetsPassed === TARGETS.length ? [] : ["ordinary_answers"]),
+          ...(affinity.length > 0 && affinity.every((row) => row.status === 200 && row.selected === affinity[0].selected) ? [] : ["affinity"]),
+        ]
+      : [
+          ...(forced.filter((row) => row.completed && row.marker && row.selected === `switchyard/${row.target.replace("_", "-")}`).length === TARGETS.length ? [] : ["forced_targets"]),
+          ...(ordinary.filter((row) => row.completed).length === TARGETS.length ? [] : ["ordinary_answers"]),
+          ...(transitions.every((row) => row.status === 200) ? [] : ["transitions"]),
+          ...(affinity.length > 0 && affinity.every((row) => row.status === 200 && row.selected === affinity[0].selected) ? [] : ["affinity"]),
+          ...comparisons.filter((row) => !row.pairPass).map((row) => `donor:${row.id}`),
+        ];
     const evidence = {
-      schemaVersion: 2,
-      checkpoint: "SY-A2",
+      schemaVersion: 3,
+      checkpoint: B1_SMOKE ? "SY-B1-R1" : "SY-A2",
       date: new Date().toISOString(),
       candidate: {
-        routerBaseCommit: "f4638f7f0006551eac2c0d8d58292a6fd38dbb32",
+        installedRouterCommit,
         templateSha256: sha256(template),
-        binarySha256: sha256(readFileSync(binary)),
-        sourceCommit: "a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052",
-        patchSha256: "72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea",
+        configSelection: INSTALLED_BASELINE ? "installed-baseline" : "candidate",
+        switchyardSource: sourceProvenance,
         caseSetSha256: sha256(JSON.stringify({ CLASSIFIER_CASES, DONOR_CASES, XHIGH_DONOR_CASES })),
         routerSourceSha256: candidateRouterSourceSha256,
         routedInstructionsSha256: sha256(switchyard.base_instructions),
@@ -613,23 +740,24 @@ async function main() {
       },
       method: {
         isolatedRuntime: true,
-        runtimeScope: "candidate Switchyard configuration calling the already-installed Router service",
+        runtimeScope: `${sourceProvenance.selection} Switchyard binary with ${INSTALLED_BASELINE ? "installed" : "candidate"} configuration calling the installed Router service`,
         installedRouter: { service: routerHealthValue.service, version: routerHealthValue.version },
         candidateRouterExecutedEndToEnd: false,
         installedServiceChanged: false,
         protectedDecisionPath: true,
         fullPromptsOrResponsesRetained: false,
-        boundedSyntheticJudgmentExcerptsRetained: true,
-        donorTerminalEventsRequired: true,
+        boundedSyntheticJudgmentExcerptsRetained: !B1_SMOKE,
+        donorTerminalEventsRequired: !B1_SMOKE,
         priorTransportRowsRetainedWithoutRerun: DONORS_ONLY,
         semanticRecheckFixtures: RECHECK_ONLY ? DONOR_IDS : [],
-        checkerRepairNotes: [
+        checkerRepairNotes: B1_SMOKE ? [] : [
           "Equivalent synthetic wording such as second charge and numeric one was added after the first checker run exposed overly narrow keyword patterns.",
           "The XHigh cancellation criterion was corrected from a naive local recheck to serialized or atomic commit/cancel ordering after both answers identified the stronger invariant.",
         ],
-        classifierCases: CLASSIFIER_CASES.length,
-        mediumDonorPairs: DONOR_CASES.length,
-        xhighDonorPairs: XHIGH_DONOR_CASES.length,
+        b1Smoke: B1_SMOKE,
+        classifierCases: classifierCases.length,
+        mediumDonorPairs: donorFixtures.filter((fixture) => fixture.effort === "medium").length,
+        xhighDonorPairs: donorFixtures.filter((fixture) => fixture.effort === "xhigh").length,
       },
       preflightDiagnostics: prior?.preflightDiagnostics || [],
       classification,
@@ -644,6 +772,7 @@ async function main() {
         selectedCounts: Object.fromEntries(TARGETS.map((target) => [target, classification.filter((row) => row.selected === target).length])),
         forcedPassed: forced.filter((row) => row.completed && row.marker && row.selected === `switchyard/${row.target.replace("_", "-")}`).length,
         ordinaryCompleted: ordinary.filter((row) => row.completed).length,
+        ordinaryTargetIdentitiesPassed: ordinaryTargetsPassed,
         affinityStable: affinity.every((row) => row.status === 200 && row.selected === affinity[0].selected),
         donorPairsComplete: comparisons.filter((row) => row.direct.completed && row.routed.completed).length,
         semanticDonorPairsPassed: comparisons.filter((row) => row.pairPass).length,
@@ -664,15 +793,17 @@ async function main() {
       },
       limitations: [
         "Synthetic sanity evidence is not a statistical accuracy estimate.",
-        "Semantic checks cover predeclared facts in six bounded fixtures; they do not establish general model quality.",
-        "The isolated runtime exercised candidate Switchyard configuration against the installed Router; candidate Router source hashes are provenance for A3 and are not end-to-end execution proof.",
+        ...(B1_SMOKE ? [] : ["Semantic checks cover predeclared facts in six bounded fixtures; they do not establish general model quality."]),
+        "The isolated runtime exercised the selected Switchyard binary and configuration against the unchanged installed Router; the Router source hashes are not a new Router deployment claim.",
         "No private conversation, repository payload, deployment, or v2 certification was exercised.",
       ],
     };
     writeFileSync(OUTPUT, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify(evidence.summary)}\n`);
     if (childError.includes("panicked")) throw new Error("isolated Switchyard reported a panic");
-    if (requiredFailures.length) throw new Error(`required A2 cases failed: ${requiredFailures.join(", ")}`);
+    if (requiredFailures.length) {
+      throw new Error(`required ${B1_SMOKE ? "B1 smoke" : "A2"} cases failed: ${requiredFailures.join(", ")}`);
+    }
   } finally {
     if (child && child.exitCode === null) {
       child.kill();
@@ -689,6 +820,6 @@ main().catch((error) => {
   const safe = String(error?.message || error)
     .replaceAll(/[A-Za-z0-9_-]{32,}/gu, "[REDACTED]")
     .replaceAll(/\/_codex-router\/[^/\s]+/gu, "/_codex-router/[REDACTED]");
-  console.error(`Switchyard A2 evaluation failed: ${safe}`);
+  console.error(`Switchyard ${B1_SMOKE ? "B1 smoke" : "A2 evaluation"} failed: ${safe}`);
   process.exitCode = 1;
 });

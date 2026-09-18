@@ -8,6 +8,7 @@ test("certification evidence keeps useful route facts and removes identifiers", 
     routerLog: [
       "Switchyard libsy server",
       "2026-09-04T05:10:06Z INFO selected_model=\"switchyard/sol-medium\" agent_id=\"secret-agent\" correlation_id=\"secret-correlation\"",
+      "2026-09-04T05:10:06Z INFO evidence.source=\"fail_open\" evidence.final_target=\"sol_medium\" evidence.policy_hash=\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\" evidence.reason_code=\"provider_error\" evidence.threshold=0.35",
       "[codex-router] timing at=2026-09-04T05:10:07Z model=switchyard/auto provider=switchyard status=200 total_ms=800 out_tokens=14 cached_tokens=120",
       "[codex-router] timing at=2026-09-04T05:10:08Z model=switchyard/auto provider=switchyard status=499 total_ms=900",
     ].join("\n"),
@@ -23,6 +24,9 @@ test("certification evidence keeps useful route facts and removes identifiers", 
   assert.equal(summary.routing.total, 1);
   assert.equal(summary.routing.uniqueSessions, 1);
   assert.equal(summary.routing.recent[0].model, "switchyard/sol-medium");
+  assert.equal(summary.classifier.decisions, 1);
+  assert.equal(summary.classifier.fallbacks, 1);
+  assert.deepEqual(summary.classifier.finalTargets, { sol_medium: 1 });
   assert.doesNotMatch(JSON.stringify(summary), /secret-agent|secret-correlation|secret-session|old-session/u);
 });
 

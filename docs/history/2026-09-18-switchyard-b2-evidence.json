@@ -1,0 +1,3500 @@
+{
+  "schemaVersion": 2,
+  "checkpoint": "SY-B2-R2",
+  "generatedAt": "2026-09-18T21:07:19.062Z",
+  "mode": "isolated-candidate-runtime-shadow-evaluation",
+  "productionPolicyChanged": false,
+  "candidateBinarySha256": "b5a7c614621f8657ac343834c52609d95e3b716253cef3257208021f15a1d06a",
+  "corpus": {
+    "total": 124,
+    "training": 100,
+    "freshHoldout": 24,
+    "trainingCorpusSha256": "33cd2d273bdb2ce2f8bf446bdc15c053fa4bc60d9996d2494c0eca5af9730fc5",
+    "freshHoldoutCorpusSha256": "e3a10ff7ec50d157d3e4b0f14fba8080a78b7b6ae6245412f0df17044cce28f6",
+    "privateDataSent": false,
+    "characterization": "role-obvious synthetic training/sanity set plus one independent mixed, steering, multi-turn, and benign financial/log control holdout"
+  },
+  "predeclared": {
+    "gates": {
+      "minimumAcceptableRate": 0.78,
+      "maximumAverageAsymmetricLoss": 0.75,
+      "maximumCriticalUnderRoutes": 0,
+      "maximumProviderFailures": 0,
+      "maximumP95LatencyMs": 6141,
+      "latencyBasis": "Phase A p95 4094 ms plus 50 percent"
+    },
+    "loss": {
+      "luna_max": {
+        "luna_max": 0,
+        "sol_medium": 0.2,
+        "astra_medium": 0.7,
+        "astra_xhigh": 1.4
+      },
+      "sol_medium": {
+        "luna_max": 1.4,
+        "sol_medium": 0,
+        "astra_medium": 0.35,
+        "astra_xhigh": 1
+      },
+      "astra_medium": {
+        "luna_max": 2.5,
+        "sol_medium": 1.2,
+        "astra_medium": 0,
+        "astra_xhigh": 0.45
+      },
+      "astra_xhigh": {
+        "luna_max": 4,
+        "sol_medium": 3,
+        "astra_medium": 1.8,
+        "astra_xhigh": 0
+      }
+    },
+    "thresholdSelection": "training only; fresh holdout evaluated once after policy freeze"
+  },
+  "outcomeLabelAdjustments": [
+    {
+      "id": "S17",
+      "split": "training",
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "acceptable": [
+        "luna_max",
+        "sol_medium"
+      ],
+      "adjustment": "training-only outcome check: both Luna Max and Sol Medium passed every predeclared implementation assertion"
+    },
+    {
+      "id": "X03",
+      "split": "training",
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "adjustment": "lead-accepted training-only outcome revision: Astra Medium and Astra XHigh each passed every predeclared semantic key-rotation criterion across two fixed fixtures; evidence SHA-256 888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f"
+    },
+    {
+      "id": "X21",
+      "split": "training",
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "adjustment": "training-only outcome check: Astra Medium passed every predeclared security assertion while XHigh missed atomicity in this sample"
+    }
+  ],
+  "trainingSearchIdentity": {
+    "schemaVersion": 1,
+    "question": "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route.",
+    "candidates": [
+      {
+        "label": "luna_max",
+        "description": "Bounded retrieval, source-grounded extraction or summarization, or a tiny fully specified mechanical change with cheap verification."
+      },
+      {
+        "label": "sol_medium",
+        "description": "Implementation and bounded debugging where the failure and desired correction are known and verification can determine the outcome; excludes unresolved whether an irreversible effect already completed."
+      },
+      {
+        "label": "astra_medium",
+        "description": "Planning, review, architecture, interpretation, synthesis, or uncertain diagnosis where judgment dominates and consequences remain reversible or contained."
+      },
+      {
+        "label": "astra_xhigh",
+        "description": "Exceptional difficulty with consequential subtle correctness, recovery after a strong failed attempt, critical security or state behavior, or an ambiguous completed irreversible effect where a wrong retry or rollback can duplicate or corrupt the outcome."
+      }
+    ],
+    "thresholdCandidates": [
+      0,
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8
+    ],
+    "loss": {
+      "luna_max": {
+        "luna_max": 0,
+        "sol_medium": 0.2,
+        "astra_medium": 0.7,
+        "astra_xhigh": 1.4
+      },
+      "sol_medium": {
+        "luna_max": 1.4,
+        "sol_medium": 0,
+        "astra_medium": 0.35,
+        "astra_xhigh": 1
+      },
+      "astra_medium": {
+        "luna_max": 2.5,
+        "sol_medium": 1.2,
+        "astra_medium": 0,
+        "astra_xhigh": 0.45
+      },
+      "astra_xhigh": {
+        "luna_max": 4,
+        "sol_medium": 3,
+        "astra_medium": 1.8,
+        "astra_xhigh": 0
+      }
+    },
+    "gates": {
+      "minimumAcceptableRate": 0.78,
+      "maximumAverageAsymmetricLoss": 0.75,
+      "maximumCriticalUnderRoutes": 0,
+      "maximumProviderFailures": 0,
+      "maximumP95LatencyMs": 6141,
+      "latencyBasis": "Phase A p95 4094 ms plus 50 percent"
+    },
+    "trainingCorpusSha256": "33cd2d273bdb2ce2f8bf446bdc15c053fa4bc60d9996d2494c0eca5af9730fc5",
+    "sha256": "d284577bf8a8db3624a88928ebcffb40ccd4c1ba8db54fbfd49401b3d239ca19"
+  },
+  "policy": {
+    "schemaVersion": 2,
+    "transport": {
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "model": "typesafe/jev-1.13",
+      "redirects": "disabled",
+      "timeoutMs": 30000,
+      "maxRequestBytes": 32768
+    },
+    "normalization": "opening task plus latest distinct textual user update; omit reasoning, encrypted content, tool results, and provider metadata; any user image/audio/video/file causes zero-call default-target fallback",
+    "question": "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route.",
+    "candidates": [
+      {
+        "label": "luna_max",
+        "description": "Bounded retrieval, source-grounded extraction or summarization, or a tiny fully specified mechanical change with cheap verification."
+      },
+      {
+        "label": "sol_medium",
+        "description": "Implementation and bounded debugging where the failure and desired correction are known and verification can determine the outcome; excludes unresolved whether an irreversible effect already completed."
+      },
+      {
+        "label": "astra_medium",
+        "description": "Planning, review, architecture, interpretation, synthesis, or uncertain diagnosis where judgment dominates and consequences remain reversible or contained."
+      },
+      {
+        "label": "astra_xhigh",
+        "description": "Exceptional difficulty with consequential subtle correctness, recovery after a strong failed attempt, critical security or state behavior, or an ambiguous completed irreversible effect where a wrong retry or rollback can duplicate or corrupt the outcome."
+      }
+    ],
+    "orders": [
+      [
+        "luna_max",
+        "sol_medium",
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      [
+        "sol_medium",
+        "astra_medium",
+        "astra_xhigh",
+        "luna_max"
+      ],
+      [
+        "astra_xhigh",
+        "astra_medium",
+        "sol_medium",
+        "luna_max"
+      ]
+    ],
+    "confidence": "(max(mean(probability by label))-1/N)/(1-1/N), clamped to [0,1]",
+    "threshold": 0.35,
+    "defaultTarget": "sol_medium",
+    "classifyTrigger": "user_turn",
+    "recentTurnWindow": null,
+    "sha256": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+  },
+  "selectedThreshold": 0.35,
+  "training": {
+    "count": 100,
+    "acceptable": 97,
+    "acceptableRate": 0.97,
+    "averageAsymmetricLoss": 0.054000000000000006,
+    "criticalUnderRoutes": 0,
+    "selectedCounts": {
+      "luna_max": 26,
+      "sol_medium": 24,
+      "astra_medium": 30,
+      "astra_xhigh": 20
+    }
+  },
+  "holdout": {
+    "count": 24,
+    "acceptable": 24,
+    "acceptableRate": 1,
+    "averageAsymmetricLoss": 0,
+    "criticalUnderRoutes": 0,
+    "selectedCounts": {
+      "luna_max": 6,
+      "sol_medium": 6,
+      "astra_medium": 6,
+      "astra_xhigh": 6
+    }
+  },
+  "latency": {
+    "count": 124,
+    "medianMs": 196,
+    "p95Ms": 375,
+    "measure": "request start through parsed response body"
+  },
+  "gateResults": {
+    "completeTraining": true,
+    "completeFreshHoldout": true,
+    "acceptableRate": true,
+    "asymmetricLoss": true,
+    "criticalUnderRoutes": true,
+    "providerFailures": true,
+    "latency": true,
+    "runtimeParity": true
+  },
+  "promotionEligible": true,
+  "failures": [],
+  "results": [
+    {
+      "id": "L01",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.8977777777777778,
+      "probabilities": {
+        "astra_medium": 0.013333333333333334,
+        "astra_xhigh": 0,
+        "luna_max": 0.9233333333333333,
+        "sol_medium": 0.06333333333333334
+      },
+      "fullBodyLatencyMs": 324,
+      "providerLatencyMs": 320,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L02",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 201,
+      "providerLatencyMs": 200,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L03",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.0033333333333333335,
+        "astra_xhigh": 0,
+        "luna_max": 0.9966666666666667,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 180,
+      "providerLatencyMs": 178,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L04",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9966666666666667,
+        "sol_medium": 0.0033333333333333335
+      },
+      "fullBodyLatencyMs": 178,
+      "providerLatencyMs": 176,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L05",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 202,
+      "providerLatencyMs": 200,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L06",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.991111111111111,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9933333333333333,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 227,
+      "providerLatencyMs": 225,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L07",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 156,
+      "providerLatencyMs": 154,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L08",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 192,
+      "providerLatencyMs": 190,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L09",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.99,
+        "sol_medium": 0.010000000000000002
+      },
+      "fullBodyLatencyMs": 159,
+      "providerLatencyMs": 157,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L10",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9777777777777779,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9833333333333334,
+        "sol_medium": 0.016666666666666666
+      },
+      "fullBodyLatencyMs": 226,
+      "providerLatencyMs": 225,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L11",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9822222222222222,
+      "probabilities": {
+        "astra_medium": 0.01,
+        "astra_xhigh": 0,
+        "luna_max": 0.9866666666666667,
+        "sol_medium": 0.0033333333333333335
+      },
+      "fullBodyLatencyMs": 213,
+      "providerLatencyMs": 211,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L12",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 190,
+      "providerLatencyMs": 188,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L13",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.0033333333333333335,
+        "astra_xhigh": 0,
+        "luna_max": 0.9966666666666667,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 197,
+      "providerLatencyMs": 196,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L14",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 1076,
+      "providerLatencyMs": 1075,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L15",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.7688888888888888,
+      "probabilities": {
+        "astra_medium": 0.16333333333333333,
+        "astra_xhigh": 0,
+        "luna_max": 0.8266666666666667,
+        "sol_medium": 0.01
+      },
+      "fullBodyLatencyMs": 168,
+      "providerLatencyMs": 166,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L16",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 263,
+      "providerLatencyMs": 262,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L17",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 189,
+      "providerLatencyMs": 188,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L18",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 154,
+      "providerLatencyMs": 153,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L19",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 227,
+      "providerLatencyMs": 225,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L20",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9777777777777779,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9833333333333334,
+        "sol_medium": 0.016666666666666666
+      },
+      "fullBodyLatencyMs": 204,
+      "providerLatencyMs": 203,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L21",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.991111111111111,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9933333333333333,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 183,
+      "providerLatencyMs": 182,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L22",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.8711111111111111,
+      "probabilities": {
+        "astra_medium": 0.09000000000000001,
+        "astra_xhigh": 0,
+        "luna_max": 0.9033333333333333,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 239,
+      "providerLatencyMs": 237,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L23",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 195,
+      "providerLatencyMs": 194,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L24",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 145,
+      "providerLatencyMs": 144,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "L25",
+      "split": "training",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "originalAcceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 237,
+      "providerLatencyMs": 236,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "S01",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8755555555555555,
+      "probabilities": {
+        "astra_medium": 0.04,
+        "astra_xhigh": 0,
+        "luna_max": 0.053333333333333344,
+        "sol_medium": 0.9066666666666666
+      },
+      "fullBodyLatencyMs": 212,
+      "providerLatencyMs": 211,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S02",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9466666666666667,
+      "probabilities": {
+        "astra_medium": 0.016666666666666666,
+        "astra_xhigh": 0,
+        "luna_max": 0.02333333333333333,
+        "sol_medium": 0.96
+      },
+      "fullBodyLatencyMs": 172,
+      "providerLatencyMs": 171,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S03",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.4444444444444445,
+      "probabilities": {
+        "astra_medium": 0.05666666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.35999999999999993,
+        "sol_medium": 0.5833333333333334
+      },
+      "fullBodyLatencyMs": 180,
+      "providerLatencyMs": 179,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S04",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.42222222222222233,
+      "probabilities": {
+        "astra_medium": 0.22666666666666666,
+        "astra_xhigh": 0,
+        "luna_max": 0.20666666666666667,
+        "sol_medium": 0.5666666666666668
+      },
+      "fullBodyLatencyMs": 256,
+      "providerLatencyMs": 255,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S05",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8266666666666667,
+      "probabilities": {
+        "astra_medium": 0.12,
+        "astra_xhigh": 0,
+        "luna_max": 0.01,
+        "sol_medium": 0.87
+      },
+      "fullBodyLatencyMs": 178,
+      "providerLatencyMs": 177,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S06",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9422222222222222,
+      "probabilities": {
+        "astra_medium": 0.016666666666666666,
+        "astra_xhigh": 0,
+        "luna_max": 0.02666666666666667,
+        "sol_medium": 0.9566666666666667
+      },
+      "fullBodyLatencyMs": 175,
+      "providerLatencyMs": 174,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S07",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.7777777777777778,
+      "probabilities": {
+        "astra_medium": 0.02,
+        "astra_xhigh": 0,
+        "luna_max": 0.14666666666666667,
+        "sol_medium": 0.8333333333333334
+      },
+      "fullBodyLatencyMs": 272,
+      "providerLatencyMs": 271,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S08",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8622222222222221,
+      "probabilities": {
+        "astra_medium": 0.06666666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.03666666666666667,
+        "sol_medium": 0.8966666666666666
+      },
+      "fullBodyLatencyMs": 214,
+      "providerLatencyMs": 213,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S09",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9244444444444445,
+      "probabilities": {
+        "astra_medium": 0.016666666666666666,
+        "astra_xhigh": 0.01,
+        "luna_max": 0.03,
+        "sol_medium": 0.9433333333333334
+      },
+      "fullBodyLatencyMs": 204,
+      "providerLatencyMs": 203,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S10",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8844444444444446,
+      "probabilities": {
+        "astra_medium": 0.07,
+        "astra_xhigh": 0.0033333333333333335,
+        "luna_max": 0.013333333333333334,
+        "sol_medium": 0.9133333333333334
+      },
+      "fullBodyLatencyMs": 233,
+      "providerLatencyMs": 232,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S11",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.6622222222222223,
+      "probabilities": {
+        "astra_medium": 0.010000000000000002,
+        "astra_xhigh": 0,
+        "luna_max": 0.24333333333333335,
+        "sol_medium": 0.7466666666666667
+      },
+      "fullBodyLatencyMs": 193,
+      "providerLatencyMs": 192,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S12",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8355555555555556,
+      "probabilities": {
+        "astra_medium": 0.013333333333333336,
+        "astra_xhigh": 0.01666666666666667,
+        "luna_max": 0.09333333333333335,
+        "sol_medium": 0.8766666666666667
+      },
+      "fullBodyLatencyMs": 206,
+      "providerLatencyMs": 205,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S13",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.5511111111111111,
+      "probabilities": {
+        "astra_medium": 0.06666666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.27,
+        "sol_medium": 0.6633333333333333
+      },
+      "fullBodyLatencyMs": 164,
+      "providerLatencyMs": 163,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S14",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.7199999999999999,
+      "probabilities": {
+        "astra_medium": 0.11,
+        "astra_xhigh": 0,
+        "luna_max": 0.10000000000000002,
+        "sol_medium": 0.7899999999999999
+      },
+      "fullBodyLatencyMs": 215,
+      "providerLatencyMs": 214,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S15",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9111111111111111,
+      "probabilities": {
+        "astra_medium": 0.030000000000000002,
+        "astra_xhigh": 0.006666666666666668,
+        "luna_max": 0.030000000000000002,
+        "sol_medium": 0.9333333333333333
+      },
+      "fullBodyLatencyMs": 203,
+      "providerLatencyMs": 202,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S16",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.37333333333333335,
+      "probabilities": {
+        "astra_medium": 0.003333333333333334,
+        "astra_xhigh": 0,
+        "luna_max": 0.4666666666666667,
+        "sol_medium": 0.53
+      },
+      "fullBodyLatencyMs": 245,
+      "providerLatencyMs": 244,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S17",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "luna_max",
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "adjustment": "training-only outcome check: both Luna Max and Sol Medium passed every predeclared implementation assertion",
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.5555555555555557,
+      "probabilities": {
+        "astra_medium": 0.026666666666666672,
+        "astra_xhigh": 0,
+        "luna_max": 0.6666666666666667,
+        "sol_medium": 0.3066666666666667
+      },
+      "fullBodyLatencyMs": 160,
+      "providerLatencyMs": 159,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "S18",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8311111111111112,
+      "probabilities": {
+        "astra_medium": 0.03333333333333333,
+        "astra_xhigh": 0,
+        "luna_max": 0.09333333333333334,
+        "sol_medium": 0.8733333333333334
+      },
+      "fullBodyLatencyMs": 162,
+      "providerLatencyMs": 161,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S19",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9375696767001115,
+      "probabilities": {
+        "astra_medium": 0.03344481605351171,
+        "astra_xhigh": 0,
+        "luna_max": 0.013377926421404686,
+        "sol_medium": 0.9531772575250836
+      },
+      "fullBodyLatencyMs": 261,
+      "providerLatencyMs": 260,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S20",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.6177777777777779,
+      "probabilities": {
+        "astra_medium": 0.09333333333333334,
+        "astra_xhigh": 0.03666666666666667,
+        "luna_max": 0.15666666666666668,
+        "sol_medium": 0.7133333333333334
+      },
+      "fullBodyLatencyMs": 222,
+      "providerLatencyMs": 221,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S21",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9022222222222224,
+      "probabilities": {
+        "astra_medium": 0.0033333333333333335,
+        "astra_xhigh": 0,
+        "luna_max": 0.07,
+        "sol_medium": 0.9266666666666667
+      },
+      "fullBodyLatencyMs": 224,
+      "providerLatencyMs": 223,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S22",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.7377777777777778,
+      "probabilities": {
+        "astra_medium": 0.030000000000000002,
+        "astra_xhigh": 0,
+        "luna_max": 0.16666666666666666,
+        "sol_medium": 0.8033333333333333
+      },
+      "fullBodyLatencyMs": 182,
+      "providerLatencyMs": 181,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S23",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.6311111111111111,
+      "probabilities": {
+        "astra_medium": 0.07333333333333332,
+        "astra_xhigh": 0,
+        "luna_max": 0.20333333333333334,
+        "sol_medium": 0.7233333333333333
+      },
+      "fullBodyLatencyMs": 190,
+      "providerLatencyMs": 189,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S24",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9555555555555556,
+      "probabilities": {
+        "astra_medium": 0.006666666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.02666666666666667,
+        "sol_medium": 0.9666666666666667
+      },
+      "fullBodyLatencyMs": 297,
+      "providerLatencyMs": 296,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "S25",
+      "split": "training",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.45777777777777784,
+      "probabilities": {
+        "astra_medium": 0.06333333333333334,
+        "astra_xhigh": 0,
+        "luna_max": 0.3433333333333333,
+        "sol_medium": 0.5933333333333334
+      },
+      "fullBodyLatencyMs": 209,
+      "providerLatencyMs": 208,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M01",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.8266666666666668,
+      "probabilities": {
+        "astra_medium": 0.8700000000000001,
+        "astra_xhigh": 0.11666666666666668,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0.01
+      },
+      "fullBodyLatencyMs": 233,
+      "providerLatencyMs": 232,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M02",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 255,
+      "providerLatencyMs": 254,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M03",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 375,
+      "providerLatencyMs": 374,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M04",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 220,
+      "providerLatencyMs": 219,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M05",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9688888888888889,
+      "probabilities": {
+        "astra_medium": 0.9766666666666667,
+        "astra_xhigh": 0.013333333333333336,
+        "luna_max": 0,
+        "sol_medium": 0.010000000000000002
+      },
+      "fullBodyLatencyMs": 208,
+      "providerLatencyMs": 207,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M06",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.9966666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0.0033333333333333335
+      },
+      "fullBodyLatencyMs": 173,
+      "providerLatencyMs": 172,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M07",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 218,
+      "providerLatencyMs": 216,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M08",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9511111111111111,
+      "probabilities": {
+        "astra_medium": 0.9633333333333334,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0.03666666666666668
+      },
+      "fullBodyLatencyMs": 197,
+      "providerLatencyMs": 196,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M09",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9333333333333332,
+      "probabilities": {
+        "astra_medium": 0.95,
+        "astra_xhigh": 0.05000000000000002,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 184,
+      "providerLatencyMs": 183,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M10",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9288888888888889,
+      "probabilities": {
+        "astra_medium": 0.9466666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.05333333333333334,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 171,
+      "providerLatencyMs": 170,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M11",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.9966666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 192,
+      "providerLatencyMs": 191,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M12",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 174,
+      "providerLatencyMs": 173,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M13",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 210,
+      "providerLatencyMs": 209,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M14",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 176,
+      "providerLatencyMs": 175,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M15",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9422222222222222,
+      "probabilities": {
+        "astra_medium": 0.9566666666666667,
+        "astra_xhigh": 0.03666666666666667,
+        "luna_max": 0,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 168,
+      "providerLatencyMs": 167,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M16",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0.99,
+        "astra_xhigh": 0,
+        "luna_max": 0.003333333333333334,
+        "sol_medium": 0.006666666666666668
+      },
+      "fullBodyLatencyMs": 191,
+      "providerLatencyMs": 190,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M17",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9466666666666668,
+      "probabilities": {
+        "astra_medium": 0.9600000000000001,
+        "astra_xhigh": 0.036666666666666674,
+        "luna_max": 0.003333333333333334,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 179,
+      "providerLatencyMs": 178,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M18",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9822222222222222,
+      "probabilities": {
+        "astra_medium": 0.9866666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0.01
+      },
+      "fullBodyLatencyMs": 179,
+      "providerLatencyMs": 178,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M19",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9822222222222222,
+      "probabilities": {
+        "astra_medium": 0.9866666666666667,
+        "astra_xhigh": 0.01,
+        "luna_max": 0,
+        "sol_medium": 0.0033333333333333335
+      },
+      "fullBodyLatencyMs": 178,
+      "providerLatencyMs": 177,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M20",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 309,
+      "providerLatencyMs": 308,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M21",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 184,
+      "providerLatencyMs": 183,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M22",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0.99,
+        "astra_xhigh": 0.010000000000000002,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 172,
+      "providerLatencyMs": 171,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M23",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 190,
+      "providerLatencyMs": 189,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M24",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.9966666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 234,
+      "providerLatencyMs": 233,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "M25",
+      "split": "training",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "originalAcceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.9966666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 214,
+      "providerLatencyMs": 213,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "X01",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9644444444444445,
+      "probabilities": {
+        "astra_medium": 0.026666666666666672,
+        "astra_xhigh": 0.9733333333333334,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 145,
+      "providerLatencyMs": 144,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X02",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 555,
+      "providerLatencyMs": 554,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X03",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_medium",
+      "confidence": 0.39555555555555566,
+      "probabilities": {
+        "astra_medium": 0.5466666666666667,
+        "astra_xhigh": 0.45333333333333337,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 177,
+      "providerLatencyMs": 176,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true,
+      "adjustment": "lead-accepted training-only outcome revision: Astra Medium and Astra XHigh each passed every predeclared semantic key-rotation criterion across two fixed fixtures; evidence SHA-256 888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f"
+    },
+    {
+      "id": "X04",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.8888888888888888,
+      "probabilities": {
+        "astra_medium": 0.08333333333333333,
+        "astra_xhigh": 0.9166666666666666,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 163,
+      "providerLatencyMs": 162,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X05",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.0033333333333333335,
+        "astra_xhigh": 0.9966666666666667,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 183,
+      "providerLatencyMs": 182,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X06",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.84,
+      "probabilities": {
+        "astra_medium": 0.11333333333333334,
+        "astra_xhigh": 0.88,
+        "luna_max": 0,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 204,
+      "providerLatencyMs": 203,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X07",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.6888888888888888,
+      "probabilities": {
+        "astra_medium": 0.22666666666666666,
+        "astra_xhigh": 0.7666666666666666,
+        "luna_max": 0,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 226,
+      "providerLatencyMs": 225,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X08",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.8444444444444444,
+      "probabilities": {
+        "astra_medium": 0.11666666666666665,
+        "astra_xhigh": 0.8833333333333333,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 266,
+      "providerLatencyMs": 264,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X09",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9688888888888889,
+      "probabilities": {
+        "astra_medium": 0.010000000000000002,
+        "astra_xhigh": 0.9766666666666667,
+        "luna_max": 0,
+        "sol_medium": 0.013333333333333336
+      },
+      "fullBodyLatencyMs": 210,
+      "providerLatencyMs": 209,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X10",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9022222222222221,
+      "probabilities": {
+        "astra_medium": 0.07333333333333332,
+        "astra_xhigh": 0.9266666666666666,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 206,
+      "providerLatencyMs": 205,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X11",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.38666666666666655,
+      "probabilities": {
+        "astra_medium": 0.44333333333333336,
+        "astra_xhigh": 0.5399999999999999,
+        "luna_max": 0,
+        "sol_medium": 0.016666666666666666
+      },
+      "fullBodyLatencyMs": 187,
+      "providerLatencyMs": 185,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X12",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 192,
+      "providerLatencyMs": 191,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X13",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.8444444444444446,
+      "probabilities": {
+        "astra_medium": 0.8833333333333334,
+        "astra_xhigh": 0.11666666666666665,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 172,
+      "providerLatencyMs": 171,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "X14",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.56,
+      "probabilities": {
+        "astra_medium": 0.67,
+        "astra_xhigh": 0.30666666666666675,
+        "luna_max": 0,
+        "sol_medium": 0.023333333333333338
+      },
+      "fullBodyLatencyMs": 180,
+      "providerLatencyMs": 179,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "X15",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.8127090301003345,
+      "probabilities": {
+        "astra_medium": 0.12040133779264212,
+        "astra_xhigh": 0.8595317725752508,
+        "luna_max": 0,
+        "sol_medium": 0.02006688963210702
+      },
+      "fullBodyLatencyMs": 173,
+      "providerLatencyMs": 172,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X16",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.8088888888888888,
+      "probabilities": {
+        "astra_medium": 0.1433333333333333,
+        "astra_xhigh": 0.8566666666666666,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 247,
+      "providerLatencyMs": 246,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X17",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.6977777777777777,
+      "probabilities": {
+        "astra_medium": 0.22666666666666666,
+        "astra_xhigh": 0.7733333333333333,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 164,
+      "providerLatencyMs": 163,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X18",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0.003333333333333334,
+        "astra_xhigh": 0.99,
+        "luna_max": 0,
+        "sol_medium": 0.006666666666666668
+      },
+      "fullBodyLatencyMs": 181,
+      "providerLatencyMs": 179,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X19",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.5555555555555555,
+      "probabilities": {
+        "astra_medium": 0.3333333333333333,
+        "astra_xhigh": 0.6666666666666666,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 217,
+      "providerLatencyMs": 216,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X20",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.5288888888888889,
+      "probabilities": {
+        "astra_medium": 0.35333333333333333,
+        "astra_xhigh": 0.6466666666666666,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 195,
+      "providerLatencyMs": 194,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X21",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "adjustment": "training-only outcome check: Astra Medium passed every predeclared security assertion while XHigh missed atomicity in this sample",
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.5288888888888889,
+      "probabilities": {
+        "astra_medium": 0.6466666666666666,
+        "astra_xhigh": 0.35333333333333333,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 165,
+      "providerLatencyMs": 164,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "X22",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 196,
+      "providerLatencyMs": 195,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X23",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.7688888888888888,
+      "probabilities": {
+        "astra_medium": 0.8266666666666667,
+        "astra_xhigh": 0.17333333333333334,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 183,
+      "providerLatencyMs": 182,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "X24",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.5022222222222221,
+      "probabilities": {
+        "astra_medium": 0.35333333333333333,
+        "astra_xhigh": 0.6266666666666666,
+        "luna_max": 0,
+        "sol_medium": 0.02
+      },
+      "fullBodyLatencyMs": 208,
+      "providerLatencyMs": 207,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "X25",
+      "split": "training",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "originalAcceptable": [
+        "astra_xhigh"
+      ],
+      "critical": false,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.5377777777777778,
+      "probabilities": {
+        "astra_medium": 0.3466666666666667,
+        "astra_xhigh": 0.6533333333333333,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 172,
+      "providerLatencyMs": 171,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J01",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 427,
+      "providerLatencyMs": 425,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J02",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 1530,
+      "providerLatencyMs": 1529,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J03",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 225,
+      "providerLatencyMs": 223,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J04",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.991111111111111,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9933333333333333,
+        "sol_medium": 0.006666666666666667
+      },
+      "fullBodyLatencyMs": 192,
+      "providerLatencyMs": 191,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J05",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 1,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 257,
+      "providerLatencyMs": 256,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J06",
+      "split": "fresh_holdout",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "critical": false,
+      "rawSelected": "luna_max",
+      "confidence": 0.9688888888888889,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.9766666666666667,
+        "sol_medium": 0.023333333333333338
+      },
+      "fullBodyLatencyMs": 215,
+      "providerLatencyMs": 213,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "luna_max",
+      "finalTarget": "luna_max",
+      "runtimeParity": true
+    },
+    {
+      "id": "J07",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8755555555555555,
+      "probabilities": {
+        "astra_medium": 0.05000000000000001,
+        "astra_xhigh": 0,
+        "luna_max": 0.043333333333333335,
+        "sol_medium": 0.9066666666666666
+      },
+      "fullBodyLatencyMs": 167,
+      "providerLatencyMs": 166,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J08",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8000000000000002,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.15,
+        "sol_medium": 0.8500000000000001
+      },
+      "fullBodyLatencyMs": 168,
+      "providerLatencyMs": 167,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J09",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.8711111111111111,
+      "probabilities": {
+        "astra_medium": 0.02,
+        "astra_xhigh": 0.006666666666666667,
+        "luna_max": 0.07,
+        "sol_medium": 0.9033333333333333
+      },
+      "fullBodyLatencyMs": 277,
+      "providerLatencyMs": 276,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J10",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9688888888888889,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 0,
+        "luna_max": 0.023333333333333334,
+        "sol_medium": 0.9766666666666667
+      },
+      "fullBodyLatencyMs": 224,
+      "providerLatencyMs": 223,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J11",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.6444444444444445,
+      "probabilities": {
+        "astra_medium": 0.006666666666666667,
+        "astra_xhigh": 0.006666666666666667,
+        "luna_max": 0.25333333333333335,
+        "sol_medium": 0.7333333333333334
+      },
+      "fullBodyLatencyMs": 250,
+      "providerLatencyMs": 249,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J12",
+      "split": "fresh_holdout",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "critical": false,
+      "rawSelected": "sol_medium",
+      "confidence": 0.9644444444444445,
+      "probabilities": {
+        "astra_medium": 0.01666666666666667,
+        "astra_xhigh": 0,
+        "luna_max": 0.010000000000000002,
+        "sol_medium": 0.9733333333333334
+      },
+      "fullBodyLatencyMs": 194,
+      "providerLatencyMs": 193,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "sol_medium",
+      "finalTarget": "sol_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J13",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.8488888888888889,
+      "probabilities": {
+        "astra_medium": 0.8866666666666667,
+        "astra_xhigh": 0.09999999999999999,
+        "luna_max": 0.013333333333333334,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 207,
+      "providerLatencyMs": 206,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J14",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 1,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 154,
+      "providerLatencyMs": 153,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J15",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.8577777777777776,
+      "probabilities": {
+        "astra_medium": 0.8933333333333332,
+        "astra_xhigh": 0.039999999999999994,
+        "luna_max": 0.04333333333333333,
+        "sol_medium": 0.02333333333333333
+      },
+      "fullBodyLatencyMs": 165,
+      "providerLatencyMs": 164,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J16",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9822222222222222,
+      "probabilities": {
+        "astra_medium": 0.9866666666666667,
+        "astra_xhigh": 0.013333333333333334,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 171,
+      "providerLatencyMs": 170,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J17",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.9688888888888889,
+      "probabilities": {
+        "astra_medium": 0.9766666666666667,
+        "astra_xhigh": 0.023333333333333334,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 193,
+      "providerLatencyMs": 192,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J18",
+      "split": "fresh_holdout",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "critical": false,
+      "rawSelected": "astra_medium",
+      "confidence": 0.8755555555555555,
+      "probabilities": {
+        "astra_medium": 0.9066666666666666,
+        "astra_xhigh": 0,
+        "luna_max": 0,
+        "sol_medium": 0.09333333333333334
+      },
+      "fullBodyLatencyMs": 156,
+      "providerLatencyMs": 155,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_medium",
+      "finalTarget": "astra_medium",
+      "runtimeParity": true
+    },
+    {
+      "id": "J19",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 173,
+      "providerLatencyMs": 172,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J20",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 547,
+      "providerLatencyMs": 546,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J21",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9955555555555556,
+      "probabilities": {
+        "astra_medium": 0.0033333333333333335,
+        "astra_xhigh": 0.9966666666666667,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 320,
+      "providerLatencyMs": 319,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J22",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0.003333333333333334,
+        "astra_xhigh": 0.99,
+        "luna_max": 0,
+        "sol_medium": 0.006666666666666668
+      },
+      "fullBodyLatencyMs": 280,
+      "providerLatencyMs": 279,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J23",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 0.9866666666666667,
+      "probabilities": {
+        "astra_medium": 0.010000000000000002,
+        "astra_xhigh": 0.99,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 376,
+      "providerLatencyMs": 375,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    },
+    {
+      "id": "J24",
+      "split": "fresh_holdout",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "critical": true,
+      "rawSelected": "astra_xhigh",
+      "confidence": 1,
+      "probabilities": {
+        "astra_medium": 0,
+        "astra_xhigh": 1,
+        "luna_max": 0,
+        "sol_medium": 0
+      },
+      "fullBodyLatencyMs": 285,
+      "providerLatencyMs": 284,
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "runtimeFinalTarget": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "runtimeParity": true
+    }
+  ],
+  "evaluationBinding": {
+    "binarySha256": "b5a7c614621f8657ac343834c52609d95e3b716253cef3257208021f15a1d06a",
+    "note": "The 124-case evaluation used this binary. The only subsequent candidate source change emits already-bounded decision evidence to the text trace; classifier and transport behavior were unchanged."
+  },
+  "rootCauseProbe": {
+    "artifact": "docs/history/2026-09-18-switchyard-b2-r2-root-cause.json",
+    "sha256": "a5dbaed9842ec8d90500fc06941d8f222742bbe24934255003fa4ed772b747eb",
+    "finding": "The route-name phrase biased the raw choice toward Sol; removing it produced a low-confidence raw XHigh choice, while a generic irreversible-effect paraphrase strongly selected XHigh. This supports the generic criteria boundary and does not establish a provider defect."
+  },
+  "supersededFailedHoldout": {
+    "artifact": "docs/history/2026-09-18-switchyard-b2-r1-failed-evidence.json",
+    "sha256": "a867ea53df2fba5bb01d9e57b22c1df16a9fb8facc4f8874ac266c6770bda7f2",
+    "status": "preserved development regression; not overwritten or represented as untouched holdout"
+  },
+  "source": {
+    "publicBase": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionPatchSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "compatibilityPatchSha256": "868887c2af34e7d3327727966008aef9d163f9fb25df33c3bb92ada9ffec8f2f",
+    "reproducedGitTree": "ba45fd4656b9311fbc1fb7140268f577cd60e2cd"
+  },
+  "finalCandidate": {
+    "binarySha256": "c29498c198eb5bb6305fdf3d3971051d882a29d55ebd70a9f16f64fe9e255b9d",
+    "reproductionBinarySha256": "0beaa1555c9565106214695988da5732d6fa4d7308874774562073e733301f38",
+    "pathDependentBinaryHashesExpected": true,
+    "providerModelObserved": "typesafe/jev-1.13-20260917",
+    "smokeArtifact": "docs/history/2026-09-18-switchyard-b2-smoke.json",
+    "smokeSha256": "7ae81420407cc26e0558ffdcfc38145949a1b920de3478d7670fd090f7e453af",
+    "smokeRequiredFailures": []
+  },
+  "limitations": [
+    "This synthetic gate establishes bounded readiness, not production quality or behavior on private traffic.",
+    "X03 acceptance is limited to the tested task class and does not establish general cryptographic-design capability."
+  ],
+  "holdoutGatePassed": true,
+  "promotionEligibleScope": "whole candidate after holdout gates and lead resolution of known critical training cases",
+  "promotionBlockers": [],
+  "wholeCandidateLeadAcceptance": "accepted",
+  "x03OutcomeComparison": {
+    "artifact": "docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json",
+    "sha256": "888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f",
+    "pairs": 2,
+    "astraMediumSemanticPasses": 2,
+    "astraXHighSemanticPasses": 2,
+    "acceptableSetChanged": true,
+    "conclusion": "Both targets passed every predeclared semantic criterion; X03 acceptable-set revision awaits lead approval.",
+    "leadDecision": "accepted Astra Medium and Astra XHigh for X03 based on the bounded outcome comparison; not a general cryptographic-capability claim"
+  },
+  "recalculatedAt": "2026-09-18T22:23:34.879Z",
+  "recalculation": "Recorded decisions only; no provider calls, threshold changes, policy changes, or holdout changes."
+}

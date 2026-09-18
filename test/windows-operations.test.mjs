@@ -70,6 +70,17 @@ test("Windows entrypoints never fall back to a developer checkout", () => {
   }
 });
 
+test("Switchyard upstream analysis checks ordered patch layers without misreporting dependency drift", () => {
+  const source = readScript("maintenance/refresh-compatibility-state.ps1");
+  const contributionCheck = source.indexOf("apply --check $contributionPath");
+  const contributionApply = source.indexOf('"apply", $contributionPath');
+  const compatibilityCheck = source.indexOf("apply --check $compatibilityPath");
+  assert.ok(contributionCheck >= 0);
+  assert.ok(contributionApply > contributionCheck);
+  assert.ok(compatibilityCheck > contributionApply);
+  assert.match(source, /Compatibility-patch applicability was not tested because its required input layer is unavailable/u);
+});
+
 test("the Switchyard deployment owns preflight, activation, and exact rollback", () => {
   const source = readScript("maintenance/deploy-switchyard-candidate.ps1");
   for (const name of [
@@ -87,6 +98,9 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /\$installManifest\.current\.commit/);
   assert.match(source, /provenance\.json/);
   assert.match(source, /\$installedProvenance\.routesSha256/);
+  assert.match(source, /Switchyard upstream contribution patch/);
+  assert.match(source, /upstreamContributionCommit/);
+  assert.match(source, /upstreamContributionSha256/);
   assert.match(source, /if \(\$WhatIfPreference\)[\s\S]*worktree add --detach/);
   assert.match(source, /worktree add --detach \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file/);

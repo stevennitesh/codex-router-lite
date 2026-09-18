@@ -41,6 +41,11 @@ function integer(body, field) {
   return value === undefined ? undefined : Number(value);
 }
 
+function decimal(body, field) {
+  const value = new RegExp(`(?:^|\\n)${field}\\s*=\\s*(\\d+(?:\\.\\d+)?)`, "u").exec(body)?.[1];
+  return value === undefined ? undefined : Number(value);
+}
+
 function target(source, name) {
   const body = section(source, "targets", name);
   return {
@@ -53,16 +58,25 @@ function target(source, name) {
 
 export function parseSwitchyardConfigContract(routesTemplate, routeModel) {
   const auto = section(routesTemplate, "routes", "auto");
-  const answerNames = /targets\s*=\s*\[([^\]]+)\]/u.exec(auto)?.[1]
-    .match(/"([^"]+)"/gu)?.map((value) => value.slice(1, -1)) || [];
-  const classifierName = quoted(auto, "classifier_target");
+  const answerNames = [...(/candidates\s*=\s*\[([^\]]*)\]/u.exec(auto)?.[1] || "")
+    .matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+  const typeSafeClient = /\[type_safe_client\]([\s\S]*?)(?=\n\[|$)/u.exec(routesTemplate)?.[1] || "";
   return {
     routeModel,
     dispatchId: quoted(auto, "id"),
     contextWindow: integer(auto, "context_window"),
     classifyTrigger: quoted(auto, "classify_trigger"),
     defaultTarget: quoted(auto, "default_target"),
-    classifier: target(routesTemplate, classifierName),
+    classifier: {
+      type: quoted(auto, "type"),
+      model: quoted(typeSafeClient, "model"),
+      endpoint: quoted(typeSafeClient, "base_url"),
+      apiKeyEnv: quoted(typeSafeClient, "api_key_env"),
+      timeoutMs: integer(typeSafeClient, "timeout_ms"),
+      maxRequestBytes: integer(typeSafeClient, "max_request_bytes"),
+      threshold: decimal(auto, "base_threshold"),
+      policyHash: quoted(auto, "policy_hash"),
+    },
     answers: answerNames.map((name) => target(routesTemplate, name)),
     smokeContextWindow: integer(section(routesTemplate, "routes", "smoke"), "context_window"),
   };
@@ -93,12 +107,16 @@ export function validateSwitchyardConfigContract(contract) {
     throw new Error("Switchyard Auto native compaction model must remain gpt-5.6-sol.");
   }
   if (
-    contract.classifier?.name !== "luna_high" ||
-    contract.classifier.model !== "gpt-5.6-luna" ||
-    contract.classifier.routingId !== "switchyard/luna-high" ||
-    contract.classifier.effort !== "high"
+    contract.classifier?.type !== "type_safe_classifier" ||
+    contract.classifier.model !== "typesafe/jev-1.13" ||
+    contract.classifier.endpoint !== "https://openrouter.ai/api/alpha/decisions" ||
+    contract.classifier.apiKeyEnv !== "OPENROUTER_API_KEY" ||
+    contract.classifier.timeoutMs !== 30000 ||
+    contract.classifier.maxRequestBytes !== 32768 ||
+    contract.classifier.threshold !== 0.35 ||
+    contract.classifier.policyHash !== "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
   ) {
-    throw new Error("Switchyard classifier must remain hidden Luna High with its distinct routing identity.");
+    throw new Error("Switchyard classifier must match the accepted Jev policy and bounded OpenRouter Decisions transport.");
   }
   const expectedNames = Object.keys(EXPECTED_ANSWERS);
   const actualByName = new Map(contract.answers?.map((answer) => [answer.name, answer]) || []);

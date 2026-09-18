@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CHECKED_IN_MODELS } from "../src/routed-models.mjs";
+import {
+  readSwitchyardConfigContract,
+  validateSwitchyardConfigContract,
+} from "./switchyard-config-contract.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_APPLICATIONS_ROOT = path.join(ROOT, "v2_agent");
@@ -113,18 +117,28 @@ function checkRouteBinding(proof, location, route) {
   if (
     !binding ||
     !GIT_COMMIT.test(binding.upstreamCommit) ||
+    !GIT_COMMIT.test(binding.upstreamContributionCommit) ||
     !GIT_COMMIT.test(binding.routerCommit) ||
+    !SHA256.test(binding.upstreamContributionSha256) ||
     !SHA256.test(binding.patchSha256) ||
     !SHA256.test(binding.binarySha256) ||
-    !SHA256.test(binding.routesSha256)
+    !SHA256.test(binding.routesSha256) ||
+    !SHA256.test(binding.policyHash)
   ) {
     fail(
-      `${location}: accepted Switchyard proof must bind upstream, patch, binary, Router, and routes`,
+      `${location}: accepted Switchyard proof must bind upstream, its reviewed contribution, the compatibility patch, binary, Router, routes, and policy`,
     );
   }
   if (
     binding.upstreamCommit.toLowerCase() !== String(sourceLock.commit).toLowerCase() ||
-    binding.patchSha256.toLowerCase() !== String(sourceLock.patchSha256).toLowerCase()
+    binding.upstreamContributionCommit.toLowerCase() !==
+      String(sourceLock.upstreamContribution.sourceCommit).toLowerCase() ||
+    binding.upstreamContributionSha256.toLowerCase() !==
+      String(sourceLock.upstreamContribution.patchSha256).toLowerCase() ||
+    binding.patchSha256.toLowerCase() !== String(sourceLock.patchSha256).toLowerCase() ||
+    binding.policyHash.toLowerCase() !== validateSwitchyardConfigContract(
+      readSwitchyardConfigContract(ROOT),
+    ).classifier.policyHash.toLowerCase()
   ) {
     fail(`${location}: Switchyard proof does not match the pinned source and patch`);
   }

@@ -217,12 +217,20 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
         Invoke-Checked "git" @("-C", $analysisRoot, "checkout", "--detach", $upstreamHead)
         Write-Host "Pending Switchyard upstream commits:"
         Invoke-Checked "git" @("-C", $analysisRoot, "log", "--oneline", "$($sourceLock.commit)..$upstreamHead")
-        $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $sourceLock.patch
-        & git -C $analysisRoot apply --check $patchPath
-        if ($LASTEXITCODE -eq 0) {
-          Write-Host "The canonical Switchyard patch still applies to upstream HEAD. A rebuild and certification are still required."
+        $switchyardConfigRoot = Join-Path $repoRoot "config\switchyard"
+        $contributionPath = Join-Path $switchyardConfigRoot $sourceLock.upstreamContribution.patch
+        $compatibilityPath = Join-Path $switchyardConfigRoot $sourceLock.patch
+        & git -C $analysisRoot apply --check $contributionPath
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warning "The reviewed Switchyard upstream contribution conflicts with upstream HEAD. Compatibility-patch applicability was not tested because its required input layer is unavailable. Rebase the contribution deliberately before continuing."
         } else {
-          Write-Warning "The canonical Switchyard patch conflicts with upstream HEAD. Rebase it deliberately before building."
+          Invoke-Checked "git" @("-C", $analysisRoot, "apply", $contributionPath)
+          & git -C $analysisRoot apply --check $compatibilityPath
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "The reviewed upstream contribution and Router compatibility patch still apply in order to upstream HEAD. A rebuild and certification are still required."
+          } else {
+            Write-Warning "The reviewed upstream contribution applies to upstream HEAD, but the Router compatibility patch conflicts after that layer. Rebase only the compatibility layer deliberately before building."
+          }
         }
       } finally {
         if (Test-Path -LiteralPath $analysisRoot -PathType Container) {

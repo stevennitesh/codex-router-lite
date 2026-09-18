@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B2-R3",
+  "status": "semantically_reviewed_pending_lead_decision",
+  "predeclaredAt": "2026-09-18T22:11:51.636Z",
+  "scope": "two fixed synthetic X03 outcome comparisons; Astra Medium and Astra XHigh receive identical task text, instructions, tools, and transport conditions",
+  "privateDataSent": false,
+  "realKeyMaterialSent": false,
+  "policyChanged": false,
+  "thresholdChanged": false,
+  "holdoutChanged": false,
+  "acceptanceRule": "A leg is semantically acceptable only if every rubric requirement is substantively satisfied. Marker checks aid review but cannot establish semantic correctness by themselves.",
+  "rubric": [
+    {
+      "id": "epoch_monotonicity",
+      "requirement": "Define a durable per-tenant monotonic epoch or fencing invariant and reject stale writers or lower-epoch material before cryptographic use."
+    },
+    {
+      "id": "tenant_binding",
+      "requirement": "Bind tenant identity to KMS authorization and authenticated cryptographic context so another tenant's key or envelope cannot be substituted."
+    },
+    {
+      "id": "compromised_material",
+      "requirement": "Never restore compromised material to encrypt, sign, unwrap, or authorize; any legacy read path must be scoped, audited, and migration-only."
+    },
+    {
+      "id": "rollback_condition",
+      "requirement": "Permit rollback only before activation or exposure and only to non-compromised material; otherwise require forward recovery."
+    },
+    {
+      "id": "atomic_activation",
+      "requirement": "Give a crash-safe activation sequence that gates writers on committed tenant state and prevents lagging replicas or caches from reactivating an old epoch."
+    },
+    {
+      "id": "adversarial_tests",
+      "requirement": "Specify decisive tests for downgrade, cross-tenant substitution, crash windows, and attempted reuse of compromised material."
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "X03-A-state-machine",
+      "promptSha256": "62d3a5db95ae1c7a7e7f633d38a198df90751cd816c14df1f429a06325a81491",
+      "syntheticScenario": "Audit and correct this entirely synthetic key-rotation design.\n\nEach tenant has a control row { tenant, current_epoch, key_uri, status }. Writers cache the row for ten minutes. Ciphertext carries tenant, epoch, and key_uri in an unauthenticated header. One shared service role may call encrypt and decrypt for every tenant key. Rotation creates epoch e+1, updates the primary row, and leaves epoch e enabled for 24 hours. Read replicas may lag. On any error, an operator may set current_epoch back to e, even when e was reported compromised. There is no durable high-water mark outside the restored control row.\n\nProvide enforceable invariants, a crash-safe activation and recovery sequence, the exact safe rollback condition, and decisive adversarial tests. Prevent downgrade, cross-tenant key reuse, and rollback to compromised material. Do not use real keys or credentials."
+    },
+    {
+      "id": "X03-B-recovery",
+      "promptSha256": "9bdc216f4b41d28821becbff88c3caa697f238f894d00f23f12160e41a87dfd1",
+      "syntheticScenario": "Review this entirely synthetic recovery proposal.\n\nTenant red used epoch 7 when its key was declared compromised. Epoch 8 was created, but one writer may have used it before the activation acknowledgement was recorded. A control-database restore now reports epoch 6. The backup includes mutable key aliases, and another tenant has a similarly named alias. An operator proposes restoring the database, pointing red's active alias back to epoch 7 until epoch 8 is validated, then re-encrypting later.\n\nState whether that rollback is ever valid. Supply a safe forward-recovery protocol with enforceable tenant and epoch bindings, crash/replay behavior, and decisive tests for stale writers, cross-tenant substitution, downgrade, and attempted reuse of the compromised key. Do not use real keys or credentials."
+    }
+  ],
+  "targets": [
+    {
+      "target": "astra_medium",
+      "model": "gpt-6-astra",
+      "effort": "medium"
+    },
+    {
+      "target": "astra_xhigh",
+      "model": "gpt-6-astra",
+      "effort": "xhigh"
+    }
+  ],
+  "results": [
+    {
+      "id": "X03-A-state-machine",
+      "legs": [
+        {
+          "target": "astra_medium",
+          "model": "gpt-6-astra",
+          "effort": "medium",
+          "status": 200,
+          "completed": true,
+          "latencyMs": 49453,
+          "outputSha256": "62b58f0540b523a56fde472e6b10f60bbfa6bb50d2e4dc9b3f19204b877daabc",
+          "outputChars": 8083,
+          "automaticChecks": [
+            {
+              "id": "epoch_monotonicity",
+              "markerPass": true
+            },
+            {
+              "id": "tenant_binding",
+              "markerPass": true
+            },
+            {
+              "id": "compromised_material",
+              "markerPass": true
+            },
+            {
+              "id": "rollback_condition",
+              "markerPass": true
+            },
+            {
+              "id": "atomic_activation",
+              "markerPass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "markerPass": true
+            }
+          ],
+          "semanticReview": {
+            "criteria": [
+              {
+                "id": "epoch_monotonicity",
+                "pass": true,
+                "evidence": "Durable external monotonic authority with CAS, immutable epoch bindings, and stale-writer rejection."
+              },
+              {
+                "id": "tenant_binding",
+                "pass": true,
+                "evidence": "Tenant-scoped authorization plus authenticated tenant/epoch/key context rejects cross-tenant substitution."
+              },
+              {
+                "id": "compromised_material",
+                "pass": true,
+                "evidence": "Compromise is irreversible; normal decrypt is denied and any exceptional recovery is isolated."
+              },
+              {
+                "id": "rollback_condition",
+                "pass": true,
+                "evidence": "Rollback is limited to proof that activation never committed and the predecessor is unrevoked; committed rotations recover forward."
+              },
+              {
+                "id": "atomic_activation",
+                "pass": true,
+                "evidence": "PREPARING, READY, atomic activation, admission fencing, cache invalidation, and restart reconciliation cover crash windows."
+              },
+              {
+                "id": "adversarial_tests",
+                "pass": true,
+                "evidence": "Tests cover stale writers, tenant substitution, restored state, aliasing revoked material, crashes, races, and rollback."
+              }
+            ],
+            "allPassed": true
+          }
+        },
+        {
+          "target": "astra_xhigh",
+          "model": "gpt-6-astra",
+          "effort": "xhigh",
+          "status": 200,
+          "completed": true,
+          "latencyMs": 121647,
+          "outputSha256": "2bb0553a80a74c2485251546c670a0ce5d76307d2a2d1148c52d81fe0f146027",
+          "outputChars": 7361,
+          "automaticChecks": [
+            {
+              "id": "epoch_monotonicity",
+              "markerPass": true
+            },
+            {
+              "id": "tenant_binding",
+              "markerPass": true
+            },
+            {
+              "id": "compromised_material",
+              "markerPass": true
+            },
+            {
+              "id": "rollback_condition",
+              "markerPass": true
+            },
+            {
+              "id": "atomic_activation",
+              "markerPass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "markerPass": true
+            }
+          ],
+          "semanticReview": {
+            "criteria": [
+              {
+                "id": "epoch_monotonicity",
+                "pass": true,
+                "evidence": "Linearizable high-water authority, permanent revocations, and fail-closed stale-state handling."
+              },
+              {
+                "id": "tenant_binding",
+                "pass": true,
+                "evidence": "Immutable tenant ownership, tenant-scoped permissions, and AEAD context prevent substitution."
+              },
+              {
+                "id": "compromised_material",
+                "pass": true,
+                "evidence": "Compromised material cannot encrypt, decrypt normally, wrap, alias, or regain authority."
+              },
+              {
+                "id": "rollback_condition",
+                "pass": true,
+                "evidence": "Exact abort-only rollback condition requires the prior epoch still authoritative and unrevoked; committed activation recovers forward."
+              },
+              {
+                "id": "atomic_activation",
+                "pass": true,
+                "evidence": "Reservation, publication fence, CAS activation, draining, and authoritative recovery cover crashes and lag."
+              },
+              {
+                "id": "adversarial_tests",
+                "pass": true,
+                "evidence": "Tests cover stale writers, cross-tenant substitution, restoration, revocation replay, crash boundaries, and partitions."
+              }
+            ],
+            "allPassed": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "X03-B-recovery",
+      "legs": [
+        {
+          "target": "astra_medium",
+          "model": "gpt-6-astra",
+          "effort": "medium",
+          "status": 200,
+          "completed": true,
+          "latencyMs": 38513,
+          "outputSha256": "7bddea34adab3b37b57b241ef24c3f4316d35253a1fc260028517862391b41c9",
+          "outputChars": 6699,
+          "automaticChecks": [
+            {
+              "id": "epoch_monotonicity",
+              "markerPass": true
+            },
+            {
+              "id": "tenant_binding",
+              "markerPass": true
+            },
+            {
+              "id": "compromised_material",
+              "markerPass": true
+            },
+            {
+              "id": "rollback_condition",
+              "markerPass": true
+            },
+            {
+              "id": "atomic_activation",
+              "markerPass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "markerPass": true
+            }
+          ],
+          "semanticReview": {
+            "criteria": [
+              {
+                "id": "epoch_monotonicity",
+                "pass": true,
+                "evidence": "External monotonic recovery generation and compromise tombstones prevent restored epoch-6 state from authorizing use."
+              },
+              {
+                "id": "tenant_binding",
+                "pass": true,
+                "evidence": "Immutable tenant/purpose/epoch/key binding and authenticated context reject alias and envelope substitution."
+              },
+              {
+                "id": "compromised_material",
+                "pass": true,
+                "evidence": "Epoch 7 never regains encryption authority; any recovery decrypt path is scoped and audited."
+              },
+              {
+                "id": "rollback_condition",
+                "pass": true,
+                "evidence": "The proposed rollback is rejected; only unactivated candidates may be abandoned and activated failures recover forward."
+              },
+              {
+                "id": "atomic_activation",
+                "pass": true,
+                "evidence": "Writer fencing, quarantined restore, CAS activation, atomic publication checks, and idempotent replay cover ambiguous epoch 8 and crashes."
+              },
+              {
+                "id": "adversarial_tests",
+                "pass": true,
+                "evidence": "Tests cover stale writers, cross-tenant substitution, downgrade replay, compromised-key aliasing, lost acknowledgements, and crash boundaries."
+              }
+            ],
+            "allPassed": true
+          }
+        },
+        {
+          "target": "astra_xhigh",
+          "model": "gpt-6-astra",
+          "effort": "xhigh",
+          "status": 200,
+          "completed": true,
+          "latencyMs": 65476,
+          "outputSha256": "ea8d82d0ef2a556043f15159f69bded2bf8709ecb1d78bd3bd8f589c868766be",
+          "outputChars": 5893,
+          "automaticChecks": [
+            {
+              "id": "epoch_monotonicity",
+              "markerPass": true
+            },
+            {
+              "id": "tenant_binding",
+              "markerPass": true
+            },
+            {
+              "id": "compromised_material",
+              "markerPass": true
+            },
+            {
+              "id": "rollback_condition",
+              "markerPass": true
+            },
+            {
+              "id": "atomic_activation",
+              "markerPass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "markerPass": true
+            }
+          ],
+          "semanticReview": {
+            "criteria": [
+              {
+                "id": "epoch_monotonicity",
+                "pass": true,
+                "evidence": "Independent high-water authority, permanent revocations, and fencing survive database rollback."
+              },
+              {
+                "id": "tenant_binding",
+                "pass": true,
+                "evidence": "Explicit tenant/epoch/immutable-key binding plus authenticated context reject similar-alias substitution."
+              },
+              {
+                "id": "compromised_material",
+                "pass": true,
+                "evidence": "Epoch 7 cannot encrypt, wrap, receive grants, be relabeled, or reactivate; recovery decrypt remains separate."
+              },
+              {
+                "id": "rollback_condition",
+                "pass": true,
+                "evidence": "Rollback to epoch 7 is rejected; candidates may only be abandoned before activation and later failures move forward."
+              },
+              {
+                "id": "atomic_activation",
+                "pass": true,
+                "evidence": "Writer/storage commit fencing, durable activation, idempotent recovery, and nonce discipline cover ambiguous completion."
+              },
+              {
+                "id": "adversarial_tests",
+                "pass": true,
+                "evidence": "Tests cover paused writers, cross-tenant substitution, restored state, compromised reuse, crash boundaries, and unavailable authority."
+              }
+            ],
+            "allPassed": true
+          }
+        }
+      ]
+    }
+  ],
+  "completedAt": "2026-09-18T22:16:26.724Z",
+  "requiredTransportFailures": [],
+  "reviewedAt": "2026-09-18T22:18:22.620Z",
+  "outcomeConclusion": "Astra Medium and Astra XHigh both satisfied every predeclared semantic criterion in both fixed synthetic fixtures. This supports revising X03 acceptable targets to include Astra Medium, but no label or acceptable set has been changed pending lead approval.",
+  "wholeCandidateStatus": "blocked_pending_lead_decision_on_X03_acceptable_set",
+  "limitations": [
+    "Two synthetic fixtures do not establish broad cryptographic-design quality.",
+    "Marker checks were not treated as semantic proof; the stored judgments were made against the predeclared rubric.",
+    "No real credentials, private files, or real key material were used."
+  ]
+}

@@ -182,7 +182,7 @@ function buildCandidate(binary, nativeOverride) {
   const switchyardContract = validateSwitchyardConfigContract(
     readSwitchyardConfigContract(repositoryRoot),
   );
-  for (const target of [switchyardContract.classifier, ...switchyardContract.answers]) {
+  for (const target of switchyardContract.answers) {
     const supported = native.models.find((model) => model.slug === target.model)
       ?.supported_reasoning_levels?.some((level) => level.effort === target.effort);
     assert.equal(

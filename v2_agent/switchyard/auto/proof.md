@@ -1,5 +1,8 @@
 # switchyard/auto v2 evidence
 
+Status: draft for the Phase B repin. The results below remain historical Phase A
+evidence and do not certify the new upstream and patch identities.
+
 Accepted exact-route evidence for deployed Router
 `6c0d16a6033c161437a8d26ce00d56820fd49e7f` and the four-target Switchyard
 policy. Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
@@ -36,8 +39,10 @@ native tool result, inter-agent metadata, redacted Router timings, deployed
 manifest, and Switchyard provenance. Only sanitized summaries are recorded;
 no encrypted payloads, private conversations, or thread identifiers are kept.
 
-The runtime binding in `proof.json` records the deployed upstream commit, patch,
-binary, generated-route, and Router candidate hashes.
+The historical runtime binding in `proof.json` records the deployed upstream
+commit, patch, binary, generated-route, and Router candidate hashes. It predates
+the reviewed PR contribution now staged for B1, so its draft status cannot
+certify that new source chain.
 
 ## Limits
 

@@ -2,7 +2,10 @@
 
 Status: Phase A completed. Checkpoints A1 and A2 were accepted, and A3 deployed
 the clean candidate and restored exact-route v2 eligibility with fresh native
-proof. Phase B is pending its upstream gate and has not started.
+proof. B1 and B2 were accepted. B3 has the frozen Jev policy, canonical routes,
+reproducible source chain, and bounded predeployment smoke ready for the
+transactional deployment and fresh exact-route proof. The installed Phase A
+runtime remains unchanged until that transaction.
 
 Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae`
 before execution began. The A1 status notes below record the later authorized
@@ -53,7 +56,7 @@ automatic escalation/retries that duplicate user actions.
 
 The inspected installed catalog is from Windows Codex `26.915.4065.0` and CLI
 `0.155.0-alpha.9.2`. It is account/environment evidence, not a universal API
-contract. The current Switchyard pin is
+contract. The deployed Phase A Switchyard pin is
 `a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052`.
 
 | Observation | Delivery consequence |
@@ -72,8 +75,9 @@ and conflicted at inspected head
 `92c84a0ca6dddcad1ee2a894f61642b42093b0b8` (base
 `082e68ea145667b7d25ac4bc59b7b06a2f20cf87`). It is candidate evidence, not an
 approved production dependency. Its client uses TypeSafe's native
-`/v1/systemone` API, not OpenRouter's chat endpoint. The native default is
-`jev-latest`; a pinned native version identifier still needs verification.
+`/v1/systemone` API, while the selected B2 transport is OpenRouter's Decisions
+API rather than chat completions. The PR's mutable `jev-latest` default must be
+replaced by the verified OpenRouter model ID `typesafe/jev-1.13`.
 
 The PR averages distributions from up to three option orders in one request.
 Its confidence is `(maximum_probability - 1/N) / (1 - 1/N)`, clamped to [0,1].
@@ -198,7 +202,7 @@ can contain capabilities the mixed route does not advertise.
 
 | Owner | Required work |
 | --- | --- |
-| `config/switchyard/routes.template.toml` | Four answer targets, hidden Luna High judge, role policy, enum, Sol fallback, user-turn trigger |
+| `config/switchyard/routes.template.toml` | Four answer targets, sole Jev classifier, role policy, enum, Sol fallback, user-turn trigger |
 | `config/switchyard/auto.json` | Target description, compatibility families, neutral Fast description, compatibility revision, controlled v1/v2 state |
 | `src/routed-models.mjs` | Validate new route metadata at its existing registration boundary |
 | `src/catalog.mjs` | Mixed-model projection, missing-member validation, neutral identity |
@@ -210,7 +214,7 @@ can contain capabilities the mixed route does not advertise.
 | `v2_agent/switchyard/auto/` | New proof at canonical paths; Git preserves superseded evidence without duplicate archival files |
 | `config/switchyard/README.md`, relevant README descriptions | Update operating truth after implementation; avoid copying this plan into always-loaded context |
 | Phase B: `source.lock`, canonical compatibility patch, build metadata | Reviewed repin, semantic rebase, remove upstream-supplied patch sections |
-| Phase B: runtime/managed environment owners | TypeSafe credentials, reliable service-start availability, bounded request/cancellation behavior |
+| Phase B: runtime/managed environment owners | Protected OpenRouter credential availability at service start, bounded request/cancellation behavior |
 | Phase B: `src/switchyard-trace.mjs`, `src/switchyard-certification-evidence.mjs` | Classifier-neutral, redacted decision evidence and version/latency/fallback reporting |
 
 If a new installed source file is actually needed, update the existing Windows
@@ -313,8 +317,8 @@ Reason: separate target compatibility from routing quality.
 Status: completed on 2026-09-18. Router commit
 `6c0d16a6033c161437a8d26ce00d56820fd49e7f` is deployed with the four-target
 routes, fresh native two-turn certification passed, and the accepted proof is
-bound to the exact runtime identities. The pre-candidate rollback remains
-retained pending lead acceptance.
+bound to the exact runtime identities. The accepted pre-candidate runtime
+rollback and detached rollback checkout were removed after final review.
 
 Boundary: a reviewed clean candidate, generated private routes, live publication,
 exact-route proof, rollback, and final integrated review.
@@ -350,12 +354,46 @@ record it, retain v1, skip the interim child proof, and require final v2 at B3.
 
 ### B1 — Reviewed upstream repin with the Luna classifier retained
 
-Status: pending. On 2026-09-18 upstream PR 762 was still OPEN and CONFLICTING
-at head `92c84a0ca6dddcad1ee2a894f61642b42093b0b8` against base
-`082e68ea145667b7d25ac4bc59b7b06a2f20cf87`; no backport or repin was attempted.
+Status: reviewable candidate prepared. On 2026-09-18 the user authorized resolving upstream PR 762
+in an isolated checkout and reviewing a reproducible repin candidate without
+waiting for upstream merge. The refreshed PR remains OPEN and CONFLICTING at
+head `92c84a0ca6dddcad1ee2a894f61642b42093b0b8`, with recorded base
+`082e68ea145667b7d25ac4bc59b7b06a2f20cf87`; upstream `main` advanced during
+the B1 refresh to `ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877`. B1 remains subject to review before
+any Router commit, deployment, or certification.
 
-Start only after choosing a reviewed usable upstream revision. Do not backport
-an open conflicted PR into the old pin or merge the original Router repository.
+The exact public base plus the reviewed PR contribution and local compatibility
+patch reproduce candidate tree `10ec27aad5cd83aff8809675efb9285571fcac8c`.
+The PR patch SHA-256 is
+`c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a`;
+the compatibility patch SHA-256 is
+`5372a70b201d6213e85ba9efc021e6f80030e13950d3fd74f24c0fcfe8d3ef22`;
+and the reproducible release binary SHA-256 is
+`6759212e53f4b3c5604b83c8da082eca7318b6f5cccc9a95128536d35ffea7e4`.
+The candidate passed format, the affected Rust suite, workspace Clippy with
+warnings denied, release build, an actual dry run of the Luna-judged four-answer
+route, all 234 Router tests, and the installed Codex catalog check. Detailed
+redacted evidence is in
+[`docs/history/2026-09-18-switchyard-b1-evidence.json`](history/2026-09-18-switchyard-b1-evidence.json).
+
+The first isolated native smoke exposed an upstream compatibility regression:
+the refreshed translator emitted a scalar Responses `input`, while the current
+native endpoint requires a top-level list. The compatibility patch now restores
+the one-message list with scalar text content. The repaired candidate passed four
+Luna decisions, one per answer role, four completed answers with exact routed
+identities, and a same-session tool-result affinity continuation. The installed
+Router stayed unchanged. See
+[`docs/history/2026-09-18-switchyard-b1-r1-smoke.json`](history/2026-09-18-switchyard-b1-r1-smoke.json).
+
+The B1 source candidate declares `switchyard/auto` v1 and marks the prior proof
+draft because the repin changes its bound upstream and patch identities. The
+currently deployed Phase A generation remains v2; no runtime files change in B1.
+Fresh promotion is required before a Phase B candidate may publish v2.
+
+Integrate the exact PR contribution onto the refreshed public upstream base in
+the disposable checkout. Preserve that public base and the PR/local changes as
+separate reproducible patch inputs rather than making an unreachable synthetic
+integration commit the sole `source.lock` fetch target.
 
 Rebase the canonical patch by behavior, not merely by resolving textual
 conflicts. Check category/target identity, recursive overrides, task-only judge
@@ -369,13 +407,89 @@ binary hashes. Reassess certification before any deployment of the new binary.
 
 Reason: separate upstream engine migration from classifier replacement.
 
+B1 review must carry these PR semantics into B2 rather than treating the engine
+as production-ready: the client defaults to mutable `jev-latest`, owns a fixed
+30-second HTTP timeout rather than the caller's remaining deadline, and has no
+explicit state-size budget. Provider errors and timeouts fall open to the
+configured default target. Non-text content is currently summarized or removed
+before the TypeSafe call instead of skipping that call, so B2 must add the
+planned zero-call non-text policy before Jev receives routing authority.
+
 ### B2 — Bounded Jev evaluation and calibration
 
-Verify the native TypeSafe model ID and credentials; pin the exact supported
-version. Reuse protected managed environment conventions and verify Windows
-service restarts receive the key. Never put it in TOML, logs, commits, or model
-instructions. Limit credential propagation to its actual consumer where the
-existing launcher supports that boundary.
+Status: accepted. The repaired candidate passed its frozen holdout gate. The classifier
+selected Astra Medium for a case predeclared to require XHigh. The user granted
+one additional validation round. Before any model call, R3 froze two concrete
+synthetic key-rotation fixtures and a six-part semantic rubric covering epoch
+monotonicity, tenant binding, compromised material, rollback conditions, atomic
+activation, and adversarial tests. Astra Medium and Astra XHigh both satisfied
+every criterion on both fixtures under identical task, tool, and transport
+conditions. Lead review accepted `{astra_medium, astra_xhigh}` for X03 based on
+those outcomes while preserving its original XHigh label. This is a bounded
+revision for the tested work, not a general cryptographic capability claim. The
+R3 artifact SHA-256 is
+`888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f`.
+The first B2 evidence used a direct evaluator whose state shape
+differed from runtime and is superseded. R1 sent all cases through the isolated
+candidate `/v1/decision` path but its first fresh holdout failed H17. That failed
+record is preserved as a development regression. A bounded three-case probe
+found that H17's route-name phrase pulled the raw choice toward Sol; removing it
+produced a low-confidence raw XHigh choice, while a generic paraphrase preserving
+the ambiguous irreversible outcome strongly selected XHigh. This did not relabel
+H17 or establish a provider defect.
+
+R2 clarified the generic criteria: Sol covers a known failure whose correction
+can be verified, and excludes unresolved completion of an irreversible effect;
+XHigh covers an ambiguous completed irreversible effect where an incorrect retry
+or rollback can duplicate or corrupt the outcome. Threshold 0.35 was selected
+again on the retained 100-case training/sanity set. After policy freeze, one new
+24-case mixed, steering, multi-turn holdout with benign payment/log controls was
+evaluated once. It reached 24/24 acceptable targets, zero asymmetric loss, zero
+critical underroutes, no provider failures, exact runtime parity, and 375 ms
+full-body p95. No holdout label or policy was changed after observation. The
+training/sanity set is 97% acceptable with zero critical underroutes after the
+reviewed X03 acceptable-set revision. The S17
+and X21 outcome-based acceptable-set changes remain explicitly training-only and
+preserve their original labels.
+See
+[`docs/history/2026-09-18-switchyard-b2-evidence.json`](history/2026-09-18-switchyard-b2-evidence.json),
+[`docs/history/2026-09-18-switchyard-b2-r1-failed-evidence.json`](history/2026-09-18-switchyard-b2-r1-failed-evidence.json),
+[`docs/history/2026-09-18-switchyard-b2-r2-root-cause.json`](history/2026-09-18-switchyard-b2-r2-root-cause.json),
+[`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json),
+[`docs/history/2026-09-18-switchyard-b2-counterfactuals.json`](history/2026-09-18-switchyard-b2-counterfactuals.json),
+and [`docs/history/2026-09-18-switchyard-b2-smoke.json`](history/2026-09-18-switchyard-b2-smoke.json).
+The final B3 ordered source chain reproduces tree
+`47c3957e490febfa896f5f3d48f166eef6dd9d67`; its compatibility patch SHA-256
+is `0967efb93e970f0f9c2bc4f375acb3d77443e85c26c5ed7f597d460ded876d70`.
+The deployment binary SHA-256 is
+`72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb`;
+path-dependent Rust binary hashes are expected.
+The frozen policy hash is
+`5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f`;
+the runner recomputes it from the effective runtime policy and rejects drift.
+The final isolated B3 smoke verified all four roles, affinity, modality and provider
+fallbacks, cancellation health, and the real sanitized trace. The trace reported
+the pinned provider version `typesafe/jev-1.13-20260917`, the exact policy hash,
+and bounded full probability maps without raw state. Its artifact SHA-256 is
+`655011f50e4650bba2af7f4f2afbb8fa3fbbcdb5dff8830fe4bb7640893a8857`.
+
+Use OpenRouter as the selected Jev transport. Reuse protected managed environment
+conventions and verify Windows service restarts receive the existing OpenRouter
+credential. Never put it in TOML, logs, commits, or model instructions. Limit
+credential propagation to its actual consumer where the existing launcher
+supports that boundary.
+
+An
+official-schema and harmless live compatibility probe confirmed
+`POST https://openrouter.ai/api/alpha/decisions` with model
+`typesafe/jev-1.13`; OpenRouter resolved it to
+`typesafe/jev-1.13-20260917` and returned complete choice probability maps,
+multiple questions including an ordered score, usage, and the documented error
+shape. B2 should make the existing decision client accept one exact validated
+HTTPS endpoint and use the existing protected OpenRouter credential, fixed model
+`typesafe/jev-1.13`, redirects disabled, and no chat-completions translation.
+Keep the three ordered choice questions and probability averaging already owned
+by the client. Do not use the mutable `typesafe/jev-latest` alias.
 
 Keep opening task plus latest distinct user update as decision state. Add a
 deterministic total request budget covering criteria and all option orders,
@@ -504,13 +618,9 @@ requires bounded live evidence and cannot be certified by mocks alone.
 
 ## Outstanding prerequisites and stopping points
 
-Phase A has a concrete implementation path, but execution is not authorized by
-this planning request. Before Phase B execution, settle the reviewed upstream
-revision, native Jev version ID, secret installation path, permitted task-data
-egress, deadline budget, and measured calibration criteria. These are explicit
-gates, not reasons to expand the router architecture now.
-
-This plan does not claim the proposed changes or live tests have been executed.
+Phase A is deployed and B1/B2 are accepted. B3 source and predeployment evidence
+are ready. Production repin, Jev promotion, fresh certification, and the B3
+commits remain in progress. Push is outside this checkpoint.
 
 ## Feedback disposition
 

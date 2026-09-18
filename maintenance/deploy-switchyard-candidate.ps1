@@ -395,6 +395,14 @@ if ($preservingRollback) {
 }
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
+$upstreamContribution = $lock.upstreamContribution
+$upstreamPatchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $upstreamContribution.patch
+$upstreamPatchHash = "$($upstreamContribution.patchSha256)".ToLowerInvariant()
+if ("$($upstreamContribution.sourceCommit)" -notmatch '^[0-9a-f]{40}$' -or
+    $upstreamPatchHash -notmatch '^[0-9a-f]{64}$') {
+  throw "Switchyard upstream contribution identity is invalid."
+}
+Assert-FileHash $upstreamPatchPath $upstreamPatchHash "Switchyard upstream contribution patch"
 $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $lock.patch
 Assert-FileHash $patchPath $lock.patchSha256 "Switchyard patch"
 Assert-FileHash $candidateBinary $expectedBinaryHash "Switchyard candidate binary"
@@ -481,11 +489,13 @@ try {
     Copy-RuntimeFile $stageRoot $runtimeRoot "switchyard-server.exe"
     Copy-RuntimeFile $stageRoot $runtimeRoot "routes.toml"
     Protect-PrivateFile (Join-Path $runtimeRoot "routes.toml")
-    "$($lock.commit) + local patch $($lock.patchSha256.Substring(0, 12))" |
+    "$($lock.commit) + PR $($upstreamContribution.pullRequest) $($upstreamPatchHash.Substring(0, 12)) + local patch $($lock.patchSha256.Substring(0, 12))" |
       Set-Content -LiteralPath (Join-Path $runtimeRoot "SOURCE_COMMIT") -Encoding ASCII
     @{
       version = 1
       upstreamCommit = $lock.commit
+      upstreamContributionCommit = "$($upstreamContribution.sourceCommit)".ToLowerInvariant()
+      upstreamContributionSha256 = $upstreamPatchHash
       patchSha256 = $lock.patchSha256.ToLowerInvariant()
       binarySha256 = $expectedBinaryHash
       routesSha256 = $expectedRoutesHash
@@ -504,6 +514,8 @@ try {
     $provenance = Get-Content -Raw -LiteralPath (Join-Path $runtimeRoot "provenance.json") | ConvertFrom-Json
     if (
       $provenance.upstreamCommit -ne $lock.commit -or
+      $provenance.upstreamContributionCommit -ne "$($upstreamContribution.sourceCommit)".ToLowerInvariant() -or
+      $provenance.upstreamContributionSha256 -ne $upstreamPatchHash -or
       $provenance.patchSha256 -ne $lock.patchSha256.ToLowerInvariant() -or
       $provenance.binarySha256 -ne $expectedBinaryHash -or
       $provenance.routesSha256 -ne $expectedRoutesHash -or

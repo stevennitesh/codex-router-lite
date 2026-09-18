@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B2-R2-root-cause",
+  "generatedAt": "2026-09-18T21:05:35.405Z",
+  "candidateBinarySha256": "b5a7c614621f8657ac343834c52609d95e3b716253cef3257208021f15a1d06a",
+  "failedEvidenceSha256": "a867ea53df2fba5bb01d9e57b22c1df16a9fb8facc4f8874ac266c6770bda7f2",
+  "frozenPolicySha256": "7692ec01d0495d88b8c9f25b0443b370c4b0166c79136328f1a5e3dc8e2ef3b9",
+  "syntheticDataOnly": true,
+  "results": [
+    {
+      "id": "original-h17",
+      "scenario": "original route-name mention plus ambiguous irreversible outcome",
+      "evidenceSource": "type_safe_classifier",
+      "rawSelected": "sol_medium",
+      "finalTarget": "sol_medium",
+      "confidence": 0.3511111111111111,
+      "probabilities": {
+        "astra_medium": 0.2333333333333333,
+        "astra_xhigh": 0.25,
+        "luna_max": 0.0033333333333333335,
+        "sol_medium": 0.5133333333333333
+      },
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "fullBodyLatencyMs": 309,
+      "policyHash": "7692ec01d0495d88b8c9f25b0443b370c4b0166c79136328f1a5e3dc8e2ef3b9"
+    },
+    {
+      "id": "without-route-name",
+      "scenario": "same task without route-name mention",
+      "evidenceSource": "fail_open",
+      "reasonCode": "low_confidence",
+      "rawSelected": "astra_xhigh",
+      "finalTarget": "sol_medium",
+      "confidence": 0.2888888888888889,
+      "probabilities": {
+        "astra_medium": 0.41000000000000003,
+        "astra_xhigh": 0.4666666666666667,
+        "luna_max": 0.003333333333333334,
+        "sol_medium": 0.12000000000000001
+      },
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "fullBodyLatencyMs": 234,
+      "policyHash": "7692ec01d0495d88b8c9f25b0443b370c4b0166c79136328f1a5e3dc8e2ef3b9"
+    },
+    {
+      "id": "generic-paraphrase",
+      "scenario": "generic paraphrase preserving uncertainty and irreversible duplicate-effect risk",
+      "evidenceSource": "type_safe_classifier",
+      "rawSelected": "astra_xhigh",
+      "finalTarget": "astra_xhigh",
+      "confidence": 0.7822222222222223,
+      "probabilities": {
+        "astra_medium": 0.14000000000000004,
+        "astra_xhigh": 0.8366666666666667,
+        "luna_max": 0.003333333333333334,
+        "sol_medium": 0.020000000000000004
+      },
+      "providerModel": "typesafe/jev-1.13-20260917",
+      "fullBodyLatencyMs": 200,
+      "policyHash": "7692ec01d0495d88b8c9f25b0443b370c4b0166c79136328f1a5e3dc8e2ef3b9"
+    }
+  ],
+  "interpretation": "Compare route-name removal and generic paraphrase before revising generic role criteria; these observations do not relabel H17 or establish a provider defect."
+}

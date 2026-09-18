@@ -32,6 +32,7 @@ import {
   switchyardSelectedForStartup,
 } from "./switchyard-runtime.mjs";
 import { providerSelectionStatus } from "./provider-selection.mjs";
+import { resolveProviderCredential } from "./provider-credentials.mjs";
 
 // Before anything reads the environment or spawns a child. A service manager
 // hands this process the proxy the install recorded; a shell hands it whatever
@@ -236,9 +237,15 @@ async function main() {
   const switchyardCapability = switchyardLaunch
     ? randomBytes(32).toString("hex")
     : undefined;
+  const switchyardOpenRouterCredential = switchyardLaunch
+    ? resolveProviderCredential("openrouter")
+    : undefined;
   const switchyard = switchyardLaunch
     ? run(switchyardLaunch.binary, switchyardLaunch.args, {
       [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability,
+      ...(switchyardOpenRouterCredential?.value
+        ? { OPENROUTER_API_KEY: switchyardOpenRouterCredential.value }
+        : {}),
     })
     : undefined;
   await Promise.all([

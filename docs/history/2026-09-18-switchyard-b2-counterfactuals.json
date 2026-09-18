@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B2",
+  "generatedAt": "2026-09-18T20:25:17.513Z",
+  "scope": "two predeclared synthetic ambiguous-case target counterfactuals",
+  "privateDataSent": false,
+  "results": [
+    {
+      "id": "S17",
+      "legs": [
+        {
+          "target": "luna_max",
+          "status": 200,
+          "latencyMs": 48507,
+          "completed": true,
+          "checks": [
+            {
+              "id": "positive_integer",
+              "pass": true
+            },
+            {
+              "id": "default",
+              "pass": true
+            },
+            {
+              "id": "duplicates",
+              "pass": true
+            },
+            {
+              "id": "whitespace",
+              "pass": true
+            },
+            {
+              "id": "tests",
+              "pass": true
+            }
+          ],
+          "pass": true,
+          "outputChars": 2052
+        },
+        {
+          "target": "sol_medium",
+          "status": 200,
+          "latencyMs": 9540,
+          "completed": true,
+          "checks": [
+            {
+              "id": "positive_integer",
+              "pass": true
+            },
+            {
+              "id": "default",
+              "pass": true
+            },
+            {
+              "id": "duplicates",
+              "pass": true
+            },
+            {
+              "id": "whitespace",
+              "pass": true
+            },
+            {
+              "id": "tests",
+              "pass": true
+            }
+          ],
+          "pass": true,
+          "outputChars": 1324
+        }
+      ]
+    },
+    {
+      "id": "X21",
+      "legs": [
+        {
+          "target": "astra_medium",
+          "status": 200,
+          "latencyMs": 42360,
+          "completed": true,
+          "checks": [
+            {
+              "id": "audience",
+              "pass": true
+            },
+            {
+              "id": "tenant_binding",
+              "pass": true
+            },
+            {
+              "id": "replay_key",
+              "pass": true
+            },
+            {
+              "id": "atomic",
+              "pass": true
+            },
+            {
+              "id": "retry",
+              "pass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "pass": true
+            }
+          ],
+          "pass": true,
+          "outputChars": 7321
+        },
+        {
+          "target": "astra_xhigh",
+          "status": 200,
+          "latencyMs": 68775,
+          "completed": true,
+          "checks": [
+            {
+              "id": "audience",
+              "pass": true
+            },
+            {
+              "id": "tenant_binding",
+              "pass": true
+            },
+            {
+              "id": "replay_key",
+              "pass": true
+            },
+            {
+              "id": "atomic",
+              "pass": false
+            },
+            {
+              "id": "retry",
+              "pass": true
+            },
+            {
+              "id": "adversarial_tests",
+              "pass": true
+            }
+          ],
+          "pass": false,
+          "outputChars": 6370
+        }
+      ]
+    }
+  ],
+  "observations": [
+    "S17: Luna Max and Sol Medium both passed all predeclared checks; Sol Medium completed materially faster in this sample.",
+    "X21: Astra Medium passed all predeclared checks; Astra XHigh omitted the explicit atomicity requirement in this sample."
+  ],
+  "requiredFailures": []
+}

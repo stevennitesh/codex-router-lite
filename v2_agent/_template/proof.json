@@ -10,10 +10,13 @@
   "endpointProvider": "",
   "runtimeBinding": {
     "upstreamCommit": "",
+    "upstreamContributionCommit": "",
+    "upstreamContributionSha256": "",
     "patchSha256": "",
     "binarySha256": "",
     "routerCommit": "",
-    "routesSha256": ""
+    "routesSha256": "",
+    "policyHash": ""
   },
   "checks": {
     "streaming": { "outcome": "pending" },

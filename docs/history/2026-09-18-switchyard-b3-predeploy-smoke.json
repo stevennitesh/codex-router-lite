@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B2",
+  "generatedAt": "2026-09-18T22:35:09.145Z",
+  "candidateBinarySha256": "72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb",
+  "materializedConfigSha256": "ce882e0499469f7c40f090bb52dbaf02656ebf3f078f6ba6e9fe8d68af9b5d56",
+  "installedRuntimeChanged": false,
+  "classification": [
+    {
+      "id": "bounded",
+      "expected": "luna_max",
+      "selected": "luna_max",
+      "status": 200,
+      "latencyMs": 401,
+      "evidence": {
+        "source": "type_safe_classifier",
+        "label": "luna_max",
+        "final_target": "luna_max",
+        "confidence": 1,
+        "threshold": 0.35,
+        "probabilities": {
+          "astra_medium": 0,
+          "astra_xhigh": 0,
+          "luna_max": 1,
+          "sol_medium": 0
+        },
+        "decision_latency_ms": 396,
+        "provider_model": "typesafe/jev-1.13-20260917",
+        "policy_hash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+      }
+    },
+    {
+      "id": "implementation",
+      "expected": "sol_medium",
+      "selected": "sol_medium",
+      "status": 200,
+      "latencyMs": 172,
+      "evidence": {
+        "source": "type_safe_classifier",
+        "label": "sol_medium",
+        "final_target": "sol_medium",
+        "confidence": 0.79041248606466,
+        "threshold": 0.35,
+        "probabilities": {
+          "astra_medium": 0.14715719063545152,
+          "astra_xhigh": 0,
+          "luna_max": 0.010033444816053512,
+          "sol_medium": 0.842809364548495
+        },
+        "decision_latency_ms": 170,
+        "provider_model": "typesafe/jev-1.13-20260917",
+        "policy_hash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+      }
+    },
+    {
+      "id": "judgment",
+      "expected": "astra_medium",
+      "selected": "astra_medium",
+      "status": 200,
+      "latencyMs": 230,
+      "evidence": {
+        "source": "type_safe_classifier",
+        "label": "astra_medium",
+        "final_target": "astra_medium",
+        "confidence": 0.8266666666666668,
+        "threshold": 0.35,
+        "probabilities": {
+          "astra_medium": 0.8700000000000001,
+          "astra_xhigh": 0.12333333333333334,
+          "luna_max": 0,
+          "sol_medium": 0.006666666666666667
+        },
+        "decision_latency_ms": 228,
+        "provider_model": "typesafe/jev-1.13-20260917",
+        "policy_hash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+      }
+    },
+    {
+      "id": "critical",
+      "expected": "astra_xhigh",
+      "selected": "astra_xhigh",
+      "status": 200,
+      "latencyMs": 189,
+      "evidence": {
+        "source": "type_safe_classifier",
+        "label": "astra_xhigh",
+        "final_target": "astra_xhigh",
+        "confidence": 0.9644444444444445,
+        "threshold": 0.35,
+        "probabilities": {
+          "astra_medium": 0.026666666666666672,
+          "astra_xhigh": 0.9733333333333334,
+          "luna_max": 0,
+          "sol_medium": 0
+        },
+        "decision_latency_ms": 187,
+        "provider_model": "typesafe/jev-1.13-20260917",
+        "policy_hash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+      }
+    }
+  ],
+  "affinity": {
+    "opening": "sol_medium",
+    "continuation": "sol_medium",
+    "stable": true
+  },
+  "mediaFallback": {
+    "selected": "sol_medium",
+    "reason": "non_text_state",
+    "zeroCallProvenByUnitTest": true
+  },
+  "oversizeFallback": {
+    "selected": "sol_medium",
+    "reason": "provider_error",
+    "localBudgetProvenByUnitTest": true
+  },
+  "unavailableCredentialFallback": {
+    "selected": "sol_medium",
+    "reason": "provider_error",
+    "networkCalls": 0
+  },
+  "cancellation": {
+    "cancellationObserved": true,
+    "healthAfterCancellation": true
+  },
+  "operatorTrace": {
+    "version": 1,
+    "generationFound": true,
+    "since": "2026-09-18T22:35:08.029138Z",
+    "until": "2026-09-18T22:35:08.864110Z",
+    "classifierConsultations": 0,
+    "classifier": {
+      "decisions": 7,
+      "fallbacks": 2,
+      "providerModels": {
+        "typesafe/jev-1.13-20260917": 5
+      },
+      "finalTargets": {
+        "luna_max": 1,
+        "sol_medium": 4,
+        "astra_medium": 1,
+        "astra_xhigh": 1
+      },
+      "policyHashes": {
+        "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f": 7
+      },
+      "latency": {
+        "count": 7,
+        "maximumMs": 396
+      },
+      "recent": [
+        {
+          "at": "2026-09-18T22:35:08.029272Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "luna_max",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "confidence": 1,
+          "threshold": 0.35,
+          "decisionLatencyMs": 396,
+          "probabilities": {
+            "luna_max": 1,
+            "sol_medium": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          }
+        },
+        {
+          "at": "2026-09-18T22:35:08.201307Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "sol_medium",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "confidence": 0.79041248606466,
+          "threshold": 0.35,
+          "decisionLatencyMs": 170,
+          "probabilities": {
+            "luna_max": 0.010033444816053512,
+            "sol_medium": 0.842809364548495,
+            "astra_medium": 0.14715719063545152,
+            "astra_xhigh": 0
+          }
+        },
+        {
+          "at": "2026-09-18T22:35:08.431332Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "astra_medium",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "confidence": 0.8266666666666668,
+          "threshold": 0.35,
+          "decisionLatencyMs": 228,
+          "probabilities": {
+            "luna_max": 0,
+            "sol_medium": 0.006666666666666667,
+            "astra_medium": 0.8700000000000001,
+            "astra_xhigh": 0.12333333333333334
+          }
+        },
+        {
+          "at": "2026-09-18T22:35:08.620335Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "astra_xhigh",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "confidence": 0.9644444444444445,
+          "threshold": 0.35,
+          "decisionLatencyMs": 187,
+          "probabilities": {
+            "luna_max": 0,
+            "sol_medium": 0,
+            "astra_medium": 0.026666666666666672,
+            "astra_xhigh": 0.9733333333333334
+          }
+        },
+        {
+          "at": "2026-09-18T22:35:08.861305Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "sol_medium",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "confidence": 0.8088888888888889,
+          "threshold": 0.35,
+          "decisionLatencyMs": 239,
+          "probabilities": {
+            "luna_max": 0.013333333333333336,
+            "sol_medium": 0.8566666666666667,
+            "astra_medium": 0.13000000000000003,
+            "astra_xhigh": 0
+          }
+        },
+        {
+          "at": "2026-09-18T22:35:08.863174Z",
+          "source": "fail_open",
+          "finalTarget": "sol_medium",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "reasonCode": "non_text_state",
+          "confidence": 0,
+          "threshold": 0.35,
+          "decisionLatencyMs": 0
+        },
+        {
+          "at": "2026-09-18T22:35:08.864110Z",
+          "source": "fail_open",
+          "finalTarget": "sol_medium",
+          "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+          "reasonCode": "provider_error",
+          "confidence": 0,
+          "threshold": 0.35,
+          "decisionLatencyMs": 0
+        }
+      ]
+    },
+    "routedRequests": {
+      "total": 0,
+      "statuses": {}
+    },
+    "nativeOpenAIRequests": {
+      "total": 0,
+      "statuses": {},
+      "scope": "all native OpenAI timings since this Switchyard generation started"
+    },
+    "switchyardServerRequests": {
+      "total": 0,
+      "statuses": {}
+    },
+    "selectedTargets": {},
+    "failures": {
+      "http": 0,
+      "nonEmptyServerErrors": 0,
+      "judgeUnavailable": 0,
+      "parseErrors": 0,
+      "fallback": 0
+    },
+    "continuity": {
+      "uniqueAgentIds": 0,
+      "uniqueCorrelationIds": 0
+    }
+  },
+  "requiredFailures": []
+}

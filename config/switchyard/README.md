@@ -18,8 +18,9 @@ Load only the branch needed for the task:
 | Item | Authority | Rule |
 | --- | --- | --- |
 | Router catalog, dispatch, provider selection, health, and supervision | repository source and tests | Router remains the sole client/catalog owner. |
-| Upstream source identity | `source.lock` | Use the exact repository, commit, Rust toolchain, binary path, patch path, and patch SHA-256. |
-| Switchyard changes | `patches/switchyard-codex-compat.patch` | Apply only to the locked commit. Do not maintain a fork checkout. |
+| Upstream source identity | `source.lock` | Use the exact repository, public base commit, ordered contribution and compatibility patches, Rust toolchain, and binary path. |
+| Reviewed upstream contribution | `patches/switchyard-typesafe-pr-762.patch` | Replays the exact reviewed PR contribution onto the locked public base. |
+| Router compatibility changes | `patches/switchyard-codex-compat.patch` | Apply after the reviewed upstream contribution. Do not maintain a fork checkout. |
 | Routing policy | `routes.template.toml` | The template contains no generated Router capability. |
 | Optional named worker | `switchyard_worker.toml` | Install at `%CODEX_HOME%\agents\switchyard_worker.toml` only when requested. |
 | Active runtime | `%CODEX_HOME%\switchyard` by default | Keep the active binary, private `routes.toml`, provenance, routing history, current logs, and at most one in-progress rollback set. |
@@ -27,7 +28,7 @@ Load only the branch needed for the task:
 An installed hash or proof is evidence about one deployment. It never overrides
 the checked-in lock, patch, template, or current Router source.
 
-The lock owns the selected upstream revision. Changes to classifier categories
+The lock owns the selected public upstream revision and ordered patch identities. Changes to classifier categories
 or routing policy require a routing-quality evaluation, not just a clean patch
 application. The [dated pin review](../../docs/history/2026-09-12-switchyard-pin.md)
 records the earlier integration decision.
@@ -40,7 +41,8 @@ records the earlier integration decision.
    A fresh per-service-generation capability authenticates every Switchyard
    endpoint except `/health`; Router removes that header before any upstream
    request.
-3. Switchyard classifies the turn, chooses a configured Luna, Sol, or Astra target and
+3. Switchyard sends bounded textual decision state to the exact OpenRouter Decisions
+   endpoint for Jev 1.13, chooses a configured Luna, Sol, or Astra target, and
    effort, and sends the native request back through Router's capability-gated
    Responses endpoint.
 4. `forward_auth = true` preserves the original Codex authorization and account
@@ -74,20 +76,29 @@ Every target sets `store = false`, `stream = true`, and removes
 
 ## Routing policy
 
-Luna High remains the hidden classifier and is never an answer target. The
-classifier chooses the dominant bottleneck of the whole request with this
-precedence:
+Jev 1.13 is the sole classifier. It receives the opening task plus latest
+distinct textual user update through the exact OpenRouter Decisions endpoint.
+Non-text user state skips the classifier and falls back to Sol; tool results,
+reasoning, provider metadata, credentials, and native authorization never enter
+the decision request. The classifier chooses the dominant bottleneck of the
+whole request with this policy:
 
-- `astra-xhigh`: positively justified exceptional difficulty, consequential
-  subtle correctness, or recovery after a strong failed attempt.
+- `astra-xhigh`: exceptional difficulty, consequential subtle correctness,
+  recovery after a strong failed attempt, critical security/state behavior, or
+  an ambiguous completed irreversible effect where retry can duplicate or
+  corrupt the outcome.
 - `astra-medium`: planning, review, architecture, interpretation, synthesis,
-  or uncertain diagnosis where judgment dominates.
-- `sol-medium`: implementation, bounded debugging, and routine local decisions;
-  this is the fallback when classification is uncertain.
+  or uncertain diagnosis where judgment dominates and consequences stay
+  reversible or contained.
+- `sol-medium`: implementation or bounded debugging where failure and desired
+  correction are known and verification determines the outcome; this is the
+  fallback when classification is uncertain.
 - `luna-max`: bounded exploration, source-grounded extraction or summarization,
   and tiny fully specified mechanical work.
 
-The classifier prompt and schema live only in `routes.template.toml`.
+The exact criteria, question, threshold, fallback, transport limits, and policy
+hash live in `routes.template.toml`; the accepted B2 evidence binds the same
+policy inputs.
 
 ## Codex compatibility
 

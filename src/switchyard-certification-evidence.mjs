@@ -95,6 +95,7 @@ export function summarizeSwitchyardCertificationEvidence({
       selectedModels: trace.selectedTargets,
       recent: routing.slice(-limit),
     },
+    classifier: trace.classifier,
     failures: trace.failures,
   };
 }

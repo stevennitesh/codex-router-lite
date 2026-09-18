@@ -41,6 +41,15 @@ export function summarizeSwitchyardTrace(contents) {
     since: null,
     until: null,
     classifierConsultations: 0,
+    classifier: {
+      decisions: 0,
+      fallbacks: 0,
+      providerModels: {},
+      finalTargets: {},
+      policyHashes: {},
+      latency: { count: 0, maximumMs: null },
+      recent: [],
+    },
     routedRequests: { total: 0, statuses: {} },
     nativeOpenAIRequests: {
       total: 0,
@@ -77,6 +86,51 @@ export function summarizeSwitchyardTrace(contents) {
     if (/judge verdict unavailable/iu.test(line)) summary.failures.judgeUnavailable += 1;
     if (/parse error|failed to parse|could not parse/iu.test(line)) summary.failures.parseErrors += 1;
     if (/falling back|fallback route|fallback target/iu.test(line)) summary.failures.fallback += 1;
+
+    const evidenceSource = /\b(?:evidence\.source|evidence_source)="([^"]+)"/u.exec(line)?.[1];
+    const evidencePolicyHash = /\b(?:evidence\.policy_hash|evidence_policy_hash)="([a-f0-9]{64})"/u.exec(line)?.[1];
+    if (evidenceSource === "type_safe_classifier" || (evidenceSource === "fail_open" && evidencePolicyHash)) {
+      const providerModel = /\b(?:evidence\.provider_model|evidence_provider_model)="([^"]+)"/u.exec(line)?.[1];
+      const finalTarget = /\b(?:evidence\.final_target|evidence_final_target)="([^"]+)"/u.exec(line)?.[1];
+      const policyHash = evidencePolicyHash;
+      const reasonCode = /\b(?:evidence\.reason_code|evidence_reason_code)="([^"]+)"/u.exec(line)?.[1];
+      const confidence = Number(/\b(?:evidence\.confidence|evidence_confidence)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
+      const threshold = Number(/\b(?:evidence\.threshold|evidence_threshold)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
+      const decisionLatencyMs = Number(/\b(?:evidence\.decision_latency_ms|evidence_decision_latency_ms)=(\d+)/u.exec(line)?.[1]);
+      const probabilities = Object.fromEntries([
+        "luna_max",
+        "sol_medium",
+        "astra_medium",
+        "astra_xhigh",
+      ].flatMap((label) => {
+        const value = Number(new RegExp(`\\b(?:evidence\\.probability_${label}|evidence_probability_${label})=([0-9]+(?:\\.[0-9]+)?)`, "u").exec(line)?.[1]);
+        return Number.isFinite(value) && value >= 0 && value <= 1 ? [[label, value]] : [];
+      }));
+      summary.classifier.decisions += 1;
+      if (evidenceSource === "fail_open") summary.classifier.fallbacks += 1;
+      if (providerModel) increment(summary.classifier.providerModels, providerModel);
+      if (finalTarget) increment(summary.classifier.finalTargets, finalTarget);
+      if (policyHash) increment(summary.classifier.policyHashes, policyHash);
+      if (Number.isFinite(decisionLatencyMs)) {
+        summary.classifier.latency.count += 1;
+        summary.classifier.latency.maximumMs = Math.max(summary.classifier.latency.maximumMs ?? 0, decisionLatencyMs);
+      }
+      summary.classifier.recent.push({
+        ...(timestamp ? { at: timestamp } : {}),
+        source: evidenceSource,
+        ...(providerModel ? { providerModel } : {}),
+        ...(finalTarget ? { finalTarget } : {}),
+        ...(policyHash ? { policyHash } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
+        ...(Number.isFinite(confidence) ? { confidence } : {}),
+        ...(Number.isFinite(threshold) ? { threshold } : {}),
+        ...(Number.isFinite(decisionLatencyMs) ? { decisionLatencyMs } : {}),
+        ...(evidenceSource === "type_safe_classifier" && Object.keys(probabilities).length === 4
+          ? { probabilities }
+          : {}),
+      });
+      if (summary.classifier.recent.length > 20) summary.classifier.recent.shift();
+    }
 
     const selected = /\bselected_model="([^"]+)"/u.exec(line)?.[1];
     if (selected) increment(summary.selectedTargets, selected);

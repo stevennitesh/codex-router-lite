@@ -29,14 +29,23 @@ verifies the patch before touching upstream source:
 $routerRoot = (& git rev-parse --show-toplevel).Trim()
 $configRoot = Join-Path $routerRoot "config\switchyard"
 $lock = Get-Content -Raw -LiteralPath (Join-Path $configRoot "source.lock") | ConvertFrom-Json
-$patchPath = Join-Path $configRoot $lock.patch
-$patchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $patchPath).Hash.ToLowerInvariant()
-if ($patchHash -ne $lock.patchSha256.ToLowerInvariant()) { throw "Switchyard patch hash does not match source.lock" }
+$upstreamPatchPath = Join-Path $configRoot $lock.upstreamContribution.patch
+$upstreamPatchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $upstreamPatchPath).Hash.ToLowerInvariant()
+if ($upstreamPatchHash -ne $lock.upstreamContribution.patchSha256.ToLowerInvariant()) {
+  throw "Switchyard upstream contribution hash does not match source.lock"
+}
+$compatPatchPath = Join-Path $configRoot $lock.patch
+$compatPatchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $compatPatchPath).Hash.ToLowerInvariant()
+if ($compatPatchHash -ne $lock.patchSha256.ToLowerInvariant()) {
+  throw "Switchyard compatibility patch hash does not match source.lock"
+}
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]::NewGuid())
 git clone $lock.repository $buildRoot
 git -C $buildRoot checkout --detach $lock.commit
-git -C $buildRoot apply --check $patchPath
-git -C $buildRoot apply $patchPath
+git -C $buildRoot apply --check $upstreamPatchPath
+git -C $buildRoot apply $upstreamPatchPath
+git -C $buildRoot apply --check $compatPatchPath
+git -C $buildRoot apply $compatPatchPath
 rustup toolchain install $lock.rustToolchain --profile minimal
 Push-Location $buildRoot
 rustup run $lock.rustToolchain cargo fmt --all --check

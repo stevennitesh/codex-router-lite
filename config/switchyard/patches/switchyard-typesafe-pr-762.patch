@@ -1,0 +1,2810 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 216fefce2d498def7c4a6b003e261bc0f263ca86..a83b8387a55d1a0d0d99ae9c684f8ce2ad3b9f85 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+ 
+ ### Added
+ 
++- **TypeSafe classifier routing** — new `type_safe_classifier` route type
++  routes through TypeSafe's Jev "System One Model" instead of a
++  chat-completion judge. `switchyard-libsy` stays I/O-free: the classifier
++  depends only on a new `TypeSafeProvider` port, and a new
++  `switchyard-typesafe-client` crate supplies the runner-owned HTTP
++  implementation, injected once per deployment via a `[type_safe_client]`
++  table. Routes compare user-configured candidate targets and average up to
++  three fixed candidate orders. Full probabilities and decision latency are
++  recorded in routing evidence. Fails open on a low-confidence or invalid
++  verdict, or a provider error. (#723)
+ - **`timeout_ms` on `[llm_clients.<name>]`** — one deadline covers all attempts,
+   retry delays, and the complete response, including stream reads. Unset leaves
+   the wait unbounded; `0` is rejected. A timeout returns `504` without trying another
+diff --git a/Cargo.lock b/Cargo.lock
+index b1cbce1be9d0d386289bd2c779a06c6765451fef..9cf17f4b739945b6e97d1f04a97f49bab66aa084 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2432,6 +2432,7 @@ dependencies = [
+  "switchyard-libsy",
+  "switchyard-llm-client",
+  "switchyard-protocol",
++ "switchyard-typesafe-client",
+  "thiserror 2.0.18",
+  "tokio",
+  "toml",
+@@ -2517,6 +2518,20 @@ dependencies = [
+  "tracing",
+ ]
+ 
++[[package]]
++name = "switchyard-typesafe-client"
++version = "0.3.0"
++dependencies = [
++ "async-trait",
++ "reqwest",
++ "serde",
++ "serde_json",
++ "switchyard-libsy",
++ "tokio",
++ "tracing",
++ "wiremock",
++]
++
+ [[package]]
+ name = "syn"
+ version = "2.0.119"
+diff --git a/Cargo.toml b/Cargo.toml
+index 4151bc41549024d52f6d2611d71eccf0aed99a38..1a07d2da2d7090909cddf618a937e1b123fed9a3 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -15,6 +15,7 @@ members = [
+     "crates/switchyard-skill-distillation",
+     "crates/switchyard-soak",
+     "crates/switchyard-translation",
++    "crates/switchyard-typesafe-client",
+ ]
+ 
+ [workspace.package]
+@@ -49,6 +50,7 @@ switchyard-protocol = { path = "crates/protocol", version = "0.3.0" }
+ switchyard-runner = { path = "crates/switchyard-runner", version = "0.3.0" }
+ switchyard-server = { path = "crates/switchyard-server", version = "0.3.0" }
+ switchyard-translation = { path = "crates/switchyard-translation", version = "0.3.0" }
++switchyard-typesafe-client = { path = "crates/switchyard-typesafe-client", version = "0.3.0" }
+ strum_macros = "0.28"
+ thiserror = "2"
+ tokio = { version = "1", features = ["full"] }
+diff --git a/README.md b/README.md
+index a302618642735cc6676b88eba45eefb4a29fb7df..a77cad584960d192c4fa18fd8e80ace0ac16726f 100644
+--- a/README.md
++++ b/README.md
+@@ -265,7 +265,8 @@ These names do not change the TOML configuration keys.
+ > Auto requires a [source build](docs/getting_started.md#build-from-source) until v0.3.0 is published. The quickstart above uses `stage_router` directly.
+ 
+ See the [full routing catalog](docs/routing_algorithms/overview.md#more-options)
+-for composite routing, escalation, custom policies, and other options.
++for TypeSafe classification, composite routing, escalation, custom policies,
++and other options.
+ Performance results are listed under [Benchmark Provenance](#benchmark-provenance).
+ 
+ ## Documentation
+diff --git a/crates/libsy/src/algorithms.rs b/crates/libsy/src/algorithms.rs
+index fa6c2af5db339f36a4748daa097656e219222891..531c2095f98d9677817ac16e7e49fb6eef6e56d3 100644
+--- a/crates/libsy/src/algorithms.rs
++++ b/crates/libsy/src/algorithms.rs
+@@ -16,6 +16,7 @@ pub mod passthrough;
+ pub mod rand;
+ pub mod stage;
+ pub mod subagent;
++pub mod type_safe_class;
+ 
+ pub mod util;
+ 
+diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
+index 12d9241d05bbb981c7478e04c7dcdeefda50ad5c..b2ff7c2ea8e3413e5126c972f8383de67de9fe9c 100644
+--- a/crates/libsy/src/algorithms/llm_class.rs
++++ b/crates/libsy/src/algorithms/llm_class.rs
+@@ -92,7 +92,7 @@ impl TaskClassifierVerdict {
+ /// Selects by reference and clones only what survives — a coding-agent
+ /// conversation carries every tool result, so cloning it whole to keep a window
+ /// would copy the transcript on each judged turn.
+-fn trim_messages(messages: &[Message], recent_turn_window: usize) -> Vec<Message> {
++pub(crate) fn trim_messages(messages: &[Message], recent_turn_window: usize) -> Vec<Message> {
+     let is_instruction = |message: &Message| matches!(message.role, Role::System | Role::Developer);
+     let mut kept: Vec<&Message> = messages.iter().filter(|m| is_instruction(m)).collect();
+     let Some(task) = messages.iter().position(|m| m.role == Role::User) else {
+@@ -149,7 +149,7 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
+ }
+ 
+ /// Keeps the opening task and the latest user follow-up when they differ.
+-fn task_messages(messages: &[Message]) -> Vec<Message> {
++pub(crate) fn task_messages(messages: &[Message]) -> Vec<Message> {
+     // Decoders also use the user role for tool results. Select ordinary user content
+     // first, so a tool result cannot replace the opening task or latest follow-up.
+     let is_task_content = |block: &ContentBlock| {
+@@ -519,7 +519,7 @@ impl JudgePolicy for CustomPolicyRuntime {
+ }
+ 
+ /// Builds the affinity router a trigger calls for, if any.
+-fn affinity_router(
++pub(crate) fn affinity_router(
+     trigger: ClassifyTrigger,
+     message_hash_fallback: bool,
+ ) -> Option<Arc<AffinityRouter>> {
+diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8a32baaab93cbd023642d97e5c1b27ff692e515
+--- /dev/null
++++ b/crates/libsy/src/algorithms/type_safe_class.rs
+@@ -0,0 +1,643 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++//! TypeSafe-backed (Jev "System One Model") routing.
++//!
++//! A non-generative classifier reached through the [`TypeSafeProvider`] port
++//! rather than `driver.call_model`: unlike [`crate::LlmTaskClassifier`], the
++//! judgment step here is never one of the deployment's own chat-completion
++//! targets, because TypeSafe's API does not speak any of the wire formats
++//! `libsy-llm-client` supports. `libsy` stays I/O-free by depending only on the
++//! [`TypeSafeProvider`] trait; the runner constructs and injects the concrete,
++//! HTTP-performing implementation.
++//!
++//! Structured the same way as [`crate::LlmTaskClassifier`]'s custom mode — an
++//! affinity-gated `FallThrough` cascade terminated by [`DefaultCategoryClassifier`]
++//! — so this mode fails open identically and slots into a route the same way
++//! `llm_classifier` does.
++
++use std::sync::Arc;
++
++use async_trait::async_trait;
++use switchyard_protocol::{Category, ContentBlock, Message, Request, Response, Role};
++
++use super::fall_through::FallThrough;
++use super::llm_class::{DefaultCategoryClassifier, affinity_router, task_messages, trim_messages};
++use super::util::affinity::ClassifyTrigger;
++use super::util::typesafe_provider::{
++    TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeVerdict,
++};
++use crate::core::algorithm::{Algorithm, Driver};
++use crate::core::classifier::{Classification, Classifier, Score};
++use crate::core::state::State;
++use crate::{LibsyError, Result};
++
++/// Telemetry label for this algorithm's spans, metrics, and logs.
++const ALGORITHM_NAME: &str = "type_safe_task_classifier";
++
++/// Instruction sent as the provider's question when the deployment leaves
++/// [`TypeSafeClassifierConfig::question`] empty.
++const DEFAULT_QUESTION: &str = "Which configured model is the best fit for this conversation?";
++
++/// Settings for a [`TypeSafeTaskClassifier`] route.
++#[derive(Clone, Debug)]
++pub struct TypeSafeClassifierConfig {
++    /// Labeled options offered to the provider, e.g. one per routing tier. Each
++    /// `label` should parse as a [`Category`] with at least one model configured
++    /// for this route.
++    pub options: Vec<TypeSafeOption>,
++    /// Instruction sent as the provider's question. Falls back to a generic
++    /// tier-selection prompt when empty.
++    pub question: String,
++    /// Lowest confidence that is trusted; below it (or on any provider failure,
++    /// or an unresolved label) the request falls through to `default_target`.
++    pub base_threshold: f64,
++    /// Category served when the provider fails, returns an unrecognised label,
++    /// or answers below `base_threshold`.
++    pub default_target: Category,
++    /// How often the classifier re-decides this session's target.
++    pub classify_trigger: ClassifyTrigger,
++    /// Uses the first user message as the SessionKey for sticky routing when
++    /// session metadata is unavailable. Requires `classify_trigger = NewSession`.
++    pub message_hash_fallback: bool,
++    /// Trailing conversation turns the provider sees on top of the opening task.
++    /// `None` (the default) sends the opening task and latest user follow-up only.
++    pub recent_turn_window: Option<usize>,
++}
++
++impl Default for TypeSafeClassifierConfig {
++    fn default() -> Self {
++        Self {
++            options: Vec::new(),
++            question: String::new(),
++            base_threshold: 0.0,
++            default_target: Category::Efficient,
++            classify_trigger: ClassifyTrigger::default(),
++            message_hash_fallback: false,
++            recent_turn_window: None,
++        }
++    }
++}
++
++impl TypeSafeClassifierConfig {
++    fn validate(&self) -> Result<()> {
++        if self.options.is_empty() {
++            return Err(LibsyError::AlgorithmError {
++                message: "type_safe_classifier needs at least one option".to_string(),
++            });
++        }
++        if !(0.0..=1.0).contains(&self.base_threshold) {
++            return Err(LibsyError::AlgorithmError {
++                message: format!(
++                    "base_threshold must be between 0 and 1, got {}",
++                    self.base_threshold
++                ),
++            });
++        }
++        if self.message_hash_fallback && self.classify_trigger != ClassifyTrigger::NewSession {
++            return Err(LibsyError::AlgorithmError {
++                message: "message_hash_fallback requires classify_trigger = new_session"
++                    .to_string(),
++            });
++        }
++        Ok(())
++    }
++
++    fn question(&self) -> &str {
++        if self.question.trim().is_empty() {
++            DEFAULT_QUESTION
++        } else {
++            &self.question
++        }
++    }
++}
++
++/// Flattens windowed task messages into plain text for a provider's `state`/context
++/// field. TypeSafe's System One Model classifies free text, not a chat transcript, so
++/// each message becomes one labeled line; non-text content (tool calls and results,
++/// media, reasoning) is summarized by kind rather than silently dropped, so the
++/// provider can still tell that something happened there even though it never sees
++/// provider-private or binary payloads.
++fn render_context(messages: &[Message]) -> String {
++    messages
++        .iter()
++        .map(render_message)
++        .collect::<Vec<_>>()
++        .join("\n\n")
++}
++
++fn render_message(message: &Message) -> String {
++    let role = role_label(message.role);
++    let body = message
++        .content
++        .iter()
++        .map(render_block)
++        .collect::<Vec<_>>()
++        .join(" ");
++    format!("[{role}] {body}")
++}
++
++fn role_label(role: Role) -> &'static str {
++    match role {
++        Role::System => "system",
++        Role::Developer => "developer",
++        Role::User => "user",
++        Role::Assistant => "assistant",
++        Role::Tool => "tool",
++    }
++}
++
++fn render_block(block: &ContentBlock) -> String {
++    match block {
++        ContentBlock::Text { text } => text.clone(),
++        ContentBlock::Reasoning { .. } => "(reasoning omitted)".to_string(),
++        ContentBlock::Image { .. } => "(image)".to_string(),
++        ContentBlock::Audio { .. } => "(audio)".to_string(),
++        ContentBlock::Video { .. } => "(video)".to_string(),
++        ContentBlock::File { .. } => "(file)".to_string(),
++        ContentBlock::ToolCall(call) => format!("(called tool {})", call.name),
++        ContentBlock::ToolResult(result) => format!(
++            "(tool result{})",
++            if result.is_error == Some(true) {
++                ", failed"
++            } else {
++                ""
++            }
++        ),
++        ContentBlock::Refusal { text } => text.clone(),
++        ContentBlock::Unknown { .. } => "(unrecognized content)".to_string(),
++    }
++}
++
++/// Raw provider-backed scorer.
++///
++/// Always resolves to a `Classification` — a provider error, an unparseable or
++/// unconfigured label, and a low-confidence verdict all become
++/// [`Classification::Ambiguous`] so the cascade's [`DefaultCategoryClassifier`]
++/// fallback can take over. Nothing here ever returns `Err`, matching
++/// [`super::util::llm_judge::JudgeClassifier`]'s fail-open contract.
++struct TypeSafeClassifier {
++    provider: Arc<dyn TypeSafeProvider>,
++    config: TypeSafeClassifierConfig,
++}
++
++impl TypeSafeClassifier {
++    fn fall_open(driver: &Driver, reason_code: &str, extra: serde_json::Value) -> Classification {
++        let mut evidence = serde_json::json!({
++            "source": "fail_open",
++            "reason_code": reason_code,
++        });
++        if let (Some(evidence), Some(extra)) = (evidence.as_object_mut(), extra.as_object()) {
++            evidence.extend(extra.clone());
++        }
++        driver.set_evidence_if_empty(evidence);
++        Classification::Ambiguous(vec![])
++    }
++
++    fn to_classification(&self, verdict: &TypeSafeVerdict, driver: &Driver) -> Classification {
++        // `TypeSafeVerdict::confidence` is documented as "not validated at this
++        // layer" — this is the caller that promise refers to. A NaN or
++        // out-of-range value must not silently pass the `< base_threshold`
++        // check below (NaN compares false against everything, so it would
++        // otherwise be treated as fully confident).
++        if !(0.0..=1.0).contains(&verdict.confidence) {
++            tracing::warn!(
++                algorithm = ALGORITHM_NAME,
++                label = %verdict.label,
++                confidence = verdict.confidence,
++                "type safe classifier returned an out-of-range confidence; falling through"
++            );
++            return Self::fall_open(
++                driver,
++                "invalid_confidence",
++                serde_json::json!({
++                    "label": verdict.label,
++                    "confidence": verdict.confidence,
++                    "probabilities": verdict.probabilities,
++                    "decision_latency_ms": verdict.decision_latency_ms,
++                }),
++            );
++        }
++
++        let resolved = verdict.label.parse::<Category>().ok().and_then(|category| {
++            let target = driver.models_for(&category).first()?.clone();
++            Some((category, target))
++        });
++
++        let Some((category, target)) = resolved else {
++            tracing::warn!(
++                algorithm = ALGORITHM_NAME,
++                label = %verdict.label,
++                "type safe classifier returned an unconfigured label; falling through"
++            );
++            return Self::fall_open(
++                driver,
++                "unresolved_label",
++                serde_json::json!({
++                    "label": verdict.label,
++                    "probabilities": verdict.probabilities,
++                    "decision_latency_ms": verdict.decision_latency_ms,
++                }),
++            );
++        };
++
++        if verdict.confidence < self.config.base_threshold {
++            return Self::fall_open(
++                driver,
++                "low_confidence",
++                serde_json::json!({
++                    "label": verdict.label,
++                    "confidence": verdict.confidence,
++                    "probabilities": verdict.probabilities,
++                    "decision_latency_ms": verdict.decision_latency_ms,
++                }),
++            );
++        }
++
++        driver.set_evidence_if_empty(serde_json::json!({
++            "source": "type_safe_classifier",
++            "label": verdict.label,
++            "confidence": verdict.confidence,
++            "probabilities": verdict.probabilities,
++            "decision_latency_ms": verdict.decision_latency_ms,
++        }));
++        Classification::Scores(vec![Score {
++            target,
++            confidence: verdict.confidence,
++            category: Some(category),
++        }])
++    }
++}
++
++#[async_trait]
++impl Classifier<State> for TypeSafeClassifier {
++    async fn score(
++        &self,
++        _state: &mut State,
++        request: &mut Request,
++        driver: &Driver,
++    ) -> Result<(Classification, Option<Response>)> {
++        let messages = match self.config.recent_turn_window {
++            Some(window) => trim_messages(&request.llm_request.messages, window),
++            None => task_messages(&request.llm_request.messages),
++        };
++        let input = TypeSafeClassifierInput {
++            question: self.config.question().to_string(),
++            context: render_context(&messages),
++        };
++
++        let verdict = match self.provider.classify(input, &self.config.options).await {
++            Ok(verdict) => verdict,
++            Err(error) => {
++                tracing::warn!(
++                    algorithm = ALGORITHM_NAME,
++                    %error,
++                    "type safe classifier request failed; falling through"
++                );
++                let classification =
++                    Self::fall_open(driver, "provider_error", serde_json::Value::Null);
++                return Ok((classification, None));
++            }
++        };
++
++        Ok((self.to_classification(&verdict, driver), None))
++    }
++}
++
++/// Routes requests through a TypeSafe (Jev "System One Model") classifier.
++pub struct TypeSafeTaskClassifier {
++    route: FallThrough<State>,
++    /// Classifier used when this router is embedded in another cascade.
++    inner: Arc<dyn Classifier<State>>,
++}
++
++impl TypeSafeTaskClassifier {
++    /// Builds the classifier described by `config`, scoring through `provider`.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error when `config` has no options, an out-of-range
++    /// `base_threshold`, or `message_hash_fallback` without a matching trigger.
++    pub fn new(
++        provider: Arc<dyn TypeSafeProvider>,
++        config: TypeSafeClassifierConfig,
++    ) -> Result<Self> {
++        config.validate()?;
++        let default_target = config.default_target.clone();
++        let classify_trigger = config.classify_trigger;
++        let message_hash_fallback = config.message_hash_fallback;
++
++        let scorer: Arc<dyn Classifier<State>> = Arc::new(TypeSafeClassifier { provider, config });
++
++        // Affinity comes first so a retained assignment short-circuits the provider call.
++        let mut route = FallThrough::<State>::new_with_state().with_name(ALGORITHM_NAME);
++        if let Some(affinity) = affinity_router(classify_trigger, message_hash_fallback).as_ref() {
++            route = route
++                .with_processor(affinity.clone())
++                .with_classifier(affinity.clone());
++        }
++        let fallback = DefaultCategoryClassifier(default_target);
++        let route = route
++            .with_classifier(scorer.clone())
++            .with_classifier(Arc::new(fallback));
++
++        Ok(Self {
++            route,
++            inner: scorer,
++        })
++    }
++}
++
++#[async_trait]
++impl Classifier<State> for TypeSafeTaskClassifier {
++    async fn score(
++        &self,
++        state: &mut State,
++        request: &mut Request,
++        driver: &Driver,
++    ) -> Result<(Classification, Option<Response>)> {
++        self.inner.score(state, request, driver).await
++    }
++}
++
++#[async_trait]
++impl Algorithm for TypeSafeTaskClassifier {
++    fn name(&self) -> &str {
++        ALGORITHM_NAME
++    }
++
++    async fn route(
++        self: Arc<Self>,
++        driver: Driver,
++        request: Request,
++    ) -> Result<crate::RoutingOutcome> {
++        self.route.execute(driver, request).await
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::core::algorithm::RuntimeModels;
++    use crate::core::testing::empty_driver;
++    use async_trait::async_trait;
++    use parking_lot::Mutex;
++    use switchyard_protocol::{ModelId, text_request};
++
++    use super::super::util::typesafe_provider::TypeSafeProviderError;
++
++    type ProviderResult = std::result::Result<TypeSafeVerdict, TypeSafeProviderError>;
++
++    /// A provider whose response is scripted per call.
++    struct StubProvider {
++        responses: Mutex<Vec<ProviderResult>>,
++    }
++
++    impl StubProvider {
++        fn once(response: ProviderResult) -> Self {
++            Self {
++                responses: Mutex::new(vec![response]),
++            }
++        }
++    }
++
++    #[async_trait]
++    impl TypeSafeProvider for StubProvider {
++        async fn classify(
++            &self,
++            _input: TypeSafeClassifierInput,
++            _options: &[TypeSafeOption],
++        ) -> ProviderResult {
++            self.responses
++                .lock()
++                .pop()
++                .expect("StubProvider called more times than scripted")
++        }
++    }
++
++    /// Builds a test `Driver` whose runtime models group every `target` under its
++    /// paired `category`, preserving `targets` order within each group. Pass the
++    /// same category more than once to give it several targets.
++    fn driver_with(category_targets: &[(Category, &str)]) -> Driver {
++        let mut map: std::collections::HashMap<Category, Vec<ModelId>> =
++            std::collections::HashMap::new();
++        for (category, target) in category_targets {
++            map.entry(category.clone())
++                .or_default()
++                .push(ModelId::from(*target));
++        }
++        Driver::new("test", Arc::new(RuntimeModels::new(map))).0
++    }
++
++    fn config(options: Vec<TypeSafeOption>, base_threshold: f64) -> TypeSafeClassifierConfig {
++        TypeSafeClassifierConfig {
++            options,
++            base_threshold,
++            default_target: Category::Efficient,
++            ..Default::default()
++        }
++    }
++
++    fn options() -> Vec<TypeSafeOption> {
++        vec![
++            TypeSafeOption::new("capable", "complex, multi-step work"),
++            TypeSafeOption::new("efficient", "short, simple requests"),
++        ]
++    }
++
++    fn verdict(label: &str, confidence: f64) -> TypeSafeVerdict {
++        TypeSafeVerdict {
++            label: label.to_string(),
++            confidence,
++            probabilities: [(label.to_string(), 1.0)].into(),
++            decision_latency_ms: 12,
++        }
++    }
++
++    #[tokio::test]
++    async fn a_confident_verdict_routes_to_its_category() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", 0.9))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[(Category::Capable, "strong"), (Category::Efficient, "weak")]);
++        let mut state = State::default();
++        let mut request = Request {
++            llm_request: text_request(None, "hello"),
++            raw_request: None,
++            metadata: None,
++        };
++
++        let (classification, _) = classifier.score(&mut state, &mut request, &driver).await?;
++        assert_eq!(
++            classification.argmax(false)?.map(|score| score.target),
++            Some(ModelId::from("strong"))
++        );
++        Ok(())
++    }
++
++    /// `TypeSafeTaskClassifier::score` (used when embedded inside another
++    /// cascade) exposes only the raw provider-backed scorer, matching
++    /// `LlmTaskClassifier`'s contract — its own affinity/default fallback only
++    /// runs when the classifier is driven end to end as an [`Algorithm`], via
++    /// [`Algorithm::route`]. These three tests exercise that full path.
++    async fn routed_target(
++        classifier: TypeSafeTaskClassifier,
++        driver: Driver,
++    ) -> Result<Option<ModelId>> {
++        let request = Request {
++            llm_request: text_request(None, "hello"),
++            raw_request: None,
++            metadata: None,
++        };
++        let outcome = Arc::new(classifier).route(driver, request).await?;
++        Ok(outcome.selected_model_ids.first().cloned())
++    }
++
++    #[tokio::test]
++    async fn a_low_confidence_verdict_falls_through_to_the_default() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", 0.2))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[
++            (Category::Any, "strong"),
++            (Category::Any, "weak"),
++            (Category::Capable, "strong"),
++            (Category::Efficient, "weak"),
++        ]);
++
++        assert_eq!(
++            routed_target(classifier, driver).await?,
++            Some(ModelId::from("weak"))
++        );
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn an_unresolved_label_falls_through_to_the_default() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Ok(verdict(
++            "not_a_configured_category",
++            0.99,
++        ))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[
++            (Category::Any, "strong"),
++            (Category::Any, "weak"),
++            (Category::Capable, "strong"),
++            (Category::Efficient, "weak"),
++        ]);
++
++        assert_eq!(
++            routed_target(classifier, driver).await?,
++            Some(ModelId::from("weak"))
++        );
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn a_provider_error_falls_through_to_the_default() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Err(TypeSafeProviderError(
++            "network down".to_string(),
++        ))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[
++            (Category::Any, "strong"),
++            (Category::Any, "weak"),
++            (Category::Capable, "strong"),
++            (Category::Efficient, "weak"),
++        ]);
++
++        assert_eq!(
++            routed_target(classifier, driver).await?,
++            Some(ModelId::from("weak"))
++        );
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn a_nan_confidence_falls_through_to_the_default() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", f64::NAN))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[
++            (Category::Any, "strong"),
++            (Category::Any, "weak"),
++            (Category::Capable, "strong"),
++            (Category::Efficient, "weak"),
++        ]);
++
++        // Without an explicit range check, `NaN < base_threshold` is `false`, so a
++        // naive comparison would treat this as confident enough to route on.
++        assert_eq!(
++            routed_target(classifier, driver).await?,
++            Some(ModelId::from("weak"))
++        );
++        Ok(())
++    }
++
++    #[tokio::test]
++    async fn an_out_of_range_confidence_falls_through_to_the_default() -> Result<()> {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", 1.5))));
++        let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
++        let driver = driver_with(&[
++            (Category::Any, "strong"),
++            (Category::Any, "weak"),
++            (Category::Capable, "strong"),
++            (Category::Efficient, "weak"),
++        ]);
++
++        assert_eq!(
++            routed_target(classifier, driver).await?,
++            Some(ModelId::from("weak"))
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn empty_options_are_rejected() {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", 1.0))));
++        let result = TypeSafeTaskClassifier::new(provider, config(Vec::new(), 0.5));
++        assert!(matches!(
++            result,
++            Err(LibsyError::AlgorithmError { message })
++                if message.contains("at least one option")
++        ));
++    }
++
++    #[test]
++    fn out_of_range_threshold_is_rejected() {
++        let provider = Arc::new(StubProvider::once(Ok(verdict("capable", 1.0))));
++        let result = TypeSafeTaskClassifier::new(provider, config(options(), 1.5));
++        assert!(matches!(
++            result,
++            Err(LibsyError::AlgorithmError { message })
++                if message.contains("base_threshold")
++        ));
++    }
++
++    #[test]
++    fn render_context_summarizes_non_text_content() {
++        use switchyard_protocol::ToolCall;
++
++        let messages = vec![Message {
++            role: Role::Assistant,
++            content: vec![
++                ContentBlock::Text {
++                    text: "checking logs".to_string(),
++                },
++                ContentBlock::ToolCall(ToolCall {
++                    id: "call-1".to_string(),
++                    name: "grep".to_string(),
++                    arguments: serde_json::json!({}),
++                }),
++            ],
++        }];
++        let rendered = render_context(&messages);
++        assert!(rendered.contains("[assistant]"));
++        assert!(rendered.contains("checking logs"));
++        assert!(rendered.contains("(called tool grep)"));
++    }
++
++    #[test]
++    fn empty_driver_smoke() {
++        // Exercises the same test-only constructor `llm_class.rs` relies on, to
++        // confirm it stays reachable from this sibling module.
++        let _ = empty_driver();
++    }
++}
+diff --git a/crates/libsy/src/algorithms/util.rs b/crates/libsy/src/algorithms/util.rs
+index 0b96ca92a027936261c5804e5778a4f8de61495e..5272c819a1f5007064bfb8cbb6afedc606ab0420 100644
+--- a/crates/libsy/src/algorithms/util.rs
++++ b/crates/libsy/src/algorithms/util.rs
+@@ -14,6 +14,7 @@ pub(crate) mod target_selector;
+ #[cfg(test)]
+ pub(crate) mod tier_fixtures;
+ pub(crate) mod tool_signals;
++pub(crate) mod typesafe_provider;
+ 
+ use switchyard_protocol::ModelId;
+ 
+diff --git a/crates/libsy/src/algorithms/util/typesafe_provider.rs b/crates/libsy/src/algorithms/util/typesafe_provider.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..5fea15eea438ff628ba8851dc4fcd6954ebc9d30
+--- /dev/null
++++ b/crates/libsy/src/algorithms/util/typesafe_provider.rs
+@@ -0,0 +1,133 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++//! Port for an externally-judged, non-generative routing decision.
++//!
++//! This is the seam [`crate::TypeSafeTaskClassifier`] uses to reach a "System One
++//! Model" style classifier (for example TypeSafe's Jev) without `libsy` performing
++//! any I/O itself. `libsy` depends only on the [`TypeSafeProvider`] trait defined
++//! here; the concrete implementation that actually calls out over HTTP lives in a
++//! separate, runner-owned crate (see `switchyard-typesafe-client`) and is injected
++//! at deployment-load time.
++//!
++//! This shape directly answers
++//! [Switchyard issue #723](https://github.com/NVIDIA-NeMo/Switchyard/issues/723),
++//! which asks for such a classifier to be implemented "via an external HTTP
++//! judgment step, or a runner-owned classification provider... avoid direct HTTP
++//! calls from libsy": the trait is the external judgment step, and the runner owns
++//! whatever calls it.
++
++use async_trait::async_trait;
++use std::collections::BTreeMap;
++use std::fmt;
++
++/// One label a [`TypeSafeProvider`] may return, together with the natural-language
++/// criteria describing when it applies.
++///
++/// Mirrors the `criteria` map a TypeSafe `Choice` question is asked to pick from:
++/// each option's `label` is ordinarily one of the deployment's configured routing
++/// categories (`capable`, `efficient`, or a deployment-defined name), and
++/// `description` is shown to the provider verbatim.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct TypeSafeOption {
++    /// The label returned verbatim in [`TypeSafeVerdict::label`] when chosen.
++    pub label: String,
++    /// Natural-language criteria shown to the provider for this label.
++    pub description: String,
++}
++
++impl TypeSafeOption {
++    /// Builds one labeled option.
++    pub fn new(label: impl Into<String>, description: impl Into<String>) -> Self {
++        Self {
++            label: label.into(),
++            description: description.into(),
++        }
++    }
++}
++
++/// Conversation material handed to a [`TypeSafeProvider`] for one classification call.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct TypeSafeClassifierInput {
++    /// The instruction asked of the provider, such as "which tier does this need?".
++    pub question: String,
++    /// Flattened conversation text the provider classifies. Free text, not a chat
++    /// transcript — a "System One Model" scores state, it does not converse.
++    pub context: String,
++}
++
++/// A provider's resolved decision: the chosen label and its confidence.
++#[derive(Clone, Debug, PartialEq)]
++pub struct TypeSafeVerdict {
++    /// The label the provider chose.
++    ///
++    /// Not guaranteed to be one of the labels it was offered, or to parse as a
++    /// configured routing category — [`crate::TypeSafeTaskClassifier`] treats an
++    /// unresolved label the same as a missing verdict (fail-open), rather than
++    /// erroring.
++    pub label: String,
++    /// Confidence in `label`, expected in `[0.0, 1.0]`.
++    ///
++    /// Not validated at this layer, so a caller comparing it against a threshold
++    /// should still treat an out-of-range value defensively.
++    pub confidence: f64,
++    /// Averaged probability for every configured candidate label.
++    pub probabilities: BTreeMap<String, f64>,
++    /// Wall-clock time spent waiting for the TypeSafe decision.
++    pub decision_latency_ms: u64,
++}
++
++/// Opaque failure from a [`TypeSafeProvider`] call.
++///
++/// [`crate::TypeSafeTaskClassifier`] folds every variant of failure to fail-open —
++/// the same request is simply handed to the next classifier in the cascade — so
++/// this carries only a display message suitable for logs and telemetry, never
++/// structured detail a caller might branch on.
++#[derive(Clone, Debug)]
++pub struct TypeSafeProviderError(pub String);
++
++impl fmt::Display for TypeSafeProviderError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.write_str(&self.0)
++    }
++}
++
++impl std::error::Error for TypeSafeProviderError {}
++
++/// External, non-generative judgment step a `TypeSafeTaskClassifier` delegates to.
++///
++/// Implementations perform the actual network call; `libsy` never does. The host
++/// (typically `switchyard-runner`, reading credentials from an environment
++/// variable — never from TOML) constructs the concrete implementation once per
++/// deployment and injects it as `Arc<dyn TypeSafeProvider>`, so this trait is the
++/// entire seam between libsy's routing logic and a provider's API.
++#[async_trait]
++pub trait TypeSafeProvider: Send + Sync {
++    /// Classifies `input` against `options`, returning the provider's choice.
++    ///
++    /// Implementations should never log or otherwise surface request credentials
++    /// in the returned error.
++    async fn classify(
++        &self,
++        input: TypeSafeClassifierInput,
++        options: &[TypeSafeOption],
++    ) -> Result<TypeSafeVerdict, TypeSafeProviderError>;
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn option_builder_converts_into_string() {
++        let option = TypeSafeOption::new("capable", "complex, multi-step work");
++        assert_eq!(option.label, "capable");
++        assert_eq!(option.description, "complex, multi-step work");
++    }
++
++    #[test]
++    fn provider_error_displays_its_message() {
++        let error = TypeSafeProviderError("boom".to_string());
++        assert_eq!(error.to_string(), "boom");
++    }
++}
+diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
+index 6e84c456af326c11cdd84a7f31f1d0f4116b5998..5d75cdff5027e2975ab51828a640c33bed6f90e5 100644
+--- a/crates/libsy/src/lib.rs
++++ b/crates/libsy/src/lib.rs
+@@ -28,6 +28,7 @@ pub use algorithms::passthrough::Passthrough;
+ pub use algorithms::rand::{Random, RandomClassifier};
+ pub use algorithms::stage::{LlmFallback, StageRouter, StageRouterConfig};
+ pub use algorithms::subagent::{SubagentRouter, SubagentRouterConfig};
++pub use algorithms::type_safe_class::{TypeSafeClassifierConfig, TypeSafeTaskClassifier};
+ pub use algorithms::util::affinity::{AffinityRouter, ClassifyTrigger};
+ pub use algorithms::util::classifier_contract::{
+     ClassifierContractConfig, ClassifierResponseFormat,
+@@ -36,6 +37,10 @@ pub use algorithms::util::escalation::EscalationJudgeConfig;
+ pub use algorithms::util::prompts::append_note;
+ pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
+ pub use algorithms::util::tool_signals::{DEFAULT_RECENT_WINDOW, ToolSemantics, ToolSignals};
++pub use algorithms::util::typesafe_provider::{
++    TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeProviderError,
++    TypeSafeVerdict,
++};
+ 
+ // Stage-router scoring and tier selection — the shared signal-driven routing
+ // core (scorer, picker, and the `StageClassifier`).
+diff --git a/crates/switchyard-nemo-relay-plugin/src/runtime.rs b/crates/switchyard-nemo-relay-plugin/src/runtime.rs
+index 95794f0d8e836b5cf63928ff350859986d3ab029..1c0ed9b91616bce12257e0c0011d85e74ba6790d 100644
+--- a/crates/switchyard-nemo-relay-plugin/src/runtime.rs
++++ b/crates/switchyard-nemo-relay-plugin/src/runtime.rs
+@@ -891,7 +891,7 @@ mod tests {
+ 
+     fn runtime_for(model: &str) -> SwitchyardRuntime {
+         let algorithm = AlgorithmSpec::Noop {}
+-            .build("relay", &BTreeMap::new())
++            .build("relay", &BTreeMap::new(), None)
+             .expect("noop route should build");
+         let route = Route::new(
+             algorithm,
+diff --git a/crates/switchyard-runner/Cargo.toml b/crates/switchyard-runner/Cargo.toml
+index 3a80b61b38b764664d839671310a1b7df24d4d74..3b96fb43048537ae340665bf0f68b8afbcee99da 100644
+--- a/crates/switchyard-runner/Cargo.toml
++++ b/crates/switchyard-runner/Cargo.toml
+@@ -24,6 +24,7 @@ serde.workspace = true
+ serde_json.workspace = true
+ switchyard-llm-client.workspace = true
+ switchyard-protocol.workspace = true
++switchyard-typesafe-client.workspace = true
+ strum_macros.workspace = true
+ thiserror.workspace = true
+ toml = "1.1"
+diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
+index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8c3b64bdb 100644
+--- a/crates/switchyard-runner/src/algorithm.rs
++++ b/crates/switchyard-runner/src/algorithm.rs
+@@ -15,7 +15,8 @@ use libsy::{
+     CustomClassifierPolicy, EscalationJudgeConfig, GateTrigger, HandoffNoteConfig,
+     LlmClassifierConfig, LlmFallback, LlmTaskClassifier, Noop, Passthrough, PickerMode, Random,
+     StageRouter, StageRouterConfig, SubagentRouter, SubagentRouterConfig, TaskClassifierConfig,
+-    ToolSemantics,
++    ToolSemantics, TypeSafeClassifierConfig, TypeSafeOption, TypeSafeProvider,
++    TypeSafeTaskClassifier,
+ };
+ use serde::Deserialize;
+ use switchyard_protocol::{Category, ModelId};
+@@ -147,18 +148,34 @@ struct CustomClassifierRouteConfig {
+ pub struct CategoryModelConfig(BTreeMap<String, Vec<String>>);
+ 
+ impl CategoryModelConfig {
++    /// Validates `models` for a judge-backed classifier (`llm_classifier` custom
++    /// mode), which always calls its judge through `models.judge`.
+     fn validate(&self, route_name: &str, default_target: &Category) -> AlgorithmResult<()> {
+-        for category in [Category::Any, Category::Judge] {
++        self.validate_for(route_name, "llm_classifier", default_target, true)
++    }
++
++    fn validate_for(
++        &self,
++        route_name: &str,
++        label: &str,
++        default_target: &Category,
++        require_judge: bool,
++    ) -> AlgorithmResult<()> {
++        let mut required = vec![Category::Any];
++        if require_judge {
++            required.push(Category::Judge);
++        }
++        for category in required {
+             if self.get(&category).is_empty() {
+                 return Err(AlgorithmConfigError::new(format!(
+-                    "llm_classifier route {route_name} models.{} must contain at least one target",
++                    "{label} route {route_name} models.{} must contain at least one target",
+                     category.as_str()
+                 )));
+             }
+         }
+         if self.get(default_target).is_empty() {
+             return Err(AlgorithmConfigError::new(format!(
+-                "llm_classifier route {route_name} models.{} must contain at least one target because it is the default_target",
++                "{label} route {route_name} models.{} must contain at least one target because it is the default_target",
+                 default_target.as_str()
+             )));
+         }
+@@ -167,12 +184,13 @@ impl CategoryModelConfig {
+         // the selected target against, so a group outside it can never be served.
+         let any = self.get(&Category::Any);
+         for (name, models) in &self.0 {
+-            if name == Category::Judge.as_str() || name == Category::Any.as_str() {
++            if name == Category::Any.as_str() || (require_judge && name == Category::Judge.as_str())
++            {
+                 continue;
+             }
+             if let Some(missing) = models.iter().find(|model| !any.contains(model)) {
+                 return Err(AlgorithmConfigError::new(format!(
+-                    "llm_classifier route {route_name} models.{name} lists target {missing}, which must also appear in models.any"
++                    "{label} route {route_name} models.{name} lists target {missing}, which must also appear in models.any"
+                 )));
+             }
+         }
+@@ -428,6 +446,40 @@ pub enum AlgorithmSpec {
+         /// Maximum prompts per encoder forward pass.
+         batch_size: Option<usize>,
+     },
++    /// Routes using a runner-owned TypeSafe (Jev "System One Model") classifier.
++    ///
++    /// Unlike `llm_classifier`, the judgment step here never calls one of the
++    /// deployment's own chat-completion targets: it calls out to an external,
++    /// non-generative provider through `switchyard-typesafe-client`, which the
++    /// runner constructs once per deployment from the `[type_safe_client]`
++    /// table and injects into every route configured this way. A route using
++    /// this type fails to build when the deployment has no `[type_safe_client]`.
++    TypeSafeClassifier {
++        /// Configured target names offered to TypeSafe as candidate models.
++        candidates: Vec<String>,
++        /// Optional routing descriptions keyed by candidate target name. When
++        /// omitted, Switchyard identifies the candidate by target name and model id.
++        #[serde(default)]
++        candidate_descriptions: BTreeMap<String, String>,
++        /// Candidate target served when the provider fails, returns an
++        /// unrecognised label, or answers below `base_threshold`.
++        default_target: String,
++        /// Instruction sent as the provider's question. Uses a generic
++        /// model-selection default when unset.
++        question: Option<String>,
++        /// Lowest confidence that is trusted, from 0 to 1.
++        base_threshold: f64,
++        /// How often the classifier re-decides this session's target.
++        #[serde(default)]
++        classify_trigger: ClassifyTrigger,
++        /// Uses the first user message as the SessionKey for sticky routing when
++        /// session metadata is unavailable. Requires `classify_trigger = "new_session"`.
++        #[serde(default)]
++        message_hash_fallback: bool,
++        /// Trailing conversation turns the provider sees on top of the opening
++        /// task. Unset sends the opening task and latest user follow-up only.
++        recent_turn_window: Option<usize>,
++    },
+ }
+ 
+ /// What fires an advisor route's review.
+@@ -586,6 +638,9 @@ impl AlgorithmSpec {
+                 executor_target, ..
+             } => vec![executor_target],
+             Self::PrefillRouter { targets, .. } => targets.iter().map(String::as_str).collect(),
++            Self::TypeSafeClassifier { candidates, .. } => {
++                candidates.iter().map(String::as_str).collect()
++            }
+         }
+     }
+ 
+@@ -705,6 +760,15 @@ impl AlgorithmSpec {
+                 (Category::Any, vec![executor_target.clone()]),
+                 (Category::Judge, vec![advisor_target.clone()]),
+             ]),
++            Self::TypeSafeClassifier { candidates, .. } => {
++                let mut models = category_models([(Category::Any, candidates.clone())]);
++                for candidate in candidates {
++                    if let Ok(category) = candidate.parse::<Category>() {
++                        models.insert(category, vec![candidate.clone()]);
++                    }
++                }
++                models
++            }
+         };
+ 
+         let subagents = match self {
+@@ -745,7 +809,8 @@ impl AlgorithmSpec {
+             | Self::StageRouter { .. }
+             | Self::Auto { .. }
+             | Self::Composite { .. }
+-            | Self::PrefillRouter { .. } => None,
++            | Self::PrefillRouter { .. }
++            | Self::TypeSafeClassifier { .. } => None,
+         }
+     }
+ 
+@@ -754,8 +819,25 @@ impl AlgorithmSpec {
+         &self,
+         context: &str,
+         targets: &BTreeMap<String, ModelId>,
++        type_safe_provider: Option<&Arc<dyn TypeSafeProvider>>,
+     ) -> AlgorithmResult<Arc<dyn Algorithm>> {
+-        build_algorithm(context, self, targets)
++        self.build_with_target_descriptions(context, targets, &BTreeMap::new(), type_safe_provider)
++    }
++
++    pub(crate) fn build_with_target_descriptions(
++        &self,
++        context: &str,
++        targets: &BTreeMap<String, ModelId>,
++        target_routing_descriptions: &BTreeMap<String, String>,
++        type_safe_provider: Option<&Arc<dyn TypeSafeProvider>>,
++    ) -> AlgorithmResult<Arc<dyn Algorithm>> {
++        build_algorithm(
++            context,
++            self,
++            targets,
++            target_routing_descriptions,
++            type_safe_provider,
++        )
+     }
+ }
+ 
+@@ -1129,6 +1211,8 @@ fn build_algorithm(
+     route_name: &str,
+     config: &AlgorithmSpec,
+     targets: &BTreeMap<String, ModelId>,
++    target_routing_descriptions: &BTreeMap<String, String>,
++    type_safe_provider: Option<&Arc<dyn TypeSafeProvider>>,
+ ) -> AlgorithmResult<Arc<dyn Algorithm>> {
+     match config {
+         AlgorithmSpec::Noop { .. } => Ok(Arc::new(Noop {})),
+@@ -1400,6 +1484,103 @@ fn build_algorithm(
+                 )))
+             }
+         }
++        AlgorithmSpec::TypeSafeClassifier {
++            candidates,
++            candidate_descriptions,
++            default_target,
++            question,
++            base_threshold,
++            classify_trigger,
++            message_hash_fallback,
++            recent_turn_window,
++        } => {
++            if candidates.len() < 2 {
++                return Err(AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} requires at least two candidates"
++                )));
++            }
++            let mut unique = BTreeSet::new();
++            if let Some(duplicate) = candidates.iter().find(|name| !unique.insert(*name)) {
++                return Err(AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} repeats candidate {duplicate}"
++                )));
++            }
++            let default_category: Category = default_target.parse().map_err(|error| {
++                AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} has invalid default_target: {error}"
++                ))
++            })?;
++            if matches!(default_category, Category::Any | Category::Judge) {
++                return Err(AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} default_target cannot be any or judge"
++                )));
++            }
++            if !candidates.contains(default_target) {
++                return Err(AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} default_target {default_target} is not in candidates"
++                )));
++            }
++            for candidate in candidates {
++                let category: Category = candidate.parse().map_err(|error| {
++                    AlgorithmConfigError::new(format!(
++                        "type_safe_classifier route {route_name} has invalid candidate {candidate:?}: {error}"
++                    ))
++                })?;
++                if matches!(category, Category::Any | Category::Judge) {
++                    return Err(AlgorithmConfigError::new(format!(
++                        "type_safe_classifier route {route_name} candidate {candidate} cannot be any or judge"
++                    )));
++                }
++            }
++            for (name, description) in candidate_descriptions {
++                if !candidates.contains(name) {
++                    return Err(AlgorithmConfigError::new(format!(
++                        "type_safe_classifier route {route_name} has a description for non-candidate {name}"
++                    )));
++                }
++                if description.trim().is_empty() || description.trim() != description {
++                    return Err(AlgorithmConfigError::new(format!(
++                        "type_safe_classifier route {route_name} description for {name} must be non-empty and have no surrounding whitespace"
++                    )));
++                }
++            }
++
++            let provider = type_safe_provider.ok_or_else(|| {
++                AlgorithmConfigError::new(format!(
++                    "type_safe_classifier route {route_name} requires a [type_safe_client] table in the deployment"
++                ))
++            })?;
++
++            let options = candidates
++                .iter()
++                .map(|name| {
++                    let model = resolve_target_model_id(route_name, name, targets)?;
++                    let description = candidate_descriptions
++                        .get(name)
++                        .or_else(|| target_routing_descriptions.get(name))
++                        .cloned()
++                        .unwrap_or_else(|| format!("Configured target {name} uses model {model}."));
++                    Ok(TypeSafeOption::new(name.clone(), description))
++                })
++                .collect::<AlgorithmResult<Vec<_>>>()?;
++            let classifier_config = TypeSafeClassifierConfig {
++                options,
++                question: question.clone().unwrap_or_default(),
++                base_threshold: *base_threshold,
++                default_target: default_category,
++                classify_trigger: *classify_trigger,
++                message_hash_fallback: *message_hash_fallback,
++                recent_turn_window: *recent_turn_window,
++            };
++            let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
++                .map_err(|error| {
++                    AlgorithmConfigError::with_source(
++                        format!("type_safe_classifier route {route_name}: {error}"),
++                        error,
++                    )
++                })?;
++            Ok(Arc::new(algorithm))
++        }
+     }
+ }
+ 
+diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
+index b6f9ca58dfac50a2ad6d344e5d460e04925edc9d..6b37e17df6507c74e0a45dbc4d3b5208171601e7 100644
+--- a/crates/switchyard-runner/src/config.rs
++++ b/crates/switchyard-runner/src/config.rs
+@@ -59,10 +59,30 @@ pub(crate) struct DeploymentConfig {
+     fallback_client: Option<String>,
+     #[serde(default)]
+     llm_clients: BTreeMap<String, LlmClientConfig>,
++    /// Shared TypeSafe (Jev "System One Model") client settings. Required when any
++    /// route uses `type = "type_safe_classifier"`; unused otherwise.
++    #[serde(default)]
++    type_safe_client: Option<TypeSafeClientConfig>,
+     targets: BTreeMap<String, TargetConfig>,
+     routes: BTreeMap<String, RouteConfig>,
+ }
+ 
++/// Settings for the single, deployment-wide TypeSafe client. Unlike `llm_clients`,
++/// there is at most one of these — every `type_safe_classifier` route shares it.
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct TypeSafeClientConfig {
++    /// Environment variable the API key is read from at load time. Never read
++    /// from TOML, and never logged.
++    api_key_env: String,
++    /// Overrides the API root. Defaults to TypeSafe's production endpoint.
++    #[serde(default)]
++    base_url: Option<String>,
++    /// Overrides the model name sent as `model`. Defaults to `"jev-latest"`.
++    #[serde(default)]
++    model: Option<String>,
++}
++
+ #[derive(Debug)]
+ struct RouteConfig {
+     id: ModelId,
+@@ -185,6 +205,12 @@ impl DeploymentConfig {
+         for (target_name, target) in &self.targets {
+             validate_value("target name", target_name)?;
+             validate_value(&format!("target {target_name} id"), &target.id)?;
++            if let Some(description) = &target.routing_description {
++                validate_value(
++                    &format!("target {target_name} routing_description"),
++                    description,
++                )?;
++            }
+             match seen_client_model_ids.entry((target.llm_client.as_str(), target.id.as_str())) {
+                 std::collections::hash_map::Entry::Vacant(slot) => {
+                     slot.insert((target_name, target));
+@@ -211,7 +237,31 @@ impl DeploymentConfig {
+         let mut provider_api_keys = Vec::new();
+         let clients = self.build_clients(&mut provider_api_keys)?;
+         let targets = self.build_targets();
++        let target_routing_descriptions = self
++            .targets
++            .iter()
++            .filter_map(|(name, target)| {
++                target
++                    .routing_description
++                    .as_ref()
++                    .map(|description| (name.clone(), description.clone()))
++            })
++            .collect();
+         let fallback_base_url = self.fallback_base_url()?;
++        // Only construct the TypeSafe provider when a route actually uses it: the
++        // `[type_safe_client]` table is documented as unused otherwise, and building it
++        // unconditionally would fail a deployment that configures the table (for later
++        // use, say) without setting its `api_key_env` variable, even though nothing
++        // calls it yet.
++        let uses_type_safe_classifier = self
++            .routes
++            .values()
++            .any(|route| matches!(route.algorithm, AlgorithmSpec::TypeSafeClassifier { .. }));
++        let type_safe_provider = if uses_type_safe_classifier {
++            self.build_type_safe_provider()?
++        } else {
++            None
++        };
+         let mut routes = Vec::with_capacity(self.routes.len());
+         for (route_name, config) in &self.routes {
+             for target_name in config.callable_target_names() {
+@@ -229,7 +279,12 @@ impl DeploymentConfig {
+             }
+             let algorithm = config
+                 .algorithm
+-                .build(route_name, &targets)
++                .build_with_target_descriptions(
++                    route_name,
++                    &targets,
++                    &target_routing_descriptions,
++                    type_safe_provider.as_ref(),
++                )
+                 .map_err(|error| RunnerError::configuration_source(error.to_string(), error))?;
+             let (route_clients, caller_auth) =
+                 self.build_route_clients(route_name, config, &clients)?;
+@@ -468,6 +523,43 @@ impl DeploymentConfig {
+         Ok(Some(config.base_url.as_str().to_string()))
+     }
+ 
++    /// Builds the deployment-wide TypeSafe provider from `[type_safe_client]`, if
++    /// configured. The API key always comes from the environment, never from
++    /// this TOML document.
++    fn build_type_safe_provider(&self) -> RunnerResult<Option<Arc<dyn libsy::TypeSafeProvider>>> {
++        let Some(config) = &self.type_safe_client else {
++            return Ok(None);
++        };
++        let mut client = switchyard_typesafe_client::TypeSafeHttpClient::from_env(
++            &config.api_key_env,
++        )
++        .map_err(|error| {
++            RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
++        })?;
++        if let Some(base_url) = &config.base_url {
++            // The API key travels as a bearer token on every request to this URL, so an
++            // http:// override must be rejected before it reaches the client (which stays
++            // permissive about scheme, since its own tests point it at a plain-http mock
++            // server).
++            if let Ok(parsed) = reqwest::Url::parse(base_url)
++                && parsed.scheme() != "https"
++            {
++                return Err(RunnerError::configuration(format!(
++                    "type_safe_client.base_url must be an absolute https:// URL (got scheme {:?}); \
++                     the API key must not travel over plaintext HTTP",
++                    parsed.scheme()
++                )));
++            }
++            client = client.with_base_url(base_url.clone()).map_err(|error| {
++                RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
++            })?;
++        }
++        if let Some(model) = &config.model {
++            client = client.with_model(model.clone());
++        }
++        Ok(Some(Arc::new(client)))
++    }
++
+     fn build_anthropic_auxiliary_target(
+         &self,
+         route: &RouteConfig,
+@@ -577,6 +669,8 @@ struct LlmClientConfig {
+ struct TargetConfig {
+     id: ModelId,
+     llm_client: String,
++    /// Optional facts TypeSafe should use when comparing this target with other candidates.
++    routing_description: Option<String>,
+     #[serde(default)]
+     extra_body: BTreeMap<String, Value>,
+     system_prompt: Option<String>,
+@@ -848,6 +942,274 @@ target = "weak"
+         Ok(())
+     }
+ 
++    /// Builds a `type_safe_classifier` deployment reusing `VALID_CONFIG`'s `strong`/`weak`
++    /// targets, with `[type_safe_client]` reading its key from `api_key_env`.
++    fn type_safe_config(api_key_env: &str) -> String {
++        format!(
++            r#"{VALID_CONFIG}
++
++[type_safe_client]
++api_key_env = "{api_key_env}"
++
++[routes.type_safe]
++id = "switchyard/type_safe"
++type = "type_safe_classifier"
++default_target = "weak"
++base_threshold = 0.5
++candidates = ["strong", "weak"]
++candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short, simple requests" }}
++"#
++        )
++    }
++
++    #[test]
++    fn type_safe_classifier_route_builds_and_resolves_its_candidates() -> RunnerResult<()> {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let result = runner_from_toml(&type_safe_config(KEY_ENV));
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        let runner = result?;
++
++        let route = runner
++            .route("switchyard/type_safe")
++            .expect("type_safe route should exist");
++        let models = route.models();
++        assert_eq!(
++            models.models_for(&"strong".parse().expect("valid category")),
++            [ModelId::from("strong/model")]
++        );
++        assert_eq!(
++            models.models_for(&"weak".parse().expect("valid category")),
++            [ModelId::from("weak/model")]
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn type_safe_classifier_without_a_client_table_is_rejected() {
++        // `type_safe_config` always emits `[type_safe_client]`; drop the whole table to
++        // exercise a route configured without one.
++        let config =
++            type_safe_config("UNUSED").replace("[type_safe_client]\napi_key_env = \"UNUSED\"", "");
++        let error = error_message(&config);
++        assert!(
++            error.contains("requires a [type_safe_client] table"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_rejects_a_description_for_a_non_candidate() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_UNMATCHED_OPTION";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV).replace(
++            r#"candidate_descriptions = { strong = "complex, multi-step work", weak = "short, simple requests" }"#,
++            r#"candidate_descriptions = { strong = "complex, multi-step work", weak = "short, simple requests", reasoning = "deep analysis" }"#,
++        );
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("description for non-candidate reasoning"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_rejects_an_empty_candidate_description() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_EMPTY_DESCRIPTION";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV)
++            .replace(r#"strong = "complex, multi-step work""#, r#"strong = """#);
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("description for strong must be non-empty"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_accepts_a_target_routing_description() -> RunnerResult<()> {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_TARGET_DESCRIPTION";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV)
++            .replace(
++                "id = \"strong/model\"",
++                "id = \"strong/model\"\nrouting_description = \"deep analysis and difficult coding\"",
++            )
++            .replace(
++                "candidate_descriptions = { strong = \"complex, multi-step work\", weak = \"short, simple requests\" }",
++                "",
++            );
++        let result = runner_from_toml(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        result?;
++        Ok(())
++    }
++
++    #[test]
++    fn type_safe_classifier_requires_two_unique_candidates() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_CANDIDATE_COUNT";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let base = type_safe_config(KEY_ENV);
++        let one = base
++            .replace(
++                r#"candidates = ["strong", "weak"]"#,
++                r#"candidates = ["weak"]"#,
++            )
++            .replace(
++                r#"candidate_descriptions = { strong = "complex, multi-step work", weak = "short, simple requests" }"#,
++                r#"candidate_descriptions = { weak = "short, simple requests" }"#,
++            );
++        let duplicate = base.replace(
++            r#"candidates = ["strong", "weak"]"#,
++            r#"candidates = ["strong", "weak", "strong"]"#,
++        );
++        let one_error = error_message(&one);
++        let duplicate_error = error_message(&duplicate);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            one_error.contains("requires at least two candidates"),
++            "{one_error}"
++        );
++        assert!(
++            duplicate_error.contains("repeats candidate strong"),
++            "{duplicate_error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_requires_the_default_to_be_a_candidate() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_DEFAULT_CANDIDATE";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV)
++            .replace("default_target = \"weak\"", "default_target = \"other\"");
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("default_target other is not in candidates"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_rejects_judge_as_the_default_target() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_JUDGE_DEFAULT";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV)
++            .replace("default_target = \"weak\"", "default_target = \"judge\"");
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("default_target cannot be any or judge"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_rejects_judge_as_a_candidate() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_JUDGE_OPTION";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = format!(
++            "{}\n[targets.judge]\nid = \"judge/model\"\nllm_client = \"responses\"\n",
++            type_safe_config(KEY_ENV).replace(
++                r#"candidates = ["strong", "weak"]"#,
++                r#"candidates = ["strong", "weak", "judge"]"#,
++            )
++        );
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("candidate judge cannot be any or judge"),
++            "{error}"
++        );
++    }
++
++    #[test]
++    fn type_safe_classifier_rejects_an_out_of_range_threshold() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_BAD_THRESHOLD";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config =
++            type_safe_config(KEY_ENV).replace("base_threshold = 0.5", "base_threshold = 1.5");
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(error.contains("base_threshold"), "{error}");
++    }
++
++    #[test]
++    fn type_safe_client_table_is_unused_without_a_type_safe_classifier_route() -> RunnerResult<()> {
++        // No route in `VALID_CONFIG` uses `type_safe_classifier`, and `api_key_env` here
++        // names a variable deliberately left unset. Building must still succeed: the
++        // `[type_safe_client]` table is documented as unused unless a route references it,
++        // so the provider must not be constructed (and therefore must not read the
++        // environment) when nothing calls it.
++        let config = format!(
++            r#"{VALID_CONFIG}
++
++[type_safe_client]
++api_key_env = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_DELIBERATELY_UNSET"
++"#
++        );
++        runner_from_toml(&config)?;
++        Ok(())
++    }
++
++    #[test]
++    fn type_safe_client_base_url_rejects_plain_http() {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_HTTP_BASE_URL";
++        unsafe {
++            std::env::set_var(KEY_ENV, "sk-test");
++        }
++        let config = type_safe_config(KEY_ENV).replace(
++            &format!("api_key_env = \"{KEY_ENV}\""),
++            &format!("api_key_env = \"{KEY_ENV}\"\nbase_url = \"http://example.test\""),
++        );
++        let error = error_message(&config);
++        unsafe {
++            std::env::remove_var(KEY_ENV);
++        }
++        assert!(
++            error.contains("type_safe_client.base_url must be an absolute https:// URL"),
++            "{error}"
++        );
++    }
++
+     #[test]
+     fn duplicate_route_ids_are_rejected() {
+         let config = format!(
+diff --git a/crates/switchyard-runner/tests/route.rs b/crates/switchyard-runner/tests/route.rs
+index 68bba56675c3c7eeff57323b1d21aed811abfefe..7910e568b0ec2751356448bf329eae2c5be436e8 100644
+--- a/crates/switchyard-runner/tests/route.rs
++++ b/crates/switchyard-runner/tests/route.rs
+@@ -41,7 +41,7 @@ fn plugin_route(client: Arc<dyn RoutedLlmClient>) -> Route {
+         ModelId::from("semantic-target"),
+     )]);
+     let algorithm = spec
+-        .build("switchyard", &targets)
++        .build("switchyard", &targets, None)
+         .expect("identity target map should build");
+     let clients = ClientRouter::new(
+         BTreeMap::from([(ModelId::from("semantic-target"), client)])
+diff --git a/crates/switchyard-typesafe-client/Cargo.toml b/crates/switchyard-typesafe-client/Cargo.toml
+new file mode 100644
+index 0000000000000000000000000000000000000000..df4c9da2121d63f42c5273f23a32b5d0228b9718
+--- /dev/null
++++ b/crates/switchyard-typesafe-client/Cargo.toml
+@@ -0,0 +1,29 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++# SPDX-License-Identifier: Apache-2.0
++
++[package]
++name = "switchyard-typesafe-client"
++version.workspace = true
++description = "HTTP client for TypeSafe's System One Model, implementing switchyard-libsy's TypeSafeProvider port"
++authors.workspace = true
++edition.workspace = true
++homepage = "https://github.com/NVIDIA-NeMo/Switchyard"
++license.workspace = true
++readme = "README.md"
++repository.workspace = true
++rust-version.workspace = true
++documentation = "https://docs.rs/switchyard-typesafe-client"
++keywords = ["typesafe", "client", "classifier", "routing"]
++publish = ["crates-io"]
++
++[dependencies]
++switchyard-libsy.workspace = true
++async-trait.workspace = true
++reqwest.workspace = true
++serde.workspace = true
++serde_json.workspace = true
++tracing.workspace = true
++
++[dev-dependencies]
++tokio.workspace = true
++wiremock = "0.6"
+diff --git a/crates/switchyard-typesafe-client/README.md b/crates/switchyard-typesafe-client/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..4209d031ebd89efb14375f8e33fd5bbf7c171fd5
+--- /dev/null
++++ b/crates/switchyard-typesafe-client/README.md
+@@ -0,0 +1,98 @@
++<!--
++SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++SPDX-License-Identifier: Apache-2.0
++-->
++
++# switchyard-typesafe-client
++
++An HTTP client for [TypeSafe](https://typesafe.ai)'s "System One Model" (Jev),
++implementing `switchyard-libsy`'s [`TypeSafeProvider`] port.
++
++`switchyard-libsy` stays I/O-free: it depends only on the `TypeSafeProvider`
++trait, never on an HTTP client. This crate is the concrete implementation that
++actually performs the network call — the "runner-owned classification
++provider" described by
++[Switchyard issue #723](https://github.com/NVIDIA-NeMo/Switchyard/issues/723).
++`switchyard-runner` constructs one [`TypeSafeHttpClient`] per deployment (from
++the optional `[type_safe_client]` table in the deployment TOML) and injects it
++into every route configured with `type = "type_safe_classifier"`.
++
++## Usage
++
++```rust,no_run
++use std::sync::Arc;
++use switchyard_libsy::{TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider};
++use switchyard_typesafe_client::TypeSafeHttpClient;
++
++# async fn example() -> Result<(), Box<dyn std::error::Error>> {
++let client = TypeSafeHttpClient::from_env("TYPESAFE_API_KEY")?;
++
++let verdict = client
++    .classify(
++        TypeSafeClassifierInput {
++            question: "Which tier does this need?".to_string(),
++            context: "[user] how do I list files in a directory?".to_string(),
++        },
++        &[
++            TypeSafeOption::new("capable", "complex, multi-step work"),
++            TypeSafeOption::new("efficient", "short, simple requests"),
++        ],
++    )
++    .await?;
++
++println!("{} ({:.2})", verdict.label, verdict.confidence);
++println!("{:?}", verdict.probabilities);
++# Ok(())
++# }
++```
++
++`switchyard-runner` always reads the API key from the environment through
++[`TypeSafeHttpClient::from_env`]. Direct library users may instead pass a key
++to [`TypeSafeHttpClient::new`]. [`TypeSafeHttpClient`]'s `Debug` implementation
++redacts the key in either case.
++
++## Wire format
++
++`POST {base_url}/v1/systemone`, `Authorization: Bearer <api_key>`:
++
++```json
++{
++  "state": "<flattened conversation text>",
++  "model": "jev-latest",
++  "questions": {
++    "route_0": {
++      "type": "choice",
++      "instructions": "<the classifier's question>",
++      "criteria": { "capable": "...", "efficient": "..." }
++    },
++    "route_1": {
++      "type": "choice",
++      "instructions": "<the classifier's question>",
++      "criteria": { "efficient": "...", "capable": "..." }
++    }
++  }
++}
++```
++
++```json
++{
++  "usage": { "input_tokens": 42 },
++  "answers": {
++    "route_0": {
++      "choice": "efficient",
++      "confidence": 0.8,
++      "probabilities": { "capable": 0.1, "efficient": 0.9 }
++    },
++    "route_1": {
++      "choice": "efficient",
++      "confidence": 0.6,
++      "probabilities": { "capable": 0.2, "efficient": 0.8 }
++    }
++  }
++}
++```
++
++The client sends up to three deterministic option orders in one request. It
++averages and normalizes their probability distributions, selects the largest
++average probability, and recomputes TypeSafe's Choice confidence. The verdict
++also contains the full averaged distribution and wall-clock decision latency.
+diff --git a/crates/switchyard-typesafe-client/examples/live_check.rs b/crates/switchyard-typesafe-client/examples/live_check.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1cae06d4a52148e2a438a06f8665af7440d250af
+--- /dev/null
++++ b/crates/switchyard-typesafe-client/examples/live_check.rs
+@@ -0,0 +1,65 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++//! Live smoke test against the real TypeSafe `/v1/systemone` API.
++//!
++//! This is NOT part of the crate's automated test suite (those use `wiremock` and
++//! never touch the network). Run it by hand, from an environment that can reach
++//! `api.typesafe.ai`, with a real API key:
++//!
++//! ```text
++//! export TYPESAFE_API_KEY=sk-...
++//! cargo run -p switchyard-typesafe-client --example live_check
++//! ```
++//!
++//! It sends one real classification request with two candidate orders (the
++//! same shape a two-candidate `type_safe_classifier` route asks in production)
++//! and prints the provider's verdict. A non-zero exit means the call failed;
++//! HTTP failures report only their status and never include the API key.
++
++use switchyard_libsy::{TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider};
++use switchyard_typesafe_client::TypeSafeHttpClient;
++
++#[tokio::main]
++async fn main() {
++    let client = match TypeSafeHttpClient::from_env("TYPESAFE_API_KEY") {
++        Ok(client) => client,
++        Err(err) => {
++            eprintln!("could not build client: {err}");
++            std::process::exit(1);
++        }
++    };
++
++    let options = vec![
++        TypeSafeOption::new(
++            "capable",
++            "The request needs a strong, expensive model: multi-step reasoning, \
++             ambiguous or open-ended instructions, or high-stakes correctness.",
++        ),
++        TypeSafeOption::new(
++            "efficient",
++            "The request is simple and well-specified: a short factual question, \
++             a small formatting or lookup task, or routine chit-chat.",
++        ),
++    ];
++
++    let input = TypeSafeClassifierInput {
++        question: "Which model tier does this conversation need?".to_string(),
++        context: "user: What's 2+2?\nassistant:".to_string(),
++    };
++
++    println!("Calling TypeSafe (model = jev-latest) ...");
++    match client.classify(input, &options).await {
++        Ok(verdict) => {
++            println!("OK");
++            println!("  label:         {}", verdict.label);
++            println!("  confidence:    {:.3}", verdict.confidence);
++            println!("  probabilities: {:?}", verdict.probabilities);
++            println!("  latency_ms:    {}", verdict.decision_latency_ms);
++        }
++        Err(err) => {
++            eprintln!("classify() failed: {err}");
++            std::process::exit(1);
++        }
++    }
++}
+diff --git a/crates/switchyard-typesafe-client/src/error.rs b/crates/switchyard-typesafe-client/src/error.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..78b2e52af791cd7ede1c79ccd50c71f9e9ea8951
+--- /dev/null
++++ b/crates/switchyard-typesafe-client/src/error.rs
+@@ -0,0 +1,48 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++use std::fmt;
++
++/// Errors constructing a [`crate::TypeSafeHttpClient`].
++///
++/// These are configuration-time failures (a missing or empty credential, an
++/// invalid base URL) — never surfaced from `classify`, which folds every
++/// runtime failure into `switchyard_libsy::TypeSafeProviderError` instead.
++#[derive(Debug)]
++pub enum TypeSafeClientError {
++    /// The named environment variable was not set.
++    MissingApiKey {
++        /// The environment variable that was read.
++        variable: String,
++    },
++    /// The named environment variable was set to an empty (or whitespace-only) value.
++    EmptyApiKey {
++        /// The environment variable that was read.
++        variable: String,
++    },
++    /// The supplied base URL could not be parsed or did not use HTTPS.
++    InvalidBaseUrl {
++        /// The value that failed to parse.
++        base_url: String,
++        /// The underlying parse error, rendered to text.
++        reason: String,
++    },
++}
++
++impl fmt::Display for TypeSafeClientError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::MissingApiKey { variable } => {
++                write!(f, "environment variable {variable} is not set")
++            }
++            Self::EmptyApiKey { variable } => {
++                write!(f, "environment variable {variable} is empty")
++            }
++            Self::InvalidBaseUrl { base_url, reason } => {
++                write!(f, "base_url {base_url:?} is not a valid URL: {reason}")
++            }
++        }
++    }
++}
++
++impl std::error::Error for TypeSafeClientError {}
+diff --git a/crates/switchyard-typesafe-client/src/lib.rs b/crates/switchyard-typesafe-client/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..73d5621bf9596fae8f63c0676af5ab213e4c229f
+--- /dev/null
++++ b/crates/switchyard-typesafe-client/src/lib.rs
+@@ -0,0 +1,615 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++#![warn(missing_docs)]
++#![doc = include_str!("../README.md")]
++
++mod error;
++pub use error::TypeSafeClientError;
++
++use std::collections::{BTreeMap, BTreeSet};
++use std::time::{Duration, Instant};
++
++use async_trait::async_trait;
++use serde::ser::SerializeMap;
++use serde::{Deserialize, Serialize};
++use switchyard_libsy::{
++    TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeProviderError,
++    TypeSafeVerdict,
++};
++
++/// Production API root. Override with [`TypeSafeHttpClient::with_base_url`] for
++/// testing or a regional deployment.
++const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
++/// Model served by default. Override with [`TypeSafeHttpClient::with_model`].
++const DEFAULT_MODEL: &str = "jev-latest";
++const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
++const QUESTION_PREFIX: &str = "route_";
++
++/// HTTP client for TypeSafe's `/v1/systemone` endpoint (the "System One Model" /
++/// Jev), implementing [`TypeSafeProvider`].
++///
++/// `switchyard-runner` reads the API key from an environment variable through
++/// [`TypeSafeHttpClient::from_env`]. Direct library users may instead use
++/// [`TypeSafeHttpClient::new`]. The `Debug` implementation redacts the key.
++#[derive(Clone)]
++pub struct TypeSafeHttpClient {
++    http: reqwest::Client,
++    base_url: String,
++    api_key: String,
++    model: String,
++}
++
++impl std::fmt::Debug for TypeSafeHttpClient {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("TypeSafeHttpClient")
++            .field("base_url", &self.base_url)
++            .field("model", &self.model)
++            .field("api_key", &"<redacted>")
++            .finish()
++    }
++}
++
++impl TypeSafeHttpClient {
++    /// Builds a client from an API key already in hand.
++    ///
++    /// Prefer [`Self::from_env`] so the key never passes through configuration
++    /// file parsing.
++    pub fn new(api_key: impl Into<String>) -> Self {
++        Self {
++            http: reqwest::Client::builder()
++                .timeout(DEFAULT_TIMEOUT)
++                .build()
++                .unwrap_or_else(|_| reqwest::Client::new()),
++            base_url: DEFAULT_BASE_URL.to_string(),
++            api_key: api_key.into(),
++            model: DEFAULT_MODEL.to_string(),
++        }
++    }
++
++    /// Reads the API key from the named environment variable.
++    ///
++    /// # Errors
++    ///
++    /// Returns [`TypeSafeClientError::MissingApiKey`] when the variable is unset,
++    /// and [`TypeSafeClientError::EmptyApiKey`] when it is set to an empty or
++    /// whitespace-only value.
++    pub fn from_env(variable: &str) -> Result<Self, TypeSafeClientError> {
++        let api_key = std::env::var(variable).map_err(|_| TypeSafeClientError::MissingApiKey {
++            variable: variable.to_string(),
++        })?;
++        if api_key.trim().is_empty() {
++            return Err(TypeSafeClientError::EmptyApiKey {
++                variable: variable.to_string(),
++            });
++        }
++        Ok(Self::new(api_key))
++    }
++
++    /// Overrides the API root. Defaults to TypeSafe's production endpoint.
++    ///
++    /// # Errors
++    ///
++    /// Returns [`TypeSafeClientError::InvalidBaseUrl`] when `base_url` does not
++    /// parse as a URL or does not use HTTPS.
++    pub fn with_base_url(
++        mut self,
++        base_url: impl Into<String>,
++    ) -> Result<Self, TypeSafeClientError> {
++        let base_url = base_url.into();
++        let parsed = reqwest::Url::parse(&base_url).map_err(|error| {
++            TypeSafeClientError::InvalidBaseUrl {
++                base_url: base_url.clone(),
++                reason: error.to_string(),
++            }
++        })?;
++        if parsed.scheme() != "https" {
++            return Err(TypeSafeClientError::InvalidBaseUrl {
++                base_url,
++                reason: "scheme must be https".to_string(),
++            });
++        }
++        self.base_url = base_url;
++        Ok(self)
++    }
++
++    #[cfg(test)]
++    fn with_base_url_for_test(
++        mut self,
++        base_url: impl Into<String>,
++    ) -> Result<Self, TypeSafeClientError> {
++        let base_url = base_url.into();
++        reqwest::Url::parse(&base_url).map_err(|error| TypeSafeClientError::InvalidBaseUrl {
++            base_url: base_url.clone(),
++            reason: error.to_string(),
++        })?;
++        self.base_url = base_url;
++        Ok(self)
++    }
++
++    /// Overrides the model name sent as `model`. Defaults to `"jev-latest"`.
++    pub fn with_model(mut self, model: impl Into<String>) -> Self {
++        self.model = model.into();
++        self
++    }
++
++    fn endpoint(&self) -> String {
++        format!("{}/v1/systemone", self.base_url.trim_end_matches('/'))
++    }
++}
++
++#[derive(Serialize)]
++struct SystemOneRequest<'a> {
++    state: &'a str,
++    model: &'a str,
++    questions: BTreeMap<String, ChoiceQuestion<'a>>,
++}
++
++#[derive(Serialize)]
++struct ChoiceQuestion<'a> {
++    #[serde(rename = "type")]
++    kind: &'static str,
++    instructions: &'a str,
++    criteria: OrderedCriteria<'a>,
++}
++
++struct OrderedCriteria<'a>(Vec<(&'a str, &'a str)>);
++
++impl Serialize for OrderedCriteria<'_> {
++    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
++    where
++        S: serde::Serializer,
++    {
++        let mut map = serializer.serialize_map(Some(self.0.len()))?;
++        for (label, description) in &self.0 {
++            map.serialize_entry(label, description)?;
++        }
++        map.end()
++    }
++}
++
++#[derive(Deserialize, Default)]
++struct Usage {
++    #[serde(default)]
++    #[allow(dead_code)]
++    // Not surfaced today; kept so a wire-shape mismatch fails to parse loudly.
++    input_tokens: u64,
++}
++
++#[derive(Deserialize)]
++struct ChoiceAnswer {
++    choice: String,
++    confidence: f64,
++    probabilities: BTreeMap<String, f64>,
++}
++
++#[derive(Deserialize)]
++struct SystemOneResponse {
++    #[serde(default)]
++    #[allow(dead_code)]
++    usage: Usage,
++    answers: BTreeMap<String, ChoiceAnswer>,
++}
++
++#[async_trait]
++impl TypeSafeProvider for TypeSafeHttpClient {
++    async fn classify(
++        &self,
++        input: TypeSafeClassifierInput,
++        options: &[TypeSafeOption],
++    ) -> Result<TypeSafeVerdict, TypeSafeProviderError> {
++        if options.is_empty() {
++            return Err(TypeSafeProviderError(
++                "typesafe classification needs at least one candidate".to_string(),
++            ));
++        }
++        let unique_labels = options
++            .iter()
++            .map(|option| option.label.as_str())
++            .collect::<BTreeSet<_>>();
++        if unique_labels.len() != options.len() {
++            return Err(TypeSafeProviderError(
++                "typesafe classification requires unique candidate labels".to_string(),
++            ));
++        }
++        let orders = option_orders(options);
++        let mut questions = BTreeMap::new();
++        for (index, order) in orders.iter().enumerate() {
++            questions.insert(
++                format!("{QUESTION_PREFIX}{index}"),
++                ChoiceQuestion {
++                    kind: "choice",
++                    instructions: &input.question,
++                    criteria: OrderedCriteria(
++                        order
++                            .iter()
++                            .map(|option| (option.label.as_str(), option.description.as_str()))
++                            .collect(),
++                    ),
++                },
++            );
++        }
++        let body = SystemOneRequest {
++            state: &input.context,
++            model: &self.model,
++            questions,
++        };
++
++        let started = Instant::now();
++        let response = self
++            .http
++            .post(self.endpoint())
++            .bearer_auth(&self.api_key)
++            .json(&body)
++            .send()
++            .await
++            .map_err(|error| TypeSafeProviderError(format!("typesafe request failed: {error}")))?;
++
++        let status = response.status();
++        if !status.is_success() {
++            // Deliberately drop the response body: it is provider-controlled and this error
++            // is surfaced through logs and telemetry. `state` in the request can carry the
++            // caller's own prompt content, so an error body that happened to echo any of it
++            // back must not flow into our own logs. The status code alone is enough to
++            // diagnose a provider-side failure.
++            return Err(TypeSafeProviderError(format!(
++                "typesafe returned HTTP {status}"
++            )));
++        }
++
++        let parsed: SystemOneResponse = response.json().await.map_err(|error| {
++            TypeSafeProviderError(format!("typesafe response was not valid JSON: {error}"))
++        })?;
++
++        let mut probabilities = options
++            .iter()
++            .map(|option| (option.label.clone(), 0.0))
++            .collect::<BTreeMap<_, _>>();
++        for index in 0..orders.len() {
++            let question = format!("{QUESTION_PREFIX}{index}");
++            let answer = parsed.answers.get(&question).ok_or_else(|| {
++                TypeSafeProviderError(format!(
++                    "typesafe response is missing the {question:?} answer"
++                ))
++            })?;
++            if !probabilities.contains_key(&answer.choice) {
++                return Err(TypeSafeProviderError(format!(
++                    "typesafe returned unknown candidate {:?}",
++                    answer.choice
++                )));
++            }
++            if !(0.0..=1.0).contains(&answer.confidence) {
++                return Err(TypeSafeProviderError(
++                    "typesafe returned an invalid confidence".to_string(),
++                ));
++            }
++            let mut answer_sum = 0.0;
++            for (label, total) in &mut probabilities {
++                let value = answer.probabilities.get(label).ok_or_else(|| {
++                    TypeSafeProviderError(format!(
++                        "typesafe response is missing probability for {label:?}"
++                    ))
++                })?;
++                if !(0.0..=1.0).contains(value) {
++                    return Err(TypeSafeProviderError(format!(
++                        "typesafe returned an invalid probability for {label:?}"
++                    )));
++                }
++                answer_sum += value;
++                *total += value;
++            }
++            if !answer_sum.is_finite() || (answer_sum - 1.0).abs() > 0.02 {
++                return Err(TypeSafeProviderError(format!(
++                    "typesafe probabilities for {question:?} do not sum to one"
++                )));
++            }
++        }
++        for probability in probabilities.values_mut() {
++            *probability /= orders.len() as f64;
++        }
++        let probability_sum = probabilities.values().sum::<f64>();
++        if !probability_sum.is_finite() || (probability_sum - 1.0).abs() > 0.02 {
++            return Err(TypeSafeProviderError(
++                "typesafe probabilities do not sum to one".to_string(),
++            ));
++        }
++        for probability in probabilities.values_mut() {
++            *probability /= probability_sum;
++        }
++        let selected = options
++            .iter()
++            .reduce(|best, candidate| {
++                if probabilities[&candidate.label] > probabilities[&best.label] {
++                    candidate
++                } else {
++                    best
++                }
++            })
++            .ok_or_else(|| {
++                TypeSafeProviderError(
++                    "typesafe classification needs at least one candidate".to_string(),
++                )
++            })?;
++        let maximum = probabilities[&selected.label];
++        let uniform = 1.0 / options.len() as f64;
++        let confidence = if options.len() == 1 {
++            1.0
++        } else {
++            ((maximum - uniform) / (1.0 - uniform)).clamp(0.0, 1.0)
++        };
++
++        Ok(TypeSafeVerdict {
++            label: selected.label.clone(),
++            confidence,
++            probabilities,
++            decision_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
++        })
++    }
++}
++
++// Return at most three deterministic, non-duplicate orders to reduce routing bias.
++fn option_orders(options: &[TypeSafeOption]) -> Vec<Vec<&TypeSafeOption>> {
++    let mut orders = vec![options.iter().collect::<Vec<_>>()];
++    if options.len() > 1 {
++        let mut rotated = options.iter().collect::<Vec<_>>();
++        rotated.rotate_left(1);
++        orders.push(rotated);
++        let mut reversed = options.iter().collect::<Vec<_>>();
++        reversed.reverse();
++        if !orders.iter().any(|order| {
++            order
++                .iter()
++                .map(|option| &option.label)
++                .eq(reversed.iter().map(|option| &option.label))
++        }) {
++            orders.push(reversed);
++        }
++    }
++    orders
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use wiremock::matchers::{body_partial_json, header, method, path};
++    use wiremock::{Mock, MockServer, ResponseTemplate};
++
++    fn options() -> Vec<TypeSafeOption> {
++        vec![
++            TypeSafeOption::new("capable", "complex, multi-step work"),
++            TypeSafeOption::new("efficient", "short, simple requests"),
++        ]
++    }
++
++    fn input() -> TypeSafeClassifierInput {
++        TypeSafeClassifierInput {
++            question: "Which tier does this need?".to_string(),
++            context: "[user] list files in a directory".to_string(),
++        }
++    }
++
++    #[test]
++    fn from_env_reports_a_missing_variable() {
++        let error = TypeSafeHttpClient::from_env("SWITCHYARD_TYPESAFE_TEST_UNSET_VAR");
++        assert!(matches!(
++            error,
++            Err(TypeSafeClientError::MissingApiKey { variable })
++                if variable == "SWITCHYARD_TYPESAFE_TEST_UNSET_VAR"
++        ));
++    }
++
++    #[test]
++    fn debug_output_redacts_the_api_key() {
++        let client = TypeSafeHttpClient::new("sk-super-secret");
++        let rendered = format!("{client:?}");
++        assert!(!rendered.contains("sk-super-secret"));
++        assert!(rendered.contains("<redacted>"));
++    }
++
++    #[test]
++    fn invalid_base_url_is_rejected() {
++        let result = TypeSafeHttpClient::new("key").with_base_url("not a url");
++        assert!(matches!(
++            result,
++            Err(TypeSafeClientError::InvalidBaseUrl { .. })
++        ));
++    }
++
++    #[test]
++    fn plain_http_base_url_is_rejected() {
++        let result = TypeSafeHttpClient::new("key").with_base_url("http://typesafe.example");
++        assert!(matches!(
++            result,
++            Err(TypeSafeClientError::InvalidBaseUrl { reason, .. })
++                if reason == "scheme must be https"
++        ));
++    }
++
++    #[tokio::test]
++    async fn classify_rejects_duplicate_candidate_labels() {
++        let options = [
++            TypeSafeOption::new("duplicate", "first description"),
++            TypeSafeOption::new("duplicate", "second description"),
++        ];
++        let error = TypeSafeHttpClient::new("sk-test")
++            .classify(input(), &options)
++            .await
++            .expect_err("duplicate labels should fail before the request");
++
++        assert!(error.to_string().contains("unique candidate labels"));
++    }
++
++    #[tokio::test]
++    async fn classify_parses_a_successful_response() {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/v1/systemone"))
++            .and(header("Authorization", "Bearer sk-test"))
++            .and(body_partial_json(serde_json::json!({
++                "state": "[user] list files in a directory",
++                "model": "jev-latest",
++                "questions": {
++                    "route_0": {
++                        "type": "choice",
++                        "instructions": "Which tier does this need?",
++                        "criteria": {
++                            "capable": "complex, multi-step work",
++                            "efficient": "short, simple requests"
++                        }
++                    },
++                    "route_1": {
++                        "type": "choice",
++                        "instructions": "Which tier does this need?",
++                        "criteria": {
++                            "efficient": "short, simple requests",
++                            "capable": "complex, multi-step work"
++                        }
++                    }
++                }
++            })))
++            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++                "usage": {"input_tokens": 42},
++                "answers": {
++                    "route_0": {
++                        "choice": "efficient",
++                        "confidence": 0.6,
++                        "probabilities": {"capable": 0.2, "efficient": 0.8}
++                    },
++                    "route_1": {
++                        "choice": "capable",
++                        "confidence": 0.2,
++                        "probabilities": {"capable": 0.6, "efficient": 0.4}
++                    }
++                }
++            })))
++            .mount(&server)
++            .await;
++
++        let client = TypeSafeHttpClient::new("sk-test")
++            .with_base_url_for_test(server.uri())
++            .expect("mock server URI is valid");
++
++        let verdict = client
++            .classify(input(), &options())
++            .await
++            .expect("classify should succeed");
++
++        assert_eq!(verdict.label, "efficient");
++        assert!((verdict.confidence - 0.2).abs() < 1e-12);
++        assert!((verdict.probabilities["capable"] - 0.4).abs() < 1e-12);
++        assert!((verdict.probabilities["efficient"] - 0.6).abs() < 1e-12);
++        assert!(verdict.decision_latency_ms < 10_000);
++    }
++
++    #[tokio::test]
++    async fn classify_surfaces_a_non_success_status_without_leaking_the_key() {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/v1/systemone"))
++            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
++            .mount(&server)
++            .await;
++
++        let client = TypeSafeHttpClient::new("sk-test")
++            .with_base_url_for_test(server.uri())
++            .expect("mock server URI is valid");
++
++        let error = client
++            .classify(input(), &options())
++            .await
++            .expect_err("classify should fail on HTTP 401");
++
++        let message = error.to_string();
++        assert!(message.contains("401"));
++        assert!(!message.contains("sk-test"));
++    }
++
++    #[tokio::test]
++    async fn classify_errors_when_the_answer_is_missing() {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/v1/systemone"))
++            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++                "usage": {"input_tokens": 1},
++                "answers": {}
++            })))
++            .mount(&server)
++            .await;
++
++        let client = TypeSafeHttpClient::new("sk-test")
++            .with_base_url_for_test(server.uri())
++            .expect("mock server URI is valid");
++
++        let error = client
++            .classify(input(), &options())
++            .await
++            .expect_err("classify should fail when the answer is absent");
++        assert!(error.to_string().contains("route"));
++    }
++
++    #[tokio::test]
++    async fn classify_rejects_a_probability_distribution_that_does_not_sum_to_one() {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/v1/systemone"))
++            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
++                "usage": {"input_tokens": 1},
++                "answers": {
++                    "route_0": {
++                        "choice": "capable",
++                        "confidence": 0.5,
++                        "probabilities": {"capable": 0.8, "efficient": 0.8}
++                    },
++                    "route_1": {
++                        "choice": "efficient",
++                        "confidence": 0.5,
++                        "probabilities": {"capable": 0.2, "efficient": 0.8}
++                    }
++                }
++            })))
++            .mount(&server)
++            .await;
++
++        let client = TypeSafeHttpClient::new("sk-test")
++            .with_base_url_for_test(server.uri())
++            .expect("mock server URI is valid");
++        let error = client
++            .classify(input(), &options())
++            .await
++            .expect_err("classify should reject a malformed distribution");
++
++        assert!(error.to_string().contains("do not sum to one"));
++    }
++
++    #[test]
++    fn option_orders_cover_stable_permutations_without_duplicates() {
++        let options = vec![
++            TypeSafeOption::new("one", "first"),
++            TypeSafeOption::new("two", "second"),
++            TypeSafeOption::new("three", "third"),
++        ];
++        let orders = option_orders(&options)
++            .into_iter()
++            .map(|order| {
++                order
++                    .into_iter()
++                    .map(|option| option.label.as_str())
++                    .collect::<Vec<_>>()
++            })
++            .collect::<Vec<_>>();
++        assert_eq!(
++            orders,
++            [
++                vec!["one", "two", "three"],
++                vec!["two", "three", "one"],
++                vec!["three", "two", "one"],
++            ]
++        );
++    }
++
++    #[test]
++    fn with_model_overrides_the_default() {
++        let client = TypeSafeHttpClient::new("sk-test").with_model("jev-pinned");
++        assert_eq!(client.model, "jev-pinned");
++    }
++}
+diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
+index d168a64dfa8e9e4a6510830a6643b3c5ab65da33..7baf1d39e8a3ab5ede4c7f9b34005d869a5d22dc 100644
+--- a/docs/reference/toml_schema.md
++++ b/docs/reference/toml_schema.md
+@@ -97,12 +97,30 @@ targets. The server rejects an Anthropic forwarding route called through an
+ OpenAI endpoint, or an OpenAI forwarding route called through an Anthropic
+ endpoint, before it calls an upstream.
+ 
++## `[type_safe_client]`
++
++Optional, deployment-wide settings for [TypeSafe](https://docs.typesafe.ai/introduction)'s
++Jev "System One Model". Required when any route uses
++`type = "type_safe_classifier"`; unused otherwise. Unlike `[llm_clients.<name>]`,
++there is at most one of these per deployment — every `type_safe_classifier`
++route shares it. See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_routing.md).
++
++| Key | Required | Default | Meaning |
++|---|:---:|---|---|
++| `api_key_env` | Yes | — | Name of the environment variable holding the TypeSafe API key. |
++| `base_url` | No | `https://api.typesafe.ai` | Overrides the API root. |
++| `model` | No | `jev-latest` | Overrides the model name sent as `model`. |
++
++As with every other credential in this file, the key itself is never read from
++TOML and never logged.
++
+ ## `[targets.<name>]`
+ 
+ | Key | Required | Default | Meaning |
+ |---|:---:|---|---|
+ | `id` | Yes | — | Exact model ID sent upstream. |
+ | `llm_client` | Yes | — | Key under `[llm_clients]`. |
++| `routing_description` | No | generated from target name and model ID | Facts TypeSafe uses when comparing this target with other candidates. A route-level `candidate_descriptions` entry overrides it. |
+ | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
+ | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
+ | `reasoning_effort` | No | unset | Reasoning effort forced on every request to this target, replacing the value the caller sent (`reasoning.effort` on `openai_responses`, `reasoning_effort` on `openai_chat`). Rejected on `anthropic_messages` clients. Use it to run one target at a different effort than the client asked for, for example a strong tier at `max` behind a client that sends `high`. Targets with different effort settings need distinct model IDs when used within one route. Separate routes may use the same model ID with separate `llm_clients` entries (same endpoint, different name). |
+@@ -280,6 +298,27 @@ Classifier prompts must not contain `{{RESPONSE_SCHEMA}}`. Switchyard supplies
+ the schema automatically: through the structured-output request in `json_schema`
+ mode, or in the prompt in `json_object` mode.
+ 
++### `type_safe_classifier`
++
++Routes using a runner-owned TypeSafe (Jev "System One Model") classifier.
++Requires a [`[type_safe_client]`](#type_safe_client) table in the deployment.
++See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_routing.md).
++
++| Key | Required | Default | Meaning |
++|---|:---:|---|---|
++| `candidates` | Yes | — | Two or more unique target names offered to TypeSafe. `any` and `judge` are reserved. |
++| `candidate_descriptions` | No | target description or generated text | Route-specific descriptions keyed by candidate target name. |
++| `default_target` | Yes | — | Candidate used when TypeSafe fails or answers below `base_threshold`. |
++| `base_threshold` | Yes | — | Lowest confidence that is trusted, in `[0, 1]`. |
++| `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
++| `classify_trigger` | No | `every_request` | When the classifier runs. Same semantics as `llm_classifier`. |
++| `message_hash_fallback` | No | `false` | Keys affinity on the first user message. Requires `classify_trigger = "new_session"`. |
++| `recent_turn_window` | No | unset | When unset, TypeSafe sees the opening task and latest user follow-up, when present. When set, it also sees trailing turns. |
++
++The classifier sends up to three fixed candidate orders in one TypeSafe
++request and averages their probability distributions. The full averaged
++probabilities and decision latency are recorded in routing evidence.
++
+ ### `stage_router`
+ 
+ Scores tool signals to pick a tier per turn. See
+diff --git a/docs/routing_algorithms/overview.md b/docs/routing_algorithms/overview.md
+index fa26620c567fab03abd150f85faa29e2be2d70de..c13906e1229839ad53b16c81772dc91feb09f56f 100644
+--- a/docs/routing_algorithms/overview.md
++++ b/docs/routing_algorithms/overview.md
+@@ -49,6 +49,7 @@ These options remain available when you need a different routing policy.
+ | [Sub-Agent-Aware Routing](subagent_routing.md) | Delegated sub-agents should use a separate routing policy from the parent agent. | `passthrough` or `stage_router` with `subagents` |
+ | [Random Routing](random_routing.md) | You need a fixed traffic split for A/B tests, baselines, or cost experiments. | `random` |
+ | [Fixed Model](#direct-model-routes) | Send every request to one target without a routing decision. | `passthrough` |
++| [TypeSafe Classifier](type_safe_classifier_routing.md) | Use TypeSafe's Jev to compare configured targets without a chat-completion judge. | `type_safe_classifier` |
+ 
+ ### Experimental
+ 
+diff --git a/docs/routing_algorithms/type_safe_classifier_routing.md b/docs/routing_algorithms/type_safe_classifier_routing.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0e72b6b08f2a325e9aa8b9271a68b97d8807a407
+--- /dev/null
++++ b/docs/routing_algorithms/type_safe_classifier_routing.md
+@@ -0,0 +1,133 @@
++# TypeSafe Classifier Routing
++
++TypeSafe classifier routing decides a route's target with
++[TypeSafe](https://docs.typesafe.ai/introduction)'s Jev "System One Model"
++instead of a chat-completion judge. Jev is non-generative: it returns a typed,
++probabilistic `Choice` directly from a sampling layer rather than generating
++and parsing text, so this classifier never calls one of the deployment's own
++`[llm_clients]` targets for its judgment step. It compares two or more target
++models configured by the user.
++
++Use it when you want a classifier call that is not itself a chat completion —
++for example to avoid a judge model's own latency and reasoning-token cost. Use
++`llm_classifier` instead when the classifier should be one of your existing
++chat-completion targets, or when you need capability/escalation mode.
++
++## Configure a TypeSafe client
++
++Every `type_safe_classifier` route shares one deployment-wide TypeSafe client,
++configured once in `[type_safe_client]`:
++
++```toml
++[type_safe_client]
++api_key_env = "TYPESAFE_API_KEY"
++# base_url = "https://api.typesafe.ai"   # optional, defaults to the production endpoint
++# model = "jev-latest"                    # optional, defaults to "jev-latest"
++```
++
++`api_key_env` names an environment variable read at startup. As with every
++other credential in a deployment, the key itself never appears in the TOML
++file or in logs. A route using `type = "type_safe_classifier"` fails to build
++when the deployment has no `[type_safe_client]` table.
++
++## Configure a route
++
++```toml
++schema_version = 1
++
++[type_safe_client]
++api_key_env = "TYPESAFE_API_KEY"
++
++[llm_clients.openrouter]
++format = "openai_chat"
++base_url = "https://openrouter.ai/api/v1"
++api_key_env = "OPENROUTER_API_KEY"
++
++[targets.strong]
++id = "openai/gpt-4o"
++llm_client = "openrouter"
++routing_description = "Best for complex, multi-step work and high-stakes correctness."
++
++[targets.weak]
++id = "openai/gpt-4o-mini"
++llm_client = "openrouter"
++routing_description = "Best for short, simple, well-specified requests."
++
++[routes.smart]
++id = "smart"
++type = "type_safe_classifier"
++default_target = "weak"
++base_threshold = 0.6
++candidates = ["strong", "weak"]
++question = "Which configured model is the best fit for this conversation?"
++```
++
++`candidates` names the configured targets that Jev compares. Each candidate
++must be unique, and `default_target` must name one of them. The optional
++`routing_description` on a target tells Jev when that model is a good fit. If
++it is omitted, Switchyard uses the target name and model ID. A route can
++override a target's description with `candidate_descriptions`:
++
++```toml
++[routes.smart.candidate_descriptions]
++strong = "Prefer for difficult coding and long-context analysis."
++```
++
++The names `any` and `judge` are reserved and cannot be candidates.
++
++## How the decision works
++
++Each request's opening task (and latest user follow-up, when it differs) is
++flattened into plain text and sent to TypeSafe as `state`, alongside the
++candidate descriptions as `Choice` criteria. Switchyard sends up to three
++fixed candidate orders in one request, averages their probability
++distributions, and chooses the candidate with the highest average probability.
++It computes confidence from that averaged distribution using TypeSafe's Choice
++confidence formula. The full probabilities and decision latency are recorded
++in routing evidence.
++
++- A confidence at or above `base_threshold` routes to the selected target.
++- A confidence below `base_threshold`, an invalid response, or a failed
++  TypeSafe request falls back to `default_target`. This classifier never
++  errors the request: every provider failure mode fails open.
++
++## Tuning options
++
++| Key | Required | Default | Meaning |
++|---|:---:|---|---|
++| `candidates` | Yes | — | Two or more unique target names offered to TypeSafe. `any` and `judge` are reserved. |
++| `candidate_descriptions` | No | target description or generated text | Route-specific descriptions keyed by candidate target name. |
++| `default_target` | Yes | — | Candidate used when TypeSafe fails or answers below `base_threshold`. |
++| `base_threshold` | Yes | — | Lowest confidence that is trusted, in `[0, 1]`. |
++| `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
++| `classify_trigger` | No | `every_request` | When the classifier re-decides. Same semantics as `llm_classifier`: `every_request`, `user_turn`, or `new_session`. |
++| `message_hash_fallback` | No | `false` | Keys affinity on the first user message when session metadata is absent. Requires `classify_trigger = "new_session"`. |
++| `recent_turn_window` | No | unset | When unset, TypeSafe sees the opening task and latest user follow-up, when present. When set, it also sees trailing turns. |
++
++`targets.<name>.routing_description` is optional. It supplies reusable facts
++about a target for every TypeSafe route that includes it. A route-level
++`candidate_descriptions` entry takes precedence.
++
++## Run the route
++
++After [installing the Rust server](../getting_started.md#install-the-server), export
++both the upstream provider credential and the TypeSafe API key, validate the
++configuration, and start the release binary:
++
++```bash
++export OPENROUTER_API_KEY="your-openrouter-key"  # pragma: allowlist secret
++export TYPESAFE_API_KEY="your-typesafe-key"      # pragma: allowlist secret
++switchyard-server --config routes.toml --dry-run
++switchyard-server --config routes.toml \
++  --host 127.0.0.1 --port 4000
++```
++
++Send a request using the route ID:
++
++```bash
++curl http://localhost:4000/v1/chat/completions \
++  -H "Content-Type: application/json" \
++  -d '{"model":"smart","messages":[{"role":"user","content":"Explain why the sky appears blue."}]}'
++```
++
++Treat the selected target as model-dependent output, not a fixed test result.
+diff --git a/mkdocs.yml b/mkdocs.yml
+index bcd19640281248ecb6ff6d1bee28af1d15e09a1f..498dde747295109d2c63b1580fa495c256b48212 100644
+--- a/mkdocs.yml
++++ b/mkdocs.yml
+@@ -31,6 +31,7 @@ nav:
+       - Execution (Stage Router): routing_algorithms/stage_router_routing.md
+       - Sub-Agent-Aware Routing: routing_algorithms/subagent_routing.md
+       - Random Routing: routing_algorithms/random_routing.md
++      - TypeSafe Classifier: routing_algorithms/type_safe_classifier_routing.md
+       - Composite Routing: routing_algorithms/composite_routing.md
+       - Escalation-Router Routing: routing_algorithms/escalation_router_routing.md
+       - Advisor-Gate Routing: routing_algorithms/advisor_gate_routing.md

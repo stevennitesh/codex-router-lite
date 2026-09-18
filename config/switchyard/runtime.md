@@ -41,7 +41,10 @@ headers, capabilities, or raw agent identifiers:
 ```
 
 The summary reports status counts, selected targets, classifier failures, and
-agent/correlation cardinality. Use the raw log only when this redacted summary
+agent/correlation cardinality. For a TypeSafe policy it also reports bounded
+counts and recent provider versions, final targets, policy hashes, confidence,
+threshold, decision latency, and fallback reasons. It never includes decision
+state or provider credentials. Use the raw log only when this redacted summary
 cannot distinguish the failing owner.
 
 For a bounded certification packet that combines Router timings with the
