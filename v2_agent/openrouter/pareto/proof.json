@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "provider": "openrouter",
+  "model": "unbiased/pareto",
+  "slug": "openrouter/pareto",
+  "status": "accepted",
+  "officialSources": [
+    "https://openrouter.ai/unbiased/pareto"
+  ],
+  "testedAt": "2026-09-18T00:22:52.469Z",
+  "routerVersion": "0.5.1",
+  "endpointProvider": "unbiased",
+  "checks": {
+    "streaming": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-18T00:22:34.636Z"
+    },
+    "toolCall": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-18T00:22:33.299Z",
+      "mode": "auto"
+    },
+    "encryptedRelay": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-18T00:22:26.003Z"
+    },
+    "markerReturn": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-18T00:22:34.670Z"
+    },
+    "sameThreadFollowUp": {
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-09-18T00:22:45.582Z"
+    }
+  },
+  "codexVersion": "codex-cli 0.155.0-alpha.2.6",
+  "executionSurface": "codex-cli",
+  "routerCommit": "5547e5ec14328d11aee16caeadad695c24d27c82"
+}

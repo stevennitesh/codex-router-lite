@@ -29,7 +29,7 @@ native CLI, with a small, explicit set of routes.
 | Switchyard Auto | Native Codex → Luna / Sol | [Routing policy](config/switchyard/README.md#routing-policy) |
 
 Pareto supports automatic tool selection and has no hosted-search capability.
-It is a v1 route. GLM and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
+Pareto, GLM, and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
 each valid only for its named runtime; Union Alpha's proof is retained as history.
 
 ## Quick start

@@ -14,15 +14,17 @@ test("certification preflight distinguishes source claims from native role readi
   assert.throws(()=>certificationPreflight(undefined),/exact registered route/);
 });
 
-test("Pareto remains v1 and cannot reuse the retired Union application", () => {
+test("Pareto uses its own v2 application and still rejects a v1 source", () => {
   const pareto = MODEL_BY_SLUG.get("openrouter/pareto");
   const state = {
-    catalogEntry: { visibility: "list", multi_agent_version: "v1" },
+    catalogEntry: { visibility: "list", multi_agent_version: "v2" },
     roleContents: routedAgentDefinition(pareto).contents,
     deployedCommit: "a".repeat(40),
   };
   const report = certificationPreflight(pareto, state);
-  assert.equal(report.readyForFreshParent, false);
-  assert.match(report.blockers.join("\n"), /Source route is v1/);
+  assert.equal(report.readyForFreshParent, true);
+  const v1 = certificationPreflight({ ...pareto, multiAgentVersion: "v1" }, state);
+  assert.equal(v1.readyForFreshParent, false);
+  assert.match(v1.blockers.join("\n"), /Source route is v1/);
   assert.equal(report.application, "v2_agent/openrouter/pareto/");
 });

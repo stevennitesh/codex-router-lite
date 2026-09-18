@@ -43,7 +43,7 @@ The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
 other.
 
-Pareto is a separate v1 entry pinned to the exact Unbiased endpoint. It has
+Pareto is a separate v2 entry pinned to the exact Unbiased endpoint. It has
 automatic tool selection and provider-controlled reasoning. See its
 [endpoint contract](agents/pareto.md) for measured capabilities.
 
