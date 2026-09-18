@@ -2,7 +2,7 @@
 
 Status: prepared, not dispatched. User requested planning only on 2026-09-18.
 
-Revision 2: feedback reconciliation only. Use revision 2 of the linked plan for
+Revision 3: feedback reconciliation only. Use revision 3 of the linked plan for
 future assignments. Implementation remains unstarted.
 
 Outcome authority: [Switchyard upgrade plan](switchyard-upgrade-plan.md).

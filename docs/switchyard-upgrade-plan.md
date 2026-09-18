@@ -3,7 +3,7 @@
 Status: proposed, implementation not started. Prepared 2026-09-18 against Router
 `363032953c22ac6b7839c79231e57f35d88d5ba6`.
 
-Revision 2 reconciles review feedback against the committed plan at `4acf2084`.
+Revision 3 reconciles follow-up feedback against the committed plan at `d81269ae`.
 This revision changes planning documents only; it does not start execution.
 
 This is a delivery proposal, not current runtime documentation or authorization
@@ -163,7 +163,9 @@ field currently sets `native.model` before both ordinary routing and native V1/V
 compaction; compaction bypasses Switchyard. Preserve a valid native compaction
 model, initially Sol, while selecting a separate dispatch identity only for
 Switchyard-bound requests. Prefer existing `gatewayModel` if its semantics fit,
-rather than adding an equivalent field. Trace other consumers first.
+rather than adding an equivalent field. The current native Switchyard branch
+does not use `gatewayModel`; A1 must wire that behavior deliberately if selected.
+Trace other consumers first.
 
 Verify streamed/non-streamed response and resumed-session identity: backend
 `response.model` must not silently change the user's selected `switchyard/auto`
@@ -340,8 +342,11 @@ task content. Exclude reasoning, encrypted content, raw tool results, transport
 envelopes, and provider metadata.
 
 Use a deterministic non-text policy initially: if normalized decision state
-contains user images or attachments whose contents Jev cannot inspect, choose Sol
-with a `non_text_state` reason. Preserve original media for the answer model;
+contains user images or attachments whose contents Jev cannot inspect, skip the
+TypeSafe request entirely and choose Sol with a `non_text_state` reason. Verify
+zero classifier calls, not a call whose result is discarded. Record this as a
+local policy fallback, not a successful Jev verdict or provider latency sample.
+Preserve original media for the answer model;
 do not send its bytes or private file contents to TypeSafe. A placeholder or high
 text-only confidence cannot establish the difficulty of unseen content. This
 avoids inventing another classifier to decide whether text is sufficient. Test
@@ -405,13 +410,18 @@ both are adequate. Set weights and blocking cases before tuning, grounded in
 outcomes rather than declaring XHigh inherently necessary. Model names and public
 API prices alone do not establish realized savings.
 
-On a subset, compare ordinary labels with consistently mapped opaque or role
-aliases while holding descriptions and cases constant. Test label bias separately
-from order bias. Do not change production names preemptively; material bias may
-justify a reviewed role-to-target mapping followed by fresh calibration.
+Label-bias probes are optional and non-blocking unless ordinary calibration or
+order results reveal a material concern that they can help diagnose. When practical,
+compare ordinary labels with consistently mapped opaque or role aliases on a
+subset, holding descriptions and cases constant. Do not build alias infrastructure
+solely for this experiment when normal evaluation is satisfactory. Record a skipped
+probe as unmeasured, not evidence of no bias. Do not change production names
+preemptively; demonstrated bias may justify a reviewed role-to-target mapping
+followed by fresh calibration.
 
 Evidence: choose the threshold on training cases and freeze it before holdout;
-evaluate outcomes, route labels, label/order stability, asymmetric loss, fallback
+evaluate outcomes, route labels, order stability, any performed label-bias probes,
+asymmetric loss, fallback
 frequency (including non-text cases), and latency. Predeclare acceptable
 regressions and latency budget from Phase A measurements. If the simple classifier
 fails, report evidence before proposing a composed policy.
@@ -441,7 +451,7 @@ readiness leaves Phase A as the delivered system, with Phase B explicitly pendin
 | Catalog | Common features only, strict review flag, neutral identity, unchanged native entries, no fabricated null/default semantics |
 | Effort and speed | Public picker cannot defeat fixed target effort; supported update paths and Fast reach the intended backend contract |
 | Failure | Invalid/unavailable classifier falls back to Sol; unavailable answer model does not masquerade as successful completion |
-| Jev modalities | Unavailable user non-text state triggers explicit Sol fallback; original media reaches the answer model, not the text classifier |
+| Jev modalities | Unavailable user non-text state triggers explicit Sol fallback with zero TypeSafe calls; original media reaches the answer model; continuation affinity remains intact |
 | Security/privacy | Native credentials remain on native hops; TypeSafe receives only authorized bounded task state; redacted evidence contains no secrets/raw payloads |
 | Certification | For v2 promotion, stream, tool call, encrypted relay, first marker and same-child second marker pass for the exact candidate; explicitly deferred interim deployments remain v1 |
 
@@ -471,3 +481,8 @@ compaction model; unseen attachments use conservative deterministic fallback
 rather than an unimplemented semantic-dependence test; optional interim v2
 requires an explicit temporary capability tradeoff. Skill drift is a recoverable
 dispatch prerequisite, not permission to silently abandon the requested method.
+
+Follow-up review clarified that non-text fallback skips TypeSafe entirely and
+made opaque-label experiments conditional rather than a reason to build another
+harness. The original code baseline remains unchanged; refresh checkout identity
+at dispatch. No further architecture changes are justified by this feedback.
