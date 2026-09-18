@@ -742,3 +742,24 @@ test("native custom-tool arguments still fail closed where LiteLLM's input canno
     assert.match(error.message, reason, name);
   }
 });
+
+test('new app worktree and artifact calls retain arguments and native namespaces', () => {
+  const {tools, namespaces} = flattenNamespaceTools(CODEX_APP_TOOLS);
+  const fixtures = {
+    create_worktree: {name: 'synthetic-review', ref: 'HEAD'},
+    attach_artifact: {artifact_type: 'pull_request', url: 'https://github.com/example/repo/pull/1'},
+    list_artifacts: {},
+    remove_artifact: {artifact_type: 'pull_request', url: 'https://github.com/example/repo/pull/1'},
+  };
+  for (const [name, args] of Object.entries(fixtures)) {
+    const flat = tools.find(tool => tool.name === `mcp__codex_app__${name}`);
+    assert.ok(flat);
+    for (const key of Object.keys(args)) assert.ok(flat.parameters.properties[key]);
+    const result = rewriteNamespaceResponsePayload({type: 'response.output_item.done', item: {
+      type: 'function_call', name: flat.name, call_id: `call_${name}`, arguments: JSON.stringify(args),
+    }}, buildNamespaceLookups(namespaces));
+    assert.equal(result.item.name, name);
+    assert.equal(result.item.namespace, 'mcp__codex_app');
+    assert.deepEqual(JSON.parse(result.item.arguments), args);
+  }
+});

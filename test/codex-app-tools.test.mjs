@@ -30,6 +30,10 @@ function appTool(name) {
 }
 
 const CURRENT_CODEX_APP_TOOLS = [
+  "attach_artifact",
+  "create_worktree",
+  "list_artifacts",
+  "remove_artifact",
   "automation_update",
   "capture_screen_context",
   "complete_conversational_onboarding_task",

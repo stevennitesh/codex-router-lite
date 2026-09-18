@@ -3,33 +3,35 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "a71312d75284872d62b27f3e0ce8e21df6fa125c",
-  "deferredCandidates": [],
-  "reviewedAt": "2026-09-12",
+  "lastReviewedCommit": "5e1b49e6e3fea1ada57f0e7fa6ca7612e9d17300",
+  "deferredCandidates": [
+    "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
+    "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
+    "3706102a and 0829fa5a: malformed function JSON gate/retry; investigate with exact provider evidence before changing streamed execution and retry semantics",
+    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router"
+  ],
+  "reviewedAt": "2026-09-18",
   "disposition": {
     "integrated": [
-      "7ecf3962: unknown provider route rejection",
-      "c8e9134a and 4bc8d50b: message phases with conservative stream bounds",
-      "e29bcdd8: LiteLLM custom input conversion with Python Unicode length parity",
-      "db9990a9 and 128b7d48: foreign native replay item IDs",
-      "c5d6e85e: fragmented bounded preludes",
-      "3419d7ad and a4bf239d: declared MCP and harness namespace restoration"
+      "a973995d: context overflow reports the complete requested token count",
+      "b65ea270: missing Windows scheduled task cannot report successful start/restart"
     ],
     "alreadyCovered": [
-      "4a10f260: WebSocket failure terminals",
-      "7c0ba7ea and e4aaa77b: Lite catalog refresh and owned config detection",
-      "2822965f: undici 8.10.2",
-      "4f7c56be: Windows heartbeat stop intent",
-      "b944249d and b5c12e03: exact generated child roles and startup publication",
-      "59a22116 and 148968dd: native encrypted relay auth and bounded quota handling"
+      "637d67cf: transactional launcher installation verifies registration and rolls back failures",
+      "c5ab6369: incompatible custom-call item IDs already removed by namespace relay",
+      "799a7196: stored native reasoning retained; only duplicate-reference extension deferred",
+      "d9f61093: choice-bearing terminal usage normalized",
+      "fa053c11: configured child effort written to exact generated roles",
+      "448a593a: GLM native text/image modalities",
+      "8e06051a: no keepalive after Responses terminal",
+      "6342daa9: root TOML assignments use the existing lexer"
     ],
     "excluded": [
-      "Grok, DeepSeek, Muse, Command Code, Ollama, alternate clients and provider research",
-      "UI, tray, dashboard, usage-account aggregation, diagnostics and generic migration systems",
-      "b215d1f6: reserved transport-marker retry belongs to excluded upstream forwarder/failover owners",
-      "ae7ab5cf: GLM hosted search uses the direct Responses history owner",
-      "a3e0dafe: injected child interrupts remain outside the retained model-authored collaboration contract",
-      "upstream-only tests, development dependencies, CI, documentation and merge commits"
+      "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
+      "Generic providers, Console Go/OpenCode Union, Muse, Moonshot, DeepSeek, Hy4, Grok, Vertex, DashScope, keyless discovery and other clients are outside Lite scope",
+      "UI/tray/dashboard, POSIX distribution, catalog curation/discovery, failover/quota aggregation and generic YAML editing are outside retained owners",
+      "Upstream-only release/build/test/docs and merge commits; native live app schema supersedes upstream app examples",
+      "d2a317aa: exposing additional Chat reasoning is a behavior expansion, not required app compatibility"
     ]
   }
 }

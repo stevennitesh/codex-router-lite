@@ -4,6 +4,7 @@ This directory contains dated investigations and review records, not current
 instructions or live status. Read it only for provenance or a specific past failure.
 Current work starts at [the repository entry](../../AGENTS.md).
 
+- [Codex compatibility review, 2026-09-18](2026-09-18-codex-compatibility.md)
 - [Union Alpha investigation, 2026-09-17](2026-09-17-union-alpha.md)
 - [Pareto investigation, 2026-09-17](2026-09-17-pareto.md)
 - [Router lifecycle audit, 2026-09-17](2026-09-17-router-lifecycle-audit.md)

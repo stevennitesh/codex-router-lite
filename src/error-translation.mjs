@@ -118,7 +118,7 @@ function isOutOfUsage(detail, errorType) {
 const CONTEXT_LENGTH_PATTERNS = [
   /input length \((\d+) tokens\) exceeds the model's maximum context length \((\d+) tokens\)/i,
   /input after truncation exceeds (?:the )?maximum context length/i,
-  /maximum context length (?:is|of) (\d+)(?: tokens?)?.{0,80}(?:input|request).{0,40}(\d+)/i,
+  /maximum context length (?:is|of) (\d+)(?: tokens?)?.{0,80}?(?:input|request).{0,40}?(\d+)/i,
   /context[_\s-]length[_\s-]exceeded/i,
 ];
 

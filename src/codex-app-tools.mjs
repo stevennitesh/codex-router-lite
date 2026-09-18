@@ -1,17 +1,17 @@
 // Snapshot of the Codex app's native app-side tool definitions.
-// Source: the live Codex Desktop tool registry on 2026-09-16, paired with
-// Windows app 26.911.7940.0 and codex-cli 0.155.0-alpha.2.6. Keep this inventory
+// Source: the live Codex Desktop tool registry on 2026-09-18, paired with
+// Windows app 26.915.3509.0 and codex-cli 0.155.0-alpha.9. Keep this inventory
 // synchronized for drift inspection. Runtime relay uses only client-provided
 // definitions and discoveries; this snapshot does not add callable tools.
-// This capture verified the 30 ordinary app tools. Conditional entries retain
+// This capture verified the 34 ordinary app tools. Conditional entries retain
 // their prior definitions until the client exposes them for a fresh capture.
 
 const CODEX_APP_NAMESPACE = "mcp__codex_app";
 const CODEX_APP_TOOL_DELIMITER = "__";
 export const CODEX_APP_TOOL_SNAPSHOT = Object.freeze({
-  capturedAt: "2026-09-16",
-  windowsAppVersion: "26.911.7940.0",
-  codexVersion: "codex-cli 0.155.0-alpha.2.6",
+  capturedAt: "2026-09-18",
+  windowsAppVersion: "26.915.3509.0",
+  codexVersion: "codex-cli 0.155.0-alpha.9",
 });
 
 // The full app toolset as the client offers it to native models.
@@ -22,6 +22,73 @@ export const CODEX_APP_TOOLS =
     "name": "mcp__codex_app",
     "description": "Tools provided by the Codex app.",
     "tools": [
+      {
+        "type": "function",
+        "name": "attach_artifact",
+        "description": "Attach a pull request to the current task. After successfully creating a pull request, always call this tool with its URL, regardless of which command or tool created it. Attach every created pull request when a task produces more than one. Also attach an existing pull request when the user asks to review, update, or continue working on it. Do not attach pull requests used only as examples, references, dependencies, comparisons, or background context.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "artifact_type": {
+              "type": "string",
+              "const": "pull_request"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "artifact_type",
+            "url"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "remove_artifact",
+        "description": "Remove an artifact from the current task when the user asks to unlink it or it is no longer relevant. Currently, only pull_request artifacts are supported. Removing an artifact does not close, delete, or otherwise modify the pull request.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "artifact_type": {
+              "type": "string",
+              "const": "pull_request"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "artifact_type",
+            "url"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "list_artifacts",
+        "description": "List all attachments explicitly saved on the current task, including pull requests, worktrees, and other attachment types. On hosts with Core attachment support, returns every attachment with its type, identity, payload, and creation time. Older hosts return their supported pull request artifacts. Items merely mentioned in messages or attached to another task are not included.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "type": "function",
+        "name": "create_worktree",
+        "description": "Create a managed Git worktree from the current task's repository and attach it to this task. ref selects a branch, tag, commit SHA, or other Git commit-ish; omit it to start at HEAD. name optionally replaces the random directory ID with a lowercase hyphenated name such as split-like-this (maximum 64 characters). Names consisting entirely of hexadecimal characters with four or more characters (such as cafe or 2026), and Windows device names (con, prn, aux, nul, com1-com9, lpt1-lpt9), are reserved. If the name is already in use or reserved by an archived worktree, appends a hyphen and four random digits (shortening the base name if needed). Omit name for a random ID. Uncommitted changes are not copied. Only use when the task needs an isolated checkout. No environment is selected and no environment setup scripts are run. Returns the Git root and workspace directory. This does not change the task's cwd or sandbox permissions: use the returned directory explicitly and request filesystem permissions when needed. If registration fails after creation, keep using the returned worktree; do not create another as a retry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
+        }
+      },
       {
         "type": "function",
         "name": "automation_update",

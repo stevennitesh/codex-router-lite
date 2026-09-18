@@ -232,6 +232,13 @@ test("Windows stop disables heartbeat before ending the task and start reenables
     () => { throw new Error("foreign task"); },
     () => assert.fail("must not mutate foreign task"), () => assert.fail("must not stop foreign task"),
     { stdout: { write() {} } }, "Codex Router"), /foreign task/u);
+  for (const command of ["start", "restart"]) {
+    assert.throws(() => execute(command, () => ({ exists: false }), () => {},
+      () => assert.fail("must not mutate a missing task"),
+      () => assert.fail("must not end a missing task"),
+      { stdout: { write() { assert.fail("must not report running"); } } },
+      "Codex Router"), /not registered.*install/u);
+  }
 });
 
 test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {

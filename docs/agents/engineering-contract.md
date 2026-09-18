@@ -4,6 +4,13 @@ Use this guidance to make engineering decisions within the requested change.
 Repository-specific requirements and accepted domain decisions supply the local
 meaning. Apply a conditional practice only when its condition is present.
 
+Implement requested capabilities and guarantees needed by actual supported
+workflows. Do not infer scale, concurrency, independent consumers, crash recovery,
+or future reuse from general goals such as reliability or reproducibility.
+A plausible failure or an agent-written plan alone does not establish a requirement. Preserve explicit user commitments and accepted domain
+decisions. Revise unnecessary implementation choices within scope; surface a
+proposed change to an accepted guarantee to its owner.
+
 ## Understand the behavior
 
 Trace enough of the owning code and affected callers to establish the changed
@@ -42,7 +49,9 @@ definition. Preserve domain distinctions where the boundary representation diffe
 Validate untrusted input where it enters a trusted representation. Rely on an
 invariant only while its guarantees hold; mutation, persisted data, or concurrent
 writes can invalidate it. Put any necessary recheck at the boundary that owns
-that change rather than scattering defensive checks through ordinary code.
+that change. On load, recheck guarantees that persistence or another writer could
+have invalidated. Reuse established guarantees within one owned pipeline while
+they remain valid instead of repeating full validation at every helper.
 
 Keep calculations separate from effects where that makes behavior clearer and
 easier to test. Hide framework and storage details when callers do not need
@@ -61,21 +70,29 @@ behavior; a fallback must not turn an error or incomplete result into apparent
 success. Make partial outcomes explicit when callers need to handle them.
 
 Migrate owned callers and remove displaced code, configuration, and tests
-together when compatibility permits. Use staged migration when real consumers
+together when compatibility permits. Follow removed consumers upstream: remove
+producers, helpers, tests, and documentation that no longer serve a supported use,
+after checking remaining consumers. Use staged migration when real consumers
 or deployment ordering require coexistence. Keep the reason and removal
-condition for a temporary compatibility path clear. When data outlives deployment
-or consumers upgrade independently, account for old and new readers and writers,
+condition for a temporary compatibility path clear. When existing stored data must remain
+usable across the change or consumers upgrade independently, account for old and new readers and writers,
 existing-data conversion, and rollback limitations.
 
 Update documentation when behavior, operations, or a non-obvious decision
 changes. Prefer an existing type, constraint, or check to repeated prose when
-it can enforce a recurring rule within the task's scope.
+it can enforce a recurring machine-relevant rule within the task's scope. Preserve
+explanatory prose, research evidence, and code identity as context or provenance;
+make them runtime rejection or compatibility rules only when required semantics
+depend on them.
 
 ## Match proof to the claim
 
 Run required checks and the nearest useful check that can fail for the changed
 behavior. Add or change tests when they protect a meaningful contract. Assert
 observable behavior rather than implementation wording or private structure.
+A test does not establish that the mechanism it protects is required. When retiring
+an unnecessary mechanism, revise or remove its tests while preserving proof of
+accepted behavior.
 
 For a fix, distinguish the reported defect. When a plausible wrong rule also
 passes the ordinary case, choose an input or state where the outcomes differ.
@@ -107,10 +124,13 @@ point unless the requested outcome or an explicit gate makes it one.
 
 ## Handle effects where they occur
 
-For retryable effects, establish identity and a recovery strategy so reruns do
-not duplicate work. On partial or uncertain success, inspect actual state before
-retrying. Give acquired resources an owner and cleanup behavior, including
-failure or cancellation paths when applicable.
+When retries can duplicate or corrupt consequential effects, choose the smallest
+adequate protection. Detecting failure and rerunning is sufficient when required
+inputs remain available, rerunning does not duplicate consequential effects, and
+partial output cannot be mistaken for a valid result.
+On partial or uncertain effects, inspect actual state before retrying. Give acquired
+resources an owner and cleanup behavior, including failure or cancellation paths
+when applicable.
 
 For concurrent mutation, eliminate unnecessary shared state first. When sharing
 is required, enforce ownership or serialization through the actual mechanism;

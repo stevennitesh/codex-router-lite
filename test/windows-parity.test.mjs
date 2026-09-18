@@ -72,7 +72,11 @@ test("Router upstream review uses an explicit immutable baseline", () => {
   assert.equal(watch.branch, "main");
   assert.equal(watch.remoteRef, "upstream/main");
   assert.match(watch.lastReviewedCommit, /^[0-9a-f]{40}$/u);
-  assert.deepEqual(watch.deferredCandidates, []);
+  assert.ok(Array.isArray(watch.deferredCandidates));
+  for (const candidate of watch.deferredCandidates) {
+    assert.equal(typeof candidate, "string");
+    assert.match(candidate, /^[0-9a-f]{8}.*: .+/u, "deferrals identify the upstream change and reason");
+  }
 });
 
 test("the Windows command exposes the redacted Switchyard trace", () => {

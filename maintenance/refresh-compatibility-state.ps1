@@ -165,8 +165,8 @@ if (-not $snapshotMatches) {
   Write-Host "1. Capture the native codex_app tool names and JSON schemas from an ordinary Windows app turn."
   Write-Host "2. Compare that inventory with src/codex-app-tools.mjs; do not infer compatibility from version numbers."
   Write-Host "3. Refresh the native catalog and run the catalog, app-tool, and namespace-relay tests."
-  Write-Host "4. Run one native routed tool call through GLM and Switchyard."
-  Write-Host "5. Refresh both exact-route v2 proofs only if tool relay or child continuation changed."
+  Write-Host "4. Run one native routed tool call through both GLM endpoints, Pareto, and Switchyard."
+  Write-Host "5. Refresh affected exact-route v2 proofs when a bound contract changed; follow docs/SUBAGENT-CERTIFICATION.md."
 }
 
 Write-Step "Current Codex catalog compatibility"

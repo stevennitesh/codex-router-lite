@@ -61,7 +61,7 @@ For a changed Windows app or CLI build:
 3. Refresh the native catalog and run the catalog, app-tool, and
    namespace-relay tests.
 4. With quota authority, run an ordinary native routed tool call through the
-   affected external profiles and Switchyard; include Union when shared relay changes.
+   affected external profiles and Switchyard; include Pareto when shared relay changes.
 5. Refresh affected exact-route proofs when a bound contract changed, using
    [the certification refresh conditions](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
 

@@ -639,7 +639,7 @@ if (command === "render") {
     `${JSON.stringify({ installed, loaded, state })}\n`,
   );
 } else if (command === "stop") {
-  // Stopping is idempotent, like uninstall and restart: a task that is missing
+  // Stopping is idempotent, like uninstall: a task that is missing
   // or already idle is the state the caller asked for, not an error to raise.
   const previousTask = taskSnapshot();
   assertOwnedTask(previousTask);
@@ -651,6 +651,9 @@ if (command === "render") {
 } else {
   const previousTask = taskSnapshot();
   assertOwnedTask(previousTask);
+  if (!previousTask.exists) {
+    throw new Error("Codex Router task is not registered. Run node src/service.mjs install first.");
+  }
   if (command === "restart") endTask();
   schtasks(["/Change", "/TN", taskName, "/ENABLE"], { quiet: true, mutating: true });
   schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
