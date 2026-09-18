@@ -1,11 +1,12 @@
 # Switchyard four-target upgrade delivery plan
 
-Status: complete through B3 pending final lead review. Phase A completed, B1 and
-B2 were accepted, and B3 deployed Router candidate
+Status: final lead review accepted the completed A1-A3 and B1-B3 delivery. B3
+deployed Router candidate
 `7f707bb773aa083144904fa027ef331bd9a1c524` with the frozen Jev policy. Fresh
 native same-child certification restored exact-route v2 eligibility. One
-validated Phase A rollback generation remains retained until final review; no
-push was performed.
+validated Phase A rollback generation remains retained only because automatic
+approval review requires explicit user confirmation before its irreversible
+cleanup; no push was performed.
 
 Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae`
 before execution began. The A1 status notes below record the later authorized
@@ -354,13 +355,13 @@ record it, retain v1, skip the interim child proof, and require final v2 at B3.
 
 ### B1 — Reviewed upstream repin with the Luna classifier retained
 
-Status: reviewable candidate prepared. On 2026-09-18 the user authorized resolving upstream PR 762
+Status: accepted historical checkpoint. On 2026-09-18 the user authorized resolving upstream PR 762
 in an isolated checkout and reviewing a reproducible repin candidate without
 waiting for upstream merge. The refreshed PR remains OPEN and CONFLICTING at
 head `92c84a0ca6dddcad1ee2a894f61642b42093b0b8`, with recorded base
 `082e68ea145667b7d25ac4bc59b7b06a2f20cf87`; upstream `main` advanced during
-the B1 refresh to `ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877`. B1 remains subject to review before
-any Router commit, deployment, or certification.
+the B1 refresh to `ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877`. These are dated
+B1 inputs, not a current instruction to wait for an upstream merge.
 
 The exact public base plus the reviewed PR contribution and local compatibility
 patch reproduce candidate tree `10ec27aad5cd83aff8809675efb9285571fcac8c`.
@@ -610,15 +611,11 @@ proof then passed both same-child markers and the sandboxed tool call. See
 and
 [`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
 
-Replace the judge only after B2 passes. Keep the same four answer targets and
-Sol fallback, explicitly set `user_turn` rather than the upstream default, then
-remove the classifier-only Luna target and obsolete judge-specific assumptions.
-Retain a reproducible previous generation for rollback; do not leave two live
-authorities deciding a request.
-
-Repeat the affected integrated tests, exact-route certification, deployment
-binding, and final change review. The completed B2 and B3 evidence satisfied the
-calibration, provider-readiness, deployment, and certification gates.
+B3 replaced the judge after B2 passed, retained the four answer targets and Sol
+fallback, set `user_turn`, and removed the classifier-only Luna target. The
+completed integrated tests, deployment binding, and exact-route certification
+satisfied the calibration, provider-readiness, deployment, and final-review
+gates.
 
 ## Required behavior matrix
 
@@ -640,11 +637,14 @@ calibration, provider-readiness, deployment, and certification gates.
 Use existing harnesses for reproducible faults. Native provider/account behavior
 requires bounded live evidence and cannot be certified by mocks alone.
 
-## Outstanding prerequisites and stopping points
+## Final disposition
 
-Phase B is deployed and freshly certified. Final lead review remains before the
-retained Phase A runtime rollback and detached rollback checkout are removed.
-Push remains outside this checkpoint.
+Phase B is deployed, freshly certified, and accepted by final lead review. The
+calibration is bounded synthetic evidence for this routing policy; it does not
+establish general routing accuracy on private or future workloads. Automatic
+approval review blocked irreversible deletion of the retained Phase A runtime
+rollback, its detached checkout, and the dated disposable B1-B3 build trees
+pending explicit user confirmation. Push remains outside this delivery.
 
 ## Feedback disposition
 
