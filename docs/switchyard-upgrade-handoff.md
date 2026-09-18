@@ -1,20 +1,23 @@
 # Future Switchyard implementation handoff
 
-Status: Phase A completed. Checkpoints A1 and A2 were accepted after their
+Status: complete through B3 pending final lead review. Phase A completed. Checkpoints A1 and A2 were accepted after their
 review-repair rounds. A3 deployed Router commit
 `6c0d16a6033c161437a8d26ce00d56820fd49e7f`, verified the end-to-end Router and
 native compaction paths, and accepted a fresh runtime-bound v2 proof. The
 accepted pre-candidate runtime rollback and detached rollback checkout were
-removed after final review. B1 is now authorized: resolve the still-open,
+removed after final review. B1 was authorized to resolve the still-open,
 conflicting upstream PR 762 in an isolated checkout, review and test the combined
 candidate, and prepare a reproducible repin without waiting for upstream merge.
-B1 was accepted. B2 has an accepted candidate using the authorized
+B1 and B2 were accepted. B3 deployed Router candidate
+`7f707bb773aa083144904fa027ef331bd9a1c524` with the authorized
 managed OpenRouter credential and synthetic-only evaluation. Its final frozen
 24-case holdout passed every holdout gate after the generic role criteria were
 clarified. Lead review accepted Astra Medium or XHigh for X03 based on the
 predeclared R3 outcome rubric while retaining XHigh as the original label. B3 is
-authorized for a Router commit, transactional production deployment, and fresh
-certification; push and private task-data egress remain outside scope.
+authorization covered the Router commit, transactional production deployment,
+and fresh certification. Those steps passed and Switchyard v2 is published.
+Push and private task-data egress remain outside scope. One validated Phase A
+rollback generation remains retained until final lead review.
 
 B1 uses public upstream base `ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877`,
 the exact PR head contribution `92c84a0ca6dddcad1ee2a894f61642b42093b0b8`,
@@ -23,9 +26,9 @@ OpenRouter's exact Decisions endpoint and protected credential, adds a
 caller-aware deadline and state budget, and implements the planned zero-call
 fallback for non-text user state. Direct TypeSafe credential setup is no longer
 a prerequisite.
-The B1 source candidate is v1 with the prior A3 proof marked draft because its
-runtime binding names the Phase A source; the unchanged deployed Phase A
-generation remains healthy and v2 until a later reviewed deployment.
+The B1 source candidate temporarily returned to v1 with the prior A3 proof marked
+draft because its runtime binding named the Phase A source. B3 replaced that
+historical binding with fresh accepted proof for the deployed Phase B generation.
 
 The reproducible candidate uses public base
 `ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877`, PR-head patch SHA-256
@@ -75,7 +78,7 @@ The bounded record is
 [`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json).
 The R3 artifact SHA-256 is
 `888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f`.
-Luna remains live until the B3 deployment transaction.
+The former Luna High classifier is retained only in the rollback generation.
 
 The final B3 public base plus ordered PR and compatibility patches reproduce Git
 tree `47c3957e490febfa896f5f3d48f166eef6dd9d67`. The compatibility patch SHA-256
@@ -87,6 +90,17 @@ fallbacks, cancellation health, and the real sanitized operator trace, which
 reported provider version `typesafe/jev-1.13-20260917`, the frozen policy hash,
 and bounded probability maps. Its artifact SHA-256 is
 `655011f50e4650bba2af7f4f2afbb8fa3fbbcdb5dff8830fe4bb7640893a8857`.
+
+The deployed live record passed public identity, a native tool-result round trip
+with same-target affinity, native V2 compaction bypass, and the observed non-text
+zero-call fallback. The synthetic one-pixel answer request reached Sol and then
+received HTTP 400 from the native answer path; the classifier fallback itself was
+recorded with no Jev call. Fresh native v2 certification used one no-history
+Switchyard child, returned both markers from that same child, and completed the
+sandboxed arithmetic tool call with result 42. The bounded records are
+[`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
+and
+[`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
 
 Revision 3 remains the outcome authority. The later execution authorization
 supersedes this document's original plan-only boundary for assigned checkpoints;

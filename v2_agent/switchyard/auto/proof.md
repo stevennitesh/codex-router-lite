@@ -1,48 +1,43 @@
 # switchyard/auto v2 evidence
 
-Status: draft for the Phase B repin. The results below remain historical Phase A
-evidence and do not certify the new upstream and patch identities.
+Status: accepted for the deployed Phase B Jev generation at Router commit
+`7f707bb773aa083144904fa027ef331bd9a1c524`.
 
-Accepted exact-route evidence for deployed Router
-`6c0d16a6033c161437a8d26ce00d56820fd49e7f` and the four-target Switchyard
-policy. Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
+Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
 
-A fresh native Sol Medium parent using codex-cli 0.155.0-alpha.9.2 spawned
-`router_switchyard_auto` with `fork_turns: none` in the normal workspace-write
-sandbox. It waited for each child turn and sent the second request to the same
-child before cleanup.
+A fresh native Sol Medium parent on codex-cli 0.155.0-alpha.9.2 spawned
+`router_switchyard_auto` with `fork_turns: none` in the workspace-write sandbox
+with automatic approval review. It waited for the first child turn to finish,
+sent the second request to that same child, waited again, and cleaned up only
+after the second turn had completed.
 
-- Window: 2026-09-18T18:28:51.175Z through 2026-09-18T18:29:17.410Z.
-- Two native inter-agent handoffs: 2026-09-18T18:28:51.175Z and
-  2026-09-18T18:29:10.010Z.
-- One native shell tool call ran `Write-Output (19+23)` and returned `42` in the
-  default sandbox, without an unsandboxed retry.
-- First marker: `CERT_FIRST_OK` at 2026-09-18T18:29:04.675Z.
+- Window: 2026-09-18T22:49:42.415Z through 2026-09-18T22:50:04.569Z.
+- Two encrypted native handoffs were recorded in the child rollout.
+- The child invoked the native execution tool for the synthetic calculation
+  `19+23`; the sandboxed result was `42`, with no unsandboxed retry.
+- First marker: `CERT_FIRST_OK` at 2026-09-18T22:49:54.438Z.
 - Same-child follow-up marker: `CERT_SECOND_OK` at
-  2026-09-18T18:29:17.366Z.
-- Parent cleanup occurred only after the second child turn completed; the native
-  parent exited 0.
-- The three exact-route Router completions succeeded with HTTP 200. Switchyard
-  selected Luna Max for this bounded synthetic task and recorded no fallback,
-  judge, parse, or HTTP failure.
+  2026-09-18T22:50:02.190Z.
+- Four exact-route Router completions succeeded with HTTP 200. Switchyard used
+  Jev provider version `typesafe/jev-1.13-20260917`, selected Luna Max for this
+  bounded task, and recorded no fallback in the certification window.
 
 | Router completion (UTC) | Duration (ms) | Status |
 | --- | ---: | ---: |
-| 2026-09-18T18:29:01.630Z | 10429 | 200 |
-| 2026-09-18T18:29:04.674Z | 2014 | 200 |
-| 2026-09-18T18:29:17.388Z | 7363 | 200 |
+| 2026-09-18T22:49:47.468Z | 4596 | 200 |
+| 2026-09-18T22:49:51.887Z | 3043 | 200 |
+| 2026-09-18T22:49:54.452Z | 2540 | 200 |
+| 2026-09-18T22:50:02.230Z | 2869 | 200 |
 
-Evidence was reconciled against the exact parent and child rollout records,
-native tool result, inter-agent metadata, redacted Router timings, deployed
-manifest, and Switchyard provenance. Only sanitized summaries are recorded;
-no encrypted payloads, private conversations, or thread identifiers are kept.
-
-The historical runtime binding in `proof.json` records the deployed upstream
-commit, patch, binary, generated-route, and Router candidate hashes. It predates
-the reviewed PR contribution now staged for B1, so its draft status cannot
-certify that new source chain.
+The machine-readable proof binds public upstream base `ee3715d1`, reviewed PR
+head `92c84a0c`, both ordered patch hashes, binary hash, private generated-route
+hash, frozen policy hash, and deployed Router candidate. The bounded reviewer
+record is
+[`docs/history/2026-09-18-switchyard-b3-certification.json`](../../../docs/history/2026-09-18-switchyard-b3-certification.json).
+Only sanitized summaries and rollout hashes are retained; no encrypted payloads,
+private conversations, or thread identifiers are copied into the repository.
 
 ## Limits
 

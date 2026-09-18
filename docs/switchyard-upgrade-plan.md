@@ -1,11 +1,11 @@
 # Switchyard four-target upgrade delivery plan
 
-Status: Phase A completed. Checkpoints A1 and A2 were accepted, and A3 deployed
-the clean candidate and restored exact-route v2 eligibility with fresh native
-proof. B1 and B2 were accepted. B3 has the frozen Jev policy, canonical routes,
-reproducible source chain, and bounded predeployment smoke ready for the
-transactional deployment and fresh exact-route proof. The installed Phase A
-runtime remains unchanged until that transaction.
+Status: complete through B3 pending final lead review. Phase A completed, B1 and
+B2 were accepted, and B3 deployed Router candidate
+`7f707bb773aa083144904fa027ef331bd9a1c524` with the frozen Jev policy. Fresh
+native same-child certification restored exact-route v2 eligibility. One
+validated Phase A rollback generation remains retained until final review; no
+push was performed.
 
 Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae`
 before execution began. The A1 status notes below record the later authorized
@@ -586,6 +586,19 @@ fails, report evidence before proposing a composed policy.
 
 ### B3 — Jev promotion and final review
 
+Status: deployed and freshly certified. The exact B3 binary and private routes
+are live with Jev 1.13 as the sole classifier and the same four answer targets.
+The bounded live verification passed public identity, tool-result affinity,
+native V2 compaction bypass, observed non-text zero-call fallback, provider
+version, policy hash, and probability-map evidence. The synthetic one-pixel
+answer request reached the Sol fallback and then received HTTP 400 from the
+native answer path; this does not weaken the verified zero-call classifier
+fallback and remains a limitation of that media fixture. Fresh native v2 proof
+then passed both same-child markers and the sandboxed tool call. See
+[`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
+and
+[`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
+
 Replace the judge only after B2 passes. Keep the same four answer targets and
 Sol fallback, explicitly set `user_turn` rather than the upstream default, then
 remove the classifier-only Luna target and obsolete judge-specific assumptions.
@@ -618,9 +631,9 @@ requires bounded live evidence and cannot be certified by mocks alone.
 
 ## Outstanding prerequisites and stopping points
 
-Phase A is deployed and B1/B2 are accepted. B3 source and predeployment evidence
-are ready. Production repin, Jev promotion, fresh certification, and the B3
-commits remain in progress. Push is outside this checkpoint.
+Phase B is deployed and freshly certified. Final lead review remains before the
+retained Phase A runtime rollback and detached rollback checkout are removed.
+Push remains outside this checkpoint.
 
 ## Feedback disposition
 

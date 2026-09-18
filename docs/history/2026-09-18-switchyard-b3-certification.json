@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B3",
+  "testedAt": "2026-09-18T22:54:20.623Z",
+  "execution": {
+    "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+    "parentModel": "gpt-5.6-sol",
+    "parentEffort": "medium",
+    "childRole": "router_switchyard_auto",
+    "forkTurns": "none",
+    "sandbox": "workspace-write with automatic approval review",
+    "parentExitedZero": true
+  },
+  "window": {
+    "startedAt": "2026-09-18T22:49:42.415Z",
+    "endedAt": "2026-09-18T22:50:04.569Z"
+  },
+  "nativeCollaboration": {
+    "sameChildFollowUp": true,
+    "cleanupTargetedSameChild": true,
+    "firstChildTurnCompletedAt": "2026-09-18T22:49:54.472Z",
+    "followUpSentAt": "2026-09-18T22:49:59.292Z",
+    "secondChildTurnCompletedAt": "2026-09-18T22:50:02.253Z",
+    "cleanupSentAt": "2026-09-18T22:50:04.542Z",
+    "cleanupAfterSecondTurn": true,
+    "encryptedHandoffsObservedInChild": 2
+  },
+  "tool": {
+    "name": "exec",
+    "syntheticCommandObserved": true,
+    "result": 42,
+    "calledAt": "2026-09-18T22:49:47.439Z",
+    "completedAt": "2026-09-18T22:49:48.781Z",
+    "unsandboxedRetry": false
+  },
+  "markers": {
+    "first": { "value": "CERT_FIRST_OK", "observedAt": "2026-09-18T22:49:54.438Z" },
+    "second": { "value": "CERT_SECOND_OK", "observedAt": "2026-09-18T22:50:02.190Z" }
+  },
+  "routerCompletions": [
+    { "at": "2026-09-18T22:49:47.468Z", "status": 200, "totalMs": 4596 },
+    { "at": "2026-09-18T22:49:51.887Z", "status": 200, "totalMs": 3043 },
+    { "at": "2026-09-18T22:49:54.452Z", "status": 200, "totalMs": 2540 },
+    { "at": "2026-09-18T22:50:02.230Z", "status": 200, "totalMs": 2869 }
+  ],
+  "classifier": {
+    "providerModel": "typesafe/jev-1.13-20260917",
+    "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+    "selectedTarget": "switchyard/luna-max",
+    "fallbacksInCertificationWindow": 0
+  },
+  "runtimeBinding": {
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "0967efb93e970f0f9c2bc4f375acb3d77443e85c26c5ed7f597d460ded876d70",
+    "binarySha256": "72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb",
+    "routerCommit": "7f707bb773aa083144904fa027ef331bd9a1c524",
+    "routesSha256": "19dbcecad6a57ac51e3a4ea8516254374d8d05249ab34a259547626696d11c37",
+    "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+  },
+  "rolloutSha256": {
+    "parent": "203ada588853bfd40d6dbc62776c5e5600d38ba71017b1cbf85f953574c82d26",
+    "child": "3827cd82f5eaaae310fd4b112046a7949eeac07b7d09eb6c0919d1a8d69d8252"
+  },
+  "rawPayloadsRetained": false,
+  "requiredFailures": []
+}

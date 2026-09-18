@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-B3",
+  "testedAt": "2026-09-18T22:48:03.226Z",
+  "binding": {
+    "routerCommit": "7f707bb773aa083144904fa027ef331bd9a1c524",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "binarySha256": "72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb",
+    "routesSha256": "19dbcecad6a57ac51e3a4ea8516254374d8d05249ab34a259547626696d11c37",
+    "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+  },
+  "ordinaryToolRoundTrip": {
+    "first": {
+      "status": 200,
+      "latencyMs": 1864,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "function_call",
+          "name": "synthetic_lookup"
+        }
+      ]
+    },
+    "second": {
+      "status": 200,
+      "latencyMs": 2784,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "reasoning"
+        },
+        {
+          "type": "message"
+        }
+      ]
+    },
+    "callObserved": true,
+    "argumentsValid": true,
+    "selectedTargets": [
+      "switchyard/luna-max",
+      "switchyard/luna-max"
+    ],
+    "affinityStable": true
+  },
+  "mediaFallback": {
+    "status": 400,
+    "latencyMs": 551,
+    "selected": null,
+    "publicModel": null,
+    "completed": false,
+    "terminalType": null,
+    "outputKinds": [],
+    "fallbackObserved": true
+  },
+  "nativeCompaction": {
+    "status": 200,
+    "latencyMs": 2477,
+    "publicModel": "switchyard/auto",
+    "classifierDecisionsBefore": 5,
+    "classifierDecisionsAfter": 5,
+    "bypassedClassifier": true
+  },
+  "classifier": {
+    "providerVersions": [
+      "typesafe/jev-1.13-20260917"
+    ],
+    "policyObserved": true,
+    "probabilityMapObserved": true,
+    "fallbacks": 2,
+    "recent": [
+      {
+        "at": "2026-09-18T22:47:55.768688Z",
+        "source": "type_safe_classifier",
+        "providerModel": "typesafe/jev-1.13-20260917",
+        "finalTarget": "luna_max",
+        "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+        "confidence": 0.9511111111111111,
+        "threshold": 0.35,
+        "decisionLatencyMs": 271,
+        "probabilities": {
+          "luna_max": 0.9633333333333334,
+          "sol_medium": 0.036666666666666674,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        }
+      },
+      {
+        "at": "2026-09-18T22:48:00.141845Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      }
+    ]
+  },
+  "privatePayloadsRetained": false,
+  "limitations": [
+    "The synthetic one-pixel media request reached the Sol fallback after zero Jev calls, then the native answer path returned HTTP 400; this proves classifier fallback and forwarding, not media-answer success."
+  ],
+  "requiredFailures": [],
+  "evidenceSha256": "7cdbb23435c97c28ef2329f582d85a3261c116101f9fc57fa83e7f7426023930"
+}
