@@ -13,8 +13,8 @@ implementation without changing the remaining checkpoint contracts.
 
 The user subsequently authorized execution through the cost-aware, ponytail
 implementation workflow defined in the
-[execution handoff](switchyard-upgrade-handoff.md). Runtime remains unchanged
-until a later checkpoint authorizes and performs deployment.
+[execution handoff](switchyard-upgrade-handoff.md). B3 performed the authorized
+transactional deployment; the bound Jev generation is the current runtime.
 
 ## Outcome and boundary
 
@@ -461,6 +461,15 @@ and [`docs/history/2026-09-18-switchyard-b2-smoke.json`](history/2026-09-18-swit
 The final B3 ordered source chain reproduces tree
 `47c3957e490febfa896f5f3d48f166eef6dd9d67`; its compatibility patch SHA-256
 is `0967efb93e970f0f9c2bc4f375acb3d77443e85c26c5ed7f597d460ded876d70`.
+The B2 R2 patch was
+`868887c2af34e7d3327727966008aef9d163f9fb25df33c3bb92ada9ffec8f2f`.
+The only Rust source difference between that evaluated candidate and the final
+patch copies its already bounded four-label probability map into the sanitized
+operator trace. Classification, policy, transport, and answer forwarding are
+unchanged, so the B2 routing-quality evidence remains applicable. A new binary
+was required because this observability code is compiled into Switchyard; B3
+therefore rebuilt it and bound fresh smoke, live, and certification evidence to
+the resulting binary.
 The deployment binary SHA-256 is
 `72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb`;
 path-dependent Rust binary hashes are expected.
@@ -590,11 +599,13 @@ Status: deployed and freshly certified. The exact B3 binary and private routes
 are live with Jev 1.13 as the sole classifier and the same four answer targets.
 The bounded live verification passed public identity, tool-result affinity,
 native V2 compaction bypass, observed non-text zero-call fallback, provider
-version, policy hash, and probability-map evidence. The synthetic one-pixel
-answer request reached the Sol fallback and then received HTTP 400 from the
-native answer path; this does not weaken the verified zero-call classifier
-fallback and remains a limitation of that media fixture. Fresh native v2 proof
-then passed both same-child markers and the sandboxed tool call. See
+version, policy hash, and probability-map evidence. The former one-pixel fixture
+was rejected because its bytes did not represent a valid image. A replacement
+programmatically generated 128x128 red PNG completed through both direct native
+Sol and the deployed automatic route with the correct answer `red`; the routed
+request recorded the Sol non-text fallback with zero Jev calls. Fresh native v2
+proof then passed both same-child markers and the sandboxed tool call. See
+[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](history/2026-09-18-switchyard-b3-invalid-media-fixture.json),
 [`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
 and
 [`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
@@ -606,8 +617,8 @@ Retain a reproducible previous generation for rollback; do not leave two live
 authorities deciding a request.
 
 Repeat the affected integrated tests, exact-route certification, deployment
-binding, and final change review. Failure to meet calibration or provider
-readiness leaves Phase A as the delivered system, with Phase B explicitly pending.
+binding, and final change review. The completed B2 and B3 evidence satisfied the
+calibration, provider-readiness, deployment, and certification gates.
 
 ## Required behavior matrix
 

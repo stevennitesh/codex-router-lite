@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "checkpoint": "SY-B3",
-  "testedAt": "2026-09-18T22:48:03.226Z",
+  "testedAt": "2026-09-18T23:09:02.587Z",
   "binding": {
     "routerCommit": "7f707bb773aa083144904fa027ef331bd9a1c524",
     "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
@@ -12,7 +12,7 @@
   "ordinaryToolRoundTrip": {
     "first": {
       "status": 200,
-      "latencyMs": 1864,
+      "latencyMs": 1674,
       "selected": null,
       "publicModel": "switchyard/auto",
       "completed": true,
@@ -26,7 +26,7 @@
     },
     "second": {
       "status": 200,
-      "latencyMs": 2784,
+      "latencyMs": 3084,
       "selected": null,
       "publicModel": "switchyard/auto",
       "completed": true,
@@ -48,22 +48,44 @@
     ],
     "affinityStable": true
   },
-  "mediaFallback": {
-    "status": 400,
-    "latencyMs": 551,
+  "nativeMediaControl": {
+    "status": 200,
+    "latencyMs": 1236,
     "selected": null,
-    "publicModel": null,
-    "completed": false,
-    "terminalType": null,
-    "outputKinds": [],
-    "fallbackObserved": true
+    "publicModel": "gpt-5.6-sol",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red"
+  },
+  "mediaFallback": {
+    "status": 200,
+    "latencyMs": 1751,
+    "selected": null,
+    "publicModel": "switchyard/auto",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red",
+    "fallbackObserved": true,
+    "providerCallsBefore": 7,
+    "providerCallsAfter": 7,
+    "zeroProviderCalls": true
   },
   "nativeCompaction": {
     "status": 200,
-    "latencyMs": 2477,
+    "latencyMs": 2310,
     "publicModel": "switchyard/auto",
-    "classifierDecisionsBefore": 5,
-    "classifierDecisionsAfter": 5,
+    "classifierDecisionsBefore": 16,
+    "classifierDecisionsAfter": 16,
     "bypassedClassifier": true
   },
   "classifier": {
@@ -72,17 +94,17 @@
     ],
     "policyObserved": true,
     "probabilityMapObserved": true,
-    "fallbacks": 2,
+    "fallbacks": 9,
     "recent": [
       {
-        "at": "2026-09-18T22:47:55.768688Z",
+        "at": "2026-09-18T23:08:52.742916Z",
         "source": "type_safe_classifier",
         "providerModel": "typesafe/jev-1.13-20260917",
         "finalTarget": "luna_max",
         "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
         "confidence": 0.9511111111111111,
         "threshold": 0.35,
-        "decisionLatencyMs": 271,
+        "decisionLatencyMs": 321,
         "probabilities": {
           "luna_max": 0.9633333333333334,
           "sol_medium": 0.036666666666666674,
@@ -91,7 +113,7 @@
         }
       },
       {
-        "at": "2026-09-18T22:48:00.141845Z",
+        "at": "2026-09-18T23:08:58.451699Z",
         "source": "fail_open",
         "finalTarget": "sol_medium",
         "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f",
@@ -103,9 +125,11 @@
     ]
   },
   "privatePayloadsRetained": false,
-  "limitations": [
-    "The synthetic one-pixel media request reached the Sol fallback after zero Jev calls, then the native answer path returned HTTP 400; this proves classifier fallback and forwarding, not media-answer success."
-  ],
+  "priorInvalidFixture": {
+    "status": 400,
+    "reason": "The former one-pixel PNG was rejected because its data did not represent a valid image; it was replaced by a programmatically generated 128x128 PNG."
+  },
+  "limitations": [],
   "requiredFailures": [],
-  "evidenceSha256": "7cdbb23435c97c28ef2329f582d85a3261c116101f9fc57fa83e7f7426023930"
+  "evidenceSha256": "33893690a0d622ef157a245c9fb4d029a8d694e5978f990260300a3ed580c00e"
 }

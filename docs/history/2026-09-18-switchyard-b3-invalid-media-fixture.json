@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-FINAL-B-R1",
+  "status": "superseded invalid fixture",
+  "originalTestedAt": "2026-09-18T22:48:03.226Z",
+  "originalGitBlob": "47e9e6c80158648b47d7fa9deeb10a6075f703f3",
+  "originalArtifactSha256": "3b340820c02f6b108c62641cdc3241930be1fa8aef195fc7e144cbaef17c66c5",
+  "originalEvidenceSha256": "7cdbb23435c97c28ef2329f582d85a3261c116101f9fc57fa83e7f7426023930",
+  "binding": {
+    "routerCommit": "7f707bb773aa083144904fa027ef331bd9a1c524",
+    "binarySha256": "72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb",
+    "routesSha256": "19dbcecad6a57ac51e3a4ea8516254374d8d05249ab34a259547626696d11c37",
+    "policyHash": "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+  },
+  "fixture": {
+    "description": "Embedded synthetic one-pixel PNG used by the original live verifier",
+    "status": 400,
+    "fallbackObserved": true,
+    "sanitizedProviderReason": "The image data did not represent a valid image."
+  },
+  "resolution": {
+    "classification": "fixture defect, not a Switchyard translation defect",
+    "replacement": "Programmatically generated 128x128 solid red PNG",
+    "acceptance": "Direct native Sol and deployed switchyard/auto must both complete and answer red; the automatic route must record non_text_state with zero Jev provider calls."
+  },
+  "privatePayloadsRetained": false
+}

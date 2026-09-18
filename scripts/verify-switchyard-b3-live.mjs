@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { deflateSync } from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { nativeAccountCatalogHeaders } from "../src/codex-native-session.mjs";
@@ -37,6 +38,51 @@ function responseOutput(value, events = []) {
     return [...finalOutput, ...done.filter((item) => !identities.has(item?.id || item?.call_id))];
   }
   return finalOutput.length ? finalOutput : Array.isArray(value?.output) ? value.output : [];
+}
+
+function responseText(result) {
+  return result.output.flatMap((item) => item?.content || [])
+    .filter((item) => item?.type === "output_text")
+    .map((item) => item.text)
+    .join(" ")
+    .trim();
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const kind = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([kind, data])));
+  return Buffer.concat([length, kind, data, checksum]);
+}
+
+function solidRedPngDataUrl(width = 128, height = 128) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.alloc(1 + width * 3);
+  for (let pixel = 0; pixel < width; pixel += 1) row.set([255, 0, 0], 1 + pixel * 3);
+  const image = Buffer.concat(Array.from({ length: height }, () => row));
+  const png = Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(image)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${png.toString("base64")}`;
 }
 
 function functionCall(result) {
@@ -90,6 +136,10 @@ function compact(result) {
       ...(item?.name ? { name: item.name } : {}),
     })),
   };
+}
+
+function providerCallCount(trace) {
+  return Object.values(trace.classifier.providerModels).reduce((sum, count) => sum + count, 0);
 }
 
 const callerSecret = readFileSync(CALLER_SECRET_PATH, "utf8").trim();
@@ -150,21 +200,30 @@ const second = await post(`${base}/responses`, {
   stream: false,
 }, headers);
 
+const mediaInput = [{
+  type: "message",
+  role: "user",
+  content: [
+    { type: "input_text", text: "What single dominant color fills this synthetic image? Reply with only the lowercase color name." },
+    { type: "input_image", image_url: solidRedPngDataUrl(), detail: "low" },
+  ],
+}];
+const nativeMedia = await post(`${base}/responses`, {
+  model: "gpt-5.6-sol",
+  input: mediaInput,
+  store: false,
+  stream: true,
+}, { ...nativeHeaders, "session-id": `${session}-media-native` });
+const beforeMedia = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
 const media = await post(`${base}/responses`, {
   model: "switchyard/auto",
-  input: [{
-    type: "message",
-    role: "user",
-    content: [
-      { type: "input_text", text: "Reply with exactly MEDIA_FALLBACK_OK; the image is a synthetic transparent pixel." },
-      { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/bo+XAAAAAElFTkSuQmCC" },
-    ],
-  }],
+  input: mediaInput,
   store: false,
-  stream: false,
-}, { ...nativeHeaders, "session-id": `${session}-media` });
+  stream: true,
+}, { ...nativeHeaders, "session-id": `${session}-media-auto` });
+const afterMedia = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
 
-const beforeCompact = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+const beforeCompact = afterMedia;
 const nativeCompact = await post(`${base}/responses`, {
   model: "switchyard/auto",
   input: [
@@ -219,9 +278,17 @@ const evidence = {
     selectedTargets: [firstSelected, secondSelected],
     affinityStable: Boolean(firstSelected) && firstSelected === secondSelected,
   },
+  nativeMediaControl: {
+    ...compact(nativeMedia),
+    answer: responseText(nativeMedia),
+  },
   mediaFallback: {
     ...compact(media),
+    answer: responseText(media),
     fallbackObserved: mediaFallbackObserved,
+    providerCallsBefore: providerCallCount(beforeMedia),
+    providerCallsAfter: providerCallCount(afterMedia),
+    zeroProviderCalls: providerCallCount(beforeMedia) === providerCallCount(afterMedia),
   },
   nativeCompaction: {
     status: nativeCompact.status,
@@ -239,9 +306,11 @@ const evidence = {
     recent: recentClassifier,
   },
   privatePayloadsRetained: false,
-  limitations: [
-    "The synthetic one-pixel media request reached the Sol fallback after zero Jev calls, then the native answer path returned HTTP 400; this proves classifier fallback and forwarding, not media-answer success.",
-  ],
+  priorInvalidFixture: {
+    status: 400,
+    reason: "The former one-pixel PNG was rejected because its data did not represent a valid image; it was replaced by a programmatically generated 128x128 PNG.",
+  },
+  limitations: [],
 };
 evidence.requiredFailures = [];
 if (!completed(first) || !completed(second)) evidence.requiredFailures.push("tool round trip did not complete");
@@ -250,7 +319,13 @@ if (first.value?.model !== "switchyard/auto" || second.value?.model !== "switchy
 }
 if (!evidence.ordinaryToolRoundTrip.affinityStable) evidence.requiredFailures.push("tool continuation affinity drifted");
 if (!firstSelected || !secondSelected) evidence.requiredFailures.push("selected answer identity was not recorded");
-if (!mediaFallbackObserved) {
+if (!completed(nativeMedia) || nativeMedia.value?.model !== "gpt-5.6-sol" || responseText(nativeMedia).toLowerCase() !== "red") {
+  evidence.requiredFailures.push("native Sol media control did not complete with the expected visual answer");
+}
+if (!completed(media) || media.value?.model !== "switchyard/auto" || responseText(media).toLowerCase() !== "red") {
+  evidence.requiredFailures.push("routed media answer did not complete with the expected public identity and visual answer");
+}
+if (!mediaFallbackObserved || !evidence.mediaFallback.zeroProviderCalls) {
   evidence.requiredFailures.push("non-text zero-call fallback was not observed");
 }
 if (nativeCompact.status !== 200 || !evidence.nativeCompaction.bypassedClassifier) {

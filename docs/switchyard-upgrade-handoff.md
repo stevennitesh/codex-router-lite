@@ -13,7 +13,7 @@ B1 and B2 were accepted. B3 deployed Router candidate
 managed OpenRouter credential and synthetic-only evaluation. Its final frozen
 24-case holdout passed every holdout gate after the generic role criteria were
 clarified. Lead review accepted Astra Medium or XHigh for X03 based on the
-predeclared R3 outcome rubric while retaining XHigh as the original label. B3 is
+predeclared R3 outcome rubric while retaining XHigh as the original label. B3
 authorization covered the Router commit, transactional production deployment,
 and fresh certification. Those steps passed and Switchyard v2 is published.
 Push and private task-data egress remain outside scope. One validated Phase A
@@ -83,6 +83,13 @@ The former Luna High classifier is retained only in the rollback generation.
 The final B3 public base plus ordered PR and compatibility patches reproduce Git
 tree `47c3957e490febfa896f5f3d48f166eef6dd9d67`. The compatibility patch SHA-256
 is `0967efb93e970f0f9c2bc4f375acb3d77443e85c26c5ed7f597d460ded876d70`.
+The B2 R2 patch hash was
+`868887c2af34e7d3327727966008aef9d163f9fb25df33c3bb92ada9ffec8f2f`;
+the only Rust source change leading to the final patch emits its existing bounded
+four-label probability map into the sanitized operator trace. It does not alter
+classification, policy, transport, or answer forwarding, so B2 evaluation remains
+applicable. Because observability is compiled Rust, B3 rebuilt and deployed a new
+binary and bound its fresh smoke, live, and certification evidence to that binary.
 The deployment binary SHA-256 is
 `72940ab3ec44c2d7071f2fcbdf3d815ee40c9b16cc9a57ee866eb623022bd5bb`.
 The final predeployment smoke passed all four identities, affinity, non-text and error
@@ -93,14 +100,21 @@ and bounded probability maps. Its artifact SHA-256 is
 
 The deployed live record passed public identity, a native tool-result round trip
 with same-target affinity, native V2 compaction bypass, and the observed non-text
-zero-call fallback. The synthetic one-pixel answer request reached Sol and then
-received HTTP 400 from the native answer path; the classifier fallback itself was
-recorded with no Jev call. Fresh native v2 certification used one no-history
+zero-call fallback. The former one-pixel fixture was rejected because its data
+did not represent a valid image. Its replacement is a programmatically generated
+128x128 red PNG: direct native Sol and deployed automatic routing both completed
+and answered `red`, while the routed request recorded the Sol fallback with no
+Jev provider call. Fresh native v2 certification used one no-history
 Switchyard child, returned both markers from that same child, and completed the
 sandboxed arithmetic tool call with result 42. The bounded records are
+[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](history/2026-09-18-switchyard-b3-invalid-media-fixture.json),
 [`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
 and
 [`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
+The corrected live artifact SHA-256 is
+`d42618a885888c787e8f2f4f96dcd98bb5237e42b8561bdefa6d0569c19a464c`;
+the retained invalid-fixture record SHA-256 is
+`74dc023928eb02c54a333b5b2ab1df23df1811d06298a73fc8c48a16dcb8fa8f`.
 
 Revision 3 remains the outcome authority. The later execution authorization
 supersedes this document's original plan-only boundary for assigned checkpoints;
