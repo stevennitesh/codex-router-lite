@@ -116,6 +116,17 @@ change-review. Test expectations must be independent of the projection/policy
 helper being tested. Do not reuse synthetic B2 success as proof of general route
 quality, Decisions privacy enforcement, or changed state normalization.
 
+Final feedback leaves plan revision 6 unchanged. During C1 review, check two
+implementation risks explicitly:
+
+- Catalog projection includes only fields the routed entry publishes or depends
+  on, plus intentional donor-owned structures; it must not become a local mirror
+  of the complete Codex model schema.
+- Removing semantic policy hashing must preserve existing artifact provenance.
+  Review the affected consumers and negative mismatch tests against the plan's
+  source/patch/binary/template/routes/Router identities, not merely the absence
+  of the old hash code.
+
 Report release-ready code separately from live release. Deployment, once
 authorized, requires a clean candidate and exact runtime certification; changed
 source/patch/routes invalidate old proof applicability. Keep current live runtime
