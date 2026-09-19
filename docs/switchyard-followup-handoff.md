@@ -1,7 +1,7 @@
 # Switchyard feedback execution handoff
 
 Status: prepared, not dispatched. Planning request only, 2026-09-18.
-Authoritative scope: [follow-up plan revision 2](switchyard-followup-plan.md).
+Authoritative scope: [follow-up plan revision 3](switchyard-followup-plan.md).
 The earlier [upgrade handoff](switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
 
@@ -23,7 +23,7 @@ Worker-only guidance:
 
 Checkout: `E:\GitHub\code\codex-router`, branch `main`, whole-plan comparison
 `e8d285b85fa1ba27e62460776bbe3074a255f102`. It was clean before creation of the
-two follow-up documents, committed as `fee2a848`. Revision 2 updates to those
+two follow-up documents, committed as `fee2a848` and revised in `74d67695`. Revision 3 updates to those
 documents are in scope. Preserve the comparison
 through intermediate commits; recheck HEAD/status before mutation. Unexpected
 competing work requires reconciliation, not reset or overwrite.
@@ -45,7 +45,7 @@ Record the accepted C1 candidate as C2's experimental baseline. The original
 whole-change review baseline remains unchanged.
 
 Reserved lead decisions: altered uncertainty fallback, classifier context/egress
-expansion, provider privacy enforcement limits, review of unknown heterogeneous fields,
+expansion, provider privacy enforcement limits, review of all unknown catalog fields,
 evaluation promotion, extra paid runs and any loss of a provenance guarantee.
 Routine internal design remains the implementer's responsibility.
 
@@ -80,10 +80,12 @@ allowance. Use the same Sol for repair; do not take over implementation locally.
 Record candidate identity and decisive evidence at each accepted gate.
 Before C2's first paid run, verify that its baseline identity, 20/20 split,
 predeclared A/B/C rules, loss matrix, boundary cases, retry limit and count-based
-promotion gates are frozen. Holdout comparisons cannot select a new winner after
-results are visible. Keep state, criteria and policy comparisons distinguishable;
+promotion gates are frozen. Compare state, criteria and A/B/C only on development
+cases, then freeze exactly one candidate. Holdout evaluates only C1 versus that
+candidate; never calculate unchosen-policy results or A/B/C disagreement there.
+Keep state, criteria and policy comparisons distinguishable;
 do not substitute the earlier production candidate for the C1 control. Uncertainty
-without enough naturally differing decisions is inconclusive, not permission to
+without enough naturally differing development decisions is inconclusive, not permission to
 manufacture a passing evaluation. A small adjacent-model probe cannot redefine roles.
 
 Review the whole accumulated diff against the original baseline at FINAL using

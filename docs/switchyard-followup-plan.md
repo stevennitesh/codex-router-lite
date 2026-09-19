@@ -1,8 +1,8 @@
 # Switchyard feedback follow-up delivery plan
 
-Status: proposed, revision 2, 2026-09-18. Planning only; implementation has not
+Status: proposed, revision 3, 2026-09-18. Planning only; implementation has not
 started. Baseline: `e8d285b85fa1ba27e62460776bbe3074a255f102` on `main`.
-Revision 2 reconciles feedback on the planning commit `fee2a848`; that commit
+Revision 3 reconciles feedback on planning commits `fee2a848` and `74d67695`; neither
 does not replace the whole-change review baseline or the C2 experimental baseline.
 
 ## Purpose and boundary
@@ -86,6 +86,15 @@ or cannot be reliably identified, prefer the smaller state and document what it
 cannot resolve. Missing/oversize context must be visible, not silently concealed.
 The classifier context must never replace or mutate the native answer payload.
 
+Within the 32768-byte serialized-request budget, reserve fixed request overhead
+and the complete current user request before assistant context. Bound or omit
+assistant context first, preserving valid UTF-8 and recording that reduction in
+evaluation evidence. Never silently truncate the authoritative user request: if
+it and required overhead do not fit, use zero-call `state_too_large` fallback.
+Reduced assistant context must be marked as incomplete; an unresolved referent
+must not be treated as understood. Test near-limit states with and without a
+required assistant referent. Do not log the omitted text.
+
 Adding assistant answers expands the external data surface: they can quote
 private tool results even if raw tool messages are excluded. Synthetic testing
 does not authorize exporting existing conversations. Resolve and record that
@@ -99,8 +108,11 @@ before viewing C2 results, using the existing confidence transform and four targ
   Astra Medium remains Astra Medium, and Astra XHigh routes to Astra Medium.
 - C: choose the action minimizing the sum of probability times routing loss,
   using the existing B2 predeclared loss matrix copied into the evaluation fixture
-  before execution. No confidence cutoff. Break equal expected losses in the
-  order Sol Medium, Astra Medium, Luna Max, Astra XHigh. A/B preserve C1's raw
+  before execution. No confidence cutoff. For exact expected-loss ties, prefer
+  Sol Medium when tied as the designated neutral default; otherwise use the
+  declared resource-preference order Luna Max, Astra Medium, Astra XHigh. This
+  is a deterministic preference, not a claim of measured per-task cost. Do not
+  treat near-equal losses as ties. A/B preserve C1's raw
   argmax tie behavior; record it before testing rather than changing the control.
 
 Use the same recorded probability vector to score A/B/C offline; do not pay for
@@ -145,11 +157,14 @@ historical fallback log line as proof of current health.
 
 For catalog projection, known routing-sensitive fields retain explicit projection
 rules and known descriptive/instruction fields retain explicit donor ownership.
-For every unknown field, compare presence and structured value across all members:
-equal values/presence may be preserved; heterogeneous values or missing-on-some
-fields block publication of the mixed entry with an actionable review requirement.
+Never automatically publish an unknown field, including one identical across all
+native members: native agreement does not establish routed-path support. Build the
+mixed entry from explicitly owned fields rather than unrestricted donor spread.
+Unknown fields block publication of the mixed entry pending compatibility review;
+review decides whether to add an explicit rule or explicitly ignore the field.
 Do not infer safety semantics from field names or silently disable other native
-entries. Test nested values and missing versus null independently of the projector.
+entries. Test identical, differing, missing and nested unknown fields independently
+of the projector.
 Avoid a generalized metadata algebra.
 
 If the Decisions endpoint lacks per-request privacy controls, investigate whether
@@ -161,6 +176,12 @@ the limitation; do not claim ZDR enforcement or expand egress on that assumption
 
 ### Evaluation that can support a decision
 
+C2 is a conservative regression/promotion gate for this personal router, not a
+study establishing optimal model selection or general routing accuracy. The small
+synthetic corpus and adjacent-model probes can expose regressions and clear
+boundary failures. They cannot settle the best model for all real tasks. No new
+long-term telemetry infrastructure is part of this plan.
+
 Reuse one small runner against the candidate's real decision path. Keep the old
 corpus as regression/development data. Prepare about 40 new realistic synthetic
 conversation cases across the boundary scenarios above, compound work, broad
@@ -171,17 +192,20 @@ Record authorship and synthetic limitations; do not call these real user traffic
 The C2 experimental baseline is the accepted C1 candidate with existing four
 role descriptions, threshold 0.35 and Sol uncertainty fallback. Record its exact
 identity; `e8d285b8` remains the review comparison, not the experimental control.
-Compare state variants with criteria/policy/transport fixed, then criteria with
+On the 20 development cases only, compare state variants with criteria/policy/transport fixed, then criteria with
 state fixed, then A/B/C on the same vectors. Use the same frozen source conversations
 and identical transport conditions; only the state-comparison step may vary the
-rendered state. Compare the final combined candidate to C1 as well. Record provider
+rendered state. Select exactly one combined candidate on development evidence,
+then freeze its state selector, criteria and uncertainty rule. The 20 held-out
+cases compare only C1 against that frozen candidate. Do not compute alternative
+A/B/C routes, winners or disagreement statistics on the holdout. Record provider
 build and interleave paired calls where possible; a build change confounds the
 comparison and cannot be silently pooled into a pass.
 
 Freeze a 20-case development / 20-case held-out split, acceptable target sets,
-severity, outcome rubrics and comparison
-rules before classifier output. Reserve an unseen evaluation subset after the
-development policy is frozen. Once inspected it is spent; a failed case becomes
+severity, outcome rubrics and comparison rules before classifier output. Keep
+held-out results unseen until the development candidate is frozen. Once inspected
+the holdout is spent; a failed case becomes
 development evidence and cannot be relabeled into a passing held-out score.
 Prefer independently authored evaluation cases; if unavailable, disclose that
 limitation rather than claiming independence.
@@ -200,9 +224,10 @@ Freeze these count-based gates before the first paid C2 run:
 - Zero severe under-routes by the proposed candidate on the 20 held-out cases.
 - At most one non-critical paired regression (C1 acceptable, candidate unacceptable),
   and total acceptable-target count at least C1's on that same held-out subset.
-- Predeclare at least six boundary cases in the 40, including at least three in
-  the held-out subset. For uncertainty-policy promotion, require observed A/B/C
-  disagreement on at least three of those cases, including one held-out case.
+- Predeclare at least six boundary cases among the 20 development cases.
+  For uncertainty-policy promotion, require observed A/B/C disagreement on at
+  least three of those development cases. This is a development-only gate;
+  holdout results cannot rescue insufficient evidence for changing uncertainty.
   Insufficient disagreement is inconclusive, not a reason to tune or replace cases.
   Handcrafted probability fixtures test policy mechanics separately and do not
   count as evidence of natural classifier uncertainty.
@@ -213,8 +238,9 @@ Freeze these count-based gates before the first paid C2 run:
 - No unresolved adjacent-model outcome contradiction of the kind above.
 
 Use small-sample counts, not a generalized accuracy claim. Final holdout is used
-once for the candidate selected on development data; do not pick a different winner
-after inspecting held-out A/B/C comparisons. If a gate fails or is inconclusive,
+once for C1 versus the candidate selected on development data; do not evaluate
+unchosen alternatives or pick a different winner after inspecting those results.
+If a gate fails or is inconclusive,
 retain the applicable baseline policy and ship eligible engineering fixes separately.
 Any further policy revision needs a new evaluation proposal, not repeated tuning
 until a holdout passes. Criteria/state-only changes do not require uncertainty
