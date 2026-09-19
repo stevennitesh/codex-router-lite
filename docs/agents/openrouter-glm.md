@@ -50,5 +50,13 @@ uv pip compile --python-platform windows --generate-hashes --python-version 3.10
 
 Run `npm run check` afterward. It rejects mismatched direct pins, a lock without
 the required compile flags or hashes, and installer commands that bypass the
-lock. Booting the gateway remains required before accepting a dependency
-upgrade; a successful resolution alone does not prove runtime compatibility.
+lock. Audit the complete production closure with the pinned auditor used by CI:
+
+```powershell
+uvx --python 3.10 --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes -r requirements/python.txt
+```
+
+Do not suppress individual advisories to make the audit pass; update or otherwise
+reconcile the affected dependency. Booting the gateway remains required before
+accepting a dependency upgrade; a successful resolution or audit alone does not
+prove runtime compatibility.

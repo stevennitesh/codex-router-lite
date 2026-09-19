@@ -23,14 +23,16 @@ async function auditSequence(results) {
   return { status, calls, delays };
 }
 
-test("audit retries registry outages, but never converts exhaustion to success", async () => {
+test("audit retries absent reports, but never converts exhaustion to success", async () => {
   assert.deepEqual(await auditSequence([unavailable, report()]), { status: 0, calls: 2, delays: [5000] });
   assert.deepEqual(await auditSequence([unavailable]), { status: 1, calls: 3, delays: [5000, 10000] });
+  assert.deepEqual(await auditSequence([{ status: 0, stdout: "{}" }]), { status: 1, calls: 3, delays: [5000, 10000] });
   assert.equal((await auditSequence([{ status: null, error: { code: "ETIMEDOUT" } }, report()])).status, 0);
+  assert.equal((await auditSequence([{ status: 1, stdout: "upstream maintenance" }, report()])).status, 0);
 });
 
-test("audit blocks vulnerabilities and unknown errors without retrying", async () => {
-  for (const result of [report(1), report(0, 1), { ...report(1), stderr: "E503" }, { status: 0, stdout: "{}" }, { status: 1, stdout: "garbage E503" }, { status: 1, stdout: JSON.stringify({ error: { code: "E401" } }) }, { ...report(), status: 1 }]) {
+test("audit blocks authoritative vulnerabilities and failed authoritative reports", async () => {
+  for (const result of [report(1), report(0, 1), { ...report(1), stderr: "E503" }, { ...report(), status: 1 }]) {
     assert.deepEqual(await auditSequence([result]), { status: 1, calls: 1, delays: [] });
   }
 });

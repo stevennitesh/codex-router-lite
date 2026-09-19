@@ -4,7 +4,7 @@
 
 **Windows-only · unofficial community project · pre-1.0**
 
-[Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Contributing](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+[Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Feedback](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 I built Router Lite to use other models inside the Windows Codex app while keeping
 its tools, conversations, and native GPT models. The exciting part is having those
@@ -89,13 +89,20 @@ Route settings live under [config/openrouter](config/openrouter/) and
 [src/routed-models.mjs](src/routed-models.mjs). A new endpoint needs compatibility
 checks as well as a configuration entry.
 
+This is a maintainer-led personal project, so external pull requests are not
+accepted. Use the privacy-safe issue forms for bugs or route and behavior ideas,
+or fork the repository for your own changes.
+
 Run the local checks after making changes:
 
 ```powershell
 npm ci
-npm run check
-npm test
+npm run verify
+npm run audit:ci
 ```
+
+Maintainers also audit the hashed Python production lock before release; the
+exact pinned command is in the [GLM dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
 
 Then follow the [deployment guide](docs/INSTALL.md#update) to install your edited
 source. Restarting alone does not deploy changes.

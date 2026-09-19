@@ -12,23 +12,24 @@ export async function auditDependencies({ npmCli = process.env.npm_execpath, run
     let payload;
     try { payload = JSON.parse(result.stdout); } catch { /* Unknown output fails closed. */ }
     const counts = payload?.metadata?.vulnerabilities;
-    const report = counts && ["high", "critical"].every((key) => Number.isInteger(counts[key]) && counts[key] >= 0);
+    const report = !payload?.error && counts && ["high", "critical"].every((key) => Number.isInteger(counts[key]) && counts[key] >= 0);
     // Findings win even if stderr also describes a network problem.
     if (report && (counts.high > 0 || counts.critical > 0)) {
       log(result.stdout);
       return 1;
     }
-    if (!result.error && result.status === 0 && report && !payload.error) {
+    if (!result.error && result.status === 0 && report) {
       log(result.stdout);
       return 0;
     }
-    const code = payload?.error?.code ?? result.error?.code;
-    const transient = /^(?:E5\d\d|EAI_AGAIN|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH)$/u.test(String(code));
-    if (!transient || attempt === 3) {
+    // A valid report is authoritative. Anything else may be an unavailable or
+    // malformed audit service, so retry it without enumerating every network
+    // and registry error spelling. Exhaustion still fails closed.
+    if (report || attempt === 3) {
       log(result.stdout || result.stderr || result.error?.message || "npm audit returned no valid report");
       return 1;
     }
-    log(`npm audit infrastructure failure (${code}); retry ${attempt + 1}/3`);
+    log(`npm audit returned no valid report; retry ${attempt + 1}/3`);
     await sleep(5_000 * attempt);
   }
 }

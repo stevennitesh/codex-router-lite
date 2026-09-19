@@ -72,6 +72,7 @@ test("LiteLLM config owns only the ordinary OpenRouter GLM hop", () => {
   const config = renderLiteLlmConfig();
   assert.match(config, /openrouter-glm-5-3-flash/u);
   assert.match(config, /openrouter-glm-5-3-flash-gmicloud/u);
+  assert.match(config, /^general_settings:\r?\n  allow_client_side_credentials: false$/mu);
   assert.doesNotMatch(config, /pareto|union-alpha|switchyard|fallback|failover/u);
 });
 

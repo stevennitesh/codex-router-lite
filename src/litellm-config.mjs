@@ -38,6 +38,10 @@ export function renderLiteLlmConfig() {
     "router_settings:",
     "  disable_cooldowns: true",
     "general_settings:",
+    // Never let request parameters replace the configured provider endpoint or
+    // credential. This is defense in depth for CVE-2026-84377 in addition to
+    // pinning LiteLLM at its fixed release.
+    "  allow_client_side_credentials: false",
     "  disable_spend_logs: true",
     "",
   );

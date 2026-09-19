@@ -1,0 +1,51 @@
+name: Route or behavior proposal
+description: Suggest a Router Lite endpoint, protocol, or user-visible behavior change.
+title: "[Proposal]: "
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals help the maintainer understand useful changes; they do not promise implementation or acceptance of a pull request.
+
+        **Never post API keys, authorization headers, account or installation identifiers, full managed loopback URLs, private prompts, response bodies, or unredacted logs.** Report security issues through [Private Vulnerability Reporting](https://github.com/stevennitesh/codex-router-lite/security/advisories/new).
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe the observable behavior or route you want and how it differs from Router Lite today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Explain the Windows Codex workflow this would improve.
+    validations:
+      required: true
+
+  - type: input
+    id: boundary
+    attributes:
+      label: Affected endpoint or protocol
+      placeholder: OpenRouter endpoint, native Codex contract, Switchyard, installer, or other boundary
+    validations:
+      required: true
+
+  - type: textarea
+    id: considerations
+    attributes:
+      label: Compatibility and privacy considerations
+      description: Note known tool, history, credential, provider, or data-egress effects using sanitized details only.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed credentials, private content, identifiers, full managed URLs, response bodies, and unredacted logs.
+          required: true
+        - label: This is not a security vulnerability requiring private reporting.
+          required: true
