@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "generationFound": true,
+  "since": "2026-09-19T15:25:16.007Z",
+  "until": "2026-09-19T15:29:10.467Z",
+  "router": {
+    "total": 7,
+    "successful": 7,
+    "statuses": {
+      "200": 7
+    },
+    "recent": [
+      {
+        "at": "2026-09-19T15:26:05.830Z",
+        "status": 200,
+        "totalMs": 1843,
+        "outputTokens": 18,
+        "cachedTokens": 0
+      },
+      {
+        "at": "2026-09-19T15:26:08.249Z",
+        "status": 200,
+        "totalMs": 2418,
+        "outputTokens": 65,
+        "cachedTokens": 0
+      },
+      {
+        "at": "2026-09-19T15:26:12.095Z",
+        "status": 200,
+        "totalMs": 2323,
+        "outputTokens": 5,
+        "cachedTokens": 0
+      },
+      {
+        "at": "2026-09-19T15:26:13.941Z",
+        "status": 200,
+        "totalMs": 1815,
+        "outputTokens": 39,
+        "cachedTokens": 0
+      },
+      {
+        "at": "2026-09-19T15:28:25.281Z",
+        "status": 200,
+        "totalMs": 23791,
+        "outputTokens": 129,
+        "cachedTokens": 12928
+      },
+      {
+        "at": "2026-09-19T15:28:30.340Z",
+        "status": 200,
+        "totalMs": 4426,
+        "outputTokens": 7,
+        "cachedTokens": 24320
+      },
+      {
+        "at": "2026-09-19T15:28:42.847Z",
+        "status": 200,
+        "totalMs": 6493,
+        "outputTokens": 7,
+        "cachedTokens": 24448
+      }
+    ]
+  },
+  "routing": {
+    "total": 6,
+    "uniqueSessions": 3,
+    "selectedModels": {
+      "switchyard/luna-max": 2,
+      "switchyard/sol-medium": 4
+    },
+    "recent": [
+      {
+        "at": "2026-09-19T15:26:05.810Z",
+        "model": "switchyard/luna-max",
+        "promptTokens": 65,
+        "cachedTokens": 0,
+        "completionTokens": 18
+      },
+      {
+        "at": "2026-09-19T15:26:08.202Z",
+        "model": "switchyard/luna-max",
+        "promptTokens": 102,
+        "cachedTokens": 0,
+        "completionTokens": 65
+      },
+      {
+        "at": "2026-09-19T15:26:12.098Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 43,
+        "cachedTokens": 0,
+        "completionTokens": 5
+      },
+      {
+        "at": "2026-09-19T15:28:25.278Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 24508,
+        "cachedTokens": 12928,
+        "completionTokens": 129
+      },
+      {
+        "at": "2026-09-19T15:28:30.336Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 24662,
+        "cachedTokens": 24320,
+        "completionTokens": 7
+      },
+      {
+        "at": "2026-09-19T15:28:42.842Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 24715,
+        "cachedTokens": 24448,
+        "completionTokens": 7
+      }
+    ]
+  },
+  "classifier": {
+    "decisions": 4,
+    "fallbacks": 3,
+    "providerModels": {
+      "typesafe/jev-1.13-20260917": 1
+    },
+    "finalTargets": {
+      "luna_max": 1,
+      "sol_medium": 3
+    },
+    "latency": {
+      "count": 4,
+      "maximumMs": 358
+    },
+    "recent": [
+      {
+        "at": "2026-09-19T15:26:04.347818Z",
+        "source": "type_safe_classifier",
+        "providerModel": "typesafe/jev-1.13-20260917",
+        "finalTarget": "luna_max",
+        "confidence": 0.9111111111111111,
+        "threshold": 0.35,
+        "decisionLatencyMs": 358,
+        "probabilities": {
+          "luna_max": 0.9333333333333333,
+          "sol_medium": 0.06666666666666668,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        }
+      },
+      {
+        "at": "2026-09-19T15:26:09.783039Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      },
+      {
+        "at": "2026-09-19T15:28:01.493990Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      },
+      {
+        "at": "2026-09-19T15:28:36.357775Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      }
+    ]
+  },
+  "failures": {
+    "http": 0,
+    "nonEmptyServerErrors": 0,
+    "judgeUnavailable": 0,
+    "parseErrors": 0,
+    "fallback": 0
+  }
+}
