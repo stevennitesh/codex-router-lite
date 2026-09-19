@@ -1,7 +1,7 @@
 # Switchyard feedback execution handoff
 
 Status: prepared, not dispatched. Planning request only, 2026-09-18.
-Authoritative scope: [follow-up plan revision 3](switchyard-followup-plan.md).
+Authoritative scope: [follow-up plan revision 4](switchyard-followup-plan.md).
 The earlier [upgrade handoff](switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
 
@@ -23,8 +23,8 @@ Worker-only guidance:
 
 Checkout: `E:\GitHub\code\codex-router`, branch `main`, whole-plan comparison
 `e8d285b85fa1ba27e62460776bbe3074a255f102`. It was clean before creation of the
-two follow-up documents, committed as `fee2a848` and revised in `74d67695`. Revision 3 updates to those
-documents are in scope. Preserve the comparison
+two follow-up documents, most recently committed in `b84ba11e`. Revision 4
+updates are in scope. Preserve the comparison
 through intermediate commits; recheck HEAD/status before mutation. Unexpected
 competing work requires reconciliation, not reset or overwrite.
 
@@ -44,8 +44,15 @@ C1 gate, as defined in the plan; they do not create extra repair allowances.
 Record the accepted C1 candidate as C2's experimental baseline. The original
 whole-change review baseline remains unchanged.
 
+Revision 4 is intentionally smaller: C1 implements latest-user-only state and
+explicit known-field catalog projection, omitting unknown fields without a new
+publication-blocking framework. Keep health minimal and migrate hash consumers
+to existing provenance. No assistant-context selectors, Policy C, runtime
+evaluation-status subsystem or generic benchmark platform. A material selector
+failure comes back to the lead; do not build a more elaborate substitute silently.
+
 Reserved lead decisions: altered uncertainty fallback, classifier context/egress
-expansion, provider privacy enforcement limits, review of all unknown catalog fields,
+expansion, provider privacy enforcement limits, changes to known catalog safety rules,
 evaluation promotion, extra paid runs and any loss of a provenance guarantee.
 Routine internal design remains the implementer's responsibility.
 
@@ -79,14 +86,17 @@ limits follow cost-aware-coding; naming a new assignment does not reset a findin
 allowance. Use the same Sol for repair; do not take over implementation locally.
 Record candidate identity and decisive evidence at each accepted gate.
 Before C2's first paid run, verify that its baseline identity, 20/20 split,
-predeclared A/B/C rules, loss matrix, boundary cases, retry limit and count-based
-promotion gates are frozen. Compare state, criteria and A/B/C only on development
+predeclared A/B rules, boundary cases, retry limit and count-based
+promotion gates are frozen. Compare criteria and A/B only on development
 cases, then freeze exactly one candidate. Holdout evaluates only C1 versus that
-candidate; never calculate unchosen-policy results or A/B/C disagreement there.
-Keep state, criteria and policy comparisons distinguishable;
+candidate; never calculate unchosen-policy results or A/B disagreement there.
+Keep criteria and policy comparisons distinguishable;
 do not substitute the earlier production candidate for the C1 control. Uncertainty
 without enough naturally differing development decisions is inconclusive, not permission to
 manufacture a passing evaluation. A small adjacent-model probe cannot redefine roles.
+There is no mandatory answer-model study: run only justified changed-selection
+probes, initially at most two cases/eight answer calls as defined in the plan.
+Return further evidence needs instead of expanding the study automatically.
 
 Review the whole accumulated diff against the original baseline at FINAL using
 change-review. Test expectations must be independent of the projection/policy
