@@ -7,6 +7,10 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
+- Implement or review the planned simplicity/correctness follow-up: read the
+  [active plan](../../docs/switchyard-followup-plan.md) and its
+  [handoff](../../docs/switchyard-followup-handoff.md). They are proposals until
+  implemented; the runtime sections below describe current behavior.
 - Request, catalog, WebSocket, or trust boundaries: the sections below.
 - Startup, health, provider selection, or trace evidence: [runtime operations](runtime.md).
 - Upstream pin or patch changes: [source maintenance](maintenance.md#update-the-pin-and-patch).
@@ -117,7 +121,7 @@ target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
 The four-target policy advertises multi-agent v2 only with the accepted
-runtime-bound application under `v2_agent/switchyard/auto`. Its fresh A3 proof
+runtime-bound application under `v2_agent/switchyard/auto`. The recorded proof
 binds the deployed Router commit, upstream source, patch, binary, and generated
 routes. Any change to those identities or the native collaboration contract
 requires recertification.
@@ -132,5 +136,5 @@ complete WebSocket request into the canonical HTTP Responses path, so
 Switchyard itself receives plain HTTP JSON. This is not a client fallback and
 does not authorize a second WebSocket implementation in Switchyard.
 
-The common `priority` tier may pass because every configured Luna and Sol
+The common `priority` tier may pass because every configured Luna, Sol and Astra
 target supports it. Sol-only tiers stay hidden from the public routed entry.

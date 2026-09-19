@@ -13,6 +13,10 @@ model/endpoint additions, to current guides; it is not an operations manual.
 - The engineering contract owns engineering discipline. Tracker and domain guides
   are conditional; ordinary endpoint work does not require a tracker or new ADR.
 - README is the user-facing overview and links to maintainer entry points.
+- Active delivery plans are reached through the affected component guide, not
+  loaded globally. Plans own proposed behavior; maintained guides describe
+  implemented behavior. Reconcile both at delivery acceptance and retain one
+  active plan/handoff per workstream. Completed records remain historical.
 - [History](../history/README.md) contains dated investigations and review evidence.
   Mark each record as historical when opened directly. Keep status, test counts,
   candidate commits and deployment anecdotes out of maintained instructions.

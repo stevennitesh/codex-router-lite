@@ -1,9 +1,9 @@
 # Switchyard feedback follow-up delivery plan
 
-Status: proposed revision 5, 2026-09-18. Planning only; not executing.
+Status: proposed revision 6, 2026-09-18. Planning only; not executing.
 Whole-change review baseline: `e8d285b85fa1ba27e62460776bbe3074a255f102`.
-Revision 5 retains revision 4's simplified scope and clarifies selector ownership,
-catalog boundaries and mechanical versus semantic acceptance. It supersedes the
+Revision 6 retains the simplified scope, narrows health to configuration readiness,
+and adds explicit documentation/context acceptance. It supersedes the
 earlier assistant-context experiment,
 Policy C, unknown-field publication blocking and mandatory 24 answer runs.
 The [handoff](switchyard-followup-handoff.md) owns execution arrangements.
@@ -77,17 +77,19 @@ on transport failures. Use a small sanitized reason set: `classifier_unavailable
 `state_too_large`, `non_text_state`, plus existing low-confidence fallback.
 Retain useful HTTP status without raw provider error bodies.
 
-Expose classifier `ok/degraded + reason` through existing health plumbing;
-before readiness is established report unknown, not invented success. Missing
-credentials must be visible while serving remains live. Document recovery after
-successful calls/restart. No paid health probes, persisted health database or
-inference of current status from old logs.
+Expose classifier configuration/readiness through existing health plumbing:
+`ready` or `unavailable + reason`, with unknown before initialization is known.
+Missing credentials or client-construction failure must be visible while serving
+remains live. Ready means configured/initialized, not provider availability.
+Per-request timeout, 429 and other failures go to existing traces/counters and Sol
+fallback; they do not mutate health. No transient-health recovery policy, rolling
+failure state, paid probes or persistent classifier-health database.
 
 Retain trace target, confidence, probability map, latency, fallback reason and
-observed provider build. A changed dated build within the accepted family gets
-a bounded warning that earlier evaluation may not apply; continue serving.
-Wrong families/malformed responses remain errors. Compare builds in evaluation
-reports; do not add a runtime `evaluation_status` subsystem.
+observed provider build. Continue serving a new dated build within the accepted
+family. Wrong families/malformed responses remain errors. Compare observed versus
+evaluated builds in the evaluator or existing update check, not in runtime drift
+state. No runtime change detector or special persistent warning is required.
 
 Build the mixed catalog from known top-level capability/configuration projection
 rules and explicitly donor-owned instruction/descriptive structures. Preserve
@@ -132,6 +134,22 @@ Keep historical JSON unchanged. Consolidate evaluation/smoke entry points withou
 building a benchmark framework or deleting unique compatibility coverage. After
 completion, archive completed plans/handoffs as history and repair links; keep
 durable guidance at existing runtime owners. Do not archive active recovery state.
+
+Keep the active plan discoverable through the Switchyard integration guide and
+keep scope, custody and methods in this plan/handoff rather than duplicating them
+in AGENTS.md. Maintained docs describe implemented behavior; proposals stay here.
+At implementation acceptance, reconcile README, SECURITY.md and Switchyard guides
+with verified classifier egress, selected-turn/media behavior, readiness and traces.
+The front page must clearly distinguish OpenRouter/Jev classification from native
+Luna/Sol/Astra answers. Until C1 lands, document today's opening-plus-latest state
+and history-wide media fallback, not the proposed latest-turn-only behavior.
+
+Aim for net simplification of the existing hash/materializer/evaluation machinery.
+Every new abstraction must remove a demonstrated source of complexity; no generic
+state manager, capability engine or evaluation registry. Report removed/added
+production code and retained helpers with a short rationale at review. Line count
+is a warning signal, not grounds to delete necessary safety or tests. Large growth
+requires a concrete scope justification before acceptance.
 
 ## Bounded routing check
 
@@ -190,13 +208,14 @@ boundaries or when no changed selection needs proof.
 
 | Gate | Scope and evidence |
 | --- | --- |
-| C1 — engineering fixes | C1a: Jev-only selection mechanics, timeout, minimal health/errors, build warning, identity reproduction and privacy investigation. C1b: history-free materialization, hash removal, top-level projection and package closure. One review covers both; preserve criteria and A. Show real-decoder mechanical regressions, unchanged other classifiers and negative provenance tests; no semantic routing-quality claim. |
+| C1 — engineering fixes | C1a: Jev-only selection mechanics, timeout, configuration readiness, per-request errors/build metadata, identity reproduction and privacy investigation. C1b: history-free materialization, hash removal, top-level projection and package closure. One review covers both; preserve criteria and A. Show real-decoder mechanical regressions, unchanged other classifiers and negative provenance tests; no semantic routing-quality claim. |
 | C2 — bounded routing check | Check semantic acceptability of latest-user-only state, clarify criteria and compare A/B in an isolated candidate using frozen cases. Run only justified outcome probes. Recommend promotion or retain existing behavior with limitations. No assistant context, Policy C or new framework. |
 | FINAL — integration | Consolidate scripts/docs, review the complete change against the original baseline, and produce a reproducible release candidate. Earlier gates do not replace final integration review. |
 
 Run required Router checks, relevant integration tests, Rust tests/fmt/clippy,
 ordered-patch reproduction and package validation. Test stalled-provider timeout/
-cancellation, zero-call local fallback, credentials/recovery, actual decoder
+cancellation, zero-call local fallback, configuration readiness (unchanged by
+transient failures), actual decoder
 turn selection, original media preservation, known catalog safety and unknown
 field omission. Reuse valid evidence rather than repeat unrelated expensive checks.
 

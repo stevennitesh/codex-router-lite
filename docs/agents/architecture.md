@@ -32,8 +32,9 @@ Update explicit allowlists for an authorized addition; never disable their check
    final payload validation and endpoint policy.
 4. Response transforms restore native tool identities and event structure before
    Codex executes tools. Router does not execute the returned app tools itself.
-5. Switchyard is a separate authenticated loopback hop: it selects a native target
-   and returns through Router to the native backend. Read its
+5. Switchyard is a separate authenticated loopback hop: bounded task text goes to
+   OpenRouter/Jev for classification, then the selected answer target returns
+   through Router to the native backend. Read its
    [trust and routing contract](../../config/switchyard/README.md) only for that path.
 
 Native account headers must never reach OpenRouter. For authentication, catalog,

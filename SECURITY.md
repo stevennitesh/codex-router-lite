@@ -4,7 +4,20 @@ All Router, LiteLLM, and Switchyard listeners bind to loopback. Codex reaches Ro
 
 Native Codex requests retain Codex authorization and account headers. OpenRouter requests never receive the caller's authorization, ChatGPT account ID, installation ID, residency headers, or FedRAMP headers. The OpenRouter hop replaces them with the one protected provider key.
 
-Switchyard is the only external routing exception. It is a local, capability-protected hop that preserves native Codex authorization for the native model it selects. It must strip the Router capability before its upstream request and must not log authorization, account data, route prompts, or unredacted decisions.
+Switchyard is a local, capability-protected hop with two separate upstream paths.
+Its Jev classifier sends bounded task text to OpenRouter's Decisions endpoint
+using the protected OpenRouter key, without native authorization/account headers.
+Currently the decision state contains the opening task and latest textual user
+update. User media anywhere in retained history skips Jev and falls back to Sol;
+media is not sent to the classifier. Assistant answers, tool-result payloads and
+reasoning are excluded from decision state. User-authored text can still contain
+sensitive information: a native answer model does not make classification local.
+
+The selected native answer path preserves Codex authorization and conversation
+content, including media. The local-hop capability must not reach upstream
+providers. Do not log authorization, account data, route prompts or unredacted
+decisions. Do not infer endpoint-specific retention enforcement from a provider's
+general privacy documentation; the proposed follow-up has not established it.
 
 Protected state uses owner-only ACLs. Do not put provider or native credentials
 in source, config JSON, command arguments, logs, fixtures, support text, or

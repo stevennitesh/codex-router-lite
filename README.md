@@ -17,7 +17,7 @@ native CLI, with a small, explicit set of routes.
 - **Choose your endpoint.** Separate model-picker entries for each OpenRouter route, with no silent provider fallback.
 - **Keep using Codex tools.** Router translates tool calls and conversation history so supported models can work through the native interface.
 - **Keep native GPT access.** Native models and account visibility remain owned by your installed Codex build.
-- **Let Switchyard choose.** An optional local router selects a native Luna or Sol model and reasoning effort for the task.
+- **Let Switchyard choose.** OpenRouter's Jev classifier helps the local router select a native Luna, Sol or Astra model and reasoning effort.
 
 ## Models
 
@@ -26,7 +26,7 @@ native CLI, with a small, explicit set of routes.
 | GLM-5.3-Flash | OpenRouter → Novita | [Compatibility](docs/agents/openrouter-glm.md) |
 | GLM-5.3-Flash | OpenRouter → GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
 | Pareto | OpenRouter → Unbiased | [Compatibility](docs/agents/pareto.md) |
-| Switchyard Auto | Native Codex → Luna / Sol | [Routing policy](config/switchyard/README.md#routing-policy) |
+| Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy) |
 
 Pareto supports automatic tool selection and has no hosted-search capability.
 Pareto, GLM, and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
@@ -118,6 +118,12 @@ Router listens locally. OpenRouter requests use your protected provider key;
 your Codex credentials and account headers are not forwarded to OpenRouter.
 Model requests still go to the selected provider. See [security](SECURITY.md)
 for the trust boundaries and private vulnerability reporting.
+
+**Switchyard Auto also sends task text to OpenRouter/Jev for model selection, even
+though its answer comes from a native GPT model.** Currently that text is the
+opening task plus latest user update. User media anywhere in the retained history
+bypasses Jev and selects Sol; that media is not sent to the classifier. See the
+[routing policy](config/switchyard/README.md#routing-policy) for details.
 
 Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),
 with a narrower focus on my Windows Codex workflow. Independent project;

@@ -1,7 +1,7 @@
 # Switchyard feedback execution handoff
 
 Status: prepared, not dispatched. Planning request only, 2026-09-18.
-Authoritative scope: [follow-up plan revision 5](switchyard-followup-plan.md).
+Authoritative scope: [follow-up plan revision 6](switchyard-followup-plan.md).
 The earlier [upgrade handoff](switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
 
@@ -23,8 +23,8 @@ Worker-only guidance:
 
 Checkout: `E:\GitHub\code\codex-router`, branch `main`, whole-plan comparison
 `e8d285b85fa1ba27e62460776bbe3074a255f102`. It was clean before creation of the
-two follow-up documents, most recently committed in `e6ded840`. Revision 5
-updates are in scope. Preserve the comparison
+two follow-up documents, most recently committed in `9db3c960`. Revision 6 and
+its accompanying documentation/context updates are in scope. Preserve the comparison
 through intermediate commits; recheck HEAD/status before mutation. Unexpected
 competing work requires reconciliation, not reset or overwrite.
 
@@ -44,9 +44,11 @@ C1 gate, as defined in the plan; they do not create extra repair allowances.
 Record the accepted C1 candidate as C2's experimental baseline. The original
 whole-change review baseline remains unchanged.
 
-Revision 5 retains the smaller scope: C1 implements Jev-only latest-user state and
+Revision 6 retains the smaller scope: C1 implements Jev-only latest-user state and
 explicit known-field catalog projection, omitting unknown fields without a new
-publication-blocking framework. Keep health minimal and migrate hash consumers
+publication-blocking framework. Health is configuration readiness only; transient
+failures stay in traces and do not need recovery state. Provider build is trace/
+evaluation metadata, not runtime drift tracking. Migrate hash consumers
 to existing provenance. No assistant-context selectors, Policy C, runtime
 evaluation-status subsystem or generic benchmark platform. A material selector
 failure comes back to the lead; do not build a more elaborate substitute silently.
@@ -57,6 +59,10 @@ update check, not a new runtime monitor. C1 acceptance proves selection/transpor
 mechanics; C2 owns semantic routing checks, including when A remains unchanged.
 An unacceptable latest-user-only result cannot pass just because C1 routes the
 same way; return it before promotion. Keep a dormant confidence gate unchanged.
+Follow the plan's documentation acceptance: update the front-page trust boundary
+and maintained guides to verified behavior when C1 lands. Do not promote proposed
+behavior into current instructions early. Return a brief simplification accounting
+with the candidate; justify new abstractions against complexity actually removed.
 
 Reserved lead decisions: altered uncertainty fallback, classifier context/egress
 expansion, provider privacy enforcement limits, changes to known catalog safety rules,
