@@ -1,9 +1,14 @@
-# switchyard/auto v2 certification
+# switchyard/auto v2 certification draft
 
-This application is accepted for deployed Router
-`e37672c4f544e5b8ebc29e473c5564e78db5bd9b` and only the runtime identities in
-the machine-readable proof. Procedure:
-[certification](../../../docs/SUBAGENT-CERTIFICATION.md).
+The installed runtime remains certified for deployed Router
+`e37672c4f544e5b8ebc29e473c5564e78db5bd9b` and compatibility patch
+`411a109fd5ec302fbec91ce13272155e76b44b540ac7cdcb0ac9654731ab3bcd`.
+The checked source now uses compatibility patch
+`adbffdb89c194c0d8f45eec13d38bf9feeea49bad86615cef60ee182e2ac3c66`,
+so the source route is v1 and this application remains draft until that exact
+candidate is deployed and certified. The prior runtime evidence remains in
+[`docs/history`](../../../docs/history/2026-09-18-switchyard-review-cleanup-certification.json).
+Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
 

@@ -85,6 +85,18 @@ test("Switchyard trace reads the candidate's emitted bounded evidence event", ()
   });
 });
 
+test("Switchyard trace retains the sanitized empty-state fallback reason", () => {
+  const summary = summarizeSwitchyardTrace([
+    "Switchyard libsy server",
+    "2026-09-19T05:00:00Z INFO libsy.run: routing decision evidence evidence_source=\"fail_open\" evidence_final_target=\"sol_medium\" evidence_reason_code=\"empty_state\" evidence_confidence=0 evidence_threshold=0.35 evidence_decision_latency_ms=0",
+  ].join("\n"));
+
+  assert.equal(summary.classifier.decisions, 1);
+  assert.equal(summary.classifier.fallbacks, 1);
+  assert.equal(summary.classifier.recent[0].reasonCode, "empty_state");
+  assert.equal(summary.classifier.recent[0].finalTarget, "sol_medium");
+});
+
 test("Switchyard trace fails closed when no service generation marker exists", () => {
   assert.deepEqual(summarizeSwitchyardTrace("status=200"), {
     version: 1,

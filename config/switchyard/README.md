@@ -82,10 +82,11 @@ Every target sets `store = false`, `stream = true`, and removes
 
 Jev 1.13 is the sole classifier. It receives only the latest genuine user turn's
 ordered text blocks through the exact OpenRouter Decisions endpoint. Empty and
-control-only pseudo-user messages are skipped. Media or unsupported meaningful
-content in the selected turn skips the classifier and falls back to Sol; older
-media does not veto a later text-only classification. Earlier turns, tool results,
-reasoning, provider metadata,
+control-only pseudo-user messages are skipped; when no genuine user turn remains,
+the route records `empty_state` and falls back to Sol without a classifier call.
+Media or unsupported meaningful content in the selected turn skips the classifier
+and falls back to Sol; older media does not veto a later text-only classification.
+Earlier turns, tool results, reasoning, provider metadata,
 credentials, and native authorization never enter the decision request. The
 full conversation remains intact for the native answer model. The classifier
 chooses the dominant bottleneck of the whole request with this policy:

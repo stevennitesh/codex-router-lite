@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 9cf17f4b..d98cf9d0 100644
+index 9cf17f4b739945b6e97d1f04a97f49bab66aa084..d98cf9d040c142d0787be7c400511502309d8d79 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -278,6 +278,15 @@ dependencies = [
@@ -188,7 +188,7 @@ index 9cf17f4b..d98cf9d0 100644
  
  [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index 1a07d2da..b592beb9 100644
+index 1a07d2da2d7090909cddf618a937e1b123fed9a3..b592beb94410d5a730b3437be5bd9330590910da 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -44,6 +44,7 @@ regex = "1"
@@ -200,7 +200,7 @@ index 1a07d2da..b592beb9 100644
  switchyard-llm-client = { path = "crates/libsy-llm-client", version = "0.3.0" }
  switchyard-protocol = { path = "crates/protocol", version = "0.3.0" }
 diff --git a/crates/libsy-llm-client/src/backend.rs b/crates/libsy-llm-client/src/backend.rs
-index da3b9aa2..03f64839 100644
+index da3b9aa2549d69508fbefc1d672ce09a2ba9d908..03f64839881b2a2042460a6fbb1a0446cc1ef253 100644
 --- a/crates/libsy-llm-client/src/backend.rs
 +++ b/crates/libsy-llm-client/src/backend.rs
 @@ -192,21 +192,22 @@ impl Backend {
@@ -242,7 +242,7 @@ index da3b9aa2..03f64839 100644
  
      /// Applies only the caller credential accepted by this provider.
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 948838f4..e4faaf48 100644
+index 948838f48ef50ee8d8766a277a70e9037542aee1..e4faaf4859369fdb8a0fe91d2c09e7b2eb02c71e 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -61,6 +61,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -579,7 +579,7 @@ index 948838f4..e4faaf48 100644
          assert!(!received.headers.contains_key("x-hop-by-hop"));
          Ok(())
 diff --git a/crates/libsy/src/algorithms/composite.rs b/crates/libsy/src/algorithms/composite.rs
-index 3afe6148..5a93786c 100644
+index 3afe61486a03cc30a3003a992b3621eebb8805b6..5a93786cb7903efc926f7bf525ed4d370cd9d068 100644
 --- a/crates/libsy/src/algorithms/composite.rs
 +++ b/crates/libsy/src/algorithms/composite.rs
 @@ -51,7 +51,7 @@ impl TierSetter {
@@ -591,296 +591,8 @@ index 3afe6148..5a93786c 100644
              // Unkeyed requests cannot be told apart, so every one is a new session.
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
-diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index b2ff7c2e..0c55bcf8 100644
---- a/crates/libsy/src/algorithms/llm_class.rs
-+++ b/crates/libsy/src/algorithms/llm_class.rs
-@@ -148,37 +148,40 @@ fn window_start(tail: &[&Message], recent_turn_window: usize) -> usize {
-     counted
- }
- 
--/// Keeps the opening task and the latest user follow-up when they differ.
-+/// Keeps the textual opening task and latest user follow-up as one clean text
-+/// message. Responses tool and relay envelopes can be normalized as user
-+/// content when their item type has no IR representation. They are transport
-+/// state, not task text, and must not be replayed to the judge. One text block
-+/// also forces the Responses codec's scalar `input` form, avoiding provider
-+/// validation of message-content arrays that the hidden classifier does not
-+/// need.
- pub(crate) fn task_messages(messages: &[Message]) -> Vec<Message> {
--    // Decoders also use the user role for tool results. Select ordinary user content
--    // first, so a tool result cannot replace the opening task or latest follow-up.
--    let is_task_content = |block: &ContentBlock| {
--        !matches!(
--            block,
--            ContentBlock::ToolCall(_)
--                | ContentBlock::ToolResult(_)
--                | ContentBlock::Reasoning { .. }
--        )
--    };
--    let mut user_messages = messages.iter().filter(|message| {
--        message.role == Role::User && message.content.iter().any(is_task_content)
-+    let mut user_messages = messages.iter().filter_map(|message| {
-+        if message.role != Role::User {
-+            return None;
-+        }
-+        let text = message
-+            .content
-+            .iter()
-+            .filter_map(|block| match block {
-+                ContentBlock::Text { text } => Some(text.as_str()),
-+                _ => None,
-+            })
-+            .collect::<Vec<_>>()
-+            .join("\n");
-+        (!text.is_empty()).then_some(text)
-     });
--    let Some(opening_task) = user_messages.next() else {
--        return Vec::new();
-+    let Some(mut text) = user_messages.next() else {
-+        return vec![Message::text(
-+            Role::User,
-+            "The current user request contains no textual task content.",
-+        )];
-     };
--    [Some(opening_task), user_messages.next_back()]
--        .into_iter()
--        .flatten()
--        .map(|message| Message {
--            role: Role::User,
--            content: message
--                .content
--                .iter()
--                .filter(|block| is_task_content(block))
--                .cloned()
--                .collect(),
--        })
--        .collect()
-+    if let Some(latest_follow_up) = user_messages.next_back() {
-+        text.push_str("\n\nLatest user update:\n");
-+        text.push_str(&latest_follow_up);
-+    }
-+    vec![Message::text(Role::User, text)]
- }
- 
- /// Selects the task messages shown to capability and custom-schema classifiers.
-@@ -776,8 +779,8 @@ mod tests {
- 
-     use super::*;
-     use switchyard_protocol::{
--        ContentBlock, InstructionBlock, LlmClientError, LlmRequest, Metadata, ModelId, ToolCall,
--        ToolResult, completion_text, text_request, text_response,
-+        ContentBlock, ImageSource, InstructionBlock, LlmClientError, LlmRequest, Metadata, ModelId,
-+        ToolCall, ToolResult, completion_text, text_request, text_response,
-     };
- 
-     use crate::algorithms::util::llm_judge::Judge;
-@@ -1348,6 +1351,52 @@ mod tests {
-         ))
-     }
- 
-+    #[test]
-+    fn classifier_keeps_only_the_common_fast_service_tier() -> Result<()> {
-+        let judge = capability_judge(None)?;
-+        for (requested, expected) in [
-+            (Some("priority"), Some("priority")),
-+            (Some("ultrafast"), None),
-+            (None, None),
-+        ] {
-+            let mut request = Request {
-+                llm_request: text_request(Some("auto".to_string()), "classify this"),
-+                raw_request: None,
-+                metadata: None,
-+            };
-+            if let Some(requested) = requested {
-+                request.llm_request.extensions.fields.insert(
-+                    "service_tier".to_string(),
-+                    Value::String(requested.to_string()),
-+                );
-+            }
-+            request
-+                .llm_request
-+                .extensions
-+                .fields
-+                .insert("unrelated".to_string(), Value::Bool(true));
-+
-+            let built = judge.build_request(&State::default(), &request);
-+            assert_eq!(
-+                built
-+                    .llm_request
-+                    .extensions
-+                    .fields
-+                    .get("service_tier")
-+                    .and_then(Value::as_str),
-+                expected
-+            );
-+            assert!(
-+                !built
-+                    .llm_request
-+                    .extensions
-+                    .fields
-+                    .contains_key("unrelated")
-+            );
-+        }
-+        Ok(())
-+    }
-+
-     fn judged_contents(recent_turn_window: usize) -> Result<Vec<String>> {
-         let judge = capability_judge(Some(recent_turn_window))?;
-         let request = Request {
-@@ -1420,7 +1469,7 @@ mod tests {
-     }
- 
-     #[test]
--    fn default_task_input_keeps_user_content_around_tool_results() {
-+    fn default_task_input_keeps_text_and_excludes_tool_results() {
-         let mut result = tool_result("call-1");
-         result.role = Role::User;
-         let mut mixed = result.clone();
-@@ -1445,13 +1494,19 @@ mod tests {
-         };
-         assert_eq!(
-             input.build_messages(&State::default(), &request),
--            vec![
--                Message::text(Role::User, "initial task"),
--                Message::text(Role::User, "latest follow-up"),
--            ]
-+            vec![Message::text(
-+                Role::User,
-+                "initial task\n\nLatest user update:\nlatest follow-up"
-+            )]
-         );
-         request.llm_request.messages = vec![result];
--        assert!(input.build_messages(&State::default(), &request).is_empty());
-+        assert_eq!(
-+            input.build_messages(&State::default(), &request),
-+            vec![Message::text(
-+                Role::User,
-+                "The current user request contains no textual task content."
-+            )]
-+        );
-     }
- 
-     /// A count-based window can begin on a tool result, which leaves the call that
-@@ -1695,16 +1750,17 @@ mod tests {
-             }
-             .content,
-         );
--        assert_eq!(judge_request.llm_request.messages.len(), 2);
-+        assert_eq!(judge_request.llm_request.messages.len(), 1);
-         let contents = judge_request
-             .llm_request
-             .messages
-             .iter()
-             .filter_map(|message| message.text_content("\n"))
-             .collect::<Vec<_>>();
--        assert!(contents.contains(&"recent 4".to_string()));
--        assert!(contents.contains(&"initial task".to_string()));
--        assert!(!contents.contains(&"recent 5".to_string()));
-+        assert!(contents[0].contains("initial task"));
-+        assert!(contents[0].contains("Latest user update:"));
-+        assert!(contents[0].contains("recent 4"));
-+        assert!(!contents[0].contains("recent 5"));
-         assert!(!contents.contains(&"client instructions".to_string()));
-         assert_eq!(
-             judge_request.llm_request.output.response_format,
-@@ -1717,6 +1773,94 @@ mod tests {
-         Ok(())
-     }
- 
-+    #[test]
-+    fn capability_judge_excludes_native_tool_envelopes_from_task_input() -> Result<()> {
-+        let judge = capability_judge(None)?;
-+        let request = Request {
-+            llm_request: LlmRequest {
-+                messages: vec![
-+                    Message::text(Role::User, "initial task"),
-+                    Message::text(Role::User, "follow-up task"),
-+                    Message {
-+                        role: Role::User,
-+                        content: vec![
-+                            ContentBlock::Text {
-+                                text: "latest visible task".to_string(),
-+                            },
-+                            ContentBlock::Image {
-+                                source: ImageSource::Url {
-+                                    url: "https://example.invalid/relay".to_string(),
-+                                    detail: None,
-+                                },
-+                            },
-+                            ContentBlock::ToolResult(ToolResult {
-+                                tool_call_id: "call-1".to_string(),
-+                                content: vec![ContentBlock::Text {
-+                                    text: "native relay output".to_string(),
-+                                }],
-+                                is_error: None,
-+                            }),
-+                        ],
-+                    },
-+                ],
-+                ..LlmRequest::default()
-+            },
-+            raw_request: None,
-+            metadata: None,
-+        };
-+
-+        let messages = judge
-+            .build_request(&State::default(), &request)
-+            .llm_request
-+            .messages;
-+        assert_eq!(messages.len(), 1);
-+        assert_eq!(messages[0].role, Role::User);
-+        assert_eq!(messages[0].content.len(), 1);
-+        assert!(matches!(messages[0].content[0], ContentBlock::Text { .. }));
-+        assert!(messages[0].text_content("\n").is_some_and(|text| {
-+            text.contains("initial task")
-+                && text.contains("latest visible task")
-+                && !text.contains("native relay output")
-+                && !text.contains("example.invalid")
-+        }));
-+        Ok(())
-+    }
-+
-+    #[test]
-+    fn capability_judge_uses_safe_text_for_a_non_text_only_task() -> Result<()> {
-+        let judge = capability_judge(None)?;
-+        let request = Request {
-+            llm_request: LlmRequest {
-+                messages: vec![Message {
-+                    role: Role::User,
-+                    content: vec![ContentBlock::ToolResult(ToolResult {
-+                        tool_call_id: "call-1".to_string(),
-+                        content: vec![ContentBlock::Text {
-+                            text: "native relay output".to_string(),
-+                        }],
-+                        is_error: None,
-+                    })],
-+                }],
-+                ..LlmRequest::default()
-+            },
-+            raw_request: None,
-+            metadata: None,
-+        };
-+
-+        let messages = judge
-+            .build_request(&State::default(), &request)
-+            .llm_request
-+            .messages;
-+        assert_eq!(
-+            messages,
-+            vec![Message::text(
-+                Role::User,
-+                "The current user request contains no textual task content."
-+            )]
-+        );
-+        Ok(())
-+    }
-+
-     fn sample_value(spec: &Value) -> Value {
-         if let Some(first) = spec
-             .get("enum")
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
-index e8a32baa..1365a34c 100644
+index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c35e3cee4c 100644
 --- a/crates/libsy/src/algorithms/type_safe_class.rs
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
 @@ -19,10 +19,12 @@
@@ -1404,20 +1116,22 @@ index e8a32baa..1365a34c 100644
  
      #[test]
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
-index 698f0a9d..2a6a4fba 100644
+index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef964196cce 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
 +++ b/crates/libsy/src/algorithms/util/affinity.rs
-@@ -57,8 +57,36 @@ fn is_user_turn(message: &Message) -> bool {
+@@ -57,8 +57,38 @@ fn is_user_turn(message: &Message) -> bool {
              .all(|block| matches!(block, ContentBlock::ToolResult(_)))
  }
  
 -pub(crate) fn has_new_user_turn(messages: &[Message]) -> bool {
 -    messages.last().is_some_and(is_user_turn)
 +const RESPONSES_TOOL_OUTPUT_TYPES: &[&str] = &[
++    "apply_patch_call_output",
 +    "function_call_output",
 +    "custom_tool_call_output",
 +    "computer_call_output",
 +    "local_shell_call_output",
++    "shell_call_output",
 +    "tool_search_output",
 +];
 +
@@ -1446,7 +1160,7 @@ index 698f0a9d..2a6a4fba 100644
  }
  
  /// Retains a model per request identity and forces it on later matching requests.
-@@ -241,7 +269,7 @@ where
+@@ -241,7 +271,7 @@ where
          };
          // Abstaining rather than clearing keeps this read path free of writes, so the judge
          // decides the turn whatever order concurrent latches land in.
@@ -1455,19 +1169,29 @@ index 698f0a9d..2a6a4fba 100644
              return Ok((Classification::Scores(Vec::new()), None));
          }
          // An empty `any` group carries no information about which models are still
-@@ -881,6 +909,39 @@ mod tests {
+@@ -881,6 +911,49 @@ mod tests {
          Ok(())
      }
  
 +    #[tokio::test]
-+    async fn codex_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
++    async fn literal_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
 +        let router = AffinityRouter::new().with_release_on_user_turn();
 +        let mut state = ();
 +        let metadata = session("session-1", "agent-a");
 +        let mut opening = task_request(Some(metadata.clone()), "apply the patch", None);
 +        retain(&router, &mut state, &mut opening, "weak").await?;
 +
-+        for item_type in RESPONSES_TOOL_OUTPUT_TYPES {
++        // Literal protocol names keep this regression independent of the
++        // implementation list it is meant to check.
++        for item_type in [
++            "apply_patch_call_output",
++            "function_call_output",
++            "custom_tool_call_output",
++            "computer_call_output",
++            "local_shell_call_output",
++            "shell_call_output",
++            "tool_search_output",
++        ] {
 +            // The Responses decoder historically represented unfamiliar Codex
 +            // outputs as user text. The raw discriminator is authoritative and
 +            // must keep that representation from releasing the route mid-loop.
@@ -1495,34 +1219,8 @@ index 698f0a9d..2a6a4fba 100644
      #[tokio::test]
      async fn latch_only_retains_matching_models() -> Result<(), BoxErr> {
          let router = AffinityRouter::new().with_latch_only(["strong"]);
-diff --git a/crates/libsy/src/algorithms/util/llm_judge.rs b/crates/libsy/src/algorithms/util/llm_judge.rs
-index 4798178e..2bb4def3 100644
---- a/crates/libsy/src/algorithms/util/llm_judge.rs
-+++ b/crates/libsy/src/algorithms/util/llm_judge.rs
-@@ -157,6 +157,13 @@ where
- 
-     fn build_request(&self, state: &State, request: &Request) -> Request {
-         let messages = self.input.build_messages(state, request);
-+        let mut extensions = request.llm_request.extensions.clone();
-+        // Fast is the only service tier common to every target in the Codex
-+        // route. Preserve it for the hidden classifier call, but do not copy
-+        // provider-specific fields or Sol-only ultrafast service.
-+        extensions
-+            .fields
-+            .retain(|key, value| key == "service_tier" && value.as_str() == Some("priority"));
-         Request {
-             llm_request: LlmRequest {
-                 model: request.llm_request.model.clone(),
-@@ -170,6 +177,7 @@ where
-                     max_output_tokens: Some(self.runtime.max_output_tokens),
-                     response_format: Some(self.contract.response_format().clone()),
-                 },
-+                extensions,
-                 ..LlmRequest::default()
-             },
-             raw_request: None,
 diff --git a/crates/libsy/src/algorithms/util/typesafe_provider.rs b/crates/libsy/src/algorithms/util/typesafe_provider.rs
-index 5fea15ee..a4e2b744 100644
+index 5fea15eea438ff628ba8851dc4fcd6954ebc9d30..a4e2b744233ee2c3caa4ab38e254c0d1935db697 100644
 --- a/crates/libsy/src/algorithms/util/typesafe_provider.rs
 +++ b/crates/libsy/src/algorithms/util/typesafe_provider.rs
 @@ -75,20 +75,76 @@ pub struct TypeSafeVerdict {
@@ -1621,7 +1319,7 @@ index 5fea15ee..a4e2b744 100644
      }
  }
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 5d75cdff..62fd98aa 100644
+index 5d75cdff5027e2975ab51828a640c33bed6f90e5..62fd98aab939957f8d64bbad728f8220d79021a8 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
 @@ -28,7 +28,9 @@ pub use algorithms::passthrough::Passthrough;
@@ -1645,7 +1343,7 @@ index 5d75cdff..62fd98aa 100644
  
  // Stage-router scoring and tier selection — the shared signal-driven routing
 diff --git a/crates/libsy/src/observability.rs b/crates/libsy/src/observability.rs
-index 69c6d929..bfc53e7c 100644
+index 69c6d9295db60cadd158d7ba2aa28bc429d259a0..bfc53e7ca109bce577763528c572dbdf0d84fa98 100644
 --- a/crates/libsy/src/observability.rs
 +++ b/crates/libsy/src/observability.rs
 @@ -78,6 +78,10 @@ pub(crate) fn run_span(algorithm: &str, request: &Request) -> Span {
@@ -1749,7 +1447,7 @@ index 69c6d929..bfc53e7c 100644
  }
  
 diff --git a/crates/switchyard-runner/Cargo.toml b/crates/switchyard-runner/Cargo.toml
-index 3b96fb43..5b66b80f 100644
+index 3b96fb43048537ae340665bf0f68b8afbcee99da..5b66b80f1861806bec1dff6d7d87640b775c7924 100644
 --- a/crates/switchyard-runner/Cargo.toml
 +++ b/crates/switchyard-runner/Cargo.toml
 @@ -22,6 +22,7 @@ prefill-router = { workspace = true, optional = true }
@@ -1761,7 +1459,7 @@ index 3b96fb43..5b66b80f 100644
  switchyard-protocol.workspace = true
  switchyard-typesafe-client.workspace = true
 diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
-index 3f34330e..42e8ea3b 100644
+index 3f34330eed7a226bd86dcf57c40d37d8c3b64bdb..42e8ea3bc616790547c0dd371bfb64a2a966555b 100644
 --- a/crates/switchyard-runner/src/algorithm.rs
 +++ b/crates/switchyard-runner/src/algorithm.rs
 @@ -476,9 +476,6 @@ pub enum AlgorithmSpec {
@@ -1791,7 +1489,7 @@ index 3f34330e..42e8ea3b 100644
              let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
                  .map_err(|error| {
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 6b37e17d..5cc6eb60 100644
+index 6b37e17df6507c74e0a45dbc4d3b5208171601e7..5cc6eb60479385da14e3fca288c583d3ef9a9719 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -20,8 +20,8 @@ use switchyard_llm_client::{
@@ -2239,7 +1937,7 @@ index 6b37e17d..5cc6eb60 100644
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
 diff --git a/crates/switchyard-runner/src/lib.rs b/crates/switchyard-runner/src/lib.rs
-index a488b31a..66abaa27 100644
+index a488b31a7983926bed8f718da84358eb8aeb39c2..66abaa279d2cab102c50860f7303561c99889618 100644
 --- a/crates/switchyard-runner/src/lib.rs
 +++ b/crates/switchyard-runner/src/lib.rs
 @@ -21,4 +21,4 @@ pub use provider_key_redactor::ProviderKeyRedactor;
@@ -2249,7 +1947,7 @@ index a488b31a..66abaa27 100644
 -pub use runner::{DecisionDescription, DecisionTarget, ModelInfo, Runner};
 +pub use runner::{ClassifierReadiness, DecisionDescription, DecisionTarget, ModelInfo, Runner};
 diff --git a/crates/switchyard-runner/src/runner.rs b/crates/switchyard-runner/src/runner.rs
-index 249e3127..14bc4626 100644
+index 249e312718a5e1acf91bf113511fbd7d94953f53..14bc46269ca69c18cecaf4a841342f60d2b7501b 100644
 --- a/crates/switchyard-runner/src/runner.rs
 +++ b/crates/switchyard-runner/src/runner.rs
 @@ -18,6 +18,21 @@ pub struct Runner {
@@ -2300,7 +1998,7 @@ index 249e3127..14bc4626 100644
      pub fn route(&self, model: &str) -> Option<&Route> {
          self.routes
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index bdf2f22f..cb18bfce 100644
+index bdf2f22fda4ffc82686bb1e01662d72afbf0081f..cb18bfce6bf2d61c8ab596a3c3d2b8bfc5b1e85d 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
 @@ -65,6 +65,12 @@ cargo install --locked switchyard-server
@@ -2326,7 +2024,7 @@ index bdf2f22f..cb18bfce 100644
  Requests name a route by its `id`, so `POST /v1/chat/completions` with `"model": "switchyard/general"`
  routes through the `[routes.general]` entry above. Any of the three request formats can address any
 diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
-index 231d4e2b..42304412 100644
+index 231d4e2bc42deef8b52bf1d7c54c1610caa52c30..42304412391ad0b1a0b23b2940ccd9de77aba100 100644
 --- a/crates/switchyard-server/src/cli.rs
 +++ b/crates/switchyard-server/src/cli.rs
 @@ -9,8 +9,8 @@ use std::path::PathBuf;
@@ -2356,7 +2054,7 @@ index 231d4e2b..42304412 100644
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 58ebc0d9..0578db69 100644
+index 58ebc0d977395ae4a86522984acf8149051ff167..0578db69c022973d5e21d7066c20c141b2011a80 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
 @@ -42,7 +42,8 @@ use serde_json::{Value, json};
@@ -2559,7 +2257,7 @@ index 58ebc0d9..0578db69 100644
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e..feb7fb6d 100644
+index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd149db93a 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2629,13 +2327,22 @@ index 29bb561e..feb7fb6d 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -800,6 +796,117 @@ fn random_state_with_retries(
+@@ -800,6 +796,195 @@ fn random_state_with_retries(
      ServerState::from_runner(Runner::new(entries)).map_err(Into::into)
  }
  
-+#[derive(Default)]
 +struct RecordingTypeSafeProvider {
 +    inputs: Mutex<Vec<TypeSafeClassifierInput>>,
++    label: &'static str,
++}
++
++impl Default for RecordingTypeSafeProvider {
++    fn default() -> Self {
++        Self {
++            inputs: Mutex::new(Vec::new()),
++            label: "efficient",
++        }
++    }
 +}
 +
 +#[async_trait]
@@ -2646,13 +2353,21 @@ index 29bb561e..feb7fb6d 100644
 +        _options: &[TypeSafeOption],
 +    ) -> Result<TypeSafeVerdict, TypeSafeProviderError> {
 +        self.inputs.lock().await.push(input);
-+        Ok(TypeSafeVerdict {
-+            label: "efficient".to_string(),
-+            confidence: 0.99,
-+            probabilities: BTreeMap::from([
++        let probabilities = if self.label == "capable" {
++            BTreeMap::from([
++                ("efficient".to_string(), 0.01),
++                ("capable".to_string(), 0.99),
++            ])
++        } else {
++            BTreeMap::from([
 +                ("efficient".to_string(), 0.99),
 +                ("capable".to_string(), 0.01),
-+            ]),
++            ])
++        };
++        Ok(TypeSafeVerdict {
++            label: self.label.to_string(),
++            confidence: 0.99,
++            probabilities,
 +            decision_latency_ms: 1,
 +            provider_model: "typesafe/jev-test".to_string(),
 +        })
@@ -2671,6 +2386,43 @@ index 29bb561e..feb7fb6d 100644
 +    provider: Arc<RecordingTypeSafeProvider>,
 +    format: WireFormat,
 +) -> TestResult<ServerState> {
++    type_safe_state_with_format_and_trigger(
++        base_url,
++        provider,
++        format,
++        ClassifyTrigger::EveryRequest,
++    )
++}
++
++fn type_safe_state_with_format_and_trigger(
++    base_url: &str,
++    provider: Arc<RecordingTypeSafeProvider>,
++    format: WireFormat,
++    classify_trigger: ClassifyTrigger,
++) -> TestResult<ServerState> {
++    type_safe_state_with_targets(
++        base_url,
++        provider,
++        format,
++        classify_trigger,
++        &[
++            ("model/efficient", "model/efficient", None),
++            ("model/complex", "model/complex", None),
++        ],
++        &["model/efficient"],
++        &["model/complex"],
++    )
++}
++
++fn type_safe_state_with_targets(
++    base_url: &str,
++    provider: Arc<RecordingTypeSafeProvider>,
++    format: WireFormat,
++    classify_trigger: ClassifyTrigger,
++    targets: &[(&str, &str, Option<&str>)],
++    efficient_targets: &[&str],
++    capable_targets: &[&str],
++) -> TestResult<ServerState> {
 +    let http = HttpBackendConfig {
 +        base_url: base_url.to_string(),
 +        api_key: (format == WireFormat::OpenAiChat).then(|| "test-key".to_string()),
@@ -2686,10 +2438,18 @@ index 29bb561e..feb7fb6d 100644
 +        WireFormat::OpenAiResponses => Backend::OpenAiResponses(http),
 +        _ => return Err("unsupported TypeSafe test answer format".into()),
 +    };
-+    let models = ["model/efficient", "model/complex"];
-+    let model_configs = models
++    let model_configs = targets
 +        .iter()
-+        .map(|model| ModelConfig::new(*model, backend.clone(), None))
++        .map(|(alias, upstream_model, effort)| {
++            let body_overrides = effort
++                .map(|effort| {
++                    BTreeMap::from([("reasoning".to_string(), json!({"effort": effort}))])
++                })
++                .unwrap_or_default();
++            ModelConfig::new(*alias, backend.clone(), None)
++                .with_upstream_model(*upstream_model)
++                .with_body_overrides(body_overrides)
++        })
 +        .collect::<Vec<_>>();
 +    let client: Arc<dyn RoutedLlmClient> = Arc::new(TranslatingLlmClient::new(&model_configs)?);
 +    let provider: Arc<dyn TypeSafeProvider> = provider;
@@ -2703,18 +2463,22 @@ index 29bb561e..feb7fb6d 100644
 +            question: String::new(),
 +            base_threshold: 0.5,
 +            default_target: Category::Efficient,
-+            classify_trigger: ClassifyTrigger::EveryRequest,
++            classify_trigger,
 +            message_hash_fallback: false,
 +        },
 +    )?);
-+    let decision_targets = models
++    let decision_targets = targets
 +        .iter()
-+        .map(|model| DecisionTarget {
-+            target: (*model).to_string(),
-+            model: ModelId::from(*model),
++        .map(|(alias, _, effort)| DecisionTarget {
++            target: (*alias).to_string(),
++            model: ModelId::from(*alias),
 +            format,
 +            base_url: base_url.to_string(),
-+            extra_body: BTreeMap::new(),
++            extra_body: effort
++                .map(|effort| {
++                    BTreeMap::from([("reasoning".to_string(), json!({"effort": effort}))])
++                })
++                .unwrap_or_default(),
 +        })
 +        .collect();
 +    let route = Route::new(
@@ -2729,13 +2493,25 @@ index 29bb561e..feb7fb6d 100644
 +            [
 +                (
 +                    Category::Any,
-+                    vec![
-+                        ModelId::from("model/efficient"),
-+                        ModelId::from("model/complex"),
-+                    ],
++                    targets
++                        .iter()
++                        .map(|(alias, _, _)| ModelId::from(*alias))
++                        .collect(),
 +                ),
-+                (Category::Efficient, vec![ModelId::from("model/efficient")]),
-+                (Category::Capable, vec![ModelId::from("model/complex")]),
++                (
++                    Category::Efficient,
++                    efficient_targets
++                        .iter()
++                        .map(|model| ModelId::from(*model))
++                        .collect(),
++                ),
++                (
++                    Category::Capable,
++                    capable_targets
++                        .iter()
++                        .map(|model| ModelId::from(*model))
++                        .collect(),
++                ),
 +            ]
 +            .into(),
 +        ),
@@ -2747,7 +2523,7 @@ index 29bb561e..feb7fb6d 100644
  async fn test_app(routes: &[(&str, &[&str])]) -> TestResult<(MockUpstream, Router)> {
      let upstream = MockUpstream::start().await?;
      let app = build_switchyard_router(random_state(&upstream.base_url, routes)?);
-@@ -842,6 +949,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+@@ -842,6 +1027,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
  
@@ -2794,7 +2570,7 @@ index 29bb561e..feb7fb6d 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-@@ -1609,10 +1756,7 @@ base_threshold = 0.5
+@@ -1609,10 +1834,7 @@ base_threshold = 0.5
      let response = response.json()?;
      assert_eq!(response["fallbacks"].as_array().map(Vec::len), Some(1));
      for target in [&response["selected"], &response["fallbacks"][0]] {
@@ -2806,7 +2582,7 @@ index 29bb561e..feb7fb6d 100644
      }
      Ok(())
  }
-@@ -1902,7 +2046,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1902,7 +2124,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2815,7 +2591,7 @@ index 29bb561e..feb7fb6d 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1911,7 +2055,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1911,7 +2133,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2824,7 +2600,7 @@ index 29bb561e..feb7fb6d 100644
                  },
                  "extra_body": {},
              }],
-@@ -2714,6 +2858,330 @@ recent_turn_window = 1
+@@ -2714,6 +2936,464 @@ recent_turn_window = 1
      Ok(())
  }
  
@@ -3097,7 +2873,7 @@ index 29bb561e..feb7fb6d 100644
 +        &responses_app,
 +        "POST",
 +        "/v1/responses",
-+        Some(json!({"model": "typesafe", "input": [
++        Some(json!({"model": "typesafe", "service_tier": "priority", "input": [
 +            {"role": "user", "content": [{"type": "input_text", "text": "Older genuine request."}]},
 +            {"type": "shell_call_output", "call_id": "call-1", "output": "private tool output"}
 +        ]})),
@@ -3152,10 +2928,144 @@ index 29bb561e..feb7fb6d 100644
 +    Ok(())
 +}
 +
++#[tokio::test]
++async fn responses_native_tool_outputs_keep_capable_affinity_until_a_genuine_user_turn()
++-> TestResult {
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider {
++        inputs: Mutex::new(Vec::new()),
++        label: "capable",
++    });
++    let app = build_switchyard_router(type_safe_state_with_targets(
++        &upstream.base_url,
++        Arc::clone(&provider),
++        WireFormat::OpenAiResponses,
++        ClassifyTrigger::UserTurn,
++        &[
++            ("sol-medium", "gpt-5.6-sol", Some("medium")),
++            ("astra-medium", "gpt-6-astra", Some("medium")),
++            ("astra-xhigh", "gpt-6-astra", Some("xhigh")),
++        ],
++        &["sol-medium"],
++        &["astra-medium", "astra-xhigh"],
++    )?);
++    let headers = [
++        ("authorization", "Bearer codex-login-token"),
++        ("chatgpt-account-id", "account-123"),
++        ("x-openai-fedramp", "true"),
++        (
++            "x-codex-turn-metadata",
++            r#"{"session_id":"native-tool-affinity"}"#,
++        ),
++    ];
++
++    let first = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(
++            json!({"model": "typesafe", "service_tier": "priority", "input": [
++                {"role": "user", "content": [
++                    {"type": "input_text", "text": "Analyze this difficult issue."}
++                ]}
++            ]}),
++        ),
++        &headers,
++    )
++    .await?;
++    assert_eq!(first.status, StatusCode::OK, "{}", first.text()?);
++    assert_eq!(
++        first.headers["x-model-router-selected-model"],
++        "astra-medium"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 1);
++    let calls = upstream.calls.lock().await;
++    assert_eq!(calls[0]["model"], "gpt-6-astra");
++    assert_eq!(calls[0]["reasoning"]["effort"], "medium");
++    assert_eq!(calls[0]["service_tier"], "priority");
++    drop(calls);
++
++    // These names are literal wire protocol values, independent of affinity's
++    // implementation list. Replayed call history and an output-only
++    // continuation must retain the exact capable reasoning alias without
++    // another Jev request, and reach the answer model byte-for-byte.
++    for (item_type, call_id, output) in [
++        ("shell_call_output", "shell-1", "shell result"),
++        ("apply_patch_call_output", "patch-1", "apply patch result"),
++    ] {
++        let input = if item_type == "shell_call_output" {
++            json!([
++                {
++                    "type": "shell_call",
++                    "call_id": call_id,
++                    "action": {"commands": ["pwd"]},
++                    "environment": {"type": "local"}
++                },
++                {"type": item_type, "call_id": call_id, "output": output}
++            ])
++        } else {
++            json!([{"type": item_type, "call_id": call_id, "output": output}])
++        };
++        let response = send_with_headers(
++            &app,
++            "POST",
++            "/v1/responses",
++            Some(json!({
++                "model": "typesafe",
++                "service_tier": "priority",
++                "input": input
++            })),
++            &headers,
++        )
++        .await?;
++        assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "astra-medium",
++            "{item_type} changed the retained target"
++        );
++        assert_eq!(
++            provider.inputs.lock().await.len(),
++            1,
++            "{item_type} made another Jev call"
++        );
++        let calls = upstream.calls.lock().await;
++        let forwarded = calls.last().ok_or("missing native answer call")?;
++        assert_eq!(forwarded["model"], "gpt-6-astra");
++        assert_eq!(forwarded["reasoning"]["effort"], "medium");
++        assert_eq!(forwarded["input"], input);
++        assert_eq!(forwarded["service_tier"], "priority");
++    }
++
++    let next_user = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(
++            json!({"model": "typesafe", "service_tier": "priority", "input": [{
++                "role": "user",
++                "content": [{"type": "input_text", "text": "Now review the result."}]
++            }]}),
++        ),
++        &headers,
++    )
++    .await?;
++    assert_eq!(next_user.status, StatusCode::OK, "{}", next_user.text()?);
++    assert_eq!(
++        next_user.headers["x-model-router-selected-model"],
++        "astra-medium"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 2);
++    assert_eq!(upstream.calls.lock().await.len(), 4);
++    let calls = upstream.calls.lock().await;
++    assert_eq!(calls[3]["model"], "gpt-6-astra");
++    assert_eq!(calls[3]["reasoning"]["effort"], "medium");
++    Ok(())
++}
++
  #[tokio::test]
  async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
      let upstream = MockUpstream::start().await?;
-@@ -3161,7 +3629,8 @@ target = "claude"
+@@ -3161,7 +3841,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3165,7 +3075,7 @@ index 29bb561e..feb7fb6d 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +3646,7 @@ target = "claude"
+@@ -3177,6 +3858,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3173,7 +3083,7 @@ index 29bb561e..feb7fb6d 100644
          ],
      )
      .await?;
-@@ -3187,7 +3657,10 @@ target = "claude"
+@@ -3187,7 +3869,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -3185,7 +3095,7 @@ index 29bb561e..feb7fb6d 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +3693,29 @@ target = "openai"
+@@ -3220,7 +3905,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3216,7 +3126,7 @@ index 29bb561e..feb7fb6d 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +3726,9 @@ target = "openai"
+@@ -3231,8 +3938,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3228,7 +3138,7 @@ index 29bb561e..feb7fb6d 100644
          ],
      )
      .await?;
-@@ -3247,6 +3743,7 @@ target = "openai"
+@@ -3247,6 +3955,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3236,7 +3146,7 @@ index 29bb561e..feb7fb6d 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +3758,7 @@ target = "openai"
+@@ -3261,6 +3970,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -3244,7 +3154,7 @@ index 29bb561e..feb7fb6d 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +3781,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +3993,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -3256,7 +3166,7 @@ index 29bb561e..feb7fb6d 100644
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +3827,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +4039,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  
@@ -3306,7 +3216,7 @@ index 29bb561e..feb7fb6d 100644
  async fn json_extractor_statuses_keep_api_specific_error_envelopes() -> TestResult {
      let (_upstream, app) = test_app(&[(ROUTE_MODEL, &["model/a"])]).await?;
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 6d185c8a..78a55948 100644
+index 6d185c8acfd37c369dd9b60990ad46adc8843f03..78a55948af9093e75e51fc42c324e9e90cb0ed15 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
 @@ -1244,14 +1244,6 @@ fn encode_responses_input(
@@ -3325,7 +3235,7 @@ index 6d185c8a..78a55948 100644
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index 806e2141..d74aa6a1 100644
+index 806e21412f9fc8d424049fd6df17e9e4af7ee2be..d74aa6a1aed6d7e0884eb28e287ebc4a82f141af 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
 @@ -2493,6 +2493,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
@@ -3366,7 +3276,7 @@ index 806e2141..d74aa6a1 100644
  #[test]
  fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {
 diff --git a/crates/switchyard-typesafe-client/README.md b/crates/switchyard-typesafe-client/README.md
-index 4209d031..704aab58 100644
+index 4209d031ebd89efb14375f8e33fd5bbf7c171fd5..704aab58716d271f41ca93bce81157830f139b81 100644
 --- a/crates/switchyard-typesafe-client/README.md
 +++ b/crates/switchyard-typesafe-client/README.md
 @@ -25,7 +25,7 @@ use switchyard_libsy::{TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider
@@ -3403,7 +3313,7 @@ index 4209d031..704aab58 100644
 +invalid probability maps, unavailable credentials, and transport failures return
 +a provider error so the route can use its configured fail-open target.
 diff --git a/crates/switchyard-typesafe-client/examples/live_check.rs b/crates/switchyard-typesafe-client/examples/live_check.rs
-index 1cae06d4..280e67bd 100644
+index 1cae06d4a52148e2a438a06f8665af7440d250af..280e67bd26e6b15c7cad7fe623469e9ed4b210bc 100644
 --- a/crates/switchyard-typesafe-client/examples/live_check.rs
 +++ b/crates/switchyard-typesafe-client/examples/live_check.rs
 @@ -1,14 +1,14 @@
@@ -3443,7 +3353,7 @@ index 1cae06d4..280e67bd 100644
          Ok(verdict) => {
              println!("OK");
 diff --git a/crates/switchyard-typesafe-client/src/error.rs b/crates/switchyard-typesafe-client/src/error.rs
-index 78b2e52a..11d32d7b 100644
+index 78b2e52af791cd7ede1c79ccd50c71f9e9ea8951..11d32d7bad308a5b5afb10be39d86d1245386b2a 100644
 --- a/crates/switchyard-typesafe-client/src/error.rs
 +++ b/crates/switchyard-typesafe-client/src/error.rs
 @@ -27,6 +27,18 @@ pub enum TypeSafeClientError {
@@ -3476,7 +3386,7 @@ index 78b2e52a..11d32d7b 100644
      }
  }
 diff --git a/crates/switchyard-typesafe-client/src/lib.rs b/crates/switchyard-typesafe-client/src/lib.rs
-index 73d5621b..669d405c 100644
+index 73d5621bf9596fae8f63c0676af5ab213e4c229f..669d405c0fd62984b86261f6b59fa3cfb45b7abb 100644
 --- a/crates/switchyard-typesafe-client/src/lib.rs
 +++ b/crates/switchyard-typesafe-client/src/lib.rs
 @@ -15,19 +15,58 @@ use serde::ser::SerializeMap;
@@ -4157,7 +4067,7 @@ index 73d5621b..669d405c 100644
      }
  }
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 7baf1d39..38126764 100644
+index 7baf1d39e8a3ab5ede4c7f9b34005d869a5d22dc..38126764fe785dfaac7364ef667d20b8a8ac01e7 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -99,17 +99,19 @@ endpoint, before it calls an upstream.
@@ -4211,7 +4121,7 @@ index 7baf1d39..38126764 100644
  
  ### `stage_router`
 diff --git a/docs/routing_algorithms/type_safe_classifier_routing.md b/docs/routing_algorithms/type_safe_classifier_routing.md
-index 0e72b6b0..a1899751 100644
+index 0e72b6b08f2a325e9aa8b9271a68b97d8807a407..a1899751da47ea5ae008a4b2440d48f2c3788429 100644
 --- a/docs/routing_algorithms/type_safe_classifier_routing.md
 +++ b/docs/routing_algorithms/type_safe_classifier_routing.md
 @@ -15,20 +15,23 @@ chat-completion targets, or when you need capability/escalation mode.
