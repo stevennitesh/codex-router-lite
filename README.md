@@ -2,6 +2,8 @@
 
 **More model choices. The Codex workflow I already enjoy.**
 
+**Windows-only · unofficial community project · pre-1.0**
+
 [Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Contributing](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 I built Router Lite to use other models inside the Windows Codex app while keeping
@@ -26,7 +28,7 @@ native CLI, with a small, explicit set of routes.
 | GLM-5.3-Flash | OpenRouter → Novita | [Compatibility](docs/agents/openrouter-glm.md) |
 | GLM-5.3-Flash | OpenRouter → GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
 | Pareto | OpenRouter → Unbiased | [Compatibility](docs/agents/pareto.md) |
-| Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy) |
+| Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy); local Switchyard build required |
 
 Pareto supports automatic tool selection and has no hosted-search capability.
 Pareto and GLM have [active recorded v2 proofs](v2_agent/README.md), each valid
@@ -50,7 +52,7 @@ Set-Location codex-router-lite
 ```
 
 The installer preserves your Codex login and user-owned settings, adds the managed
-routing configuration, and installs the Windows background service.
+Codex routing configuration, and installs a local Windows scheduled background task.
 
 **2. Add your OpenRouter key**
 
@@ -106,6 +108,10 @@ To check for and install a published Router Lite update:
 .\model-router.ps1 codex update check
 .\model-router.ps1 codex update
 ```
+
+`main` is the rolling tested update channel. The updater fetches `origin/main`,
+fast-forwards only, and reinstalls the managed generation; it does not merge
+local divergence.
 
 When Codex itself updates, the [compatibility workflow](docs/agents/compatibility-maintenance.md)
 checks the installed app and reviews upstream Router and Switchyard changes worth

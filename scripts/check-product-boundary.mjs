@@ -26,7 +26,6 @@ const retainedConfig = [
   "config/switchyard/switchyard.json",
 ];
 const forbiddenPaths = [
-  /^\.github\/ISSUE_TEMPLATE\//u,
   /^\.github\/workflows\/release\.yml$/u,
   /^docs-site\//u,
   /^bin\//u,
@@ -86,7 +85,14 @@ for (const file of packageManifest.files) {
     `development-only file is packaged: ${file}`,
   );
 }
-for (const file of [...requiredEntrypoints, ...retainedConfig, "LICENSE", "NOTICE.md"]) {
+for (const file of [
+  ...requiredEntrypoints,
+  ...retainedConfig,
+  "LICENSE",
+  "LICENSES/Apache-2.0.txt",
+  "NOTICE.md",
+  "config/switchyard/patches/README.md",
+]) {
   assert.ok(packageManifest.files.includes(file), `retained package file is absent: ${file}`);
 }
 

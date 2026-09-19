@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a Router Lite installation, routing, or compatibility problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tracker covers Router Lite. If the problem still occurs with Router disabled, report it to the affected app or provider instead.
+
+        **Never post API keys, authorization headers, account or installation identifiers, full managed loopback URLs, private prompts, response bodies, or unredacted logs.** Report security issues through [Private Vulnerability Reporting](https://github.com/stevennitesh/codex-router-lite/security/advisories/new).
+
+  - type: input
+    id: router-version
+    attributes:
+      label: Router Lite version or commit
+      placeholder: v0.x.y or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: codex-version
+    attributes:
+      label: Codex version
+      description: Run `codex --version` or provide the Windows app build.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: route
+    attributes:
+      label: Affected route
+      options:
+        - Native Codex
+        - GLM-5.3-Flash via Novita
+        - GLM-5.3-Flash via GMICloud
+        - Pareto via Unbiased
+        - Switchyard Auto
+        - Installation, update, or service lifecycle
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction
+      description: Describe the expected result, actual result, and smallest safe sequence that reproduces it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include only the relevant redacted output from `model-router.ps1 codex status` or `doctor`. Do not attach raw logs.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed credentials, private content, identifiers, full managed URLs, response bodies, and unredacted logs.
+          required: true
+        - label: This is not a security vulnerability requiring private reporting.
+          required: true

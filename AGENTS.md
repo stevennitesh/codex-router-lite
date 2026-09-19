@@ -14,7 +14,6 @@ follow its conditional pointers rather than loading all documentation.
 | Change subagent eligibility or certify a route | [Certification](docs/SUBAGENT-CERTIFICATION.md) |
 | Edit repository instructions or documentation | [Context ownership](docs/agents/context-ownership.md) |
 | Work on issues or labels | [Tracker](docs/agents/issue-tracker.md) |
-| Resolve domain meaning or accepted decisions | [Domain route](docs/agents/domain.md) |
 
 Before substantive code work, also read the [engineering contract](docs/agents/engineering-contract.md).
 Inspect Git status and branch; preserve existing work. Keep credentials and private

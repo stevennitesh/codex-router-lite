@@ -12,16 +12,48 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.19.0", "24.x"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run check
       - name: Test the retained Windows runtime
         run: npm test
       - name: Audit production dependencies
+        if: matrix.node == '22.19.0'
         timeout-minutes: 5
-        run: npm audit --omit=dev --audit-level=high
+        shell: pwsh
+        run: |
+          $attempts = 3
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            $output = & npm audit --omit=dev --audit-level=high --json 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = $output | Out-String
+            if ($exitCode -eq 0) {
+              Write-Output $text
+              exit 0
+            }
+
+            $payload = $null
+            try { $payload = $text | ConvertFrom-Json } catch {}
+            if ($payload -and -not $payload.error) {
+              Write-Output $text
+              exit $exitCode
+            }
+
+            $transient = $text -match '(?i)(EAI_AGAIN|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|E5\d\d|service unavailable|socket hang up)'
+            if (-not $transient -or $attempt -eq $attempts) {
+              Write-Output $text
+              exit $exitCode
+            }
+
+            Write-Warning "npm audit infrastructure failure; retrying attempt $($attempt + 1) of $attempts"
+            Start-Sleep -Seconds (5 * $attempt)
+          }
