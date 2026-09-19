@@ -17,6 +17,7 @@ import {
   effectivePickerHiddenModels,
   mergeNativeCatalogs,
   nativeCatalogRefreshNeeded,
+  omittedSwitchyardNativeFields,
   promoteNativeMultiAgent,
   routedModel,
 } from "../src/catalog.mjs";
@@ -121,6 +122,10 @@ function switchyardNative(slug, overrides = {}) {
     context_window: 300000,
     max_context_window: 900000,
     effective_context_window_percent: 95,
+    default_reasoning_summary: "none",
+    default_verbosity: "low",
+    shell_type: "unified_exec",
+    truncation_policy: { mode: "tokens", limit: 10000 },
     support_verbosity: true,
     supports_search_tool: true,
     supports_parallel_tool_calls: true,
@@ -194,11 +199,37 @@ test("Switchyard publishes the common native contract with neutral Sol instructi
   assert.equal(model.node_repl_disabled, false);
   assert.equal(model.supports_parallel_tool_calls, false);
   assert.equal(model.web_search_tool_type, "text_and_image");
+  assert.equal(model.default_reasoning_summary, "none");
+  assert.equal(model.default_verbosity, "low");
+  assert.equal(model.shell_type, "unified_exec");
+  assert.deepEqual(model.truncation_policy, { mode: "tokens", limit: 10000 });
   assert.equal("multi_agent_reasoning_effort" in model, false);
   assert.deepEqual(model.service_tiers, [
     { id: "priority", name: "Fast", description: "Faster processing, increased usage" },
   ]);
   assert.deepEqual(model.additional_speed_tiers, ["fast"]);
+});
+
+test("Switchyard omits unknown top-level fields and preserves nested donor metadata", () => {
+  const model = mergedSwitchyard({
+    sol: {
+      future_scalar: "omit me",
+      future_object: { unsafe: true },
+      model_messages: {
+        ...switchyardNative("gpt-5.6-sol").model_messages,
+        future_prompt_metadata: { retained: true },
+      },
+    },
+  });
+  assert.equal(Object.hasOwn(model, "future_scalar"), false);
+  assert.equal(Object.hasOwn(model, "future_object"), false);
+  assert.deepEqual(model.model_messages.future_prompt_metadata, { retained: true });
+  assert.deepEqual(
+    omittedSwitchyardNativeFields([
+      { future_scalar: "value", future_object: { nested: true }, multi_agent_reasoning_effort: "xhigh" },
+    ], model),
+    { fields: ["future_object", "future_scalar"], total: 2 },
+  );
 });
 
 test("Switchyard conservatively projects nullable tools and common tiers", () => {

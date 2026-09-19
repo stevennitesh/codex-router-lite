@@ -5,19 +5,25 @@ All Router, LiteLLM, and Switchyard listeners bind to loopback. Codex reaches Ro
 Native Codex requests retain Codex authorization and account headers. OpenRouter requests never receive the caller's authorization, ChatGPT account ID, installation ID, residency headers, or FedRAMP headers. The OpenRouter hop replaces them with the one protected provider key.
 
 Switchyard is a local, capability-protected hop with two separate upstream paths.
-Its Jev classifier sends bounded task text to OpenRouter's Decisions endpoint
-using the protected OpenRouter key, without native authorization/account headers.
-Currently the decision state contains the opening task and latest textual user
-update. User media anywhere in retained history skips Jev and falls back to Sol;
-media is not sent to the classifier. Assistant answers, tool-result payloads and
-reasoning are excluded from decision state. User-authored text can still contain
-sensitive information: a native answer model does not make classification local.
+The final source candidate's Jev classifier sends bounded task text to OpenRouter's
+Decisions endpoint using the protected OpenRouter key, without native
+authorization/account headers. After that candidate is built and deployed, the
+decision state contains only the latest genuine user turn. Pure tool-result
+pseudo-user messages are skipped. Media in the selected turn skips Jev and falls
+back to Sol; older media does not veto a later text-only decision. Assistant
+answers, tool-result payloads, earlier user turns and reasoning are excluded from
+decision state. User-authored text can still contain sensitive information: a
+native answer model does not make classification local.
 
 The selected native answer path preserves Codex authorization and conversation
 content, including media. The local-hop capability must not reach upstream
 providers. Do not log authorization, account data, route prompts or unredacted
-decisions. Do not infer endpoint-specific retention enforcement from a provider's
-general privacy documentation; the proposed follow-up has not established it.
+decisions. OpenRouter documents account and key guardrails that can require
+zero-data-retention routing for model groups, but the Decisions documentation
+does not establish how those controls are enforced on this exact alpha endpoint.
+This repository therefore does not claim endpoint-specific ZDR. A dedicated key
+or guardrail remains an account-side option requiring separate authorization and
+verification.
 
 Protected state uses owner-only ACLs. Do not put provider or native credentials
 in source, config JSON, command arguments, logs, fixtures, support text, or

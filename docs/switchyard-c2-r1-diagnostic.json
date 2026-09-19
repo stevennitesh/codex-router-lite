@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-FOLLOWUP-C2",
+  "status": "diagnostic_complete",
+  "predeclaredAt": "2026-09-19T02:16:08.669Z",
+  "syntheticAuthoredCorpus": true,
+  "independentDataset": false,
+  "privateDataSent": false,
+  "productionChanged": false,
+  "acceptedC1Identity": "8b55ddec0621a0b439eaa871548683d426cbae08734a31fadedf4373407a74a5",
+  "identities": {
+    "binarySha256": "06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709",
+    "sourceLockSha256": "69994a42b850dfacb3e8d32ac8cc26c201be4e6d24c6153d40fafe0383776cf9",
+    "compatibilityPatchSha256": "745556b814fee78c898482c38b1b672e95e3eddcc4ff6a1e1a9b4eebd6bdeccb",
+    "routesTemplateSha256": "235c36109e88d44b0c974de6682d8c56972798aecd3ebd4e505c0c6dfe2daabe",
+    "corpusSha256": "af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165",
+    "c1ConfigSha256": "ebf81ada3aadfa000f29ec751d59f57afb6daad67510202bed41ebca9344413d",
+    "genericConfigSha256": "b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b",
+    "c1CriteriaSha256": "33dadb02116f16729d47aa305b1cda9264d72b79524ab18aabf02eb020381f88",
+    "genericCriteriaSha256": "b9aa7024cb733a3891555751e123c3ae86db60c50fca31c8092692e4a7d1fb68",
+    "evaluatorSha256": "83ff97c2eda3829909b2bf988281a0b5f7d3ca7d2ee1a4def3c1359c860ebeb3"
+  },
+  "frozen": {
+    "developmentIds": [
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "D06",
+      "D07",
+      "D08",
+      "D09",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D20"
+    ],
+    "holdoutIds": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06",
+      "H07",
+      "H08",
+      "H09",
+      "H10",
+      "H11",
+      "H12",
+      "H13",
+      "H14",
+      "H15",
+      "H16",
+      "H17",
+      "H18",
+      "H19",
+      "H20"
+    ],
+    "boundaryIds": [
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "D06"
+    ],
+    "question": "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route.",
+    "policies": {
+      "threshold": 0.35,
+      "A": "Argmax; confidence below 0.35 selects sol_medium.",
+      "B": "Argmax; below 0.35 luna_max or sol_medium selects sol_medium, astra_medium remains astra_medium, and astra_xhigh selects astra_medium."
+    },
+    "gates": {
+      "minimumC1AcceptablePerSplit": 17,
+      "maximumSevereUnderRoutes": 0,
+      "maximumPairedNonCriticalRegressions": 1,
+      "candidateAcceptableMustMeetOrExceedC1": true,
+      "criteriaChangeRequiresStrictAcceptableGain": true,
+      "minimumDevelopmentPolicyDisagreements": 3,
+      "maximumRetriesPerRequest": 1,
+      "providerBuildMustRemainConstant": true
+    }
+  },
+  "runs": {
+    "diagnostic": {
+      "vectors": [
+        {
+          "id": "D01",
+          "measurementKind": "low_confidence",
+          "reasonCode": "low_confidence",
+          "rawSelected": "astra_medium",
+          "confidence": 0.2933333333333333,
+          "probabilities": {
+            "astra_medium": 0.47,
+            "astra_xhigh": 0.013333333333333334,
+            "luna_max": 0.4566666666666667,
+            "sol_medium": 0.06
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 321,
+          "fullBodyLatencyMs": 325
+        }
+      ],
+      "attempts": [
+        {
+          "id": "D01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 325,
+              "source": "fail_open",
+              "reasonCode": "low_confidence"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "predecessorEvidence": {
+    "path": "docs/switchyard-c2-evidence.json",
+    "sha256": "895a2b8d2c9715b0af1561520350c276bc0db8bcb21a2f03bf388a94b250306e",
+    "interpretation": "historical attempts had source fail_open with an unretained reason; no failure class is inferred"
+  },
+  "paidDecisionRequests": 1,
+  "completedAt": "2026-09-19T02:16:09.139Z"
+}

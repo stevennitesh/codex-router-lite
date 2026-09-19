@@ -1,0 +1,826 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "switchyard-routing-regression",
+  "characterization": "Authored synthetic regression cases for the maintained Switchyard routing policy. This corpus is not independent or representative user data.",
+  "privateData": false,
+  "labels": [
+    "luna_max",
+    "sol_medium",
+    "astra_medium",
+    "astra_xhigh"
+  ],
+  "question": "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route.",
+  "policies": {
+    "threshold": 0.35
+  },
+  "gates": {
+    "minimumAcceptablePerSplit": 17,
+    "maximumSevereUnderRoutes": 0,
+    "maximumRetriesPerRequest": 1,
+    "providerBuildMustRemainConstant": true
+  },
+  "development": [
+    {
+      "id": "D01",
+      "boundary": true,
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "We were comparing two cache ownership designs."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The tradeoffs are listed."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Continue."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D02",
+      "boundary": true,
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "A reversible migration proposal is ready."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The proposal is attached."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Review that."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D03",
+      "boundary": true,
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "The unit test now reproduces the null bug."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The failing branch is isolated."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Fix this."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D04",
+      "boundary": true,
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "The proposed edit is reversible and fully specified."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "It is ready to apply."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Do it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D05",
+      "boundary": true,
+      "expected": "sol_medium",
+      "acceptable": [
+        "luna_max",
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Extract the two failing field names from this supplied fixture, then implement the documented mapping correction and run its focused test."
+    },
+    {
+      "id": "D06",
+      "boundary": true,
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium",
+        "astra_xhigh"
+      ],
+      "severity": "normal",
+      "input": "Assess whether a contained concurrency fix preserves cancellation ordering across three interacting but reversible state transitions."
+    },
+    {
+      "id": "D07",
+      "boundary": false,
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": "Rename the single local variable oldCount to itemCount in the shown function and run the formatter."
+    },
+    {
+      "id": "D08",
+      "boundary": false,
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": "Extract the three version numbers from the supplied release note and return them in order."
+    },
+    {
+      "id": "D09",
+      "boundary": false,
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max",
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Inspect the five named files and report which two contain the literal timeout setting; make no edits."
+    },
+    {
+      "id": "D10",
+      "boundary": false,
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Implement validation for the existing retry option and add focused tests for zero and negative values."
+    },
+    {
+      "id": "D11",
+      "boundary": false,
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "The integration test deterministically loses one header after redirect handling. Find the concrete local cause, fix it, and add a regression test."
+    },
+    {
+      "id": "D12",
+      "boundary": false,
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Plan a repository-wide configuration migration."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "I can compare the owners."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Switch topics: summarize these five supplied log lines in one sentence without diagnosis."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D13",
+      "boundary": false,
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Design a reversible migration from two conflicting configuration owners to one authority, including compatibility checks."
+    },
+    {
+      "id": "D14",
+      "boundary": false,
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Synthesize three contradictory design notes into one reviewable architecture decision with explicit tradeoffs."
+    },
+    {
+      "id": "D15",
+      "boundary": false,
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Diagnose an intermittent test failure that appears only after service restart; the root cause is not yet known and all effects are contained."
+    },
+    {
+      "id": "D16",
+      "boundary": false,
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Prove a correct incremental graph algorithm under concurrent updates, bounded memory, adversarial ordering, and strict latency while preserving deterministic output."
+    },
+    {
+      "id": "D17",
+      "boundary": false,
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "A capable prior attempt failed. Diagnose a rare distributed scheduling race involving clock skew, duplicate delivery, cancellation, and restart, then give invariants and decisive tests."
+    },
+    {
+      "id": "D18",
+      "boundary": false,
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Recover a multi-tenant publication after an ambiguous timeout where retry may duplicate an irreversible cross-account effect and rollback state is incomplete."
+    },
+    {
+      "id": "D19",
+      "boundary": false,
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Describe this old diagram."
+            },
+            {
+              "type": "input_image",
+              "image_url": "data:image/png;base64,iVBORw0KGgo="
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The old media was acknowledged."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Now list the two package names in this supplied TOML block."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D20",
+      "boundary": false,
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Inspect the ownership report."
+            }
+          ]
+        },
+        {
+          "type": "function_call",
+          "name": "read_report",
+          "call_id": "call_synthetic",
+          "arguments": "{}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "call_synthetic",
+          "output": "Two modules both claim authority."
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Review the proposed ownership boundary and identify the migration risk."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "holdout": [
+    {
+      "id": "H01",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": "Copy the two declared model identifiers from this supplied JSON exactly, in order."
+    },
+    {
+      "id": "H02",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Inspect an earlier screenshot."
+            },
+            {
+              "type": "input_image",
+              "image_url": "data:image/png;base64,iVBORw0KGgo="
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The earlier media was handled."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "List the three filenames in this text block alphabetically."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H03",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Analyze a protocol migration."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "I can do that."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "New task: summarize this short changelog entry without interpretation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H04",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "The bounded extraction steps are written down."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The steps are ready."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Continue."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H05",
+      "expected": "luna_max",
+      "acceptable": [
+        "luna_max",
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Inspect the named directory and report the count of files by extension; do not modify anything."
+    },
+    {
+      "id": "H06",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Implement the documented payment-log schema validation and add focused tests for its required fields."
+    },
+    {
+      "id": "H07",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": "Fix the reproduced logger bug that writes account_id under the wrong field name, then verify the exact fixture."
+    },
+    {
+      "id": "H08",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "The parser failure is reproduced and the expected branch is documented."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The local cause is known."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Fix this."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H09",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "A small specified code edit is ready."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "It has decisive tests."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Do it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H10",
+      "expected": "sol_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Diagnose and fix the deterministic Windows path join failure; the failing input and required output are supplied."
+    },
+    {
+      "id": "H11",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Review this authentication boundary and recommend the smallest safe ownership change; all effects remain local."
+    },
+    {
+      "id": "H12",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Plan a mixed-version migration from duplicate configuration owners to one authority with rollback checks."
+    },
+    {
+      "id": "H13",
+      "expected": "astra_medium",
+      "acceptable": [
+        "sol_medium",
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Diagnose why a contained integration test intermittently fails after restart when the root cause is uncertain."
+    },
+    {
+      "id": "H14",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "A fallback-contract proposal is attached."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "It may mask incomplete output."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Review that."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "H15",
+      "expected": "astra_medium",
+      "acceptable": [
+        "astra_medium"
+      ],
+      "severity": "normal",
+      "input": "Synthesize conflicting incident evidence into ranked root-cause hypotheses and a verification plan."
+    },
+    {
+      "id": "H16",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Derive a numerically stable solver under adversarial conditioning, bounded precision, hard latency, and interacting convergence constraints, with a correctness argument."
+    },
+    {
+      "id": "H17",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "A capable previous fix failed. Resolve a distributed cancellation race across restart, delayed messages, duplicate delivery, and stale fencing tokens."
+    },
+    {
+      "id": "H18",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Audit recovery from an authorization race where an irreversible cross-tenant effect may have completed before the timeout and retry could repeat it."
+    },
+    {
+      "id": "H19",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Recover an ambiguous external settlement timeout without duplicating a payment that may already have completed, despite incomplete acknowledgement and rollback state."
+    },
+    {
+      "id": "H20",
+      "expected": "astra_xhigh",
+      "acceptable": [
+        "astra_xhigh"
+      ],
+      "severity": "severe",
+      "input": "Prove subtle correctness for a concurrent compiler optimization with aliasing, exceptions, incremental recompilation, and multiple interacting invariants after a strong attempt failed."
+    }
+  ]
+}

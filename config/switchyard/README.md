@@ -9,8 +9,9 @@ Load only the branch needed for the task:
 
 - Implement or review the planned simplicity/correctness follow-up: read the
   [active plan](../../docs/switchyard-followup-plan.md) and its
-  [handoff](../../docs/switchyard-followup-handoff.md). They are proposals until
-  implemented; the runtime sections below describe current behavior.
+  [handoff](../../docs/switchyard-followup-handoff.md). The final source
+  candidate is ready for review; the installed runtime remains unchanged until
+  a separately authorized release and exact-runtime certification.
 - Request, catalog, WebSocket, or trust boundaries: the sections below.
 - Startup, health, provider selection, or trace evidence: [runtime operations](runtime.md).
 - Upstream pin or patch changes: [source maintenance](maintenance.md#update-the-pin-and-patch).
@@ -26,6 +27,7 @@ Load only the branch needed for the task:
 | Reviewed upstream contribution | `patches/switchyard-typesafe-pr-762.patch` | Replays the exact reviewed PR contribution onto the locked public base. |
 | Router compatibility changes | `patches/switchyard-codex-compat.patch` | Apply after the reviewed upstream contribution. Do not maintain a fork checkout. |
 | Routing policy | `routes.template.toml` | The template contains no generated Router capability. |
+| Synthetic routing regression | [`docs/switchyard-routing-corpus.json`](../../docs/switchyard-routing-corpus.json) | Authored development/holdout cases for the maintained evaluator; not independent or representative user data. |
 | Optional named worker | `switchyard_worker.toml` | Install at `%CODEX_HOME%\agents\switchyard_worker.toml` only when requested. |
 | Active runtime | `%CODEX_HOME%\switchyard` by default | Keep the active binary, private `routes.toml`, provenance, routing history, current logs, and at most one in-progress rollback set. |
 
@@ -80,29 +82,31 @@ Every target sets `store = false`, `stream = true`, and removes
 
 ## Routing policy
 
-Jev 1.13 is the sole classifier. It receives the opening task plus latest
-distinct textual user update through the exact OpenRouter Decisions endpoint.
-Non-text user state skips the classifier and falls back to Sol; tool results,
-reasoning, provider metadata, credentials, and native authorization never enter
-the decision request. The classifier chooses the dominant bottleneck of the
-whole request with this policy:
+In the final source candidate, Jev 1.13 is the sole classifier. It receives only
+the latest genuine user turn's
+ordered text blocks through the exact OpenRouter Decisions endpoint. Pure
+tool-result pseudo-user messages are skipped. Media in the selected turn skips
+the classifier and falls back to Sol; older media does not veto a later text-only
+classification. Earlier turns, tool results, reasoning, provider metadata,
+credentials, and native authorization never enter the decision request. The
+full conversation remains intact for the native answer model. The classifier
+chooses the dominant bottleneck of the whole request with this policy:
 
-- `astra-xhigh`: exceptional difficulty, consequential subtle correctness,
-  recovery after a strong failed attempt, critical security/state behavior, or
-  an ambiguous completed irreversible effect where retry can duplicate or
-  corrupt the outcome.
+- `astra-xhigh`: exceptional reasoning with multiple difficult interacting
+  constraints, subtle correctness, recovery after a capable attempt failed, or
+  consequential state or security effects.
 - `astra-medium`: planning, review, architecture, interpretation, synthesis,
-  or uncertain diagnosis where judgment dominates and consequences stay
-  reversible or contained.
-- `sol-medium`: implementation or bounded debugging where failure and desired
-  correction are known and verification determines the outcome; this is the
-  fallback when classification is uncertain.
-- `luna-max`: bounded exploration, source-grounded extraction or summarization,
-  and tiny fully specified mechanical work.
+  or uncertain diagnosis where judgment dominates.
+- `sol-medium`: implementation or concrete debugging with a defined outcome
+  and decisive verification; this is also the default when the work mode is
+  unclear or classification is uncertain.
+- `luna-max`: bounded retrieval, source-grounded extraction or summarization,
+  and tiny fully specified mechanical work with cheap verification.
 
-The exact criteria, question, threshold, fallback, transport limits, and policy
-hash live in `routes.template.toml`; the accepted B2 evidence binds the same
-policy inputs.
+The exact criteria, question, threshold, fallback and transport limits live in
+`routes.template.toml`. Artifact provenance binds the pinned source, ordered
+patches, route template, generated routes, binary and Router commit. Historical
+B2 evidence remains regression context and no longer materializes current routes.
 
 ## Codex compatibility
 
@@ -120,11 +124,12 @@ public `switchyard/auto` identity while routing diagnostics retain the selected
 target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
-The four-target policy advertises multi-agent v2 only with the accepted
-runtime-bound application under `v2_agent/switchyard/auto`. The recorded proof
-binds the deployed Router commit, upstream source, patch, binary, and generated
-routes. Any change to those identities or the native collaboration contract
-requires recertification.
+The four-target policy advertises multi-agent v2 only with an accepted
+runtime-bound application under `v2_agent/switchyard/auto`. The final source
+candidate changes bound runtime identities, so its prior proof is retained as
+history and the candidate
+stays v1 until deployment and recertification. A proof binds the deployed Router
+commit, upstream source, patch, binary, generated routes and current template.
 
 Router keeps Codex compaction requests on the native public route rather than
 sending them through Switchyard's auxiliary compaction endpoint. The optional

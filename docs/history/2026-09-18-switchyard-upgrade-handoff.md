@@ -40,7 +40,7 @@ candidate tree `10ec27aad5cd83aff8809675efb9285571fcac8c`, and release binary SH
 `6759212e53f4b3c5604b83c8da082eca7318b6f5cccc9a95128536d35ffea7e4`.
 The candidate passed its full B1 offline check set, including actual route
 dry-run and installed-Codex catalog compatibility; see
-[`docs/history/2026-09-18-switchyard-b1-evidence.json`](history/2026-09-18-switchyard-b1-evidence.json).
+[`docs/history/2026-09-18-switchyard-b1-evidence.json`](2026-09-18-switchyard-b1-evidence.json).
 
 R1 restored a one-message list for the Luna classifier's native Responses input
 after the new binary's first isolated smoke received HTTP 400 for upstream's
@@ -48,7 +48,7 @@ scalar form. The repaired binary then selected all four roles, completed one
 answer through each exact routed identity, preserved affinity across a tool
 result, and forwarded native authentication through the unchanged installed
 Router. The bounded record is
-[`docs/history/2026-09-18-switchyard-b1-r1-smoke.json`](history/2026-09-18-switchyard-b1-r1-smoke.json).
+[`docs/history/2026-09-18-switchyard-b1-r1-smoke.json`](2026-09-18-switchyard-b1-r1-smoke.json).
 
 For B2, the implementation used OpenRouter's Decisions endpoint rather than direct TypeSafe access.
 The official schema and live synthetic probe verified
@@ -76,7 +76,7 @@ criterion in both fixtures. This supports the accepted
 `{astra_medium, astra_xhigh}` set for the tested work and is not a general claim
 about cryptographic capability. The original XHigh label is retained.
 The bounded record is
-[`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json).
+[`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](2026-09-18-switchyard-b2-r3-x03-counterfactual.json).
 The R3 artifact SHA-256 is
 `888b4f9efb48d1b99436a8697300763b5db4d528b82b34a298d4c5bd82c40e0f`.
 The former Luna High classifier is retained only in the rollback generation.
@@ -108,10 +108,10 @@ and answered `red`, while the routed request recorded the Sol fallback with no
 Jev provider call. Fresh native v2 certification used one no-history
 Switchyard child, returned both markers from that same child, and completed the
 sandboxed arithmetic tool call with result 42. The bounded records are
-[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](history/2026-09-18-switchyard-b3-invalid-media-fixture.json),
-[`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
+[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](2026-09-18-switchyard-b3-invalid-media-fixture.json),
+[`docs/history/2026-09-18-switchyard-b3-live.json`](2026-09-18-switchyard-b3-live.json)
 and
-[`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
+[`docs/history/2026-09-18-switchyard-b3-certification.json`](2026-09-18-switchyard-b3-certification.json).
 The corrected live artifact SHA-256 is
 `d42618a885888c787e8f2f4f96dcd98bb5237e42b8561bdefa6d0569c19a464c`;
 the retained invalid-fixture record SHA-256 is

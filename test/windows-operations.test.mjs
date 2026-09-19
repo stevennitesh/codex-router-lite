@@ -101,6 +101,7 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /Switchyard upstream contribution patch/);
   assert.match(source, /upstreamContributionCommit/);
   assert.match(source, /upstreamContributionSha256/);
+  assert.match(source, /templateSha256 = \$templateHash/);
   assert.match(source, /if \(\$WhatIfPreference\)[\s\S]*worktree add --detach/);
   assert.match(source, /worktree add --detach \$rollbackRouterRoot \$expectedRollbackCommit/);
   assert.match(source, /ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file/);

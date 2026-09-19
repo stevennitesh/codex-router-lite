@@ -403,6 +403,7 @@ if ("$($upstreamContribution.sourceCommit)" -notmatch '^[0-9a-f]{40}$' -or
   throw "Switchyard upstream contribution identity is invalid."
 }
 Assert-FileHash $upstreamPatchPath $upstreamPatchHash "Switchyard upstream contribution patch"
+$templateHash = Get-Sha256 (Join-Path $repoRoot "config\switchyard\routes.template.toml")
 $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $lock.patch
 Assert-FileHash $patchPath $lock.patchSha256 "Switchyard patch"
 Assert-FileHash $candidateBinary $expectedBinaryHash "Switchyard candidate binary"
@@ -498,6 +499,7 @@ try {
       upstreamContributionSha256 = $upstreamPatchHash
       patchSha256 = $lock.patchSha256.ToLowerInvariant()
       binarySha256 = $expectedBinaryHash
+      templateSha256 = $templateHash
       routesSha256 = $expectedRoutesHash
       routerCommit = $routerCommit
       deployedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -518,6 +520,7 @@ try {
       $provenance.upstreamContributionSha256 -ne $upstreamPatchHash -or
       $provenance.patchSha256 -ne $lock.patchSha256.ToLowerInvariant() -or
       $provenance.binarySha256 -ne $expectedBinaryHash -or
+      $provenance.templateSha256 -ne $templateHash -or
       $provenance.routesSha256 -ne $expectedRoutesHash -or
       $provenance.routerCommit -ne $routerCommit
     ) {

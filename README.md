@@ -29,8 +29,9 @@ native CLI, with a small, explicit set of routes.
 | Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy) |
 
 Pareto supports automatic tool selection and has no hosted-search capability.
-Pareto, GLM, and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
-each valid only for its named runtime; Union Alpha's proof is retained as history.
+Pareto and GLM have [active recorded v2 proofs](v2_agent/README.md), each valid
+only for its named runtime. Switchyard's prior proof is retained as historical
+evidence while the changed runtime awaits deployment and recertification.
 
 ## Quick start
 
@@ -120,9 +121,12 @@ Model requests still go to the selected provider. See [security](SECURITY.md)
 for the trust boundaries and private vulnerability reporting.
 
 **Switchyard Auto also sends task text to OpenRouter/Jev for model selection, even
-though its answer comes from a native GPT model.** Currently that text is the
-opening task plus latest user update. User media anywhere in the retained history
-bypasses Jev and selects Sol; that media is not sent to the classifier. See the
+though its answer comes from a native GPT model.** In the final source candidate,
+that text is the latest genuine user turn only. A pure tool-result pseudo-user
+message is skipped.
+Media in that selected turn bypasses Jev and selects Sol; older media does not
+block a later text-only classification. The full request still goes to the native
+answer model. See the
 [routing policy](config/switchyard/README.md#routing-policy) for details.
 
 Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),

@@ -50,7 +50,7 @@ rustup toolchain install $lock.rustToolchain --profile minimal
 Push-Location $buildRoot
 rustup run $lock.rustToolchain cargo fmt --all --check
 rustup run $lock.rustToolchain cargo clippy --workspace --all-targets -- -D warnings
-rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server -p switchyard-translation
+rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server -p switchyard-translation -p switchyard-typesafe-client
 rustup run $lock.rustToolchain cargo build --release -p switchyard-server
 Pop-Location
 $candidateBinary = Join-Path $buildRoot ($lock.binary -replace '/', '\')
@@ -87,6 +87,21 @@ The catalog script checks current native-field inheritance and the specific
 Switchyard/GLM catalog assertions. It does not validate the patch, route-file
 privacy, local-hop authentication, loopback binding, decision redaction, or
 runtime health; those need their own checks above and below.
+
+When a classifier criterion or fallback policy changes, run the maintained
+synthetic evaluator only with explicit provider-spend authorization and an
+already frozen corpus:
+
+```powershell
+node scripts/evaluate-switchyard-routing.mjs $candidateBinary docs/switchyard-routing-corpus.json $evidencePath
+```
+
+The evaluator exercises the candidate's `/v1/decision` path, records provider
+build and runtime-policy parity, and stops before holdout when development gates
+fail. Its authored corpus is regression evidence, not a representative dataset.
+After an authorized deployment, the single live smoke/certification entry point
+is `node scripts/verify-switchyard-live.mjs $evidencePath`; it requires an
+explicit output path and applies only to the installed identities it records.
 
 ## Deploy and roll back
 
@@ -166,7 +181,7 @@ generation. Do not delete the retained rollback to make a second deployment pass
 for the five checks before any future proof refresh. Switchyard additionally
 requires the proof's runtime
 binding to record the deployed upstream commit, patch SHA-256, binary SHA-256,
-Router commit, and generated-routes SHA-256.
+Router commit, generated-routes SHA-256, and current route-template SHA-256.
 
 Recertify after any change to one of those identities or to the native
 collaboration/tool namespace contract. Do not duplicate the general v2

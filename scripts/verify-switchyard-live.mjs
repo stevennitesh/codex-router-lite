@@ -9,14 +9,12 @@ import { CALLER_SECRET_PATH, CODEX_HOME, LOG_PATH, PORTS } from "../src/paths.mj
 import { summarizeSwitchyardTrace } from "../src/switchyard-trace.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const output = path.resolve(process.argv[2] || path.join(
-  root,
-  "docs",
-  "history",
-  "2026-09-18-switchyard-b3-live.json",
-));
-const expectedPolicyHash = "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f";
-const session = "switchyard-b3-synthetic-verification";
+const output = process.argv[2] ? path.resolve(process.argv[2]) : null;
+if (!output) throw new Error("usage: verify-switchyard-live.mjs OUTPUT_JSON");
+const expectedTemplateHash = createHash("sha256").update(readFileSync(
+  path.join(root, "config", "switchyard", "routes.template.toml"),
+)).digest("hex");
+const session = "switchyard-live-synthetic-verification";
 const startedAt = Date.now();
 
 function parseSse(text) {
@@ -251,7 +249,7 @@ const routingRecords = readFileSync(path.join(CODEX_HOME, "switchyard", "routing
   .filter((item) => Date.parse(item.ts) >= startedAt);
 const firstSelected = routingRecords[0]?.model || null;
 const secondSelected = routingRecords[1]?.model || null;
-const policyObserved = afterCompact.classifier.policyHashes[expectedPolicyHash] > 0;
+const templateObserved = installedProvenance.templateSha256 === expectedTemplateHash;
 const mediaFallbackObserved = recentClassifier.some((item) =>
   item.source === "fail_open" && item.reasonCode === "non_text_state" && item.finalTarget === "sol_medium");
 const probabilityMapObserved = recentClassifier.some((item) =>
@@ -261,14 +259,14 @@ const probabilityMapObserved = recentClassifier.some((item) =>
 
 const evidence = {
   schemaVersion: 1,
-  checkpoint: "SY-B3",
+  checkpoint: "switchyard-live",
   testedAt: new Date().toISOString(),
   binding: {
     routerCommit: installedProvenance.routerCommit,
     upstreamCommit: installedProvenance.upstreamCommit,
     binarySha256: installedProvenance.binarySha256,
     routesSha256: installedProvenance.routesSha256,
-    policyHash: expectedPolicyHash,
+    templateSha256: expectedTemplateHash,
   },
   ordinaryToolRoundTrip: {
     first: compact(first),
@@ -300,7 +298,7 @@ const evidence = {
   },
   classifier: {
     providerVersions,
-    policyObserved,
+    templateObserved,
     probabilityMapObserved,
     fallbacks: afterCompact.classifier.fallbacks,
     recent: recentClassifier,
@@ -331,7 +329,11 @@ if (!mediaFallbackObserved || !evidence.mediaFallback.zeroProviderCalls) {
 if (nativeCompact.status !== 200 || !evidence.nativeCompaction.bypassedClassifier) {
   evidence.requiredFailures.push("native compaction did not bypass the classifier");
 }
-if (!policyObserved || !probabilityMapObserved || !providerVersions.includes("typesafe/jev-1.13-20260917")) {
+if (
+  !templateObserved ||
+  !probabilityMapObserved ||
+  !providerVersions.some((model) => model.startsWith("typesafe/jev-1.13-"))
+) {
   evidence.requiredFailures.push("classifier binding evidence is incomplete");
 }
 evidence.evidenceSha256 = createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
@@ -342,7 +344,7 @@ process.stdout.write(`${JSON.stringify({
   requiredFailures: evidence.requiredFailures,
   selected: [firstSelected, secondSelected],
   providerVersions,
-  policyObserved,
+  templateObserved,
   probabilityMapObserved,
   compactionBypassedClassifier: evidence.nativeCompaction.bypassedClassifier,
 }, null, 2)}\n`);

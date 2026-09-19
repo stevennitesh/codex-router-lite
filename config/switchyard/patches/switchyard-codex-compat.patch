@@ -880,55 +880,49 @@ index b2ff7c2e..0c55bcf8 100644
          if let Some(first) = spec
              .get("enum")
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
-index e8a32baa..0ff2159a 100644
+index e8a32baa..36edcd06 100644
 --- a/crates/libsy/src/algorithms/type_safe_class.rs
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
-@@ -37,7 +37,11 @@ const ALGORITHM_NAME: &str = "type_safe_task_classifier";
+@@ -22,7 +22,7 @@ use async_trait::async_trait;
+ use switchyard_protocol::{Category, ContentBlock, Message, Request, Response, Role};
+ 
+ use super::fall_through::FallThrough;
+-use super::llm_class::{DefaultCategoryClassifier, affinity_router, task_messages, trim_messages};
++use super::llm_class::{DefaultCategoryClassifier, affinity_router};
+ use super::util::affinity::ClassifyTrigger;
+ use super::util::typesafe_provider::{
+     TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeVerdict,
+@@ -37,8 +37,10 @@ const ALGORITHM_NAME: &str = "type_safe_task_classifier";
  
  /// Instruction sent as the provider's question when the deployment leaves
  /// [`TypeSafeClassifierConfig::question`] empty.
 -const DEFAULT_QUESTION: &str = "Which configured model is the best fit for this conversation?";
 +pub const DEFAULT_TYPE_SAFE_QUESTION: &str =
 +    "Which configured model is the best fit for this conversation?";
-+
-+/// Stable description of the state normalization bound into calibrated policies.
-+pub const TYPE_SAFE_NORMALIZATION_POLICY: &str = "opening task plus latest distinct textual user update; omit reasoning, encrypted content, tool results, and provider metadata; any user image/audio/video/file causes zero-call default-target fallback";
  
++/// Stable description of the state normalization bound into calibrated policies.
  /// Settings for a [`TypeSafeTaskClassifier`] route.
  #[derive(Clone, Debug)]
-@@ -63,6 +67,8 @@ pub struct TypeSafeClassifierConfig {
-     /// Trailing conversation turns the provider sees on top of the opening task.
-     /// `None` (the default) sends the opening task and latest user follow-up only.
-     pub recent_turn_window: Option<usize>,
-+    /// Optional SHA-256 digest binding the externally evaluated routing policy.
-+    pub policy_hash: Option<String>,
+ pub struct TypeSafeClassifierConfig {
+@@ -60,9 +62,6 @@ pub struct TypeSafeClassifierConfig {
+     /// Uses the first user message as the SessionKey for sticky routing when
+     /// session metadata is unavailable. Requires `classify_trigger = NewSession`.
+     pub message_hash_fallback: bool,
+-    /// Trailing conversation turns the provider sees on top of the opening task.
+-    /// `None` (the default) sends the opening task and latest user follow-up only.
+-    pub recent_turn_window: Option<usize>,
  }
  
  impl Default for TypeSafeClassifierConfig {
-@@ -75,6 +81,7 @@ impl Default for TypeSafeClassifierConfig {
+@@ -74,7 +73,6 @@ impl Default for TypeSafeClassifierConfig {
+             default_target: Category::Efficient,
              classify_trigger: ClassifyTrigger::default(),
              message_hash_fallback: false,
-             recent_turn_window: None,
-+            policy_hash: None,
+-            recent_turn_window: None,
          }
      }
  }
-@@ -100,12 +107,22 @@ impl TypeSafeClassifierConfig {
-                     .to_string(),
-             });
-         }
-+        if let Some(hash) = &self.policy_hash
-+            && (hash.len() != 64
-+                || !hash
-+                    .bytes()
-+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-+        {
-+            return Err(LibsyError::AlgorithmError {
-+                message: "policy_hash must be 64 lowercase hexadecimal characters".to_string(),
-+            });
-+        }
-         Ok(())
-     }
+@@ -105,68 +103,53 @@ impl TypeSafeClassifierConfig {
  
      fn question(&self) -> &str {
          if self.question.trim().is_empty() {
@@ -937,29 +931,106 @@ index e8a32baa..0ff2159a 100644
          } else {
              &self.question
          }
-@@ -126,6 +143,21 @@ fn render_context(messages: &[Message]) -> String {
-         .join("\n\n")
+     }
  }
  
-+fn has_user_non_text(messages: &[Message]) -> bool {
-+    messages.iter().any(|message| {
-+        message.role == Role::User
-+            && message.content.iter().any(|block| {
-+                matches!(
-+                    block,
-+                    ContentBlock::Image { .. }
-+                        | ContentBlock::Audio { .. }
-+                        | ContentBlock::Video { .. }
-+                        | ContentBlock::File { .. }
-+                )
+-/// Flattens windowed task messages into plain text for a provider's `state`/context
+-/// field. TypeSafe's System One Model classifies free text, not a chat transcript, so
+-/// each message becomes one labeled line; non-text content (tool calls and results,
+-/// media, reasoning) is summarized by kind rather than silently dropped, so the
+-/// provider can still tell that something happened there even though it never sees
+-/// provider-private or binary payloads.
+-fn render_context(messages: &[Message]) -> String {
+-    messages
+-        .iter()
+-        .map(render_message)
+-        .collect::<Vec<_>>()
+-        .join("\n\n")
++struct SelectedUserTurn {
++    text: String,
++    has_non_text: bool,
+ }
+ 
+-fn render_message(message: &Message) -> String {
+-    let role = role_label(message.role);
+-    let body = message
+-        .content
+-        .iter()
+-        .map(render_block)
+-        .collect::<Vec<_>>()
+-        .join(" ");
+-    format!("[{role}] {body}")
+-}
+-
+-fn role_label(role: Role) -> &'static str {
+-    match role {
+-        Role::System => "system",
+-        Role::Developer => "developer",
+-        Role::User => "user",
+-        Role::Assistant => "assistant",
+-        Role::Tool => "tool",
+-    }
+-}
+-
+-fn render_block(block: &ContentBlock) -> String {
+-    match block {
+-        ContentBlock::Text { text } => text.clone(),
+-        ContentBlock::Reasoning { .. } => "(reasoning omitted)".to_string(),
+-        ContentBlock::Image { .. } => "(image)".to_string(),
+-        ContentBlock::Audio { .. } => "(audio)".to_string(),
+-        ContentBlock::Video { .. } => "(video)".to_string(),
+-        ContentBlock::File { .. } => "(file)".to_string(),
+-        ContentBlock::ToolCall(call) => format!("(called tool {})", call.name),
+-        ContentBlock::ToolResult(result) => format!(
+-            "(tool result{})",
+-            if result.is_error == Some(true) {
+-                ", failed"
+-            } else {
+-                ""
+-            }
+-        ),
+-        ContentBlock::Refusal { text } => text.clone(),
+-        ContentBlock::Unknown { .. } => "(unrecognized content)".to_string(),
+-    }
++/// Selects the latest decoded end-user turn without treating tool-result
++/// pseudo-user messages as user intent. The original request is never changed.
++fn latest_user_turn(messages: &[Message]) -> Option<SelectedUserTurn> {
++    messages.iter().rev().find_map(|message| {
++        if message.role != Role::User {
++            return None;
++        }
++        let tool_result_only = !message.content.is_empty()
++            && message
++                .content
++                .iter()
++                .all(|block| matches!(block, ContentBlock::ToolResult(_)));
++        if tool_result_only {
++            return None;
++        }
++        let text = message
++            .content
++            .iter()
++            .filter_map(|block| match block {
++                ContentBlock::Text { text } => Some(text.as_str()),
++                _ => None,
 +            })
++            .collect::<Vec<_>>()
++            .join("\n");
++        let has_non_text = message.content.iter().any(|block| {
++            matches!(
++                block,
++                ContentBlock::Image { .. }
++                    | ContentBlock::Audio { .. }
++                    | ContentBlock::Video { .. }
++                    | ContentBlock::File { .. }
++            )
++        });
++        Some(SelectedUserTurn { text, has_non_text })
 +    })
-+}
-+
- fn render_message(message: &Message) -> String {
-     let role = role_label(message.role);
-     let body = message
-@@ -182,10 +214,18 @@ struct TypeSafeClassifier {
+ }
+ 
+ /// Raw provider-backed scorer.
+@@ -182,10 +165,17 @@ struct TypeSafeClassifier {
  }
  
  impl TypeSafeClassifier {
@@ -974,12 +1045,11 @@ index e8a32baa..0ff2159a 100644
              "source": "fail_open",
              "reason_code": reason_code,
 +            "final_target": self.config.default_target.as_str(),
-+            "policy_hash": self.config.policy_hash,
 +            "threshold": self.config.base_threshold,
          });
          if let (Some(evidence), Some(extra)) = (evidence.as_object_mut(), extra.as_object()) {
              evidence.extend(extra.clone());
-@@ -207,7 +247,7 @@ impl TypeSafeClassifier {
+@@ -207,7 +197,7 @@ impl TypeSafeClassifier {
                  confidence = verdict.confidence,
                  "type safe classifier returned an out-of-range confidence; falling through"
              );
@@ -988,7 +1058,7 @@ index e8a32baa..0ff2159a 100644
                  driver,
                  "invalid_confidence",
                  serde_json::json!({
-@@ -215,6 +255,7 @@ impl TypeSafeClassifier {
+@@ -215,6 +205,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -996,7 +1066,7 @@ index e8a32baa..0ff2159a 100644
                  }),
              );
          }
-@@ -230,19 +271,20 @@ impl TypeSafeClassifier {
+@@ -230,19 +221,20 @@ impl TypeSafeClassifier {
                  label = %verdict.label,
                  "type safe classifier returned an unconfigured label; falling through"
              );
@@ -1019,7 +1089,7 @@ index e8a32baa..0ff2159a 100644
                  driver,
                  "low_confidence",
                  serde_json::json!({
-@@ -250,6 +292,7 @@ impl TypeSafeClassifier {
+@@ -250,6 +242,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -1027,7 +1097,7 @@ index e8a32baa..0ff2159a 100644
                  }),
              );
          }
-@@ -257,9 +300,13 @@ impl TypeSafeClassifier {
+@@ -257,9 +250,12 @@ impl TypeSafeClassifier {
          driver.set_evidence_if_empty(serde_json::json!({
              "source": "type_safe_classifier",
              "label": verdict.label,
@@ -1036,34 +1106,47 @@ index e8a32baa..0ff2159a 100644
              "probabilities": verdict.probabilities,
              "decision_latency_ms": verdict.decision_latency_ms,
 +            "provider_model": verdict.provider_model,
-+            "policy_hash": self.config.policy_hash,
 +            "threshold": self.config.base_threshold,
          }));
          Classification::Scores(vec![Score {
              target,
-@@ -277,6 +324,12 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -277,13 +273,16 @@ impl Classifier<State> for TypeSafeClassifier {
          request: &mut Request,
          driver: &Driver,
      ) -> Result<(Classification, Option<Response>)> {
-+        if has_user_non_text(&request.llm_request.messages) {
+-        let messages = match self.config.recent_turn_window {
+-            Some(window) => trim_messages(&request.llm_request.messages, window),
+-            None => task_messages(&request.llm_request.messages),
+-        };
++        let selected = latest_user_turn(&request.llm_request.messages);
++        if selected.as_ref().is_some_and(|turn| turn.has_non_text) {
 +            return Ok((
 +                self.fall_open(driver, "non_text_state", serde_json::Value::Null),
 +                None,
 +            ));
 +        }
-         let messages = match self.config.recent_turn_window {
-             Some(window) => trim_messages(&request.llm_request.messages, window),
-             None => task_messages(&request.llm_request.messages),
-@@ -295,7 +348,7 @@ impl Classifier<State> for TypeSafeClassifier {
+         let input = TypeSafeClassifierInput {
+             question: self.config.question().to_string(),
+-            context: render_context(&messages),
++            context: selected.map_or_else(String::new, |turn| turn.text),
+         };
+ 
+         let verdict = match self.provider.classify(input, &self.config.options).await {
+@@ -294,8 +293,11 @@ impl Classifier<State> for TypeSafeClassifier {
+                     %error,
                      "type safe classifier request failed; falling through"
                  );
-                 let classification =
+-                let classification =
 -                    Self::fall_open(driver, "provider_error", serde_json::Value::Null);
-+                    self.fall_open(driver, "provider_error", serde_json::Value::Null);
++                let extra = error.http_status().map_or(
++                    serde_json::Value::Null,
++                    |status| serde_json::json!({ "http_status": status }),
++                );
++                let classification = self.fall_open(driver, error.kind().reason_code(), extra);
                  return Ok((classification, None));
              }
          };
-@@ -382,7 +435,7 @@ mod tests {
+@@ -382,7 +384,7 @@ mod tests {
      use crate::core::testing::empty_driver;
      use async_trait::async_trait;
      use parking_lot::Mutex;
@@ -1072,7 +1155,7 @@ index e8a32baa..0ff2159a 100644
  
      use super::super::util::typesafe_provider::TypeSafeProviderError;
  
-@@ -451,6 +504,7 @@ mod tests {
+@@ -451,6 +453,7 @@ mod tests {
              confidence,
              probabilities: [(label.to_string(), 1.0)].into(),
              decision_latency_ms: 12,
@@ -1080,7 +1163,19 @@ index e8a32baa..0ff2159a 100644
          }
      }
  
-@@ -551,6 +605,42 @@ mod tests {
+@@ -533,8 +536,9 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn a_provider_error_falls_through_to_the_default() -> Result<()> {
+-        let provider = Arc::new(StubProvider::once(Err(TypeSafeProviderError(
+-            "network down".to_string(),
++        let provider = Arc::new(StubProvider::once(Err(TypeSafeProviderError::new(
++            super::super::util::typesafe_provider::TypeSafeProviderErrorKind::Unavailable,
++            "network down",
+         ))));
+         let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
+         let driver = driver_with(&[
+@@ -551,6 +555,42 @@ mod tests {
          Ok(())
      }
  
@@ -1123,6 +1218,80 @@ index e8a32baa..0ff2159a 100644
      #[tokio::test]
      async fn a_nan_confidence_falls_through_to_the_default() -> Result<()> {
          let provider = Arc::new(StubProvider::once(Ok(verdict("capable", f64::NAN))));
+@@ -612,26 +652,53 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn render_context_summarizes_non_text_content() {
+-        use switchyard_protocol::ToolCall;
+-
+-        let messages = vec![Message {
+-            role: Role::Assistant,
+-            content: vec![
+-                ContentBlock::Text {
+-                    text: "checking logs".to_string(),
+-                },
+-                ContentBlock::ToolCall(ToolCall {
+-                    id: "call-1".to_string(),
+-                    name: "grep".to_string(),
+-                    arguments: serde_json::json!({}),
+-                }),
+-            ],
+-        }];
+-        let rendered = render_context(&messages);
+-        assert!(rendered.contains("[assistant]"));
+-        assert!(rendered.contains("checking logs"));
+-        assert!(rendered.contains("(called tool grep)"));
++    fn latest_user_selector_skips_tool_results_and_ignores_old_media() {
++        use switchyard_protocol::ToolResult;
++
++        let messages = vec![
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::Image {
++                    source: ImageSource::Url {
++                        url: "https://example.test/old.png".to_string(),
++                        detail: None,
++                    },
++                }],
++            },
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::ToolResult(ToolResult {
++                    tool_call_id: "call-1".to_string(),
++                    content: vec![ContentBlock::Text {
++                        text: "private tool output".to_string(),
++                    }],
++                    is_error: None,
++                })],
++            },
++            Message::text(Role::User, "fix this"),
++        ];
++        let selected = latest_user_turn(&messages).expect("latest user turn");
++        assert_eq!(selected.text, "fix this");
++        assert!(!selected.has_non_text);
++    }
++
++    #[test]
++    fn latest_user_selector_keeps_media_only_turn() {
++        let messages = vec![
++            Message::text(Role::User, "older text"),
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::Image {
++                    source: ImageSource::Url {
++                        url: "https://example.test/current.png".to_string(),
++                        detail: None,
++                    },
++                }],
++            },
++        ];
++        let selected = latest_user_turn(&messages).expect("media user turn");
++        assert_eq!(selected.text, "");
++        assert!(selected.has_non_text);
+     }
+ 
+     #[test]
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
 index 698f0a9d..2a6a4fba 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
@@ -1242,10 +1411,10 @@ index 4798178e..2bb4def3 100644
              },
              raw_request: None,
 diff --git a/crates/libsy/src/algorithms/util/typesafe_provider.rs b/crates/libsy/src/algorithms/util/typesafe_provider.rs
-index 5fea15ee..457b3343 100644
+index 5fea15ee..a4e2b744 100644
 --- a/crates/libsy/src/algorithms/util/typesafe_provider.rs
 +++ b/crates/libsy/src/algorithms/util/typesafe_provider.rs
-@@ -75,6 +75,8 @@ pub struct TypeSafeVerdict {
+@@ -75,20 +75,76 @@ pub struct TypeSafeVerdict {
      pub probabilities: BTreeMap<String, f64>,
      /// Wall-clock time spent waiting for the TypeSafe decision.
      pub decision_latency_ms: u64,
@@ -1253,25 +1422,119 @@ index 5fea15ee..457b3343 100644
 +    pub provider_model: String,
  }
  
- /// Opaque failure from a [`TypeSafeProvider`] call.
+-/// Opaque failure from a [`TypeSafeProvider`] call.
+-///
+-/// [`crate::TypeSafeTaskClassifier`] folds every variant of failure to fail-open —
+-/// the same request is simply handed to the next classifier in the cascade — so
+-/// this carries only a display message suitable for logs and telemetry, never
+-/// structured detail a caller might branch on.
++/// Stable failure classes surfaced by a [`TypeSafeProvider`].
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TypeSafeProviderErrorKind {
++    /// The provider could not be constructed or reached.
++    Unavailable,
++    /// The whole provider request exceeded its deadline.
++    Timeout,
++    /// The provider returned a non-success HTTP status.
++    Http,
++    /// The response did not satisfy the expected Jev schema.
++    MalformedResponse,
++    /// The serialized request exceeded the configured byte budget.
++    StateTooLarge,
++}
++
++impl TypeSafeProviderErrorKind {
++    /// Returns the bounded reason written to routing evidence.
++    pub fn reason_code(self) -> &'static str {
++        match self {
++            Self::Unavailable => "classifier_unavailable",
++            Self::Timeout => "classifier_timeout",
++            Self::Http => "provider_http_error",
++            Self::MalformedResponse => "malformed_response",
++            Self::StateTooLarge => "state_too_large",
++        }
++    }
++}
++
++/// Sanitized failure from a [`TypeSafeProvider`] call.
+ #[derive(Clone, Debug)]
+-pub struct TypeSafeProviderError(pub String);
++pub struct TypeSafeProviderError {
++    kind: TypeSafeProviderErrorKind,
++    message: String,
++    http_status: Option<u16>,
++}
++
++impl TypeSafeProviderError {
++    /// Creates a classified provider failure with no HTTP status.
++    pub fn new(kind: TypeSafeProviderErrorKind, message: impl Into<String>) -> Self {
++        Self {
++            kind,
++            message: message.into(),
++            http_status: None,
++        }
++    }
++
++    /// Attaches the provider HTTP status without retaining its response body.
++    pub fn with_http_status(mut self, status: u16) -> Self {
++        self.http_status = Some(status);
++        self
++    }
++
++    /// Returns the stable failure class.
++    pub fn kind(&self) -> TypeSafeProviderErrorKind {
++        self.kind
++    }
++
++    /// Returns the provider HTTP status when one was observed.
++    pub fn http_status(&self) -> Option<u16> {
++        self.http_status
++    }
++}
+ 
+ impl fmt::Display for TypeSafeProviderError {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        f.write_str(&self.0)
++        f.write_str(&self.message)
+     }
+ }
+ 
+@@ -127,7 +183,8 @@ mod tests {
+ 
+     #[test]
+     fn provider_error_displays_its_message() {
+-        let error = TypeSafeProviderError("boom".to_string());
++        let error = TypeSafeProviderError::new(TypeSafeProviderErrorKind::Unavailable, "boom");
+         assert_eq!(error.to_string(), "boom");
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::Unavailable);
+     }
+ }
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 5d75cdff..3a2fab9d 100644
+index 5d75cdff..62fd98aa 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
-@@ -28,7 +28,10 @@ pub use algorithms::passthrough::Passthrough;
+@@ -28,7 +28,9 @@ pub use algorithms::passthrough::Passthrough;
  pub use algorithms::rand::{Random, RandomClassifier};
  pub use algorithms::stage::{LlmFallback, StageRouter, StageRouterConfig};
  pub use algorithms::subagent::{SubagentRouter, SubagentRouterConfig};
 -pub use algorithms::type_safe_class::{TypeSafeClassifierConfig, TypeSafeTaskClassifier};
 +pub use algorithms::type_safe_class::{
-+    DEFAULT_TYPE_SAFE_QUESTION, TYPE_SAFE_NORMALIZATION_POLICY, TypeSafeClassifierConfig,
-+    TypeSafeTaskClassifier,
++    DEFAULT_TYPE_SAFE_QUESTION, TypeSafeClassifierConfig, TypeSafeTaskClassifier,
 +};
  pub use algorithms::util::affinity::{AffinityRouter, ClassifyTrigger};
  pub use algorithms::util::classifier_contract::{
      ClassifierContractConfig, ClassifierResponseFormat,
+@@ -39,7 +41,7 @@ pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
+ pub use algorithms::util::tool_signals::{DEFAULT_RECENT_WINDOW, ToolSemantics, ToolSignals};
+ pub use algorithms::util::typesafe_provider::{
+     TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeProviderError,
+-    TypeSafeVerdict,
++    TypeSafeProviderErrorKind, TypeSafeVerdict,
+ };
+ 
+ // Stage-router scoring and tier selection — the shared signal-driven routing
 diff --git a/crates/libsy/src/observability.rs b/crates/libsy/src/observability.rs
-index 69c6d929..ec996c5b 100644
+index 69c6d929..bfc53e7c 100644
 --- a/crates/libsy/src/observability.rs
 +++ b/crates/libsy/src/observability.rs
 @@ -78,6 +78,10 @@ pub(crate) fn run_span(algorithm: &str, request: &Request) -> Span {
@@ -1280,22 +1543,21 @@ index 69c6d929..ec996c5b 100644
          evidence.reason_code = tracing::field::Empty,
 +        evidence.provider_model = tracing::field::Empty,
 +        evidence.final_target = tracing::field::Empty,
-+        evidence.policy_hash = tracing::field::Empty,
++        evidence.http_status = tracing::field::Empty,
 +        evidence.decision_latency_ms = tracing::field::Empty,
          switchyard.algorithm = algorithm,
          openinference.span.kind = "CHAIN",
          switchyard.route = tracing::field::Empty,
-@@ -134,6 +138,9 @@ pub(crate) fn record_outcome(metadata: &OutcomeMetadata, models: &[ModelId]) {
+@@ -134,6 +138,8 @@ pub(crate) fn record_outcome(metadata: &OutcomeMetadata, models: &[ModelId]) {
              ("verdict", "evidence.verdict"),
              ("trigger", "evidence.trigger"),
              ("reason_code", "evidence.reason_code"),
 +            ("provider_model", "evidence.provider_model"),
 +            ("final_target", "evidence.final_target"),
-+            ("policy_hash", "evidence.policy_hash"),
          ] {
              if let Some(value) = evidence.get(key).and_then(serde_json::Value::as_str) {
                  span.record(field, value);
-@@ -148,6 +155,73 @@ pub(crate) fn record_outcome(metadata: &OutcomeMetadata, models: &[ModelId]) {
+@@ -148,6 +154,79 @@ pub(crate) fn record_outcome(metadata: &OutcomeMetadata, models: &[ModelId]) {
                  span.record(field, value);
              }
          }
@@ -1304,6 +1566,12 @@ index 69c6d929..ec996c5b 100644
 +            .and_then(serde_json::Value::as_u64)
 +        {
 +            span.record("evidence.decision_latency_ms", value);
++        }
++        if let Some(value) = evidence
++            .get("http_status")
++            .and_then(serde_json::Value::as_u64)
++        {
++            span.record("evidence.http_status", value);
 +        }
 +
 +        // The standard text subscriber does not emit a span when fields are
@@ -1322,10 +1590,6 @@ index 69c6d929..ec996c5b 100644
 +            .get("final_target")
 +            .and_then(serde_json::Value::as_str)
 +            .unwrap_or("");
-+        let policy_hash = evidence
-+            .get("policy_hash")
-+            .and_then(serde_json::Value::as_str)
-+            .unwrap_or("");
 +        let reason_code = evidence
 +            .get("reason_code")
 +            .and_then(serde_json::Value::as_str)
@@ -1342,6 +1606,10 @@ index 69c6d929..ec996c5b 100644
 +            .get("decision_latency_ms")
 +            .and_then(serde_json::Value::as_u64)
 +            .unwrap_or(0);
++        let http_status = evidence
++            .get("http_status")
++            .and_then(serde_json::Value::as_u64)
++            .unwrap_or(0);
 +        let probability = |label: &str| {
 +            evidence
 +                .get("probabilities")
@@ -1355,8 +1623,8 @@ index 69c6d929..ec996c5b 100644
 +            evidence_source = source,
 +            evidence_provider_model = provider_model,
 +            evidence_final_target = final_target,
-+            evidence_policy_hash = policy_hash,
 +            evidence_reason_code = reason_code,
++            evidence_http_status = http_status,
 +            evidence_confidence = confidence,
 +            evidence_threshold = threshold,
 +            evidence_decision_latency_ms = decision_latency_ms,
@@ -1382,175 +1650,51 @@ index 3b96fb43..5b66b80f 100644
  switchyard-protocol.workspace = true
  switchyard-typesafe-client.workspace = true
 diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
-index 3f34330e..cbab120a 100644
+index 3f34330e..42e8ea3b 100644
 --- a/crates/switchyard-runner/src/algorithm.rs
 +++ b/crates/switchyard-runner/src/algorithm.rs
-@@ -12,14 +12,16 @@ use std::sync::Arc;
- use libsy::{
-     AdvisorGate, AdvisorGateConfig, Algorithm, ClassifierContractConfig, ClassifierResponseFormat,
-     ClassifyTrigger, CompositeRouter, CompositeRouterConfig, CustomClassifierConfig,
--    CustomClassifierPolicy, EscalationJudgeConfig, GateTrigger, HandoffNoteConfig,
--    LlmClassifierConfig, LlmFallback, LlmTaskClassifier, Noop, Passthrough, PickerMode, Random,
--    StageRouter, StageRouterConfig, SubagentRouter, SubagentRouterConfig, TaskClassifierConfig,
--    ToolSemantics, TypeSafeClassifierConfig, TypeSafeOption, TypeSafeProvider,
--    TypeSafeTaskClassifier,
-+    CustomClassifierPolicy, DEFAULT_TYPE_SAFE_QUESTION, EscalationJudgeConfig, GateTrigger,
-+    HandoffNoteConfig, LlmClassifierConfig, LlmFallback, LlmTaskClassifier, Noop, Passthrough,
-+    PickerMode, Random, StageRouter, StageRouterConfig, SubagentRouter, SubagentRouterConfig,
-+    TYPE_SAFE_NORMALIZATION_POLICY, TaskClassifierConfig, ToolSemantics, TypeSafeClassifierConfig,
-+    TypeSafeOption, TypeSafeProvider, TypeSafeTaskClassifier,
- };
- use serde::Deserialize;
-+use sha2::{Digest, Sha256};
- use switchyard_protocol::{Category, ModelId};
-+use switchyard_typesafe_client::TYPE_SAFE_CONFIDENCE_POLICY;
- 
- /// Error returned when an algorithm description cannot be constructed.
- #[derive(Debug)]
-@@ -28,6 +30,13 @@ pub struct AlgorithmConfigError {
-     source: Option<Box<dyn Error + Send + Sync>>,
- }
- 
-+pub(crate) struct TypeSafePolicyTransport<'a> {
-+    pub(crate) endpoint: &'a str,
-+    pub(crate) model: &'a str,
-+    pub(crate) timeout_ms: u64,
-+    pub(crate) max_request_bytes: usize,
-+}
-+
- impl AlgorithmConfigError {
-     fn new(message: impl Into<String>) -> Self {
-         Self {
-@@ -479,6 +488,8 @@ pub enum AlgorithmSpec {
-         /// Trailing conversation turns the provider sees on top of the opening
-         /// task. Unset sends the opening task and latest user follow-up only.
-         recent_turn_window: Option<usize>,
-+        /// SHA-256 binding the evaluated decision policy.
-+        policy_hash: Option<String>,
+@@ -476,9 +476,6 @@ pub enum AlgorithmSpec {
+         /// session metadata is unavailable. Requires `classify_trigger = "new_session"`.
+         #[serde(default)]
+         message_hash_fallback: bool,
+-        /// Trailing conversation turns the provider sees on top of the opening
+-        /// task. Unset sends the opening task and latest user follow-up only.
+-        recent_turn_window: Option<usize>,
      },
  }
  
-@@ -571,6 +582,91 @@ impl StageClassifierConfig {
- }
- 
- impl AlgorithmSpec {
-+    pub(crate) fn validate_type_safe_policy_hash(
-+        &self,
-+        route_name: &str,
-+        targets: &BTreeMap<String, ModelId>,
-+        target_routing_descriptions: &BTreeMap<String, String>,
-+        transport: TypeSafePolicyTransport<'_>,
-+    ) -> AlgorithmResult<()> {
-+        let Self::TypeSafeClassifier {
-+            candidates,
-+            candidate_descriptions,
-+            default_target,
-+            question,
-+            base_threshold,
-+            classify_trigger,
-+            recent_turn_window,
-+            policy_hash: Some(policy_hash),
-+            ..
-+        } = self
-+        else {
-+            return Ok(());
-+        };
-+        let mut options = Vec::with_capacity(candidates.len());
-+        for name in candidates {
-+            let model_id = resolve_target_model_id(route_name, name, targets)?;
-+            let description = candidate_descriptions
-+                .get(name)
-+                .or_else(|| target_routing_descriptions.get(name))
-+                .cloned()
-+                .unwrap_or_else(|| format!("Configured target {name} uses model {model_id}."));
-+            options.push(serde_json::json!({ "label": name, "description": description }));
-+        }
-+        let mut orders = vec![candidates.clone()];
-+        if candidates.len() > 1 {
-+            let mut rotated = candidates.clone();
-+            rotated.rotate_left(1);
-+            orders.push(rotated);
-+            let mut reversed = candidates.clone();
-+            reversed.reverse();
-+            if !orders.contains(&reversed) {
-+                orders.push(reversed);
-+            }
-+        }
-+        let trigger = match classify_trigger {
-+            ClassifyTrigger::EveryRequest => "every_request",
-+            ClassifyTrigger::UserTurn => "user_turn",
-+            ClassifyTrigger::NewSession => "new_session",
-+        };
-+        let document = serde_json::json!({
-+            "schemaVersion": 2,
-+            "transport": {
-+                "endpoint": transport.endpoint,
-+                "model": transport.model,
-+                "redirects": "disabled",
-+                "timeoutMs": transport.timeout_ms,
-+                "maxRequestBytes": transport.max_request_bytes,
-+            },
-+            "normalization": TYPE_SAFE_NORMALIZATION_POLICY,
-+            "question": question.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(DEFAULT_TYPE_SAFE_QUESTION),
-+            "candidates": options,
-+            "orders": orders,
-+            "confidence": TYPE_SAFE_CONFIDENCE_POLICY,
-+            "threshold": base_threshold,
-+            "defaultTarget": default_target,
-+            "classifyTrigger": trigger,
-+            "recentTurnWindow": recent_turn_window,
-+        });
-+        let actual = format!(
-+            "{:x}",
-+            Sha256::digest(serde_json::to_vec(&document).map_err(|error| {
-+                AlgorithmConfigError::with_source(
-+                    format!(
-+                        "type_safe_classifier route {route_name} could not serialize its policy"
-+                    ),
-+                    error,
-+                )
-+            })?)
-+        );
-+        if actual != *policy_hash {
-+            return Err(AlgorithmConfigError::new(format!(
-+                "type_safe_classifier route {route_name} policy_hash does not match its effective runtime policy"
-+            )));
-+        }
-+        Ok(())
-+    }
-+
-     /// Completion targets in algorithm order; judge-only targets are excluded.
-     pub fn routing_target_names(&self) -> Vec<&str> {
-         match self {
-@@ -1493,6 +1589,7 @@ fn build_algorithm(
+@@ -1492,7 +1489,6 @@ fn build_algorithm(
+             base_threshold,
              classify_trigger,
              message_hash_fallback,
-             recent_turn_window,
-+            policy_hash,
+-            recent_turn_window,
          } => {
              if candidates.len() < 2 {
                  return Err(AlgorithmConfigError::new(format!(
-@@ -1571,6 +1668,7 @@ fn build_algorithm(
+@@ -1570,7 +1566,6 @@ fn build_algorithm(
+                 default_target: default_category,
                  classify_trigger: *classify_trigger,
                  message_hash_fallback: *message_hash_fallback,
-                 recent_turn_window: *recent_turn_window,
-+                policy_hash: policy_hash.clone(),
+-                recent_turn_window: *recent_turn_window,
              };
              let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
                  .map_err(|error| {
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 6b37e17d..82196641 100644
+index 6b37e17d..5cc6eb60 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
-@@ -19,6 +19,7 @@ use switchyard_llm_client::{
- };
+@@ -20,8 +20,8 @@ use switchyard_llm_client::{
  use switchyard_protocol::{Category, ModelId, RoutedLlmClient, WireFormat};
  
-+use crate::algorithm::TypeSafePolicyTransport;
  use crate::{
-     AlgorithmSpec, AuxiliaryTarget, CallerAuthKind, DecisionTarget, ModelCapabilities, Route,
-     Runner, RunnerError,
-@@ -75,12 +76,18 @@ struct TypeSafeClientConfig {
+-    AlgorithmSpec, AuxiliaryTarget, CallerAuthKind, DecisionTarget, ModelCapabilities, Route,
+-    Runner, RunnerError,
++    AlgorithmSpec, AuxiliaryTarget, CallerAuthKind, ClassifierReadiness, DecisionTarget,
++    ModelCapabilities, Route, Runner, RunnerError,
+ };
+ 
+ const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+@@ -75,12 +75,18 @@ struct TypeSafeClientConfig {
      /// Environment variable the API key is read from at load time. Never read
      /// from TOML, and never logged.
      api_key_env: String,
@@ -1571,7 +1715,7 @@ index 6b37e17d..82196641 100644
  }
  
  #[derive(Debug)]
-@@ -167,7 +174,7 @@ impl DeploymentConfig {
+@@ -167,7 +173,7 @@ impl DeploymentConfig {
          let client = self.llm_clients.get(&target.llm_client)?;
          Some(DecisionTarget {
              target: name.to_string(),
@@ -1580,7 +1724,7 @@ index 6b37e17d..82196641 100644
              format: client.format.wire_format(),
              base_url: client.base_url.as_str().to_string(),
              extra_body: target.extra_body.clone(),
-@@ -211,7 +218,26 @@ impl DeploymentConfig {
+@@ -211,7 +217,26 @@ impl DeploymentConfig {
                      description,
                  )?;
              }
@@ -1608,7 +1752,7 @@ index 6b37e17d..82196641 100644
                  std::collections::hash_map::Entry::Vacant(slot) => {
                      slot.insert((target_name, target));
                  }
-@@ -219,6 +245,9 @@ impl DeploymentConfig {
+@@ -219,6 +244,9 @@ impl DeploymentConfig {
                      let (first_name, first) = slot.get();
                      if first.reasoning_effort != target.reasoning_effort
                          || first.extra_body != target.extra_body
@@ -1618,40 +1762,28 @@ index 6b37e17d..82196641 100644
                      {
                          return Err(RunnerError::configuration(format!(
                              "targets {first_name} and {target_name} both name model {} on llm client {} but with different reasoning_effort or extra_body; one target per model id is kept, so give each its own model id or llm client",
-@@ -277,6 +306,32 @@ impl DeploymentConfig {
-                     "route {route_name} context_window must be greater than zero"
-                 )));
-             }
-+            if let Some(type_safe_client) = &self.type_safe_client {
-+                config
-+                    .algorithm
-+                    .validate_type_safe_policy_hash(
-+                        route_name,
-+                        &targets,
-+                        &target_routing_descriptions,
-+                        TypeSafePolicyTransport {
-+                            endpoint: type_safe_client
-+                                .base_url
-+                                .as_deref()
-+                                .unwrap_or(switchyard_typesafe_client::OPENROUTER_DECISIONS_URL),
-+                            model: type_safe_client
-+                                .model
-+                                .as_deref()
-+                                .unwrap_or(switchyard_typesafe_client::OPENROUTER_MODEL),
-+                            timeout_ms: type_safe_client
-+                                .timeout_ms
-+                                .unwrap_or(switchyard_typesafe_client::DEFAULT_TIMEOUT_MS),
-+                            max_request_bytes: type_safe_client
-+                                .max_request_bytes
-+                                .unwrap_or(switchyard_typesafe_client::DEFAULT_MAX_REQUEST_BYTES),
-+                        },
-+                    )
-+                    .map_err(|error| RunnerError::configuration_source(error.to_string(), error))?;
-+            }
-             let algorithm = config
-                 .algorithm
-                 .build_with_target_descriptions(
-@@ -367,16 +422,21 @@ impl DeploymentConfig {
+@@ -257,10 +285,10 @@ impl DeploymentConfig {
+             .routes
+             .values()
+             .any(|route| matches!(route.algorithm, AlgorithmSpec::TypeSafeClassifier { .. }));
+-        let type_safe_provider = if uses_type_safe_classifier {
++        let (type_safe_provider, classifier_readiness) = if uses_type_safe_classifier {
+             self.build_type_safe_provider()?
+         } else {
+-            None
++            (None, ClassifierReadiness::Unknown)
+         };
+         let mut routes = Vec::with_capacity(self.routes.len());
+         for (route_name, config) in &self.routes {
+@@ -319,6 +347,7 @@ impl DeploymentConfig {
+         }
+         let runner = Runner::new(routes)
+             .with_fallback_url(fallback_base_url)
++            .with_classifier_readiness(classifier_readiness)
+             .with_provider_api_keys(provider_api_keys);
+         Ok(runner)
+     }
+@@ -367,16 +396,21 @@ impl DeploymentConfig {
                      )));
                  }
              }
@@ -1683,7 +1815,7 @@ index 6b37e17d..82196641 100644
          }
  
          let mut clients = BTreeMap::new();
-@@ -393,7 +453,7 @@ impl DeploymentConfig {
+@@ -393,7 +427,7 @@ impl DeploymentConfig {
      fn build_targets(&self) -> BTreeMap<String, ModelId> {
          self.targets
              .iter()
@@ -1692,7 +1824,7 @@ index 6b37e17d..82196641 100644
              .collect()
      }
  
-@@ -441,7 +501,7 @@ impl DeploymentConfig {
+@@ -441,7 +475,7 @@ impl DeploymentConfig {
                  caller_auth = Some(target_auth);
              }
              let client: Arc<dyn RoutedLlmClient> = client.clone();
@@ -1701,7 +1833,7 @@ index 6b37e17d..82196641 100644
          }
          let completion_targets = route
              .routing_target_names()
-@@ -471,7 +531,7 @@ impl DeploymentConfig {
+@@ -471,7 +505,7 @@ impl DeploymentConfig {
              })?;
              let prompt = target.system_prompt.as_deref();
              if aliases
@@ -1710,7 +1842,7 @@ index 6b37e17d..82196641 100644
                  .is_some_and(|configured| configured != prompt)
              {
                  return Err(RunnerError::configuration(format!(
-@@ -480,7 +540,7 @@ impl DeploymentConfig {
+@@ -480,7 +514,7 @@ impl DeploymentConfig {
                  )));
              }
              if let Some(prompt) = prompt {
@@ -1719,7 +1851,7 @@ index 6b37e17d..82196641 100644
              }
          }
          let mut policy = TargetPromptPolicy {
-@@ -495,19 +555,19 @@ impl DeploymentConfig {
+@@ -495,19 +529,19 @@ impl DeploymentConfig {
          let response = self.targets.get(response_name).ok_or_else(|| {
              RunnerError::configuration(format!("route references unknown target {response_name}"))
          })?;
@@ -1742,22 +1874,31 @@ index 6b37e17d..82196641 100644
          Ok(policy)
      }
  
-@@ -530,12 +590,29 @@ impl DeploymentConfig {
+@@ -526,16 +560,47 @@ impl DeploymentConfig {
+     /// Builds the deployment-wide TypeSafe provider from `[type_safe_client]`, if
+     /// configured. The API key always comes from the environment, never from
+     /// this TOML document.
+-    fn build_type_safe_provider(&self) -> RunnerResult<Option<Arc<dyn libsy::TypeSafeProvider>>> {
++    fn build_type_safe_provider(
++        &self,
++    ) -> RunnerResult<(
++        Option<Arc<dyn libsy::TypeSafeProvider>>,
++        ClassifierReadiness,
++    )> {
          let Some(config) = &self.type_safe_client else {
-             return Ok(None);
-         };
--        let mut client = switchyard_typesafe_client::TypeSafeHttpClient::from_env(
--            &config.api_key_env,
--        )
--        .map_err(|error| {
--            RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
--        })?;
+-            return Ok(None);
++            return Ok((None, ClassifierReadiness::Unknown));
++        };
 +        if config.timeout_ms == Some(0) {
 +            return Err(RunnerError::configuration(
 +                "type_safe_client.timeout_ms must be at least 1".to_string(),
 +            ));
 +        }
-+        let timeout = Duration::from_millis(config.timeout_ms.unwrap_or(30_000));
++        let timeout = Duration::from_millis(
++            config
++                .timeout_ms
++                .unwrap_or(switchyard_typesafe_client::DEFAULT_TIMEOUT_MS),
++        );
 +        let api_key = std::env::var(&config.api_key_env)
 +            .ok()
 +            .filter(|value| !value.trim().is_empty());
@@ -1768,17 +1909,28 @@ index 6b37e17d..82196641 100644
 +        ) {
 +            Ok(client) => client,
 +            Err(_) => {
-+                return Ok(Some(Arc::new(
-+                    switchyard_typesafe_client::UnavailableTypeSafeProvider::new(
-+                        "classifier HTTP client unavailable",
-+                    ),
-+                )));
++                return Ok((
++                    Some(Arc::new(
++                        switchyard_typesafe_client::UnavailableTypeSafeProvider::new(
++                            "classifier HTTP client unavailable",
++                        ),
++                    )),
++                    ClassifierReadiness::Unavailable {
++                        reason: "client_construction_failed",
++                    },
++                ));
 +            }
-+        };
+         };
+-        let mut client = switchyard_typesafe_client::TypeSafeHttpClient::from_env(
+-            &config.api_key_env,
+-        )
+-        .map_err(|error| {
+-            RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
+-        })?;
          if let Some(base_url) = &config.base_url {
              // The API key travels as a bearer token on every request to this URL, so an
              // http:// override must be rejected before it reaches the client (which stays
-@@ -555,7 +632,23 @@ impl DeploymentConfig {
+@@ -555,9 +620,30 @@ impl DeploymentConfig {
              })?;
          }
          if let Some(model) = &config.model {
@@ -1793,17 +1945,25 @@ index 6b37e17d..82196641 100644
 +                .map_err(|error| {
 +                    RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
 +                })?;
-+        }
-+        if !credential_available {
-+            return Ok(Some(Arc::new(
-+                switchyard_typesafe_client::UnavailableTypeSafeProvider::new(
-+                    "classifier credential unavailable",
-+                ),
-+            )));
          }
-         Ok(Some(Arc::new(client)))
+-        Ok(Some(Arc::new(client)))
++        if !credential_available {
++            return Ok((
++                Some(Arc::new(
++                    switchyard_typesafe_client::UnavailableTypeSafeProvider::new(
++                        "classifier credential unavailable",
++                    ),
++                )),
++                ClassifierReadiness::Unavailable {
++                    reason: "missing_credentials",
++                },
++            ));
++        }
++        Ok((Some(Arc::new(client)), ClassifierReadiness::Ready))
      }
-@@ -600,9 +693,9 @@ impl DeploymentConfig {
+ 
+     fn build_anthropic_auxiliary_target(
+@@ -600,9 +686,9 @@ impl DeploymentConfig {
          let target = self.targets.get(name)?;
          let client = clients.get(&target.llm_client)?;
          client
@@ -1815,7 +1975,7 @@ index 6b37e17d..82196641 100644
                  client: client.clone(),
              })
      }
-@@ -668,10 +761,15 @@ struct LlmClientConfig {
+@@ -668,10 +754,15 @@ struct LlmClientConfig {
  #[serde(deny_unknown_fields)]
  struct TargetConfig {
      id: ModelId,
@@ -1831,7 +1991,7 @@ index 6b37e17d..82196641 100644
      extra_body: BTreeMap<String, Value>,
      system_prompt: Option<String>,
      /// Reasoning effort forced on every request to this target, replacing the caller's value.
-@@ -679,6 +777,12 @@ struct TargetConfig {
+@@ -679,6 +770,12 @@ struct TargetConfig {
      reasoning_effort: Option<String>,
  }
  
@@ -1844,7 +2004,7 @@ index 6b37e17d..82196641 100644
  #[derive(Clone, Copy, Debug, Deserialize)]
  enum ClientFormat {
      #[serde(rename = "openai_chat")]
-@@ -989,6 +1093,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
+@@ -989,6 +1086,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
          Ok(())
      }
  
@@ -1857,32 +2017,32 @@ index 6b37e17d..82196641 100644
 +        let runner = runner_from_toml(&type_safe_config(KEY_ENV))
 +            .expect("missing classifier credentials use the fail-open provider");
 +        assert!(runner.route("switchyard/type_safe").is_some());
++        assert_eq!(
++            runner.classifier_readiness(),
++            &ClassifierReadiness::Unavailable {
++                reason: "missing_credentials"
++            }
++        );
 +    }
 +
 +    #[test]
-+    fn type_safe_classifier_rejects_a_policy_hash_not_bound_to_runtime_inputs() {
-+        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_POLICY_HASH";
++    fn type_safe_classifier_reports_ready_after_local_initialization() -> RunnerResult<()> {
++        const KEY_ENV: &str = "SWITCHYARD_CONFIG_TEST_TYPESAFE_KEY_READY";
 +        unsafe {
 +            std::env::set_var(KEY_ENV, "sk-test");
 +        }
-+        let config = type_safe_config(KEY_ENV).replace(
-+            "default_target = \"weak\"\nbase_threshold = 0.5",
-+            "default_target = \"weak\"\nbase_threshold = 0.5\npolicy_hash = \"0000000000000000000000000000000000000000000000000000000000000000\"",
-+        );
-+        let error = error_message(&config);
++        let runner = runner_from_toml(&type_safe_config(KEY_ENV));
 +        unsafe {
 +            std::env::remove_var(KEY_ENV);
 +        }
-+        assert!(
-+            error.contains("policy_hash does not match its effective runtime policy"),
-+            "{error}"
-+        );
++        assert_eq!(runner?.classifier_readiness(), &ClassifierReadiness::Ready);
++        Ok(())
 +    }
 +
      #[test]
      fn type_safe_classifier_without_a_client_table_is_rejected() {
          // `type_safe_config` always emits `[type_safe_client]`; drop the whole table to
-@@ -2006,6 +2141,84 @@ confidence_threshold = 0.5
+@@ -2006,6 +2134,84 @@ confidence_threshold = 0.5
          Ok(())
      }
  
@@ -1967,8 +2127,69 @@ index 6b37e17d..82196641 100644
      #[test]
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
+diff --git a/crates/switchyard-runner/src/lib.rs b/crates/switchyard-runner/src/lib.rs
+index a488b31a..66abaa27 100644
+--- a/crates/switchyard-runner/src/lib.rs
++++ b/crates/switchyard-runner/src/lib.rs
+@@ -21,4 +21,4 @@ pub use provider_key_redactor::ProviderKeyRedactor;
+ pub use route::{
+     AuxiliaryTarget, CallerAuthKind, ModelCapabilities, Route, RunOutput, RunnerError,
+ };
+-pub use runner::{DecisionDescription, DecisionTarget, ModelInfo, Runner};
++pub use runner::{ClassifierReadiness, DecisionDescription, DecisionTarget, ModelInfo, Runner};
+diff --git a/crates/switchyard-runner/src/runner.rs b/crates/switchyard-runner/src/runner.rs
+index 249e3127..14bc4626 100644
+--- a/crates/switchyard-runner/src/runner.rs
++++ b/crates/switchyard-runner/src/runner.rs
+@@ -18,6 +18,21 @@ pub struct Runner {
+     routes: Vec<(ModelId, Route)>,
+     fallback_base_url: Option<String>,
+     provider_api_keys: Vec<String>,
++    classifier_readiness: ClassifierReadiness,
++}
++
++/// Configuration readiness for the optional external classifier.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum ClassifierReadiness {
++    /// No classifier initialization result is available.
++    Unknown,
++    /// The classifier client and credentials were initialized.
++    Ready,
++    /// The server remains available but classifier calls will fall back locally.
++    Unavailable {
++        /// Stable local configuration failure reason.
++        reason: &'static str,
++    },
+ }
+ 
+ /// Borrowed model metadata returned while listing routes.
+@@ -63,6 +78,7 @@ impl Runner {
+             routes,
+             fallback_base_url: None,
+             provider_api_keys: Vec::new(),
++            classifier_readiness: ClassifierReadiness::Unknown,
+         }
+     }
+ 
+@@ -83,6 +99,16 @@ impl Runner {
+         self
+     }
+ 
++    pub(crate) fn with_classifier_readiness(mut self, readiness: ClassifierReadiness) -> Self {
++        self.classifier_readiness = readiness;
++        self
++    }
++
++    /// Returns classifier configuration readiness. Per-request failures do not mutate it.
++    pub fn classifier_readiness(&self) -> &ClassifierReadiness {
++        &self.classifier_readiness
++    }
++
+     /// Returns the route registered for a model.
+     pub fn route(&self, model: &str) -> Option<&Route> {
+         self.routes
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index bdf2f22f..52619760 100644
+index bdf2f22f..cb18bfce 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
 @@ -65,6 +65,12 @@ cargo install --locked switchyard-server
@@ -1984,6 +2205,15 @@ index bdf2f22f..52619760 100644
  Ctrl+C and Unix `SIGTERM` stop new connections and allow active requests to drain for up to
  `--shutdown-timeout` (30 seconds by default) before they are terminated.
  
+@@ -183,7 +189,7 @@ the caller's instructions. Omit the setting to add no target instructions.
+ | `GET` | `/v1/stats` | Per-model usage plus curated algorithm stats |
+ | `POST` | `/v1/stats/reset` | Clear accumulated stats |
+ | `GET` | `/metrics` | Prometheus text, see [Metrics](#metrics) |
+-| `GET` | `/health` | Liveness |
++| `GET` | `/health` | Liveness plus immutable classifier startup readiness (`unknown`, `ready`, or `unavailable`) |
+ 
+ Requests name a route by its `id`, so `POST /v1/chat/completions` with `"model": "switchyard/general"`
+ routes through the `[routes.general]` entry above. Any of the three request formats can address any
 diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
 index 231d4e2b..42304412 100644
 --- a/crates/switchyard-server/src/cli.rs
@@ -2015,10 +2245,20 @@ index 231d4e2b..42304412 100644
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 58ebc0d9..f94197c0 100644
+index 58ebc0d9..0578db69 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
-@@ -76,6 +76,10 @@ const FORWARDED_UPSTREAM_HEADERS: &[&str] = &[
+@@ -42,7 +42,8 @@ use serde_json::{Value, json};
+ use switchyard_llm_client::{AuxiliaryOperation, RunObservation, RunObserver};
+ use switchyard_protocol::{LlmClientError, Metadata, ModelId, Request, Usage};
+ use switchyard_runner::{
+-    CallerAuthKind, DecisionTarget, ModelCapabilities, Route, RunOutput, Runner, RunnerError,
++    CallerAuthKind, ClassifierReadiness, DecisionTarget, ModelCapabilities, Route, RunOutput,
++    Runner, RunnerError,
+ };
+ use tokio::net::{TcpListener, TcpSocket};
+ use tokio::task;
+@@ -76,6 +77,10 @@ const FORWARDED_UPSTREAM_HEADERS: &[&str] = &[
  ];
  const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
      &["anthropic-ratelimit-", "x-ratelimit-", "x-upstream-"];
@@ -2029,7 +2269,7 @@ index 58ebc0d9..f94197c0 100644
  const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
  
  /// Whether an upstream header is safe and useful to expose downstream.
-@@ -137,6 +141,8 @@ struct DecisionResponse {
+@@ -137,6 +142,8 @@ struct DecisionResponse {
      fallbacks: Vec<DecisionTargetResponse>,
      #[serde(skip_serializing_if = "Option::is_none")]
      response: Option<Value>,
@@ -2038,7 +2278,7 @@ index 58ebc0d9..f94197c0 100644
  }
  
  /// Response view over one target's existing configuration.
-@@ -152,7 +158,9 @@ struct DecisionTargetResponse {
+@@ -152,7 +159,9 @@ struct DecisionTargetResponse {
  #[derive(Serialize)]
  struct DecisionLlmClientResponse {
      format: WireFormat,
@@ -2049,19 +2289,29 @@ index 58ebc0d9..f94197c0 100644
  }
  
  /// Shared server state used by all endpoint handlers.
-@@ -165,6 +173,7 @@ pub struct ServerState {
+@@ -165,6 +174,8 @@ pub struct ServerState {
      stats: StatsAccumulator,
      routing_log: Option<SharedRoutingLog>,
      track_cache_eligibility: bool,
 +    local_hop_capability: Option<HeaderValue>,
++    classifier_readiness: ClassifierReadiness,
  }
  
  #[derive(Clone)]
-@@ -222,9 +231,22 @@ impl ServerState {
+@@ -214,6 +225,7 @@ impl ServerState {
+             runner.models().map(|model| model.algorithm),
+         );
+         let redactor = redaction::Redactor::new(runner.provider_api_keys());
++        let classifier_readiness = runner.classifier_readiness().clone();
+         Ok(Self {
+             redactor: Arc::new(redactor),
+             runner: Arc::new(runner),
+@@ -222,9 +234,23 @@ impl ServerState {
              stats,
              routing_log: None,
              track_cache_eligibility: tracking_enabled_from_env(),
 +            local_hop_capability: None,
++            classifier_readiness,
          })
      }
  
@@ -2080,7 +2330,7 @@ index 58ebc0d9..f94197c0 100644
      /// Enables durable per-request routing records at `path`.
      pub fn with_routing_log(mut self, path: impl Into<PathBuf>) -> ServerResult<Self> {
          self.routing_log = Some(SharedRoutingLog::new(path.into())?);
-@@ -260,17 +282,50 @@ impl ServerState {
+@@ -260,17 +286,50 @@ impl ServerState {
              model: target.model,
              llm_client: DecisionLlmClientResponse {
                  format: target.format,
@@ -2121,7 +2371,7 @@ index 58ebc0d9..f94197c0 100644
 +        "probabilities",
 +        "decision_latency_ms",
 +        "provider_model",
-+        "policy_hash",
++        "http_status",
 +    ] {
 +        if let Some(value) = object.get(key) {
 +            bounded.insert(key.to_string(), value.clone());
@@ -2132,7 +2382,7 @@ index 58ebc0d9..f94197c0 100644
  /// Runtime options shared by server entry points.
  #[derive(Clone, Debug)]
  pub struct ServerRunOptions {
-@@ -522,15 +577,43 @@ fn primary_llm_routes() -> Router<ServerState> {
+@@ -522,15 +581,43 @@ fn primary_llm_routes() -> Router<ServerState> {
  
  // Applies the serving limits and request timing shared by both public router constructors.
  fn finish_router(router: Router<ServerState>, state: ServerState) -> Router {
@@ -2179,11 +2429,50 @@ index 58ebc0d9..f94197c0 100644
  }
  
  fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
+@@ -1506,8 +1593,15 @@ async fn get_session_stats(
+     }
+ }
+ 
+-async fn health() -> Json<Value> {
+-    Json(json!({"status": "ok"}))
++async fn health(State(state): State<ServerState>) -> Json<Value> {
++    let classifier = match &state.classifier_readiness {
++        ClassifierReadiness::Unknown => json!({"status": "unknown"}),
++        ClassifierReadiness::Ready => json!({"status": "ready"}),
++        ClassifierReadiness::Unavailable { reason } => {
++            json!({"status": "unavailable", "reason": reason})
++        }
++    };
++    Json(json!({"status": "ok", "classifier": classifier}))
+ }
+ 
+ async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e..87a3c359 100644
+index 29bb561e..b1b0ef20 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
-@@ -27,7 +27,8 @@ use switchyard_protocol::{Category, ModelId, WireFormat};
+@@ -9,6 +9,7 @@ use std::error::Error;
+ use std::io::Write;
+ use std::sync::Arc;
+ 
++use async_trait::async_trait;
+ use axum::body::{Body, Bytes};
+ use axum::extract::{DefaultBodyLimit, Path, State};
+ use axum::http::{HeaderMap, HeaderValue, Request as HttpRequest, StatusCode, Uri};
+@@ -17,7 +18,11 @@ use axum::response::{IntoResponse, Response as HttpResponse};
+ use axum::routing::post;
+ use axum::{Json, Router};
+ use http_body_util::BodyExt;
+-use libsy::{Algorithm, Random};
++use libsy::{
++    Algorithm, ClassifyTrigger, Random, TypeSafeClassifierConfig, TypeSafeClassifierInput,
++    TypeSafeOption, TypeSafeProvider, TypeSafeProviderError, TypeSafeTaskClassifier,
++    TypeSafeVerdict,
++};
+ use serde_json::{Value, json};
+ use switchyard_llm_client::{
+     Backend, ClientRouter, HttpBackendConfig, ModelConfig, TranslatingLlmClient,
+@@ -27,7 +32,8 @@ use switchyard_protocol::{Category, ModelId, WireFormat};
  use switchyard_runner::{DecisionTarget, ModelCapabilities, Route, Runner, RuntimeModels};
  use switchyard_server::config::load_server_state;
  use switchyard_server::{
@@ -2193,7 +2482,7 @@ index 29bb561e..87a3c359 100644
  };
  use tokio::net::TcpListener;
  use tokio::sync::Mutex;
-@@ -454,14 +455,9 @@ async fn upstream_messages_requires_forwarded_oauth(
+@@ -454,14 +460,9 @@ async fn upstream_messages_requires_forwarded_oauth(
              .get("anthropic-version")
              .and_then(|value| value.to_str().ok())
              == Some("2023-06-01")
@@ -2211,7 +2500,7 @@ index 29bb561e..87a3c359 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -514,14 +510,9 @@ async fn upstream_responses_requires_forwarded_auth(
+@@ -514,14 +515,9 @@ async fn upstream_responses_requires_forwarded_auth(
              .get("x-openai-fedramp")
              .and_then(|value| value.to_str().ok())
              == Some("true")
@@ -2229,7 +2518,112 @@ index 29bb561e..87a3c359 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -842,6 +833,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+@@ -800,6 +796,104 @@ fn random_state_with_retries(
+     ServerState::from_runner(Runner::new(entries)).map_err(Into::into)
+ }
+ 
++#[derive(Default)]
++struct RecordingTypeSafeProvider {
++    inputs: Mutex<Vec<TypeSafeClassifierInput>>,
++}
++
++#[async_trait]
++impl TypeSafeProvider for RecordingTypeSafeProvider {
++    async fn classify(
++        &self,
++        input: TypeSafeClassifierInput,
++        _options: &[TypeSafeOption],
++    ) -> Result<TypeSafeVerdict, TypeSafeProviderError> {
++        self.inputs.lock().await.push(input);
++        Ok(TypeSafeVerdict {
++            label: "efficient".to_string(),
++            confidence: 0.99,
++            probabilities: BTreeMap::from([
++                ("efficient".to_string(), 0.99),
++                ("capable".to_string(), 0.01),
++            ]),
++            decision_latency_ms: 1,
++            provider_model: "typesafe/jev-test".to_string(),
++        })
++    }
++}
++
++fn type_safe_state(
++    base_url: &str,
++    provider: Arc<RecordingTypeSafeProvider>,
++) -> TestResult<ServerState> {
++    let backend = Backend::OpenAiChat(HttpBackendConfig {
++        base_url: base_url.to_string(),
++        api_key: Some("test-key".to_string()),
++        forward_auth: false,
++        extra_headers: BTreeMap::new(),
++        extra_body: BTreeMap::new(),
++        reasoning_effort: None,
++        max_retries: 0,
++        timeout: None,
++    });
++    let models = ["model/efficient", "model/complex"];
++    let model_configs = models
++        .iter()
++        .map(|model| ModelConfig::new(*model, backend.clone(), None))
++        .collect::<Vec<_>>();
++    let client: Arc<dyn RoutedLlmClient> = Arc::new(TranslatingLlmClient::new(&model_configs)?);
++    let provider: Arc<dyn TypeSafeProvider> = provider;
++    let algorithm: Arc<dyn Algorithm> = Arc::new(TypeSafeTaskClassifier::new(
++        provider,
++        TypeSafeClassifierConfig {
++            options: vec![
++                TypeSafeOption::new("efficient", "Routine implementation work"),
++                TypeSafeOption::new("capable", "Complex implementation work"),
++            ],
++            question: String::new(),
++            base_threshold: 0.5,
++            default_target: Category::Efficient,
++            classify_trigger: ClassifyTrigger::EveryRequest,
++            message_hash_fallback: false,
++        },
++    )?);
++    let decision_targets = models
++        .iter()
++        .map(|model| DecisionTarget {
++            target: (*model).to_string(),
++            model: ModelId::from(*model),
++            format: WireFormat::OpenAiChat,
++            base_url: base_url.to_string(),
++            extra_body: BTreeMap::new(),
++        })
++        .collect();
++    let route = Route::new(
++        algorithm,
++        ClientRouter::single(client),
++        None,
++        ModelCapabilities::default(),
++        None,
++        None,
++        decision_targets,
++        RuntimeModels::new(
++            [
++                (
++                    Category::Any,
++                    vec![
++                        ModelId::from("model/efficient"),
++                        ModelId::from("model/complex"),
++                    ],
++                ),
++                (Category::Efficient, vec![ModelId::from("model/efficient")]),
++                (Category::Capable, vec![ModelId::from("model/complex")]),
++            ]
++            .into(),
++        ),
++    );
++    ServerState::from_runner(Runner::new(vec![(ModelId::from("typesafe"), route)]))
++        .map_err(Into::into)
++}
++
+ async fn test_app(routes: &[(&str, &[&str])]) -> TestResult<(MockUpstream, Router)> {
+     let upstream = MockUpstream::start().await?;
+     let app = build_switchyard_router(random_state(&upstream.base_url, routes)?);
+@@ -842,6 +936,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
  
@@ -2276,7 +2670,7 @@ index 29bb561e..87a3c359 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-@@ -1609,10 +1640,7 @@ base_threshold = 0.5
+@@ -1609,10 +1743,7 @@ base_threshold = 0.5
      let response = response.json()?;
      assert_eq!(response["fallbacks"].as_array().map(Vec::len), Some(1));
      for target in [&response["selected"], &response["fallbacks"][0]] {
@@ -2288,7 +2682,7 @@ index 29bb561e..87a3c359 100644
      }
      Ok(())
  }
-@@ -1902,7 +1930,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1902,7 +2033,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2297,7 +2691,7 @@ index 29bb561e..87a3c359 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1911,7 +1939,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1911,7 +2042,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2306,7 +2700,143 @@ index 29bb561e..87a3c359 100644
                  },
                  "extra_body": {},
              }],
-@@ -3161,7 +3189,8 @@ target = "claude"
+@@ -2714,6 +2845,135 @@ recent_turn_window = 1
+     Ok(())
+ }
+ 
++#[tokio::test]
++async fn type_safe_classifier_uses_only_latest_genuine_user_turn_across_decoders() -> TestResult {
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider::default());
++    let app = build_switchyard_router(type_safe_state(&upstream.base_url, Arc::clone(&provider))?);
++    let image_url = "data:image/png;base64,aW1hZ2U=";
++    let requests = [
++        (
++            "/v1/chat/completions",
++            json!({"model": "typesafe", "messages": [
++                {"role": "user", "content": [
++                    {"type": "text", "text": "Earlier turn."},
++                    {"type": "image_url", "image_url": {"url": image_url}}
++                ]},
++                {"role": "assistant", "content": null, "tool_calls": [{
++                    "id": "call_read", "type": "function", "function": {"name": "read_file", "arguments": "{}"}
++                }]},
++                {"role": "tool", "tool_call_id": "call_read", "content": "Tool result."},
++                {"role": "user", "content": "Fix decoder bug."}
++            ]}),
++        ),
++        (
++            "/v1/messages",
++            json!({"model": "typesafe", "max_tokens": 32, "messages": [
++                {"role": "user", "content": [
++                    {"type": "text", "text": "Earlier turn."},
++                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="}}
++                ]},
++                {"role": "assistant", "content": [{"type": "tool_use", "id": "call_read", "name": "read_file", "input": {}}]},
++                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_read", "content": "Tool result."}]},
++                {"role": "user", "content": "Fix decoder bug."}
++            ]}),
++        ),
++        (
++            "/v1/responses",
++            json!({"model": "typesafe", "input": [
++                {"role": "user", "content": [
++                    {"type": "input_text", "text": "Earlier turn."},
++                    {"type": "input_image", "image_url": image_url}
++                ]},
++                {"type": "function_call", "call_id": "call_read", "name": "read_file", "arguments": "{}"},
++                {"type": "function_call_output", "call_id": "call_read", "output": "Tool result."},
++                {"role": "user", "content": [{"type": "input_text", "text": "Fix decoder bug."}]}
++            ]}),
++        ),
++    ];
++
++    for (endpoint, body) in requests {
++        upstream.calls.lock().await.clear();
++        let response = send(&app, "POST", endpoint, Some(body)).await?;
++        assert_eq!(
++            response.status,
++            StatusCode::OK,
++            "{endpoint}: {}",
++            response.text()?
++        );
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "model/efficient",
++            "{endpoint}"
++        );
++        let inputs = provider.inputs.lock().await;
++        assert_eq!(
++            inputs.last().map(|input| input.context.as_str()),
++            Some("Fix decoder bug.")
++        );
++        drop(inputs);
++        let calls = upstream.calls.lock().await;
++        assert_eq!(calls.len(), 1, "{endpoint}");
++        let encoded = calls[0].to_string();
++        assert!(
++            encoded.contains("Fix decoder bug."),
++            "{endpoint}: {encoded}"
++        );
++        assert!(encoded.contains("aW1hZ2U="), "{endpoint}: {encoded}");
++        assert!(encoded.contains("Tool result."), "{endpoint}: {encoded}");
++    }
++    assert_eq!(provider.inputs.lock().await.len(), 3);
++    Ok(())
++}
++
++#[tokio::test]
++async fn type_safe_classifier_falls_open_on_current_turn_media_without_provider_call() -> TestResult
++{
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider::default());
++    let app = build_switchyard_router(type_safe_state(&upstream.base_url, Arc::clone(&provider))?);
++    let image_url = "data:image/png;base64,aW1hZ2U=";
++    let requests = [
++        (
++            "/v1/chat/completions",
++            json!({"model": "typesafe", "messages": [{"role": "user", "content": [
++                {"type": "image_url", "image_url": {"url": image_url}}
++            ]}]}),
++        ),
++        (
++            "/v1/messages",
++            json!({"model": "typesafe", "max_tokens": 32, "messages": [{"role": "user", "content": [
++                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="}}
++            ]}]}),
++        ),
++        (
++            "/v1/responses",
++            json!({"model": "typesafe", "input": [{"role": "user", "content": [
++                {"type": "input_image", "image_url": image_url}
++            ]}]}),
++        ),
++    ];
++
++    for (endpoint, body) in requests {
++        upstream.calls.lock().await.clear();
++        let response = send(&app, "POST", endpoint, Some(body)).await?;
++        assert_eq!(
++            response.status,
++            StatusCode::OK,
++            "{endpoint}: {}",
++            response.text()?
++        );
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "model/efficient",
++            "{endpoint}"
++        );
++        let calls = upstream.calls.lock().await;
++        assert_eq!(calls.len(), 1, "{endpoint}");
++        assert!(calls[0].to_string().contains("aW1hZ2U="), "{endpoint}");
++    }
++    assert!(provider.inputs.lock().await.is_empty());
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
+     let upstream = MockUpstream::start().await?;
+@@ -3161,7 +3421,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -2316,7 +2846,7 @@ index 29bb561e..87a3c359 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +3206,7 @@ target = "claude"
+@@ -3177,6 +3438,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2324,7 +2854,7 @@ index 29bb561e..87a3c359 100644
          ],
      )
      .await?;
-@@ -3187,7 +3217,10 @@ target = "claude"
+@@ -3187,7 +3449,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -2336,7 +2866,7 @@ index 29bb561e..87a3c359 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +3253,29 @@ target = "openai"
+@@ -3220,7 +3485,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -2367,7 +2897,7 @@ index 29bb561e..87a3c359 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +3286,9 @@ target = "openai"
+@@ -3231,8 +3518,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2379,7 +2909,7 @@ index 29bb561e..87a3c359 100644
          ],
      )
      .await?;
-@@ -3247,6 +3303,7 @@ target = "openai"
+@@ -3247,6 +3535,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2387,7 +2917,7 @@ index 29bb561e..87a3c359 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +3318,7 @@ target = "openai"
+@@ -3261,6 +3550,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -2395,6 +2925,67 @@ index 29bb561e..87a3c359 100644
              ("x-test-echo-auth", "1"),
          ],
      )
+@@ -3283,7 +3573,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+ 
+     let health = send(&app, "GET", "/health", None).await?;
+     assert_eq!(health.status, StatusCode::OK);
+-    assert_eq!(health.json()?, json!({"status": "ok"}));
++    assert_eq!(
++        health.json()?,
++        json!({"status": "ok", "classifier": {"status": "unknown"}})
++    );
+ 
+     let models = send(&app, "GET", "/v1/models", None).await?;
+     assert_eq!(models.status, StatusCode::OK);
+@@ -3326,6 +3619,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+     Ok(())
+ }
+ 
++#[tokio::test]
++async fn health_exposes_unavailable_classifier_configuration_while_serving() -> TestResult {
++    let state = load_test_config(
++        r#"
++schema_version = 1
++
++[type_safe_client]
++api_key_env = "SWITCHYARD_SERVER_TEST_DELIBERATELY_MISSING_TYPESAFE_KEY"
++
++[llm_clients.upstream]
++format = "openai_chat"
++base_url = "http://127.0.0.1:1/v1"
++
++[targets.capable]
++id = "model/capable"
++llm_client = "upstream"
++
++[targets.efficient]
++id = "model/efficient"
++llm_client = "upstream"
++
++[routes.typesafe]
++id = "switchyard/typesafe"
++type = "type_safe_classifier"
++candidates = ["capable", "efficient"]
++default_target = "efficient"
++base_threshold = 0.5
++"#,
++    )?;
++    let app = build_switchyard_router(state);
++    let health = send(&app, "GET", "/health", None).await?;
++    assert_eq!(health.status, StatusCode::OK);
++    assert_eq!(
++        health.json()?,
++        json!({
++            "status": "ok",
++            "classifier": {"status": "unavailable", "reason": "missing_credentials"}
++        })
++    );
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn json_extractor_statuses_keep_api_specific_error_envelopes() -> TestResult {
+     let (_upstream, app) = test_app(&[(ROUTE_MODEL, &["model/a"])]).await?;
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
 index 6d185c8a..78a55948 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
@@ -2566,11 +3157,15 @@ index 78b2e52a..11d32d7b 100644
      }
  }
 diff --git a/crates/switchyard-typesafe-client/src/lib.rs b/crates/switchyard-typesafe-client/src/lib.rs
-index 73d5621b..6cd5eeca 100644
+index 73d5621b..669d405c 100644
 --- a/crates/switchyard-typesafe-client/src/lib.rs
 +++ b/crates/switchyard-typesafe-client/src/lib.rs
-@@ -18,16 +18,52 @@ use switchyard_libsy::{
-     TypeSafeVerdict,
+@@ -15,19 +15,58 @@ use serde::ser::SerializeMap;
+ use serde::{Deserialize, Serialize};
+ use switchyard_libsy::{
+     TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeProviderError,
+-    TypeSafeVerdict,
++    TypeSafeProviderErrorKind, TypeSafeVerdict,
  };
  
 -/// Production API root. Override with [`TypeSafeHttpClient::with_base_url`] for
@@ -2584,7 +3179,7 @@ index 73d5621b..6cd5eeca 100644
 +/// Immutable requested model family/version. The response carries the dated provider build.
 +pub const OPENROUTER_MODEL: &str = "typesafe/jev-1.13";
 +/// Default whole-request deadline in milliseconds.
-+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
++pub const DEFAULT_TIMEOUT_MS: u64 = 3_000;
 +/// Default serialized Decisions request bound.
 +pub const DEFAULT_MAX_REQUEST_BYTES: usize = 32 * 1024;
 +const DEFAULT_TIMEOUT: Duration = Duration::from_millis(DEFAULT_TIMEOUT_MS);
@@ -2621,7 +3216,10 @@ index 73d5621b..6cd5eeca 100644
 +        _input: TypeSafeClassifierInput,
 +        _options: &[TypeSafeOption],
 +    ) -> Result<TypeSafeVerdict, TypeSafeProviderError> {
-+        Err(TypeSafeProviderError(self.reason.clone()))
++        Err(TypeSafeProviderError::new(
++            TypeSafeProviderErrorKind::Unavailable,
++            self.reason.clone(),
++        ))
 +    }
 +}
 +
@@ -2630,7 +3228,7 @@ index 73d5621b..6cd5eeca 100644
  ///
  /// `switchyard-runner` reads the API key from an environment variable through
  /// [`TypeSafeHttpClient::from_env`]. Direct library users may instead use
-@@ -38,6 +74,7 @@ pub struct TypeSafeHttpClient {
+@@ -38,6 +77,7 @@ pub struct TypeSafeHttpClient {
      base_url: String,
      api_key: String,
      model: String,
@@ -2638,7 +3236,7 @@ index 73d5621b..6cd5eeca 100644
  }
  
  impl std::fmt::Debug for TypeSafeHttpClient {
-@@ -55,16 +92,29 @@ impl TypeSafeHttpClient {
+@@ -55,16 +95,29 @@ impl TypeSafeHttpClient {
      ///
      /// Prefer [`Self::from_env`] so the key never passes through configuration
      /// file parsing.
@@ -2677,7 +3275,7 @@ index 73d5621b..6cd5eeca 100644
      }
  
      /// Reads the API key from the named environment variable.
-@@ -83,10 +133,10 @@ impl TypeSafeHttpClient {
+@@ -83,10 +136,10 @@ impl TypeSafeHttpClient {
                  variable: variable.to_string(),
              });
          }
@@ -2690,7 +3288,7 @@ index 73d5621b..6cd5eeca 100644
      ///
      /// # Errors
      ///
-@@ -103,10 +153,10 @@ impl TypeSafeHttpClient {
+@@ -103,10 +156,10 @@ impl TypeSafeHttpClient {
                  reason: error.to_string(),
              }
          })?;
@@ -2703,7 +3301,7 @@ index 73d5621b..6cd5eeca 100644
              });
          }
          self.base_url = base_url;
-@@ -127,14 +177,27 @@ impl TypeSafeHttpClient {
+@@ -127,14 +180,27 @@ impl TypeSafeHttpClient {
          Ok(self)
      }
  
@@ -2736,7 +3334,7 @@ index 73d5621b..6cd5eeca 100644
      }
  }
  
-@@ -185,6 +248,7 @@ struct ChoiceAnswer {
+@@ -185,6 +251,7 @@ struct ChoiceAnswer {
  
  #[derive(Deserialize)]
  struct SystemOneResponse {
@@ -2744,18 +3342,48 @@ index 73d5621b..6cd5eeca 100644
      #[serde(default)]
      #[allow(dead_code)]
      usage: Usage,
-@@ -236,11 +300,21 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+@@ -199,8 +266,9 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+         options: &[TypeSafeOption],
+     ) -> Result<TypeSafeVerdict, TypeSafeProviderError> {
+         if options.is_empty() {
+-            return Err(TypeSafeProviderError(
+-                "typesafe classification needs at least one candidate".to_string(),
++            return Err(TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::MalformedResponse,
++                "typesafe classification needs at least one candidate",
+             ));
+         }
+         let unique_labels = options
+@@ -208,8 +276,9 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+             .map(|option| option.label.as_str())
+             .collect::<BTreeSet<_>>();
+         if unique_labels.len() != options.len() {
+-            return Err(TypeSafeProviderError(
+-                "typesafe classification requires unique candidate labels".to_string(),
++            return Err(TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::MalformedResponse,
++                "typesafe classification requires unique candidate labels",
+             ));
+         }
+         let orders = option_orders(options);
+@@ -236,14 +305,37 @@ impl TypeSafeProvider for TypeSafeHttpClient {
          };
  
          let started = Instant::now();
 +        let encoded = serde_json::to_vec(&body).map_err(|error| {
-+            TypeSafeProviderError(format!("typesafe request serialization failed: {error}"))
++            TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::MalformedResponse,
++                format!("typesafe request serialization failed: {error}"),
++            )
 +        })?;
 +        if encoded.len() > self.max_request_bytes {
-+            return Err(TypeSafeProviderError(format!(
-+                "typesafe request exceeds {} byte budget",
-+                self.max_request_bytes
-+            )));
++            return Err(TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::StateTooLarge,
++                format!(
++                    "typesafe request exceeds {} byte budget",
++                    self.max_request_bytes
++                ),
++            ));
 +        }
          let response = self
              .http
@@ -2766,22 +3394,74 @@ index 73d5621b..6cd5eeca 100644
 +            .body(encoded)
              .send()
              .await
-             .map_err(|error| TypeSafeProviderError(format!("typesafe request failed: {error}")))?;
-@@ -260,6 +334,13 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+-            .map_err(|error| TypeSafeProviderError(format!("typesafe request failed: {error}")))?;
++            .map_err(|error| {
++                let kind = if error.is_timeout() {
++                    TypeSafeProviderErrorKind::Timeout
++                } else {
++                    TypeSafeProviderErrorKind::Unavailable
++                };
++                TypeSafeProviderError::new(kind, format!("typesafe request failed: {error}"))
++            })?;
+ 
+         let status = response.status();
+         if !status.is_success() {
+@@ -252,46 +344,79 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+             // caller's own prompt content, so an error body that happened to echo any of it
+             // back must not flow into our own logs. The status code alone is enough to
+             // diagnose a provider-side failure.
+-            return Err(TypeSafeProviderError(format!(
+-                "typesafe returned HTTP {status}"
+-            )));
++            return Err(TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::Http,
++                format!("typesafe returned HTTP {status}"),
++            )
++            .with_http_status(status.as_u16()));
+         }
+ 
          let parsed: SystemOneResponse = response.json().await.map_err(|error| {
-             TypeSafeProviderError(format!("typesafe response was not valid JSON: {error}"))
+-            TypeSafeProviderError(format!("typesafe response was not valid JSON: {error}"))
++            if error.is_timeout() {
++                TypeSafeProviderError::new(
++                    TypeSafeProviderErrorKind::Timeout,
++                    "typesafe response body timed out",
++                )
++            } else {
++                TypeSafeProviderError::new(
++                    TypeSafeProviderErrorKind::MalformedResponse,
++                    format!("typesafe response was not valid JSON: {error}"),
++                )
++            }
          })?;
 +        if parsed.model != OPENROUTER_MODEL
 +            && !parsed.model.starts_with(&format!("{OPENROUTER_MODEL}-"))
 +        {
-+            return Err(TypeSafeProviderError(
-+                "typesafe response model does not match the pinned Jev version".to_string(),
++            return Err(TypeSafeProviderError::new(
++                TypeSafeProviderErrorKind::MalformedResponse,
++                "typesafe response model does not match the pinned Jev version",
 +            ));
 +        }
  
          let mut probabilities = options
              .iter()
-@@ -278,6 +359,16 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+             .map(|option| (option.label.clone(), 0.0))
+             .collect::<BTreeMap<_, _>>();
++        let malformed = |message| {
++            TypeSafeProviderError::new(TypeSafeProviderErrorKind::MalformedResponse, message)
++        };
+         for index in 0..orders.len() {
+             let question = format!("{QUESTION_PREFIX}{index}");
+             let answer = parsed.answers.get(&question).ok_or_else(|| {
+-                TypeSafeProviderError(format!(
++                malformed(format!(
+                     "typesafe response is missing the {question:?} answer"
+                 ))
+             })?;
+             if !probabilities.contains_key(&answer.choice) {
+-                return Err(TypeSafeProviderError(format!(
++                return Err(malformed(format!(
+                     "typesafe returned unknown candidate {:?}",
                      answer.choice
                  )));
              }
@@ -2791,14 +3471,60 @@ index 73d5621b..6cd5eeca 100644
 +                    .keys()
 +                    .any(|label| !probabilities.contains_key(label))
 +            {
-+                return Err(TypeSafeProviderError(
++                return Err(malformed(
 +                    "typesafe response probability labels do not match candidates".to_string(),
 +                ));
 +            }
              if !(0.0..=1.0).contains(&answer.confidence) {
-                 return Err(TypeSafeProviderError(
+-                return Err(TypeSafeProviderError(
++                return Err(malformed(
                      "typesafe returned an invalid confidence".to_string(),
-@@ -343,6 +434,7 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+                 ));
+             }
+             let mut answer_sum = 0.0;
+             for (label, total) in &mut probabilities {
+                 let value = answer.probabilities.get(label).ok_or_else(|| {
+-                    TypeSafeProviderError(format!(
++                    malformed(format!(
+                         "typesafe response is missing probability for {label:?}"
+                     ))
+                 })?;
+                 if !(0.0..=1.0).contains(value) {
+-                    return Err(TypeSafeProviderError(format!(
++                    return Err(malformed(format!(
+                         "typesafe returned an invalid probability for {label:?}"
+                     )));
+                 }
+@@ -299,7 +424,7 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+                 *total += value;
+             }
+             if !answer_sum.is_finite() || (answer_sum - 1.0).abs() > 0.02 {
+-                return Err(TypeSafeProviderError(format!(
++                return Err(malformed(format!(
+                     "typesafe probabilities for {question:?} do not sum to one"
+                 )));
+             }
+@@ -309,7 +434,7 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+         }
+         let probability_sum = probabilities.values().sum::<f64>();
+         if !probability_sum.is_finite() || (probability_sum - 1.0).abs() > 0.02 {
+-            return Err(TypeSafeProviderError(
++            return Err(malformed(
+                 "typesafe probabilities do not sum to one".to_string(),
+             ));
+         }
+@@ -326,9 +451,7 @@ impl TypeSafeProvider for TypeSafeHttpClient {
+                 }
+             })
+             .ok_or_else(|| {
+-                TypeSafeProviderError(
+-                    "typesafe classification needs at least one candidate".to_string(),
+-                )
++                malformed("typesafe classification needs at least one candidate".to_string())
+             })?;
+         let maximum = probabilities[&selected.label];
+         let uniform = 1.0 / options.len() as f64;
+@@ -343,6 +466,7 @@ impl TypeSafeProvider for TypeSafeHttpClient {
              confidence,
              probabilities,
              decision_latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
@@ -2806,7 +3532,16 @@ index 73d5621b..6cd5eeca 100644
          })
      }
  }
-@@ -400,7 +492,7 @@ mod tests {
+@@ -371,6 +495,8 @@ fn option_orders(options: &[TypeSafeOption]) -> Vec<Vec<&TypeSafeOption>> {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++    use tokio::net::TcpListener;
+     use wiremock::matchers::{body_partial_json, header, method, path};
+     use wiremock::{Mock, MockServer, ResponseTemplate};
+ 
+@@ -400,7 +526,7 @@ mod tests {
  
      #[test]
      fn debug_output_redacts_the_api_key() {
@@ -2815,7 +3550,7 @@ index 73d5621b..6cd5eeca 100644
          let rendered = format!("{client:?}");
          assert!(!rendered.contains("sk-super-secret"));
          assert!(rendered.contains("<redacted>"));
-@@ -408,7 +500,9 @@ mod tests {
+@@ -408,7 +534,9 @@ mod tests {
  
      #[test]
      fn invalid_base_url_is_rejected() {
@@ -2826,7 +3561,7 @@ index 73d5621b..6cd5eeca 100644
          assert!(matches!(
              result,
              Err(TypeSafeClientError::InvalidBaseUrl { .. })
-@@ -417,14 +511,32 @@ mod tests {
+@@ -417,14 +545,32 @@ mod tests {
  
      #[test]
      fn plain_http_base_url_is_rejected() {
@@ -2861,7 +3596,7 @@ index 73d5621b..6cd5eeca 100644
      #[tokio::test]
      async fn classify_rejects_duplicate_candidate_labels() {
          let options = [
-@@ -432,6 +544,7 @@ mod tests {
+@@ -432,6 +578,7 @@ mod tests {
              TypeSafeOption::new("duplicate", "second description"),
          ];
          let error = TypeSafeHttpClient::new("sk-test")
@@ -2869,7 +3604,7 @@ index 73d5621b..6cd5eeca 100644
              .classify(input(), &options)
              .await
              .expect_err("duplicate labels should fail before the request");
-@@ -443,11 +556,11 @@ mod tests {
+@@ -443,11 +590,11 @@ mod tests {
      async fn classify_parses_a_successful_response() {
          let server = MockServer::start().await;
          Mock::given(method("POST"))
@@ -2883,7 +3618,7 @@ index 73d5621b..6cd5eeca 100644
                  "questions": {
                      "route_0": {
                          "type": "choice",
-@@ -468,6 +581,7 @@ mod tests {
+@@ -468,6 +615,7 @@ mod tests {
                  }
              })))
              .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -2891,7 +3626,7 @@ index 73d5621b..6cd5eeca 100644
                  "usage": {"input_tokens": 42},
                  "answers": {
                      "route_0": {
-@@ -486,6 +600,7 @@ mod tests {
+@@ -486,6 +634,7 @@ mod tests {
              .await;
  
          let client = TypeSafeHttpClient::new("sk-test")
@@ -2899,7 +3634,7 @@ index 73d5621b..6cd5eeca 100644
              .with_base_url_for_test(server.uri())
              .expect("mock server URI is valid");
  
-@@ -505,12 +620,13 @@ mod tests {
+@@ -505,12 +654,13 @@ mod tests {
      async fn classify_surfaces_a_non_success_status_without_leaking_the_key() {
          let server = MockServer::start().await;
          Mock::given(method("POST"))
@@ -2914,10 +3649,14 @@ index 73d5621b..6cd5eeca 100644
              .with_base_url_for_test(server.uri())
              .expect("mock server URI is valid");
  
-@@ -524,12 +640,84 @@ mod tests {
+@@ -522,14 +672,146 @@ mod tests {
+         let message = error.to_string();
+         assert!(message.contains("401"));
          assert!(!message.contains("sk-test"));
-     }
- 
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::Http);
++        assert_eq!(error.http_status(), Some(401));
++    }
++
 +    #[tokio::test]
 +    async fn request_budget_is_checked_before_network_io() {
 +        let server = MockServer::start().await;
@@ -2932,6 +3671,7 @@ index 73d5621b..6cd5eeca 100644
 +            .await
 +            .expect_err("oversize request must fail locally");
 +        assert!(error.to_string().contains("byte budget"));
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::StateTooLarge);
 +        assert_eq!(
 +            server.received_requests().await.expect("request log").len(),
 +            0
@@ -2987,8 +3727,65 @@ index 73d5621b..6cd5eeca 100644
 +            .await
 +            .expect_err("deadline must stop the request");
 +        assert!(error.to_string().contains("request failed"));
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::Timeout);
 +    }
 +
++    #[tokio::test]
++    async fn deadline_during_response_body_read_is_a_timeout() {
++        let listener = TcpListener::bind("127.0.0.1:0")
++            .await
++            .expect("test listener binds");
++        let address = listener.local_addr().expect("listener has an address");
++        let server = tokio::spawn(async move {
++            let (mut socket, _) = listener.accept().await.expect("request connects");
++            let mut request = [0_u8; 4096];
++            let _ = socket
++                .read(&mut request)
++                .await
++                .expect("request is readable");
++            socket
++                .write_all(
++                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 128\r\n\r\n{\"model\":",
++                )
++                .await
++                .expect("headers and partial body write");
++            socket.flush().await.expect("headers flush immediately");
++            tokio::time::sleep(Duration::from_millis(250)).await;
++        });
++        let client = TypeSafeHttpClient::new_with_timeout("sk-test", Duration::from_millis(50))
++            .expect("client builds")
++            .with_base_url_for_test(format!("http://{address}"))
++            .expect("test server URI is valid");
++        let error = client
++            .classify(input(), &options())
++            .await
++            .expect_err("a stalled body must meet the whole-request deadline");
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::Timeout);
++        assert!(error.to_string().contains("response body timed out"));
++        server.abort();
++        let _ = server.await;
++    }
++
++    #[tokio::test]
++    async fn invalid_json_is_a_malformed_response() {
++        let server = MockServer::start().await;
++        Mock::given(method("POST"))
++            .and(path("/"))
++            .respond_with(ResponseTemplate::new(200).set_body_string("{not-json"))
++            .mount(&server)
++            .await;
++        let client = TypeSafeHttpClient::new("sk-test")
++            .expect("client builds")
++            .with_base_url_for_test(server.uri())
++            .expect("mock server URI is valid");
++        let error = client
++            .classify(input(), &options())
++            .await
++            .expect_err("invalid JSON must be rejected");
++        assert_eq!(error.kind(), TypeSafeProviderErrorKind::MalformedResponse);
++        assert!(error.to_string().contains("not valid JSON"));
+     }
+ 
      #[tokio::test]
      async fn classify_errors_when_the_answer_is_missing() {
          let server = MockServer::start().await;
@@ -3000,7 +3797,7 @@ index 73d5621b..6cd5eeca 100644
                  "usage": {"input_tokens": 1},
                  "answers": {}
              })))
-@@ -537,6 +725,7 @@ mod tests {
+@@ -537,6 +819,7 @@ mod tests {
              .await;
  
          let client = TypeSafeHttpClient::new("sk-test")
@@ -3008,7 +3805,7 @@ index 73d5621b..6cd5eeca 100644
              .with_base_url_for_test(server.uri())
              .expect("mock server URI is valid");
  
-@@ -551,8 +740,9 @@ mod tests {
+@@ -551,8 +834,9 @@ mod tests {
      async fn classify_rejects_a_probability_distribution_that_does_not_sum_to_one() {
          let server = MockServer::start().await;
          Mock::given(method("POST"))
@@ -3019,7 +3816,7 @@ index 73d5621b..6cd5eeca 100644
                  "usage": {"input_tokens": 1},
                  "answers": {
                      "route_0": {
-@@ -571,6 +761,7 @@ mod tests {
+@@ -571,6 +855,7 @@ mod tests {
              .await;
  
          let client = TypeSafeHttpClient::new("sk-test")
@@ -3027,7 +3824,7 @@ index 73d5621b..6cd5eeca 100644
              .with_base_url_for_test(server.uri())
              .expect("mock server URI is valid");
          let error = client
-@@ -609,7 +800,10 @@ mod tests {
+@@ -609,7 +894,10 @@ mod tests {
  
      #[test]
      fn with_model_overrides_the_default() {
@@ -3041,7 +3838,7 @@ index 73d5621b..6cd5eeca 100644
      }
  }
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 7baf1d39..98acbb55 100644
+index 7baf1d39..38126764 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -99,17 +99,19 @@ endpoint, before it calls an upstream.
@@ -3064,7 +3861,7 @@ index 7baf1d39..98acbb55 100644
 +| `api_key_env` | Yes | — | Name of the environment variable holding the OpenRouter API key. A missing or empty value leaves the classifier available in fail-open mode without a network call. |
 +| `base_url` | No | `https://openrouter.ai/api/alpha/decisions` | Must equal the allowlisted Decisions endpoint. Redirects are disabled. |
 +| `model` | No | `typesafe/jev-1.13` | Must equal the immutable requested model. This is not translated to chat completions. |
-+| `timeout_ms` | No | `30000` | One deadline covering connect, request upload, and response read. Must be positive. |
++| `timeout_ms` | No | `3000` | One deadline covering connect, request upload, and response read. Must be positive. |
 +| `max_request_bytes` | No | `32768` | Maximum serialized Decisions request size before local fail-open. Must be positive. |
  
  As with every other credential in this file, the key itself is never read from
@@ -3079,8 +3876,23 @@ index 7baf1d39..98acbb55 100644
  | `llm_client` | Yes | — | Key under `[llm_clients]`. |
  | `routing_description` | No | generated from target name and model ID | Facts TypeSafe uses when comparing this target with other candidates. A route-level `candidate_descriptions` entry overrides it. |
  | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
+@@ -313,10 +318,12 @@ See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_rou
+ | `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
+ | `classify_trigger` | No | `every_request` | When the classifier runs. Same semantics as `llm_classifier`. |
+ | `message_hash_fallback` | No | `false` | Keys affinity on the first user message. Requires `classify_trigger = "new_session"`. |
+-| `recent_turn_window` | No | unset | When unset, TypeSafe sees the opening task and latest user follow-up, when present. When set, it also sees trailing turns. |
+ 
+ The classifier sends up to three fixed candidate orders in one TypeSafe
+-request and averages their probability distributions. The full averaged
++request and averages their probability distributions. It sends only the latest
++genuine user turn, skips pure tool-result pseudo-user messages, and fails open
++without a classifier call when that turn contains media. The original request
++continues unchanged to the selected answer target. The full averaged
+ probabilities and decision latency are recorded in routing evidence.
+ 
+ ### `stage_router`
 diff --git a/docs/routing_algorithms/type_safe_classifier_routing.md b/docs/routing_algorithms/type_safe_classifier_routing.md
-index 0e72b6b0..1ddf07a0 100644
+index 0e72b6b0..a1899751 100644
 --- a/docs/routing_algorithms/type_safe_classifier_routing.md
 +++ b/docs/routing_algorithms/type_safe_classifier_routing.md
 @@ -15,20 +15,23 @@ chat-completion targets, or when you need capability/escalation mode.
@@ -3099,7 +3911,7 @@ index 0e72b6b0..1ddf07a0 100644
 +api_key_env = "OPENROUTER_API_KEY"
 +# base_url = "https://openrouter.ai/api/alpha/decisions"
 +# model = "typesafe/jev-1.13"
-+# timeout_ms = 30000
++# timeout_ms = 3000
 +# max_request_bytes = 32768
  ```
  
@@ -3121,38 +3933,42 @@ index 0e72b6b0..1ddf07a0 100644
  
  [llm_clients.openrouter]
  format = "openai_chat"
-@@ -84,7 +87,12 @@ fixed candidate orders in one request, averages their probability
+@@ -77,14 +80,22 @@ The names `any` and `judge` are reserved and cannot be candidates.
+ 
+ ## How the decision works
+ 
+-Each request's opening task (and latest user follow-up, when it differs) is
+-flattened into plain text and sent to TypeSafe as `state`, alongside the
+-candidate descriptions as `Choice` criteria. Switchyard sends up to three
++The latest genuine user turn is flattened into plain text and sent to TypeSafe
++as `state`, alongside the candidate descriptions as `Choice` criteria. Pure
++tool-result pseudo-user messages are skipped. Text blocks from the selected turn
++retain their order and are joined with newlines. Switchyard sends up to three
+ fixed candidate orders in one request, averages their probability
  distributions, and chooses the candidate with the highest average probability.
  It computes confidence from that averaged distribution using TypeSafe's Choice
  confidence formula. The full probabilities and decision latency are recorded
 -in routing evidence.
-+in sanitized routing evidence together with the provider version, policy hash,
-+threshold, and final target. Conversation state is never included in evidence.
++in sanitized routing evidence together with the provider version, threshold,
++and final target. Conversation state is never included in evidence.
 +
-+Requests containing user image, audio, video, or file content fail open before
-+the provider call. The configured byte budget is also checked before networking.
-+The client accepts only complete probability maps with valid finite values.
++If that selected turn contains image, audio, video, or file content, the request
++fails open before the provider call. Media in older turns does not suppress a
++later text-only classification. The original request remains intact for the
++answer model. The configured byte budget is also checked before networking. The
++client accepts only complete probability maps with valid finite values.
  
  - A confidence at or above `base_threshold` routes to the selected target.
  - A confidence below `base_threshold`, an invalid response, or a failed
-@@ -100,6 +108,7 @@ in routing evidence.
- | `default_target` | Yes | — | Candidate used when TypeSafe fails or answers below `base_threshold`. |
- | `base_threshold` | Yes | — | Lowest confidence that is trusted, in `[0, 1]`. |
+@@ -102,7 +113,6 @@ in routing evidence.
  | `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
-+| `policy_hash` | No | unset | Lowercase SHA-256 digest binding calibrated labels, criteria, orders, confidence formula, and threshold. |
  | `classify_trigger` | No | `every_request` | When the classifier re-decides. Same semantics as `llm_classifier`: `every_request`, `user_turn`, or `new_session`. |
  | `message_hash_fallback` | No | `false` | Keys affinity on the first user message when session metadata is absent. Requires `classify_trigger = "new_session"`. |
- | `recent_turn_window` | No | unset | When unset, TypeSafe sees the opening task and latest user follow-up, when present. When set, it also sees trailing turns. |
-@@ -108,15 +117,20 @@ in routing evidence.
- about a target for every TypeSafe route that includes it. A route-level
- `candidate_descriptions` entry takes precedence.
+-| `recent_turn_window` | No | unset | When unset, TypeSafe sees the opening task and latest user follow-up, when present. When set, it also sees trailing turns. |
  
-+When `policy_hash` is present, the runner recomputes it from the effective
-+endpoint, model, deadline, request-size bound, normalization contract, question,
-+ordered candidates and descriptions, option orders, confidence transform,
-+threshold, fallback, classification trigger, and recent-turn window. A stale or
-+copied digest prevents the deployment from loading.
-+
+ `targets.<name>.routing_description` is optional. It supplies reusable facts
+ about a target for every TypeSafe route that includes it. A route-level
+@@ -111,12 +121,11 @@ about a target for every TypeSafe route that includes it. A route-level
  ## Run the route
  
  After [installing the Rust server](../getting_started.md#install-the-server), export

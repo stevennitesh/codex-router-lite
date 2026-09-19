@@ -1,7 +1,9 @@
 # switchyard/auto v2 evidence
 
-Status: accepted for the deployed Phase B Jev generation at Router commit
-`7f707bb773aa083144904fa027ef331bd9a1c524`.
+Status: historical evidence for the deployed Phase B Jev generation at Router
+commit `7f707bb773aa083144904fa027ef331bd9a1c524`. The C1 source candidate changes
+bound runtime identities, so the route remains v1 until a deployed candidate is
+certified again.
 
 Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
@@ -33,7 +35,7 @@ after the second turn had completed.
 
 The machine-readable proof binds public upstream base `ee3715d1`, reviewed PR
 head `92c84a0c`, both ordered patch hashes, binary hash, private generated-route
-hash, frozen policy hash, and deployed Router candidate. The bounded reviewer
+hash, private generated-route hash, and deployed Router candidate. The bounded reviewer
 record is
 [`docs/history/2026-09-18-switchyard-b3-certification.json`](../../../docs/history/2026-09-18-switchyard-b3-certification.json).
 Only sanitized summaries and rollout hashes are retained; no encrypted payloads,

@@ -347,6 +347,108 @@ test("response transform restores flattened calls to the native namespace shape"
   assert.doesNotMatch(output, /collaboration__spawn_agent|codex_app__create_thread|mcp__node_repl__js/);
 });
 
+test("response identity survives an unsupported function-call envelope", async () => {
+  const payload = {
+    id: "response_1",
+    model: "gpt-6-astra",
+    output: [{
+      type: "function_call",
+      call_id: "call_1",
+      name: "unsupported_tool",
+      arguments: "not valid JSON",
+    }],
+  };
+  const transform = new NamespaceToolCallTransform(
+    new Map(),
+    "application/json",
+    "switchyard/auto",
+    { responseModel: "switchyard/auto" },
+  );
+  const output = await collect(Readable.from([JSON.stringify(payload)]).pipe(transform));
+  const rewritten = JSON.parse(output.toString("utf8"));
+  assert.equal(rewritten.model, "switchyard/auto");
+  assert.deepEqual(rewritten.output, payload.output);
+});
+
+test("SSE identity restoration continues after an unsupported function-call envelope", async () => {
+  const events = [
+    { type: "response.created", response: { id: "r", model: "gpt-6-astra" } },
+    {
+      type: "response.in_progress",
+      response: {
+        id: "r",
+        model: "gpt-6-astra",
+        output: [{ type: "function_call", name: "unsupported", arguments: "not JSON" }],
+      },
+    },
+    { type: "response.completed", response: { id: "r", model: "gpt-6-astra", output: [] } },
+  ];
+  const wire = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+  const chunkings = [
+    [wire],
+    [...Buffer.from(wire)].map((byte) => Buffer.from([byte])),
+  ];
+  for (const chunks of chunkings) {
+    const transform = new NamespaceToolCallTransform(
+      new Map(),
+      "text/event-stream",
+      "switchyard/auto",
+      { responseModel: "switchyard/auto" },
+    );
+    const output = await collect(Readable.from(chunks).pipe(transform));
+    const payloads = output.trim().split("\n\n")
+      .map((frame) => JSON.parse(frame.split("\n").find((line) => line.startsWith("data: ")).slice(6)));
+    assert.deepEqual(payloads.map((event) => event.response.model), [
+      "switchyard/auto",
+      "switchyard/auto",
+      "switchyard/auto",
+    ]);
+    assert.deepEqual(payloads[1].response.output, events[1].response.output);
+  }
+});
+
+test("unsupported SSE envelopes fail closed after a tool rewrite was committed", async () => {
+  const { tools, namespaces } = flattenNamespaceTools([{
+    type: "namespace",
+    name: "collaboration",
+    tools: [{ type: "function", name: "send_message", parameters: { type: "object" } }],
+  }]);
+  const events = [
+    {
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        id: "fc_1",
+        call_id: "call_1",
+        name: tools[0].name,
+        arguments: "{}",
+      },
+    },
+    {
+      type: "response.in_progress",
+      response: {
+        id: "r",
+        model: "gpt-6-astra",
+        output: [{ type: "function_call", name: "unsupported", arguments: "not JSON" }],
+      },
+    },
+  ];
+  const wire = events.map((event) => `data: ${JSON.stringify(event)}\n\n`);
+  let error;
+  try {
+    await collect(Readable.from(wire).pipe(new NamespaceToolCallTransform(
+      namespaces,
+      "text/event-stream",
+      "switchyard/auto",
+      { responseModel: "switchyard/auto" },
+    )));
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error?.code, "ERR_NAMESPACE_RELAY_COMMITTED_STREAM");
+  assert.match(error.message, /ambiguous function arguments/u);
+});
+
 test("response transform drops a spawn-agent model override not offered by the tool schema", async () => {
   const { namespaces } = flattenNamespaceTools(clientRoutedTools());
   const lookups = buildNamespaceLookups(namespaces);

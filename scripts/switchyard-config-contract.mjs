@@ -75,7 +75,6 @@ export function parseSwitchyardConfigContract(routesTemplate, routeModel) {
       timeoutMs: integer(typeSafeClient, "timeout_ms"),
       maxRequestBytes: integer(typeSafeClient, "max_request_bytes"),
       threshold: decimal(auto, "base_threshold"),
-      policyHash: quoted(auto, "policy_hash"),
     },
     answers: answerNames.map((name) => target(routesTemplate, name)),
     smokeContextWindow: integer(section(routesTemplate, "routes", "smoke"), "context_window"),
@@ -111,10 +110,9 @@ export function validateSwitchyardConfigContract(contract) {
     contract.classifier.model !== "typesafe/jev-1.13" ||
     contract.classifier.endpoint !== "https://openrouter.ai/api/alpha/decisions" ||
     contract.classifier.apiKeyEnv !== "OPENROUTER_API_KEY" ||
-    contract.classifier.timeoutMs !== 30000 ||
+    contract.classifier.timeoutMs !== 3000 ||
     contract.classifier.maxRequestBytes !== 32768 ||
-    contract.classifier.threshold !== 0.35 ||
-    contract.classifier.policyHash !== "5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"
+    contract.classifier.threshold !== 0.35
   ) {
     throw new Error("Switchyard classifier must match the accepted Jev policy and bounded OpenRouter Decisions transport.");
   }

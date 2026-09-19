@@ -11,6 +11,7 @@ import {
   clampModelEfforts,
   codexEffortVocabulary,
   effectivePickerHiddenModels,
+  omittedSwitchyardNativeFields,
 } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 import { spawnableCommand } from "../src/spawnable-command.mjs";
@@ -96,6 +97,17 @@ function buildCandidate(binary, nativeOverride) {
     return member;
   });
   const nativeSol = compatibilityMembers.find((model) => model.slug === "gpt-5.6-sol");
+  const omittedNativeFields = omittedSwitchyardNativeFields(
+    compatibilityMembers,
+    builtSwitchyard,
+  );
+  if (omittedNativeFields.total) {
+    console.warn(JSON.stringify({
+      warning: "switchyard_native_fields_omitted",
+      fields: omittedNativeFields.fields,
+      total: omittedNativeFields.total,
+    }));
+  }
   const commonArray = (field) => compatibilityMembers.slice(1).reduce(
     (values, member) => values.filter((value) => (member[field] || []).includes(value)),
     [...(compatibilityMembers[0][field] || [])],
@@ -133,6 +145,18 @@ function buildCandidate(binary, nativeOverride) {
   ) ? "text_and_image" : "text";
   assert.equal(builtSwitchyard.web_search_tool_type, commonWebSearchToolType);
   assert.equal("multi_agent_reasoning_effort" in builtSwitchyard, false);
+  for (const field of [
+    "default_reasoning_summary",
+    "default_verbosity",
+    "shell_type",
+    "truncation_policy",
+  ]) {
+    assert.deepEqual(
+      builtSwitchyard[field],
+      compatibilityMembers[0][field],
+      `${version} did not preserve common Switchyard ${field}`,
+    );
+  }
   for (const field of [
     "include_apps_usage_instructions",
     "include_plugin_usage_instructions",

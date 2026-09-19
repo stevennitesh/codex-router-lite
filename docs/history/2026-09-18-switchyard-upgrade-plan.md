@@ -14,7 +14,7 @@ implementation without changing the remaining checkpoint contracts.
 
 The user subsequently authorized execution through the cost-aware, ponytail
 implementation workflow defined in the
-[execution handoff](switchyard-upgrade-handoff.md). B3 performed the authorized
+[execution handoff](2026-09-18-switchyard-upgrade-handoff.md). B3 performed the authorized
 transactional deployment; the bound Jev generation is the current runtime.
 
 ## Outcome and boundary
@@ -273,8 +273,8 @@ cancellation concurrency. The redelivery fixture also completed a real function
 call and result round trip on both legs with the same tool schema. Bounded
 synthetic answer excerpts and structured judgments are retained for review. See
 the redacted
-[A2 evidence](history/2026-09-18-switchyard-a2-evidence.json) and its
-[reproducible harness](../scripts/evaluate-switchyard-a2.mjs). One strict-label
+[A2 evidence](2026-09-18-switchyard-a2-evidence.json) and its
+retired checkpoint harness. One strict-label
 miss (`S04`, Luna Max instead of Sol Medium) is a low-risk boundary disagreement
 for a tiny fully specified CLI edit and is informational rather than a required
 case failure. The harness now exits nonzero for failed required cases. This is
@@ -375,7 +375,7 @@ The candidate passed format, the affected Rust suite, workspace Clippy with
 warnings denied, release build, an actual dry run of the Luna-judged four-answer
 route, all 234 Router tests, and the installed Codex catalog check. Detailed
 redacted evidence is in
-[`docs/history/2026-09-18-switchyard-b1-evidence.json`](history/2026-09-18-switchyard-b1-evidence.json).
+[`docs/history/2026-09-18-switchyard-b1-evidence.json`](2026-09-18-switchyard-b1-evidence.json).
 
 The first isolated native smoke exposed an upstream compatibility regression:
 the refreshed translator emitted a scalar Responses `input`, while the current
@@ -384,7 +384,7 @@ the one-message list with scalar text content. The repaired candidate passed fou
 Luna decisions, one per answer role, four completed answers with exact routed
 identities, and a same-session tool-result affinity continuation. The installed
 Router stayed unchanged. See
-[`docs/history/2026-09-18-switchyard-b1-r1-smoke.json`](history/2026-09-18-switchyard-b1-r1-smoke.json).
+[`docs/history/2026-09-18-switchyard-b1-r1-smoke.json`](2026-09-18-switchyard-b1-r1-smoke.json).
 
 The B1 source candidate declares `switchyard/auto` v1 and marks the prior proof
 draft because the repin changes its bound upstream and patch identities. The
@@ -453,12 +453,12 @@ reviewed X03 acceptable-set revision. The S17
 and X21 outcome-based acceptable-set changes remain explicitly training-only and
 preserve their original labels.
 See
-[`docs/history/2026-09-18-switchyard-b2-evidence.json`](history/2026-09-18-switchyard-b2-evidence.json),
-[`docs/history/2026-09-18-switchyard-b2-r1-failed-evidence.json`](history/2026-09-18-switchyard-b2-r1-failed-evidence.json),
-[`docs/history/2026-09-18-switchyard-b2-r2-root-cause.json`](history/2026-09-18-switchyard-b2-r2-root-cause.json),
-[`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json),
-[`docs/history/2026-09-18-switchyard-b2-counterfactuals.json`](history/2026-09-18-switchyard-b2-counterfactuals.json),
-and [`docs/history/2026-09-18-switchyard-b2-smoke.json`](history/2026-09-18-switchyard-b2-smoke.json).
+[`docs/history/2026-09-18-switchyard-b2-evidence.json`](2026-09-18-switchyard-b2-evidence.json),
+[`docs/history/2026-09-18-switchyard-b2-r1-failed-evidence.json`](2026-09-18-switchyard-b2-r1-failed-evidence.json),
+[`docs/history/2026-09-18-switchyard-b2-r2-root-cause.json`](2026-09-18-switchyard-b2-r2-root-cause.json),
+[`docs/history/2026-09-18-switchyard-b2-r3-x03-counterfactual.json`](2026-09-18-switchyard-b2-r3-x03-counterfactual.json),
+[`docs/history/2026-09-18-switchyard-b2-counterfactuals.json`](2026-09-18-switchyard-b2-counterfactuals.json),
+and [`docs/history/2026-09-18-switchyard-b2-smoke.json`](2026-09-18-switchyard-b2-smoke.json).
 The final B3 ordered source chain reproduces tree
 `47c3957e490febfa896f5f3d48f166eef6dd9d67`; its compatibility patch SHA-256
 is `0967efb93e970f0f9c2bc4f375acb3d77443e85c26c5ed7f597d460ded876d70`.
@@ -606,10 +606,10 @@ programmatically generated 128x128 red PNG completed through both direct native
 Sol and the deployed automatic route with the correct answer `red`; the routed
 request recorded the Sol non-text fallback with zero Jev calls. Fresh native v2
 proof then passed both same-child markers and the sandboxed tool call. See
-[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](history/2026-09-18-switchyard-b3-invalid-media-fixture.json),
-[`docs/history/2026-09-18-switchyard-b3-live.json`](history/2026-09-18-switchyard-b3-live.json)
+[`docs/history/2026-09-18-switchyard-b3-invalid-media-fixture.json`](2026-09-18-switchyard-b3-invalid-media-fixture.json),
+[`docs/history/2026-09-18-switchyard-b3-live.json`](2026-09-18-switchyard-b3-live.json)
 and
-[`docs/history/2026-09-18-switchyard-b3-certification.json`](history/2026-09-18-switchyard-b3-certification.json).
+[`docs/history/2026-09-18-switchyard-b3-certification.json`](2026-09-18-switchyard-b3-certification.json).
 
 B3 replaced the judge after B2 passed, retained the four answer targets and Sol
 fallback, set `user_turn`, and removed the classifier-only Luna target. The

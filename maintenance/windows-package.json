@@ -7,6 +7,7 @@
     "config/openrouter/openrouter.json",
     "config/openrouter/pareto.json",
     "config/switchyard/auto.json",
+    "config/switchyard/patches/switchyard-typesafe-pr-762.patch",
     "config/switchyard/patches/switchyard-codex-compat.patch",
     "config/switchyard/routes.template.toml",
     "config/switchyard/source.lock",

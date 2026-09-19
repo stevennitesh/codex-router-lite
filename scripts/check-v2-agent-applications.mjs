@@ -1,14 +1,10 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CHECKED_IN_MODELS } from "../src/routed-models.mjs";
-import {
-  readSwitchyardConfigContract,
-  validateSwitchyardConfigContract,
-} from "./switchyard-config-contract.mjs";
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_APPLICATIONS_ROOT = path.join(ROOT, "v2_agent");
 const REQUIRED_CHECKS = Object.freeze([
@@ -123,10 +119,10 @@ function checkRouteBinding(proof, location, route) {
     !SHA256.test(binding.patchSha256) ||
     !SHA256.test(binding.binarySha256) ||
     !SHA256.test(binding.routesSha256) ||
-    !SHA256.test(binding.policyHash)
+    !SHA256.test(binding.templateSha256)
   ) {
     fail(
-      `${location}: accepted Switchyard proof must bind upstream, its reviewed contribution, the compatibility patch, binary, Router, routes, and policy`,
+      `${location}: accepted Switchyard proof must bind upstream, its reviewed contribution, the compatibility patch, binary, Router, template, and generated routes`,
     );
   }
   if (
@@ -136,9 +132,9 @@ function checkRouteBinding(proof, location, route) {
     binding.upstreamContributionSha256.toLowerCase() !==
       String(sourceLock.upstreamContribution.patchSha256).toLowerCase() ||
     binding.patchSha256.toLowerCase() !== String(sourceLock.patchSha256).toLowerCase() ||
-    binding.policyHash.toLowerCase() !== validateSwitchyardConfigContract(
-      readSwitchyardConfigContract(ROOT),
-    ).classifier.policyHash.toLowerCase()
+    binding.templateSha256.toLowerCase() !== createHash("sha256").update(readFileSync(
+      path.join(ROOT, "config", "switchyard", "routes.template.toml"),
+    )).digest("hex")
   ) {
     fail(`${location}: Switchyard proof does not match the pinned source and patch`);
   }

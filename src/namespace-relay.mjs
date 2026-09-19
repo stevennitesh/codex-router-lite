@@ -1910,6 +1910,34 @@ function embeddedFunctionArgumentsAreUnambiguous(payload, rawCustomArguments = f
   return true;
 }
 
+function rewriteResponseIdentity(payload, responseModel) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    typeof responseModel !== "string" ||
+    !responseModel
+  ) {
+    return payload;
+  }
+  let rewritten = payload;
+  if (typeof payload.model === "string" && payload.model !== responseModel) {
+    rewritten = { ...rewritten, model: responseModel };
+  }
+  if (
+    payload.response &&
+    typeof payload.response === "object" &&
+    typeof payload.response.model === "string" &&
+    payload.response.model !== responseModel
+  ) {
+    rewritten = {
+      ...rewritten,
+      response: { ...payload.response, model: responseModel },
+    };
+  }
+  return rewritten;
+}
+
 // Non-streaming Responses return completed function calls in an `output`
 // array instead of SSE `item` events. Restore both shapes through the same
 // exact request-local lookup so stream mode cannot change dispatch semantics.
@@ -1921,27 +1949,9 @@ export function rewriteNamespaceResponsePayload(
   responseModel,
 ) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
-  let rewritten = rewriteNamespaceFunctionCall(payload, lookups, sessionModel) || payload;
+  let rewritten = rewriteResponseIdentity(payload, responseModel);
+  rewritten = rewriteNamespaceFunctionCall(rewritten, lookups, sessionModel) || rewritten;
   let changed = rewritten !== payload;
-
-  if (typeof responseModel === "string" && responseModel) {
-    if (typeof rewritten.model === "string" && rewritten.model !== responseModel) {
-      rewritten = { ...rewritten, model: responseModel };
-      changed = true;
-    }
-    if (
-      rewritten.response &&
-      typeof rewritten.response === "object" &&
-      typeof rewritten.response.model === "string" &&
-      rewritten.response.model !== responseModel
-    ) {
-      rewritten = {
-        ...rewritten,
-        response: { ...rewritten.response, model: responseModel },
-      };
-      changed = true;
-    }
-  }
 
   if (payload.type === "response.function_call_arguments.done") {
     const argumentsText = jsonArgumentsAreUnambiguous(rewritten.arguments, {
@@ -2107,7 +2117,9 @@ export class NamespaceToolCallTransform extends Transform {
   #maxTrackedOutputItems;
   #maxTrackedStateBytes;
   #rewriteDisabled = false;
+  #identityOnlySse = false;
   #semanticMutationCommitted = false;
+  #toolMutationCommitted = false;
   #lookups;
   #sessionModel;
   #responseModel;
@@ -2232,7 +2244,8 @@ export class NamespaceToolCallTransform extends Transform {
         return;
       }
       if (!embeddedFunctionArgumentsAreUnambiguous(original)) {
-        this.push(body);
+        const identityOnly = rewriteResponseIdentity(original, this.#responseModel);
+        this.push(identityOnly === original ? body : Buffer.from(JSON.stringify(identityOnly), "utf8"));
         return;
       }
       const payload = rewriteNamespaceResponsePayload(
@@ -2538,6 +2551,11 @@ export class NamespaceToolCallTransform extends Transform {
     this.#semanticMutationCommitted = true;
   }
 
+  #commitToolMutation() {
+    this.#toolMutationCommitted = true;
+    this.#commitSemanticMutation();
+  }
+
   #unsafeSseFrame(frame, reason) {
     if (this.#semanticMutationCommitted) {
       throw new NamespaceRelayCommittedStreamError(reason);
@@ -2548,10 +2566,33 @@ export class NamespaceToolCallTransform extends Transform {
 
   #disableSseRewriting() {
     this.#rewriteDisabled = true;
+    this.#identityOnlySse = false;
+    this.#clearTrackedCalls();
+  }
+
+  #clearTrackedCalls() {
     this.#callsByItemId.clear();
     this.#callsByCallId.clear();
     this.#trackedCallCount = 0;
     this.#trackedStateBytes = 0;
+  }
+
+  #enterIdentityOnlySse() {
+    if (this.#toolMutationCommitted || this.#hasOpenSpecialCalls()) {
+      throw new NamespaceRelayCommittedStreamError("ambiguous function arguments");
+    }
+    this.#identityOnlySse = true;
+    this.#clearTrackedCalls();
+  }
+
+  #identityOnlySseFrame(frame, dataLine, event) {
+    const rewritten = rewriteResponseIdentity(event, this.#responseModel);
+    if (rewritten === event) return [frame];
+    this.#commitSemanticMutation();
+    return [this.#rewrittenSseFrame(
+      frame,
+      [[dataLine, `data: ${JSON.stringify(rewritten)}`]],
+    )];
   }
 
   #specialCallKind(item) {
@@ -3193,13 +3234,17 @@ export class NamespaceToolCallTransform extends Transform {
         // convenient when both claims are present and disagree.
         return this.#unsafeSseFrame(frame, "conflicting SSE event and JSON type");
       }
+      if (this.#identityOnlySse) {
+        return this.#identityOnlySseFrame(frame, dataLine, event);
+      }
       const doneMatch = event?.type === "response.function_call_arguments.done"
         ? this.#specialCallForArgumentsEvent(event) : undefined;
       const rawCustomArguments = !doneMatch?.reason &&
         doneMatch?.state?.kind === "custom" &&
         doneMatch.state.sourceType === "custom_tool_call";
       if (!embeddedFunctionArgumentsAreUnambiguous(event, rawCustomArguments)) {
-        return this.#unsafeSseFrame(frame, "ambiguous function arguments");
+        this.#enterIdentityOnlySse();
+        return this.#identityOnlySseFrame(frame, dataLine, event);
       }
       const sourceEvent = event;
       const originalEventType = event?.type;
@@ -3231,7 +3276,7 @@ export class NamespaceToolCallTransform extends Transform {
             return this.#unsafeSseFrame(frame, "special tool call delta after arguments done");
           }
           if (matched.state.kind === "tool_search") {
-            this.#commitSemanticMutation();
+            this.#commitToolMutation();
             return [];
           }
           matched.state.sawArgumentDelta = true;
@@ -3245,7 +3290,7 @@ export class NamespaceToolCallTransform extends Transform {
             argumentProperty,
           );
           if (delta === undefined) {
-            this.#commitSemanticMutation();
+            this.#commitToolMutation();
             return [];
           }
           matched.state.deltaHash.update(Buffer.from(delta, "utf16le"));
@@ -3276,7 +3321,7 @@ export class NamespaceToolCallTransform extends Transform {
             matched.state.argumentsDone = true;
             matched.state.finalArgumentsLength = argumentsFingerprint.length;
             matched.state.finalArgumentsDigest = argumentsFingerprint.digest;
-            this.#commitSemanticMutation();
+            this.#commitToolMutation();
             return [];
           }
           const argumentProperty =
@@ -3351,7 +3396,9 @@ export class NamespaceToolCallTransform extends Transform {
         replacements.push([eventLine, `event: ${event.type}`]);
       }
       if (!changed) return [frame];
-      this.#commitSemanticMutation();
+      const identityOnly = rewriteResponseIdentity(sourceEvent, this.#responseModel);
+      if (!isDeepStrictEqual(event, identityOnly)) this.#commitToolMutation();
+      else this.#commitSemanticMutation();
       replacements.push([dataLine, `data: ${JSON.stringify(event)}`]);
       return [this.#rewrittenSseFrame(frame, replacements)];
     } catch (error) {

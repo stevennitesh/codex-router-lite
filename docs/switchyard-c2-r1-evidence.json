@@ -1,0 +1,4230 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-FOLLOWUP-C2",
+  "status": "c2_gates_passed",
+  "predeclaredAt": "2026-09-19T02:16:27.488Z",
+  "syntheticAuthoredCorpus": true,
+  "independentDataset": false,
+  "privateDataSent": false,
+  "productionChanged": false,
+  "acceptedC1Identity": "8b55ddec0621a0b439eaa871548683d426cbae08734a31fadedf4373407a74a5",
+  "identities": {
+    "binarySha256": "06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709",
+    "sourceLockSha256": "69994a42b850dfacb3e8d32ac8cc26c201be4e6d24c6153d40fafe0383776cf9",
+    "compatibilityPatchSha256": "745556b814fee78c898482c38b1b672e95e3eddcc4ff6a1e1a9b4eebd6bdeccb",
+    "routesTemplateSha256": "235c36109e88d44b0c974de6682d8c56972798aecd3ebd4e505c0c6dfe2daabe",
+    "corpusSha256": "af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165",
+    "c1ConfigSha256": "ebf81ada3aadfa000f29ec751d59f57afb6daad67510202bed41ebca9344413d",
+    "genericConfigSha256": "b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b",
+    "c1CriteriaSha256": "33dadb02116f16729d47aa305b1cda9264d72b79524ab18aabf02eb020381f88",
+    "genericCriteriaSha256": "b9aa7024cb733a3891555751e123c3ae86db60c50fca31c8092692e4a7d1fb68",
+    "evaluatorSha256": "83ff97c2eda3829909b2bf988281a0b5f7d3ca7d2ee1a4def3c1359c860ebeb3"
+  },
+  "frozen": {
+    "developmentIds": [
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "D06",
+      "D07",
+      "D08",
+      "D09",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D20"
+    ],
+    "holdoutIds": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06",
+      "H07",
+      "H08",
+      "H09",
+      "H10",
+      "H11",
+      "H12",
+      "H13",
+      "H14",
+      "H15",
+      "H16",
+      "H17",
+      "H18",
+      "H19",
+      "H20"
+    ],
+    "boundaryIds": [
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "D06"
+    ],
+    "question": "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route.",
+    "policies": {
+      "threshold": 0.35,
+      "A": "Argmax; confidence below 0.35 selects sol_medium.",
+      "B": "Argmax; below 0.35 luna_max or sol_medium selects sol_medium, astra_medium remains astra_medium, and astra_xhigh selects astra_medium."
+    },
+    "gates": {
+      "minimumC1AcceptablePerSplit": 17,
+      "maximumSevereUnderRoutes": 0,
+      "maximumPairedNonCriticalRegressions": 1,
+      "candidateAcceptableMustMeetOrExceedC1": true,
+      "criteriaChangeRequiresStrictAcceptableGain": true,
+      "minimumDevelopmentPolicyDisagreements": 3,
+      "maximumRetriesPerRequest": 1,
+      "providerBuildMustRemainConstant": true
+    }
+  },
+  "runs": {
+    "c1Development": {
+      "vectors": [
+        {
+          "id": "D01",
+          "measurementKind": "low_confidence",
+          "reasonCode": "low_confidence",
+          "rawSelected": "astra_medium",
+          "confidence": 0.2933333333333333,
+          "probabilities": {
+            "astra_medium": 0.47,
+            "astra_xhigh": 0.013333333333333334,
+            "luna_max": 0.4566666666666667,
+            "sol_medium": 0.06
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 545,
+          "fullBodyLatencyMs": 549
+        },
+        {
+          "id": "D02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9022222222222221,
+          "probabilities": {
+            "astra_medium": 0.9266666666666666,
+            "astra_xhigh": 0,
+            "luna_max": 0.07333333333333335,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 826,
+          "fullBodyLatencyMs": 828
+        },
+        {
+          "id": "D03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.6088888888888889,
+          "probabilities": {
+            "astra_medium": 0.7066666666666667,
+            "astra_xhigh": 0.013333333333333334,
+            "luna_max": 0.06,
+            "sol_medium": 0.22
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 246,
+          "fullBodyLatencyMs": 248
+        },
+        {
+          "id": "D04",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.36000000000000015,
+          "probabilities": {
+            "astra_medium": 0.5200000000000001,
+            "astra_xhigh": 0.026666666666666672,
+            "luna_max": 0.38,
+            "sol_medium": 0.07333333333333335
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 181,
+          "fullBodyLatencyMs": 183
+        },
+        {
+          "id": "D05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.6533333333333333,
+          "probabilities": {
+            "astra_medium": 0.01666666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.24333333333333335,
+            "sol_medium": 0.74
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 188,
+          "fullBodyLatencyMs": 190
+        },
+        {
+          "id": "D06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.6755555555555556,
+          "probabilities": {
+            "astra_medium": 0.7566666666666667,
+            "astra_xhigh": 0.19666666666666668,
+            "luna_max": 0,
+            "sol_medium": 0.04666666666666667
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 162,
+          "fullBodyLatencyMs": 164
+        },
+        {
+          "id": "D07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 235,
+          "fullBodyLatencyMs": 237
+        },
+        {
+          "id": "D08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 145,
+          "fullBodyLatencyMs": 147
+        },
+        {
+          "id": "D09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.991111111111111,
+          "probabilities": {
+            "astra_medium": 0.006666666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.9933333333333333,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 171,
+          "fullBodyLatencyMs": 173
+        },
+        {
+          "id": "D10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.9644444444444445,
+          "probabilities": {
+            "astra_medium": 0.01666666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.010000000000000002,
+            "sol_medium": 0.9733333333333334
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 212,
+          "fullBodyLatencyMs": 213
+        },
+        {
+          "id": "D11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.8000000000000002,
+          "probabilities": {
+            "astra_medium": 0.13666666666666666,
+            "astra_xhigh": 0.01,
+            "luna_max": 0.0033333333333333335,
+            "sol_medium": 0.8500000000000001
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 164,
+          "fullBodyLatencyMs": 166
+        },
+        {
+          "id": "D12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 150,
+          "fullBodyLatencyMs": 151
+        },
+        {
+          "id": "D13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9688888888888889,
+          "probabilities": {
+            "astra_medium": 0.9766666666666667,
+            "astra_xhigh": 0.023333333333333338,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 195,
+          "fullBodyLatencyMs": 196
+        },
+        {
+          "id": "D14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 143,
+          "fullBodyLatencyMs": 144
+        },
+        {
+          "id": "D15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 246,
+          "fullBodyLatencyMs": 248
+        },
+        {
+          "id": "D16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.92,
+          "probabilities": {
+            "astra_medium": 0.046666666666666676,
+            "astra_xhigh": 0.9400000000000001,
+            "luna_max": 0,
+            "sol_medium": 0.013333333333333336
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 269,
+          "fullBodyLatencyMs": 270
+        },
+        {
+          "id": "D17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9644444444444445,
+          "probabilities": {
+            "astra_medium": 0.026666666666666672,
+            "astra_xhigh": 0.9733333333333334,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 169,
+          "fullBodyLatencyMs": 170
+        },
+        {
+          "id": "D18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 146,
+          "fullBodyLatencyMs": 147
+        },
+        {
+          "id": "D19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 168,
+          "fullBodyLatencyMs": 169
+        },
+        {
+          "id": "D20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.99,
+            "astra_xhigh": 0,
+            "luna_max": 0.010000000000000002,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 184,
+          "fullBodyLatencyMs": 185
+        }
+      ],
+      "attempts": [
+        {
+          "id": "D01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 549,
+              "source": "fail_open",
+              "reasonCode": "low_confidence"
+            }
+          ]
+        },
+        {
+          "id": "D02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 828,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 248,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 183,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 190,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 164,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 237,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 147,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 173,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 213,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 166,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 151,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 196,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 144,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 248,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 270,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 170,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 147,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 169,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 185,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ]
+    },
+    "genericDevelopment": {
+      "vectors": [
+        {
+          "id": "D01",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.6666666666666666,
+          "probabilities": {
+            "astra_medium": 0.09000000000000001,
+            "astra_xhigh": 0,
+            "luna_max": 0.16,
+            "sol_medium": 0.75
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 304,
+          "fullBodyLatencyMs": 306
+        },
+        {
+          "id": "D02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.88,
+          "probabilities": {
+            "astra_medium": 0.91,
+            "astra_xhigh": 0,
+            "luna_max": 0.036666666666666674,
+            "sol_medium": 0.05333333333333334
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 1119,
+          "fullBodyLatencyMs": 1121
+        },
+        {
+          "id": "D03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.8266666666666668,
+          "probabilities": {
+            "astra_medium": 0.11,
+            "astra_xhigh": 0,
+            "luna_max": 0.02,
+            "sol_medium": 0.8700000000000001
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 201
+        },
+        {
+          "id": "D04",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.9022222222222221,
+          "probabilities": {
+            "astra_medium": 0.030000000000000002,
+            "astra_xhigh": 0,
+            "luna_max": 0.043333333333333335,
+            "sol_medium": 0.9266666666666666
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 168,
+          "fullBodyLatencyMs": 169
+        },
+        {
+          "id": "D05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.7377777777777778,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.19333333333333336,
+            "sol_medium": 0.8033333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 220,
+          "fullBodyLatencyMs": 221
+        },
+        {
+          "id": "D06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.6844444444444444,
+          "probabilities": {
+            "astra_medium": 0.21333333333333335,
+            "astra_xhigh": 0.7633333333333333,
+            "luna_max": 0,
+            "sol_medium": 0.023333333333333334
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 197,
+          "fullBodyLatencyMs": 198
+        },
+        {
+          "id": "D07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9822222222222222,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.9866666666666667,
+            "sol_medium": 0.013333333333333334
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 154,
+          "fullBodyLatencyMs": 155
+        },
+        {
+          "id": "D08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 234,
+          "fullBodyLatencyMs": 235
+        },
+        {
+          "id": "D09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.99,
+            "sol_medium": 0.010000000000000002
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 198,
+          "fullBodyLatencyMs": 200
+        },
+        {
+          "id": "D10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 1
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 257,
+          "fullBodyLatencyMs": 258
+        },
+        {
+          "id": "D11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.006666666666666668,
+            "astra_xhigh": 0.003333333333333334,
+            "luna_max": 0,
+            "sol_medium": 0.99
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 204,
+          "fullBodyLatencyMs": 205
+        },
+        {
+          "id": "D12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 222,
+          "fullBodyLatencyMs": 223
+        },
+        {
+          "id": "D13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.8266666666666667,
+          "probabilities": {
+            "astra_medium": 0.87,
+            "astra_xhigh": 0.13,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 168,
+          "fullBodyLatencyMs": 169
+        },
+        {
+          "id": "D14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 225,
+          "fullBodyLatencyMs": 226
+        },
+        {
+          "id": "D15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.7733333333333333,
+          "probabilities": {
+            "astra_medium": 0.83,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0.17
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 228,
+          "fullBodyLatencyMs": 229
+        },
+        {
+          "id": "D16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 201
+        },
+        {
+          "id": "D17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 244,
+          "fullBodyLatencyMs": 245
+        },
+        {
+          "id": "D18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 243,
+          "fullBodyLatencyMs": 244
+        },
+        {
+          "id": "D19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 201
+        },
+        {
+          "id": "D20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.9966666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.0033333333333333335,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 323,
+          "fullBodyLatencyMs": 325
+        }
+      ],
+      "attempts": [
+        {
+          "id": "D01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 306,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 1121,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 201,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 169,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 221,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 198,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 155,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 235,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 200,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 258,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 205,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 223,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 169,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 226,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 229,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 201,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 245,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 244,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 201,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 325,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ]
+    },
+    "c1Holdout": {
+      "vectors": [
+        {
+          "id": "H01",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 325,
+          "fullBodyLatencyMs": 327
+        },
+        {
+          "id": "H02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 315,
+          "fullBodyLatencyMs": 317
+        },
+        {
+          "id": "H03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 281,
+          "fullBodyLatencyMs": 282
+        },
+        {
+          "id": "H04",
+          "measurementKind": "low_confidence",
+          "reasonCode": "low_confidence",
+          "rawSelected": "luna_max",
+          "confidence": 0.27999999999999997,
+          "probabilities": {
+            "astra_medium": 0.4566666666666666,
+            "astra_xhigh": 0.013333333333333334,
+            "luna_max": 0.45999999999999996,
+            "sol_medium": 0.07
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 1089,
+          "fullBodyLatencyMs": 1090
+        },
+        {
+          "id": "H05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9733333333333333,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.98,
+            "sol_medium": 0.016666666666666666
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 267,
+          "fullBodyLatencyMs": 269
+        },
+        {
+          "id": "H06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.8711111111111111,
+          "probabilities": {
+            "astra_medium": 0.03666666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.06,
+            "sol_medium": 0.9033333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 210,
+          "fullBodyLatencyMs": 211
+        },
+        {
+          "id": "H07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.6577777777777777,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.25666666666666665,
+            "sol_medium": 0.7433333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 236,
+          "fullBodyLatencyMs": 237
+        },
+        {
+          "id": "H08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.5644444444444444,
+          "probabilities": {
+            "astra_medium": 0.6733333333333333,
+            "astra_xhigh": 0.016666666666666666,
+            "luna_max": 0.06666666666666667,
+            "sol_medium": 0.24333333333333332
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 181,
+          "fullBodyLatencyMs": 182
+        },
+        {
+          "id": "H09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.39111111111111113,
+          "probabilities": {
+            "astra_medium": 0.5433333333333333,
+            "astra_xhigh": 0.02666666666666667,
+            "luna_max": 0.35333333333333333,
+            "sol_medium": 0.07666666666666667
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 153,
+          "fullBodyLatencyMs": 154
+        },
+        {
+          "id": "H10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.9733333333333333,
+          "probabilities": {
+            "astra_medium": 0.01,
+            "astra_xhigh": 0,
+            "luna_max": 0.01,
+            "sol_medium": 0.98
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 226,
+          "fullBodyLatencyMs": 228
+        },
+        {
+          "id": "H11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9022222222222224,
+          "probabilities": {
+            "astra_medium": 0.9266666666666667,
+            "astra_xhigh": 0.04666666666666667,
+            "luna_max": 0.016666666666666666,
+            "sol_medium": 0.01
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 224,
+          "fullBodyLatencyMs": 225
+        },
+        {
+          "id": "H12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9733333333333333,
+          "probabilities": {
+            "astra_medium": 0.98,
+            "astra_xhigh": 0.02,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 236,
+          "fullBodyLatencyMs": 238
+        },
+        {
+          "id": "H13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 448,
+          "fullBodyLatencyMs": 449
+        },
+        {
+          "id": "H14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9155555555555556,
+          "probabilities": {
+            "astra_medium": 0.9366666666666666,
+            "astra_xhigh": 0,
+            "luna_max": 0.06333333333333334,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 170,
+          "fullBodyLatencyMs": 171
+        },
+        {
+          "id": "H15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 183,
+          "fullBodyLatencyMs": 185
+        },
+        {
+          "id": "H16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.43111111111111117,
+          "probabilities": {
+            "astra_medium": 0.42,
+            "astra_xhigh": 0.5733333333333334,
+            "luna_max": 0,
+            "sol_medium": 0.006666666666666667
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 232,
+          "fullBodyLatencyMs": 233
+        },
+        {
+          "id": "H17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 192,
+          "fullBodyLatencyMs": 193
+        },
+        {
+          "id": "H18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 370,
+          "fullBodyLatencyMs": 371
+        },
+        {
+          "id": "H19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 160,
+          "fullBodyLatencyMs": 162
+        },
+        {
+          "id": "H20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 170,
+          "fullBodyLatencyMs": 171
+        }
+      ],
+      "attempts": [
+        {
+          "id": "H01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 327,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 317,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 282,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 1090,
+              "source": "fail_open",
+              "reasonCode": "low_confidence"
+            }
+          ]
+        },
+        {
+          "id": "H05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 269,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 211,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 237,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 182,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 154,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 228,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 225,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 238,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 449,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 171,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 185,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 233,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 193,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 371,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 162,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 171,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ]
+    },
+    "candidateHoldout": {
+      "vectors": [
+        {
+          "id": "H01",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 380,
+          "fullBodyLatencyMs": 382
+        },
+        {
+          "id": "H02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.9966666666666667,
+            "sol_medium": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 155,
+          "fullBodyLatencyMs": 157
+        },
+        {
+          "id": "H03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 311,
+          "fullBodyLatencyMs": 312
+        },
+        {
+          "id": "H04",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.6444444444444445,
+          "probabilities": {
+            "astra_medium": 0.09666666666666668,
+            "astra_xhigh": 0,
+            "luna_max": 0.17,
+            "sol_medium": 0.7333333333333334
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 177,
+          "fullBodyLatencyMs": 178
+        },
+        {
+          "id": "H05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.7999999999999999,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.85,
+            "sol_medium": 0.15
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 214,
+          "fullBodyLatencyMs": 215
+        },
+        {
+          "id": "H06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0,
+            "luna_max": 0.006666666666666668,
+            "sol_medium": 0.99
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 221,
+          "fullBodyLatencyMs": 222
+        },
+        {
+          "id": "H07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.6311111111111111,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.27666666666666667,
+            "sol_medium": 0.7233333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 222,
+          "fullBodyLatencyMs": 223
+        },
+        {
+          "id": "H08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.8355555555555556,
+          "probabilities": {
+            "astra_medium": 0.10333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.020000000000000004,
+            "sol_medium": 0.8766666666666667
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 272,
+          "fullBodyLatencyMs": 273
+        },
+        {
+          "id": "H09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.8977777777777778,
+          "probabilities": {
+            "astra_medium": 0.02666666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0.05000000000000001,
+            "sol_medium": 0.9233333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 195,
+          "fullBodyLatencyMs": 196
+        },
+        {
+          "id": "H10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_medium",
+          "confidence": 0.991111111111111,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.0033333333333333335,
+            "sol_medium": 0.9933333333333333
+          },
+          "runtimeFinalTarget": "sol_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 176,
+          "fullBodyLatencyMs": 177
+        },
+        {
+          "id": "H11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.6577777777777777,
+          "probabilities": {
+            "astra_medium": 0.7433333333333333,
+            "astra_xhigh": 0.19000000000000003,
+            "luna_max": 0.043333333333333335,
+            "sol_medium": 0.023333333333333334
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 168,
+          "fullBodyLatencyMs": 169
+        },
+        {
+          "id": "H12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9511111111111111,
+          "probabilities": {
+            "astra_medium": 0.9633333333333334,
+            "astra_xhigh": 0.036666666666666674,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 299,
+          "fullBodyLatencyMs": 300
+        },
+        {
+          "id": "H13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9688888888888889,
+          "probabilities": {
+            "astra_medium": 0.9766666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0.023333333333333334
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 271,
+          "fullBodyLatencyMs": 272
+        },
+        {
+          "id": "H14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.8622222222222221,
+          "probabilities": {
+            "astra_medium": 0.8966666666666666,
+            "astra_xhigh": 0,
+            "luna_max": 0.043333333333333335,
+            "sol_medium": 0.06
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 239,
+          "fullBodyLatencyMs": 240
+        },
+        {
+          "id": "H15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 1,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 213,
+          "fullBodyLatencyMs": 214
+        },
+        {
+          "id": "H16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.991111111111111,
+          "probabilities": {
+            "astra_medium": 0.006666666666666667,
+            "astra_xhigh": 0.9933333333333333,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 175,
+          "fullBodyLatencyMs": 176
+        },
+        {
+          "id": "H17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 201
+        },
+        {
+          "id": "H18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 208,
+          "fullBodyLatencyMs": 209
+        },
+        {
+          "id": "H19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9644444444444443,
+          "probabilities": {
+            "astra_medium": 0.016666666666666666,
+            "astra_xhigh": 0.9733333333333333,
+            "luna_max": 0,
+            "sol_medium": 0.01
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 180,
+          "fullBodyLatencyMs": 181
+        },
+        {
+          "id": "H20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_medium": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 238,
+          "fullBodyLatencyMs": 239
+        }
+      ],
+      "attempts": [
+        {
+          "id": "H01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 382,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 157,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 312,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 178,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 215,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 222,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 223,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 273,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 196,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 177,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 169,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 300,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 272,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 240,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 214,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 176,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 201,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 209,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 181,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 239,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ],
+      "reusedC1Vectors": false
+    }
+  },
+  "predecessorEvidence": {
+    "path": "docs/switchyard-c2-evidence.json",
+    "sha256": "895a2b8d2c9715b0af1561520350c276bc0db8bcb21a2f03bf388a94b250306e",
+    "interpretation": "historical attempts had source fail_open with an unretained reason; no failure class is inferred"
+  },
+  "development": {
+    "c1": {
+      "policy": "A",
+      "count": 20,
+      "acceptable": 18,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 5,
+        "sol_medium": 4,
+        "astra_medium": 8,
+        "astra_xhigh": 3
+      },
+      "rows": [
+        {
+          "id": "D01",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.2933333333333333,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D02",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9022222222222221,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D03",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.6088888888888889,
+          "finalTarget": "astra_medium",
+          "acceptableResult": false,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.36000000000000015,
+          "finalTarget": "astra_medium",
+          "acceptableResult": false,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D05",
+          "expected": "sol_medium",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6533333333333333,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D06",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium",
+            "astra_xhigh"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.6755555555555556,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D07",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D08",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D09",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.991111111111111,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9644444444444445,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D11",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8000000000000002,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D12",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9688888888888889,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.92,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9644444444444445,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D19",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D20",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "genericA": {
+      "policy": "A",
+      "count": 20,
+      "acceptable": 20,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 5,
+        "sol_medium": 6,
+        "astra_medium": 5,
+        "astra_xhigh": 4
+      },
+      "rows": [
+        {
+          "id": "D01",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6666666666666666,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D02",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.88,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D03",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8266666666666668,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9022222222222221,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D05",
+          "expected": "sol_medium",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.7377777777777778,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D06",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium",
+            "astra_xhigh"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.6844444444444444,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D07",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9822222222222222,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D08",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D09",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 1,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D11",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D12",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.8266666666666667,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.7733333333333333,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D19",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D20",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "criteriaRegressions": [],
+    "criteriaSelected": true,
+    "selectedCriteria": "genericCandidate",
+    "selectedA": {
+      "policy": "A",
+      "count": 20,
+      "acceptable": 20,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 5,
+        "sol_medium": 6,
+        "astra_medium": 5,
+        "astra_xhigh": 4
+      },
+      "rows": [
+        {
+          "id": "D01",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6666666666666666,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D02",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.88,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D03",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8266666666666668,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9022222222222221,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D05",
+          "expected": "sol_medium",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.7377777777777778,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D06",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium",
+            "astra_xhigh"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.6844444444444444,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D07",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9822222222222222,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D08",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D09",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 1,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D11",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D12",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.8266666666666667,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.7733333333333333,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D19",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D20",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "selectedB": {
+      "policy": "B",
+      "count": 20,
+      "acceptable": 20,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 5,
+        "sol_medium": 6,
+        "astra_medium": 5,
+        "astra_xhigh": 4
+      },
+      "rows": [
+        {
+          "id": "D01",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6666666666666666,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D02",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.88,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D03",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8266666666666668,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9022222222222221,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D05",
+          "expected": "sol_medium",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.7377777777777778,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D06",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium",
+            "astra_xhigh"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.6844444444444444,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D07",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9822222222222222,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D08",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D09",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 1,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D11",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D12",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.8266666666666667,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.7733333333333333,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D19",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "D20",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "policyChanges": [],
+    "boundaryPolicyChanges": [],
+    "policyRegressions": [],
+    "policyBSelected": false,
+    "selectedPolicy": "A"
+  },
+  "developmentProviderBuilds": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "developmentRuntimeParity": {
+    "passed": true,
+    "mismatches": []
+  },
+  "counterfactualAssessment": {
+    "consequentialChanges": [],
+    "authorizedMaximumAnswerCalls": 8,
+    "answerCallsMade": 0,
+    "resolved": true
+  },
+  "frozenCandidate": {
+    "frozenAt": "2026-09-19T02:16:37.829Z",
+    "criteria": "genericCandidate",
+    "policy": "A",
+    "developmentAcceptable": 20,
+    "developmentSevereUnderRoutes": 0
+  },
+  "holdout": {
+    "c1": {
+      "policy": "A",
+      "count": 20,
+      "acceptable": 18,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 4,
+        "sol_medium": 4,
+        "astra_medium": 7,
+        "astra_xhigh": 5
+      },
+      "rows": [
+        {
+          "id": "H01",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H02",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H03",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.27999999999999997,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H05",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9733333333333333,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H06",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8711111111111111,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H07",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6577777777777777,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H08",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.5644444444444444,
+          "finalTarget": "astra_medium",
+          "acceptableResult": false,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H09",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.39111111111111113,
+          "finalTarget": "astra_medium",
+          "acceptableResult": false,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9733333333333333,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H11",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9022222222222224,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H12",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9733333333333333,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9155555555555556,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.43111111111111117,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H19",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H20",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "candidate": {
+      "policy": "A",
+      "count": 20,
+      "acceptable": 20,
+      "severeUnderRoutes": 0,
+      "underRouteDistance": 0,
+      "selectedCounts": {
+        "luna_max": 4,
+        "sol_medium": 6,
+        "astra_medium": 5,
+        "astra_xhigh": 5
+      },
+      "rows": [
+        {
+          "id": "H01",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H02",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H03",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H04",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6444444444444445,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H05",
+          "expected": "luna_max",
+          "acceptable": [
+            "luna_max",
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "luna_max",
+          "confidence": 0.7999999999999999,
+          "finalTarget": "luna_max",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H06",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.9866666666666667,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H07",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.6311111111111111,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H08",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8355555555555556,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H09",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.8977777777777778,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H10",
+          "expected": "sol_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "sol_medium",
+          "confidence": 0.991111111111111,
+          "finalTarget": "sol_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H11",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.6577777777777777,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H12",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9511111111111111,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H13",
+          "expected": "astra_medium",
+          "acceptable": [
+            "sol_medium",
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.9688888888888889,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H14",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 0.8622222222222221,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H15",
+          "expected": "astra_medium",
+          "acceptable": [
+            "astra_medium"
+          ],
+          "severity": "normal",
+          "rawSelected": "astra_medium",
+          "confidence": 1,
+          "finalTarget": "astra_medium",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H16",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.991111111111111,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H17",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H18",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H19",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9644444444444443,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        },
+        {
+          "id": "H20",
+          "expected": "astra_xhigh",
+          "acceptable": [
+            "astra_xhigh"
+          ],
+          "severity": "severe",
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "finalTarget": "astra_xhigh",
+          "acceptableResult": true,
+          "severeUnderRoute": false,
+          "underRouteDistance": 0
+        }
+      ]
+    },
+    "pairedNonCriticalRegressions": [],
+    "changedSelections": [
+      {
+        "id": "H08",
+        "baseline": "astra_medium",
+        "candidate": "sol_medium",
+        "severity": "normal"
+      },
+      {
+        "id": "H09",
+        "baseline": "astra_medium",
+        "candidate": "sol_medium",
+        "severity": "normal"
+      }
+    ]
+  },
+  "gateResults": {
+    "completeDevelopment": true,
+    "completeHoldout": true,
+    "c1DevelopmentSemantic": true,
+    "c1HoldoutSemantic": true,
+    "candidateSevereUnderRoutes": true,
+    "pairedNonCriticalRegressions": true,
+    "acceptableTargetCount": true,
+    "providerBuildStable": true,
+    "developmentProviderBuildStable": true,
+    "selectedRuntimeParity": true,
+    "counterfactualConcernsResolved": true
+  },
+  "providerBuilds": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "counterfactualCandidates": [],
+  "paidDecisionRequests": 80,
+  "promotionEligible": true,
+  "completedAt": "2026-09-19T02:16:48.241Z"
+}

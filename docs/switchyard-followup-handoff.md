@@ -1,8 +1,40 @@
 # Switchyard feedback execution handoff
 
-Status: prepared, not dispatched. Planning request only, 2026-09-18.
+Status: implementation accepted after final lead review, 2026-09-18. C1 and
+C2 were each accepted after correction round 1 of 2. Release, deployment and
+renewed exact-runtime proof remain pending separate authorization; the checked
+route remains draft v1 and the installed runtime is unchanged.
+Worker custody has returned to the lead. Final review has no remaining actionable
+findings: 248 automated tests and repository/native catalog/Rust checks passed;
+the lead independently reran the 21 focused evaluator/runtime tests. Implementation
+changes remain uncommitted. The next release step is to commit the reviewed
+candidate, deploy it and renew exact-runtime certification when authorized.
+The frozen corpus SHA-256 is
+`af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165`;
+the review-candidate evidence SHA-256 is
+`c5b7516c2ed9fa246206bb721f72d3a34e419324f92ae0bc36955fd7ad1a06fd`.
+The original stopped evidence remains immutable at SHA-256
+`895a2b8d2c9715b0af1561520350c276bc0db8bcb21a2f03bf388a94b250306e`;
+its two unretained reason codes remain unknown. A separately authorized D01
+diagnostic identified the current result as a valid `low_confidence` measurement,
+then the authorized fresh run retained all reasons. The fresh run used 80 decision
+requests with no retries: 78 direct classifier measurements and two valid
+low-confidence measurements. The generic criteria with Policy A scored 20/20 on
+development and holdout against C1's 18/20 on each, with zero severe under-routes,
+zero paired regressions, stable provider build, actual-runtime parity and no
+consequential development change requiring answer-model calls. Policy A/B had no
+development disagreements, so A remains selected.
+The final canonical template SHA-256 is
+`fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd`.
+Its evaluator-style materialization SHA-256 is
+`b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b`,
+exactly matching the accepted C2 candidate config. The exact evaluated harness is
+preserved at
+[`docs/history/2026-09-18-switchyard-c2-evaluator.mjs`](history/2026-09-18-switchyard-c2-evaluator.mjs);
+ongoing checks use the smaller maintained routing evaluator and the existing live
+verification entry point.
 Authoritative scope: [follow-up plan revision 6](switchyard-followup-plan.md).
-The earlier [upgrade handoff](switchyard-upgrade-handoff.md) is a completed
+The earlier [upgrade handoff](history/2026-09-18-switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
 
 ## Assignment when execution is authorized
@@ -11,7 +43,7 @@ Use one fresh reusable native GPT-5.6 Sol agent at Medium for this coherent plan
 lead owns shaping, decisions, change-review and acceptance. Start with C1 only,
 then reuse the same implementer for C2, final integration and any corrections.
 Do not fork the long conversation. Supply this handoff and the plan as the brief.
-No implementation agent was started during planning.
+The assigned Sol implementer completed the C1 candidate without delegation.
 
 Worker-only guidance:
 
@@ -98,6 +130,22 @@ of two review-repair rounds consumed. Implementation recovery and correction
 limits follow cost-aware-coding; naming a new assignment does not reset a finding's
 allowance. Use the same Sol for repair; do not take over implementation locally.
 Record candidate identity and decisive evidence at each accepted gate.
+The first C1 review-repair round corrected persistent SSE identity restoration,
+body-read timeout classification, native catalog default projection, and
+candidate-versus-installed documentation wording. One C1 review-repair round
+remains before escalation to the user under the review protocol.
+The accepted C1 experimental control is diff SHA-256
+`8b55ddec0621a0b439eaa871548683d426cbae08734a31fadedf4373407a74a5`,
+binary SHA-256
+`06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709`,
+source-lock SHA-256
+`69994a42b850dfacb3e8d32ac8cc26c201be4e6d24c6153d40fafe0383776cf9`,
+compatibility-patch SHA-256
+`745556b814fee78c898482c38b1b672e95e3eddcc4ff6a1e1a9b4eebd6bdeccb`,
+route-template SHA-256
+`235c36109e88d44b0c974de6682d8c56972798aecd3ebd4e505c0c6dfe2daabe`,
+and materialized C1 evaluation-config SHA-256
+`ebf81ada3aadfa000f29ec751d59f57afb6daad67510202bed41ebca9344413d`.
 Before C2's first paid run, verify that its baseline identity, 20/20 split,
 predeclared A/B rules, boundary cases, retry limit and count-based
 promotion gates are frozen. Compare criteria and A/B only on development

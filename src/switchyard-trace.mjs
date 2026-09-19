@@ -46,7 +46,6 @@ export function summarizeSwitchyardTrace(contents) {
       fallbacks: 0,
       providerModels: {},
       finalTargets: {},
-      policyHashes: {},
       latency: { count: 0, maximumMs: null },
       recent: [],
     },
@@ -88,12 +87,11 @@ export function summarizeSwitchyardTrace(contents) {
     if (/falling back|fallback route|fallback target/iu.test(line)) summary.failures.fallback += 1;
 
     const evidenceSource = /\b(?:evidence\.source|evidence_source)="([^"]+)"/u.exec(line)?.[1];
-    const evidencePolicyHash = /\b(?:evidence\.policy_hash|evidence_policy_hash)="([a-f0-9]{64})"/u.exec(line)?.[1];
-    if (evidenceSource === "type_safe_classifier" || (evidenceSource === "fail_open" && evidencePolicyHash)) {
+    if (evidenceSource === "type_safe_classifier" || evidenceSource === "fail_open") {
       const providerModel = /\b(?:evidence\.provider_model|evidence_provider_model)="([^"]+)"/u.exec(line)?.[1];
       const finalTarget = /\b(?:evidence\.final_target|evidence_final_target)="([^"]+)"/u.exec(line)?.[1];
-      const policyHash = evidencePolicyHash;
       const reasonCode = /\b(?:evidence\.reason_code|evidence_reason_code)="([^"]+)"/u.exec(line)?.[1];
+      const httpStatus = Number(/\b(?:evidence\.http_status|evidence_http_status)=(\d{3})/u.exec(line)?.[1]);
       const confidence = Number(/\b(?:evidence\.confidence|evidence_confidence)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
       const threshold = Number(/\b(?:evidence\.threshold|evidence_threshold)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
       const decisionLatencyMs = Number(/\b(?:evidence\.decision_latency_ms|evidence_decision_latency_ms)=(\d+)/u.exec(line)?.[1]);
@@ -110,7 +108,6 @@ export function summarizeSwitchyardTrace(contents) {
       if (evidenceSource === "fail_open") summary.classifier.fallbacks += 1;
       if (providerModel) increment(summary.classifier.providerModels, providerModel);
       if (finalTarget) increment(summary.classifier.finalTargets, finalTarget);
-      if (policyHash) increment(summary.classifier.policyHashes, policyHash);
       if (Number.isFinite(decisionLatencyMs)) {
         summary.classifier.latency.count += 1;
         summary.classifier.latency.maximumMs = Math.max(summary.classifier.latency.maximumMs ?? 0, decisionLatencyMs);
@@ -120,8 +117,8 @@ export function summarizeSwitchyardTrace(contents) {
         source: evidenceSource,
         ...(providerModel ? { providerModel } : {}),
         ...(finalTarget ? { finalTarget } : {}),
-        ...(policyHash ? { policyHash } : {}),
         ...(reasonCode ? { reasonCode } : {}),
+        ...(Number.isFinite(httpStatus) ? { httpStatus } : {}),
         ...(Number.isFinite(confidence) ? { confidence } : {}),
         ...(Number.isFinite(threshold) ? { threshold } : {}),
         ...(Number.isFinite(decisionLatencyMs) ? { decisionLatencyMs } : {}),

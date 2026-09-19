@@ -9,6 +9,9 @@ Current work starts at [the repository entry](../../AGENTS.md).
 - [Pareto investigation, 2026-09-17](2026-09-17-pareto.md)
 - [Router lifecycle audit, 2026-09-17](2026-09-17-router-lifecycle-audit.md)
 - [Switchyard pin review, 2026-09-12](2026-09-12-switchyard-pin.md)
+- [Switchyard upgrade plan, 2026-09-18](2026-09-18-switchyard-upgrade-plan.md)
+- [Switchyard upgrade handoff, 2026-09-18](2026-09-18-switchyard-upgrade-handoff.md)
+- [Switchyard follow-up evaluator snapshot, 2026-09-18](2026-09-18-switchyard-c2-evaluator.mjs)
 
 Exact-route proof records remain in [v2_agent](../../v2_agent/README.md) because
 the application checker consumes those paths. Each proof applies only to its

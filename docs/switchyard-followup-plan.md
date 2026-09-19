@@ -1,12 +1,49 @@
 # Switchyard feedback follow-up delivery plan
 
-Status: proposed revision 6, 2026-09-18. Planning only; not executing.
+Status: implementation accepted after final lead review, 2026-09-18. C1 was
+accepted after correction round 1 of 2 and C2 was accepted after correction round
+1 of 2. The unchanged frozen evaluation selected the generic criteria
+with Policy A and passed every predeclared development and holdout gate. C1 scored
+18/20 on each split; the candidate scored 20/20 on each split, with zero severe
+under-routes and zero paired regressions. Policy A/B produced no development
+disagreements, so A remains selected. The provider build was consistently
+`typesafe/jev-1.13-20260917`.
 Whole-change review baseline: `e8d285b85fa1ba27e62460776bbe3074a255f102`.
+Accepted C1 control: diff SHA-256
+`8b55ddec0621a0b439eaa871548683d426cbae08734a31fadedf4373407a74a5`,
+Switchyard binary SHA-256
+`06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709`,
+source-lock SHA-256
+`69994a42b850dfacb3e8d32ac8cc26c201be4e6d24c6153d40fafe0383776cf9`,
+compatibility-patch SHA-256
+`745556b814fee78c898482c38b1b672e95e3eddcc4ff6a1e1a9b4eebd6bdeccb`,
+route-template SHA-256
+`235c36109e88d44b0c974de6682d8c56972798aecd3ebd4e505c0c6dfe2daabe`,
+and materialized C1 evaluation-config SHA-256
+`ebf81ada3aadfa000f29ec751d59f57afb6daad67510202bed41ebca9344413d`.
+Frozen C2 corpus SHA-256:
+`af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165`.
+C2 review-candidate evidence SHA-256:
+`c5b7516c2ed9fa246206bb721f72d3a34e419324f92ae0bc36955fd7ad1a06fd`.
+The canonical template now contains exactly the accepted criteria. Its SHA-256 is
+`fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd`;
+materializing its private Router URL as the evaluator did produces SHA-256
+`b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b`,
+matching the evaluated candidate config. Release and renewed exact-runtime proof
+remain pending separate authorization, so the checked route stays draft v1.
 Revision 6 retains the simplified scope, narrows health to configuration readiness,
 and adds explicit documentation/context acceptance. It supersedes the
 earlier assistant-context experiment,
 Policy C, unknown-field publication blocking and mandatory 24 answer runs.
 The [handoff](switchyard-followup-handoff.md) owns execution arrangements.
+
+Final validation passed: 248 automated tests, repository/package checks, the
+installed native catalog check, and Rust formatting, lint, affected tests and
+release build. The lead independently reran the 21 focused evaluator/runtime
+tests and found no remaining actionable review findings. Maintained tooling is
+1,494 lines smaller. Synthetic evaluation supports this bounded candidate only;
+it does not establish general routing accuracy. Implementation changes remain
+uncommitted pending release preparation.
 
 ## Purpose and scope
 
@@ -15,9 +52,10 @@ four answer roles, three-order averaging, user-turn affinity and Sol failure
 fallback. Preserve native/external endpoints, public/session identity, fixed
 efforts, capability security, media forwarding, cancellation, compaction and
 exact-runtime v2 certification. This is a personal router cleanup, not a routing
-research platform. This request authorizes planning only: no implementation,
-paid calls, private-conversation export, commits, push or live deployment.
-The [completed upgrade record](switchyard-upgrade-plan.md) remains historical.
+research platform. Initial execution authorization covered the offline C1
+candidate. The subsequent C2 assignment authorized its bounded synthetic paid
+calls; private-conversation export, push and live deployment remain outside scope.
+The [completed upgrade record](history/2026-09-18-switchyard-upgrade-plan.md) remains historical.
 
 ## Recommended reconciliation
 

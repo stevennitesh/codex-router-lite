@@ -5,6 +5,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
@@ -596,8 +597,36 @@ const SWITCHYARD_STRICT_BOOLEAN_FIELDS = Object.freeze([
 ]);
 const SWITCHYARD_AGREEMENT_FIELDS = Object.freeze([
   "apply_patch_tool_type",
+  "default_reasoning_summary",
+  "default_verbosity",
+  "shell_type",
   "tool_mode",
+  "truncation_policy",
 ]);
+const SWITCHYARD_DONOR_FIELDS = Object.freeze([
+  "base_instructions",
+  "model_messages",
+]);
+const SWITCHYARD_INTENTIONALLY_OMITTED_NATIVE_FIELDS = new Set([
+  "multi_agent_reasoning_effort",
+  "supports_reasoning_summaries",
+]);
+
+export function omittedSwitchyardNativeFields(nativeModels, projectedModel, limit = 20) {
+  const omitted = new Set();
+  for (const model of nativeModels || []) {
+    for (const field of Object.keys(model || {})) {
+      if (
+        !owns(projectedModel, field) &&
+        !SWITCHYARD_INTENTIONALLY_OMITTED_NATIVE_FIELDS.has(field)
+      ) {
+        omitted.add(field);
+      }
+    }
+  }
+  const all = [...omitted].sort();
+  return { fields: all.slice(0, limit), total: all.length };
+}
 
 function compatibleArray(members, field) {
   const arrays = members.map((member) => Array.isArray(member[field]) ? member[field] : []);
@@ -667,7 +696,11 @@ function switchyardCompatibilityTemplate(nativeModels, model, donor) {
     }
     return member;
   });
-  const projected = { ...donor };
+  const projected = Object.fromEntries(
+    SWITCHYARD_DONOR_FIELDS
+      .filter((field) => owns(donor, field))
+      .map((field) => [field, donor[field]]),
+  );
   projected.input_modalities = compatibleArray(members, "input_modalities");
   projected.experimental_supported_tools = compatibleArray(
     members,
@@ -686,16 +719,12 @@ function switchyardCompatibilityTemplate(nativeModels, model, donor) {
   projected.web_search_tool_type = webSearchToolTypes.every(
     (value) => value === "text_and_image",
   ) ? "text_and_image" : "text";
-  if (!projected.supports_reasoning_summary_parameter) {
-    delete projected.default_reasoning_summary;
-  }
-  if (!projected.support_verbosity) delete projected.default_verbosity;
   for (const field of SWITCHYARD_STRICT_BOOLEAN_FIELDS) {
     projected[field] = members.some((member) => member[field] === true);
   }
   for (const field of SWITCHYARD_AGREEMENT_FIELDS) {
     const values = members.map((member) => member[field]);
-    if (values.some((value) => value !== values[0])) {
+    if (values.some((value) => !isDeepStrictEqual(value, values[0]))) {
       throw new Error(
         `Routed model ${model.slug} requires compatible ${field} across ${model.compatibilityModels.join(", ")}.`,
       );
@@ -748,7 +777,6 @@ function switchyardCompatibilityTemplate(nativeModels, model, donor) {
       ),
     };
   }
-  delete projected.multi_agent_reasoning_effort;
   return projected;
 }
 

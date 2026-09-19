@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,7 @@ import {
   readSwitchyardConfigContract,
   validateSwitchyardConfigContract,
 } from "../scripts/switchyard-config-contract.mjs";
+import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -164,6 +166,56 @@ test("Switchyard source lock pins the reviewed upstream contribution and compati
     patchBytes.toString("utf8"),
     /chat_text_message_maps_to_a_responses_list_with_string_content/,
   );
+  const packaged = JSON.parse(readFileSync(
+    path.join(root, "maintenance", "windows-package.json"),
+    "utf8",
+  )).files;
+  assert.ok(packaged.includes(`config/switchyard/${lock.upstreamContribution.patch}`));
+  assert.ok(packaged.includes(`config/switchyard/${lock.patch}`));
+});
+
+test("Switchyard accepted proof rejects changed patch and template identities", () => {
+  const configRoot = path.join(root, "config", "switchyard");
+  const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
+  const proof = JSON.parse(readFileSync(
+    path.join(root, "v2_agent", "switchyard", "auto", "proof.json"),
+    "utf8",
+  ));
+  proof.status = "accepted";
+  proof.runtimeBinding.patchSha256 = lock.patchSha256;
+  proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
+    path.join(configRoot, "routes.template.toml"),
+  )).digest("hex");
+  delete proof.runtimeBinding.policyHash;
+  const applicationsRoot = mkdtempSync(path.join(tmpdir(), "switchyard-proof-"));
+  const proofRoot = path.join(applicationsRoot, "switchyard", "auto");
+  mkdirSync(proofRoot, { recursive: true });
+  writeFileSync(path.join(proofRoot, "proof.md"), "# Synthetic proof\n\n## Evidence\n");
+  const models = [{
+    slug: "switchyard/auto",
+    provider: "switchyard",
+    upstreamModel: "gpt-5.6-sol",
+    multiAgentVersion: "v2",
+  }];
+  try {
+    writeFileSync(path.join(proofRoot, "proof.json"), JSON.stringify(proof));
+    assert.equal(validateV2AgentApplications(applicationsRoot, { models }).length, 1);
+    proof.runtimeBinding.patchSha256 = "0".repeat(64);
+    writeFileSync(path.join(proofRoot, "proof.json"), JSON.stringify(proof));
+    assert.throws(
+      () => validateV2AgentApplications(applicationsRoot, { models }),
+      /does not match the pinned source and patch/u,
+    );
+    proof.runtimeBinding.patchSha256 = lock.patchSha256;
+    proof.runtimeBinding.templateSha256 = "0".repeat(64);
+    writeFileSync(path.join(proofRoot, "proof.json"), JSON.stringify(proof));
+    assert.throws(
+      () => validateV2AgentApplications(applicationsRoot, { models }),
+      /does not match the pinned source and patch/u,
+    );
+  } finally {
+    rmSync(applicationsRoot, { recursive: true, force: true });
+  }
 });
 
 test("Switchyard runtime status does not misreport access denial as missing", () => {
@@ -186,12 +238,13 @@ test("Switchyard's sole classifier matches the accepted bounded Jev contract", (
   );
   const autoRoute = /\[routes\.auto\]([\s\S]*?)(?=\n\[)/u.exec(template)?.[1];
   assert.match(autoRoute, /type\s*=\s*"type_safe_classifier"/u);
-  assert.match(autoRoute, /policy_hash\s*=\s*"5fd25e076c6997fe4e997ba313206766e896bcf082ac83e29e57ba54f989748f"/u);
+  assert.doesNotMatch(autoRoute, /policy_hash/u);
   assert.match(autoRoute, /classify_trigger\s*=\s*"user_turn"/u);
   assert.doesNotMatch(template, /\[targets\.luna_high\]/u);
   assert.doesNotMatch(template, /type\s*=\s*"llm_classifier"/u);
   assert.match(template, /base_url\s*=\s*"https:\/\/openrouter\.ai\/api\/alpha\/decisions"/u);
   assert.match(template, /model\s*=\s*"typesafe\/jev-1\.13"/u);
+  assert.match(template, /timeout_ms\s*=\s*3000/u);
 });
 
 test("Switchyard answer targets match the checked catalog compatibility families", () => {
@@ -201,47 +254,27 @@ test("Switchyard answer targets match the checked catalog compatibility families
   assert.equal(contract.answers.length, 4);
 });
 
-test("Switchyard evaluation binds the selected binary and ordered source chain", () => {
-  const source = readFileSync(path.join(root, "scripts", "evaluate-switchyard-a2.mjs"), "utf8");
-  assert.match(source, /--candidate-binary/u);
-  assert.match(source, /--candidate-config/u);
-  assert.match(source, /--installed-baseline/u);
-  assert.match(source, /lock\.upstreamContribution\.patchSha256/u);
-  assert.match(source, /role: "reviewed-upstream-contribution"/u);
-  assert.match(source, /role: "router-compatibility"/u);
-  assert.doesNotMatch(source, /a70a1fba2f975b6eb0f1066a2cd2a82bfc7d3052/u);
-  assert.doesNotMatch(source, /72c3e4b77be8a60ae9af00ca80dab1a323d92167a337a8658c484790030795ea/u);
-});
-
-test("B2 calibration uses the candidate runtime and a self-verifying frozen policy", () => {
-  const evaluator = readFileSync(path.join(root, "scripts", "evaluate-switchyard-b2.mjs"), "utf8");
+test("Switchyard keeps one maintained routing evaluator over the actual decision path", () => {
+  const corpus = JSON.parse(readFileSync(
+    path.join(root, "docs", "switchyard-routing-corpus.json"),
+    "utf8",
+  ));
+  const evaluator = readFileSync(
+    path.join(root, "scripts", "evaluate-switchyard-routing.mjs"),
+    "utf8",
+  );
+  assert.equal(corpus.development.length, 20);
+  assert.equal(corpus.holdout.length, 20);
+  assert.equal(corpus.development.filter((item) => item.boundary).length, 6);
+  assert.equal(corpus.gates.maximumRetriesPerRequest, 1);
+  assert.equal(corpus.gates.minimumAcceptablePerSplit, 17);
+  assert.equal(corpus.gates.maximumSevereUnderRoutes, 0);
+  assert.match(evaluator, /fetchImpl\(`\$\{base\}\/v1\/decision`/u);
+  assert.match(evaluator, /request: \{ model: "switchyard-auto", input: item\.input/u);
+  assert.doesNotMatch(evaluator, /fetch\("https:\/\/openrouter\.ai/u);
+  assert.match(evaluator, /candidate_frozen_before_holdout/u);
   const materializer = readFileSync(path.join(root, "scripts", "materialize-switchyard-routes.mjs"), "utf8");
-  const evidence = JSON.parse(readFileSync(
-    path.join(root, "docs", "history", "2026-09-18-switchyard-b2-evidence.json"),
-    "utf8",
-  ));
-  const { sha256, ...policy } = evidence.policy;
-
-  assert.match(evaluator, /fetch\(`\$\{base\}\/v1\/decision`/u);
-  assert.doesNotMatch(evaluator, /fetch\(endpoint/u);
-  assert.match(evaluator, /freshHoldoutCorpusSha256/u);
-  assert.match(evaluator, /request start through parsed response body/u);
-  assert.match(evaluator, /if \(!evidence\.promotionEligible \|\| evidence\.failures\.length\) process\.exitCode = 1/u);
-  assert.match(evaluator, /known_critical_training_underroute/u);
-  assert.match(evaluator, /evidence\.holdoutGatePassed && evidence\.promotionBlockers\.length === 0/u);
-  assert.match(materializer, /computedPolicyHash !== recordedPolicyHash/u);
-  assert.match(materializer, /configuredRoute !== route/u);
-  assert.equal(createHash("sha256").update(JSON.stringify(policy)).digest("hex"), sha256);
-  assert.equal(policy.threshold, evidence.selectedThreshold);
-  assert.equal(evidence.results.length, evidence.corpus.total);
-  assert.equal(evidence.holdoutGatePassed, true);
-  assert.equal(evidence.promotionEligible, true);
-  assert.deepEqual(evidence.promotionBlockers, []);
-  const x03 = JSON.parse(readFileSync(
-    path.join(root, "docs", "history", "2026-09-18-switchyard-b2-r3-x03-counterfactual.json"),
-    "utf8",
-  ));
-  assert.equal(x03.status, "semantically_reviewed_pending_lead_decision");
-  assert.equal(x03.results.length, 2);
-  assert.equal(x03.results.flatMap((result) => result.legs).every((leg) => leg.semanticReview.allPassed), true);
+  assert.match(materializer, /validateSwitchyardConfigContract/u);
+  assert.doesNotMatch(materializer, /docs.*history|evidencePath|policy_hash/isu);
+  assert.doesNotMatch(evaluator, /acceptedC1|SY-B2|SY-FOLLOWUP-C2|predecessorEvidence/u);
 });
