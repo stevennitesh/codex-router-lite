@@ -1,8 +1,10 @@
 # Switchyard feedback follow-up delivery plan
 
-Status: proposed revision 4, 2026-09-18. Planning only; not executing.
+Status: proposed revision 5, 2026-09-18. Planning only; not executing.
 Whole-change review baseline: `e8d285b85fa1ba27e62460776bbe3074a255f102`.
-Revision 4 supersedes revisions 1–3, including the assistant-context experiment,
+Revision 5 retains revision 4's simplified scope and clarifies selector ownership,
+catalog boundaries and mechanical versus semantic acceptance. It supersedes the
+earlier assistant-context experiment,
 Policy C, unknown-field publication blocking and mandatory 24 answer runs.
 The [handoff](switchyard-followup-handoff.md) owns execution arrangements.
 
@@ -42,6 +44,14 @@ Preserve text belonging to that turn in order. No opening task, assistant answer
 reasoning, encrypted history, tool outputs or summarizer. Do not mutate the native
 answer request.
 
+Own this selector in the TypeSafe/Jev path. The patched `task_messages()` helper
+is shared with other classifier/judge paths: do not change its semantics globally
+to implement this policy. Use one small Jev-specific selector returning selected
+text and a same-turn non-text indicator, reusing decoder semantics. Scan backward
+past tool-result pseudo-user messages; a media-only genuine user turn must still
+be selected rather than falling back to older text. Test that other classifier
+paths retain their existing behavior. Do not add a general state-selection API.
+
 Inspect media only in the selected user turn: image/audio/video/file content
 causes zero-call Sol fallback with the original payload preserved. Old media
 must not veto later text. Continuation affinity remains ahead of classification:
@@ -79,13 +89,19 @@ a bounded warning that earlier evaluation may not apply; continue serving.
 Wrong families/malformed responses remain errors. Compare builds in evaluation
 reports; do not add a runtime `evaluation_status` subsystem.
 
-Build the mixed catalog from known projection rules and explicitly owned donor/
-descriptive fields. Preserve common capabilities, strict safety flags and neutral
-instructions. Never spread the complete donor. Unknown fields are omitted and
-do not automatically block publication. Test identical, differing and nested
-unknown fields. Omission does not prove future compatibility: existing Codex-update
-review must inspect new required/protocol/safety fields and add explicit rules
-when needed. Do not assume an installed-catalog check catches every semantic change.
+Build the mixed catalog from known top-level capability/configuration projection
+rules and explicitly donor-owned instruction/descriptive structures. Preserve
+common capabilities, strict safety flags and neutral instructions. In particular,
+preserve donor-owned `base_instructions` and `model_messages`, including nested
+prompt metadata, subject to existing identity neutralization and explicit overrides.
+Never spread the complete donor or recursively sanitize all instruction metadata.
+Unknown top-level fields are omitted without blocking publication. Add a bounded
+field-name-only warning to the existing development/Codex-update check when native
+fields are outside both explicit sets; no new runtime monitor. Test unknown
+top-level fields with scalar/object values and preservation of new nested metadata
+inside donor-owned structures. Omission does not prove future compatibility:
+update review must inspect required/protocol/safety semantics and add rules when
+needed. Do not assume a catalog check catches every semantic change.
 
 Reproduce response identity loss on valid-envelope/unsupported-tool paths.
 Decouple identity only if the reproduction demonstrates namespace bypass loses it.
@@ -128,9 +144,15 @@ are examples. Do not claim optimal roles or general routing accuracy.
 Freeze 20 development / 20 held-out cases, acceptable targets and severe failures
 before output. Old B2 cases remain development/regression evidence. C2's baseline
 is accepted C1, including latest-user-only state, with existing role descriptions,
-0.35 threshold and Sol uncertainty fallback. C1 must separately prove the selector
-fixes the media defect without material conversational regressions; adopting C1
-as the control does not waive that evidence.
+0.35 threshold and Sol uncertainty fallback. C1 proves mechanical properties:
+genuine-turn selection, historical/current-media distinction, unchanged answer
+payload and continuation affinity. It does not claim semantic routing quality.
+C2 checks acceptable choices for short follow-ups such as “do it”, “continue”,
+“review that” and “fix this”, together with topic switches. Their acceptable sets
+must be declared before output. Even if A is retained unchanged, evaluate these
+behaviors: matching a C1 control cannot hide a bad latest-user-only choice.
+A material semantic failure blocks promotion of that selector; unrelated fixes
+can proceed with the existing selector, or the lead can propose a focused revision.
 
 On development data compare only:
 - A: current argmax; confidence below 0.35 falls back to Sol.
@@ -142,6 +164,8 @@ duplicate paid calls. Separate criteria changes from fallback changes.
 Predeclare six development boundary cases; require A/B disagreement on at least
 three before recommending B. Otherwise retain A; do not manufacture qualifying
 cases. Handcrafted vectors prove mechanics, not natural classifier behavior.
+If the confidence gate never fires, record it as dormant in observed cases and
+retain A. Do not start another calibration study or remove the gate in this scope.
 
 Select one candidate on development evidence and freeze it. Holdout compares only
 C1 against that candidate, never unchosen alternatives. Require zero severe
@@ -166,8 +190,8 @@ boundaries or when no changed selection needs proof.
 
 | Gate | Scope and evidence |
 | --- | --- |
-| C1 — engineering fixes | C1a: latest-user/media selection, timeout, minimal health/errors, build warning, identity reproduction and privacy investigation. C1b: history-free materialization, hash removal, explicit projection and package closure. One review covers both; preserve criteria and A. Show real-decoder regressions and negative provenance tests. |
-| C2 — bounded routing check | Clarify criteria and compare A/B in an isolated candidate using frozen cases. Run only justified outcome probes. Recommend promotion or retain baseline with limitations. No assistant context, Policy C or new framework. |
+| C1 — engineering fixes | C1a: Jev-only selection mechanics, timeout, minimal health/errors, build warning, identity reproduction and privacy investigation. C1b: history-free materialization, hash removal, top-level projection and package closure. One review covers both; preserve criteria and A. Show real-decoder mechanical regressions, unchanged other classifiers and negative provenance tests; no semantic routing-quality claim. |
+| C2 — bounded routing check | Check semantic acceptability of latest-user-only state, clarify criteria and compare A/B in an isolated candidate using frozen cases. Run only justified outcome probes. Recommend promotion or retain existing behavior with limitations. No assistant context, Policy C or new framework. |
 | FINAL — integration | Consolidate scripts/docs, review the complete change against the original baseline, and produce a reproducible release candidate. Earlier gates do not replace final integration review. |
 
 Run required Router checks, relevant integration tests, Rust tests/fmt/clippy,
