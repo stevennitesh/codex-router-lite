@@ -9,6 +9,8 @@
   },
   "scripts": {
     "check": "node scripts-check.mjs",
+    "verify": "npm run check && npm test",
+    "audit:ci": "node scripts/audit-dependencies.mjs",
     "test": "node --test test/*.test.mjs",
     "test:stress": "node --test test/router-stress.test.mjs"
   },

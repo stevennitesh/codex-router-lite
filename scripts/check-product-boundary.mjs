@@ -42,12 +42,13 @@ const forbiddenPaths = [
   /^skills\/codex-router-media\//u,
 ];
 
-const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root })
+// Check the candidate before staging too; CI sees new files as tracked.
+const candidateFiles = [...new Set(execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root })
   .toString("utf8")
   .split("\0")
   .filter(Boolean)
   .map((file) => file.replaceAll("\\", "/"))
-  .filter((file) => existsSync(path.join(root, file)));
+  .filter((file) => existsSync(path.join(root, file))))];
 
 for (const file of requiredEntrypoints) {
   assert.ok(existsSync(path.join(root, file)), `missing retained entrypoint: ${file}`);
@@ -59,7 +60,7 @@ for (const dispatcher of ["src/start.mjs", "install.ps1", "model-router.ps1", "d
     assert.ok(existsSync(path.join(root, target)), `${dispatcher} references missing ${target}`);
   }
 }
-for (const file of tracked) {
+for (const file of candidateFiles) {
   assert.ok(!forbiddenPaths.some((pattern) => pattern.test(file)), `forbidden product artifact: ${file}`);
 }
 
@@ -96,7 +97,7 @@ for (const file of [
   assert.ok(packageManifest.files.includes(file), `retained package file is absent: ${file}`);
 }
 
-const runtimeFiles = tracked.filter(
+const runtimeFiles = candidateFiles.filter(
   (file) => file.startsWith("src/") || /^(?:install|deploy-codex-router|restart-codex-router)\.ps1$/u.test(file),
 );
 const forbiddenRuntimeText = [
@@ -121,4 +122,4 @@ for (const file of runtimeFiles) {
   }
 }
 
-console.log(`product boundary passed (${tracked.length} tracked files, ${packageManifest.files.length} packaged files)`);
+console.log(`product boundary passed (${candidateFiles.length} candidate files, ${packageManifest.files.length} packaged files)`);
