@@ -12,6 +12,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 - [Switchyard upgrade plan, 2026-09-18](2026-09-18-switchyard-upgrade-plan.md)
 - [Switchyard upgrade handoff, 2026-09-18](2026-09-18-switchyard-upgrade-handoff.md)
 - [Switchyard follow-up evaluator snapshot, 2026-09-18](2026-09-18-switchyard-c2-evaluator.mjs)
+- [Switchyard follow-up release certification, 2026-09-18](2026-09-18-switchyard-followup-release-certification.json)
 
 Exact-route proof records remain in [v2_agent](../../v2_agent/README.md) because
 the application checker consumes those paths. Each proof applies only to its

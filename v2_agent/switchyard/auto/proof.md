@@ -1,49 +1,41 @@
-# switchyard/auto v2 evidence
+# switchyard/auto v2 certification
 
-Status: historical evidence for the deployed Phase B Jev generation at Router
-commit `7f707bb773aa083144904fa027ef331bd9a1c524`. The C1 source candidate changes
-bound runtime identities, so the route remains v1 until a deployed candidate is
-certified again.
-
+Accepted exact-route evidence for deployed Router `096fb8704ebc83df2aecec3aa46228578b639686`.
 Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
 
-A fresh native Sol Medium parent on codex-cli 0.155.0-alpha.9.2 spawned
-`router_switchyard_auto` with `fork_turns: none` in the workspace-write sandbox
-with automatic approval review. It waited for the first child turn to finish,
+A fresh native Sol parent on codex-cli 0.155.0-alpha.9.2 spawned
+`router_switchyard_auto` with no inherited conversation in the workspace-write
+sandbox with automatic approval review. It waited for the first child turn,
 sent the second request to that same child, waited again, and cleaned up only
-after the second turn had completed.
+after completion.
 
-- Window: 2026-09-18T22:49:42.415Z through 2026-09-18T22:50:04.569Z.
-- Two encrypted native handoffs were recorded in the child rollout.
-- The child invoked the native execution tool for the synthetic calculation
-  `19+23`; the sandboxed result was `42`, with no unsandboxed retry.
-- First marker: `CERT_FIRST_OK` at 2026-09-18T22:49:54.438Z.
-- Same-child follow-up marker: `CERT_SECOND_OK` at
-  2026-09-18T22:50:02.190Z.
-- Four exact-route Router completions succeeded with HTTP 200. Switchyard used
-  Jev provider version `typesafe/jev-1.13-20260917`, selected Luna Max for this
-  bounded task, and recorded no fallback in the certification window.
+- Window: 2026-09-19T02:49:01.007Z through 2026-09-19T02:49:17.833Z.
+- Two encrypted native handoffs were present in the same child rollout.
+- The child invoked native execution for `19+23`; the sandboxed result was `42`,
+  with no unsandboxed retry.
+- First marker: `CERT_FIRST_OK` at 2026-09-19T02:49:07.943Z.
+- Same-child follow-up: `CERT_SECOND_OK` at 2026-09-19T02:49:12.805Z.
+- All three exact-route completions returned HTTP 200. Jev
+  `typesafe/jev-1.13-20260917` selected Sol Medium and recorded no fallback in
+  this certification window.
 
 | Router completion (UTC) | Duration (ms) | Status |
 | --- | ---: | ---: |
-| 2026-09-18T22:49:47.468Z | 4596 | 200 |
-| 2026-09-18T22:49:51.887Z | 3043 | 200 |
-| 2026-09-18T22:49:54.452Z | 2540 | 200 |
-| 2026-09-18T22:50:02.230Z | 2869 | 200 |
+| 2026-09-19T02:49:05.342Z | 4312 | 200 |
+| 2026-09-19T02:49:07.952Z | 1560 | 200 |
+| 2026-09-19T02:49:12.822Z | 2056 | 200 |
 
-The machine-readable proof binds public upstream base `ee3715d1`, reviewed PR
-head `92c84a0c`, both ordered patch hashes, binary hash, private generated-route
-hash, private generated-route hash, and deployed Router candidate. The bounded reviewer
-record is
-[`docs/history/2026-09-18-switchyard-b3-certification.json`](../../../docs/history/2026-09-18-switchyard-b3-certification.json).
-Only sanitized summaries and rollout hashes are retained; no encrypted payloads,
-private conversations, or thread identifiers are copied into the repository.
+The machine-readable proof binds upstream base and reviewed contribution, the
+compatibility patch, binary, private generated routes, canonical template, and
+the deployed Router candidate. The sanitized reviewer record is
+[`docs/history/2026-09-18-switchyard-followup-release-certification.json`](../../../docs/history/2026-09-18-switchyard-followup-release-certification.json).
+No encrypted payload, conversation text, or thread identifier is retained.
 
 ## Limits
 
 This is native CLI v2 evidence, not a desktop GUI WebSocket soak or an exhaustive
 provider fault test. Shared app-tool, relay, catalog, and lifecycle regressions
 remain covered by the offline suite. Refresh after any bound identity or contract
-changes.
+change.

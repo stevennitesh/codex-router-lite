@@ -1,6 +1,6 @@
 # Switchyard feedback follow-up delivery plan
 
-Status: implementation accepted after final lead review, 2026-09-18. C1 was
+Status: released and exact-runtime certified, 2026-09-18. C1 was
 accepted after correction round 1 of 2 and C2 was accepted after correction round
 1 of 2. The unchanged frozen evaluation selected the generic criteria
 with Policy A and passed every predeclared development and holdout gate. C1 scored
@@ -29,8 +29,13 @@ The canonical template now contains exactly the accepted criteria. Its SHA-256 i
 `fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd`;
 materializing its private Router URL as the evaluator did produces SHA-256
 `b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b`,
-matching the evaluated candidate config. Release and renewed exact-runtime proof
-remain pending separate authorization, so the checked route stays draft v1.
+matching the evaluated candidate config. Source candidate
+`096fb8704ebc83df2aecec3aa46228578b639686` is deployed with binary SHA-256
+`06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709`
+and generated-route SHA-256
+`502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2`.
+Switchyard and the three affected exact OpenRouter routes passed renewed native
+v2 certification; the checked Switchyard route is now accepted v2.
 Revision 6 retains the simplified scope, narrows health to configuration readiness,
 and adds explicit documentation/context acceptance. It supersedes the
 earlier assistant-context experiment,
@@ -41,9 +46,10 @@ Final validation passed: 248 automated tests, repository/package checks, the
 installed native catalog check, and Rust formatting, lint, affected tests and
 release build. The lead independently reran the 21 focused evaluator/runtime
 tests and found no remaining actionable review findings. Maintained tooling is
-1,494 lines smaller. Synthetic evaluation supports this bounded candidate only;
-it does not establish general routing accuracy. Implementation changes remain
-uncommitted pending release preparation.
+1,494 lines smaller. Live verification recorded no required failure and all four
+native certifications completed tool use and same-child follow-up. Synthetic
+evaluation supports this bounded candidate only; it does not establish general
+routing accuracy.
 
 ## Purpose and scope
 
@@ -54,7 +60,9 @@ efforts, capability security, media forwarding, cancellation, compaction and
 exact-runtime v2 certification. This is a personal router cleanup, not a routing
 research platform. Initial execution authorization covered the offline C1
 candidate. The subsequent C2 assignment authorized its bounded synthetic paid
-calls; private-conversation export, push and live deployment remain outside scope.
+calls, and final release authorization covered commit, push, deployment, live
+smoke and renewed synthetic native certification. No private conversation was
+used or exported.
 The [completed upgrade record](history/2026-09-18-switchyard-upgrade-plan.md) remains historical.
 
 ## Recommended reconciliation

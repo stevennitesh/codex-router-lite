@@ -7,38 +7,38 @@
   "officialSources": [
     "https://openrouter.ai/unbiased/pareto"
   ],
-  "testedAt": "2026-09-18T11:42:31.692Z",
+  "testedAt": "2026-09-19T02:52:47.357Z",
   "routerVersion": "0.5.1",
   "endpointProvider": "unbiased",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-18T11:42:16.495Z"
+      "observedAt": "2026-09-19T02:52:39.661Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-18T11:42:15.236Z",
+      "observedAt": "2026-09-19T02:52:30.367Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-18T11:42:07.162Z"
+      "observedAt": "2026-09-19T02:52:23.633Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-18T11:42:16.518Z"
+      "observedAt": "2026-09-19T02:52:31.826Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-18T11:42:23.627Z"
+      "observedAt": "2026-09-19T02:52:39.668Z"
     }
   },
-  "codexVersion": "codex-cli 0.155.0-alpha.2.6",
+  "codexVersion": "codex-cli 0.155.0-alpha.9.2",
   "executionSurface": "codex-cli",
-  "routerCommit": "934caf23233a8ef5da8d71caf1339cc6b6f3dc05"
+  "routerCommit": "096fb8704ebc83df2aecec3aa46228578b639686"
 }

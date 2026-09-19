@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SY-FOLLOWUP-RELEASE",
+  "testedAt": "2026-09-19T02:52:47.357Z",
+  "execution": {
+    "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+    "parentModel": "gpt-5.6-sol",
+    "sandbox": "workspace-write with automatic approval review",
+    "freshNormalUserDirectories": true
+  },
+  "runtimeBinding": {
+    "routerCommit": "096fb8704ebc83df2aecec3aa46228578b639686",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "745556b814fee78c898482c38b1b672e95e3eddcc4ff6a1e1a9b4eebd6bdeccb",
+    "binarySha256": "06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2"
+  },
+  "liveVerification": {
+    "path": "docs/switchyard-live-release-evidence.json",
+    "fileSha256": "2891ca175fc2108d460ccb594f96fa65aade303b16946ef4f6a19691ce7da4e3",
+    "evidenceSha256": "43c6319f9f3a79d41e5c0b22b5c119b78d67216d91a7177264c2dad6c8544728",
+    "requiredFailures": []
+  },
+  "routes": [
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "testedAt": "2026-09-19T02:49:17.833Z",
+      "window": {
+        "startedAt": "2026-09-19T02:49:01.007Z",
+        "endedAt": "2026-09-19T02:49:17.833Z"
+      },
+      "nativeCollaboration": {
+        "sameChildFollowUp": true,
+        "cleanupAfterSecondTurn": true,
+        "encryptedHandoffs": [
+          "2026-09-19T02:49:01.007Z",
+          "2026-09-19T02:49:10.752Z"
+        ]
+      },
+      "tool": {
+        "name": "exec",
+        "syntheticArithmeticObserved": true,
+        "result": 42,
+        "calledAt": "2026-09-19T02:49:05.309Z",
+        "completedAt": "2026-09-19T02:49:06.323Z",
+        "unsandboxedRetry": false
+      },
+      "markers": {
+        "first": {
+          "value": "CERT_FIRST_OK",
+          "observedAt": "2026-09-19T02:49:07.943Z"
+        },
+        "second": {
+          "value": "CERT_SECOND_OK",
+          "observedAt": "2026-09-19T02:49:12.805Z"
+        }
+      },
+      "routerCompletions": [
+        {
+          "at": "2026-09-19T02:49:05.342Z",
+          "status": 200,
+          "totalMs": 4312
+        },
+        {
+          "at": "2026-09-19T02:49:07.952Z",
+          "status": 200,
+          "totalMs": 1560
+        },
+        {
+          "at": "2026-09-19T02:49:12.822Z",
+          "status": 200,
+          "totalMs": 2056
+        }
+      ],
+      "rolloutSha256": {
+        "parent": "aaeb7dbfa1607840f3df5552a97bd422cff876c6354e986c9281753a548ce6ca",
+        "child": "54839a6dea096f8e0bc54be17b29f97cb36ef7f321d211685c57e1b17f2f2e4e"
+      },
+      "requiredFailures": []
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash",
+      "role": "router_openrouter_glm_5_3_flash",
+      "testedAt": "2026-09-19T02:50:38.790Z",
+      "window": {
+        "startedAt": "2026-09-19T02:49:52.631Z",
+        "endedAt": "2026-09-19T02:50:38.790Z"
+      },
+      "nativeCollaboration": {
+        "sameChildFollowUp": true,
+        "cleanupAfterSecondTurn": true,
+        "encryptedHandoffs": [
+          "2026-09-19T02:49:52.631Z",
+          "2026-09-19T02:50:26.207Z"
+        ]
+      },
+      "tool": {
+        "name": "exec_command",
+        "syntheticArithmeticObserved": true,
+        "result": 42,
+        "calledAt": "2026-09-19T02:50:16.408Z",
+        "completedAt": "2026-09-19T02:50:17.417Z",
+        "unsandboxedRetry": false
+      },
+      "markers": {
+        "first": {
+          "value": "CERT_FIRST_OK",
+          "observedAt": "2026-09-19T02:50:23.407Z"
+        },
+        "second": {
+          "value": "CERT_SECOND_OK",
+          "observedAt": "2026-09-19T02:50:33.618Z"
+        }
+      },
+      "routerCompletions": [
+        {
+          "at": "2026-09-19T02:50:16.415Z",
+          "status": 200,
+          "totalMs": 23761
+        },
+        {
+          "at": "2026-09-19T02:50:23.370Z",
+          "status": 200,
+          "totalMs": 5867
+        },
+        {
+          "at": "2026-09-19T02:50:33.612Z",
+          "status": 200,
+          "totalMs": 7387
+        }
+      ],
+      "rolloutSha256": {
+        "parent": "d54900e6f1ab4c31ec813168769639be42972ce793ec69611257b09ce6a042c5",
+        "child": "e17100e1e94b711536a45d4543e11a2b6ffd141f40551f855d0024c216d13662"
+      },
+      "requiredFailures": []
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash-gmicloud",
+      "role": "router_openrouter_glm_5_3_flash_gmicloud",
+      "testedAt": "2026-09-19T02:52:03.152Z",
+      "window": {
+        "startedAt": "2026-09-19T02:51:15.190Z",
+        "endedAt": "2026-09-19T02:52:03.152Z"
+      },
+      "nativeCollaboration": {
+        "sameChildFollowUp": true,
+        "cleanupAfterSecondTurn": true,
+        "encryptedHandoffs": [
+          "2026-09-19T02:51:15.190Z",
+          "2026-09-19T02:51:41.081Z"
+        ]
+      },
+      "tool": {
+        "name": "exec_command",
+        "syntheticArithmeticObserved": true,
+        "result": 42,
+        "calledAt": "2026-09-19T02:51:30.235Z",
+        "completedAt": "2026-09-19T02:51:31.641Z",
+        "unsandboxedRetry": false
+      },
+      "markers": {
+        "first": {
+          "value": "CERT_FIRST_OK",
+          "observedAt": "2026-09-19T02:51:38.398Z"
+        },
+        "second": {
+          "value": "CERT_SECOND_OK",
+          "observedAt": "2026-09-19T02:51:58.346Z"
+        }
+      },
+      "routerCompletions": [
+        {
+          "at": "2026-09-19T02:51:30.249Z",
+          "status": 200,
+          "totalMs": 15038
+        },
+        {
+          "at": "2026-09-19T02:51:38.362Z",
+          "status": 200,
+          "totalMs": 6639
+        },
+        {
+          "at": "2026-09-19T02:51:58.336Z",
+          "status": 200,
+          "totalMs": 17238
+        }
+      ],
+      "rolloutSha256": {
+        "parent": "f6b8f074e88ba1abeed48297c150fc3b21e60b0e76e2c2ba272a46d27e51d9b7",
+        "child": "2ec921c5e5b65601816d13dfb8f4fc2166a59db7fa2815ecb24089b0fe3845f2"
+      },
+      "requiredFailures": []
+    },
+    {
+      "slug": "openrouter/pareto",
+      "role": "router_openrouter_pareto",
+      "testedAt": "2026-09-19T02:52:47.357Z",
+      "window": {
+        "startedAt": "2026-09-19T02:52:23.633Z",
+        "endedAt": "2026-09-19T02:52:47.357Z"
+      },
+      "nativeCollaboration": {
+        "sameChildFollowUp": true,
+        "cleanupAfterSecondTurn": true,
+        "encryptedHandoffs": [
+          "2026-09-19T02:52:23.633Z",
+          "2026-09-19T02:52:35.380Z"
+        ]
+      },
+      "tool": {
+        "name": "exec_command",
+        "syntheticArithmeticObserved": true,
+        "result": 42,
+        "calledAt": "2026-09-19T02:52:29.343Z",
+        "completedAt": "2026-09-19T02:52:30.367Z",
+        "unsandboxedRetry": false
+      },
+      "markers": {
+        "first": {
+          "value": "CERT_FIRST_OK",
+          "observedAt": "2026-09-19T02:52:31.826Z"
+        },
+        "second": {
+          "value": "CERT_SECOND_OK",
+          "observedAt": "2026-09-19T02:52:39.668Z"
+        }
+      },
+      "routerCompletions": [
+        {
+          "at": "2026-09-19T02:52:29.347Z",
+          "status": 200,
+          "totalMs": 5691
+        },
+        {
+          "at": "2026-09-19T02:52:31.798Z",
+          "status": 200,
+          "totalMs": 1356
+        },
+        {
+          "at": "2026-09-19T02:52:39.661Z",
+          "status": 200,
+          "totalMs": 4267
+        }
+      ],
+      "rolloutSha256": {
+        "parent": "0acc1999d8e87934c8722876bc62a049928c5ce525445a7c346b7b25487ddbf5",
+        "child": "2e28265858e6d48af66aa6af680ac132e858145d7fb68d34f92ebe9f9c7bfb8e"
+      },
+      "requiredFailures": []
+    }
+  ],
+  "privatePayloadsRetained": false,
+  "requiredFailures": []
+}

@@ -9,9 +9,9 @@ Load only the branch needed for the task:
 
 - Implement or review the planned simplicity/correctness follow-up: read the
   [active plan](../../docs/switchyard-followup-plan.md) and its
-  [handoff](../../docs/switchyard-followup-handoff.md). The final source
-  candidate is ready for review; the installed runtime remains unchanged until
-  a separately authorized release and exact-runtime certification.
+  [handoff](../../docs/switchyard-followup-handoff.md). The accepted source
+  candidate was deployed and exact-runtime certification was renewed on
+  2026-09-18; those records bind the installed candidate named in the handoff.
 - Request, catalog, WebSocket, or trust boundaries: the sections below.
 - Startup, health, provider selection, or trace evidence: [runtime operations](runtime.md).
 - Upstream pin or patch changes: [source maintenance](maintenance.md#update-the-pin-and-patch).

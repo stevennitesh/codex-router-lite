@@ -1,14 +1,14 @@
 # Switchyard feedback execution handoff
 
-Status: implementation accepted after final lead review, 2026-09-18. C1 and
-C2 were each accepted after correction round 1 of 2. Release, deployment and
-renewed exact-runtime proof remain pending separate authorization; the checked
-route remains draft v1 and the installed runtime is unchanged.
-Worker custody has returned to the lead. Final review has no remaining actionable
-findings: 248 automated tests and repository/native catalog/Rust checks passed;
-the lead independently reran the 21 focused evaluator/runtime tests. Implementation
-changes remain uncommitted. The next release step is to commit the reviewed
-candidate, deploy it and renew exact-runtime certification when authorized.
+Status: release completed and exact-runtime proof renewed, 2026-09-18. C1 and
+C2 were each accepted after correction round 1 of 2. Candidate
+`096fb8704ebc83df2aecec3aa46228578b639686` was committed, pushed and deployed
+through the rollback-owning transaction. Switchyard and the three affected exact
+OpenRouter routes passed native v2 certification with tool use, two encrypted
+handoffs and same-child follow-up. The retained rollback set remains available.
+Final review and release checks have no remaining actionable findings: 248
+automated tests and repository/native catalog/Rust checks passed; the lead also
+reran the 21 focused evaluator/runtime tests.
 The frozen corpus SHA-256 is
 `af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165`;
 the review-candidate evidence SHA-256 is
@@ -26,6 +26,10 @@ consequential development change requiring answer-model calls. Policy A/B had no
 development disagreements, so A remains selected.
 The final canonical template SHA-256 is
 `fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd`.
+The deployed binary SHA-256 is
+`06950a63e244e54c22b7cc43eb69afd5ab89ff4cd3caa1a06b5d6343386fd709`;
+the generated private route SHA-256 is
+`502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2`.
 Its evaluator-style materialization SHA-256 is
 `b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b`,
 exactly matching the accepted C2 candidate config. The exact evaluated harness is
@@ -33,6 +37,10 @@ preserved at
 [`docs/history/2026-09-18-switchyard-c2-evaluator.mjs`](history/2026-09-18-switchyard-c2-evaluator.mjs);
 ongoing checks use the smaller maintained routing evaluator and the existing live
 verification entry point.
+The release live-smoke record is
+[`docs/switchyard-live-release-evidence.json`](switchyard-live-release-evidence.json),
+and the sanitized four-route native certification record is
+[`docs/history/2026-09-18-switchyard-followup-release-certification.json`](history/2026-09-18-switchyard-followup-release-certification.json).
 Authoritative scope: [follow-up plan revision 6](switchyard-followup-plan.md).
 The earlier [upgrade handoff](history/2026-09-18-switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
