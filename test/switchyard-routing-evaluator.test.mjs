@@ -176,24 +176,28 @@ test("C2 review evidence binds the repaired evaluator and every frozen gate", ()
     path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r1-accepted-evidence.json"),
     "utf8",
   ));
-  const evaluatorHash = createHash("sha256").update(readFileSync(
+  const canonicalTextHash = (file) => createHash("sha256").update(
+    readFileSync(file, "utf8").replace(/\r\n?/gu, "\n"),
+    "utf8",
+  ).digest("hex");
+  const evaluatorHash = canonicalTextHash(
     path.join(root, "docs", "history", "2026-09-18-switchyard-c2-evaluator.mjs"),
-  )).digest("hex");
-  const predecessorHash = createHash("sha256").update(readFileSync(
+  );
+  const predecessorHash = canonicalTextHash(
     path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r0-failed-evidence.json"),
-  )).digest("hex");
+  );
   const canonicalTemplate = readFileSync(
     path.join(root, "config", "switchyard", "routes.template.toml"),
     "utf8",
-  );
-  const canonicalConfigHash = createHash("sha256").update(canonicalTemplate.replace(
+  ).replace(/\r\n?/gu, "\n");
+  const canonicalConfigSourceHash = createHash("sha256").update(canonicalTemplate.replace(
     "__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__",
     "http://127.0.0.1:1/v1",
   )).digest("hex");
   assert.equal(evidence.status, "c2_gates_passed");
   assert.equal(evidence.promotionEligible, true);
   assert.equal(evidence.identities.evaluatorSha256, evaluatorHash);
-  assert.equal(evidence.identities.genericConfigSha256, canonicalConfigHash);
+  assert.equal(evidence.identities.genericConfigSourceSha256, canonicalConfigSourceHash);
   assert.equal(evidence.predecessorEvidence.sha256, predecessorHash);
   assert.equal(evidence.paidDecisionRequests, 80);
   assert.equal(evidence.development.selectedCriteria, "genericCandidate");

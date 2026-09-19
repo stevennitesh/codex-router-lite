@@ -16,6 +16,7 @@
     "corpusSha256": "af12fc94161a419b7eafb689e7c0fcfd083763b909ddc78decc4b2646a5d8165",
     "c1ConfigSha256": "ebf81ada3aadfa000f29ec751d59f57afb6daad67510202bed41ebca9344413d",
     "genericConfigSha256": "b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b",
+    "genericConfigSourceSha256": "0e1b3c6b1f7e1b6973267ac8da46ff981fd14627948b928a35cf0d0ee4fa5499",
     "c1CriteriaSha256": "33dadb02116f16729d47aa305b1cda9264d72b79524ab18aabf02eb020381f88",
     "genericCriteriaSha256": "b9aa7024cb733a3891555751e123c3ae86db60c50fca31c8092692e4a7d1fb68",
     "evaluatorSha256": "83ff97c2eda3829909b2bf988281a0b5f7d3ca7d2ee1a4def3c1359c860ebeb3"
