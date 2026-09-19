@@ -15,6 +15,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Switchyard delivery and evidence
 
+- [Version 0.6.1 certification, 2026-09-19](2026-09-19-switchyard-v061-certification.json)
 - [Pin review, 2026-09-12](2026-09-12-switchyard-pin.md)
 - [Upgrade plan](2026-09-18-switchyard-upgrade-plan.md) and [handoff](2026-09-18-switchyard-upgrade-handoff.md), 2026-09-18
 - [Completed follow-up plan](2026-09-18-switchyard-followup-plan-completed.md) and [handoff](2026-09-18-switchyard-followup-handoff-completed.md), 2026-09-18

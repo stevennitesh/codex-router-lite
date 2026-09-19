@@ -83,8 +83,11 @@ candidate's generated `router_<provider>_<model>` agent type. Refresh the
 catalog and open a fresh parent task if the role was added after that task
 started. Spawn the role through native collaboration, record the first marker,
 wait for that child turn to finish, then call `followup_task` on that same child
-for the second marker. Do not pair the follow-up with `interrupt_agent` and do
-not interrupt between markers. A client cancellation appears as Router
+for the second marker. Never interrupt a running child to send the follow-up.
+If native instructions require `interrupt_agent` cleanup after a completed turn,
+verify its result reports the child already completed, then follow up on that
+same child and record this lifecycle explicitly. Completed-turn cleanup is not
+evidence of an active-turn cancellation. A client cancellation appears as Router
 `status=0`; discard that evidence window and start a clean sequence. Do not
 substitute `codex_app.create_thread`: a separate app task is not the encrypted
 child relay being certified.

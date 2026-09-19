@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "testedAt": "2026-09-19T21:21:33.194Z",
+  "executionSurface": "codex-cli",
+  "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+  "routerVersion": "0.6.1",
+  "runtimeBinding": {
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "6902a7e93e7ac7f1b75d31f5985fe4a078a733e06270455785f8ef1a244dd9de",
+    "binarySha256": "e704c624276bd15f805353fd61d7e733790868078a1a84ce555d24d7f96476ee",
+    "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"
+  },
+  "nativeCollaboration": {
+    "parentModel": "gpt-5.6-sol",
+    "role": "router_switchyard_auto",
+    "inheritedConversation": false,
+    "sameChildFollowUp": true,
+    "encryptedHandoffTimes": [
+      "2026-09-19T21:21:08.597Z",
+      "2026-09-19T21:21:23.508Z"
+    ],
+    "completedTurnCleanupBeforeFollowUp": true,
+    "activeTurnCancellation": false,
+    "cleanupAfterSecondTurn": true
+  },
+  "tool": {
+    "name": "exec/PowerShell",
+    "result": 42,
+    "exitCode": 0,
+    "durationMs": 53,
+    "sandbox": "workspace-write",
+    "unsandboxedRetry": false
+  },
+  "markers": {
+    "first": {
+      "value": "CERT_FIRST_OK",
+      "observedAt": "2026-09-19T21:21:16.807Z"
+    },
+    "second": {
+      "value": "CERT_SECOND_OK",
+      "observedAt": "2026-09-19T21:21:25.275Z"
+    }
+  },
+  "routerCompletions": [
+    {
+      "at": "2026-09-19T21:21:13.712Z",
+      "status": 200,
+      "totalMs": 4611,
+      "outputTokens": 117,
+      "cachedTokens": 12928
+    },
+    {
+      "at": "2026-09-19T21:21:16.803Z",
+      "status": 200,
+      "totalMs": 2337,
+      "outputTokens": 9,
+      "cachedTokens": 24320
+    },
+    {
+      "at": "2026-09-19T21:21:25.356Z",
+      "status": 200,
+      "totalMs": 1790,
+      "outputTokens": 7,
+      "cachedTokens": 24576
+    }
+  ],
+  "selectedTargets": [
+    "switchyard/sol-medium",
+    "switchyard/sol-medium",
+    "switchyard/sol-medium"
+  ],
+  "liveVerification": {
+    "schemaVersion": 1,
+    "checkpoint": "switchyard-live",
+    "testedAt": "2026-09-19T21:20:06.860Z",
+    "binding": {
+      "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+      "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+      "binarySha256": "e704c624276bd15f805353fd61d7e733790868078a1a84ce555d24d7f96476ee",
+      "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+      "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd"
+    },
+    "ordinaryToolRoundTrip": {
+      "first": {
+        "status": 200,
+        "latencyMs": 1992,
+        "selected": null,
+        "publicModel": "switchyard/auto",
+        "completed": true,
+        "terminalType": "response.completed",
+        "outputKinds": [
+          {
+            "type": "function_call",
+            "name": "synthetic_lookup"
+          }
+        ]
+      },
+      "second": {
+        "status": 200,
+        "latencyMs": 4886,
+        "selected": null,
+        "publicModel": "switchyard/auto",
+        "completed": true,
+        "terminalType": "response.completed",
+        "outputKinds": [
+          {
+            "type": "reasoning"
+          },
+          {
+            "type": "message"
+          }
+        ]
+      },
+      "callObserved": true,
+      "argumentsValid": true,
+      "selectedTargets": [
+        "switchyard/luna-max",
+        "switchyard/luna-max"
+      ],
+      "affinityStable": true
+    },
+    "nativeMediaControl": {
+      "status": 200,
+      "latencyMs": 1312,
+      "selected": null,
+      "publicModel": "gpt-5.6-sol",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "message"
+        }
+      ],
+      "answer": "red"
+    },
+    "mediaFallback": {
+      "status": 200,
+      "latencyMs": 1450,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "message"
+        }
+      ],
+      "answer": "red",
+      "fallbackObserved": true,
+      "providerCallsBefore": 1,
+      "providerCallsAfter": 1,
+      "zeroProviderCalls": true
+    },
+    "nativeCompaction": {
+      "status": 200,
+      "latencyMs": 2514,
+      "publicModel": "switchyard/auto",
+      "classifierDecisionsBefore": 2,
+      "classifierDecisionsAfter": 2,
+      "bypassedClassifier": true
+    },
+    "classifier": {
+      "providerVersions": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "templateObserved": true,
+      "probabilityMapObserved": true,
+      "fallbacks": 1,
+      "recent": [
+        {
+          "at": "2026-09-19T21:19:54.929143Z",
+          "source": "type_safe_classifier",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "finalTarget": "luna_max",
+          "confidence": 0.9199999999999999,
+          "threshold": 0.35,
+          "decisionLatencyMs": 363,
+          "probabilities": {
+            "luna_max": 0.94,
+            "sol_medium": 0.060000000000000005,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          }
+        },
+        {
+          "at": "2026-09-19T21:20:02.838286Z",
+          "source": "fail_open",
+          "finalTarget": "sol_medium",
+          "reasonCode": "non_text_state",
+          "confidence": 0,
+          "threshold": 0.35,
+          "decisionLatencyMs": 0
+        }
+      ]
+    },
+    "privatePayloadsRetained": false,
+    "priorInvalidFixture": {
+      "status": 400,
+      "reason": "The former one-pixel PNG was rejected because its data did not represent a valid image; it was replaced by a programmatically generated 128x128 PNG."
+    },
+    "limitations": [],
+    "requiredFailures": [],
+    "evidenceSha256": "afa228f24826f5fa24ec3bd44609256ce7e4f5a837396ff9748ba9a9f5baf45e"
+  },
+  "privatePayloadsRetained": false,
+  "requiredFailures": []
+}
