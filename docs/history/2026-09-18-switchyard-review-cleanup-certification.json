@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "SWITCHYARD-REVIEW-CLEANUP-RELEASE",
+  "testedAt": "2026-09-19T04:11:10.740Z",
+  "execution": {
+    "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+    "parentModel": "gpt-5.6-sol",
+    "sandbox": "workspace-write with automatic approval review",
+    "freshNormalUserDirectories": true
+  },
+  "runtimeBinding": {
+    "routerCommit": "e37672c4f544e5b8ebc29e473c5564e78db5bd9b",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "411a109fd5ec302fbec91ce13272155e76b44b540ac7cdcb0ac9654731ab3bcd",
+    "binarySha256": "f9c60d4eb2ef1bb4fd4e070548f7ba74b9f13da1bbb2353e789f057b06de283d",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2"
+  },
+  "liveVerification": {
+    "path": "docs/history/2026-09-18-switchyard-review-cleanup-live-evidence.json",
+    "fileSha256": "0562b7cbfe2f02e083da72b9297f1d13223c742ffbd375fdf737346525ca6b95",
+    "evidenceSha256": "4b195a084542e8c7d9ed1e3585a86ae6dddd2a07fb6f7f1e5f4fd8b706fc9d7c",
+    "requiredFailures": []
+  },
+  "routes": [
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "testedAt": "2026-09-19T04:11:10.740Z",
+      "window": {
+        "startedAt": "2026-09-19T04:10:53.541Z",
+        "endedAt": "2026-09-19T04:11:10.740Z"
+      },
+      "nativeCollaboration": {
+        "sameChildFollowUp": true,
+        "cleanupAfterSecondTurn": true,
+        "encryptedHandoffs": [
+          "2026-09-19T04:10:53.541Z",
+          "2026-09-19T04:11:03.292Z"
+        ]
+      },
+      "tool": {
+        "name": "exec",
+        "syntheticArithmeticObserved": true,
+        "result": 42,
+        "calledAt": "2026-09-19T04:10:57.388Z",
+        "completedAt": "2026-09-19T04:10:58.307Z",
+        "unsandboxedRetry": false
+      },
+      "markers": {
+        "first": {
+          "value": "CERT_FIRST_OK",
+          "observedAt": "2026-09-19T04:11:00.039Z"
+        },
+        "second": {
+          "value": "CERT_SECOND_OK",
+          "observedAt": "2026-09-19T04:11:06.949Z"
+        }
+      },
+      "routerCompletions": [
+        {
+          "at": "2026-09-19T04:10:57.467Z",
+          "status": 200,
+          "totalMs": 3383
+        },
+        {
+          "at": "2026-09-19T04:11:00.043Z",
+          "status": 200,
+          "totalMs": 1677
+        },
+        {
+          "at": "2026-09-19T04:11:06.972Z",
+          "status": 200,
+          "totalMs": 3627
+        }
+      ],
+      "routing": {
+        "selectedModel": "switchyard/sol-medium",
+        "localReasonCode": "non_text_state",
+        "providerFailure": false
+      },
+      "rolloutSha256": {
+        "parent": "2079c1ff4bc2905e0fdbb2646987a26db592a10ba8c488b108cdb819f8b0ee18",
+        "child": "1eee061b79f60f19d754b54369b87128a413a38084e2fb963179f4d0542705d7"
+      },
+      "requiredFailures": []
+    }
+  ],
+  "unchangedRoutesNotRecertified": [
+    "openrouter/glm-5.3-flash",
+    "openrouter/glm-5.3-flash-gmicloud",
+    "openrouter/pareto"
+  ],
+  "privatePayloadsRetained": false,
+  "requiredFailures": []
+}

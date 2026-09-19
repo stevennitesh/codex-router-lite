@@ -20,6 +20,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 - [Switchyard C2 R1 accepted evidence, 2026-09-18](2026-09-18-switchyard-c2-r1-accepted-evidence.json)
 - [Switchyard follow-up release certification, 2026-09-18](2026-09-18-switchyard-followup-release-certification.json)
 - [Switchyard follow-up accepted runtime proof, 2026-09-18](2026-09-18-switchyard-followup-runtime-proof-accepted.json)
+- [Switchyard review cleanup live evidence, 2026-09-18](2026-09-18-switchyard-review-cleanup-live-evidence.json)
+- [Switchyard review cleanup certification, 2026-09-18](2026-09-18-switchyard-review-cleanup-certification.json)
 
 The immutable evaluator snapshot and evidence retain their original
 `docs/switchyard-c2-*.json` path strings because those strings describe the

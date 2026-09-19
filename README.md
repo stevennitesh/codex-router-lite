@@ -29,9 +29,9 @@ native CLI, with a small, explicit set of routes.
 | Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy) |
 
 Pareto supports automatic tool selection and has no hosted-search capability.
-Pareto and GLM have [active recorded v2 proofs](v2_agent/README.md), each valid
-only for its named runtime. Switchyard certification additionally binds the exact
-source, patch, binary, generated routes, and Router commit; see its
+Pareto, GLM, and Switchyard have [active recorded v2 proofs](v2_agent/README.md),
+each valid only for its named runtime. Switchyard certification additionally
+binds the exact source, patch, binary, generated routes, and Router commit; see its
 [current application](v2_agent/switchyard/auto/proof.md).
 
 ## Quick start
