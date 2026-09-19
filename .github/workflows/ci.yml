@@ -33,7 +33,7 @@ jobs:
         run: |
           $attempts = 3
           for ($attempt = 1; $attempt -le $attempts; $attempt++) {
-            $output = & npm audit --omit=dev --audit-level=high --json 2>&1
+            $output = & npm.cmd audit --omit=dev --audit-level=high --json 2>&1
             $exitCode = $LASTEXITCODE
             $text = $output | Out-String
             if ($exitCode -eq 0) {
