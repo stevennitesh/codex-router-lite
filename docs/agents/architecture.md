@@ -1,7 +1,8 @@
-# Architecture and ownership
+# Router Lite system specification
 
-Read before changing an unfamiliar request path. For endpoint work continue with
-[model onboarding](model-onboarding.md); for a failure use [debugging](debugging.md).
+Read to understand Router Lite's supported system, invariants, and source owners.
+For endpoint work continue with [model onboarding](model-onboarding.md); for a
+failure use [debugging](debugging.md).
 
 ## Product and source authority
 
@@ -16,6 +17,21 @@ them. Scope each external compatibility transform to the route that needs it.
 `maintenance/windows-package.json` owns the complete installed file set;
 `scripts/check-product-boundary.mjs` independently enforces the retained product.
 Update explicit allowlists for an authorized addition; never disable their checks.
+
+## System invariants
+
+- One capability-protected loopback Router owns the client-facing catalog and
+  request lifecycle. It does not expose a public or shared listener.
+- Native requests retain native credentials, account headers, and catalog
+  authority. External providers never receive those native secrets.
+- Every external route has an explicit slug, profile, endpoint policy, and
+  capability contract. A failed endpoint does not silently select another one.
+- Tool identity, produced history, and response restoration remain request-local
+  and reversible across ordinary turns, replay, and compaction.
+- One installed generation is active at a time. Deployment is transactional;
+  runtime-bound certification applies only to the exact deployed identities.
+- Checked-in source and configuration remain authoritative. Generated files,
+  installed hashes, and historical evidence describe a runtime but do not redefine it.
 
 ## Request flow
 

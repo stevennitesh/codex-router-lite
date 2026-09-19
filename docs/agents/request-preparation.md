@@ -34,12 +34,12 @@ Response restoration uses the returned namespace context, not a rebuilt map.
 Compaction recovers historical definitions solely to translate history. It sends
 no tools or tool choice, removes previous-response references, appends the source
 catalog and summary instructions, and uses non-streaming Responses. GLM thinking
-carry is an ordinary-turn adaptation, not a compaction adaptation. Union's
-freeform history conversion applies to both paths. GLM hosted search uses the
-direct Responses hop; ordinary GLM requests still use LiteLLM.
+carry is an ordinary-turn adaptation, not a compaction adaptation. Pareto's
+custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
+search uses the direct Responses hop; ordinary GLM requests still use LiteLLM.
 
 The forwarder calls `prepareOpenRouterRequest` for final payload validation and
-Union parameter filtering at
+Pareto parameter filtering at
 the external send boundary. This is intentional: internal callers can reach the
 forwarder directly, so validation only in the front Router would be bypassable.
 

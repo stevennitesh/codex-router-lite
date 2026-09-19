@@ -180,8 +180,10 @@ generation. Do not delete the retained rollback to make a second deployment pass
 [`../../docs/SUBAGENT-CERTIFICATION.md`](../../docs/SUBAGENT-CERTIFICATION.md)
 for the five checks before any future proof refresh. Switchyard additionally
 requires the proof's runtime
-binding to record the deployed upstream commit, patch SHA-256, binary SHA-256,
-Router commit, generated-routes SHA-256, and current route-template SHA-256.
+binding to record the deployed upstream commit, ordered patch SHA-256 values,
+binary SHA-256, Router commit, generated-routes SHA-256, deployed-template byte
+SHA-256 (`templateSha256`), and line-ending-independent canonical template-source
+SHA-256 (`templateSourceSha256`).
 
 Recertify after any change to one of those identities or to the native
 collaboration/tool namespace contract. Do not duplicate the general v2

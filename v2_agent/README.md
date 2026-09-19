@@ -8,16 +8,18 @@ the application checker consumes them; the maintained procedure is
 
 The current applications are:
 
-- accepted: `openrouter/glm-5.3-flash`
-- accepted: `openrouter/glm-5.3-flash-gmicloud`
-- retired historical acceptance: `openrouter/union-alpha` (does not certify Pareto)
-- accepted: `openrouter/pareto`
-- accepted: `switchyard/auto`
+- accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
+- accepted: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md)
+- retired historical acceptance:
+  [`openrouter/union-alpha`](openrouter/union-alpha/proof.md) (does not certify Pareto)
+- accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
+- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 
-Create or refresh an application by copying both `_template/proof.json` and
-`_template/proof.md`. The JSON file is the machine-readable authority. The
-Markdown file records the evidence and limitations a reviewer needs. Do not
-add another provider or model without a separate product decision.
+Create or refresh an application by copying both
+[`_template/proof.json`](_template/proof.json) and
+[`_template/proof.md`](_template/proof.md). The JSON file is the machine-readable
+authority. The Markdown file records the evidence and limitations a reviewer
+needs. Do not add another provider or model without a separate product decision.
 
 An accepted proof must identify the public slug, provider, upstream model, Router
 and Codex versions, execution path, timestamps, and all five checks. Switchyard

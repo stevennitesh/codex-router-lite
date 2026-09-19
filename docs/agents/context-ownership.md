@@ -6,7 +6,8 @@ model/endpoint additions, to current guides; it is not an operations manual.
 
 ## Repository context
 
-- Architecture owns product boundaries, source ownership and common verification.
+- The Router Lite system specification owns product boundaries, invariants,
+  source ownership, and common verification.
 - Model onboarding owns the integration path; endpoint guides own measured route rules.
 - Debugging owns diagnosis; compatibility maintenance owns app/upstream refresh;
   installation and Switchyard guides own their runtime transactions.

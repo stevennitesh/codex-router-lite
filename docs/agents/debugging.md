@@ -34,6 +34,20 @@ and HTTP status in sanitized evidence. Locate the earliest violated contract:
 | Wrong Switchyard target/classifier output | [Switchyard runtime diagnostics](../../config/switchyard/runtime.md) |
 | Missing or duplicate agent instructions | [Instruction ownership](context-ownership.md#runtime-instructions) |
 
+## Use historical evidence conditionally
+
+Start from current source, configuration, installed identity, and the smallest
+relevant log window. Search the [history index](../history/README.md) only when
+the symptom matches a dated incident, a retired provider behavior, a prior
+reproduction, or a rejected hypothesis. History can supply useful probes and
+causal clues, but revalidate them against the current route, dependency pins,
+Codex build, and installed generation before applying a conclusion.
+
+Do not copy historical deployment status, proof acceptance, model availability,
+or test counts into a current diagnosis. When a repair changes durable behavior,
+update the maintained owner named above and keep dated investigation evidence in
+history with its historical status explicit.
+
 ## Repair and close
 
 For empty ordinary function calls, `tool-protocol` warnings record only source,

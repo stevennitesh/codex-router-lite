@@ -50,6 +50,25 @@ immutable startup readiness (`ready`, `unavailable` with a local reason, or
 and do not mutate readiness. Use the raw log only when this redacted summary
 cannot distinguish the failing owner.
 
+Interpret current Jev fallback reasons before opening raw logs:
+
+| Reason | Meaning and first action |
+| --- | --- |
+| `empty_state` | No genuine user turn remained after control-only messages were skipped. Expected zero-call Sol fallback. |
+| `non_text_state` | The selected user turn contained media or unsupported meaningful content. Expected zero-call Sol fallback. |
+| `low_confidence` | Jev returned a valid probability vector below the configured threshold. Expected Sol fallback without a retry. |
+| `classifier_unavailable` | The Decisions client could not be constructed or reached. Check startup configuration and connectivity. |
+| `classifier_timeout` | The complete Decisions request, including body read, exceeded its deadline. Check provider latency before changing the deadline. |
+| `provider_http_error` | The Decisions endpoint returned a non-success status. Use the sanitized status, never the response body. |
+| `malformed_response` | The provider response did not satisfy the expected Jev schema. Compare the current schema and provider build. |
+| `state_too_large` | The serialized decision request exceeded its configured byte budget. Check the latest-turn bound and input shape. |
+| `invalid_confidence` or `unresolved_label` | Jev returned an unusable confidence or an unconfigured target. Check the current route options and provider result shape. |
+
+Legacy `judgeUnavailable` and generative-judge messages may appear when reading
+logs from an older installed generation. They do not describe the current Jev
+policy; use the [history index](../../docs/history/README.md) if that generation
+must be investigated.
+
 For a bounded certification packet that combines Router timings with the
 current generation's routing decisions, without emitting session, agent, or
 correlation identifiers, run:

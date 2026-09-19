@@ -1,7 +1,8 @@
-# Switchyard integration
+# Switchyard integration specification
 
-This directory is the source of truth for Codex Router's Switchyard
-integration. The active runtime under `%CODEX_HOME%\switchyard` (or
+This maintained specification and its owned files are the source of truth for
+Codex Router's Switchyard integration. The active runtime under
+`%CODEX_HOME%\switchyard` (or
 `CODEX_ROUTER_SWITCHYARD_ROOT`) is generated output, not editable source.
 Never keep a permanent upstream checkout or alternate runtime tree.
 
@@ -126,8 +127,9 @@ each target's configured effort overrides it.
 The four-target policy advertises multi-agent v2 only with an accepted
 runtime-bound application under `v2_agent/switchyard/auto`. A source change keeps
 the route at v1 until the changed source is deployed and recertified. A proof
-binds the deployed Router commit, upstream source, patch, binary, generated routes
-and current template.
+binds the deployed Router commit, upstream source, ordered patches, binary,
+generated routes, exact deployed-template bytes, and the line-ending-independent
+canonical template source.
 
 Router keeps Codex compaction requests on the native public route rather than
 sending them through Switchyard's auxiliary compaction endpoint. The optional

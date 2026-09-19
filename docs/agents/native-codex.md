@@ -40,8 +40,10 @@ update the paired build and snapshot, then test a routed round trip.
 The catalog's `supports_search_tool` gates client-side deferred tool discovery,
 not hosted web search. External routes declare `supportsToolSearch` separately
 from their `searchTool` web-search policy. Conflating these hides deferred app
-tools before Router sees the request. This distinction is defined by native
-[Codex tool planning](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/tools/spec_plan.rs#L599).
+tools before Router sees the request. Recheck this distinction against current
+[Codex tool planning](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/spec_plan.rs)
+during compatibility maintenance rather than treating a versioned source line
+as permanent.
 
 Flattened tool names must remain unique even when a plain function has the same
 spelling as a namespace child. Use the request-local alias map consistently for

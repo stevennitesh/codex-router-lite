@@ -79,7 +79,7 @@ Rust is only needed to build Switchyard. For setup details and recovery, see
 Most work here starts with a new model or endpoint. The
 [model onboarding guide](docs/agents/model-onboarding.md) walks through choosing a
 compatible API, adding route metadata, translating tools, and testing the real
-Codex path. Start with the [architecture overview](docs/agents/architecture.md)
+Codex path. Start with the [Router Lite system specification](docs/agents/architecture.md)
 if you want to understand how the pieces fit together.
 
 Route settings live under [config/openrouter](config/openrouter/) and

@@ -79,9 +79,8 @@ Start with the redacted current-generation summary:
 
 | Observation | First owner to inspect |
 | --- | --- |
-| `Input must be a list` | Switchyard's Responses encoder emitted scalar `input`; keep native classifier input as a message list. |
-| `input[n].content` rejects an array | The hidden classifier received native content blocks; reduce it to one text-only user message. |
-| Judge HTTP 200 followed by a parse failure | The classifier saw conversation or tool-relay traffic instead of task-only text. Check route windowing and classifier input selection. |
+| A Jev fallback reason appears | Use the maintained [fallback reason table](../config/switchyard/runtime.md#runtime-supervision-and-diagnosis) to distinguish expected Sol fallback from client, deadline, HTTP, schema, or state-bound failures. |
+| A generative-judge error appears | The log is from a retired Switchyard generation. Identify that generation and consult [historical evidence](history/README.md) instead of applying its workaround to current Jev. |
 | `routed_agents: 0` with accepted v2 proofs | Local subagent mode or its selected allowlist filtered every certified exact route. Run `model-router.ps1 codex subagents status` before changing source. |
 | Deployment waits on dependency preparation, then rejects an old rollback | The deployment script is stale. Current source checks candidate and rollback directories before preparing dependencies. |
 
