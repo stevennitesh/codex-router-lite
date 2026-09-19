@@ -41,8 +41,8 @@ headers, capabilities, or raw agent identifiers:
 ```
 
 The summary reports status counts, selected targets, classifier failures, and
-agent/correlation cardinality. For a built C1 candidate, its TypeSafe policy also reports bounded
-counts and recent provider builds, final targets, HTTP status where useful,
+agent/correlation cardinality. The TypeSafe routing policy also reports
+bounded counts and recent provider builds, final targets, HTTP status where useful,
 confidence, threshold, decision latency, and sanitized fallback reasons. It
 never includes decision state, provider bodies or credentials. `/health` reports
 immutable startup readiness (`ready`, `unavailable` with a local reason, or

@@ -71,7 +71,7 @@ model and control over additional request fields. The patch adds and tests:
   reasoning siblings;
 - raw Responses item inspection so custom, computer, shell, and tool-search
   continuations retain the selected target;
-- `priority` propagation to classifier and serving requests;
+- preservation of caller `priority` on selected native answer requests;
 - local-hop capability enforcement and removal; and
 - target-URL redaction in decision output.
 
