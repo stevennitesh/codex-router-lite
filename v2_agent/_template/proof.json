@@ -16,7 +16,8 @@
     "binarySha256": "",
     "routerCommit": "",
     "routesSha256": "",
-    "templateSha256": ""
+    "templateSha256": "",
+    "templateSourceSha256": ""
   },
   "checks": {
     "streaming": { "outcome": "pending" },

@@ -9,7 +9,7 @@ make the retired slug callable.
 The retired route was `openrouter/union-alpha`. Its owner was
 `config/openrouter/union-alpha.json`; `src/union-alpha-compat.mjs` owns measured
 request adaptations. Native credential isolation and namespace relay remain
-owned by [native Codex compatibility](native-codex.md).
+owned by [native Codex compatibility](../agents/native-codex.md).
 
 ## Endpoint contract
 
@@ -92,7 +92,7 @@ response completion does not trigger cancellation.
 
 Run the Union, namespace-relay, compaction-checkpoint, and empty-completion-guard
 tests, then the retained suite, npm run check, and current native catalog check.
-[Historical investigation and candidate proofs](../history/2026-09-17-union-alpha.md) record
+[Historical investigation and candidate proofs](2026-09-17-union-alpha.md) record
 the original observations and controlled comparisons; they are not live status.
 Keep scratch payloads and logs under generated/union-alpha with no credentials
 or private project-file contents.

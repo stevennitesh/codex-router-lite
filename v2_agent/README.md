@@ -12,14 +12,17 @@ The current applications are:
 - accepted: `openrouter/glm-5.3-flash-gmicloud`
 - retired historical acceptance: `openrouter/union-alpha` (does not certify Pareto)
 - accepted: `openrouter/pareto`
-- draft: `switchyard/auto` (the checked source differs from its last accepted runtime)
+- accepted: `switchyard/auto`
 
 Create or refresh an application by copying both `_template/proof.json` and
 `_template/proof.md`. The JSON file is the machine-readable authority. The
 Markdown file records the evidence and limitations a reviewer needs. Do not
 add another provider or model without a separate product decision.
 
-An accepted proof must identify the public slug, provider, upstream model, Router and Codex versions, execution path, timestamps, and all five checks. Switchyard also records its upstream commit, patch, binary, Router, and generated-route hashes.
+An accepted proof must identify the public slug, provider, upstream model, Router
+and Codex versions, execution path, timestamps, and all five checks. Switchyard
+also records its upstream commit, patch, binary, Router, generated-route,
+deployed-template, and canonical template-source hashes.
 
 The checker rejects a v2 catalog declaration whose matching application is
 missing, draft, mismatched, or incomplete. It also rejects an application

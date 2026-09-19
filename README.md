@@ -2,7 +2,7 @@
 
 **More model choices. The Codex workflow I already enjoy.**
 
-[Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+[Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Contributing](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 I built Router Lite to use other models inside the Windows Codex app while keeping
 its tools, conversations, and native GPT models. The exciting part is having those

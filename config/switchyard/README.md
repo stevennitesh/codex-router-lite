@@ -24,7 +24,7 @@ Load only the branch needed for the task:
 | Upstream source identity | `source.lock` | Use the exact repository, public base commit, ordered contribution and compatibility patches, Rust toolchain, and binary path. |
 | Reviewed upstream contribution | `patches/switchyard-typesafe-pr-762.patch` | Replays the exact reviewed PR contribution onto the locked public base. |
 | Router compatibility changes | `patches/switchyard-codex-compat.patch` | Apply after the reviewed upstream contribution. Do not maintain a fork checkout. |
-| Routing policy | `routes.template.toml` | The template contains no generated Router capability. |
+| Routing policy | `routes.template.toml` | The template contains no generated Router capability. Its canonical source hash is line-ending independent; deployment provenance separately records the exact deployed bytes. |
 | Synthetic routing regression | [`docs/switchyard-routing-corpus.json`](../../docs/switchyard-routing-corpus.json) | Authored development/holdout cases for the maintained evaluator; not independent or representative user data. |
 | Optional named worker | `switchyard_worker.toml` | Install at `%CODEX_HOME%\agents\switchyard_worker.toml` only when requested. |
 | Active runtime | `%CODEX_HOME%\switchyard` by default | Keep the active binary, private `routes.toml`, provenance, routing history, current logs, and at most one in-progress rollback set. |

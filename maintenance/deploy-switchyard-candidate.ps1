@@ -116,6 +116,17 @@ function Get-Sha256([string]$Path) {
   }
 }
 
+function Get-CanonicalTextSha256([string]$Path) {
+  $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Replace("`r", "`n")
+  $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+  }
+}
+
 function Assert-FileHash([string]$Path, [string]$Expected, [string]$Label) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
     throw "$Label is missing at $Path."
@@ -403,7 +414,9 @@ if ("$($upstreamContribution.sourceCommit)" -notmatch '^[0-9a-f]{40}$' -or
   throw "Switchyard upstream contribution identity is invalid."
 }
 Assert-FileHash $upstreamPatchPath $upstreamPatchHash "Switchyard upstream contribution patch"
-$templateHash = Get-Sha256 (Join-Path $repoRoot "config\switchyard\routes.template.toml")
+$templatePath = Join-Path $repoRoot "config\switchyard\routes.template.toml"
+$templateHash = Get-Sha256 $templatePath
+$templateSourceHash = Get-CanonicalTextSha256 $templatePath
 $patchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $lock.patch
 Assert-FileHash $patchPath $lock.patchSha256 "Switchyard patch"
 Assert-FileHash $candidateBinary $expectedBinaryHash "Switchyard candidate binary"
@@ -500,6 +513,7 @@ try {
       patchSha256 = $lock.patchSha256.ToLowerInvariant()
       binarySha256 = $expectedBinaryHash
       templateSha256 = $templateHash
+      templateSourceSha256 = $templateSourceHash
       routesSha256 = $expectedRoutesHash
       routerCommit = $routerCommit
       deployedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -521,6 +535,7 @@ try {
       $provenance.patchSha256 -ne $lock.patchSha256.ToLowerInvariant() -or
       $provenance.binarySha256 -ne $expectedBinaryHash -or
       $provenance.templateSha256 -ne $templateHash -or
+      $provenance.templateSourceSha256 -ne $templateSourceHash -or
       $provenance.routesSha256 -ne $expectedRoutesHash -or
       $provenance.routerCommit -ne $routerCommit
     ) {

@@ -1,7 +1,7 @@
 # Router stress-test delivery
 
 Status: historical completed delivery record, revision 2, 2026-09-17.
-Current execution instructions live in [Debugging](agents/debugging.md#bounded-stress-checks).
+Current execution instructions live in [Debugging](../agents/debugging.md#bounded-stress-checks).
 
 Delivered a shared isolated fixture and seven bounded stress tests spanning the
 native, GLM, direct Responses and Switchyard boundaries. The suite reproduced a
@@ -25,7 +25,7 @@ Catch protocol and lifecycle regressions that happy-path endpoint checks miss,
 without building a testing platform. Extend the existing Node test suite and
 isolated Router/provider fixtures for this personal Windows workflow. Preserve
 all endpoint contracts, native behavior, privacy boundaries and the existing
-[engineering contract](agents/engineering-contract.md).
+[engineering contract](../agents/engineering-contract.md).
 
 Required outcomes:
 
@@ -76,7 +76,7 @@ raise consequential contract changes before implementation.
   public interface or persistent format to approve in stages.
 - **F1 — integrated review:** review the whole change against this scope. Evidence
   must include the bounded stress command, `npm run check`, `npm test`, and current
-  installed-CLI catalog compatibility per [verification](agents/architecture.md#verification).
+  installed-CLI catalog compatibility per [verification](../agents/architecture.md#verification).
   Demonstrate a relevant known-bad fault is detected, retain successful controls,
   and distinguish injected provider failures from Router defects. Verify cleanup
   and repeatability without relying solely on wall-clock timing assertions.

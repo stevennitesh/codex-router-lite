@@ -6,7 +6,8 @@ Accepted for deployed Router
 and binary
 `e704c624276bd15f805353fd61d7e733790868078a1a84ce555d24d7f96476ee`.
 The machine-readable proof binds the upstream source, reviewed contribution,
-private generated routes, canonical template, and deployed Router candidate.
+private generated routes, deployed template bytes, canonical template source,
+and deployed Router candidate.
 Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence

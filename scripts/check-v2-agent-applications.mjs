@@ -93,6 +93,11 @@ function routeIdentity({ slug, provider, upstreamModel }) {
   return JSON.stringify([slug, provider, upstreamModel]);
 }
 
+function canonicalTextSha256(file) {
+  const text = readFileSync(file, "utf8").replace(/\r\n?/gu, "\n");
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 function checkRouteBinding(proof, location, route) {
   const endpointProviders = route.openRouterProviderPolicy?.only;
   if (route.provider === "openrouter" && Array.isArray(endpointProviders) && endpointProviders.length) {
@@ -119,7 +124,8 @@ function checkRouteBinding(proof, location, route) {
     !SHA256.test(binding.patchSha256) ||
     !SHA256.test(binding.binarySha256) ||
     !SHA256.test(binding.routesSha256) ||
-    !SHA256.test(binding.templateSha256)
+    !SHA256.test(binding.templateSha256) ||
+    !SHA256.test(binding.templateSourceSha256)
   ) {
     fail(
       `${location}: accepted Switchyard proof must bind upstream, its reviewed contribution, the compatibility patch, binary, Router, template, and generated routes`,
@@ -132,9 +138,9 @@ function checkRouteBinding(proof, location, route) {
     binding.upstreamContributionSha256.toLowerCase() !==
       String(sourceLock.upstreamContribution.patchSha256).toLowerCase() ||
     binding.patchSha256.toLowerCase() !== String(sourceLock.patchSha256).toLowerCase() ||
-    binding.templateSha256.toLowerCase() !== createHash("sha256").update(readFileSync(
+    binding.templateSourceSha256.toLowerCase() !== canonicalTextSha256(
       path.join(ROOT, "config", "switchyard", "routes.template.toml"),
-    )).digest("hex")
+    )
   ) {
     fail(`${location}: Switchyard proof does not match the pinned source and patch`);
   }

@@ -174,7 +174,7 @@ test("Switchyard source lock pins the reviewed upstream contribution and compati
   assert.ok(packaged.includes(`config/switchyard/${lock.patch}`));
 });
 
-test("Switchyard accepted proof rejects changed patch and template identities", () => {
+test("Switchyard accepted proof rejects changed patch and canonical template source", () => {
   const configRoot = path.join(root, "config", "switchyard");
   const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
   const proof = JSON.parse(readFileSync(
@@ -186,6 +186,10 @@ test("Switchyard accepted proof rejects changed patch and template identities", 
   proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
     path.join(configRoot, "routes.template.toml"),
   )).digest("hex");
+  proof.runtimeBinding.templateSourceSha256 = createHash("sha256").update(
+    readFileSync(path.join(configRoot, "routes.template.toml"), "utf8").replace(/\r\n?/gu, "\n"),
+    "utf8",
+  ).digest("hex");
   delete proof.runtimeBinding.policyHash;
   const applicationsRoot = mkdtempSync(path.join(tmpdir(), "switchyard-proof-"));
   const proofRoot = path.join(applicationsRoot, "switchyard", "auto");
@@ -207,7 +211,7 @@ test("Switchyard accepted proof rejects changed patch and template identities", 
       /does not match the pinned source and patch/u,
     );
     proof.runtimeBinding.patchSha256 = lock.patchSha256;
-    proof.runtimeBinding.templateSha256 = "0".repeat(64);
+    proof.runtimeBinding.templateSourceSha256 = "0".repeat(64);
     writeFileSync(path.join(proofRoot, "proof.json"), JSON.stringify(proof));
     assert.throws(
       () => validateV2AgentApplications(applicationsRoot, { models }),
