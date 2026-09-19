@@ -7,11 +7,9 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
-- Implement or review the planned simplicity/correctness follow-up: read the
-  [active plan](../../docs/switchyard-followup-plan.md) and its
-  [handoff](../../docs/switchyard-followup-handoff.md). The accepted source
-  candidate was deployed and exact-runtime certification was renewed on
-  2026-09-18; those records bind the installed candidate named in the handoff.
+- Classifier behavior and routing criteria: the routing policy below and
+  `routes.template.toml`. Completed delivery records live under
+  [`docs/history`](../../docs/history/README.md).
 - Request, catalog, WebSocket, or trust boundaries: the sections below.
 - Startup, health, provider selection, or trace evidence: [runtime operations](runtime.md).
 - Upstream pin or patch changes: [source maintenance](maintenance.md#update-the-pin-and-patch).
@@ -82,12 +80,12 @@ Every target sets `store = false`, `stream = true`, and removes
 
 ## Routing policy
 
-In the final source candidate, Jev 1.13 is the sole classifier. It receives only
-the latest genuine user turn's
-ordered text blocks through the exact OpenRouter Decisions endpoint. Pure
-tool-result pseudo-user messages are skipped. Media in the selected turn skips
-the classifier and falls back to Sol; older media does not veto a later text-only
-classification. Earlier turns, tool results, reasoning, provider metadata,
+Jev 1.13 is the sole classifier. It receives only the latest genuine user turn's
+ordered text blocks through the exact OpenRouter Decisions endpoint. Empty and
+control-only pseudo-user messages are skipped. Media or unsupported meaningful
+content in the selected turn skips the classifier and falls back to Sol; older
+media does not veto a later text-only classification. Earlier turns, tool results,
+reasoning, provider metadata,
 credentials, and native authorization never enter the decision request. The
 full conversation remains intact for the native answer model. The classifier
 chooses the dominant bottleneck of the whole request with this policy:
@@ -125,11 +123,10 @@ target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
 The four-target policy advertises multi-agent v2 only with an accepted
-runtime-bound application under `v2_agent/switchyard/auto`. The final source
-candidate changes bound runtime identities, so its prior proof is retained as
-history and the candidate
-stays v1 until deployment and recertification. A proof binds the deployed Router
-commit, upstream source, patch, binary, generated routes and current template.
+runtime-bound application under `v2_agent/switchyard/auto`. A source change keeps
+the route at v1 until the changed source is deployed and recertified. A proof
+binds the deployed Router commit, upstream source, patch, binary, generated routes
+and current template.
 
 Router keeps Codex compaction requests on the native public route rather than
 sending them through Switchyard's auxiliary compaction endpoint. The optional

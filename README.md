@@ -30,8 +30,9 @@ native CLI, with a small, explicit set of routes.
 
 Pareto supports automatic tool selection and has no hosted-search capability.
 Pareto and GLM have [active recorded v2 proofs](v2_agent/README.md), each valid
-only for its named runtime. Switchyard's prior proof is retained as historical
-evidence while the changed runtime awaits deployment and recertification.
+only for its named runtime. Switchyard certification additionally binds the exact
+source, patch, binary, generated routes, and Router commit; see its
+[current application](v2_agent/switchyard/auto/proof.md).
 
 ## Quick start
 
@@ -121,12 +122,11 @@ Model requests still go to the selected provider. See [security](SECURITY.md)
 for the trust boundaries and private vulnerability reporting.
 
 **Switchyard Auto also sends task text to OpenRouter/Jev for model selection, even
-though its answer comes from a native GPT model.** In the final source candidate,
-that text is the latest genuine user turn only. A pure tool-result pseudo-user
-message is skipped.
-Media in that selected turn bypasses Jev and selects Sol; older media does not
-block a later text-only classification. The full request still goes to the native
-answer model. See the
+though its answer comes from a native GPT model.** The checked-in classifier sends
+only the latest genuine user turn. Empty and control-only pseudo-user messages are
+skipped. Media or unsupported meaningful content in the selected turn bypasses
+Jev and selects Sol; older media does not block a later text-only classification.
+The full request still goes to the native answer model. See the
 [routing policy](config/switchyard/README.md#routing-policy) for details.
 
 Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),

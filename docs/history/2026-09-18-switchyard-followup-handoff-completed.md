@@ -34,15 +34,15 @@ Its evaluator-style materialization SHA-256 is
 `b8ac56e4912caa49371acf9c526afcb840f26679e886d3e1f552cbcc726bbe0b`,
 exactly matching the accepted C2 candidate config. The exact evaluated harness is
 preserved at
-[`docs/history/2026-09-18-switchyard-c2-evaluator.mjs`](history/2026-09-18-switchyard-c2-evaluator.mjs);
+[`docs/history/2026-09-18-switchyard-c2-evaluator.mjs`](2026-09-18-switchyard-c2-evaluator.mjs);
 ongoing checks use the smaller maintained routing evaluator and the existing live
 verification entry point.
 The release live-smoke record is
-[`docs/switchyard-live-release-evidence.json`](switchyard-live-release-evidence.json),
+[`docs/switchyard-live-release-evidence.json`](../switchyard-live-release-evidence.json),
 and the sanitized four-route native certification record is
-[`docs/history/2026-09-18-switchyard-followup-release-certification.json`](history/2026-09-18-switchyard-followup-release-certification.json).
-Authoritative scope: [follow-up plan revision 6](switchyard-followup-plan.md).
-The earlier [upgrade handoff](history/2026-09-18-switchyard-upgrade-handoff.md) is a completed
+[`docs/history/2026-09-18-switchyard-followup-release-certification.json`](2026-09-18-switchyard-followup-release-certification.json).
+Authoritative scope: [completed follow-up plan revision 6](2026-09-18-switchyard-followup-plan-completed.md).
+The earlier [upgrade handoff](2026-09-18-switchyard-upgrade-handoff.md) is a completed
 delivery record, not authorization to execute this new plan.
 
 ## Assignment when execution is authorized

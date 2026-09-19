@@ -8,8 +8,8 @@ Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
 The accepted active v2 routes are `openrouter/glm-5.3-flash`,
-`openrouter/glm-5.3-flash-gmicloud`, `openrouter/pareto`, and `switchyard/auto`. The retired Union Alpha
-application remains historical evidence and does not certify `openrouter/pareto`. Switchyard's
+`openrouter/glm-5.3-flash-gmicloud`, and `openrouter/pareto`. The retired Union Alpha
+application remains historical evidence and does not certify `openrouter/pareto`. A Switchyard
 application is also bound to its deployed source, patch, binary, generated
 routes, and Router commit.
 

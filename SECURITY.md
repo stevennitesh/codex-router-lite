@@ -5,15 +5,15 @@ All Router, LiteLLM, and Switchyard listeners bind to loopback. Codex reaches Ro
 Native Codex requests retain Codex authorization and account headers. OpenRouter requests never receive the caller's authorization, ChatGPT account ID, installation ID, residency headers, or FedRAMP headers. The OpenRouter hop replaces them with the one protected provider key.
 
 Switchyard is a local, capability-protected hop with two separate upstream paths.
-The final source candidate's Jev classifier sends bounded task text to OpenRouter's
-Decisions endpoint using the protected OpenRouter key, without native
-authorization/account headers. After that candidate is built and deployed, the
-decision state contains only the latest genuine user turn. Pure tool-result
-pseudo-user messages are skipped. Media in the selected turn skips Jev and falls
-back to Sol; older media does not veto a later text-only decision. Assistant
-answers, tool-result payloads, earlier user turns and reasoning are excluded from
-decision state. User-authored text can still contain sensitive information: a
-native answer model does not make classification local.
+The checked-in Jev classifier sends bounded task text to OpenRouter's Decisions
+endpoint using the protected OpenRouter key, without native authorization/account
+headers. The decision state contains only the latest genuine user turn. Empty and
+control-only pseudo-user messages are skipped. Media or unsupported meaningful
+content in the selected turn skips Jev and falls back to Sol; older media does not
+veto a later text-only decision. Assistant answers, tool-result payloads, earlier
+user turns and reasoning are excluded from decision state. User-authored text can
+still contain sensitive information: a native answer model does not make
+classification local.
 
 The selected native answer path preserves Codex authorization and conversation
 content, including media. The local-hop capability must not reach upstream

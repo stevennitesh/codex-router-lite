@@ -173,14 +173,14 @@ test("runtime parity, provider stability, and promotion gates are behavioral", (
 
 test("C2 review evidence binds the repaired evaluator and every frozen gate", () => {
   const evidence = JSON.parse(readFileSync(
-    path.join(root, "docs", "switchyard-c2-r1-evidence.json"),
+    path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r1-accepted-evidence.json"),
     "utf8",
   ));
   const evaluatorHash = createHash("sha256").update(readFileSync(
     path.join(root, "docs", "history", "2026-09-18-switchyard-c2-evaluator.mjs"),
   )).digest("hex");
   const predecessorHash = createHash("sha256").update(readFileSync(
-    path.join(root, "docs", "switchyard-c2-evidence.json"),
+    path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r0-failed-evidence.json"),
   )).digest("hex");
   const canonicalTemplate = readFileSync(
     path.join(root, "config", "switchyard", "routes.template.toml"),

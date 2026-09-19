@@ -40,7 +40,7 @@ Revision 6 retains the simplified scope, narrows health to configuration readine
 and adds explicit documentation/context acceptance. It supersedes the
 earlier assistant-context experiment,
 Policy C, unknown-field publication blocking and mandatory 24 answer runs.
-The [handoff](switchyard-followup-handoff.md) owns execution arrangements.
+The [completed handoff](2026-09-18-switchyard-followup-handoff-completed.md) records execution arrangements.
 
 Final validation passed: 248 automated tests, repository/package checks, the
 installed native catalog check, and Rust formatting, lint, affected tests and
@@ -63,7 +63,7 @@ candidate. The subsequent C2 assignment authorized its bounded synthetic paid
 calls, and final release authorization covered commit, push, deployment, live
 smoke and renewed synthetic native certification. No private conversation was
 used or exported.
-The [completed upgrade record](history/2026-09-18-switchyard-upgrade-plan.md) remains historical.
+The [completed upgrade record](2026-09-18-switchyard-upgrade-plan.md) remains historical.
 
 ## Recommended reconciliation
 

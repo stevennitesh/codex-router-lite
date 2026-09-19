@@ -880,11 +880,17 @@ index b2ff7c2e..0c55bcf8 100644
          if let Some(first) = spec
              .get("enum")
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
-index e8a32baa..36edcd06 100644
+index e8a32baa..1365a34c 100644
 --- a/crates/libsy/src/algorithms/type_safe_class.rs
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
-@@ -22,7 +22,7 @@ use async_trait::async_trait;
- use switchyard_protocol::{Category, ContentBlock, Message, Request, Response, Role};
+@@ -19,10 +19,12 @@
+ use std::sync::Arc;
+ 
+ use async_trait::async_trait;
+-use switchyard_protocol::{Category, ContentBlock, Message, Request, Response, Role};
++use switchyard_protocol::{
++    Category, ContentBlock, FormatId, Message, Request, Response, Role, WireFormat,
++};
  
  use super::fall_through::FallThrough;
 -use super::llm_class::{DefaultCategoryClassifier, affinity_router, task_messages, trim_messages};
@@ -892,7 +898,7 @@ index e8a32baa..36edcd06 100644
  use super::util::affinity::ClassifyTrigger;
  use super::util::typesafe_provider::{
      TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeVerdict,
-@@ -37,8 +37,10 @@ const ALGORITHM_NAME: &str = "type_safe_task_classifier";
+@@ -37,8 +39,10 @@ const ALGORITHM_NAME: &str = "type_safe_task_classifier";
  
  /// Instruction sent as the provider's question when the deployment leaves
  /// [`TypeSafeClassifierConfig::question`] empty.
@@ -904,7 +910,7 @@ index e8a32baa..36edcd06 100644
  /// Settings for a [`TypeSafeTaskClassifier`] route.
  #[derive(Clone, Debug)]
  pub struct TypeSafeClassifierConfig {
-@@ -60,9 +62,6 @@ pub struct TypeSafeClassifierConfig {
+@@ -60,9 +64,6 @@ pub struct TypeSafeClassifierConfig {
      /// Uses the first user message as the SessionKey for sticky routing when
      /// session metadata is unavailable. Requires `classify_trigger = NewSession`.
      pub message_hash_fallback: bool,
@@ -914,7 +920,7 @@ index e8a32baa..36edcd06 100644
  }
  
  impl Default for TypeSafeClassifierConfig {
-@@ -74,7 +73,6 @@ impl Default for TypeSafeClassifierConfig {
+@@ -74,7 +75,6 @@ impl Default for TypeSafeClassifierConfig {
              default_target: Category::Efficient,
              classify_trigger: ClassifyTrigger::default(),
              message_hash_fallback: false,
@@ -922,7 +928,7 @@ index e8a32baa..36edcd06 100644
          }
      }
  }
-@@ -105,68 +103,53 @@ impl TypeSafeClassifierConfig {
+@@ -105,68 +105,70 @@ impl TypeSafeClassifierConfig {
  
      fn question(&self) -> &str {
          if self.question.trim().is_empty() {
@@ -960,8 +966,41 @@ index e8a32baa..36edcd06 100644
 -        .collect::<Vec<_>>()
 -        .join(" ");
 -    format!("[{role}] {body}")
--}
--
++/// Selects the latest decoded end-user turn without treating tool-result
++/// pseudo-user messages as user intent. The original request is never changed.
++fn latest_user_turn(messages: &[Message]) -> Option<SelectedUserTurn> {
++    messages.iter().rev().find_map(|message| {
++        if message.role != Role::User {
++            return None;
++        }
++        let text = message
++            .content
++            .iter()
++            .filter_map(|block| match block {
++                ContentBlock::Text { text } | ContentBlock::Refusal { text } => Some(text.as_str()),
++                _ => None,
++            })
++            .collect::<Vec<_>>()
++            .join("\n");
++        let has_non_text = message.content.iter().any(|block| match block {
++            ContentBlock::Image { .. }
++            | ContentBlock::Audio { .. }
++            | ContentBlock::Video { .. }
++            | ContentBlock::File { .. } => true,
++            ContentBlock::Unknown { provider, raw } => !unknown_is_control_only(provider, raw),
++            ContentBlock::Text { .. }
++            | ContentBlock::Reasoning { .. }
++            | ContentBlock::ToolCall(_)
++            | ContentBlock::ToolResult(_)
++            | ContentBlock::Refusal { .. } => false,
++        });
++        if text.trim().is_empty() && !has_non_text {
++            return None;
++        }
++        Some(SelectedUserTurn { text, has_non_text })
++    })
+ }
+ 
 -fn role_label(role: Role) -> &'static str {
 -    match role {
 -        Role::System => "system",
@@ -992,45 +1031,27 @@ index e8a32baa..36edcd06 100644
 -        ContentBlock::Refusal { text } => text.clone(),
 -        ContentBlock::Unknown { .. } => "(unrecognized content)".to_string(),
 -    }
-+/// Selects the latest decoded end-user turn without treating tool-result
-+/// pseudo-user messages as user intent. The original request is never changed.
-+fn latest_user_turn(messages: &[Message]) -> Option<SelectedUserTurn> {
-+    messages.iter().rev().find_map(|message| {
-+        if message.role != Role::User {
-+            return None;
-+        }
-+        let tool_result_only = !message.content.is_empty()
-+            && message
-+                .content
-+                .iter()
-+                .all(|block| matches!(block, ContentBlock::ToolResult(_)));
-+        if tool_result_only {
-+            return None;
-+        }
-+        let text = message
-+            .content
-+            .iter()
-+            .filter_map(|block| match block {
-+                ContentBlock::Text { text } => Some(text.as_str()),
-+                _ => None,
-+            })
-+            .collect::<Vec<_>>()
-+            .join("\n");
-+        let has_non_text = message.content.iter().any(|block| {
-+            matches!(
-+                block,
-+                ContentBlock::Image { .. }
-+                    | ContentBlock::Audio { .. }
-+                    | ContentBlock::Video { .. }
-+                    | ContentBlock::File { .. }
++/// Responses built-in tool history is carried through the neutral IR as an
++/// `Unknown` user message so it can be replayed byte-for-byte. It is control
++/// state, not unsupported end-user content. Every other unknown block is
++/// conservatively meaningful non-text and therefore forces local fallback.
++fn unknown_is_control_only(provider: &FormatId, raw: &serde_json::Value) -> bool {
++    provider.as_str() == WireFormat::OpenAiResponses.as_str()
++        && matches!(
++            raw.get("type").and_then(serde_json::Value::as_str),
++            Some(
++                "apply_patch_call"
++                    | "apply_patch_call_output"
++                    | "shell_call"
++                    | "shell_call_output"
++                    | "computer_call"
++                    | "computer_call_output"
 +            )
-+        });
-+        Some(SelectedUserTurn { text, has_non_text })
-+    })
++        )
  }
  
  /// Raw provider-backed scorer.
-@@ -182,10 +165,17 @@ struct TypeSafeClassifier {
+@@ -182,10 +184,17 @@ struct TypeSafeClassifier {
  }
  
  impl TypeSafeClassifier {
@@ -1049,7 +1070,7 @@ index e8a32baa..36edcd06 100644
          });
          if let (Some(evidence), Some(extra)) = (evidence.as_object_mut(), extra.as_object()) {
              evidence.extend(extra.clone());
-@@ -207,7 +197,7 @@ impl TypeSafeClassifier {
+@@ -207,7 +216,7 @@ impl TypeSafeClassifier {
                  confidence = verdict.confidence,
                  "type safe classifier returned an out-of-range confidence; falling through"
              );
@@ -1058,7 +1079,7 @@ index e8a32baa..36edcd06 100644
                  driver,
                  "invalid_confidence",
                  serde_json::json!({
-@@ -215,6 +205,7 @@ impl TypeSafeClassifier {
+@@ -215,6 +224,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -1066,7 +1087,7 @@ index e8a32baa..36edcd06 100644
                  }),
              );
          }
-@@ -230,19 +221,20 @@ impl TypeSafeClassifier {
+@@ -230,19 +240,20 @@ impl TypeSafeClassifier {
                  label = %verdict.label,
                  "type safe classifier returned an unconfigured label; falling through"
              );
@@ -1089,7 +1110,7 @@ index e8a32baa..36edcd06 100644
                  driver,
                  "low_confidence",
                  serde_json::json!({
-@@ -250,6 +242,7 @@ impl TypeSafeClassifier {
+@@ -250,6 +261,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -1097,7 +1118,7 @@ index e8a32baa..36edcd06 100644
                  }),
              );
          }
-@@ -257,9 +250,12 @@ impl TypeSafeClassifier {
+@@ -257,9 +269,12 @@ impl TypeSafeClassifier {
          driver.set_evidence_if_empty(serde_json::json!({
              "source": "type_safe_classifier",
              "label": verdict.label,
@@ -1110,16 +1131,20 @@ index e8a32baa..36edcd06 100644
          }));
          Classification::Scores(vec![Score {
              target,
-@@ -277,13 +273,16 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -277,13 +292,21 @@ impl Classifier<State> for TypeSafeClassifier {
          request: &mut Request,
          driver: &Driver,
      ) -> Result<(Classification, Option<Response>)> {
 -        let messages = match self.config.recent_turn_window {
 -            Some(window) => trim_messages(&request.llm_request.messages, window),
 -            None => task_messages(&request.llm_request.messages),
--        };
-+        let selected = latest_user_turn(&request.llm_request.messages);
-+        if selected.as_ref().is_some_and(|turn| turn.has_non_text) {
++        let Some(selected) = latest_user_turn(&request.llm_request.messages) else {
++            return Ok((
++                self.fall_open(driver, "empty_state", serde_json::Value::Null),
++                None,
++            ));
+         };
++        if selected.has_non_text {
 +            return Ok((
 +                self.fall_open(driver, "non_text_state", serde_json::Value::Null),
 +                None,
@@ -1128,11 +1153,11 @@ index e8a32baa..36edcd06 100644
          let input = TypeSafeClassifierInput {
              question: self.config.question().to_string(),
 -            context: render_context(&messages),
-+            context: selected.map_or_else(String::new, |turn| turn.text),
++            context: selected.text,
          };
  
          let verdict = match self.provider.classify(input, &self.config.options).await {
-@@ -294,8 +293,11 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -294,8 +317,11 @@ impl Classifier<State> for TypeSafeClassifier {
                      %error,
                      "type safe classifier request failed; falling through"
                  );
@@ -1146,16 +1171,16 @@ index e8a32baa..36edcd06 100644
                  return Ok((classification, None));
              }
          };
-@@ -382,7 +384,7 @@ mod tests {
+@@ -382,7 +408,7 @@ mod tests {
      use crate::core::testing::empty_driver;
      use async_trait::async_trait;
      use parking_lot::Mutex;
 -    use switchyard_protocol::{ModelId, text_request};
-+    use switchyard_protocol::{ImageSource, ModelId, text_request};
++    use switchyard_protocol::{ImageSource, ModelId, ToolCall, ToolResult, text_request};
  
      use super::super::util::typesafe_provider::TypeSafeProviderError;
  
-@@ -451,6 +453,7 @@ mod tests {
+@@ -451,6 +477,7 @@ mod tests {
              confidence,
              probabilities: [(label.to_string(), 1.0)].into(),
              decision_latency_ms: 12,
@@ -1163,7 +1188,7 @@ index e8a32baa..36edcd06 100644
          }
      }
  
-@@ -533,8 +536,9 @@ mod tests {
+@@ -533,8 +560,9 @@ mod tests {
  
      #[tokio::test]
      async fn a_provider_error_falls_through_to_the_default() -> Result<()> {
@@ -1175,7 +1200,7 @@ index e8a32baa..36edcd06 100644
          ))));
          let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
          let driver = driver_with(&[
-@@ -551,6 +555,42 @@ mod tests {
+@@ -551,6 +579,42 @@ mod tests {
          Ok(())
      }
  
@@ -1218,33 +1243,13 @@ index e8a32baa..36edcd06 100644
      #[tokio::test]
      async fn a_nan_confidence_falls_through_to_the_default() -> Result<()> {
          let provider = Arc::new(StubProvider::once(Ok(verdict("capable", f64::NAN))));
-@@ -612,26 +652,53 @@ mod tests {
+@@ -612,26 +676,146 @@ mod tests {
      }
  
      #[test]
 -    fn render_context_summarizes_non_text_content() {
 -        use switchyard_protocol::ToolCall;
--
--        let messages = vec![Message {
--            role: Role::Assistant,
--            content: vec![
--                ContentBlock::Text {
--                    text: "checking logs".to_string(),
--                },
--                ContentBlock::ToolCall(ToolCall {
--                    id: "call-1".to_string(),
--                    name: "grep".to_string(),
--                    arguments: serde_json::json!({}),
--                }),
--            ],
--        }];
--        let rendered = render_context(&messages);
--        assert!(rendered.contains("[assistant]"));
--        assert!(rendered.contains("checking logs"));
--        assert!(rendered.contains("(called tool grep)"));
 +    fn latest_user_selector_skips_tool_results_and_ignores_old_media() {
-+        use switchyard_protocol::ToolResult;
-+
 +        let messages = vec![
 +            Message {
 +                role: Role::User,
@@ -1289,6 +1294,112 @@ index e8a32baa..36edcd06 100644
 +        let selected = latest_user_turn(&messages).expect("media user turn");
 +        assert_eq!(selected.text, "");
 +        assert!(selected.has_non_text);
++    }
+ 
++    #[test]
++    fn latest_user_selector_marks_mixed_unknown_content_non_text() {
+         let messages = vec![Message {
+-            role: Role::Assistant,
++            role: Role::User,
+             content: vec![
+                 ContentBlock::Text {
+-                    text: "checking logs".to_string(),
++                    text: "classify no partial state".to_string(),
++                },
++                ContentBlock::Unknown {
++                    provider: WireFormat::OpenAiChat.into(),
++                    raw: serde_json::json!({
++                        "type": "future_user_content",
++                        "payload": {"meaning": "must not be dropped"}
++                    }),
+                 },
+-                ContentBlock::ToolCall(ToolCall {
+-                    id: "call-1".to_string(),
+-                    name: "grep".to_string(),
+-                    arguments: serde_json::json!({}),
+-                }),
+             ],
+         }];
+-        let rendered = render_context(&messages);
+-        assert!(rendered.contains("[assistant]"));
+-        assert!(rendered.contains("checking logs"));
+-        assert!(rendered.contains("(called tool grep)"));
++        let selected = latest_user_turn(&messages).expect("mixed unknown user turn");
++        assert_eq!(selected.text, "classify no partial state");
++        assert!(selected.has_non_text);
++    }
++
++    #[test]
++    fn latest_user_selector_keeps_unknown_only_turn() {
++        let messages = vec![
++            Message::text(Role::User, "older text"),
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::Unknown {
++                    provider: WireFormat::AnthropicMessages.into(),
++                    raw: serde_json::json!({
++                        "type": "future_user_content",
++                        "payload": "meaningful"
++                    }),
++                }],
++            },
++        ];
++        let selected = latest_user_turn(&messages).expect("unknown-only user turn");
++        assert_eq!(selected.text, "");
++        assert!(selected.has_non_text);
++    }
++
++    #[test]
++    fn latest_user_selector_skips_empty_and_control_only_pseudo_messages() {
++        let messages = vec![
++            Message::text(Role::User, "older genuine request"),
++            Message {
++                role: Role::User,
++                content: Vec::new(),
++            },
++            Message::text(Role::User, "  \n"),
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::Reasoning {
++                    text: "private reasoning".to_string(),
++                    signature: None,
++                    details: Vec::new(),
++                }],
++            },
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::ToolCall(ToolCall {
++                    id: "call-1".to_string(),
++                    name: "read_file".to_string(),
++                    arguments: serde_json::json!({}),
++                })],
++            },
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::ToolResult(ToolResult {
++                    tool_call_id: "call-1".to_string(),
++                    content: vec![ContentBlock::Text {
++                        text: "private tool output".to_string(),
++                    }],
++                    is_error: None,
++                })],
++            },
++            Message {
++                role: Role::User,
++                content: vec![ContentBlock::Unknown {
++                    provider: WireFormat::OpenAiResponses.into(),
++                    raw: serde_json::json!({
++                        "type": "shell_call_output",
++                        "call_id": "call-1",
++                        "output": "private tool output"
++                    }),
++                }],
++            },
++        ];
++        let selected = latest_user_turn(&messages).expect("older genuine user turn");
++        assert_eq!(selected.text, "older genuine request");
++        assert!(!selected.has_non_text);
++        assert!(latest_user_turn(&messages[1..]).is_none());
      }
  
      #[test]
@@ -2448,7 +2559,7 @@ index 58ebc0d9..0578db69 100644
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e..b1b0ef20 100644
+index 29bb561e..feb7fb6d 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2518,7 +2629,7 @@ index 29bb561e..b1b0ef20 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -800,6 +796,104 @@ fn random_state_with_retries(
+@@ -800,6 +796,117 @@ fn random_state_with_retries(
      ServerState::from_runner(Runner::new(entries)).map_err(Into::into)
  }
  
@@ -2552,16 +2663,29 @@ index 29bb561e..b1b0ef20 100644
 +    base_url: &str,
 +    provider: Arc<RecordingTypeSafeProvider>,
 +) -> TestResult<ServerState> {
-+    let backend = Backend::OpenAiChat(HttpBackendConfig {
++    type_safe_state_with_format(base_url, provider, WireFormat::OpenAiChat)
++}
++
++fn type_safe_state_with_format(
++    base_url: &str,
++    provider: Arc<RecordingTypeSafeProvider>,
++    format: WireFormat,
++) -> TestResult<ServerState> {
++    let http = HttpBackendConfig {
 +        base_url: base_url.to_string(),
-+        api_key: Some("test-key".to_string()),
-+        forward_auth: false,
++        api_key: (format == WireFormat::OpenAiChat).then(|| "test-key".to_string()),
++        forward_auth: format == WireFormat::OpenAiResponses,
 +        extra_headers: BTreeMap::new(),
 +        extra_body: BTreeMap::new(),
 +        reasoning_effort: None,
 +        max_retries: 0,
 +        timeout: None,
-+    });
++    };
++    let backend = match format {
++        WireFormat::OpenAiChat => Backend::OpenAiChat(http),
++        WireFormat::OpenAiResponses => Backend::OpenAiResponses(http),
++        _ => return Err("unsupported TypeSafe test answer format".into()),
++    };
 +    let models = ["model/efficient", "model/complex"];
 +    let model_configs = models
 +        .iter()
@@ -2588,7 +2712,7 @@ index 29bb561e..b1b0ef20 100644
 +        .map(|model| DecisionTarget {
 +            target: (*model).to_string(),
 +            model: ModelId::from(*model),
-+            format: WireFormat::OpenAiChat,
++            format,
 +            base_url: base_url.to_string(),
 +            extra_body: BTreeMap::new(),
 +        })
@@ -2623,7 +2747,7 @@ index 29bb561e..b1b0ef20 100644
  async fn test_app(routes: &[(&str, &[&str])]) -> TestResult<(MockUpstream, Router)> {
      let upstream = MockUpstream::start().await?;
      let app = build_switchyard_router(random_state(&upstream.base_url, routes)?);
-@@ -842,6 +936,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+@@ -842,6 +949,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
  
@@ -2670,7 +2794,7 @@ index 29bb561e..b1b0ef20 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-@@ -1609,10 +1743,7 @@ base_threshold = 0.5
+@@ -1609,10 +1756,7 @@ base_threshold = 0.5
      let response = response.json()?;
      assert_eq!(response["fallbacks"].as_array().map(Vec::len), Some(1));
      for target in [&response["selected"], &response["fallbacks"][0]] {
@@ -2682,7 +2806,7 @@ index 29bb561e..b1b0ef20 100644
      }
      Ok(())
  }
-@@ -1902,7 +2033,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1902,7 +2046,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2691,7 +2815,7 @@ index 29bb561e..b1b0ef20 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1911,7 +2042,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1911,7 +2055,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2700,7 +2824,7 @@ index 29bb561e..b1b0ef20 100644
                  },
                  "extra_body": {},
              }],
-@@ -2714,6 +2845,135 @@ recent_turn_window = 1
+@@ -2714,6 +2858,330 @@ recent_turn_window = 1
      Ok(())
  }
  
@@ -2833,10 +2957,205 @@ index 29bb561e..b1b0ef20 100644
 +    Ok(())
 +}
 +
++#[tokio::test]
++async fn type_safe_classifier_falls_open_on_unknown_user_content_across_decoders() -> TestResult {
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider::default());
++    let app = build_switchyard_router(type_safe_state(&upstream.base_url, Arc::clone(&provider))?);
++    let cases = [
++        (
++            "/v1/chat/completions",
++            json!({"model": "typesafe", "messages": [{"role": "user", "content": [
++                {"type": "text", "text": "Visible partial text."},
++                {"type": "future_user_content", "payload": "CHAT_UNKNOWN_MIXED"}
++            ]}]}),
++            "CHAT_UNKNOWN_MIXED",
++        ),
++        (
++            "/v1/chat/completions",
++            json!({"model": "typesafe", "messages": [{"role": "user", "content": [
++                {"type": "future_user_content", "payload": "CHAT_UNKNOWN_ONLY"}
++            ]}]}),
++            "CHAT_UNKNOWN_ONLY",
++        ),
++        (
++            "/v1/messages",
++            json!({"model": "typesafe", "max_tokens": 32, "messages": [{"role": "user", "content": [
++                {"type": "text", "text": "Visible partial text."},
++                {"type": "future_user_content", "payload": "ANTHROPIC_UNKNOWN_MIXED"}
++            ]}]}),
++            "ANTHROPIC_UNKNOWN_MIXED",
++        ),
++        (
++            "/v1/messages",
++            json!({"model": "typesafe", "max_tokens": 32, "messages": [{"role": "user", "content": [
++                {"type": "future_user_content", "payload": "ANTHROPIC_UNKNOWN_ONLY"}
++            ]}]}),
++            "ANTHROPIC_UNKNOWN_ONLY",
++        ),
++        (
++            "/v1/responses",
++            json!({"model": "typesafe", "input": [{"role": "user", "content": [
++                {"type": "input_text", "text": "Visible partial text."},
++                {"type": "future_user_content", "payload": "RESPONSES_UNKNOWN_MIXED"}
++            ]}]}),
++            "RESPONSES_UNKNOWN_MIXED",
++        ),
++        (
++            "/v1/responses",
++            json!({"model": "typesafe", "input": [{"type": "future_user_content", "payload": "RESPONSES_UNKNOWN_ONLY"}]}),
++            "RESPONSES_UNKNOWN_ONLY",
++        ),
++    ];
++
++    for (endpoint, body, marker) in cases {
++        upstream.calls.lock().await.clear();
++        let response = send(&app, "POST", endpoint, Some(body)).await?;
++        assert_eq!(
++            response.status,
++            StatusCode::OK,
++            "{endpoint}: {}",
++            response.text()?
++        );
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "model/efficient",
++            "{endpoint}: {marker}"
++        );
++        let calls = upstream.calls.lock().await;
++        assert_eq!(calls.len(), 1, "{endpoint}: {marker}");
++        assert!(
++            calls[0].to_string().contains(marker),
++            "{endpoint}: {marker}"
++        );
++    }
++    assert!(provider.inputs.lock().await.is_empty());
++    Ok(())
++}
++
++#[tokio::test]
++async fn type_safe_classifier_skips_empty_and_control_only_user_state_across_decoders() -> TestResult
++{
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider::default());
++    let app = build_switchyard_router(type_safe_state(&upstream.base_url, Arc::clone(&provider))?);
++    let requests = [
++        (
++            "/v1/chat/completions",
++            json!({"model": "typesafe", "messages": [
++                {"role": "user", "content": "Older genuine request."},
++                {"role": "user", "content": []}
++            ]}),
++        ),
++        (
++            "/v1/messages",
++            json!({"model": "typesafe", "max_tokens": 32, "messages": [
++                {"role": "user", "content": "Older genuine request."},
++                {"role": "user", "content": []}
++            ]}),
++        ),
++        (
++            "/v1/responses",
++            json!({"model": "typesafe", "input": [
++                {"role": "user", "content": [{"type": "input_text", "text": "Older genuine request."}]},
++                {"role": "user", "content": []}
++            ]}),
++        ),
++    ];
++
++    for (endpoint, body) in requests {
++        upstream.calls.lock().await.clear();
++        let response = send(&app, "POST", endpoint, Some(body)).await?;
++        assert_eq!(
++            response.status,
++            StatusCode::OK,
++            "{endpoint}: {}",
++            response.text()?
++        );
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "model/efficient",
++            "{endpoint}"
++        );
++        let inputs = provider.inputs.lock().await;
++        assert_eq!(
++            inputs.last().map(|input| input.context.as_str()),
++            Some("Older genuine request."),
++            "{endpoint}"
++        );
++        drop(inputs);
++        assert_eq!(upstream.calls.lock().await.len(), 1, "{endpoint}");
++    }
++    assert_eq!(provider.inputs.lock().await.len(), 3);
++
++    let responses_provider = Arc::new(RecordingTypeSafeProvider::default());
++    let responses_app = build_switchyard_router(type_safe_state_with_format(
++        &upstream.base_url,
++        Arc::clone(&responses_provider),
++        WireFormat::OpenAiResponses,
++    )?);
++    upstream.calls.lock().await.clear();
++    let response = send_with_headers(
++        &responses_app,
++        "POST",
++        "/v1/responses",
++        Some(json!({"model": "typesafe", "input": [
++            {"role": "user", "content": [{"type": "input_text", "text": "Older genuine request."}]},
++            {"type": "shell_call_output", "call_id": "call-1", "output": "private tool output"}
++        ]})),
++        &[
++            ("authorization", "Bearer codex-login-token"),
++            ("chatgpt-account-id", "account-123"),
++            ("x-openai-fedramp", "true"),
++        ],
++    )
++    .await?;
++    assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
++    assert_eq!(
++        response.headers["x-model-router-selected-model"],
++        "model/efficient"
++    );
++    assert_eq!(
++        responses_provider
++            .inputs
++            .lock()
++            .await
++            .last()
++            .map(|input| input.context.as_str()),
++        Some("Older genuine request.")
++    );
++    let calls = upstream.calls.lock().await;
++    assert_eq!(calls.len(), 1);
++    assert_eq!(calls[0]["input"][1]["type"], "shell_call_output");
++    drop(calls);
++
++    upstream.calls.lock().await.clear();
++    let response = send_with_headers(
++        &responses_app,
++        "POST",
++        "/v1/responses",
++        Some(json!({"model": "typesafe", "input": [
++            {"type": "shell_call_output", "call_id": "call-2", "output": "private tool output"}
++        ]})),
++        &[
++            ("authorization", "Bearer codex-login-token"),
++            ("chatgpt-account-id", "account-123"),
++            ("x-openai-fedramp", "true"),
++        ],
++    )
++    .await?;
++    assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
++    assert_eq!(
++        response.headers["x-model-router-selected-model"],
++        "model/efficient"
++    );
++    assert_eq!(responses_provider.inputs.lock().await.len(), 1);
++    assert_eq!(upstream.calls.lock().await.len(), 1);
++    Ok(())
++}
++
  #[tokio::test]
  async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
      let upstream = MockUpstream::start().await?;
-@@ -3161,7 +3421,8 @@ target = "claude"
+@@ -3161,7 +3629,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -2846,7 +3165,7 @@ index 29bb561e..b1b0ef20 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +3438,7 @@ target = "claude"
+@@ -3177,6 +3646,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2854,7 +3173,7 @@ index 29bb561e..b1b0ef20 100644
          ],
      )
      .await?;
-@@ -3187,7 +3449,10 @@ target = "claude"
+@@ -3187,7 +3657,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -2866,7 +3185,7 @@ index 29bb561e..b1b0ef20 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +3485,29 @@ target = "openai"
+@@ -3220,7 +3693,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -2897,7 +3216,7 @@ index 29bb561e..b1b0ef20 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +3518,9 @@ target = "openai"
+@@ -3231,8 +3726,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2909,7 +3228,7 @@ index 29bb561e..b1b0ef20 100644
          ],
      )
      .await?;
-@@ -3247,6 +3535,7 @@ target = "openai"
+@@ -3247,6 +3743,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -2917,7 +3236,7 @@ index 29bb561e..b1b0ef20 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +3550,7 @@ target = "openai"
+@@ -3261,6 +3758,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -2925,7 +3244,7 @@ index 29bb561e..b1b0ef20 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +3573,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +3781,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -2937,7 +3256,7 @@ index 29bb561e..b1b0ef20 100644
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +3619,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +3827,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  

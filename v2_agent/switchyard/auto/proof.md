@@ -1,6 +1,10 @@
-# switchyard/auto v2 certification
+# switchyard/auto v2 certification draft
 
-Accepted exact-route evidence for deployed Router `096fb8704ebc83df2aecec3aa46228578b639686`.
+The evidence below was accepted for deployed Router
+`096fb8704ebc83df2aecec3aa46228578b639686`. The checked source now includes an
+un-deployed classifier-input fix, so the application and route are v1/draft until
+that source is deployed and certified. The byte-preserved accepted JSON is in
+[`docs/history`](../../../docs/history/2026-09-18-switchyard-followup-runtime-proof-accepted.json).
 Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
