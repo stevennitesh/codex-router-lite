@@ -1116,22 +1116,25 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
  
      #[test]
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
-index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef964196cce 100644
+index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60c5a1321a 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
 +++ b/crates/libsy/src/algorithms/util/affinity.rs
-@@ -57,8 +57,38 @@ fn is_user_turn(message: &Message) -> bool {
+@@ -57,8 +57,41 @@ fn is_user_turn(message: &Message) -> bool {
              .all(|block| matches!(block, ContentBlock::ToolResult(_)))
  }
  
 -pub(crate) fn has_new_user_turn(messages: &[Message]) -> bool {
 -    messages.last().is_some_and(is_user_turn)
-+const RESPONSES_TOOL_OUTPUT_TYPES: &[&str] = &[
++const RESPONSES_CONTROL_TYPES: &[&str] = &[
++    "apply_patch_call",
 +    "apply_patch_call_output",
++    "shell_call",
++    "shell_call_output",
++    "computer_call",
++    "computer_call_output",
 +    "function_call_output",
 +    "custom_tool_call_output",
-+    "computer_call_output",
 +    "local_shell_call_output",
-+    "shell_call_output",
 +    "tool_search_output",
 +];
 +
@@ -1142,7 +1145,7 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef9
 +    }
 +    let item = input.as_array()?.last()?.as_object()?;
 +    let item_type = item.get("type")?.as_str()?;
-+    if RESPONSES_TOOL_OUTPUT_TYPES.contains(&item_type) {
++    if RESPONSES_CONTROL_TYPES.contains(&item_type) {
 +        return Some(false);
 +    }
 +    (item_type == "message")
@@ -1160,7 +1163,7 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef9
  }
  
  /// Retains a model per request identity and forces it on later matching requests.
-@@ -241,7 +271,7 @@ where
+@@ -241,7 +274,7 @@ where
          };
          // Abstaining rather than clearing keeps this read path free of writes, so the judge
          // decides the turn whatever order concurrent latches land in.
@@ -1169,12 +1172,12 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef9
              return Ok((Classification::Scores(Vec::new()), None));
          }
          // An empty `any` group carries no information about which models are still
-@@ -881,6 +911,49 @@ mod tests {
+@@ -881,6 +914,52 @@ mod tests {
          Ok(())
      }
  
 +    #[tokio::test]
-+    async fn literal_responses_tool_outputs_keep_user_turn_affinity() -> Result<(), BoxErr> {
++    async fn literal_responses_control_items_keep_user_turn_affinity() -> Result<(), BoxErr> {
 +        let router = AffinityRouter::new().with_release_on_user_turn();
 +        let mut state = ();
 +        let metadata = session("session-1", "agent-a");
@@ -1184,12 +1187,15 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..a6f4ad07f41e22b638fa3a943b58cef9
 +        // Literal protocol names keep this regression independent of the
 +        // implementation list it is meant to check.
 +        for item_type in [
++            "apply_patch_call",
 +            "apply_patch_call_output",
++            "shell_call",
++            "shell_call_output",
++            "computer_call",
++            "computer_call_output",
 +            "function_call_output",
 +            "custom_tool_call_output",
-+            "computer_call_output",
 +            "local_shell_call_output",
-+            "shell_call_output",
 +            "tool_search_output",
 +        ] {
 +            // The Responses decoder historically represented unfamiliar Codex
@@ -2257,7 +2263,7 @@ index 58ebc0d977395ae4a86522984acf8149051ff167..0578db69c022973d5e21d7066c20c141
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd149db93a 100644
+index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27dff50e78b3 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2600,7 +2606,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
                  },
                  "extra_body": {},
              }],
-@@ -2714,6 +2936,464 @@ recent_turn_window = 1
+@@ -2714,6 +2936,522 @@ recent_turn_window = 1
      Ok(())
  }
  
@@ -2929,7 +2935,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
 +}
 +
 +#[tokio::test]
-+async fn responses_native_tool_outputs_keep_capable_affinity_until_a_genuine_user_turn()
++async fn responses_native_tool_control_keeps_capable_affinity_until_a_genuine_user_turn()
 +-> TestResult {
 +    let upstream = MockUpstream::start().await?;
 +    let provider = Arc::new(RecordingTypeSafeProvider {
@@ -2984,6 +2990,64 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
 +    assert_eq!(calls[0]["reasoning"]["effort"], "medium");
 +    assert_eq!(calls[0]["service_tier"], "priority");
 +    drop(calls);
++
++    for (item_type, input) in [
++        (
++            "apply_patch_call",
++            json!([{
++                "type": "apply_patch_call",
++                "call_id": "patch-call",
++                "operation": {"type": "update_file", "path": "src/lib.rs"}
++            }]),
++        ),
++        (
++            "shell_call",
++            json!([{
++                "type": "shell_call",
++                "call_id": "shell-call",
++                "action": {"commands": ["pwd"]},
++                "environment": {"type": "local"}
++            }]),
++        ),
++        (
++            "computer_call",
++            json!([{
++                "type": "computer_call",
++                "call_id": "computer-call",
++                "action": {"type": "screenshot"},
++                "pending_safety_checks": []
++            }]),
++        ),
++    ] {
++        let response = send_with_headers(
++            &app,
++            "POST",
++            "/v1/responses",
++            Some(json!({
++                "model": "typesafe",
++                "service_tier": "priority",
++                "input": input
++            })),
++            &headers,
++        )
++        .await?;
++        assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
++        assert_eq!(
++            response.headers["x-model-router-selected-model"], "astra-medium",
++            "{item_type} changed the retained target"
++        );
++        assert_eq!(
++            provider.inputs.lock().await.len(),
++            1,
++            "{item_type} made another Jev call"
++        );
++        let calls = upstream.calls.lock().await;
++        let forwarded = calls.last().ok_or("missing native answer call")?;
++        assert_eq!(forwarded["model"], "gpt-6-astra");
++        assert_eq!(forwarded["reasoning"]["effort"], "medium");
++        assert_eq!(forwarded["input"], input);
++        assert_eq!(forwarded["service_tier"], "priority");
++    }
 +
 +    // These names are literal wire protocol values, independent of affinity's
 +    // implementation list. Replayed call history and an output-only
@@ -3055,17 +3119,17 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
 +        "astra-medium"
 +    );
 +    assert_eq!(provider.inputs.lock().await.len(), 2);
-+    assert_eq!(upstream.calls.lock().await.len(), 4);
++    assert_eq!(upstream.calls.lock().await.len(), 7);
 +    let calls = upstream.calls.lock().await;
-+    assert_eq!(calls[3]["model"], "gpt-6-astra");
-+    assert_eq!(calls[3]["reasoning"]["effort"], "medium");
++    assert_eq!(calls[6]["model"], "gpt-6-astra");
++    assert_eq!(calls[6]["reasoning"]["effort"], "medium");
 +    Ok(())
 +}
 +
  #[tokio::test]
  async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
      let upstream = MockUpstream::start().await?;
-@@ -3161,7 +3841,8 @@ target = "claude"
+@@ -3161,7 +3899,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3075,7 +3139,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +3858,7 @@ target = "claude"
+@@ -3177,6 +3916,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3083,7 +3147,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
          ],
      )
      .await?;
-@@ -3187,7 +3869,10 @@ target = "claude"
+@@ -3187,7 +3927,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -3095,7 +3159,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +3905,29 @@ target = "openai"
+@@ -3220,7 +3963,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3126,7 +3190,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +3938,9 @@ target = "openai"
+@@ -3231,8 +3996,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3138,7 +3202,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
          ],
      )
      .await?;
-@@ -3247,6 +3955,7 @@ target = "openai"
+@@ -3247,6 +4013,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3146,7 +3210,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +3970,7 @@ target = "openai"
+@@ -3261,6 +4028,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -3154,7 +3218,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +3993,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +4051,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -3166,7 +3230,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..ef9af196539828fe608d2ea6e485c8cd
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +4039,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +4097,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  

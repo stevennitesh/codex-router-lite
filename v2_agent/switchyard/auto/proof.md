@@ -4,7 +4,7 @@ The installed runtime remains certified for deployed Router
 `e37672c4f544e5b8ebc29e473c5564e78db5bd9b` and compatibility patch
 `411a109fd5ec302fbec91ce13272155e76b44b540ac7cdcb0ac9654731ab3bcd`.
 The checked source now uses compatibility patch
-`adbffdb89c194c0d8f45eec13d38bf9feeea49bad86615cef60ee182e2ac3c66`,
+`6902a7e93e7ac7f1b75d31f5985fe4a078a733e06270455785f8ef1a244dd9de`,
 so the source route is v1 and this application remains draft until that exact
 candidate is deployed and certified. The prior runtime evidence remains in
 [`docs/history`](../../../docs/history/2026-09-18-switchyard-review-cleanup-certification.json).
