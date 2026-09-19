@@ -2,7 +2,7 @@
 
 **More model choices. The Codex workflow I already enjoy.**
 
-**Windows-only · unofficial community project · pre-1.0**
+**Windows-only · unofficial personal project · pre-1.0**
 
 [Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Feedback](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 

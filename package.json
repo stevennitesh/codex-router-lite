@@ -1,6 +1,6 @@
 {
   "name": "codex-router-lite",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "description": "Windows compatibility router for native Codex, OpenRouter GLM-5.3-Flash and Pareto, and Switchyard",

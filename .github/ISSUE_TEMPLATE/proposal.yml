@@ -1,7 +1,7 @@
 name: Route or behavior proposal
 description: Suggest a Router Lite endpoint, protocol, or user-visible behavior change.
 title: "[Proposal]: "
-labels: [proposal]
+labels: [enhancement]
 body:
   - type: markdown
     attributes:
