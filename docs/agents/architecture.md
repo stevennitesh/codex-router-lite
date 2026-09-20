@@ -53,6 +53,25 @@ Update explicit allowlists for an authorized addition; never disable their check
    through Router to the native backend. Read its
    [trust and routing contract](../../config/switchyard/README.md) only for that path.
 
+## Boundaries and identities
+
+| Boundary | Supported surface | Authentication and identity | Failure behavior |
+| --- | --- | --- | --- |
+| Public Router HTTP | `GET /v1/health`, `GET /v1/models`; `POST /v1/responses`, `/v1/responses/compact`, `/v1/embeddings`, `/v1/images/edits`, `/v1/images/generations`, `/v1/alpha/search` | Loopback caller capability in the managed path, or an accepted bearer on direct `/v1/*`; native session identity is retained only for native hops | Known local validation errors use HTTP status plus stable `error.code`; `error.type` retains its boundary-specific compatibility value. Upstream error passthrough and post-header terminal stream errors keep their existing semantics. |
+| Public Responses WebSocket | Upgrade on `/v1/responses` | Same caller capability or accepted bearer as HTTP | Each complete WebSocket request re-enters the authenticated HTTP Responses path; the adapter serializes HTTP/SSE results and terminal failures. |
+| Private Switchyard hop | Router to the configured loopback `/v1/responses` target | Dedicated Switchyard capability; `gatewayModel` selects the native answer target | A rejected encrypted-task extraction supplies a null projection, which invokes Switchyard's local zero-Jev fallback. |
+| Private external-provider hops | Router to LiteLLM and/or `api-forwarder`; `/chat/completions` is internal-only, while direct hosted-search Responses uses the forwarder | Dedicated internal capability between local services; the forwarder alone owns the provider credential | The forwarder repeats Router-owned validation and preserves provider responses; it never receives native account headers. |
+
+Identity terms are deliberately distinct:
+
+| Term | Meaning |
+| --- | --- |
+| Public slug | The model name Codex selects and sends to Router, such as `openrouter/pareto`. |
+| `gatewayModel` | The private local dispatch identity used for the gateway or Switchyard answer route. |
+| `upstreamModel` | The provider or native model identity placed on the final upstream request. |
+| `requestProfile` | The checked-in preparation and validation policy selected for a route. |
+| Transport | The concrete hop shape chosen by that profile: native Responses, direct Responses, or chat translation. |
+
 Native account headers must never reach OpenRouter. For authentication, catalog,
 app-tool, or encrypted-handoff changes read [native Codex](native-codex.md); for
 credential storage and logging read [security](../../SECURITY.md). Proxy behavior

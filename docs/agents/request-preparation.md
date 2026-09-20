@@ -31,6 +31,17 @@ surface, resolves discovery history, translates names and choices, applies the
 selected route's custom-history and parameter rules, and chooses the transport.
 Response restoration uses the returned namespace context, not a rebuilt map.
 
+For example, one call returns a single request-local bundle:
+
+```js
+const prepared = prepareRoutedRequest(clientPayload, route);
+const upstream = await send(prepared.transport, prepared.payload);
+return restoreProviderResponse(upstream, prepared.namespaces);
+```
+
+The exact response helper varies by transport; the invariant is that
+`prepared.namespaces` from this preparation call accompanies its response.
+
 Compaction recovers historical definitions solely to translate history. It sends
 no tools or tool choice, removes previous-response references, appends the source
 catalog and summary instructions, and uses non-streaming Responses. GLM thinking
@@ -39,8 +50,8 @@ custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
 search uses the direct Responses hop; ordinary GLM requests still use LiteLLM.
 
 The forwarder calls `prepareOpenRouterRequest` for final payload validation and
-Pareto parameter filtering at
-the external send boundary. This is intentional: internal callers can reach the
+Pareto parameter filtering at the external send boundary. This is intentional:
+internal callers can reach the
 forwarder directly, so validation only in the front Router would be bypassable.
 
 ## Design decisions

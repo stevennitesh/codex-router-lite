@@ -31,10 +31,11 @@ export function payloadHasHostedSearchIntent(payload) {
   );
 }
 
-// Request-local preparation has no network, credentials, or persistent state.
-// Its namespace context must accompany the payload into response restoration.
-// Compaction reuses history conversion but never enables discovered tools or
-// carries GLM thinking into assistant messages; those are turn-only behaviors.
+/**
+ * Builds one request-local provider bundle. The returned namespace context must
+ * accompany the payload into response restoration; it cannot be reconstructed
+ * safely from a later request. This function has no network or persistent state.
+ */
 export function prepareRoutedRequest(payload, route, {
   input = payload.input, compaction = false, compactionMessages = [], childEffort,
 } = {}) {

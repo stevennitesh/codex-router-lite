@@ -1,3 +1,5 @@
+import { safeLocalHttpError } from "./http-utils.mjs";
+
 // Search is available only when the checked-in route declares how it runs.
 export function routedModelSearchMode(model) {
   if (["hosted", "standalone"].includes(model?.searchTool?.mode)) {
@@ -33,10 +35,10 @@ function hostedSearchTool(tool) {
 }
 
 function unsupportedSearchError(message) {
-  const error = new Error(message);
-  error.status = 400;
-  error.code = "model_search_not_supported";
-  return error;
+  return safeLocalHttpError(message, {
+    status: 400,
+    code: "model_search_not_supported",
+  });
 }
 
 export function unsupportedSearchContractError(model) {

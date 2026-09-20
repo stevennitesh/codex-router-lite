@@ -8,6 +8,7 @@ import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { routedModel } from "../src/catalog.mjs";
 import { MODEL_BY_SLUG, validateOpenRouterRoute } from "../src/routed-models.mjs";
 import { prepareParetoRequest } from "../src/pareto-compat.mjs";
+import { safeLocalHttpErrorPayload } from "../src/http-utils.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop, responseJson } from "./router-fixture.mjs";
 
@@ -61,6 +62,14 @@ test("Pareto strips unsupported controls and implements none without weakening f
     assert.throws(() => prepareParetoRequest({ ...original, tool_choice }, route), { code: "unsupported_tool_choice", status: 400 });
   }
   assert.equal(prepareParetoRequest(original, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash")), original);
+});
+
+test("only explicitly safe local errors may expose their message", () => {
+  const arbitrary = Object.assign(new Error("synthetic private detail"), {
+    status: 400,
+    code: "unsupported_tool_choice",
+  });
+  assert.equal(safeLocalHttpErrorPayload(arbitrary), undefined);
 });
 
 test("Pareto uses the authenticated direct Responses hop for native tools, replay, and compaction", async () => {
@@ -236,16 +245,63 @@ test("Pareto uses the authenticated direct Responses hop for native tools, repla
     for (const tool_choice of ["required", { type: "function", name: "lookup" }]) {
       const rejected = await post({ tools: [fn], tool_choice });
       assert.equal(rejected.status, 400);
-      assert.match(await rejected.text(), /automatic tool selection/);
+      const rejectedError = (await rejected.json()).error;
+      assert.equal(rejectedError.type, "unsupported_tool_choice");
+      assert.equal(rejectedError.code, "unsupported_tool_choice");
+      assert.match(rejectedError.message, /automatic tool selection/);
     }
     assert.equal(seen.length, count, "forced choice must fail before provider traffic");
     const unsupportedSearch = await post({ tools: [{ type: "web_search" }], tool_choice: { type: "web_search" } });
     assert.equal(unsupportedSearch.status, 400);
+    assert.deepEqual(
+      ((await unsupportedSearch.json()).error),
+      {
+        type: "model_search_not_supported",
+        code: "model_search_not_supported",
+        message: "Model openrouter/pareto does not advertise web search, but tool_choice explicitly selects it.",
+      },
+    );
     const hostileSearch = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${internal}` },
       body: JSON.stringify({ model: route.slug, tools: [{ type: "openrouter:web_search", parameters: {} }] }),
     });
     assert.equal(hostileSearch.status, 400);
+    const hostileSearchError = (await hostileSearch.json()).error;
+    assert.equal(hostileSearchError.type, "invalid_request_error");
+    assert.equal(hostileSearchError.code, "model_search_not_supported");
+    const directStructured = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${internal}` },
+      body: JSON.stringify({ model: route.slug, text: { format: { type: "json_schema" } } }),
+    });
+    assert.equal(directStructured.status, 400);
+    const directStructuredError = (await directStructured.json()).error;
+    assert.equal(directStructuredError.type, "invalid_request_error");
+    assert.equal(directStructuredError.code, "unsupported_response_format");
+    const directForced = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${internal}` },
+      body: JSON.stringify({ model: route.slug, tools: [fn], tool_choice: "required" }),
+    });
+    assert.equal(directForced.status, 400);
+    const directForcedError = (await directForced.json()).error;
+    assert.equal(directForcedError.type, "invalid_request_error");
+    assert.equal(directForcedError.code, "unsupported_tool_choice");
+    for (const [body, code] of [
+      ['{"model":"openrouter/pareto","input":"PRIVATE_FORWARDER_MARKER"', "invalid_request_json"],
+      ["[]", "invalid_request_json_object"],
+    ]) {
+      const invalid = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${internal}` },
+        body,
+      });
+      assert.equal(invalid.status, 400);
+      const invalidError = (await invalid.json()).error;
+      assert.equal(invalidError.type, "invalid_request_error");
+      assert.equal(invalidError.code, code);
+      assert.doesNotMatch(JSON.stringify(invalidError), /PRIVATE_FORWARDER_MARKER/);
+    }
     assert.equal(seen.length, count);
     const beforePartial = seen.length;
     const interrupted = await post({ tools: customTools, stream: true, max_output_tokens: 17 });

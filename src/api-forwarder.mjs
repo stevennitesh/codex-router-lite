@@ -5,10 +5,12 @@ import {
   endStreamedResponse,
   HOP_BY_HOP_HEADERS,
   installGracefulShutdown,
+  parseJsonObjectRequest,
   pipeResponse,
   readRequestBody,
   reportListenFailure,
   requireInternalAuth,
+  safeLocalHttpErrorPayload,
   writeJson,
 } from "./http-utils.mjs";
 import { PORTS } from "./paths.mjs";
@@ -76,13 +78,13 @@ async function handle(request, response) {
   }
   let payload;
   try {
-    payload = prepareOpenRouterRequest(JSON.parse((await readRequestBody(request)).toString("utf8")));
+    payload = prepareOpenRouterRequest(parseJsonObjectRequest(await readRequestBody(request)));
   } catch (error) {
-    writeJson(response, 400, {
+    const safe = safeLocalHttpErrorPayload(error);
+    writeJson(response, safe ? error.status : 400, safe || {
       error: {
         type: "invalid_request_error",
-        code: error?.code,
-        message: error instanceof Error ? error.message : String(error),
+        message: "The OpenRouter request is invalid.",
       },
     });
     return;

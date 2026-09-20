@@ -353,6 +353,49 @@ export function writeJson(response, status, payload) {
   response.end(body);
 }
 
+// Only errors created through this module may return their message to a caller.
+// A provider, dependency, or arbitrary throw can carry a plausible HTTP status
+// and code, but neither makes its message safe for a local API response.
+const safeLocalHttpErrors = new WeakSet();
+
+export function safeLocalHttpError(message, { status = 400, code } = {}) {
+  const error = new Error(message);
+  error.status = status;
+  if (code) error.code = code;
+  safeLocalHttpErrors.add(error);
+  return error;
+}
+
+export function safeLocalHttpErrorPayload(error, { type = "invalid_request_error" } = {}) {
+  if (!error || typeof error !== "object" || !safeLocalHttpErrors.has(error)) return undefined;
+  return {
+    error: {
+      type,
+      ...(error.code ? { code: error.code } : {}),
+      message: error.message,
+    },
+  };
+}
+
+export function parseJsonObjectRequest(buffer) {
+  let value;
+  try {
+    value = JSON.parse(buffer.toString("utf8"));
+  } catch {
+    throw safeLocalHttpError("Request body must contain valid JSON.", {
+      status: 400,
+      code: "invalid_request_json",
+    });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw safeLocalHttpError("Request JSON must be an object.", {
+      status: 400,
+      code: "invalid_request_json_object",
+    });
+  }
+  return value;
+}
+
 // The transport reports every connection-level failure as a bare
 // `TypeError: fetch failed`; the code that says why (ECONNREFUSED,
 // UND_ERR_CONNECT_TIMEOUT, ENOTFOUND, ...) lives on the `cause` chain, and a

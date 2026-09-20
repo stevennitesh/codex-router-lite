@@ -467,6 +467,54 @@ test("router preserves native auth and isolates every external route", async () 
   }
 });
 
+test("malformed request JSON returns safe stable diagnostics without input disclosure", async () => {
+  const marker = "SYNTHETIC_PRIVATE_MARKER_7f3b";
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = { "Content-Type": "application/json" };
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const malformed = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: `{"model":"gpt-5.6-sol","input":"${marker}"`,
+    });
+    assert.equal(malformed.status, 400);
+    const malformedBody = await malformed.json();
+    assert.deepEqual(malformedBody, {
+      error: {
+        type: "local_router_error",
+        code: "invalid_request_json",
+        message: "Request body must contain valid JSON.",
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(malformedBody), new RegExp(marker));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.doesNotMatch(router.testErrors(), new RegExp(marker));
+
+    for (const value of [null, [], "text", 7]) {
+      const response = await fetch(`${routerBase(routerPort)}/responses`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(value),
+      });
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), {
+        error: {
+          type: "local_router_error",
+          code: "invalid_request_json_object",
+          message: "Request JSON must be an object.",
+        },
+      });
+    }
+  } finally {
+    await stopChild(router);
+  }
+});
+
 test("native agent relay selection is deterministic and fails before unavailable upstream calls", async () => {
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
@@ -476,8 +524,9 @@ test("native agent relay selection is deterministic and fails before unavailable
       json(response, 404, { error: { message: "fixture model unavailable" } });
       return;
     }
-    json(response, 200, { output: [{
+    json(response, 200, { status: "completed", output: [{
       type: "function_call",
+      id: "fc_deterministic",
       name: "relay_external_agent_payload",
       arguments: JSON.stringify({ payload: "DETERMINISTIC_PAYLOAD" }),
     }] });
@@ -641,30 +690,42 @@ test("router relays encrypted Codex subagent payloads before external routing", 
   const native = await mockServer(async (request, response) => {
     nativeRequests.push({ headers: request.headers, body: await bodyJson(request) });
     const relayArguments = JSON.stringify({ payload: "Inspect /tmp/capture.png harshly." });
+    const relayCall = {
+      type: "function_call",
+      id: "fc_relay",
+      call_id: "call_relay",
+      name: "relay_external_agent_payload",
+      arguments: relayArguments,
+    };
     const relayEvents = [
       {
         type: "response.output_item.added",
         item: {
           type: "function_call",
           id: "fc_relay",
+          call_id: "call_relay",
           name: "relay_external_agent_payload",
           arguments: "",
         },
       },
       {
         type: "response.function_call_arguments.delta",
-        item_id: "fc_relay",
+        call_id: "call_relay",
         delta: relayArguments.slice(0, 17),
       },
       {
         type: "response.function_call_arguments.delta",
-        item_id: "fc_relay",
+        call_id: "call_relay",
         delta: relayArguments.slice(17),
       },
       {
         type: "response.function_call_arguments.done",
-        item_id: "fc_relay",
+        call_id: "call_relay",
         arguments: relayArguments,
+      },
+      {
+        type: "response.completed",
+        response: { status: "completed", output: [relayCall] },
       },
     ];
     const event = `${relayEvents
@@ -802,6 +863,169 @@ test("router relays encrypted Codex subagent payloads before external routing", 
   }
 });
 
+test("relay extraction requires one completed final call and caches only success", async () => {
+  const attempts = new Map();
+  const relayCall = (payload, id = "fc_relay", callId) => ({
+    type: "function_call",
+    id,
+    ...(callId ? { call_id: callId } : {}),
+    name: "relay_external_agent_payload",
+    arguments: JSON.stringify({ payload }),
+  });
+  const sse = (response, events) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`);
+  };
+  const native = await mockServer(async (request, response) => {
+    const body = await bodyJson(request);
+    const token = body.input?.[0]?.content?.at(-1)?.encrypted_content;
+    const attempt = (attempts.get(token) || 0) + 1;
+    attempts.set(token, attempt);
+    if (token === "gAAAAA-failure-then-success=") {
+      const call = relayCall("CACHE_ONLY_COMPLETED");
+      if (attempt === 1) {
+        sse(response, [
+          { type: "response.output_item.added", item: { ...call, arguments: "" } },
+          { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+          { type: "response.failed", response: { status: "failed", output: [call] } },
+        ]);
+      } else {
+        sse(response, [{
+          type: "response.completed",
+          response: { status: "completed", output: [call] },
+        }]);
+      }
+      return;
+    }
+    const call = relayCall(`payload:${token}`);
+    if (token === "gAAAAA-incomplete-json=") {
+      json(response, 200, { status: "incomplete", output: [call] });
+    } else if (token === "gAAAAA-multiple-json=") {
+      json(response, 200, { status: "completed", output: [call, relayCall("other", "fc_other")] });
+    } else if (token === "gAAAAA-malformed-json-args=") {
+      json(response, 200, { status: "completed", output: [{ ...call, arguments: "{" }] });
+    } else if (token === "gAAAAA-missing-identity=") {
+      const { id: _id, ...unidentified } = call;
+      json(response, 200, { status: "completed", output: [unidentified] });
+    } else if (token === "gAAAAA-missing-identity-sse=") {
+      const { id: _id, ...unidentified } = call;
+      sse(response, [{
+        type: "response.completed",
+        response: { status: "completed", output: [unidentified] },
+      }]);
+    } else if (token === "gAAAAA-truncated-sse=") {
+      sse(response, [{ type: "response.output_item.done", item: call }]);
+    } else if (token === "gAAAAA-incomplete-sse=") {
+      sse(response, [
+        { type: "response.output_item.added", item: { ...call, arguments: "" } },
+        { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+        { type: "response.incomplete", response: { status: "incomplete", output: [call] } },
+      ]);
+    } else if (token === "gAAAAA-error-sse=") {
+      sse(response, [
+        { type: "response.output_item.added", item: { ...call, arguments: "" } },
+        { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+        { type: "error", error: { code: "fixture_error" } },
+      ]);
+    } else if (token === "gAAAAA-unbound-sse=") {
+      sse(response, [
+        { type: "response.function_call_arguments.done", item_id: "fc_unknown", arguments: call.arguments },
+        { type: "response.completed", response: { status: "completed", output: [call] } },
+      ]);
+    } else if (token === "gAAAAA-wrong-tool-sse=") {
+      sse(response, [
+        { type: "response.output_item.added", item: { ...call, name: "other_tool", arguments: "" } },
+        { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+        { type: "response.completed", response: { status: "completed", output: [call] } },
+      ]);
+    } else if (token === "gAAAAA-conflict-sse=") {
+      sse(response, [
+        { type: "response.output_item.added", item: { ...call, arguments: "" } },
+        { type: "response.completed", response: { status: "completed", output: [relayCall("conflict", "fc_conflict")] } },
+      ]);
+    } else if (token === "gAAAAA-call-id-conflict-sse=") {
+      const observed = relayCall("observed", "fc_shared", "call_observed");
+      const completed = relayCall("completed", "fc_shared", "call_changed");
+      sse(response, [
+        { type: "response.output_item.added", item: { ...observed, arguments: "" } },
+        { type: "response.completed", response: { status: "completed", output: [completed] } },
+      ]);
+    } else {
+      json(response, 500, { error: { message: "unexpected fixture token" } });
+    }
+  });
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, { status: "completed", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "gpt-5.6-sol",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const send = async (token) => fetch(`${routerBase(routerPort)}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer relay-validation-session",
+      "ChatGPT-Account-Id": "relay-validation-account",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "openrouter/glm-5.3-flash",
+      input: [{
+        type: "agent_message",
+        content: [
+          { type: "input_text", text: "Message Type: NEW_TASK\nPayload:\n" },
+          { type: "encrypted_content", encrypted_content: token },
+        ],
+      }],
+    }),
+  });
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    for (const token of [
+      "gAAAAA-incomplete-json=",
+      "gAAAAA-multiple-json=",
+      "gAAAAA-malformed-json-args=",
+      "gAAAAA-missing-identity=",
+      "gAAAAA-missing-identity-sse=",
+      "gAAAAA-truncated-sse=",
+      "gAAAAA-incomplete-sse=",
+      "gAAAAA-error-sse=",
+      "gAAAAA-unbound-sse=",
+      "gAAAAA-wrong-tool-sse=",
+      "gAAAAA-conflict-sse=",
+      "gAAAAA-call-id-conflict-sse=",
+    ]) {
+      const before = gatewayRequests.length;
+      const response = await send(token);
+      assert.equal(response.status, 502, token);
+      assert.equal(gatewayRequests.length, before, `${token} reached the external provider`);
+    }
+
+    const token = "gAAAAA-failure-then-success=";
+    const failed = await send(token);
+    assert.equal(failed.status, 502);
+    assert.equal(attempts.get(token), 1);
+    assert.equal(gatewayRequests.length, 0);
+    const succeeded = await send(token);
+    assert.equal(succeeded.status, 200, await succeeded.text());
+    assert.equal(attempts.get(token), 2, "failed extraction must not populate the cache");
+    assert.equal(gatewayRequests.at(-1).input[0].content.at(-1).text, "CACHE_ONLY_COMPLETED");
+    const cached = await send(token);
+    assert.equal(cached.status, 200, await cached.text());
+    assert.equal(attempts.get(token), 2, "completed extraction should be reused");
+    assert.equal(gatewayRequests.length, 2);
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+  }
+});
+
 test("encrypted payload relay coalesces concurrent waiters when one caller cancels", async () => {
   const relayStarted = Promise.withResolvers();
   const releaseRelay = Promise.withResolvers();
@@ -811,8 +1035,9 @@ test("encrypted payload relay coalesces concurrent waiters when one caller cance
     await bodyJson(request);
     relayStarted.resolve();
     await releaseRelay.promise;
-    json(response, 200, { output: [{
+    json(response, 200, { status: "completed", output: [{
       type: "function_call",
+      id: "fc_coalesced",
       name: "relay_external_agent_payload",
       arguments: JSON.stringify({ payload: "COALESCED_PAYLOAD" }),
     }] });
@@ -1237,6 +1462,24 @@ test("Switchyard classifies only the current authenticated task projection", asy
     const body = await bodyJson(request);
     nativeRequests.push({ headers: request.headers, body });
     const token = body.input?.at(-1)?.content?.at(-1)?.encrypted_content;
+    if (["gAAAAA-failed-terminal-task=", "gAAAAA-incomplete-terminal-task="].includes(token)) {
+      const status = token.includes("incomplete") ? "incomplete" : "failed";
+      const call = {
+        type: "function_call",
+        id: `fc_${status}`,
+        call_id: `call_${status}`,
+        name: "relay_external_agent_payload",
+        arguments: JSON.stringify({ payload: `PARTIAL_${status.toUpperCase()}_TASK` }),
+      };
+      const events = [
+        { type: "response.output_item.added", item: { ...call, arguments: "" } },
+        { type: "response.function_call_arguments.done", call_id: call.call_id, arguments: call.arguments },
+        { type: `response.${status}`, response: { status, output: [call] } },
+      ];
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`);
+      return;
+    }
     if (token === "gAAAAA-slow-task=") {
       slowRelayStarted.resolve();
       await new Promise(resolve => response.once("close", resolve));
@@ -1245,8 +1488,9 @@ test("Switchyard classifies only the current authenticated task projection", asy
     if (token === "gAAAAA-deadline-task=") {
       deadlineRelayStarted.resolve();
       await releaseDeadlineRelay.promise;
-      json(response, 200, { output: [{
+      json(response, 200, { status: "completed", output: [{
         type: "function_call",
+        id: "fc_deadline",
         name: "relay_external_agent_payload",
         arguments: JSON.stringify({ payload: "DEADLINE_SHARED_TASK" }),
       }] });
@@ -1254,11 +1498,12 @@ test("Switchyard classifies only the current authenticated task projection", asy
     }
     const plaintext = plaintextByToken.get(token);
     if (plaintext === undefined) {
-      json(response, 200, { output: [] });
+      json(response, 200, { status: "completed", output: [] });
       return;
     }
-    json(response, 200, { output: [{
+    json(response, 200, { status: "completed", output: [{
       type: "function_call",
+      id: "fc_projection",
       name: "relay_external_agent_payload",
       arguments: JSON.stringify({ payload: plaintext }),
     }] });
@@ -1354,6 +1599,24 @@ test("Switchyard classifies only the current authenticated task projection", asy
     assert.equal(nativeRequests.length, 2);
     assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, "READABLE_FOLLOWUP");
 
+    // Parseable relay arguments followed by an unsuccessful terminal never
+    // become classifier text. Switchyard receives the original encrypted input
+    // plus a null projection, which selects its existing zero-Jev fallback.
+    for (const token of [
+      "gAAAAA-failed-terminal-task=",
+      "gAAAAA-incomplete-terminal-task=",
+    ]) {
+      const input = [task(token)];
+      const selected = await send(input);
+      const forwarded = switchyardRequests.at(-1);
+      assert.deepEqual(forwarded.input, input);
+      assert.equal(forwarded.x_codex_router_task_projection, null);
+      assert.equal(selected, "switchyard/sol-medium");
+      assert.doesNotMatch(JSON.stringify(forwarded), /PARTIAL_(?:FAILED|INCOMPLETE)_TASK/);
+    }
+    const nativeAfterRejectedTerminals = nativeRequests.length;
+    assert.equal(nativeAfterRejectedTerminals, 4);
+
     const appTurn = "01a0be86-5a57-7733-930c-b715dee4edc5";
     const appThread = "01a0be80-76c5-7d67-8dd4-f4ff86e5e126";
     const sourceThread = "01a070b8-92cb-72d0-995e-4c34ae25dd53";
@@ -1383,7 +1646,11 @@ test("Switchyard classifies only the current authenticated task projection", asy
       switchyardRequests.at(-1).x_codex_router_task_projection,
       "Review A & B > C",
     );
-    assert.equal(nativeRequests.length, 2, "plaintext app delivery must not use native relay");
+    assert.equal(
+      nativeRequests.length,
+      nativeAfterRejectedTerminals,
+      "plaintext app delivery must not use native relay",
+    );
     assert.equal(appSelected, "switchyard/astra-medium");
 
     // Ordinary tool continuation retains affinity.

@@ -1,5 +1,7 @@
 // This is the observed OpenRouter contract, not an inferred underlying family.
 // Keep it separate from GLM repairs and OpenCode's unrelated Messages limits.
+import { safeLocalHttpError } from "./http-utils.mjs";
+
 export function isParetoRoute(route) {
   return route?.slug === "openrouter/pareto" &&
     route.provider === "openrouter" && route.upstreamModel === "unbiased/pareto";
@@ -14,10 +16,10 @@ function prepareParetoText(text) {
     const plainText = format && typeof format === "object" && !Array.isArray(format) &&
       format.type === "text" && Object.keys(format).length === 1;
     if (!plainText) {
-      const error = new Error("Pareto's exact Responses endpoint does not support the requested structured response format.");
-      error.status = 400;
-      error.code = "unsupported_response_format";
-      throw error;
+      throw safeLocalHttpError(
+        "Pareto's exact Responses endpoint does not support the requested structured response format.",
+        { status: 400, code: "unsupported_response_format" },
+      );
     }
     // An explicit plain-text format is semantically identical to the endpoint
     // default, while forwarding the redundant control fails endpoint routing.
@@ -30,10 +32,10 @@ export function prepareParetoRequest(payload, route) {
   if (!isParetoRoute(route)) return payload;
   const choice = payload.tool_choice;
   if (choice !== undefined && !["auto", "none"].includes(choice)) {
-    const error = new Error("Pareto supports automatic tool selection only; a forced tool call cannot be guaranteed.");
-    error.status = 400;
-    error.code = "unsupported_tool_choice";
-    throw error;
+    throw safeLocalHttpError(
+      "Pareto supports automatic tool selection only; a forced tool call cannot be guaranteed.",
+      { status: 400, code: "unsupported_tool_choice" },
+    );
   }
   const next = { ...payload };
   // These native controls cause OpenRouter's require_parameters filter to

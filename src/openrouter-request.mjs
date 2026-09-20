@@ -2,6 +2,7 @@
 // Internal gateway callers must pass the same validation as front-Router callers.
 import { OPENROUTER_MODELS as routes, CANONICAL_OPENROUTER_ROUTE as defaultRoute, MODEL_BY_GATEWAY_ID, MODEL_BY_SLUG } from "./routed-models.mjs";
 import { prepareParetoRequest } from "./pareto-compat.mjs";
+import { safeLocalHttpError } from "./http-utils.mjs";
 
 function hasNativeSearch(payload) {
   return payload?.web_search_options !== undefined ||
@@ -53,9 +54,10 @@ export function prepareOpenRouterRequest(payload) {
   }
   payload = prepareParetoRequest(payload, selected);
   if (hasNativeSearch(payload)) {
-    const error = new Error("Codex hosted-search fields must be translated before the OpenRouter hop.");
-    error.code = "model_search_not_supported";
-    throw error;
+    throw safeLocalHttpError(
+      "Codex hosted-search fields must be translated before the OpenRouter hop.",
+      { status: 400, code: "model_search_not_supported" },
+    );
   }
   const serverSearchTools = Array.isArray(payload?.tools)
     ? payload.tools.filter((tool) => tool?.type === "openrouter:web_search")
@@ -72,9 +74,10 @@ export function prepareOpenRouterRequest(payload) {
       tool.type.startsWith("openrouter:") &&
       tool.type !== "openrouter:web_search"))
   ) {
-    const error = new Error("OpenRouter hosted search must use the checked-in bounded route contract.");
-    error.code = "model_search_not_supported";
-    throw error;
+    throw safeLocalHttpError(
+      "OpenRouter hosted search must use the checked-in bounded route contract.",
+      { status: 400, code: "model_search_not_supported" },
+    );
   }
   const {
     client_metadata: _clientMetadata,

@@ -61,9 +61,11 @@ import {
   MAX_BUFFERED_RESPONSE_BYTES,
   httpErrorStatus,
   installGracefulShutdown,
+  parseJsonObjectRequest,
   pipeResponse,
   readResponseBody,
   readRequestBody,
+  safeLocalHttpErrorPayload,
   writeEventStreamHead,
   writeJson,
   writeStreamErrorEvent,
@@ -374,19 +376,7 @@ const FORWARD_HEADERS = new Set([
 ]);
 
 function parseBody(buffer) {
-  try {
-    const value = JSON.parse(buffer.toString("utf8"));
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("Request JSON must be an object.");
-    }
-    return value;
-  } catch (error) {
-    const wrapped = new Error(
-      `Invalid JSON request: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    wrapped.status = 400;
-    throw wrapped;
-  }
+  return parseJsonObjectRequest(buffer);
 }
 
 // Large Codex turns parse several megabytes of JSON on the event loop. Yield
@@ -1246,19 +1236,27 @@ async function switchyardTaskProjection(request, input, clientMetadata, callerSi
   return plaintext;
 }
 
-function parseRelayedAgentPayload(payload) {
-  const output = payload?.item
-    ? [payload.item]
-    : Array.isArray(payload?.output)
-      ? payload.output
-      : Array.isArray(payload?.response?.output)
-        ? payload.response.output
-        : [];
-  const call = output.find(
+function relayedCallIdentities(call) {
+  const identities = {};
+  for (const field of ["id", "call_id"]) {
+    if (call?.[field] === undefined) continue;
+    if (typeof call[field] !== "string" || !call[field]) return undefined;
+    identities[field] = call[field];
+  }
+  return Object.keys(identities).length ? identities : undefined;
+}
+
+function parseRelayedAgentPayload(payload, { requireStatus = true } = {}) {
+  if (requireStatus && payload?.status !== "completed") return undefined;
+  if (!requireStatus && payload?.status !== undefined && payload.status !== "completed") {
+    return undefined;
+  }
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  const calls = output.filter(
     (item) => item?.type === "function_call" && item.name === AGENT_PAYLOAD_RELAY_TOOL,
   );
-  if (!call) return undefined;
-  return parseRelayedAgentArguments(call.arguments);
+  if (calls.length !== 1 || !relayedCallIdentities(calls[0])) return undefined;
+  return parseRelayedAgentArguments(calls[0].arguments);
 }
 
 function parseRelayedAgentArguments(value) {
@@ -1272,8 +1270,10 @@ function parseRelayedAgentArguments(value) {
 
 function parseRelayedAgentPayloadSse(bytes) {
   const events = bytes.toString("utf8").split(/\r?\n\r?\n/);
-  const relayItems = new Set();
-  let argumentDeltas = "";
+  const observedRelayIdentities = {};
+  let completedResponse;
+  let terminalCount = 0;
+  let rejected = false;
   for (const rawEvent of events) {
     const data = rawEvent
       .split(/\r?\n/)
@@ -1284,41 +1284,63 @@ function parseRelayedAgentPayloadSse(bytes) {
     if (!data || data === "[DONE]") continue;
     try {
       const event = JSON.parse(data);
+      if (["response.failed", "response.incomplete", "error"].includes(event?.type)) {
+        rejected = true;
+      }
       if (
-        event?.type === "response.output_item.added" &&
+        ["response.output_item.added", "response.output_item.done"].includes(event?.type) &&
         event.item?.type === "function_call" &&
         event.item.name === AGENT_PAYLOAD_RELAY_TOOL
       ) {
-        if (event.item.id) relayItems.add(event.item.id);
-        if (event.item.call_id) relayItems.add(event.item.call_id);
+        const identities = relayedCallIdentities(event.item);
+        if (!identities) {
+          rejected = true;
+        } else {
+          for (const [field, identity] of Object.entries(identities)) {
+            if (observedRelayIdentities[field] && observedRelayIdentities[field] !== identity) {
+              rejected = true;
+            } else {
+              observedRelayIdentities[field] = identity;
+            }
+          }
+        }
       }
-      const relatedArgumentEvent =
-        relayItems.size === 0 ||
-        relayItems.has(event?.item_id) ||
-        relayItems.has(event?.call_id);
-      if (
-        event?.type === "response.function_call_arguments.delta" &&
-        relatedArgumentEvent &&
-        typeof event.delta === "string"
-      ) {
-        argumentDeltas += event.delta;
+      if ([
+        "response.function_call_arguments.delta",
+        "response.function_call_arguments.done",
+      ].includes(event?.type)) {
+        const hasItemId = typeof event.item_id === "string" && event.item_id;
+        const hasCallId = typeof event.call_id === "string" && event.call_id;
+        if (
+          (!hasItemId && !hasCallId) ||
+          (hasItemId && event.item_id !== observedRelayIdentities.id) ||
+          (hasCallId && event.call_id !== observedRelayIdentities.call_id)
+        ) {
+          rejected = true;
+        }
       }
-      if (
-        event?.type === "response.function_call_arguments.done" &&
-        relatedArgumentEvent
-      ) {
-        const completed = parseRelayedAgentArguments(event.arguments);
-        if (completed !== undefined) return completed;
+      if (event?.type === "response.completed") {
+        terminalCount += 1;
+        completedResponse = event.response;
       }
-      const plaintext = parseRelayedAgentPayload(event);
-      if (plaintext !== undefined) return plaintext;
     } catch {
-      // Ignore malformed or unrelated events and continue to the completion item.
+      // A malformed unrelated frame cannot establish completion. Continue so a
+      // valid terminal response can still be assessed from the complete body.
     }
   }
-  const accumulated = parseRelayedAgentArguments(argumentDeltas);
-  if (accumulated !== undefined) return accumulated;
-  return undefined;
+  if (rejected || terminalCount !== 1 || !completedResponse) return undefined;
+  const finalCalls = Array.isArray(completedResponse.output)
+    ? completedResponse.output.filter(
+      (item) => item?.type === "function_call" && item.name === AGENT_PAYLOAD_RELAY_TOOL,
+    )
+    : [];
+  if (finalCalls.length !== 1) return undefined;
+  const finalIdentities = relayedCallIdentities(finalCalls[0]);
+  if (!finalIdentities) return undefined;
+  for (const [field, identity] of Object.entries(observedRelayIdentities)) {
+    if (finalIdentities[field] !== identity) return undefined;
+  }
+  return parseRelayedAgentPayload(completedResponse, { requireStatus: false });
 }
 
 function nativeRelayContext(request) {
@@ -2778,14 +2800,13 @@ async function handleResponses(request, response, requestUrl) {
       }
       return;
     }
-    if (["model_search_not_supported", "unsupported_tool_choice"].includes(error?.code) && !response.headersSent) {
-      finalStatus = error.status;
-      writeJson(response, error.status, {
-        error: {
-          type: error.code,
-          message: error.message,
-        },
-      });
+    const safeType = ["model_search_not_supported", "unsupported_tool_choice"].includes(error?.code)
+      ? error.code
+      : "local_router_error";
+    const safeLocalError = safeLocalHttpErrorPayload(error, { type: safeType });
+    if (safeLocalError && !response.headersSent) {
+      finalStatus = httpErrorStatus(error, 400);
+      writeJson(response, finalStatus, safeLocalError);
       return;
     }
     if (retryEmptyCompletionGuard?.hasContent()) emptyCompletion = false;
@@ -3158,6 +3179,11 @@ async function handleRequest(request, response) {
 const server = http.createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
     const status = httpErrorStatus(error);
+    const safeLocalError = safeLocalHttpErrorPayload(error, { type: "local_router_error" });
+    if (safeLocalError && !response.headersSent) {
+      writeJson(response, status, safeLocalError);
+      return;
+    }
     // The bare string this used to log made every mid-stream failure
     // indistinguishable in production, and stopping at the top error was the
     // second half of the same problem: a native connect failure logs
