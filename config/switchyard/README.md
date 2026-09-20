@@ -48,8 +48,12 @@ records the earlier integration decision.
    endpoint except `/health`; Router removes that header before any upstream
    request. For a canonical current encrypted child assignment, Router may add a
    bounded classifier-only projection after using the caller's native account to
-   relay that task. Switchyard removes the private field before decode and raw
-   request preservation.
+   relay that task. A current Codex app task delivery may supply its already
+   plaintext delegated input only when its exact app operation, final output
+   identity, current-turn request metadata and canonical envelope all agree.
+   These client-provided fields are a structural contract inside the authenticated
+   local caller boundary, not a cryptographic signature. Switchyard removes the
+   private field before decode and raw request preservation.
 3. Switchyard sends bounded textual decision state to the exact OpenRouter Decisions
    endpoint for Jev 1.13, chooses a configured Luna, Sol, or Astra target, and
    effort, and sends the native request back through Router's capability-gated
@@ -123,6 +127,19 @@ reclassified within one conversation; see the contrasting
 [live protocol](../../docs/history/2026-09-19-switchyard-live-model-transitions.json)
 and [native child](../../docs/history/2026-09-19-switchyard-native-child-transitions.json)
 tests.
+
+Codex app `create_thread` and `send_message_to_thread` deliveries arrive in the
+target task as standalone `function_call_output` control items rather than user
+messages. Router recognizes only the final item with the exact `codex_app`
+operation, a native function-output identity, a parseable current-turn request,
+and one anchored `codex_delegation` envelope. Some desktop paths also preserve
+item-level turn metadata; when present, a mismatch marks the item historical.
+Router projects only the decoded `<input>` text. Historical deliveries, items
+without a current-turn request, and ordinary tool results retain affinity. A
+structurally current delivery with a malformed identity or envelope, invalid XML
+escaping, or oversized input releases affinity and takes the zero-Jev Sol
+fallback. These fields are a client protocol contract within the authenticated
+local caller boundary, not cryptographic proof of who authored the payload.
 
 The exact criteria, question, threshold, fallback and transport limits live in
 `routes.template.toml`. Artifact provenance binds the pinned source, ordered

@@ -1,6 +1,9 @@
-# switchyard/auto v2 certification
+# switchyard/auto prior v2 certification (invalidated)
 
-Accepted on 2026-09-20 for Router
+This acceptance is draft because the source candidate now recognizes current
+Codex app thread deliveries as classifier projections. It must not publish v2
+until that changed protocol contract is deployed and recertified. The prior
+acceptance remains evidence for Router
 `594cf484a863033a1f0f11c61a52fe3d1abf6e52`. The machine-readable proof binds
 the exact Switchyard source, ordered patches, binary, private generated routes,
 template and deployed Router commit. Procedure:

@@ -1023,7 +1023,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
   }
 });
 
-test("Switchyard classifies only the current authenticated child-task projection", async () => {
+test("Switchyard classifies only the current authenticated task projection", async () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "switchyard-child-projection-"));
   const switchyardRoot = path.join(stateDir, "switchyard-runtime");
   mkdirSync(switchyardRoot, { recursive: true });
@@ -1099,13 +1099,14 @@ test("Switchyard classifies only the current authenticated child-task projection
     "ChatGPT-Account-Id": account,
     "Content-Type": "application/json",
   });
-  const send = async (input, account = "account-a") => {
+  const send = async (input, account = "account-a", extraBody = {}) => {
     const response = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: headers(account),
       body: JSON.stringify({
         model: "switchyard/auto",
         input,
+        ...extraBody,
         x_codex_router_task_projection: "CALLER_SPOOF",
       }),
     });
@@ -1137,6 +1138,87 @@ test("Switchyard classifies only the current authenticated child-task projection
     await send([task("READABLE_FOLLOWUP", "FOLLOWUP_TASK")]);
     assert.equal(nativeRequests.length, 2);
     assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, "READABLE_FOLLOWUP");
+
+    const appTurn = "01a0be86-5a57-7733-930c-b715dee4edc5";
+    const appDelivery = (overrides = {}) => ({
+      type: "function_call_output",
+      id: `fco_${appTurn}`,
+      name: "send_message_to_thread",
+      namespace: "codex_app",
+      output: "<codex_delegation>\n  <source_thread_id>01a070b8-92cb-72d0-995e-4c34ae25dd53</source_thread_id>\n  <input>Review A &amp; B &gt; C</input>\n</codex_delegation>",
+      internal_chat_message_metadata_passthrough: { turn_id: appTurn, create_time: 1 },
+      ...overrides,
+    });
+    const appMetadata = (turnId = appTurn) => ({
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ turn_id: turnId }),
+      },
+    });
+
+    // App-created task and follow-up delivery are standalone function outputs.
+    // The exact final-item contract exposes only the delegated input to Jev
+    // while preserving the native answer input.
+    const currentAppDelivery = appDelivery({ name: "create_thread" });
+    delete currentAppDelivery.internal_chat_message_metadata_passthrough;
+    await send([currentAppDelivery], "account-a", appMetadata());
+    assert.deepEqual(switchyardRequests.at(-1).input, [currentAppDelivery]);
+    assert.equal(
+      switchyardRequests.at(-1).x_codex_router_task_projection,
+      "Review A & B > C",
+    );
+    assert.equal(nativeRequests.length, 2, "plaintext app delivery must not use native relay");
+
+    // Ordinary tool continuation retains affinity.
+    const continuation = { type: "function_call_output", call_id: "call-app", output: "ok" };
+    await send([currentAppDelivery, continuation], "account-a", appMetadata());
+    assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
+    assert.deepEqual(switchyardRequests.at(-1).input, [currentAppDelivery, continuation]);
+
+    // A same-operation item explicitly linked to an earlier turn is historical
+    // even when it is the final item in the replayed current-turn request.
+    await send([appDelivery()], "account-a", appMetadata("01a0be90-0000-7000-8000-000000000000"));
+    assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
+
+    const nextTurn = "01a0be87-401d-79b3-b3d2-2c5a69f54eb9";
+    const nextDelivery = appDelivery({
+      id: `fco_${nextTurn}`,
+      output: "<codex_delegation>\n  <source_thread_id>01a070b8-92cb-72d0-995e-4c34ae25dd53</source_thread_id>\n  <input>Architecture review only</input>\n</codex_delegation>",
+      internal_chat_message_metadata_passthrough: { turn_id: nextTurn, create_time: 2 },
+    });
+    await send([nextDelivery], "account-a", appMetadata(nextTurn));
+    assert.equal(
+      switchyardRequests.at(-1).x_codex_router_task_projection,
+      "Architecture review only",
+    );
+
+    // Structurally current deliveries with malformed envelopes or oversized
+    // input release affinity to the zero-Jev Sol fallback.
+    for (const invalid of [
+      { item: appDelivery({ id: "fco_not-a-native-id" }), metadata: appMetadata() },
+      { item: appDelivery({ output: "prefix <codex_delegation>not canonical</codex_delegation>" }), metadata: appMetadata() },
+      { item: appDelivery({ output: "<codex_delegation>\n  <source_thread_id>01a070b8-92cb-72d0-995e-4c34ae25dd53</source_thread_id>\n  <input>raw <shape> tag</input>\n</codex_delegation>" }), metadata: appMetadata() },
+      { item: appDelivery({ output: "<codex_delegation>\n  <source_thread_id>01a070b8-92cb-72d0-995e-4c34ae25dd53</source_thread_id>\n  <input>ambiguous &unknown; entity</input>\n</codex_delegation>" }), metadata: appMetadata() },
+      { item: appDelivery({ output: `<codex_delegation>\n  <source_thread_id>01a070b8-92cb-72d0-995e-4c34ae25dd53</source_thread_id>\n  <input>${"x".repeat(32 * 1024 + 1)}</input>\n</codex_delegation>` }), metadata: appMetadata() },
+    ]) {
+      await send([invalid.item], "account-a", invalid.metadata);
+      assert.deepEqual(switchyardRequests.at(-1).input, [invalid.item]);
+      assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, null);
+    }
+
+    // Ambiguous current-turn metadata cannot qualify an app delivery.
+    const duplicateTurnMetadata = {
+      client_metadata: {
+        "x-codex-turn-metadata": `{"turn_id":"${appTurn}","turn_id":"${appTurn}"}`,
+      },
+    };
+    await send([appDelivery()], "account-a", duplicateTurnMetadata);
+    assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
+
+    // A wrapper-shaped arbitrary tool output has no app-delivery authority.
+    const spoofedApp = appDelivery({ namespace: "untrusted_app" });
+    await send([spoofedApp], "account-a", appMetadata());
+    assert.deepEqual(switchyardRequests.at(-1).input, [spoofedApp]);
+    assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
 
     // Ambiguous content, completed-child traffic, relay failure, and an
     // oversized projection all reach unchanged Switchyard input with no Jev

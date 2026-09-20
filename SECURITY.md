@@ -18,8 +18,16 @@ content, or an oversized state bypasses Jev and falls back to Sol. In ordinary
 plaintext history, empty and control-only pseudo-user items are skipped and the
 most recent genuine user turn can still be selected. For child handoffs only the
 final item is considered, and a prior child assignment is never substituted.
-Assistant answers, tool-result payloads and reasoning are excluded from decision
-state. User-authored text can still contain sensitive information: a native answer
+Codex app task delivery is the narrow tool-result exception: only a current
+`create_thread` or `send_message_to_thread` output with its exact app namespace,
+native output identity, parseable current-turn request metadata and anchored
+delegation envelope contributes the delegated `<input>` text. Optional mismatched
+item-turn metadata marks a historical delivery. These are client protocol fields
+inside the authenticated local caller boundary, not a cryptographic signature.
+Historical, arbitrary and malformed tool outputs are never promoted. Assistant
+answers, other tool-result
+payloads and reasoning are excluded from decision state. User-authored text can
+still contain sensitive information: a native answer
 model does not make classification local.
 
 The selected native answer path preserves Codex authorization and conversation

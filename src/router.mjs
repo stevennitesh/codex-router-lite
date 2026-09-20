@@ -101,7 +101,7 @@ import {
   tokenUsageFromPayload,
 } from "./response-usage.mjs";
 import { fetchWithRetry } from "./upstream-retry.mjs";
-import { NamespaceToolCallTransform } from "./namespace-relay.mjs";
+import { jsonIsUnambiguousForRewrite, NamespaceToolCallTransform } from "./namespace-relay.mjs";
 import { prepareRoutedRequest, routedSearchCompatibility, payloadHasHostedSearchIntent } from "./routed-request.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
@@ -1085,8 +1085,90 @@ function currentSwitchyardTaskEnvelope(input) {
   };
 }
 
-async function switchyardTaskProjection(request, input, callerSignal) {
-  const envelope = currentSwitchyardTaskEnvelope(input);
+const CODEX_APP_THREAD_DELIVERY_NAMES = new Set(["create_thread", "send_message_to_thread"]);
+const CODEX_UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const CODEX_FUNCTION_OUTPUT_ID = new RegExp(`^fco_${CODEX_UUID}$`, "i");
+const CODEX_DELEGATION = new RegExp(
+  `^<codex_delegation>\\r?\\n  <source_thread_id>(${CODEX_UUID})<\\/source_thread_id>\\r?\\n  <input>([\\s\\S]*)<\\/input>\\r?\\n<\\/codex_delegation>$`,
+);
+const CODEX_DELEGATION_MAX_ENVELOPE_BYTES = 6 * SWITCHYARD_CLASSIFIER_MAX_REQUEST_BYTES;
+
+function codexTurnId(clientMetadata) {
+  const encoded = clientMetadata?.["x-codex-turn-metadata"];
+  if (
+    typeof encoded !== "string" ||
+    !jsonIsUnambiguousForRewrite(encoded, { allowLossyNumbers: true })
+  ) {
+    return undefined;
+  }
+  try {
+    const metadata = JSON.parse(encoded);
+    return typeof metadata?.turn_id === "string" && metadata.turn_id
+      ? metadata.turn_id
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeCodexDelegationInput(text) {
+  if (
+    typeof text !== "string" ||
+    Buffer.byteLength(text, "utf8") > CODEX_DELEGATION_MAX_ENVELOPE_BYTES
+  ) {
+    return undefined;
+  }
+  const match = CODEX_DELEGATION.exec(text);
+  if (!match) return undefined;
+  const input = match[2];
+  if (/[<>]/.test(input) || /&(?!(?:amp|lt|gt|quot|apos);)/.test(input)) return undefined;
+  return input.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+  })[entity]);
+}
+
+// Codex app task delivery is a standalone function output rather than a user
+// message. Within the authenticated local caller boundary, qualify only the
+// final item with the exact app operation, native output identity and envelope.
+// These client-provided fields are a structural contract, not a signature.
+function currentSwitchyardAppThreadDelivery(input, clientMetadata) {
+  if (!Array.isArray(input)) return undefined;
+  const item = input.at(-1);
+  if (
+    item?.type !== "function_call_output" ||
+    !CODEX_APP_THREAD_DELIVERY_NAMES.has(item.name) ||
+    item.namespace !== "codex_app"
+  ) {
+    return undefined;
+  }
+  const itemTurnId = item.internal_chat_message_metadata_passthrough?.turn_id;
+  const createTime = item.internal_chat_message_metadata_passthrough?.create_time;
+  const currentTurnId = codexTurnId(clientMetadata);
+  if (!currentTurnId) return undefined;
+  // Desktop builds that include response-item passthrough metadata let us
+  // identify a replayed historical delivery explicitly. The standalone
+  // app-server toolOutput path omits this optional object on the wire.
+  if (typeof itemTurnId === "string" && itemTurnId && itemTurnId !== currentTurnId) {
+    return undefined;
+  }
+  if (
+    !CODEX_FUNCTION_OUTPUT_ID.test(item.id || "") ||
+    (itemTurnId !== undefined && (typeof itemTurnId !== "string" || !itemTurnId)) ||
+    (createTime !== undefined && (typeof createTime !== "number" || !Number.isFinite(createTime)))
+  ) {
+    return { eligible: false };
+  }
+  const content = decodeCodexDelegationInput(item.output);
+  return content === undefined ? { eligible: false } : { eligible: true, content, native: false };
+}
+
+async function switchyardTaskProjection(request, input, clientMetadata, callerSignal) {
+  const envelope = currentSwitchyardTaskEnvelope(input) ||
+    currentSwitchyardAppThreadDelivery(input, clientMetadata);
   if (!envelope) return undefined;
   // Null is a trusted, request-local marker that this is a new assignment but
   // no safe classifier projection is available. Switchyard uses it to release
@@ -2177,6 +2259,7 @@ async function handleResponses(request, response, requestUrl) {
           const projection = await switchyardTaskProjection(
             request,
             payload.input,
+            payload.client_metadata,
             controller.signal,
           );
           if (projection !== undefined) {
