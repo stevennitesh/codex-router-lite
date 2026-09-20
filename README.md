@@ -135,18 +135,16 @@ your Codex credentials and account headers are not forwarded to OpenRouter.
 Model requests still go to the selected provider. See [security](SECURITY.md)
 for the trust boundaries and private vulnerability reporting.
 
-**Switchyard Auto also sends task text to OpenRouter/Jev for model selection, even
-though its answer comes from a native GPT model.** The checked-in classifier sends
-only the latest genuine user turn. For ordinary plaintext history, trailing empty
-or control-only pseudo-user items are skipped, so the most recent genuine user
-turn can still be selected. For an encrypted native child handoff, Router inspects
-only the final item and uses the caller's native account to recover that current
-task through its bounded relay. Relay failure, the five-second projection deadline,
-or a recognized but unsafe media, ambiguous, or oversized child assignment releases
-prior affinity and selects the Sol fallback without a Jev call. An earlier child
-assignment is never substituted. The full, unchanged request still goes to the
-native answer model. See the
-[routing policy](config/switchyard/README.md#routing-policy) for details.
+**Switchyard Auto also sends bounded task text to OpenRouter/Jev for model
+selection, even though its answer comes from a native GPT model.** Text can come
+from three sources: the latest genuine ordinary user turn, a recovered current
+encrypted child assignment, or the delegated input of a recognized current
+`codex_app` task delivery. Ordinary tool outputs, assistant answers and reasoning
+are excluded. Failed or unsafe recognized assignments fall back to Sol without a
+Jev call, while ordinary and known historical tool outputs retain the current
+route. The full, unchanged request still goes to the native answer model. See
+[security](SECURITY.md) and the [routing policy](config/switchyard/README.md#routing-policy)
+for the exact admission, currentness and egress boundaries.
 
 Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),
 with a narrower focus on my Windows Codex workflow. Independent project;

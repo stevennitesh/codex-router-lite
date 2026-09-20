@@ -1,88 +1,105 @@
-# Switchyard app-thread admission hardening
+# Switchyard failed-projection correctness
 
-Revision 1, 2026-09-20. Active delivery; implementation authorized after planning.
-Baseline: `3f352ae7f08759cc03c4c80b3a636d9ffe93f28e`, main, initially clean.
-Execution: [Sol handoff](switchyard-thread-admission-handoff.md).
+Revision 2, 2026-09-20. Planning only. Current baseline:
+`60be2390680be7d202a5c2668efbaeaa85278811`. Accumulated admission work began at
+`3f352ae7f08759cc03c4c80b3a636d9ffe93f28e`. Call-linked result exclusion and
+source/receiver validation are implemented; source remains v1/draft.
 
-## Accepted outcome
+## Outcome and diagnosis
 
-App-thread assignments should trigger Jev for their current delegated input;
-ordinary call-linked tool results must retain the selected model and never send
-their output to Jev. Harden the existing adapter, not the routing architecture.
-Source remains v1/draft until deployment-bound evidence accepts this behavior.
-The currently installed accepted generation is a separate runtime authority.
+Recognized new assignments with unsafe or unavailable projections must release
+old affinity and choose Sol without sending rejected content to Jev. Ordinary
+tool continuations retain the selected model. Valid projections classify only
+their text; requests without an attempted projection retain normal selection.
 
-The supplied review identifies two concrete source omissions: no `call_id`
-exclusion and discarded source-thread identity. Its upstream interpretation is
-supporting evidence to verify against an exact source revision and the installed
-app-server contract; do not assume every upstream field survives serialization.
+The canonical patch currently makes the attempt marker authoritative for affinity,
+but `classifier_turn` checks only projection text before falling through to
+`latest_user_turn`. The review identifies an unpaired Responses function output
+as a decoder path that becomes user text. Reproduce that path in the actual Rust
+server before correction. A JavaScript fixture implementing null-to-Sol directly
+cannot establish this invariant.
 
-Required behavior:
+Use the existing `CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY`; no new sentinel,
+Router workaround, cache, registry, parser framework, classifier policy or repin.
+Preserve encrypted-child extraction, its bounds, native input, private projection
+removal and the existing desktop-only admission scope.
 
-- A non-null `call_id` means ordinary tool continuation: no projection, no Jev,
-  no affinity release, even with an otherwise valid delegation envelope. Absent
-  or null call identity may qualify under the remaining existing checks.
-- Preserve source UUID from the parser and obtain receiver thread identity from
-  actual current-turn metadata. Reject self-delivery, comparing UUID identity
-  rather than incidental letter case. Verify receiver-field presence on the real
-  producer before relying on it. A recognized assignment with absent, ambiguous,
-  or invalid required identity uses the existing null/Sol fallback; a proven
-  self-delivery is not delegation and retains affinity with no projection.
-- Retain bounded strict named-entity decoding, original native answer input,
-  caller projection stripping, local-hop removal, and existing privacy limits.
-- Currentness without item metadata depends on the host's current-turn/final-item
-  contract. Document that assumption explicitly; do not claim cryptographic or
-  independent historical provenance. Confirm real continuation/replay behavior.
-- Keep this exception `codex_app` only. Explicitly test `codex_tui` exclusion and
-  preserve the separate encrypted native-agent path. Do not imply all TUI thread
-  messaging uses encrypted agent messages or is supported without evidence.
+## Delivery
 
-No seen-message cache, registry, persistent state, general XML parser, new
-classifier, upstream repin, policy tuning, or Switchyard redesign is in scope.
-If currentness cannot be demonstrated, leave v1 and report the concrete gap.
+### 1. Enforce the cross-layer contract
 
-## Delivery approach
+Reconstruct the locked Switchyard source and ordered patches. Add a failing real
+server regression using the actual decoder, affinity and TypeSafe classifier
+with a recording provider stub and mock answer upstream. Retain a non-Sol target,
+then send an authenticated null projection with an unpaired `codex_app` function
+output. Assert default/Sol and unchanged provider call count. Repeat with older
+genuine user text before it, and valid versus malformed delegation text. Show
+failure on the old patch before correction.
 
-One coherent implementation, with final review and a release evidence boundary.
+Make attempted projection without usable text bypass ordinary selection and take
+the existing fallback, preferably `non_text_state`. Text projection takes precedence
+when valid. No attempt preserves normal behavior. Test those controls, ordinary
+continuation affinity, the existing encrypted handoff failure, and absence of private
+fields/rejected content at inappropriate upstreams. Update the canonical patch
+and source-lock hash; do not retain an alternate maintained fork.
 
-1. Verify sender-admission semantics in pinned inspected Codex source and actual
-   installed wire shape. Reuse sanitized synthetic evidence; do not scrape private
-   tasks. Resolve routine field handling locally, escalate contradictory semantics.
-2. Add call-identity exclusion, source/receiver validation, and focused tests at
-   existing owners (`src/router.mjs`, `test/routing.test.mjs`). Reconcile security
-   and Switchyard documentation; do not widen supported namespaces.
-3. Prove current delivery and later follow-up produce the expected projection;
-   call-linked lookalike, self-delivery, historical items and ordinary continuations
-   cannot produce new Jev input. Check missing/duplicate metadata, case-normalized
-   self identity, unchanged native input, null fallback, and namespace exclusion.
-   Include a retained non-Sol affinity assertion through the existing local
-   integration harness; a Router output-field assertion alone is not end-to-end.
-   Run focused tests then `npm run verify`; reuse unaffected locked Rust evidence.
-4. Return candidate with explicit custody release for lead change-review against
-   the whole baseline. This is readiness for live release validation, not v2 proof.
-5. Once commit/deploy authority is present, use the maintained rollback-owning
-   transaction. On the actual Windows app create a synthetic task, send follow-up
-   assignments on that same task, and verify at least two actual selected targets,
-   current-only decision state, history/tool continuity and no classification on
-   ordinary call-linked results. Exercise resume/history replay without promoting
-   the old delivery. Use the same app surface, not only reconstructed requests.
-   Correlate actual turns to classifier records. If private-text telemetry is
-   insufficient, use bounded synthetic-only temporary observation, not permanent
-   payload logging. User typing may be required where UI automation is unavailable.
-6. Run exact-route native v2 certification and maintained live checks against the
-   deployed commit, refresh proof only on success, and final-review the accumulated
-   change. On failure retain rollback and v1 or restore the known-good generation.
-   Archive this plan/handoff only after the full outcome is accepted.
+Run required locked Rust suites, formatting, clippy and release build from the
+maintenance guide, then focused Router regressions and `npm run verify`.
+Report real Rust integration separately from simulated JavaScript affinity.
 
-## Review and authority
+### 2. Restore public documentation boundaries
 
-Final gate `THREAD-ADMISSION`: correct admission boundaries plus real Windows app
-delivery/replay evidence and deployed exact-route v2 acceptance. Code readiness may
-be reviewed before release; missing deployment proof remains explicitly pending.
-Two review-repair rounds total; prerequisite-only returns do not consume them.
-The user authorized planning and execution, including synthetic tests. This request
-does not newly authorize commit, push or production deployment; request those only
-when the concrete reviewed candidate is ready. Do not re-ask once authorized.
+Remove the public worker handoff and maintained-spec pointers to temporary
+execution documents. Keep this portable technical proposal until acceptance;
+local worker instructions belong in ignored scratch space. Adjust context
+ownership guidance narrowly so private paths, skill hashes, custody rules and
+temporary authorization state are not published in product documentation.
 
-Status: steps 1-4 candidate implemented and verified; lead review, deployment,
-real desktop delivery/replay evidence and certification remain pending.
+Shorten README privacy disclosure to include ordinary user turns, recovered native
+child assignments and recognized app-thread delegated input. Distinguish that
+intentional exception from ordinary tool outputs; link SECURITY for exact limits.
+Task text itself may contain sensitive material. Retain the host final-item
+currentness assumption and intentional `codex_app` namespace scope.
+
+Check directly related tracked documentation for worker-only remnants and repair
+links. Do not mass-delete useful history. Removing a current file does not erase
+its old public commits; history rewriting is outside this delivery.
+
+### 3. Validate and release the exact candidate
+
+Review code, real server tests and docs before live replacement. Keep source
+v1/draft. At release readiness, prepare version `0.7.0` consistently across version
+owners, validate and commit the candidate before deployment. Do not bump after
+certification, which must bind the actual deployed version and source. Do not
+retag `0.6.1` or infer that a release/tag is authorized by implementation.
+
+Use the maintained rollback-owning deployment transaction. On the real Windows
+app create a synthetic task and send successive app-thread messages. Verify
+current-only decisions, at least two selected targets, and retained history/tools.
+Ordinary call-linked results and continuation/resume history must not classify an
+old delegation. Repeat native encrypted-child checks. Correlate actual turns to
+classifier records; use bounded synthetic-only temporary observation if needed,
+not permanent payload logging. Do not substitute an isolated app-server fixture
+or model PASS text for this desktop evidence.
+
+Run exact-route v2 certification and maintained live verification against the
+deployed commit/binary/routes. Promote only after acceptance; otherwise keep v1
+or restore the known-good runtime and retain rollback. Final review includes the
+accumulated admission behavior and inherited assumptions from earlier commits.
+
+On acceptance, archive a sanitized technical result under `docs/history` and
+repair links. Keep runtime and proof-only commit identities explicit. Do not
+archive or publish a worker-specific execution handoff.
+
+## Acceptance and status
+
+- Actual decoder-to-classifier regression fails before and passes after the fix.
+- Failed projection makes zero Jev calls regardless of decoded text or older history.
+- Valid projection, ordinary selection, affinity and native input remain correct.
+- Real Windows app follow-up/replay and native child evidence pass on the deployed
+  candidate; exact-route v2 proof is current.
+- Product docs contain durable technical guidance, not local orchestration details.
+- Required checks and final review pass; green CI alone is not live acceptance.
+
+Revision 2 is planned, not executed. Commit, deployment and certification remain
+separate release actions. Installed runtime and checked-in source are distinct.

@@ -8,7 +8,6 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
-- App-thread admission hardening: [active delivery plan](../../docs/switchyard-thread-admission-plan.md) and [Sol handoff](../../docs/switchyard-thread-admission-handoff.md).
 - Native encrypted-child routing delivery: the completed [delivery plan](../../docs/history/2026-09-20-switchyard-child-routing-plan-completed.md) and [execution handoff](../../docs/history/2026-09-20-switchyard-child-routing-handoff-completed.md).
 - Classifier behavior and routing criteria: the routing policy below and
   `routes.template.toml`. Completed delivery records live under
@@ -92,19 +91,21 @@ Every target sets `store = false`, `stream = true`, and removes
 
 ## Routing policy
 
-Jev 1.13 is the sole classifier. It receives only the latest genuine user turn's
-ordered text blocks through the exact OpenRouter Decisions endpoint. A canonical
-current native child assignment may supply the exact relayed task as a trusted
-request-local projection; this releases the child's retained target for the new
-assignment. Tool continuations carry no projection and retain affinity. Empty and
-control-only pseudo-user messages are skipped; when no genuine user turn remains,
-the route records `empty_state` and falls back to Sol without a classifier call.
-Media or unsupported meaningful content in the selected turn skips the classifier
-and falls back to Sol; older media does not veto a later text-only classification.
-Earlier turns, tool results, reasoning, provider metadata,
-credentials, and native authorization never enter the decision request. The
-full conversation remains intact for the native answer model. The classifier
-chooses the dominant bottleneck of the whole request with this policy:
+Jev 1.13 is the sole classifier. It receives bounded text through the exact
+OpenRouter Decisions endpoint from three sources: the latest genuine ordinary
+user turn, a recovered current native child assignment, or the delegated input
+from a recognized current Codex app task delivery. Ordinary tool outputs,
+assistant answers, reasoning, provider metadata, credentials, native
+authorization and earlier turns do not enter the decision request. In ordinary
+plaintext history, empty and control-only pseudo-user items are skipped so the
+most recent genuine user turn can still be selected; only no usable turn or a
+selected turn with unsupported meaningful content takes the local fallback.
+An authenticated assignment projection attempt with no usable text instead
+releases affinity and takes the zero-Jev `non_text_state` Sol fallback. The full
+conversation remains intact for the native answer model. See the repository
+[security boundary](../../SECURITY.md) for the exact egress and currentness
+limits. The classifier chooses the dominant bottleneck of the whole request with
+this policy:
 
 - `astra-xhigh`: exceptional reasoning with multiple difficult interacting
   constraints, subtle correctness, recovery after a capable attempt failed, or
@@ -117,34 +118,27 @@ chooses the dominant bottleneck of the whole request with this policy:
 - `luna-max`: bounded retrieval, source-grounded extraction or summarization,
   and tiny fully specified mechanical work with cheap verification.
 
-Native v2 subagent handoffs carry encrypted task content. Router selects only the
-final canonical task envelope, uses its existing native relay under a five-second
-projection deadline, and leaves the encrypted answer request byte-semantically
-unchanged. Exact account-scoped cache hits avoid a second relay. Ambiguous shapes,
-media, control traffic, relay failure, malformed or oversized output, and projection
-failure make zero Jev calls and take the `non_text_state` Sol Medium fallback.
-Earlier assignments are never substituted. Plaintext user turns can also be
-reclassified within one conversation; see the contrasting
-[live protocol](../../docs/history/2026-09-19-switchyard-live-model-transitions.json)
+For encrypted native child handoffs, Router relays only the final canonical task
+under a five-second deadline and never substitutes an earlier assignment. Failed,
+ambiguous or unsupported recovery makes zero Jev calls and takes the
+`non_text_state` Sol fallback. Plaintext user turns can still be reclassified
+within one conversation; see the contrasting [live protocol](../../docs/history/2026-09-19-switchyard-live-model-transitions.json)
 and [native child](../../docs/history/2026-09-19-switchyard-native-child-transitions.json)
 tests.
 
-Codex app `create_thread` and `send_message_to_thread` deliveries arrive in the
-target task as standalone `function_call_output` control items rather than user
-messages. Router recognizes only the final item with the exact `codex_app`
-operation, a native function-output identity, no non-null `call_id`, a parseable
-current-turn request whose receiver thread differs from the envelope's source
-thread, and one anchored `codex_delegation` envelope. Some desktop paths also
-preserve item-level turn metadata; when present, a mismatch marks the item
-historical. Router projects only the decoded `<input>` text. Historical
-deliveries, self-deliveries, paired tool results, and ordinary continuations
-retain affinity. A recognized current delivery with absent, ambiguous, or
-malformed required identity, invalid XML escaping, or oversized input releases
-affinity and takes the zero-Jev Sol fallback. When optional item metadata is
-absent, currentness depends on Codex sending only the current turn's standalone
-tool output as the final item; this is a host contract, not independent historical
-provenance. These fields are a client protocol contract within the authenticated
-local caller boundary, not cryptographic proof of who authored the payload.
+The Codex app exception recognizes only the final standalone
+`function_call_output` item from the `codex_app` namespace for `create_thread` or
+`send_message_to_thread`. It requires a native `fco_<UUID>` identity, no non-null
+`call_id`, parseable current receiver metadata, a distinct source thread and one
+anchored delegation envelope, then projects only the decoded delegated input.
+Known historical, self-delivered, call-linked and unrelated outputs retain
+affinity as ordinary control history. Once the current app identity and operation
+are recognized, missing, ambiguous, malformed or oversized required assignment
+state produces a null projection attempt, releases affinity and takes the zero-Jev
+Sol fallback. Optional mismatched item-turn metadata marks the item historical;
+when item-turn metadata is absent, currentness relies on the host contract that
+the current turn's standalone tool output is the final request item. The envelope
+is not independent historical provenance or a cryptographic signature.
 
 The exact criteria, question, threshold, fallback and transport limits live in
 `routes.template.toml`. Artifact provenance binds the pinned source, ordered

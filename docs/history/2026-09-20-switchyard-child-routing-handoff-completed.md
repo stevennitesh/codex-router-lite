@@ -53,27 +53,17 @@ The pre-candidate runtime rollback and detached Router checkout remain retained:
 automatic approval review rejected deleting the sole production rollback
 generation without more explicit authorization.
 
-## Route and custody
+## Historical execution note
 
-Astra leads shaping and change-review. One reusable native GPT-5.6 Sol Medium
-subagent owns implementation, routine investigation and verification across G1
-and G2. Request `model="gpt-5.6-sol"`, `reasoning_effort="medium"`,
-`fork_turns="none"`; do not spawn additional workers or reviewers by default.
-Verify effective settings from exposed metadata when available; otherwise report
-the settings as requested. No worker holds custody between assignments.
-
-Worker-only Ponytail method (verify hash before reading):
-
-- Path: `C:\Users\steve\.agents\skills\ponytail-implementer\SKILL.md`
-- SHA-256: `adc416210ef7f062ef0b302a519267d3b188fa01155b44d475f9789677d5ccff`
-
-If the skill is absent or changed, return a prerequisite gap. Do not substitute
-another method. Follow the active cost-aware-coding receiver, waiting and repair
-rules; this handoff does not copy or override the worker skill.
+A single Sol Medium implementer completed G1 and G2 while the lead retained
+change review and release decisions. Temporary worker paths, skill identities,
+custody rules and live coordination were removed after completion because they
+are not current operating guidance. The linked plan and evidence preserve the
+durable scope, gates, results and limitations.
 
 ## Starting comparison
 
-Checkout: `E:\GitHub\code\codex-router`, branch `main`.
+Execution used the repository's `main` branch.
 Whole-plan source baseline: `eaef9c8338c923b49476eaad1b6647222bcc617a`.
 Deployed Router: `849941ac4834e45b90820f7f06d84ca954962492` (0.6.1).
 
@@ -92,30 +82,12 @@ commit raw session logs, ciphertext, credentials, account data or private paths.
 
 ## Completed first assignment
 
-Assignment `CHILD-ROUTING-G1` executed only G1 of plan revision 1. Its purpose was to determine
-whether existing native extraction can safely and economically enable Jev to
+Assignment `CHILD-ROUTING-G1` executed only G1 of plan revision 1. It determined
+whether existing native extraction could safely and economically enable Jev to
 classify current encrypted child assignments without changing native answer
-history. Read the plan, engineering contract and its relevant owner links.
-Do not reconstruct the full conversation or load unrelated historical evidence.
-
-You are not alone: preserve others' edits and stop on unexpected competing work.
-Work directly without delegation. You receive exclusive checkout custody only
-when the lead explicitly dispatches an assignment. During custody the lead
-does not inspect, edit or run commands; it waits using 180-second event-driven
-agent waits without routine progress requests.
-
-G1 allowed only the authorized bounded synthetic probe and its local evidence.
-No runtime deployment, production routing change, upstream repin, commit, push,
-or external publication is included. Before spending quota verify the execution
-request covers the probe. Unknown task-envelope meaning, new plaintext egress,
-and material cost/latency tradeoffs are lead decisions, not routine coding choices.
-For a question, report assignment and custody state; do not broaden the experiment.
-
-Return `ready-for-review` or `blocked` with assignment, candidate identity,
-changed files, exactness/latency/token observations, limitations, and the proposed
-bounded projection deadline. Stop writers/subprocesses and explicitly release
-custody before the lead reviews. A question-only return retains custody unless
-release is explicitly requested. Idle status is not a custody transfer.
+history. Its scope was the authorized bounded synthetic probe and local evidence;
+it made no runtime deployment, production routing change, upstream repin, commit,
+push or external publication.
 
 G1 completed against source baseline
 `eaef9c8338c923b49476eaad1b6647222bcc617a` and received independent review with
@@ -142,21 +114,8 @@ decision took 266 ms. The corpus contained six short 124–249-byte synthetic
 assignments; these observations do not statistically guarantee the 5-second
 deadline, prove arbitrary-payload fidelity, or establish dollar cost.
 
-## Progression and accounting
+## Completion accounting
 
-The lead completed G1 change-review and recorded acceptance. It may now grant
-the same Sol custody for `CHILD-ROUTING-G2`, with the accepted 5-second deadline
-and all remaining effect authorizations explicit. After a successful intermediate gate,
-continue under existing execution authority without a redundant approval question.
-Do not treat this planning request as execution authority.
-
-G2 owns the complete remaining implementation and final acceptance in the plan.
-Its final candidate releases custody for whole-plan review against the original
-comparison, including preserved in-scope untracked work. Findings go back to the
-same implementer; Astra does not take over coding. Apply cost-aware-coding repair
-allowances: two review-repair rounds at G1 and two at final G2. G1 used no
-review-repair round; both final G2 rounds remain available. Prerequisite gaps
-and unanswered questions consume none.
-
-Only report delivery complete after the integrated checks, native switching and
-v2 proof pass. A feasibility pass or reviewable code candidate alone is incomplete.
+The lead accepted G1 before G2 implemented the remaining plan. Delivery was
+complete only after the integrated checks, native switching and v2 proof passed;
+the source candidate and deployed evidence linked above record those results.

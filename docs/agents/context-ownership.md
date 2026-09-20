@@ -14,16 +14,21 @@ model/endpoint additions, to current guides; it is not an operations manual.
 - The engineering contract owns engineering discipline. Tracker and domain guides
   are conditional; ordinary endpoint work does not require a tracker or new ADR.
 - README is the user-facing overview and links to maintainer entry points.
-- Active delivery plans are reached through the affected component guide, not
-  loaded globally. Plans own proposed behavior; maintained guides describe
-  implemented behavior. Reconcile both at delivery acceptance and retain one
-  active plan/handoff per workstream. Completed records remain historical.
+- Portable technical plans and design documents may be tracked when they contain
+  durable problem statements, constraints and acceptance evidence without worker
+  orchestration. Component guides describe maintained behavior rather than
+  routing temporary execution plans. Reconcile plans with their maintained owners
+  at delivery acceptance. Completed records remain historical.
 - [History](../history/README.md) contains dated investigations and review evidence.
   Mark each record as historical when opened directly. Keep status, test counts,
   candidate commits and deployment anecdotes out of maintained instructions.
 - `v2_agent/` retains machine-consumed exact-runtime evidence at its required paths.
   Its records are historical proof for named identities, not current operating rules.
 - `generated/` is disposable scratch evidence, never a required context pointer.
+  Private filesystem paths, skill hashes, checkout custody, temporary
+  authorization and live worker coordination belong only in ignored scratch or
+  the active task conversation. Keep them out of product guides, delivery plans
+  and historical records; retain only durable technical scope, gates and evidence.
 
 Keep one authoritative owner for each rule, with concrete task triggers on inbound
 links. When moving a document, preserve useful evidence and repair inbound and

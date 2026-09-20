@@ -592,7 +592,7 @@ index 3afe6148..5a93786c 100644
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
-index e8a32baa..ae1a41b5 100644
+index e8a32baa..5e02fd31 100644
 --- a/crates/libsy/src/algorithms/type_safe_class.rs
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
 @@ -19,10 +19,12 @@
@@ -640,7 +640,7 @@ index e8a32baa..ae1a41b5 100644
          }
      }
  }
-@@ -105,68 +105,88 @@ impl TypeSafeClassifierConfig {
+@@ -105,68 +105,99 @@ impl TypeSafeClassifierConfig {
  
      fn question(&self) -> &str {
          if self.question.trim().is_empty() {
@@ -758,6 +758,17 @@ index e8a32baa..ae1a41b5 100644
 -        ContentBlock::Refusal { text } => text.clone(),
 -        ContentBlock::Unknown { .. } => "(unrecognized content)".to_string(),
 -    }
++fn projection_attempted_without_text(request: &Request) -> bool {
++    request
++        .metadata
++        .as_ref()
++        .and_then(|metadata| metadata.extra_metadata.as_ref())
++        .is_some_and(|metadata| {
++            metadata.contains_key(switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY)
++                && !metadata.contains_key(switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_KEY)
++        })
++}
++
 +/// Responses built-in tool history is carried through the neutral IR as an
 +/// `Unknown` user message so it can be replayed byte-for-byte. It is control
 +/// state, not unsupported end-user content. Every other unknown block is
@@ -778,7 +789,7 @@ index e8a32baa..ae1a41b5 100644
  }
  
  /// Raw provider-backed scorer.
-@@ -182,10 +202,17 @@ struct TypeSafeClassifier {
+@@ -182,10 +213,17 @@ struct TypeSafeClassifier {
  }
  
  impl TypeSafeClassifier {
@@ -797,7 +808,7 @@ index e8a32baa..ae1a41b5 100644
          });
          if let (Some(evidence), Some(extra)) = (evidence.as_object_mut(), extra.as_object()) {
              evidence.extend(extra.clone());
-@@ -207,7 +234,7 @@ impl TypeSafeClassifier {
+@@ -207,7 +245,7 @@ impl TypeSafeClassifier {
                  confidence = verdict.confidence,
                  "type safe classifier returned an out-of-range confidence; falling through"
              );
@@ -806,7 +817,7 @@ index e8a32baa..ae1a41b5 100644
                  driver,
                  "invalid_confidence",
                  serde_json::json!({
-@@ -215,6 +242,7 @@ impl TypeSafeClassifier {
+@@ -215,6 +253,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -814,7 +825,7 @@ index e8a32baa..ae1a41b5 100644
                  }),
              );
          }
-@@ -230,19 +258,20 @@ impl TypeSafeClassifier {
+@@ -230,19 +269,20 @@ impl TypeSafeClassifier {
                  label = %verdict.label,
                  "type safe classifier returned an unconfigured label; falling through"
              );
@@ -837,7 +848,7 @@ index e8a32baa..ae1a41b5 100644
                  driver,
                  "low_confidence",
                  serde_json::json!({
-@@ -250,6 +279,7 @@ impl TypeSafeClassifier {
+@@ -250,6 +290,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -845,7 +856,7 @@ index e8a32baa..ae1a41b5 100644
                  }),
              );
          }
-@@ -257,9 +287,12 @@ impl TypeSafeClassifier {
+@@ -257,9 +298,12 @@ impl TypeSafeClassifier {
          driver.set_evidence_if_empty(serde_json::json!({
              "source": "type_safe_classifier",
              "label": verdict.label,
@@ -858,13 +869,19 @@ index e8a32baa..ae1a41b5 100644
          }));
          Classification::Scores(vec![Score {
              target,
-@@ -277,13 +310,21 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -277,13 +321,27 @@ impl Classifier<State> for TypeSafeClassifier {
          request: &mut Request,
          driver: &Driver,
      ) -> Result<(Classification, Option<Response>)> {
 -        let messages = match self.config.recent_turn_window {
 -            Some(window) => trim_messages(&request.llm_request.messages, window),
 -            None => task_messages(&request.llm_request.messages),
++        if projection_attempted_without_text(request) {
++            return Ok((
++                self.fall_open(driver, "non_text_state", serde_json::Value::Null),
++                None,
++            ));
++        }
 +        let Some(selected) = classifier_turn(request) else {
 +            return Ok((
 +                self.fall_open(driver, "empty_state", serde_json::Value::Null),
@@ -884,7 +901,7 @@ index e8a32baa..ae1a41b5 100644
          };
  
          let verdict = match self.provider.classify(input, &self.config.options).await {
-@@ -294,8 +335,11 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -294,8 +352,11 @@ impl Classifier<State> for TypeSafeClassifier {
                      %error,
                      "type safe classifier request failed; falling through"
                  );
@@ -898,7 +915,7 @@ index e8a32baa..ae1a41b5 100644
                  return Ok((classification, None));
              }
          };
-@@ -382,7 +426,7 @@ mod tests {
+@@ -382,7 +443,7 @@ mod tests {
      use crate::core::testing::empty_driver;
      use async_trait::async_trait;
      use parking_lot::Mutex;
@@ -907,7 +924,7 @@ index e8a32baa..ae1a41b5 100644
  
      use super::super::util::typesafe_provider::TypeSafeProviderError;
  
-@@ -451,6 +495,7 @@ mod tests {
+@@ -451,6 +512,7 @@ mod tests {
              confidence,
              probabilities: [(label.to_string(), 1.0)].into(),
              decision_latency_ms: 12,
@@ -915,7 +932,7 @@ index e8a32baa..ae1a41b5 100644
          }
      }
  
-@@ -533,8 +578,9 @@ mod tests {
+@@ -533,8 +595,9 @@ mod tests {
  
      #[tokio::test]
      async fn a_provider_error_falls_through_to_the_default() -> Result<()> {
@@ -927,7 +944,7 @@ index e8a32baa..ae1a41b5 100644
          ))));
          let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
          let driver = driver_with(&[
-@@ -551,6 +597,42 @@ mod tests {
+@@ -551,6 +614,42 @@ mod tests {
          Ok(())
      }
  
@@ -970,7 +987,7 @@ index e8a32baa..ae1a41b5 100644
      #[tokio::test]
      async fn a_nan_confidence_falls_through_to_the_default() -> Result<()> {
          let provider = Arc::new(StubProvider::once(Ok(verdict("capable", f64::NAN))));
-@@ -612,26 +694,146 @@ mod tests {
+@@ -612,26 +711,146 @@ mod tests {
      }
  
      #[test]
@@ -2386,7 +2403,7 @@ index 58ebc0d9..a2b968f8 100644
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e..b66decb9 100644
+index 29bb561e..b0eee6a8 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2729,13 +2746,30 @@ index 29bb561e..b66decb9 100644
                  },
                  "extra_body": {},
              }],
-@@ -2714,6 +2936,704 @@ recent_turn_window = 1
-     Ok(())
+@@ -2715,139 +2937,1058 @@ recent_turn_window = 1
  }
  
-+#[tokio::test]
+ #[tokio::test]
+-async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
 +async fn type_safe_classifier_uses_only_latest_genuine_user_turn_across_decoders() -> TestResult {
-+    let upstream = MockUpstream::start().await?;
+     let upstream = MockUpstream::start().await?;
+-    let temp_dir = tempfile::tempdir()?;
+-    let state = load_test_config(&format!(
+-        r#"
+-schema_version = 1
+-
+-[llm_clients.upstream]
+-format = "openai_chat"
+-base_url = "{base_url}"
+-
+-[targets.classifier]
+-id = "model/strong"
+-llm_client = "upstream"
+-
+-[targets.strong]
+-id = "model/strong"
+-llm_client = "upstream"
+-system_prompt = "strong answer prompt"
 +    let provider = Arc::new(RecordingTypeSafeProvider::default());
 +    let app = build_switchyard_router(type_safe_state(&upstream.base_url, Arc::clone(&provider))?);
 +    let image_url = "data:image/png;base64,aW1hZ2U=";
@@ -2779,7 +2813,11 @@ index 29bb561e..b66decb9 100644
 +            ]}),
 +        ),
 +    ];
-+
+ 
+-[targets.weak]
+-id = "model/weak"
+-llm_client = "upstream"
+-system_prompt = "weak answer prompt"
 +    for (endpoint, body) in requests {
 +        upstream.calls.lock().await.clear();
 +        let response = send(&app, "POST", endpoint, Some(body)).await?;
@@ -2812,7 +2850,19 @@ index 29bb561e..b66decb9 100644
 +    assert_eq!(provider.inputs.lock().await.len(), 3);
 +    Ok(())
 +}
-+
+ 
+-[routes.escalation]
+-id = "switchyard/escalation"
+-type = "llm_classifier"
+-mode = "escalation"
+-classifier_target = "classifier"
+-strong_target = "strong"
+-weak_target = "weak"
+-escalation = {{ confirmations = 1 }}
+-"#,
+-        base_url = upstream.base_url
+-    ))?
+-    .with_routing_log(temp_dir.path().join("routing.jsonl"))?;
 +#[tokio::test]
 +async fn authenticated_task_projection_drives_classifier_but_never_reaches_upstream() -> TestResult
 +{
@@ -2822,7 +2872,7 @@ index 29bb561e..b66decb9 100644
 +    let provider = Arc::new(RecordingTypeSafeProvider::default());
 +    let state = type_safe_state(&upstream.base_url, Arc::clone(&provider))?
 +        .with_local_hop_capability("test-local-hop-capability")?;
-+    let app = build_switchyard_router(state);
+     let app = build_switchyard_router(state);
 +    let body = json!({
 +        "model": "typesafe",
 +        (PROJECTION_FIELD): "Implement the bounded parser.",
@@ -2838,15 +2888,23 @@ index 29bb561e..b66decb9 100644
 +    let unauthorized = send(&app, "POST", "/v1/responses", Some(body.clone())).await?;
 +    assert_eq!(unauthorized.status, StatusCode::UNAUTHORIZED);
 +    assert!(provider.inputs.lock().await.is_empty());
-+
-+    let response = send_with_headers(
-+        &app,
-+        "POST",
+ 
+     let response = send_with_headers(
+         &app,
+         "POST",
+-        "/v1/chat/completions",
+-        Some(json!({
+-            "model": "switchyard/escalation",
+-            "messages": [{"role": "user", "content": "bounded task"}]
+-        })),
+-        &[("x-switchyard-session-id", "accepted-escalation")],
 +        "/v1/responses",
 +        Some(body.clone()),
 +        &[(LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability")],
-+    )
-+    .await?;
+     )
+     .await?;
+-    assert_eq!(response.status, StatusCode::OK);
+-    assert_eq!(upstream.models().await, ["model/weak", "model/strong"]);
 +    assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
 +    assert_eq!(
 +        provider
@@ -2857,14 +2915,38 @@ index 29bb561e..b66decb9 100644
 +            .map(|input| input.context.as_str()),
 +        Some("Implement the bounded parser.")
 +    );
-+    let calls = upstream.calls.lock().await;
+     let calls = upstream.calls.lock().await;
+-    assert!(has_system_prompt(&calls[0], "weak answer prompt"));
+-    assert!(!has_system_prompt(&calls[1], "strong answer prompt"));
 +    assert_eq!(calls.len(), 1);
 +    let encoded = calls[0].to_string();
 +    assert!(encoded.contains(CIPHERTEXT));
 +    assert!(!encoded.contains(PROJECTION_FIELD));
 +    assert!(!encoded.contains("Implement the bounded parser."));
-+    drop(calls);
-+
+     drop(calls);
+ 
+-    let stats = send(
+-        &app,
+-        "GET",
+-        "/v1/routing/session-stats?session_id=accepted-escalation",
+-        None,
+-    )
+-    .await?;
+-    assert_eq!(stats.status, StatusCode::OK);
+-    let stats = stats.json()?;
+-    assert_eq!(stats["total_calls"], 2);
+-    assert_eq!(stats["total_prompt_tokens"], 20);
+-    assert_eq!(stats["total_completion_tokens"], 4);
+-    assert_eq!(stats["models"]["model/weak"]["calls"], 1);
+-    assert_eq!(stats["models"]["model/strong"]["calls"], 1);
+-
+-    let process_stats = send(&app, "GET", "/v1/stats", None).await?.json()?;
+-    assert_eq!(process_stats["total_requests"], 1);
+-    assert_eq!(process_stats["models"]["model/weak"]["calls"], 1);
+-    assert_eq!(
+-        process_stats["models"]["model/weak"]["model_call_latency"]["count"],
+-        1
+-    );
 +    // A standalone server with no local-hop capability still strips the field,
 +    // but never trusts it as classifier state.
 +    let untrusted_provider = Arc::new(RecordingTypeSafeProvider::default());
@@ -2883,13 +2965,52 @@ index 29bb561e..b66decb9 100644
 +    assert!(encoded.contains(CIPHERTEXT));
 +    assert!(!encoded.contains(PROJECTION_FIELD));
 +    assert!(!encoded.contains("Implement the bounded parser."));
-+    Ok(())
-+}
-+
-+#[tokio::test]
+     Ok(())
+ }
+ 
+ #[tokio::test]
+-async fn stage_classifier_can_request_json_object_output() -> TestResult {
 +async fn failed_new_task_projection_releases_affinity_to_default_without_jev() -> TestResult {
 +    const PROJECTION_FIELD: &str = "x_codex_router_task_projection";
-+    let upstream = MockUpstream::start().await?;
++    const APP_TURN: &str = "01a0be86-5a57-7733-930c-b715dee4edc5";
++    const APP_THREAD: &str = "01a0be80-76c5-7d67-8dd4-f4ff86e5e126";
++    const SOURCE_THREAD: &str = "01a070b8-92cb-72d0-995e-4c34ae25dd53";
+     let upstream = MockUpstream::start().await?;
+-    let state = load_test_config(&format!(
+-        r#"
+-schema_version = 1
+-
+-[llm_clients.upstream]
+-format = "openai_chat"
+-base_url = "{base_url}"
+-
+-[targets.classifier]
+-id = "model/classifier"
+-llm_client = "upstream"
+-
+-[targets.strong]
+-id = "model/strong"
+-llm_client = "upstream"
+-
+-[targets.weak]
+-id = "model/weak"
+-llm_client = "upstream"
+-
+-[routes.stage]
+-id = "switchyard/stage"
+-type = "stage_router"
+-capable_target = "strong"
+-efficient_target = "weak"
+-picker = "efficient_first"
+-confidence_threshold = 1.0
+-
+-[routes.stage.classifier]
+-target = "classifier"
+-base_threshold = 0.5
+-response_format_type = "json_object"
+-"#,
+-        base_url = upstream.base_url
+-    ))?;
 +    let provider = Arc::new(RecordingTypeSafeProvider {
 +        inputs: Mutex::new(Vec::new()),
 +        label: "capable",
@@ -2901,7 +3022,7 @@ index 29bb561e..b66decb9 100644
 +        ClassifyTrigger::UserTurn,
 +    )?
 +    .with_local_hop_capability("test-local-hop-capability")?;
-+    let app = build_switchyard_router(state);
+     let app = build_switchyard_router(state);
 +    let request_headers = [
 +        ("authorization", "Bearer codex-login-token"),
 +        ("chatgpt-account-id", "account-123"),
@@ -2919,19 +3040,24 @@ index 29bb561e..b66decb9 100644
 +            ]
 +        })
 +    };
-+
+ 
+-    let response = send(
 +    let first = send_with_headers(
-+        &app,
-+        "POST",
+         &app,
+         "POST",
+-        "/v1/chat/completions",
 +        "/v1/responses",
-+        Some(json!({
+         Some(json!({
+-            "model": "switchyard/stage",
+-            "messages": [{"role": "user", "content": "bounded task"}]
 +            "model": "typesafe",
 +            (PROJECTION_FIELD): "Complex first assignment.",
 +            "input": [handoff("gAAAAA-first=")]
-+        })),
+         })),
 +        &request_headers,
-+    )
-+    .await?;
+     )
+     .await?;
+-
 +    assert_eq!(first.status, StatusCode::OK, "{}", first.text()?);
 +    assert_eq!(
 +        first.headers["x-model-router-selected-model"],
@@ -2965,6 +3091,9 @@ index 29bb561e..b66decb9 100644
 +    );
 +    assert_eq!(provider.inputs.lock().await.len(), 1);
 +
++    // Preserve the original encrypted-handoff failure regression: an
++    // authenticated projection attempt with no text releases retained affinity
++    // and falls back without consulting the provider.
 +    let failed_projection = send_with_headers(
 +        &app,
 +        "POST",
@@ -2992,6 +3121,221 @@ index 29bb561e..b66decb9 100644
 +        1,
 +        "failed projection must release affinity and make zero additional Jev calls"
 +    );
++
++    let app_delivery = |output: &str| {
++        json!({
++            "type": "function_call_output",
++            "id": format!("fco_{APP_TURN}"),
++            "name": "send_message_to_thread",
++            "namespace": "codex_app",
++            "output": output,
++            "internal_chat_message_metadata_passthrough": {
++                "turn_id": APP_TURN,
++                "create_time": 1
++            }
++        })
++    };
++    let valid_delegation = format!(
++        "<codex_delegation>\n  <source_thread_id>{SOURCE_THREAD}</source_thread_id>\n  <input>Review A &amp; B &gt; C</input>\n</codex_delegation>"
++    );
++    let malformed_delegation = format!(
++        "prefix <codex_delegation>\n  <source_thread_id>{SOURCE_THREAD}</source_thread_id>\n  <input>rejected private app output</input>\n</codex_delegation>"
++    );
++    let turn_metadata = json!({
++        "x-codex-turn-metadata": format!(
++            r#"{{"turn_id":"{APP_TURN}","thread_id":"{APP_THREAD}"}}"#
++        )
++    });
++    let app_headers = [
++        ("authorization", "Bearer codex-login-token"),
++        ("chatgpt-account-id", "account-123"),
++        ("x-openai-fedramp", "true"),
++        ("x-switchyard-session-id", "session-app-projection-failure"),
++        ("x-switchyard-agent-id", "child-app-projection-failure"),
++        (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
++    ];
++    let valid_app_item = app_delivery(&valid_delegation);
++    let app_first = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): "Review A & B > C",
++            "client_metadata": turn_metadata,
++            "input": [valid_app_item.clone()]
++        })),
++        &app_headers,
++    )
++    .await?;
++    assert_eq!(app_first.status, StatusCode::OK, "{}", app_first.text()?);
++    assert_eq!(
++        app_first.headers["x-model-router-selected-model"],
++        "model/complex"
++    );
++    assert_eq!(
++        provider
++            .inputs
++            .lock()
++            .await
++            .last()
++            .map(|input| input.context.as_str()),
++        Some("Review A & B > C")
++    );
++
++    // An ordinary call-linked continuation has no projection attempt and keeps
++    // the non-Sol selection without another provider call.
++    let app_continuation = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            "client_metadata": turn_metadata,
++            "input": [
++                valid_app_item,
++                {"type": "function_call_output", "call_id": "call-app", "output": "ok"}
++            ]
++        })),
++        &app_headers,
++    )
++    .await?;
++    assert_eq!(
++        app_continuation.status,
++        StatusCode::OK,
++        "{}",
++        app_continuation.text()?
++    );
++    assert_eq!(
++        app_continuation.headers["x-model-router-selected-model"],
++        "model/complex"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 2);
++
++    // This is the exact unpaired producer shape: native fco UUID identity,
++    // Codex app namespace and operation, and no call_id. A recognized malformed
++    // current delegation arrives with a null projection attempt. Although the
++    // Responses decoder degrades the orphan output to user text, neither that
++    // text nor any older text may reach the classifier.
++    let malformed_app_item = app_delivery(&malformed_delegation);
++    let malformed_app = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): Value::Null,
++            "client_metadata": turn_metadata,
++            "input": [malformed_app_item.clone()]
++        })),
++        &app_headers,
++    )
++    .await?;
++    assert_eq!(
++        malformed_app.status,
++        StatusCode::OK,
++        "{}",
++        malformed_app.text()?
++    );
++    assert_eq!(
++        malformed_app.headers["x-model-router-selected-model"],
++        "model/efficient"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 2);
++
++    let historical_headers = [
++        ("authorization", "Bearer codex-login-token"),
++        ("chatgpt-account-id", "account-123"),
++        ("x-openai-fedramp", "true"),
++        (
++            "x-switchyard-session-id",
++            "session-projection-failure-history",
++        ),
++        ("x-switchyard-agent-id", "child-projection-failure-history"),
++        (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
++    ];
++    let historical_first = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): "Review A & B > C",
++            "client_metadata": turn_metadata,
++            "input": [app_delivery(&valid_delegation)]
++        })),
++        &historical_headers,
++    )
++    .await?;
++    assert_eq!(
++        historical_first.status,
++        StatusCode::OK,
++        "{}",
++        historical_first.text()?
++    );
++    assert_eq!(
++        historical_first.headers["x-model-router-selected-model"],
++        "model/complex"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 3);
++
++    let historical_failed_projection = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): Value::Null,
++            "client_metadata": turn_metadata,
++            "input": [
++                {
++                    "role": "user",
++                    "content": [{"type": "input_text", "text": "older genuine user text"}]
++                },
++                malformed_app_item
++            ]
++        })),
++        &historical_headers,
++    )
++    .await?;
++    assert_eq!(
++        historical_failed_projection.status,
++        StatusCode::OK,
++        "{}",
++        historical_failed_projection.text()?
++    );
++    assert_eq!(
++        historical_failed_projection.headers["x-model-router-selected-model"],
++        "model/efficient"
++    );
++    assert_eq!(
++        provider.inputs.lock().await.len(),
++        3,
++        "failed projection must make older user text and app output ineligible for Jev"
++    );
++    let provider_inputs = provider.inputs.lock().await;
++    assert_eq!(
++        provider_inputs
++            .iter()
++            .map(|input| input.context.as_str())
++            .collect::<Vec<_>>(),
++        [
++            "Complex first assignment.",
++            "Review A & B > C",
++            "Review A & B > C"
++        ]
++    );
++    assert!(provider_inputs.iter().all(|input| {
++        !input.context.contains("codex_delegation")
++            && !input.context.contains("rejected private app output")
++            && !input.context.contains("older genuine user text")
++    }));
++    drop(provider_inputs);
++    assert!(upstream.calls.lock().await.iter().all(|request| {
++        !request
++            .to_string()
++            .contains("x_codex_router_task_projection")
++    }));
 +    Ok(())
 +}
 +
@@ -3431,10 +3775,144 @@ index 29bb561e..b66decb9 100644
 +    Ok(())
 +}
 +
- #[tokio::test]
- async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
-     let upstream = MockUpstream::start().await?;
-@@ -3161,7 +4081,8 @@ target = "claude"
++#[tokio::test]
++async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
++    let upstream = MockUpstream::start().await?;
++    let temp_dir = tempfile::tempdir()?;
++    let state = load_test_config(&format!(
++        r#"
++schema_version = 1
++
++[llm_clients.upstream]
++format = "openai_chat"
++base_url = "{base_url}"
++
++[targets.classifier]
++id = "model/strong"
++llm_client = "upstream"
++
++[targets.strong]
++id = "model/strong"
++llm_client = "upstream"
++system_prompt = "strong answer prompt"
++
++[targets.weak]
++id = "model/weak"
++llm_client = "upstream"
++system_prompt = "weak answer prompt"
++
++[routes.escalation]
++id = "switchyard/escalation"
++type = "llm_classifier"
++mode = "escalation"
++classifier_target = "classifier"
++strong_target = "strong"
++weak_target = "weak"
++escalation = {{ confirmations = 1 }}
++"#,
++        base_url = upstream.base_url
++    ))?
++    .with_routing_log(temp_dir.path().join("routing.jsonl"))?;
++    let app = build_switchyard_router(state);
++
++    let response = send_with_headers(
++        &app,
++        "POST",
++        "/v1/chat/completions",
++        Some(json!({
++            "model": "switchyard/escalation",
++            "messages": [{"role": "user", "content": "bounded task"}]
++        })),
++        &[("x-switchyard-session-id", "accepted-escalation")],
++    )
++    .await?;
++    assert_eq!(response.status, StatusCode::OK);
++    assert_eq!(upstream.models().await, ["model/weak", "model/strong"]);
++    let calls = upstream.calls.lock().await;
++    assert!(has_system_prompt(&calls[0], "weak answer prompt"));
++    assert!(!has_system_prompt(&calls[1], "strong answer prompt"));
++    drop(calls);
++
++    let stats = send(
++        &app,
++        "GET",
++        "/v1/routing/session-stats?session_id=accepted-escalation",
++        None,
++    )
++    .await?;
++    assert_eq!(stats.status, StatusCode::OK);
++    let stats = stats.json()?;
++    assert_eq!(stats["total_calls"], 2);
++    assert_eq!(stats["total_prompt_tokens"], 20);
++    assert_eq!(stats["total_completion_tokens"], 4);
++    assert_eq!(stats["models"]["model/weak"]["calls"], 1);
++    assert_eq!(stats["models"]["model/strong"]["calls"], 1);
++
++    let process_stats = send(&app, "GET", "/v1/stats", None).await?.json()?;
++    assert_eq!(process_stats["total_requests"], 1);
++    assert_eq!(process_stats["models"]["model/weak"]["calls"], 1);
++    assert_eq!(
++        process_stats["models"]["model/weak"]["model_call_latency"]["count"],
++        1
++    );
++    Ok(())
++}
++
++#[tokio::test]
++async fn stage_classifier_can_request_json_object_output() -> TestResult {
++    let upstream = MockUpstream::start().await?;
++    let state = load_test_config(&format!(
++        r#"
++schema_version = 1
++
++[llm_clients.upstream]
++format = "openai_chat"
++base_url = "{base_url}"
++
++[targets.classifier]
++id = "model/classifier"
++llm_client = "upstream"
++
++[targets.strong]
++id = "model/strong"
++llm_client = "upstream"
++
++[targets.weak]
++id = "model/weak"
++llm_client = "upstream"
++
++[routes.stage]
++id = "switchyard/stage"
++type = "stage_router"
++capable_target = "strong"
++efficient_target = "weak"
++picker = "efficient_first"
++confidence_threshold = 1.0
++
++[routes.stage.classifier]
++target = "classifier"
++base_threshold = 0.5
++response_format_type = "json_object"
++"#,
++        base_url = upstream.base_url
++    ))?;
++    let app = build_switchyard_router(state);
++
++    let response = send(
++        &app,
++        "POST",
++        "/v1/chat/completions",
++        Some(json!({
++            "model": "switchyard/stage",
++            "messages": [{"role": "user", "content": "bounded task"}]
++        })),
++    )
++    .await?;
++
+     assert_eq!(response.status, StatusCode::OK);
+     let calls = upstream.calls.lock().await;
+     let judge_call = calls
+@@ -3161,7 +4302,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3444,7 +3922,7 @@ index 29bb561e..b66decb9 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +4098,7 @@ target = "claude"
+@@ -3177,6 +4319,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3452,7 +3930,7 @@ index 29bb561e..b66decb9 100644
          ],
      )
      .await?;
-@@ -3187,7 +4109,10 @@ target = "claude"
+@@ -3187,7 +4330,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -3464,7 +3942,7 @@ index 29bb561e..b66decb9 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +4145,29 @@ target = "openai"
+@@ -3220,7 +4366,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3495,7 +3973,7 @@ index 29bb561e..b66decb9 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +4178,9 @@ target = "openai"
+@@ -3231,8 +4399,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3507,7 +3985,7 @@ index 29bb561e..b66decb9 100644
          ],
      )
      .await?;
-@@ -3247,6 +4195,7 @@ target = "openai"
+@@ -3247,6 +4416,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3515,7 +3993,7 @@ index 29bb561e..b66decb9 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +4210,7 @@ target = "openai"
+@@ -3261,6 +4431,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -3523,7 +4001,7 @@ index 29bb561e..b66decb9 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +4233,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +4454,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -3535,7 +4013,7 @@ index 29bb561e..b66decb9 100644
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +4279,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +4500,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  

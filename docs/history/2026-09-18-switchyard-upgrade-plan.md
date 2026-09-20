@@ -12,10 +12,10 @@ Revision 3 reconciled follow-up feedback against the committed plan at `d81269ae
 before execution began. The A1 status notes below record the later authorized
 implementation without changing the remaining checkpoint contracts.
 
-The user subsequently authorized execution through the cost-aware, ponytail
-implementation workflow defined in the
-[execution handoff](2026-09-18-switchyard-upgrade-handoff.md). B3 performed the authorized
-transactional deployment; the bound Jev generation is the current runtime.
+The user subsequently authorized the staged execution defined in the
+[execution handoff](2026-09-18-switchyard-upgrade-handoff.md). B3 performed the
+authorized transactional deployment; the bound Jev generation is the current
+runtime.
 
 ## Outcome and boundary
 

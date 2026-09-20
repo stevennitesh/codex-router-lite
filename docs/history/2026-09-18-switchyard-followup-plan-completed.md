@@ -181,10 +181,10 @@ building a benchmark framework or deleting unique compatibility coverage. After
 completion, archive completed plans/handoffs as history and repair links; keep
 durable guidance at existing runtime owners. Do not archive active recovery state.
 
-During delivery, the active plan was discoverable through the Switchyard guide;
-scope, custody and methods stayed in the plan/handoff rather than AGENTS.md.
+During delivery, the active plan was discoverable through the Switchyard guide.
 Maintained docs now describe the implemented behavior, while this record preserves
-the proposal and acceptance boundary.
+the durable proposal and acceptance boundary. Temporary custody and worker-method
+details were removed after completion under current context ownership rules.
 At implementation acceptance, reconcile README, SECURITY.md and Switchyard guides
 with verified classifier egress, selected-turn/media behavior, readiness and traces.
 The front page must clearly distinguish OpenRouter/Jev classification from native
