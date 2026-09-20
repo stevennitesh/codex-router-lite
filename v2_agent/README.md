@@ -6,14 +6,17 @@ not current instructions or proof of a later candidate. Keep these paths because
 the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
-The current applications are:
+The current source candidate changes shared encrypted-relay behavior, so its four
+active applications are draft and their routes remain v1 until fresh
+deployment-bound proof. The unchanged installed runtime retains its prior
+accepted identity, but that historical result does not certify this candidate:
 
-- accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
-- accepted: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md)
+- draft: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
+- draft: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md)
 - retired historical acceptance:
   [`openrouter/union-alpha`](openrouter/union-alpha/proof.md) (does not certify Pareto)
-- accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
+- draft: [`openrouter/pareto`](openrouter/pareto/proof.md)
+- draft: [`switchyard/auto`](switchyard/auto/proof.md)
 
 Create or refresh an application by copying both
 [`_template/proof.json`](_template/proof.json) and

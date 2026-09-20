@@ -182,7 +182,29 @@ test("Switchyard accepted proof rejects changed patch and canonical template sou
     "utf8",
   ));
   proof.status = "accepted";
+  proof.testedAt = "2026-09-20T00:00:00.000Z";
+  proof.routerVersion = "fixture";
+  proof.codexVersion = "fixture";
+  proof.executionSurface = "codex-cli";
+  proof.checks = Object.fromEntries([
+    "streaming",
+    "toolCall",
+    "encryptedRelay",
+    "markerReturn",
+    "sameThreadFollowUp",
+  ].map((key) => [key, {
+    outcome: "pass",
+    status: 200,
+    observedAt: "2026-09-20T00:00:00.000Z",
+  }]));
+  proof.checks.toolCall.mode = "auto";
+  proof.runtimeBinding.upstreamCommit = lock.commit;
+  proof.runtimeBinding.upstreamContributionCommit = lock.upstreamContribution.sourceCommit;
+  proof.runtimeBinding.upstreamContributionSha256 = lock.upstreamContribution.patchSha256;
   proof.runtimeBinding.patchSha256 = lock.patchSha256;
+  proof.runtimeBinding.binarySha256 = "a".repeat(64);
+  proof.runtimeBinding.routerCommit = "a".repeat(40);
+  proof.runtimeBinding.routesSha256 = "a".repeat(64);
   proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
     path.join(configRoot, "routes.template.toml"),
   )).digest("hex");

@@ -11,8 +11,8 @@ model/endpoint additions, to current guides; it is not an operations manual.
 - Model onboarding owns the integration path; endpoint guides own measured route rules.
 - Debugging owns diagnosis; compatibility maintenance owns app/upstream refresh;
   installation and Switchyard guides own their runtime transactions.
-- The engineering contract owns engineering discipline. Tracker and domain guides
-  are conditional; ordinary endpoint work does not require a tracker or new ADR.
+- The engineering contract owns engineering discipline. Tracker guidance is
+  conditional; ordinary endpoint work does not require a tracker or new ADR.
 - README is the user-facing overview and links to maintainer entry points.
 - Portable technical plans and design documents may be tracked when they contain
   durable problem statements, constraints and acceptance evidence without worker

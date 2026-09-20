@@ -988,28 +988,35 @@ function normalizeRoutedInput(input) {
     });
 }
 
+function nativeAgentRelayUnavailable(reason) {
+  const error = new Error(`Native collaboration payload relay is unavailable because ${reason}.`);
+  error.status = 503;
+  error.code = "native_agent_relay_unavailable";
+  return error;
+}
+
 function nativeAgentRelayModel() {
   const configured = String(process.env.MODEL_ROUTER_AGENT_RELAY_MODEL || "").trim();
   if (configured) return configured;
+  let parsed;
   try {
-    const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
-    const preferred = models.find((model) => model?.slug === "gpt-5.6-sol");
-    const listed = models.find(
-      (model) => typeof model?.slug === "string" && model.visibility === "list",
-    );
-    const available = models.find((model) => typeof model?.slug === "string");
-    return preferred?.slug || listed?.slug || available?.slug || "gpt-5.6-sol";
+    parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
   } catch {
-    return "gpt-5.6-sol";
+    throw nativeAgentRelayUnavailable("the native model catalog could not be read");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.models)) {
+    throw nativeAgentRelayUnavailable("the native model catalog is malformed");
+  }
+  const preferred = parsed.models.find((model) => model?.slug === "gpt-5.6-sol");
+  if (preferred) return preferred.slug;
+  throw nativeAgentRelayUnavailable("gpt-5.6-sol is absent from the native model catalog");
 }
 
-// Every `encrypted_content` value OpenAI issues is a Fernet token: the version
-// byte 0x80 followed by a big-endian timestamp whose leading bytes stay zero
-// for the rest of the century, which base64url-encodes to the fixed `gAAAAA`
-// prefix over the base64url alphabet with no whitespace. This is the whole
-// detection predicate -- the plaintext is never inspected.
+// Native agent payloads observed from the currently tested Codex build use a
+// Fernet-shaped `gAAAAA...` representation. The protocol defines
+// `encrypted_content` as opaque, so this discriminator is a version-bound
+// compatibility observation rather than a guarantee about future ciphertext.
+// The plaintext is never inspected.
 const NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 // Private Router -> Switchyard request state. Switchyard removes this field
 // before decoding or retaining the native request, so it can influence only

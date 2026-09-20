@@ -7,12 +7,16 @@ A route is spawnable only when its published model has `multiAgentVersion: "v2"`
 Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.
 
-The accepted active v2 routes are `openrouter/glm-5.3-flash`,
-`openrouter/glm-5.3-flash-gmicloud`, and `openrouter/pareto`. The retired Union
-Alpha application remains historical evidence and does not certify
-`openrouter/pareto`. A Switchyard application is also bound to its deployed
-source, patch, binary, generated routes, and Router commit; its checked status
-is authoritative for source publication.
+Source publication requires both an exact route with `multiAgentVersion: "v2"`
+and its matching accepted application. The current source applications for
+`openrouter/glm-5.3-flash`, `openrouter/glm-5.3-flash-gmicloud`,
+`openrouter/pareto`, and `switchyard/auto` are draft and their source routes are
+v1 pending fresh proof of the changed shared relay. The unchanged installed
+runtime retains its prior accepted identity, which does not certify this source
+candidate. The retired Union Alpha application remains historical evidence and
+does not certify `openrouter/pareto`. An accepted Switchyard application is
+additionally bound to its deployed source, patch, binary, generated routes, and
+Router commit.
 
 Generated routed-agent definitions pin each route's checked-in default effort.
 Do not inherit an unsupported parent effort into a routed child: Codex rejects

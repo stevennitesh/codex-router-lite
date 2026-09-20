@@ -55,7 +55,7 @@ Interpret current Jev fallback reasons before opening raw logs:
 | Reason | Meaning and first action |
 | --- | --- |
 | `empty_state` | No genuine user turn remained after control-only messages were skipped. Expected zero-call Sol fallback. |
-| `non_text_state` | The selected user turn contained media or unsupported meaningful content. Expected zero-call Sol fallback. |
+| `non_text_state` | The selected user turn contained media or unsupported meaningful content, or a recognized assignment projection was attempted without producing safe text. Expected zero-call Sol fallback. |
 | `low_confidence` | Jev returned a valid probability vector below the configured threshold. Expected Sol fallback without a retry. |
 | `classifier_unavailable` | The Decisions client could not be constructed or reached. Check startup configuration and connectivity. |
 | `classifier_timeout` | The complete Decisions request, including body read, exceeded its deadline. Check provider latency before changing the deadline. |

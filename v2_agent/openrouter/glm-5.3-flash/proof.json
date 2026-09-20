@@ -3,44 +3,23 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash",
-  "status": "accepted",
+  "status": "draft",
   "endpointProvider": "novita",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash?endpoint=7e1222fc-b9ab-4299-b75a-dd80e1ccd206#providers",
     "https://openrouter.ai/z-ai/glm-5.3-flash",
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
   ],
-  "routerVersion": "0.5.1",
-  "codexVersion": "codex-cli 0.155.0-alpha.9.2",
-  "executionSurface": "codex-cli",
+  "routerVersion": "",
+  "codexVersion": "",
+  "executionSurface": "",
   "checks": {
-    "streaming": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:50:33.612Z"
-    },
-    "toolCall": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:50:17.417Z",
-      "mode": "auto"
-    },
-    "encryptedRelay": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:49:52.631Z"
-    },
-    "markerReturn": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:50:23.407Z"
-    },
-    "sameThreadFollowUp": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:50:33.618Z"
-    }
+    "streaming": { "outcome": "pending" },
+    "toolCall": { "outcome": "pending" },
+    "encryptedRelay": { "outcome": "pending" },
+    "markerReturn": { "outcome": "pending" },
+    "sameThreadFollowUp": { "outcome": "pending" }
   },
-  "testedAt": "2026-09-19T02:50:38.790Z",
-  "routerCommit": "096fb8704ebc83df2aecec3aa46228578b639686"
+  "testedAt": "",
+  "routerCommit": ""
 }

@@ -16,7 +16,7 @@ const caller = "pareto-fixture-caller-capability-long-enough";
 const internal = "pareto-fixture-internal-capability-long-enough";
 const fn = { type: "function", name: "lookup", parameters: { type: "object", properties: {} } };
 
-test("Pareto advertises its measured exact-route contract as v2", () => {
+test("Pareto keeps its measured exact-route contract while source proof is provisional", () => {
   assert.equal(validateOpenRouterRoute(route), route);
   const built = routedModel({ base_instructions: "You are Codex.", model_messages: {} }, route);
   assert.equal(built.context_window, 262144);
@@ -27,7 +27,7 @@ test("Pareto advertises its measured exact-route contract as v2", () => {
   assert.equal(built.support_verbosity, false);
   assert.equal(built.supports_search_tool, true);
   assert.equal(route.searchTool, undefined);
-  assert.equal(built.multi_agent_version, "v2");
+  assert.equal(built.multi_agent_version, "v1");
   assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, only: ["novita"] } }), /exact Unbiased/);
   assert.throws(() => validateOpenRouterRoute({ ...route, openRouterProviderPolicy: { ...route.openRouterProviderPolicy, allow_fallbacks: true } }), /fallback disabled/);
 });

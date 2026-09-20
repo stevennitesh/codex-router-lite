@@ -3,43 +3,22 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash-gmicloud",
-  "status": "accepted",
+  "status": "draft",
   "endpointProvider": "gmicloud",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash",
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
   ],
-  "routerVersion": "0.5.1",
-  "codexVersion": "codex-cli 0.155.0-alpha.9.2",
-  "executionSurface": "codex-cli",
+  "routerVersion": "",
+  "codexVersion": "",
+  "executionSurface": "",
   "checks": {
-    "streaming": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:51:58.336Z"
-    },
-    "toolCall": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:51:31.641Z",
-      "mode": "auto"
-    },
-    "encryptedRelay": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:51:15.190Z"
-    },
-    "markerReturn": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:51:38.398Z"
-    },
-    "sameThreadFollowUp": {
-      "outcome": "pass",
-      "status": 200,
-      "observedAt": "2026-09-19T02:51:58.346Z"
-    }
+    "streaming": { "outcome": "pending" },
+    "toolCall": { "outcome": "pending" },
+    "encryptedRelay": { "outcome": "pending" },
+    "markerReturn": { "outcome": "pending" },
+    "sameThreadFollowUp": { "outcome": "pending" }
   },
-  "testedAt": "2026-09-19T02:52:03.152Z",
-  "routerCommit": "096fb8704ebc83df2aecec3aa46228578b639686"
+  "testedAt": "",
+  "routerCommit": ""
 }

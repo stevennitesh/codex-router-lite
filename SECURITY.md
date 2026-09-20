@@ -7,7 +7,8 @@ Native Codex requests retain Codex authorization and account headers. OpenRouter
 Switchyard is a local, capability-protected hop with two separate upstream paths.
 The checked-in Jev classifier sends bounded task text to OpenRouter's Decisions
 endpoint using the protected OpenRouter key, without native authorization/account
-headers. The decision state contains only the latest genuine user turn. For a
+headers. For ordinary-turn classification, the decision state contains only the
+latest genuine user turn. For a
 canonical encrypted native child handoff, Router asks the native account-scoped
 relay for the current task plaintext and gives Switchyard a request-local
 classifier projection. The projection has a five-second waiter deadline, shares

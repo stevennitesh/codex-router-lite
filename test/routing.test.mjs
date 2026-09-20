@@ -247,6 +247,18 @@ function run(script, env, { nodeArgs = [] } = {}) {
   return child;
 }
 
+function relayState(catalog = { models: [{ slug: "gpt-5.6-sol" }] }) {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "relay-selection-state-"));
+  if (catalog === "missing") return stateDir;
+  const catalogPath = path.join(stateDir, "native-models.json");
+  if (catalog === "unreadable") mkdirSync(catalogPath);
+  else writeFileSync(
+    catalogPath,
+    typeof catalog === "string" ? catalog : JSON.stringify(catalog),
+  );
+  return stateDir;
+}
+
 async function waitFor(url, child, headers = {}) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -455,7 +467,176 @@ test("router preserves native auth and isolates every external route", async () 
   }
 });
 
+test("native agent relay selection is deterministic and fails before unavailable upstream calls", async () => {
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    const body = await bodyJson(request);
+    nativeRequests.push(body);
+    if (body.model === "fixture-explicit-failure") {
+      json(response, 404, { error: { message: "fixture model unavailable" } });
+      return;
+    }
+    json(response, 200, { output: [{
+      type: "function_call",
+      name: "relay_external_agent_payload",
+      arguments: JSON.stringify({ payload: "DETERMINISTIC_PAYLOAD" }),
+    }] });
+  });
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, { output: [] });
+  });
+  const requestBody = (token) => JSON.stringify({
+    model: "openrouter/glm-5.3-flash",
+    input: [{
+      type: "agent_message",
+      content: [
+        { type: "input_text", text: "Message Type: NEW_TASK\nPayload:\n" },
+        { type: "encrypted_content", encrypted_content: token },
+      ],
+    }],
+  });
+  const runCase = async ({ catalog, override = "", token }) => {
+    const stateDir = relayState(catalog);
+    const port = await openPort();
+    const router = run("router.mjs", {
+      CODEX_ROUTER_PORT: String(port),
+      CODEX_ROUTER_STATE_DIR: stateDir,
+      CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+      CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+      MODEL_ROUTER_AGENT_RELAY_MODEL: override,
+      CODEX_ROUTER_QUIET: "1",
+    });
+    try {
+      await waitFor(`${routerBase(port)}/models`, router);
+      const response = await fetch(`${routerBase(port)}/responses`, {
+        method: "POST",
+        headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
+        body: requestBody(token),
+      });
+      return { response, body: await response.json() };
+    } finally {
+      await stopChild(router);
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  };
+
+  try {
+    const unavailable = [
+      ["missing", "gAAAAA-missing-catalog="],
+      ["{not-json", "gAAAAA-malformed-json="],
+      [[], "gAAAAA-malformed-root="],
+      [{ models: {} }, "gAAAAA-malformed-models="],
+      [{ models: [{ slug: "gpt-6-astra", visibility: "list" }, { slug: "gpt-5.6-luna" }] }, "gAAAAA-sol-absent="],
+      ["unreadable", "gAAAAA-unreadable-catalog="],
+    ];
+    for (const [catalog, token] of unavailable) {
+      const nativeBefore = nativeRequests.length;
+      const gatewayBefore = gatewayRequests.length;
+      const { response, body } = await runCase({ catalog, token });
+      assert.equal(response.status, 503);
+      assert.equal(body.error.code, "native_agent_relay_unavailable");
+      assert.equal(nativeRequests.length, nativeBefore, token);
+      assert.equal(gatewayRequests.length, gatewayBefore, token);
+    }
+
+    const whitespace = await runCase({
+      catalog: { models: [{ slug: "gpt-6-astra" }, { slug: "gpt-5.6-sol" }] },
+      override: "  \t ",
+      token: "gAAAAA-whitespace-override=",
+    });
+    assert.equal(whitespace.response.status, 200);
+    assert.equal(nativeRequests.at(-1).model, "gpt-5.6-sol");
+
+    const explicit = await runCase({
+      catalog: "missing",
+      override: "fixture-explicit-model",
+      token: "gAAAAA-explicit-model=",
+    });
+    assert.equal(explicit.response.status, 200);
+    assert.equal(nativeRequests.at(-1).model, "fixture-explicit-model");
+
+    const nativeBeforeFailure = nativeRequests.length;
+    const gatewayBeforeFailure = gatewayRequests.length;
+    const failedExplicit = await runCase({
+      catalog: { models: [{ slug: "gpt-5.6-sol" }] },
+      override: "fixture-explicit-failure",
+      token: "gAAAAA-explicit-failure=",
+    });
+    assert.equal(failedExplicit.response.status, 502);
+    assert.deepEqual(
+      nativeRequests.slice(nativeBeforeFailure).map(({ model }) => model),
+      ["fixture-explicit-failure"],
+    );
+    assert.equal(gatewayRequests.length, gatewayBeforeFailure);
+  } finally {
+    await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+  }
+});
+
+test("Switchyard projects null without a relay call when Sol selection is unavailable", async () => {
+  const stateDir = relayState("missing");
+  const switchyardRoot = path.join(stateDir, "switchyard-runtime");
+  mkdirSync(switchyardRoot, { recursive: true });
+  writeFileSync(path.join(switchyardRoot, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
+  writeFileSync(path.join(switchyardRoot, "routes.toml"), "# fixture\n");
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["switchyard"] })}\n`,
+  );
+  let nativeRequests = 0;
+  const native = await mockServer(async (_request, response) => {
+    nativeRequests += 1;
+    json(response, 500, {});
+  });
+  const switchyardRequests = [];
+  const switchyard = await mockServer(async (request, response) => {
+    switchyardRequests.push(await bodyJson(request));
+    json(response, 200, { model: "gpt-5.6-sol", output: [] });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
+    CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
+    CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    const response = await fetch(`${routerBase(port)}/responses`, {
+      method: "POST",
+      headers: { Authorization: "Bearer fixture", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "switchyard/auto",
+        input: [{
+          type: "agent_message",
+          content: [
+            { type: "input_text", text: "Message Type: NEW_TASK\nPayload:\n" },
+            { type: "encrypted_content", encrypted_content: "gAAAAA-switchyard-no-sol=" },
+          ],
+        }],
+      }),
+    });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(nativeRequests, 0);
+    assert.equal(switchyardRequests.length, 1);
+    assert.equal(switchyardRequests[0].x_codex_router_task_projection, null);
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(switchyard.server)]);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("router relays encrypted Codex subagent payloads before external routing", async () => {
+  const stateDir = relayState({
+    models: [{ slug: "gpt-6-astra", visibility: "list" }, { slug: "gpt-5.6-sol" }],
+  });
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
     nativeRequests.push({ headers: request.headers, body: await bodyJson(request) });
@@ -502,8 +683,10 @@ test("router relays encrypted Codex subagent payloads before external routing", 
   const routerPort = await openPort();
   const router = run("router.mjs", {
     CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "",
     CODEX_ROUTER_QUIET: "1",
   });
 
@@ -615,6 +798,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
   } finally {
     await stopChild(router);
     await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
@@ -643,6 +827,7 @@ test("encrypted payload relay coalesces concurrent waiters when one caller cance
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "gpt-5.6-sol",
     CODEX_ROUTER_QUIET: "1",
   });
   const body = JSON.stringify({
@@ -712,6 +897,7 @@ test("router fails closed when an encrypted subagent payload cannot be relayed",
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "gpt-5.6-sol",
     CODEX_ROUTER_QUIET: "1",
   });
 
@@ -760,6 +946,7 @@ test("rate-limited child handoffs cool down per account without reaching the gat
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "gpt-5.6-sol",
     CODEX_ROUTER_QUIET: "1",
   });
   try {
@@ -1034,6 +1221,10 @@ test("Switchyard classifies only the current authenticated task projection", asy
     path.join(stateDir, "enabled-providers.json"),
     `${JSON.stringify({ version: 1, providers: ["switchyard"] })}\n`,
   );
+  writeFileSync(
+    path.join(stateDir, "native-models.json"),
+    JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }] }),
+  );
   const plaintextByToken = new Map([
     ["gAAAAA-current-task=", "CURRENT_TASK"],
     ["gAAAAA-oversize-task=", "x".repeat(32 * 1024 + 1)],
@@ -1106,6 +1297,7 @@ test("Switchyard classifies only the current authenticated task projection", asy
     CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
     CODEX_ROUTER_SWITCHYARD_CAPABILITY: "test-switchyard-local-hop-capability",
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    MODEL_ROUTER_AGENT_RELAY_MODEL: "",
     CODEX_ROUTER_QUIET: "1",
   });
   const task = (token, type = "NEW_TASK", extra = []) => ({

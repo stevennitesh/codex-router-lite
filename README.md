@@ -142,7 +142,8 @@ encrypted child assignment, or the delegated input of a recognized current
 `codex_app` task delivery. Ordinary tool outputs, assistant answers and reasoning
 are excluded. Failed or unsafe recognized assignments fall back to Sol without a
 Jev call, while ordinary and known historical tool outputs retain the current
-route. The full, unchanged request still goes to the native answer model. See
+route. Task and conversation content remains intact for the native answer model;
+Router still applies the request-field changes owned by the selected route. See
 [security](SECURITY.md) and the [routing policy](config/switchyard/README.md#routing-policy)
 for the exact admission, currentness and egress boundaries.
 

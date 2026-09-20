@@ -60,9 +60,16 @@ For a changed Windows app or CLI build:
    does not prove a tool change.
 3. Refresh the native catalog and run the catalog, app-tool, and
    namespace-relay tests.
-4. With quota authority, run an ordinary native routed tool call through the
+4. With quota authority, start a fresh native child and send a synthetic
+   encrypted assignment. Verify the representation is recognized and the exact
+   plaintext is recovered, then verify a readable routed-child assignment stays
+   readable. Record the tested app/CLI identity in sanitized compatibility
+   evidence without retaining ciphertext or private task text. A new
+   representation requires investigation and withholds acceptance for the
+   affected path; catalog success alone is insufficient.
+5. With quota authority, run an ordinary native routed tool call through the
    affected external profiles and Switchyard; include Pareto when shared relay changes.
-5. Refresh affected exact-route proofs when a bound contract changed, using
+6. Refresh affected exact-route proofs when a bound contract changed, using
    [the certification refresh conditions](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
 
 Never copy a versioned Codex app path into source. Never print keys, bearer tokens, account IDs, capability values, or unredacted protected metadata.
