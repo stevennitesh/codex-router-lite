@@ -3,7 +3,7 @@
 Date: 2026-09-20
 Status: design recommendation; no runtime change in this review
 
-Delivery is owned by the [active plan](../switchyard-child-routing-plan.md).
+Delivery is recorded in the [completed plan](2026-09-20-switchyard-child-routing-plan-completed.md).
 This dated investigation explains the proposal; it is not a second execution contract.
 
 ## Decision

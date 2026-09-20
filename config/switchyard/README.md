@@ -8,7 +8,7 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
-- Native encrypted-child routing delivery: [delivery plan](../../docs/switchyard-child-routing-plan.md) and its execution handoff. The source candidate still requires deployment and live acceptance before v2 promotion.
+- Native encrypted-child routing delivery: the completed [delivery plan](../../docs/history/2026-09-20-switchyard-child-routing-plan-completed.md) and [execution handoff](../../docs/history/2026-09-20-switchyard-child-routing-handoff-completed.md).
 - Classifier behavior and routing criteria: the routing policy below and
   `routes.template.toml`. Completed delivery records live under
   [`docs/history`](../../docs/history/README.md).

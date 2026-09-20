@@ -1,8 +1,9 @@
 # Switchyard native child routing delivery plan
 
-Revision 3, 2026-09-20. G1 is accepted. G2 steps 1-4 and an isolated native
-candidate proof are reviewable; deployed acceptance and v2 promotion have not run.
-Execution ownership and checkout state: [implementer handoff](switchyard-child-routing-handoff.md).
+Revision 3, completed 2026-09-20. G1 and G2 are accepted. The reviewed candidate
+was deployed, passed the native four-turn acceptance sequence and was promoted
+to v2.
+Execution ownership and checkout state: [implementer handoff](2026-09-20-switchyard-child-routing-handoff-completed.md).
 
 ## Outcome and boundary
 
@@ -18,11 +19,11 @@ payload relay; do not build a decryptor, context summarizer, hook service, new
 classifier, persistent task store, or routing framework. No model-policy tuning,
 upstream repin, unrelated endpoint changes, or broad refactor belongs here.
 
-The [design investigation](history/2026-09-20-switchyard-encrypted-handoff-design.md)
+The [design investigation](2026-09-20-switchyard-encrypted-handoff-design.md)
 is supporting evidence, not an implemented contract. This plan owns delivery.
-The [Switchyard specification](../config/switchyard/README.md),
-[security contract](../SECURITY.md), and
-[engineering contract](agents/engineering-contract.md) remain current authority.
+The [Switchyard specification](../../config/switchyard/README.md),
+[security contract](../../SECURITY.md), and
+[engineering contract](../agents/engineering-contract.md) remain current authority.
 
 ## Required behavior
 
@@ -91,7 +92,7 @@ Sol fallback, and report the supported parent-selected-model alternative. A
 negative feasibility result completes the experiment, not the switching feature.
 
 G1 is now mechanically demonstrated and independently reviewed. The
-[sanitized evidence](history/2026-09-20-switchyard-child-routing-g1-evidence.json)
+[sanitized evidence](2026-09-20-switchyard-child-routing-g1-evidence.json)
 records six independent uncached extractions, all exact, plus six exact cache
 replays. Uncached relay latency was 2.231–2.962 seconds (2.645-second median),
 aggregate native relay usage was 1,511 tokens, and cached replay latency was
@@ -153,14 +154,16 @@ success cannot hide uneconomic overhead. Commit/push/deploy are separate effects
 the plan alone grants none of them. On completion, archive this plan/handoff as
 history and retain only durable behavior in maintained guides.
 
-## Status
+## Final status
 
 - G1: accepted. Six independent uncached extractions were exact; six cache
   replays were exact; the accepted extraction fallback deadline is 5 seconds.
-- G2: steps 1-4 implemented in an uncommitted source candidate. Independent
-  review now includes an isolated four-turn native candidate run. Its new-task
-  sequence selected Luna Max, Sol Medium, Astra Medium, then Sol Medium; five
-  tool continuations retained affinity without repeated projection. Commit,
-  deployment and the deployment-bound steps 5-7 remain pending.
-- Current runtime remains unchanged and v2-certified for collaboration, with
-  encrypted-child assignments falling back to Sol.
+- G2: accepted and deployed from Router commit
+  `594cf484a863033a1f0f11c61a52fe3d1abf6e52`. The accepted native four-turn
+  sequence selected Luna Max, Sol Medium, Astra Medium and Sol Medium; tool
+  continuations retained affinity and each new assignment reclassified. The
+  exact route passed all five v2 checks and the maintained live verifier.
+- Projection relay latency and tokens could not be isolated from current
+  sanitized deployed telemetry. The code enforces the accepted five-second
+  wait; G1 remains a bounded observation and establishes no future token or
+  latency guarantee.

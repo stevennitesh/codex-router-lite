@@ -3,7 +3,7 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
@@ -16,39 +16,39 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-19T21:21:25.356Z"
+      "observedAt": "2026-09-20T10:50:40.601Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-19T21:21:14.395Z",
+      "observedAt": "2026-09-20T10:49:26.925Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-19T21:21:08.597Z"
+      "observedAt": "2026-09-20T10:48:36.575Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-19T21:21:16.807Z"
+      "observedAt": "2026-09-20T10:48:42.256Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-19T21:21:25.275Z"
+      "observedAt": "2026-09-20T10:50:40.601Z"
     }
   },
-  "testedAt": "2026-09-19T21:21:33.194Z",
-  "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+  "testedAt": "2026-09-20T10:50:53.188Z",
+  "routerCommit": "594cf484a863033a1f0f11c61a52fe3d1abf6e52",
   "runtimeBinding": {
     "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
-    "patchSha256": "6902a7e93e7ac7f1b75d31f5985fe4a078a733e06270455785f8ef1a244dd9de",
-    "binarySha256": "e704c624276bd15f805353fd61d7e733790868078a1a84ce555d24d7f96476ee",
-    "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+    "patchSha256": "73e28f54a4bcd780d602390e6aebf2f8979ab05c03d5b1511ecaab959605385d",
+    "binarySha256": "097c3e405a74bdd623e01a02a48f41a621eb5109a0ffa458fe1a8c679bd48cc8",
+    "routerCommit": "594cf484a863033a1f0f11c61a52fe3d1abf6e52",
     "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
     "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
     "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"

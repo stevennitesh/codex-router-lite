@@ -1,38 +1,42 @@
-# switchyard/auto prior v2 certification (invalidated)
+# switchyard/auto v2 certification
 
-This prior acceptance is draft again because the child-routing source contract
-changed. It must not publish v2 until the new candidate is deployed and the
-fresh native acceptance sequence passes. The historical run was for Router
-0.6.1 deployed from
-`849941ac4834e45b90820f7f06d84ca954962492`.
-The machine-readable proof binds the exact Switchyard source, ordered patches,
-binary, private generated routes, template and deployed Router commit.
-Procedure: [certification](../../../docs/SUBAGENT-CERTIFICATION.md).
+Accepted on 2026-09-20 for Router
+`594cf484a863033a1f0f11c61a52fe3d1abf6e52`. The machine-readable proof binds
+the exact Switchyard source, ordered patches, binary, private generated routes,
+template and deployed Router commit. Procedure:
+[certification](../../../docs/SUBAGENT-CERTIFICATION.md).
 
 ## Evidence
 
-A fresh native Sol parent on codex-cli 0.155.0-alpha.9.2 spawned
-`router_switchyard_auto` without inherited conversation. The child used the
-workspace-write sandbox and native PowerShell to compute `19+23`, returning
-`42` with exit code zero. No unsandboxed retry was used.
+A fresh native parent on codex-cli 0.155.0-alpha.9.2 spawned one
+`router_switchyard_auto` child and reused it for four new encrypted assignments.
+The child used native PowerShell tools, preserved the original synthetic facts
+and tool-produced state, and returned all four requested markers. The selected
+targets were Luna Max, Sol Medium, Astra Medium and Sol Medium. Tool
+continuations retained the current target; each new assignment reclassified.
 
-- Two encrypted native handoffs: 2026-09-19T21:21:08.597Z and 21:21:23.508Z.
-- First marker: `CERT_FIRST_OK` at 21:21:16.807Z.
-- Same-child follow-up marker: `CERT_SECOND_OK` at 21:21:25.275Z.
-- All three Router completions returned HTTP 200, taking 4611, 2337 and 1790 ms.
-- All three native child requests selected Sol Medium.
-- Native lifecycle instructions triggered cleanup after the first completed
-  turn. Its result confirmed completion before the same child was resumed;
-  there was no active-turn cancellation. Final cleanup followed the second turn.
+The five required checks occurred in this one accepted run: streamed Responses
+completion, a valid native tool call, encrypted parent-to-child relay, the first
+marker and later markers from the same child. The successful window had four Jev
+decisions with 166-280 ms classifier latency (252 ms median) and no classifier
+fallbacks. The projection relay's latency and token use cannot be isolated from
+the current sanitized deployed telemetry, so no deployed token or projection
+latency claim is made. The implementation enforces a five-second projection
+deadline; the earlier G1 measurements remain bounded observations rather than a
+future latency or token guarantee.
 
-The live verifier also passed its ordinary tool round trip, media fallback,
-priority and compaction checks against the installed release. See the
-[sanitized historical record](../../../docs/history/2026-09-19-switchyard-v061-certification.json).
+The maintained live verifier also passed ordinary tool affinity, media fallback
+with zero provider calls, and compaction bypass against the installed release.
+See the [deployed child-routing record](../../../docs/history/2026-09-20-switchyard-child-routing-g2-deployed-evidence.json)
+and [live verifier record](../../../docs/history/2026-09-20-switchyard-g2-live-verification.json).
 No encrypted payload, private conversation, thread identifier or credential is
 retained in the checked-in evidence.
 
 ## Limits
 
-This is native CLI v2 evidence, not a desktop GUI WebSocket soak or exhaustive
-provider fault testing. Other routes were not recertified by this run. Refresh
-after any bound identity or collaboration contract changes.
+This is native CLI v2 evidence, not a desktop GUI WebSocket soak, statistical
+latency study or exhaustive provider fault test. One earlier synthetic attempt
+was discarded after the parent accepted a replayed wait result and interrupted
+an active child; its Router status was zero and it is excluded from this proof.
+Other routes were not recertified. Refresh after any bound identity or
+collaboration contract changes.

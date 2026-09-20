@@ -46,7 +46,7 @@
         "gpt-5.6-sol",
         "gpt-6-astra"
       ],
-      "multiAgentVersion": "v1",
+      "multiAgentVersion": "v2",
       "serviceTiers": [
         {
           "id": "priority",

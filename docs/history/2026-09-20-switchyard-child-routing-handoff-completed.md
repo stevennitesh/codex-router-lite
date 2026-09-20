@@ -1,13 +1,13 @@
 # Switchyard child routing execution handoff
 
-Plan: [revision 3](switchyard-child-routing-plan.md). Status: G1 accepted; G2
-steps 1-4 and an isolated native candidate proof are implemented in an undeployed
-candidate awaiting independent review.
+Plan: [revision 3](2026-09-20-switchyard-child-routing-plan-completed.md). Status: completed. G1 and
+G2 are accepted; the reviewed candidate was committed, deployed and recertified
+for exact-route v2 publication.
 This document owns temporary execution state; the plan owns product acceptance.
 
 ## G2 source candidate
 
-Steps 1-4 are implemented without deployment. Router derives a classifier-only
+Steps 1-4 are deployed and accepted. Router derives a classifier-only
 projection from only the final canonical task-bearing `agent_message`, using the
 existing account-scoped native relay/cache/coalescing path and a 5-second waiter
 deadline. Switchyard accepts the reserved field only behind its configured local
@@ -15,15 +15,13 @@ hop capability, removes it before decode/raw preservation, and prefers it in the
 TypeSafe selector. A trusted projection releases `user_turn` affinity; tool
 continuations carry none and remain pinned.
 
-The compatibility patch SHA-256 is
+The deployed compatibility patch SHA-256 is
 `73e28f54a4bcd780d602390e6aebf2f8979ab05c03d5b1511ecaab959605385d`.
-The reconstructed release binary under
-`generated/switchyard-g2-locked/target/release/switchyard-server.exe` is retained
-for review/staging and has SHA-256
+The deployed release binary has SHA-256
 `097c3e405a74bdd623e01a02a48f41a621eb5109a0ffa458fe1a8c679bd48cc8`.
-The source registry is intentionally v1 and the old application is draft until
-deployment-bound live acceptance refreshes it. No service, installed file, or
-provider selection changed.
+The deployed Router commit is
+`594cf484a863033a1f0f11c61a52fe3d1abf6e52`. The exact application is accepted
+and the source registry publishes v2.
 
 The isolated native proof used one app-server parent and one explicitly selected
 synthetic child role against disposable loopback Router and Switchyard processes.
@@ -31,7 +29,7 @@ Four exact current-task projections selected Luna Max, Sol Medium, Astra Medium
 and Sol Medium in order. Four encrypted answer handoffs were unchanged, five
 tool continuations carried no repeated projection, and the final tool-produced
 artifact preserved the original facts and review result. Sanitized evidence is
-in [the G2 isolated record](history/2026-09-20-switchyard-child-routing-g2-isolated-evidence.json).
+in [the G2 isolated record](2026-09-20-switchyard-child-routing-g2-isolated-evidence.json).
 The run also found that synthesized native relay requests under Responses Lite
 must explicitly set `reasoning.context = all_turns` and
 `parallel_tool_calls = false`; Router now does so with focused coverage.
@@ -42,6 +40,18 @@ new assignment with a failed projection releases affinity, selects Sol Medium,
 and makes zero additional Jev calls. Existing Switchyard observability tests
 exclude `extra_metadata`, and the selected-client path constructs fresh metadata
 without forwarding it.
+
+The deployed native acceptance reused one child for four new assignments and
+selected Luna Max, Sol Medium, Astra Medium and Sol Medium. Native tools,
+original synthetic facts and tool-produced state were preserved. The maintained
+live verifier also passed ordinary tool affinity, media fallback with zero
+provider calls and compaction bypass. Deployed projection relay latency and
+tokens were not separately measurable in the sanitized telemetry; no values
+were inferred from G1. See the
+[deployed evidence](2026-09-20-switchyard-child-routing-g2-deployed-evidence.json).
+The pre-candidate runtime rollback and detached Router checkout remain retained:
+automatic approval review rejected deleting the sole production rollback
+generation without more explicit authorization.
 
 ## Route and custody
 
@@ -110,7 +120,7 @@ release is explicitly requested. Idle status is not a custody transfer.
 G1 completed against source baseline
 `eaef9c8338c923b49476eaad1b6647222bcc617a` and received independent review with
 no blocking mechanical finding. Its
-[sanitized evidence](history/2026-09-20-switchyard-child-routing-g1-evidence.json)
+[sanitized evidence](2026-09-20-switchyard-child-routing-g1-evidence.json)
 contains six independent exact uncached extractions and six exact cache replays,
 not twelve independent extractions. The user accepted automatic routing, the
 measured bounded overhead, and the proposed 5-second extraction fallback.
