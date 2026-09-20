@@ -20,15 +20,18 @@ most recent genuine user turn can still be selected. For child handoffs only the
 final item is considered, and a prior child assignment is never substituted.
 Codex app task delivery is the narrow tool-result exception: only a current
 `create_thread` or `send_message_to_thread` output with its exact app namespace,
-native output identity, parseable current-turn request metadata and anchored
-delegation envelope contributes the delegated `<input>` text. Optional mismatched
-item-turn metadata marks a historical delivery. These are client protocol fields
-inside the authenticated local caller boundary, not a cryptographic signature.
-Historical, arbitrary and malformed tool outputs are never promoted. Assistant
-answers, other tool-result
+native output identity, no non-null call identity, parseable current-turn request
+metadata, a distinct source and receiver thread, and an anchored delegation
+envelope contributes the delegated `<input>` text. Optional mismatched item-turn
+metadata marks a historical delivery. When item-turn metadata is absent,
+currentness relies on the host contract that only the current turn's standalone
+tool output is the final request item; these fields provide no independent
+historical provenance and are not a cryptographic signature. Known historical,
+self-delivered and call-linked outputs are not promoted. Arbitrary and malformed
+tool-output payloads contribute no text. Assistant answers, other tool-result
 payloads and reasoning are excluded from decision state. User-authored text can
-still contain sensitive information: a native answer
-model does not make classification local.
+still contain sensitive information: a native answer model does not make
+classification local.
 
 The selected native answer path preserves Codex authorization and conversation
 content, including media. The local-hop capability must not reach upstream

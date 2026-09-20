@@ -1087,13 +1087,14 @@ function currentSwitchyardTaskEnvelope(input) {
 
 const CODEX_APP_THREAD_DELIVERY_NAMES = new Set(["create_thread", "send_message_to_thread"]);
 const CODEX_UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const CODEX_UUID_ID = new RegExp(`^${CODEX_UUID}$`, "i");
 const CODEX_FUNCTION_OUTPUT_ID = new RegExp(`^fco_${CODEX_UUID}$`, "i");
 const CODEX_DELEGATION = new RegExp(
   `^<codex_delegation>\\r?\\n  <source_thread_id>(${CODEX_UUID})<\\/source_thread_id>\\r?\\n  <input>([\\s\\S]*)<\\/input>\\r?\\n<\\/codex_delegation>$`,
 );
 const CODEX_DELEGATION_MAX_ENVELOPE_BYTES = 6 * SWITCHYARD_CLASSIFIER_MAX_REQUEST_BYTES;
 
-function codexTurnId(clientMetadata) {
+function codexTurnIdentity(clientMetadata) {
   const encoded = clientMetadata?.["x-codex-turn-metadata"];
   if (
     typeof encoded !== "string" ||
@@ -1103,9 +1104,17 @@ function codexTurnId(clientMetadata) {
   }
   try {
     const metadata = JSON.parse(encoded);
-    return typeof metadata?.turn_id === "string" && metadata.turn_id
-      ? metadata.turn_id
-      : undefined;
+    const turnId = metadata?.turn_id;
+    const threadId = metadata?.thread_id;
+    if (
+      typeof turnId !== "string" ||
+      !CODEX_UUID_ID.test(turnId) ||
+      typeof threadId !== "string" ||
+      !CODEX_UUID_ID.test(threadId)
+    ) {
+      return undefined;
+    }
+    return { turnId, threadId };
   } catch {
     return undefined;
   }
@@ -1120,15 +1129,19 @@ function decodeCodexDelegationInput(text) {
   }
   const match = CODEX_DELEGATION.exec(text);
   if (!match) return undefined;
+  const sourceThreadId = match[1];
   const input = match[2];
   if (/[<>]/.test(input) || /&(?!(?:amp|lt|gt|quot|apos);)/.test(input)) return undefined;
-  return input.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-  })[entity]);
+  return {
+    sourceThreadId,
+    content: input.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: '"',
+      apos: "'",
+    })[entity]),
+  };
 }
 
 // Codex app task delivery is a standalone function output rather than a user
@@ -1145,25 +1158,38 @@ function currentSwitchyardAppThreadDelivery(input, clientMetadata) {
   ) {
     return undefined;
   }
+  // turn/start.toolOutput produces an unpaired output. A non-null call_id is
+  // an ordinary tool continuation and must retain the selected target.
+  if (item.call_id != null) return undefined;
   const itemTurnId = item.internal_chat_message_metadata_passthrough?.turn_id;
   const createTime = item.internal_chat_message_metadata_passthrough?.create_time;
-  const currentTurnId = codexTurnId(clientMetadata);
-  if (!currentTurnId) return undefined;
-  // Desktop builds that include response-item passthrough metadata let us
-  // identify a replayed historical delivery explicitly. The standalone
-  // app-server toolOutput path omits this optional object on the wire.
-  if (typeof itemTurnId === "string" && itemTurnId && itemTurnId !== currentTurnId) {
-    return undefined;
-  }
+  const currentTurn = codexTurnIdentity(clientMetadata);
+  if (!currentTurn) return { eligible: false };
   if (
-    !CODEX_FUNCTION_OUTPUT_ID.test(item.id || "") ||
-    (itemTurnId !== undefined && (typeof itemTurnId !== "string" || !itemTurnId)) ||
+    (itemTurnId !== undefined && (
+      typeof itemTurnId !== "string" || !CODEX_UUID_ID.test(itemTurnId)
+    )) ||
     (createTime !== undefined && (typeof createTime !== "number" || !Number.isFinite(createTime)))
   ) {
     return { eligible: false };
   }
-  const content = decodeCodexDelegationInput(item.output);
-  return content === undefined ? { eligible: false } : { eligible: true, content, native: false };
+  // Desktop builds that include response-item passthrough metadata let us
+  // identify a replayed historical delivery explicitly. The standalone
+  // app-server toolOutput path omits this optional object on the wire.
+  if (itemTurnId && itemTurnId.toLowerCase() !== currentTurn.turnId.toLowerCase()) {
+    return undefined;
+  }
+  if (typeof item.id !== "string" || !CODEX_FUNCTION_OUTPUT_ID.test(item.id)) {
+    return { eligible: false };
+  }
+  const delegation = decodeCodexDelegationInput(item.output);
+  if (!delegation) return { eligible: false };
+  // Sending to the current task is not delegation. UUID comparison is
+  // case-insensitive because textual hex case is not part of the identity.
+  if (delegation.sourceThreadId.toLowerCase() === currentTurn.threadId.toLowerCase()) {
+    return undefined;
+  }
+  return { eligible: true, content: delegation.content, native: false };
 }
 
 async function switchyardTaskProjection(request, input, clientMetadata, callerSignal) {

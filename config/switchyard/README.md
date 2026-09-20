@@ -8,6 +8,7 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
+- App-thread admission hardening: [active delivery plan](../../docs/switchyard-thread-admission-plan.md) and [Sol handoff](../../docs/switchyard-thread-admission-handoff.md).
 - Native encrypted-child routing delivery: the completed [delivery plan](../../docs/history/2026-09-20-switchyard-child-routing-plan-completed.md) and [execution handoff](../../docs/history/2026-09-20-switchyard-child-routing-handoff-completed.md).
 - Classifier behavior and routing criteria: the routing policy below and
   `routes.template.toml`. Completed delivery records live under
@@ -131,14 +132,18 @@ tests.
 Codex app `create_thread` and `send_message_to_thread` deliveries arrive in the
 target task as standalone `function_call_output` control items rather than user
 messages. Router recognizes only the final item with the exact `codex_app`
-operation, a native function-output identity, a parseable current-turn request,
-and one anchored `codex_delegation` envelope. Some desktop paths also preserve
-item-level turn metadata; when present, a mismatch marks the item historical.
-Router projects only the decoded `<input>` text. Historical deliveries, items
-without a current-turn request, and ordinary tool results retain affinity. A
-structurally current delivery with a malformed identity or envelope, invalid XML
-escaping, or oversized input releases affinity and takes the zero-Jev Sol
-fallback. These fields are a client protocol contract within the authenticated
+operation, a native function-output identity, no non-null `call_id`, a parseable
+current-turn request whose receiver thread differs from the envelope's source
+thread, and one anchored `codex_delegation` envelope. Some desktop paths also
+preserve item-level turn metadata; when present, a mismatch marks the item
+historical. Router projects only the decoded `<input>` text. Historical
+deliveries, self-deliveries, paired tool results, and ordinary continuations
+retain affinity. A recognized current delivery with absent, ambiguous, or
+malformed required identity, invalid XML escaping, or oversized input releases
+affinity and takes the zero-Jev Sol fallback. When optional item metadata is
+absent, currentness depends on Codex sending only the current turn's standalone
+tool output as the final item; this is a host contract, not independent historical
+provenance. These fields are a client protocol contract within the authenticated
 local caller boundary, not cryptographic proof of who authored the payload.
 
 The exact criteria, question, threshold, fallback and transport limits live in
