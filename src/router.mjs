@@ -1011,6 +1011,12 @@ function nativeAgentRelayModel() {
 // prefix over the base64url alphabet with no whitespace. This is the whole
 // detection predicate -- the plaintext is never inspected.
 const NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
+// Private Router -> Switchyard request state. Switchyard removes this field
+// before decoding or retaining the native request, so it can influence only
+// the local classifier and can never reach a selected model.
+const SWITCHYARD_TASK_PROJECTION_FIELD = "x_codex_router_task_projection";
+const SWITCHYARD_TASK_PROJECTION_TIMEOUT_MS = 5_000;
+const SWITCHYARD_CLASSIFIER_MAX_REQUEST_BYTES = 32 * 1024;
 
 function isNativeEncryptedToken(value) {
   return typeof value === "string" && NATIVE_ENCRYPTED_TOKEN.test(value);
@@ -1039,6 +1045,90 @@ function encryptedAgentPayload(item) {
     content: encrypted.encrypted_content,
     native: isNativeEncryptedToken(encrypted.encrypted_content),
   };
+}
+
+// Select only a canonical task envelope in the current input item. Looking at
+// input.at(-1) is intentional: a tool continuation must retain affinity without
+// reclassifying an older assignment, and a new handoff must be classified from
+// its own text rather than substituted with stale history.
+function currentSwitchyardTaskEnvelope(input) {
+  if (!Array.isArray(input)) return undefined;
+  const item = input.at(-1);
+  if (item?.type !== "agent_message" || !Array.isArray(item.content)) return undefined;
+  const [visible, opaque] = item.content;
+  if (
+    !["input_text", "text"].includes(visible?.type) ||
+    typeof visible.text !== "string"
+  ) {
+    return undefined;
+  }
+  if (
+    !/^Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK)\b[\s\S]*\nPayload:\s*$/i.test(
+      visible.text,
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    item.content.length !== 2 ||
+    opaque?.type !== "encrypted_content" ||
+    typeof opaque.encrypted_content !== "string" ||
+    opaque.encrypted_content.length === 0
+  ) {
+    return { eligible: false };
+  }
+  return {
+    eligible: true,
+    item,
+    content: opaque.encrypted_content,
+    native: isNativeEncryptedToken(opaque.encrypted_content),
+  };
+}
+
+async function switchyardTaskProjection(request, input, callerSignal) {
+  const envelope = currentSwitchyardTaskEnvelope(input);
+  if (!envelope) return undefined;
+  // Null is a trusted, request-local marker that this is a new assignment but
+  // no safe classifier projection is available. Switchyard uses it to release
+  // user-turn affinity, then its unchanged non-text fallback chooses Sol
+  // without calling Jev.
+  if (!envelope.eligible) return null;
+  let plaintext;
+  if (envelope.native) {
+    const deadline = new AbortController();
+    const abortFromCaller = () => deadline.abort(callerSignal.reason);
+    const timer = setTimeout(
+      () => deadline.abort(new Error("Switchyard task projection deadline exceeded.")),
+      SWITCHYARD_TASK_PROJECTION_TIMEOUT_MS,
+    );
+    timer.unref?.();
+    if (callerSignal?.aborted) abortFromCaller();
+    else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    try {
+      plaintext = await relayEncryptedAgentPayload(
+        request,
+        envelope.item,
+        envelope.content,
+        deadline.signal,
+      );
+    } catch (error) {
+      if (callerSignal?.aborted) throw callerSignal.reason || error;
+      return null;
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    }
+  } else {
+    plaintext = envelope.content;
+  }
+  if (
+    typeof plaintext !== "string" ||
+    plaintext.trim() === "" ||
+    Buffer.byteLength(plaintext, "utf8") > SWITCHYARD_CLASSIFIER_MAX_REQUEST_BYTES
+  ) {
+    return null;
+  }
+  return plaintext;
 }
 
 function parseRelayedAgentPayload(payload) {
@@ -1212,6 +1302,12 @@ async function relayEncryptedAgentPayloadOnce(
     model: nativeAgentRelayModel(),
     stream: true,
     store: false,
+    parallel_tool_calls: false,
+    // The native Codex client marks these requests as Responses Lite. Relay
+    // calls are synthesized locally rather than copied from the client body,
+    // so carry the required context mode explicitly when that header is
+    // forwarded with the caller's native session.
+    reasoning: { context: "all_turns" },
     instructions:
       "You are a transport relay. Do not execute or answer the delegated task. " +
       "Call relay_external_agent_payload exactly once with the exact plaintext after the " +
@@ -1970,6 +2066,10 @@ async function handleResponses(request, response, requestUrl) {
     const body = await decodeBody(encoded, request.headers["content-encoding"]);
     let payload = await parseBodyAsync(body);
     controller.signal.throwIfAborted();
+    // The projection is trusted only when this process derived it. Strip any
+    // caller value before route selection so spoofed state cannot reach either
+    // Switchyard or another upstream.
+    delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
     const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
@@ -2073,6 +2173,16 @@ async function handleResponses(request, response, requestUrl) {
       // local runtime. Native GPT requests keep their original model.
       if (switchyard) {
         native.model = compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel;
+        if (!compactV1 && !compactV2) {
+          const projection = await switchyardTaskProjection(
+            request,
+            payload.input,
+            controller.signal,
+          );
+          if (projection !== undefined) {
+            native[SWITCHYARD_TASK_PROJECTION_FIELD] = projection;
+          }
+        }
       }
       normalizeNativePromptCacheCompatibility(native);
       if (Array.isArray(payload.input)) {

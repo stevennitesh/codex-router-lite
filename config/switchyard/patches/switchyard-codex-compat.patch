@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 9cf17f4b739945b6e97d1f04a97f49bab66aa084..d98cf9d040c142d0787be7c400511502309d8d79 100644
+index 9cf17f4b..d98cf9d0 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -278,6 +278,15 @@ dependencies = [
@@ -188,7 +188,7 @@ index 9cf17f4b739945b6e97d1f04a97f49bab66aa084..d98cf9d040c142d0787be7c400511502
  
  [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index 1a07d2da2d7090909cddf618a937e1b123fed9a3..b592beb94410d5a730b3437be5bd9330590910da 100644
+index 1a07d2da..b592beb9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -44,6 +44,7 @@ regex = "1"
@@ -200,7 +200,7 @@ index 1a07d2da2d7090909cddf618a937e1b123fed9a3..b592beb94410d5a730b3437be5bd9330
  switchyard-llm-client = { path = "crates/libsy-llm-client", version = "0.3.0" }
  switchyard-protocol = { path = "crates/protocol", version = "0.3.0" }
 diff --git a/crates/libsy-llm-client/src/backend.rs b/crates/libsy-llm-client/src/backend.rs
-index da3b9aa2549d69508fbefc1d672ce09a2ba9d908..03f64839881b2a2042460a6fbb1a0446cc1ef253 100644
+index da3b9aa2..03f64839 100644
 --- a/crates/libsy-llm-client/src/backend.rs
 +++ b/crates/libsy-llm-client/src/backend.rs
 @@ -192,21 +192,22 @@ impl Backend {
@@ -242,7 +242,7 @@ index da3b9aa2549d69508fbefc1d672ce09a2ba9d908..03f64839881b2a2042460a6fbb1a0446
  
      /// Applies only the caller credential accepted by this provider.
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 948838f48ef50ee8d8766a277a70e9037542aee1..e4faaf4859369fdb8a0fe91d2c09e7b2eb02c71e 100644
+index 948838f4..e4faaf48 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -61,6 +61,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -579,7 +579,7 @@ index 948838f48ef50ee8d8766a277a70e9037542aee1..e4faaf4859369fdb8a0fe91d2c09e7b2
          assert!(!received.headers.contains_key("x-hop-by-hop"));
          Ok(())
 diff --git a/crates/libsy/src/algorithms/composite.rs b/crates/libsy/src/algorithms/composite.rs
-index 3afe61486a03cc30a3003a992b3621eebb8805b6..5a93786cb7903efc926f7bf525ed4d370cd9d068 100644
+index 3afe6148..5a93786c 100644
 --- a/crates/libsy/src/algorithms/composite.rs
 +++ b/crates/libsy/src/algorithms/composite.rs
 @@ -51,7 +51,7 @@ impl TierSetter {
@@ -592,7 +592,7 @@ index 3afe61486a03cc30a3003a992b3621eebb8805b6..5a93786cb7903efc926f7bf525ed4d37
              ClassifyTrigger::NewSession => {
                  identity.is_none_or(|identity| !self.tiers.lock().contains_key(identity))
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
-index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c35e3cee4c 100644
+index e8a32baa..ae1a41b5 100644
 --- a/crates/libsy/src/algorithms/type_safe_class.rs
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
 @@ -19,10 +19,12 @@
@@ -640,7 +640,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          }
      }
  }
-@@ -105,68 +105,70 @@ impl TypeSafeClassifierConfig {
+@@ -105,68 +105,88 @@ impl TypeSafeClassifierConfig {
  
      fn question(&self) -> &str {
          if self.question.trim().is_empty() {
@@ -720,9 +720,24 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
 -        Role::User => "user",
 -        Role::Assistant => "assistant",
 -        Role::Tool => "tool",
--    }
--}
--
++/// Prefer the authenticated Router projection when one is present. The value
++/// lives only in host metadata: codecs, raw request replay, headers, and
++/// observability never receive it.
++fn classifier_turn(request: &Request) -> Option<SelectedUserTurn> {
++    let projection = request
++        .metadata
++        .as_ref()
++        .and_then(|metadata| metadata.extra_metadata.as_ref())
++        .and_then(|metadata| metadata.get(switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_KEY));
++    if let Some(text) = projection {
++        return Some(SelectedUserTurn {
++            text: text.clone(),
++            has_non_text: false,
++        });
+     }
++    latest_user_turn(&request.llm_request.messages)
+ }
+ 
 -fn render_block(block: &ContentBlock) -> String {
 -    match block {
 -        ContentBlock::Text { text } => text.clone(),
@@ -763,7 +778,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
  }
  
  /// Raw provider-backed scorer.
-@@ -182,10 +184,17 @@ struct TypeSafeClassifier {
+@@ -182,10 +202,17 @@ struct TypeSafeClassifier {
  }
  
  impl TypeSafeClassifier {
@@ -782,7 +797,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          });
          if let (Some(evidence), Some(extra)) = (evidence.as_object_mut(), extra.as_object()) {
              evidence.extend(extra.clone());
-@@ -207,7 +216,7 @@ impl TypeSafeClassifier {
+@@ -207,7 +234,7 @@ impl TypeSafeClassifier {
                  confidence = verdict.confidence,
                  "type safe classifier returned an out-of-range confidence; falling through"
              );
@@ -791,7 +806,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
                  driver,
                  "invalid_confidence",
                  serde_json::json!({
-@@ -215,6 +224,7 @@ impl TypeSafeClassifier {
+@@ -215,6 +242,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -799,7 +814,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
                  }),
              );
          }
-@@ -230,19 +240,20 @@ impl TypeSafeClassifier {
+@@ -230,19 +258,20 @@ impl TypeSafeClassifier {
                  label = %verdict.label,
                  "type safe classifier returned an unconfigured label; falling through"
              );
@@ -822,7 +837,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
                  driver,
                  "low_confidence",
                  serde_json::json!({
-@@ -250,6 +261,7 @@ impl TypeSafeClassifier {
+@@ -250,6 +279,7 @@ impl TypeSafeClassifier {
                      "confidence": verdict.confidence,
                      "probabilities": verdict.probabilities,
                      "decision_latency_ms": verdict.decision_latency_ms,
@@ -830,7 +845,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
                  }),
              );
          }
-@@ -257,9 +269,12 @@ impl TypeSafeClassifier {
+@@ -257,9 +287,12 @@ impl TypeSafeClassifier {
          driver.set_evidence_if_empty(serde_json::json!({
              "source": "type_safe_classifier",
              "label": verdict.label,
@@ -843,14 +858,14 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          }));
          Classification::Scores(vec![Score {
              target,
-@@ -277,13 +292,21 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -277,13 +310,21 @@ impl Classifier<State> for TypeSafeClassifier {
          request: &mut Request,
          driver: &Driver,
      ) -> Result<(Classification, Option<Response>)> {
 -        let messages = match self.config.recent_turn_window {
 -            Some(window) => trim_messages(&request.llm_request.messages, window),
 -            None => task_messages(&request.llm_request.messages),
-+        let Some(selected) = latest_user_turn(&request.llm_request.messages) else {
++        let Some(selected) = classifier_turn(request) else {
 +            return Ok((
 +                self.fall_open(driver, "empty_state", serde_json::Value::Null),
 +                None,
@@ -869,7 +884,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          };
  
          let verdict = match self.provider.classify(input, &self.config.options).await {
-@@ -294,8 +317,11 @@ impl Classifier<State> for TypeSafeClassifier {
+@@ -294,8 +335,11 @@ impl Classifier<State> for TypeSafeClassifier {
                      %error,
                      "type safe classifier request failed; falling through"
                  );
@@ -883,7 +898,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
                  return Ok((classification, None));
              }
          };
-@@ -382,7 +408,7 @@ mod tests {
+@@ -382,7 +426,7 @@ mod tests {
      use crate::core::testing::empty_driver;
      use async_trait::async_trait;
      use parking_lot::Mutex;
@@ -892,7 +907,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
  
      use super::super::util::typesafe_provider::TypeSafeProviderError;
  
-@@ -451,6 +477,7 @@ mod tests {
+@@ -451,6 +495,7 @@ mod tests {
              confidence,
              probabilities: [(label.to_string(), 1.0)].into(),
              decision_latency_ms: 12,
@@ -900,7 +915,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          }
      }
  
-@@ -533,8 +560,9 @@ mod tests {
+@@ -533,8 +578,9 @@ mod tests {
  
      #[tokio::test]
      async fn a_provider_error_falls_through_to_the_default() -> Result<()> {
@@ -912,7 +927,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
          ))));
          let classifier = TypeSafeTaskClassifier::new(provider, config(options(), 0.5))?;
          let driver = driver_with(&[
-@@ -551,6 +579,42 @@ mod tests {
+@@ -551,6 +597,42 @@ mod tests {
          Ok(())
      }
  
@@ -955,7 +970,7 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
      #[tokio::test]
      async fn a_nan_confidence_falls_through_to_the_default() -> Result<()> {
          let provider = Arc::new(StubProvider::once(Ok(verdict("capable", f64::NAN))));
-@@ -612,26 +676,146 @@ mod tests {
+@@ -612,26 +694,146 @@ mod tests {
      }
  
      #[test]
@@ -1116,10 +1131,10 @@ index e8a32baaab93cbd023642d97e5c1b27ff692e515..1365a34c3d13a6d1f088cf22271575c3
  
      #[test]
 diff --git a/crates/libsy/src/algorithms/util/affinity.rs b/crates/libsy/src/algorithms/util/affinity.rs
-index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60c5a1321a 100644
+index 698f0a9d..f28ed987 100644
 --- a/crates/libsy/src/algorithms/util/affinity.rs
 +++ b/crates/libsy/src/algorithms/util/affinity.rs
-@@ -57,8 +57,41 @@ fn is_user_turn(message: &Message) -> bool {
+@@ -57,8 +57,51 @@ fn is_user_turn(message: &Message) -> bool {
              .all(|block| matches!(block, ContentBlock::ToolResult(_)))
  }
  
@@ -1153,6 +1168,16 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60
 +}
 +
 +pub(crate) fn has_new_user_turn(request: &Request) -> bool {
++    if request
++        .metadata
++        .as_ref()
++        .and_then(|metadata| metadata.extra_metadata.as_ref())
++        .is_some_and(|metadata| {
++            metadata.contains_key(switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY)
++        })
++    {
++        return true;
++    }
 +    raw_responses_has_new_user_turn(request).unwrap_or_else(|| {
 +        request
 +            .llm_request
@@ -1163,7 +1188,7 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60
  }
  
  /// Retains a model per request identity and forces it on later matching requests.
-@@ -241,7 +274,7 @@ where
+@@ -241,7 +284,7 @@ where
          };
          // Abstaining rather than clearing keeps this read path free of writes, so the judge
          // decides the turn whatever order concurrent latches land in.
@@ -1172,10 +1197,53 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60
              return Ok((Classification::Scores(Vec::new()), None));
          }
          // An empty `any` group carries no information about which models are still
-@@ -881,6 +914,52 @@ mod tests {
+@@ -881,6 +924,95 @@ mod tests {
          Ok(())
      }
  
++    #[tokio::test]
++    async fn authenticated_task_projection_releases_child_affinity() -> Result<(), BoxErr> {
++        let router = AffinityRouter::new().with_release_on_user_turn();
++        let mut state = ();
++        let mut opening = request(subagent("child-1", "task-1"));
++        retain(&router, &mut state, &mut opening, "weak").await?;
++
++        let mut continuation = request(subagent("child-1", "task-1"));
++        continuation.raw_request = Some(serde_json::json!({
++            "model": "switchyard/auto",
++            "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
++        }));
++        assert_eq!(
++            scores(&router, &mut state, &mut continuation)
++                .await?
++                .first()
++                .map(|score| score.target.as_str()),
++            Some("weak")
++        );
++
++        let mut reassigned = request(subagent("child-1", "task-2"));
++        reassigned
++            .metadata
++            .as_mut()
++            .expect("metadata")
++            .extra_metadata
++            .get_or_insert_default()
++            .insert(
++                switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY.to_string(),
++                "1".to_string(),
++            );
++        reassigned.raw_request = Some(serde_json::json!({
++            "model": "switchyard/auto",
++            "input": [{"type": "agent_message"}]
++        }));
++        assert!(
++            scores(&router, &mut state, &mut reassigned)
++                .await?
++                .is_empty()
++        );
++        Ok(())
++    }
++
 +    #[tokio::test]
 +    async fn literal_responses_control_items_keep_user_turn_affinity() -> Result<(), BoxErr> {
 +        let router = AffinityRouter::new().with_release_on_user_turn();
@@ -1226,7 +1294,7 @@ index 698f0a9dde6c35cc80a44dee472488659939f034..6d1fcc521f99f57015fae8a73d399c60
      async fn latch_only_retains_matching_models() -> Result<(), BoxErr> {
          let router = AffinityRouter::new().with_latch_only(["strong"]);
 diff --git a/crates/libsy/src/algorithms/util/typesafe_provider.rs b/crates/libsy/src/algorithms/util/typesafe_provider.rs
-index 5fea15eea438ff628ba8851dc4fcd6954ebc9d30..a4e2b744233ee2c3caa4ab38e254c0d1935db697 100644
+index 5fea15ee..a4e2b744 100644
 --- a/crates/libsy/src/algorithms/util/typesafe_provider.rs
 +++ b/crates/libsy/src/algorithms/util/typesafe_provider.rs
 @@ -75,20 +75,76 @@ pub struct TypeSafeVerdict {
@@ -1325,7 +1393,7 @@ index 5fea15eea438ff628ba8851dc4fcd6954ebc9d30..a4e2b744233ee2c3caa4ab38e254c0d1
      }
  }
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 5d75cdff5027e2975ab51828a640c33bed6f90e5..62fd98aab939957f8d64bbad728f8220d79021a8 100644
+index 5d75cdff..62fd98aa 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
 @@ -28,7 +28,9 @@ pub use algorithms::passthrough::Passthrough;
@@ -1349,7 +1417,7 @@ index 5d75cdff5027e2975ab51828a640c33bed6f90e5..62fd98aab939957f8d64bbad728f8220
  
  // Stage-router scoring and tier selection — the shared signal-driven routing
 diff --git a/crates/libsy/src/observability.rs b/crates/libsy/src/observability.rs
-index 69c6d9295db60cadd158d7ba2aa28bc429d259a0..bfc53e7ca109bce577763528c572dbdf0d84fa98 100644
+index 69c6d929..bfc53e7c 100644
 --- a/crates/libsy/src/observability.rs
 +++ b/crates/libsy/src/observability.rs
 @@ -78,6 +78,10 @@ pub(crate) fn run_span(algorithm: &str, request: &Request) -> Span {
@@ -1452,8 +1520,28 @@ index 69c6d9295db60cadd158d7ba2aa28bc429d259a0..bfc53e7ca109bce577763528c572dbdf
      }
  }
  
+diff --git a/crates/protocol/src/metadata.rs b/crates/protocol/src/metadata.rs
+index d2e73ee5..57056193 100644
+--- a/crates/protocol/src/metadata.rs
++++ b/crates/protocol/src/metadata.rs
+@@ -11,6 +11,15 @@ use std::{collections::BTreeMap, str::FromStr as _};
+ 
+ use crate::{ModelId, WireFormat};
+ 
++/// Private metadata key used only between Codex Router's authenticated local
++/// hop and Switchyard's task classifier. It is never forwarded as a header or
++/// included in request observability.
++pub const CODEX_ROUTER_TASK_PROJECTION_KEY: &str = "x_codex_router_task_projection";
++/// Internal marker recording that the authenticated Router recognized a new
++/// child assignment even when no safe classifier projection was available.
++pub const CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY: &str =
++    "x_codex_router_task_projection_attempted";
++
+ // Dotted paths addressing fields inside Codex's turn-metadata header JSON value.
+ const CODEX_SESSION_ID_PATH: &str = "x-codex-turn-metadata.session_id";
+ const CODEX_THREAD_ID_PATH: &str = "x-codex-turn-metadata.thread_id";
 diff --git a/crates/switchyard-runner/Cargo.toml b/crates/switchyard-runner/Cargo.toml
-index 3b96fb43048537ae340665bf0f68b8afbcee99da..5b66b80f1861806bec1dff6d7d87640b775c7924 100644
+index 3b96fb43..5b66b80f 100644
 --- a/crates/switchyard-runner/Cargo.toml
 +++ b/crates/switchyard-runner/Cargo.toml
 @@ -22,6 +22,7 @@ prefill-router = { workspace = true, optional = true }
@@ -1465,7 +1553,7 @@ index 3b96fb43048537ae340665bf0f68b8afbcee99da..5b66b80f1861806bec1dff6d7d87640b
  switchyard-protocol.workspace = true
  switchyard-typesafe-client.workspace = true
 diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
-index 3f34330eed7a226bd86dcf57c40d37d8c3b64bdb..42e8ea3bc616790547c0dd371bfb64a2a966555b 100644
+index 3f34330e..42e8ea3b 100644
 --- a/crates/switchyard-runner/src/algorithm.rs
 +++ b/crates/switchyard-runner/src/algorithm.rs
 @@ -476,9 +476,6 @@ pub enum AlgorithmSpec {
@@ -1495,7 +1583,7 @@ index 3f34330eed7a226bd86dcf57c40d37d8c3b64bdb..42e8ea3bc616790547c0dd371bfb64a2
              let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
                  .map_err(|error| {
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 6b37e17df6507c74e0a45dbc4d3b5208171601e7..5cc6eb60479385da14e3fca288c583d3ef9a9719 100644
+index 6b37e17d..5cc6eb60 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -20,8 +20,8 @@ use switchyard_llm_client::{
@@ -1943,7 +2031,7 @@ index 6b37e17df6507c74e0a45dbc4d3b5208171601e7..5cc6eb60479385da14e3fca288c583d3
      fn retry_budget_defaults_and_accepts_an_override() -> RunnerResult<()> {
          let default: DeploymentConfig = toml::from_str(VALID_CONFIG).map_err(|error| {
 diff --git a/crates/switchyard-runner/src/lib.rs b/crates/switchyard-runner/src/lib.rs
-index a488b31a7983926bed8f718da84358eb8aeb39c2..66abaa279d2cab102c50860f7303561c99889618 100644
+index a488b31a..66abaa27 100644
 --- a/crates/switchyard-runner/src/lib.rs
 +++ b/crates/switchyard-runner/src/lib.rs
 @@ -21,4 +21,4 @@ pub use provider_key_redactor::ProviderKeyRedactor;
@@ -1953,7 +2041,7 @@ index a488b31a7983926bed8f718da84358eb8aeb39c2..66abaa279d2cab102c50860f7303561c
 -pub use runner::{DecisionDescription, DecisionTarget, ModelInfo, Runner};
 +pub use runner::{ClassifierReadiness, DecisionDescription, DecisionTarget, ModelInfo, Runner};
 diff --git a/crates/switchyard-runner/src/runner.rs b/crates/switchyard-runner/src/runner.rs
-index 249e312718a5e1acf91bf113511fbd7d94953f53..14bc46269ca69c18cecaf4a841342f60d2b7501b 100644
+index 249e3127..14bc4626 100644
 --- a/crates/switchyard-runner/src/runner.rs
 +++ b/crates/switchyard-runner/src/runner.rs
 @@ -18,6 +18,21 @@ pub struct Runner {
@@ -2004,7 +2092,7 @@ index 249e312718a5e1acf91bf113511fbd7d94953f53..14bc46269ca69c18cecaf4a841342f60
      pub fn route(&self, model: &str) -> Option<&Route> {
          self.routes
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index bdf2f22fda4ffc82686bb1e01662d72afbf0081f..cb18bfce6bf2d61c8ab596a3c3d2b8bfc5b1e85d 100644
+index bdf2f22f..cb18bfce 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
 @@ -65,6 +65,12 @@ cargo install --locked switchyard-server
@@ -2030,7 +2118,7 @@ index bdf2f22fda4ffc82686bb1e01662d72afbf0081f..cb18bfce6bf2d61c8ab596a3c3d2b8bf
  Requests name a route by its `id`, so `POST /v1/chat/completions` with `"model": "switchyard/general"`
  routes through the `[routes.general]` entry above. Any of the three request formats can address any
 diff --git a/crates/switchyard-server/src/cli.rs b/crates/switchyard-server/src/cli.rs
-index 231d4e2bc42deef8b52bf1d7c54c1610caa52c30..42304412391ad0b1a0b23b2940ccd9de77aba100 100644
+index 231d4e2b..42304412 100644
 --- a/crates/switchyard-server/src/cli.rs
 +++ b/crates/switchyard-server/src/cli.rs
 @@ -9,8 +9,8 @@ use std::path::PathBuf;
@@ -2060,7 +2148,7 @@ index 231d4e2bc42deef8b52bf1d7c54c1610caa52c30..42304412391ad0b1a0b23b2940ccd9de
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 58ebc0d977395ae4a86522984acf8149051ff167..0578db69c022973d5e21d7066c20c141b2011a80 100644
+index 58ebc0d9..a2b968f8 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
 @@ -42,7 +42,8 @@ use serde_json::{Value, json};
@@ -2244,7 +2332,42 @@ index 58ebc0d977395ae4a86522984acf8149051ff167..0578db69c022973d5e21d7066c20c141
  }
  
  fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
-@@ -1506,8 +1593,15 @@ async fn get_session_stats(
+@@ -963,10 +1050,33 @@ fn llm_json_body(
+ #[allow(clippy::type_complexity, clippy::result_large_err)]
+ fn resolve_route(
+     state: &ServerState,
+-    metadata: Metadata,
++    mut metadata: Metadata,
+     mut body: Value,
+     wire_format: WireFormat,
+ ) -> std::result::Result<(&Route, Request), Response> {
++    // This private field is trusted only on the authenticated Router ->
++    // Switchyard hop. Always remove it before decoding and raw request replay;
++    // when local-hop authentication is disabled, ignore it entirely.
++    let classifier_projection = body
++        .as_object_mut()
++        .and_then(|body| body.remove(switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_KEY));
++    if let Some(projection) = classifier_projection.filter(|_| state.local_hop_capability.is_some())
++    {
++        let extra = metadata.extra_metadata.get_or_insert_default();
++        extra.insert(
++            switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_ATTEMPT_KEY.to_string(),
++            "1".to_string(),
++        );
++        if let Some(projection) = projection
++            .as_str()
++            .filter(|value| !value.trim().is_empty() && value.len() <= 32 * 1024)
++        {
++            extra.insert(
++                switchyard_protocol::CODEX_ROUTER_TASK_PROJECTION_KEY.to_string(),
++                projection.to_string(),
++            );
++        }
++    }
+     // Only trusted translation hops may supply exact request preservation state.
+     // Strip it before decoding and retaining the raw body for upstream replay.
+     if let Some(metadata) = body.get_mut("metadata").and_then(Value::as_object_mut) {
+@@ -1506,8 +1616,15 @@ async fn get_session_stats(
      }
  }
  
@@ -2263,7 +2386,7 @@ index 58ebc0d977395ae4a86522984acf8149051ff167..0578db69c022973d5e21d7066c20c141
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27dff50e78b3 100644
+index 29bb561e..b66decb9 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2606,7 +2729,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
                  },
                  "extra_body": {},
              }],
-@@ -2714,6 +2936,522 @@ recent_turn_window = 1
+@@ -2714,6 +2936,704 @@ recent_turn_window = 1
      Ok(())
  }
  
@@ -2687,6 +2810,188 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
 +        assert!(encoded.contains("Tool result."), "{endpoint}: {encoded}");
 +    }
 +    assert_eq!(provider.inputs.lock().await.len(), 3);
++    Ok(())
++}
++
++#[tokio::test]
++async fn authenticated_task_projection_drives_classifier_but_never_reaches_upstream() -> TestResult
++{
++    const PROJECTION_FIELD: &str = "x_codex_router_task_projection";
++    const CIPHERTEXT: &str = "gAAAAA-synthetic-ciphertext=";
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider::default());
++    let state = type_safe_state(&upstream.base_url, Arc::clone(&provider))?
++        .with_local_hop_capability("test-local-hop-capability")?;
++    let app = build_switchyard_router(state);
++    let body = json!({
++        "model": "typesafe",
++        (PROJECTION_FIELD): "Implement the bounded parser.",
++        "input": [{
++            "type": "agent_message",
++            "content": [
++                {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
++                {"type": "encrypted_content", "encrypted_content": CIPHERTEXT}
++            ]
++        }]
++    });
++
++    let unauthorized = send(&app, "POST", "/v1/responses", Some(body.clone())).await?;
++    assert_eq!(unauthorized.status, StatusCode::UNAUTHORIZED);
++    assert!(provider.inputs.lock().await.is_empty());
++
++    let response = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(body.clone()),
++        &[(LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability")],
++    )
++    .await?;
++    assert_eq!(response.status, StatusCode::OK, "{}", response.text()?);
++    assert_eq!(
++        provider
++            .inputs
++            .lock()
++            .await
++            .last()
++            .map(|input| input.context.as_str()),
++        Some("Implement the bounded parser.")
++    );
++    let calls = upstream.calls.lock().await;
++    assert_eq!(calls.len(), 1);
++    let encoded = calls[0].to_string();
++    assert!(encoded.contains(CIPHERTEXT));
++    assert!(!encoded.contains(PROJECTION_FIELD));
++    assert!(!encoded.contains("Implement the bounded parser."));
++    drop(calls);
++
++    // A standalone server with no local-hop capability still strips the field,
++    // but never trusts it as classifier state.
++    let untrusted_provider = Arc::new(RecordingTypeSafeProvider::default());
++    let untrusted_app = build_switchyard_router(type_safe_state(
++        &upstream.base_url,
++        Arc::clone(&untrusted_provider),
++    )?);
++    let untrusted = send(&untrusted_app, "POST", "/v1/responses", Some(body)).await?;
++    assert_eq!(untrusted.status, StatusCode::OK, "{}", untrusted.text()?);
++    assert!(untrusted_provider.inputs.lock().await.is_empty());
++    let untrusted_upstream = upstream.calls.lock().await;
++    let encoded = untrusted_upstream
++        .last()
++        .ok_or("missing upstream call")?
++        .to_string();
++    assert!(encoded.contains(CIPHERTEXT));
++    assert!(!encoded.contains(PROJECTION_FIELD));
++    assert!(!encoded.contains("Implement the bounded parser."));
++    Ok(())
++}
++
++#[tokio::test]
++async fn failed_new_task_projection_releases_affinity_to_default_without_jev() -> TestResult {
++    const PROJECTION_FIELD: &str = "x_codex_router_task_projection";
++    let upstream = MockUpstream::start().await?;
++    let provider = Arc::new(RecordingTypeSafeProvider {
++        inputs: Mutex::new(Vec::new()),
++        label: "capable",
++    });
++    let state = type_safe_state_with_format_and_trigger(
++        &upstream.base_url,
++        Arc::clone(&provider),
++        WireFormat::OpenAiResponses,
++        ClassifyTrigger::UserTurn,
++    )?
++    .with_local_hop_capability("test-local-hop-capability")?;
++    let app = build_switchyard_router(state);
++    let request_headers = [
++        ("authorization", "Bearer codex-login-token"),
++        ("chatgpt-account-id", "account-123"),
++        ("x-openai-fedramp", "true"),
++        ("x-switchyard-session-id", "session-projection-failure"),
++        ("x-switchyard-agent-id", "child-projection-failure"),
++        (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
++    ];
++    let handoff = |ciphertext: &str| {
++        json!({
++            "type": "agent_message",
++            "content": [
++                {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
++                {"type": "encrypted_content", "encrypted_content": ciphertext}
++            ]
++        })
++    };
++
++    let first = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): "Complex first assignment.",
++            "input": [handoff("gAAAAA-first=")]
++        })),
++        &request_headers,
++    )
++    .await?;
++    assert_eq!(first.status, StatusCode::OK, "{}", first.text()?);
++    assert_eq!(
++        first.headers["x-model-router-selected-model"],
++        "model/complex"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 1);
++
++    let continuation = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            "input": [
++                handoff("gAAAAA-first="),
++                {"type": "function_call_output", "call_id": "call-1", "output": "tool result"}
++            ]
++        })),
++        &request_headers,
++    )
++    .await?;
++    assert_eq!(
++        continuation.status,
++        StatusCode::OK,
++        "{}",
++        continuation.text()?
++    );
++    assert_eq!(
++        continuation.headers["x-model-router-selected-model"],
++        "model/complex"
++    );
++    assert_eq!(provider.inputs.lock().await.len(), 1);
++
++    let failed_projection = send_with_headers(
++        &app,
++        "POST",
++        "/v1/responses",
++        Some(json!({
++            "model": "typesafe",
++            (PROJECTION_FIELD): Value::Null,
++            "input": [handoff("gAAAAA-second=")]
++        })),
++        &request_headers,
++    )
++    .await?;
++    assert_eq!(
++        failed_projection.status,
++        StatusCode::OK,
++        "{}",
++        failed_projection.text()?
++    );
++    assert_eq!(
++        failed_projection.headers["x-model-router-selected-model"],
++        "model/efficient"
++    );
++    assert_eq!(
++        provider.inputs.lock().await.len(),
++        1,
++        "failed projection must release affinity and make zero additional Jev calls"
++    );
 +    Ok(())
 +}
 +
@@ -3129,7 +3434,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
  #[tokio::test]
  async fn accepted_escalation_response_is_logged_once_as_the_final_answer() -> TestResult {
      let upstream = MockUpstream::start().await?;
-@@ -3161,7 +3899,8 @@ target = "claude"
+@@ -3161,7 +4081,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3139,7 +3444,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +3916,7 @@ target = "claude"
+@@ -3177,6 +4098,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3147,7 +3452,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
          ],
      )
      .await?;
-@@ -3187,7 +3927,10 @@ target = "claude"
+@@ -3187,7 +4109,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -3159,7 +3464,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +3963,29 @@ target = "openai"
+@@ -3220,7 +4145,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3190,7 +3495,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +3996,9 @@ target = "openai"
+@@ -3231,8 +4178,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3202,7 +3507,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
          ],
      )
      .await?;
-@@ -3247,6 +4013,7 @@ target = "openai"
+@@ -3247,6 +4195,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3210,7 +3515,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +4028,7 @@ target = "openai"
+@@ -3261,6 +4210,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -3218,7 +3523,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +4051,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +4233,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -3230,7 +3535,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +4097,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +4279,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  
@@ -3280,7 +3585,7 @@ index 29bb561e71f8c3d8594d4ad598543f932835fe3f..e482566efe45eaf6d525d28ac89f27df
  async fn json_extractor_statuses_keep_api_specific_error_envelopes() -> TestResult {
      let (_upstream, app) = test_app(&[(ROUTE_MODEL, &["model/a"])]).await?;
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 6d185c8acfd37c369dd9b60990ad46adc8843f03..78a55948af9093e75e51fc42c324e9e90cb0ed15 100644
+index 6d185c8a..78a55948 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
 @@ -1244,14 +1244,6 @@ fn encode_responses_input(
@@ -3299,7 +3604,7 @@ index 6d185c8acfd37c369dd9b60990ad46adc8843f03..78a55948af9093e75e51fc42c324e9e9
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index 806e21412f9fc8d424049fd6df17e9e4af7ee2be..d74aa6a1aed6d7e0884eb28e287ebc4a82f141af 100644
+index 806e2141..d74aa6a1 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
 @@ -2493,6 +2493,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
@@ -3340,7 +3645,7 @@ index 806e21412f9fc8d424049fd6df17e9e4af7ee2be..d74aa6a1aed6d7e0884eb28e287ebc4a
  #[test]
  fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {
 diff --git a/crates/switchyard-typesafe-client/README.md b/crates/switchyard-typesafe-client/README.md
-index 4209d031ebd89efb14375f8e33fd5bbf7c171fd5..704aab58716d271f41ca93bce81157830f139b81 100644
+index 4209d031..704aab58 100644
 --- a/crates/switchyard-typesafe-client/README.md
 +++ b/crates/switchyard-typesafe-client/README.md
 @@ -25,7 +25,7 @@ use switchyard_libsy::{TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider
@@ -3377,7 +3682,7 @@ index 4209d031ebd89efb14375f8e33fd5bbf7c171fd5..704aab58716d271f41ca93bce8115783
 +invalid probability maps, unavailable credentials, and transport failures return
 +a provider error so the route can use its configured fail-open target.
 diff --git a/crates/switchyard-typesafe-client/examples/live_check.rs b/crates/switchyard-typesafe-client/examples/live_check.rs
-index 1cae06d4a52148e2a438a06f8665af7440d250af..280e67bd26e6b15c7cad7fe623469e9ed4b210bc 100644
+index 1cae06d4..280e67bd 100644
 --- a/crates/switchyard-typesafe-client/examples/live_check.rs
 +++ b/crates/switchyard-typesafe-client/examples/live_check.rs
 @@ -1,14 +1,14 @@
@@ -3417,7 +3722,7 @@ index 1cae06d4a52148e2a438a06f8665af7440d250af..280e67bd26e6b15c7cad7fe623469e9e
          Ok(verdict) => {
              println!("OK");
 diff --git a/crates/switchyard-typesafe-client/src/error.rs b/crates/switchyard-typesafe-client/src/error.rs
-index 78b2e52af791cd7ede1c79ccd50c71f9e9ea8951..11d32d7bad308a5b5afb10be39d86d1245386b2a 100644
+index 78b2e52a..11d32d7b 100644
 --- a/crates/switchyard-typesafe-client/src/error.rs
 +++ b/crates/switchyard-typesafe-client/src/error.rs
 @@ -27,6 +27,18 @@ pub enum TypeSafeClientError {
@@ -3450,7 +3755,7 @@ index 78b2e52af791cd7ede1c79ccd50c71f9e9ea8951..11d32d7bad308a5b5afb10be39d86d12
      }
  }
 diff --git a/crates/switchyard-typesafe-client/src/lib.rs b/crates/switchyard-typesafe-client/src/lib.rs
-index 73d5621bf9596fae8f63c0676af5ab213e4c229f..669d405c0fd62984b86261f6b59fa3cfb45b7abb 100644
+index 73d5621b..669d405c 100644
 --- a/crates/switchyard-typesafe-client/src/lib.rs
 +++ b/crates/switchyard-typesafe-client/src/lib.rs
 @@ -15,19 +15,58 @@ use serde::ser::SerializeMap;
@@ -4131,7 +4436,7 @@ index 73d5621bf9596fae8f63c0676af5ab213e4c229f..669d405c0fd62984b86261f6b59fa3cf
      }
  }
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 7baf1d39e8a3ab5ede4c7f9b34005d869a5d22dc..38126764fe785dfaac7364ef667d20b8a8ac01e7 100644
+index 7baf1d39..38126764 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -99,17 +99,19 @@ endpoint, before it calls an upstream.
@@ -4185,7 +4490,7 @@ index 7baf1d39e8a3ab5ede4c7f9b34005d869a5d22dc..38126764fe785dfaac7364ef667d20b8
  
  ### `stage_router`
 diff --git a/docs/routing_algorithms/type_safe_classifier_routing.md b/docs/routing_algorithms/type_safe_classifier_routing.md
-index 0e72b6b08f2a325e9aa8b9271a68b97d8807a407..a1899751da47ea5ae008a4b2440d48f2c3788429 100644
+index 0e72b6b0..a1899751 100644
 --- a/docs/routing_algorithms/type_safe_classifier_routing.md
 +++ b/docs/routing_algorithms/type_safe_classifier_routing.md
 @@ -15,20 +15,23 @@ chat-completion targets, or when you need capability/escalation mode.

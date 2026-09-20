@@ -8,6 +8,7 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
+- Native encrypted-child routing delivery: [delivery plan](../../docs/switchyard-child-routing-plan.md) and its execution handoff. The source candidate still requires deployment and live acceptance before v2 promotion.
 - Classifier behavior and routing criteria: the routing policy below and
   `routes.template.toml`. Completed delivery records live under
   [`docs/history`](../../docs/history/README.md).
@@ -45,7 +46,10 @@ records the earlier integration decision.
 2. Router sends uncompressed native Responses JSON to Switchyard on loopback.
    A fresh per-service-generation capability authenticates every Switchyard
    endpoint except `/health`; Router removes that header before any upstream
-   request.
+   request. For a canonical current encrypted child assignment, Router may add a
+   bounded classifier-only projection after using the caller's native account to
+   relay that task. Switchyard removes the private field before decode and raw
+   request preservation.
 3. Switchyard sends bounded textual decision state to the exact OpenRouter Decisions
    endpoint for Jev 1.13, chooses a configured Luna, Sol, or Astra target, and
    effort, and sends the native request back through Router's capability-gated
@@ -73,6 +77,8 @@ model and control over additional request fields. The patch adds and tests:
 - raw Responses item inspection so custom, computer, shell, and tool-search
   continuations retain the selected target;
 - preservation of caller `priority` on selected native answer requests;
+- authenticated classifier projections that are removed before decode, raw
+  preservation, observability, and upstream forwarding;
 - local-hop capability enforcement and removal; and
 - target-URL redaction in decision output.
 
@@ -82,7 +88,10 @@ Every target sets `store = false`, `stream = true`, and removes
 ## Routing policy
 
 Jev 1.13 is the sole classifier. It receives only the latest genuine user turn's
-ordered text blocks through the exact OpenRouter Decisions endpoint. Empty and
+ordered text blocks through the exact OpenRouter Decisions endpoint. A canonical
+current native child assignment may supply the exact relayed task as a trusted
+request-local projection; this releases the child's retained target for the new
+assignment. Tool continuations carry no projection and retain affinity. Empty and
 control-only pseudo-user messages are skipped; when no genuine user turn remains,
 the route records `empty_state` and falls back to Sol without a classifier call.
 Media or unsupported meaningful content in the selected turn skips the classifier
@@ -102,6 +111,18 @@ chooses the dominant bottleneck of the whole request with this policy:
   unclear or classification is uncertain.
 - `luna-max`: bounded retrieval, source-grounded extraction or summarization,
   and tiny fully specified mechanical work with cheap verification.
+
+Native v2 subagent handoffs carry encrypted task content. Router selects only the
+final canonical task envelope, uses its existing native relay under a five-second
+projection deadline, and leaves the encrypted answer request byte-semantically
+unchanged. Exact account-scoped cache hits avoid a second relay. Ambiguous shapes,
+media, control traffic, relay failure, malformed or oversized output, and projection
+failure make zero Jev calls and take the `non_text_state` Sol Medium fallback.
+Earlier assignments are never substituted. Plaintext user turns can also be
+reclassified within one conversation; see the contrasting
+[live protocol](../../docs/history/2026-09-19-switchyard-live-model-transitions.json)
+and [native child](../../docs/history/2026-09-19-switchyard-native-child-transitions.json)
+tests.
 
 The exact criteria, question, threshold, fallback and transport limits live in
 `routes.template.toml`. Artifact provenance binds the pinned source, ordered

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "description": "Live synthetic same-conversation Responses switching test; one session, cumulative user/assistant/reasoning/tool history, no forced answer target.",
+  "startedAt": "2026-09-19T23:46:55.685Z",
+  "finishedAt": "2026-09-19T23:47:32.516Z",
+  "runtimeBinding": {
+    "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "6902a7e93e7ac7f1b75d31f5985fe4a078a733e06270455785f8ef1a244dd9de",
+    "binarySha256": "e704c624276bd15f805353fd61d7e733790868078a1a84ce555d24d7f96476ee",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"
+  },
+  "transport": "HTTP Responses with SSE streaming through managed Router",
+  "scope": "Protocol-level live conversation, not a Codex desktop GUI interaction or additional v2 child certification.",
+  "historyReplay": "All returned output items, including available encrypted reasoning, were replayed on subsequent requests alongside tool results.",
+  "turns": [
+    {
+      "turn": 1,
+      "target": "switchyard/luna-max",
+      "continuationTarget": "switchyard/luna-max",
+      "affinityPreserved": true,
+      "publicIdentityPreserved": true,
+      "originalFactRetained": true,
+      "currentToolResultRetained": true,
+      "priorToolResultRetained": true,
+      "httpStatuses": [
+        200,
+        200
+      ],
+      "encryptedReasoningReturned": true
+    },
+    {
+      "turn": 2,
+      "target": "switchyard/sol-medium",
+      "continuationTarget": "switchyard/sol-medium",
+      "affinityPreserved": true,
+      "publicIdentityPreserved": true,
+      "originalFactRetained": true,
+      "currentToolResultRetained": true,
+      "priorToolResultRetained": true,
+      "httpStatuses": [
+        200,
+        200
+      ],
+      "encryptedReasoningReturned": true
+    },
+    {
+      "turn": 3,
+      "target": "switchyard/astra-medium",
+      "continuationTarget": "switchyard/astra-medium",
+      "affinityPreserved": true,
+      "publicIdentityPreserved": true,
+      "originalFactRetained": true,
+      "currentToolResultRetained": true,
+      "priorToolResultRetained": true,
+      "httpStatuses": [
+        200,
+        200
+      ],
+      "encryptedReasoningReturned": false
+    },
+    {
+      "turn": 4,
+      "target": "switchyard/sol-medium",
+      "continuationTarget": "switchyard/sol-medium",
+      "affinityPreserved": true,
+      "publicIdentityPreserved": true,
+      "originalFactRetained": true,
+      "currentToolResultRetained": true,
+      "priorToolResultRetained": true,
+      "httpStatuses": [
+        200,
+        200
+      ],
+      "encryptedReasoningReturned": true
+    }
+  ],
+  "requiredFailures": [],
+  "privatePayloadsRetained": false
+}

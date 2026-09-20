@@ -1,6 +1,9 @@
-# switchyard/auto v2 certification
+# switchyard/auto prior v2 certification (invalidated)
 
-Accepted for Router 0.6.1 deployed from
+This prior acceptance is draft again because the child-routing source contract
+changed. It must not publish v2 until the new candidate is deployed and the
+fresh native acceptance sequence passes. The historical run was for Router
+0.6.1 deployed from
 `849941ac4834e45b90820f7f06d84ca954962492`.
 The machine-readable proof binds the exact Switchyard source, ordered patches,
 binary, private generated routes, template and deployed Router commit.

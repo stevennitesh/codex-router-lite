@@ -7,13 +7,20 @@ Native Codex requests retain Codex authorization and account headers. OpenRouter
 Switchyard is a local, capability-protected hop with two separate upstream paths.
 The checked-in Jev classifier sends bounded task text to OpenRouter's Decisions
 endpoint using the protected OpenRouter key, without native authorization/account
-headers. The decision state contains only the latest genuine user turn. Empty and
-control-only pseudo-user messages are skipped. Media or unsupported meaningful
-content in the selected turn skips Jev and falls back to Sol; older media does not
-veto a later text-only decision. Assistant answers, tool-result payloads, earlier
-user turns and reasoning are excluded from decision state. User-authored text can
-still contain sensitive information: a native answer model does not make
-classification local.
+headers. The decision state contains only the latest genuine user turn. For a
+canonical encrypted native child handoff, Router asks the native account-scoped
+relay for the current task plaintext and gives Switchyard a request-local
+classifier projection. The projection has a five-second waiter deadline, shares
+the bounded account-scoped cache and coalescing path, and is removed before
+Switchyard decodes, retains, logs, or forwards the native request. Caller-supplied
+projection fields are stripped. Relay failure, malformed output, unsupported
+content, or an oversized state bypasses Jev and falls back to Sol. In ordinary
+plaintext history, empty and control-only pseudo-user items are skipped and the
+most recent genuine user turn can still be selected. For child handoffs only the
+final item is considered, and a prior child assignment is never substituted.
+Assistant answers, tool-result payloads and reasoning are excluded from decision
+state. User-authored text can still contain sensitive information: a native answer
+model does not make classification local.
 
 The selected native answer path preserves Codex authorization and conversation
 content, including media. The local-hop capability must not reach upstream

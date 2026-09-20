@@ -15,6 +15,11 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Switchyard delivery and evidence
 
+- [Native child automatic-routing G2 isolated candidate evidence, 2026-09-20](2026-09-20-switchyard-child-routing-g2-isolated-evidence.json)
+- [Native child encrypted-handoff G1 accepted evidence, 2026-09-20](2026-09-20-switchyard-child-routing-g1-evidence.json)
+- [Encrypted-handoff routing design review, 2026-09-20](2026-09-20-switchyard-encrypted-handoff-design.md) (proposal; not implemented)
+- [Native child transition limitation, 2026-09-19](2026-09-19-switchyard-native-child-transitions.json)
+- [Live same-conversation model transitions, 2026-09-19](2026-09-19-switchyard-live-model-transitions.json)
 - [Version 0.6.1 certification, 2026-09-19](2026-09-19-switchyard-v061-certification.json)
 - [Pin review, 2026-09-12](2026-09-12-switchyard-pin.md)
 - [Upgrade plan](2026-09-18-switchyard-upgrade-plan.md) and [handoff](2026-09-18-switchyard-upgrade-handoff.md), 2026-09-18

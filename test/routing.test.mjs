@@ -541,6 +541,8 @@ test("router relays encrypted Codex subagent payloads before external routing", 
     assert.equal(nativeRequests[0].headers["chatgpt-account-id"], "account-id");
     assert.equal(nativeRequests[0].body.model, "gpt-5.6-sol");
     assert.equal(nativeRequests[0].body.stream, true);
+    assert.equal(nativeRequests[0].body.parallel_tool_calls, false);
+    assert.deepEqual(nativeRequests[0].body.reasoning, { context: "all_turns" });
     assert.equal(nativeRequests[0].body.tool_choice.name, "relay_external_agent_payload");
     assert.equal(gatewayRequests.length, 1);
     const content = gatewayRequests[0].body.input[0].content;
@@ -1017,6 +1019,186 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     await closeServer(gateway.server);
     await closeServer(native.server);
     await closeServer(switchyard.server);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Switchyard classifies only the current authenticated child-task projection", async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "switchyard-child-projection-"));
+  const switchyardRoot = path.join(stateDir, "switchyard-runtime");
+  mkdirSync(switchyardRoot, { recursive: true });
+  writeFileSync(path.join(switchyardRoot, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
+  writeFileSync(path.join(switchyardRoot, "routes.toml"), "# fixture\n");
+  writeFileSync(
+    path.join(stateDir, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["switchyard"] })}\n`,
+  );
+  const plaintextByToken = new Map([
+    ["gAAAAA-current-task=", "CURRENT_TASK"],
+    ["gAAAAA-oversize-task=", "x".repeat(32 * 1024 + 1)],
+  ]);
+  const slowRelayStarted = Promise.withResolvers();
+  const deadlineRelayStarted = Promise.withResolvers();
+  const releaseDeadlineRelay = Promise.withResolvers();
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    const body = await bodyJson(request);
+    nativeRequests.push({ headers: request.headers, body });
+    const token = body.input?.at(-1)?.content?.at(-1)?.encrypted_content;
+    if (token === "gAAAAA-slow-task=") {
+      slowRelayStarted.resolve();
+      await new Promise(resolve => response.once("close", resolve));
+      return;
+    }
+    if (token === "gAAAAA-deadline-task=") {
+      deadlineRelayStarted.resolve();
+      await releaseDeadlineRelay.promise;
+      json(response, 200, { output: [{
+        type: "function_call",
+        name: "relay_external_agent_payload",
+        arguments: JSON.stringify({ payload: "DEADLINE_SHARED_TASK" }),
+      }] });
+      return;
+    }
+    const plaintext = plaintextByToken.get(token);
+    if (plaintext === undefined) {
+      json(response, 200, { output: [] });
+      return;
+    }
+    json(response, 200, { output: [{
+      type: "function_call",
+      name: "relay_external_agent_payload",
+      arguments: JSON.stringify({ payload: plaintext }),
+    }] });
+  });
+  const switchyardRequests = [];
+  const switchyard = await mockServer(async (request, response) => {
+    switchyardRequests.push(await bodyJson(request));
+    json(response, 200, { id: "projection", model: "gpt-5.6-sol", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: stateDir,
+    CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
+    CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyard.port}/v1`,
+    CODEX_ROUTER_SWITCHYARD_CAPABILITY: "test-switchyard-local-hop-capability",
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const task = (token, type = "NEW_TASK", extra = []) => ({
+    type: "agent_message",
+    content: [
+      { type: "input_text", text: `Message Type: ${type}\nTask name: /root/child\nSender: /root\nPayload:\n` },
+      { type: "encrypted_content", encrypted_content: token },
+      ...extra,
+    ],
+  });
+  const headers = (account = "account-a") => ({
+    Authorization: "Bearer CHATGPT_SESSION_TOKEN",
+    "ChatGPT-Account-Id": account,
+    "Content-Type": "application/json",
+  });
+  const send = async (input, account = "account-a") => {
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: headers(account),
+      body: JSON.stringify({
+        model: "switchyard/auto",
+        input,
+        x_codex_router_task_projection: "CALLER_SPOOF",
+      }),
+    });
+    assert.equal(response.status, 200, await response.text());
+  };
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const old = task("gAAAAA-old-task=");
+    const current = task("gAAAAA-current-task=");
+    await send([old, current]);
+    assert.equal(nativeRequests.length, 1);
+    assert.deepEqual(switchyardRequests[0].input, [old, current]);
+    assert.equal(switchyardRequests[0].x_codex_router_task_projection, "CURRENT_TASK");
+
+    // The second request uses the account-scoped relay cache. A different
+    // account must not reuse it.
+    await send([current]);
+    assert.equal(nativeRequests.length, 1);
+    await send([current], "account-b");
+    assert.equal(nativeRequests.length, 2);
+
+    // A tool continuation retains Switchyard affinity and does not substitute
+    // the preceding handoff as a fresh task.
+    await send([current, { type: "function_call_output", call_id: "call-1", output: "ok" }]);
+    assert.equal(nativeRequests.length, 2);
+    assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
+
+    await send([task("READABLE_FOLLOWUP", "FOLLOWUP_TASK")]);
+    assert.equal(nativeRequests.length, 2);
+    assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, "READABLE_FOLLOWUP");
+
+    // Ambiguous content, completed-child traffic, relay failure, and an
+    // oversized projection all reach unchanged Switchyard input with no Jev
+    // projection and no caller-spoofed substitute.
+    for (const input of [
+      [task("gAAAAA-current-task=", "NEW_TASK", [{ type: "input_image", image_url: "data:image/png;base64,AAAA" }])],
+      [task("gAAAAA-current-task=", "FINAL_ANSWER")],
+      [task("gAAAAA-malformed-relay=")],
+      [task("gAAAAA-oversize-task=")],
+    ]) {
+      const before = nativeRequests.length;
+      await send(input);
+      assert.deepEqual(switchyardRequests.at(-1).input, input);
+      const completed = input[0].content[0].text.includes("FINAL_ANSWER");
+      if (completed) {
+        assert.equal("x_codex_router_task_projection" in switchyardRequests.at(-1), false);
+      } else {
+        assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, null);
+      }
+      if (input[0].content.length !== 2 || completed) {
+        assert.equal(nativeRequests.length, before);
+      }
+    }
+
+    const deadlineInput = [task("gAAAAA-deadline-task=")];
+    const deadlineBody = JSON.stringify({ model: "switchyard/auto", input: deadlineInput });
+    const deadlineStarted = Date.now();
+    const timedOut = fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST", headers: headers(), body: deadlineBody,
+    });
+    await deadlineRelayStarted.promise;
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const survivor = fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST", headers: headers(), body: deadlineBody,
+    });
+    const timedOutResponse = await timedOut;
+    const deadlineElapsed = Date.now() - deadlineStarted;
+    assert.equal(timedOutResponse.status, 200, await timedOutResponse.text());
+    assert.ok(deadlineElapsed >= 4_500 && deadlineElapsed < 7_500, `${deadlineElapsed}ms`);
+    assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, null);
+    releaseDeadlineRelay.resolve();
+    const survivorResponse = await survivor;
+    assert.equal(survivorResponse.status, 200, await survivorResponse.text());
+    assert.equal(switchyardRequests.at(-1).x_codex_router_task_projection, "DEADLINE_SHARED_TASK");
+
+    const beforeCanceled = switchyardRequests.length;
+    const cancel = new AbortController();
+    const canceled = fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: headers(),
+      signal: cancel.signal,
+      body: JSON.stringify({ model: "switchyard/auto", input: [task("gAAAAA-slow-task=")] }),
+    });
+    await slowRelayStarted.promise;
+    cancel.abort();
+    await assert.rejects(canceled, { name: "AbortError" });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(switchyardRequests.length, beforeCanceled);
+  } finally {
+    releaseDeadlineRelay.resolve();
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(switchyard.server)]);
     rmSync(stateDir, { recursive: true, force: true });
   }
 });

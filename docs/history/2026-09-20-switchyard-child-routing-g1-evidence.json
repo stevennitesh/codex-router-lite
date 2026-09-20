@@ -1,0 +1,356 @@
+{
+  "schemaVersion": 1,
+  "assignment": "CHILD-ROUTING-G1",
+  "status": "accepted-g1",
+  "startedAt": "2026-09-20T09:26:32.949Z",
+  "finishedAt": "2026-09-20T09:27:49.686Z",
+  "sourceIdentity": {
+    "repositoryHead": "eaef9c8338c923b49476eaad1b6647222bcc617a",
+    "routerPackageVersion": "0.6.1",
+    "codexCli": "0.155.0-alpha.9.2",
+    "relayModel": "gpt-5.6-sol",
+    "parentModel": "gpt-5.6-sol",
+    "childRoute": "switchyard/auto"
+  },
+  "scope": {
+    "authoredAssignments": 6,
+    "extractionObservationsPerAssignment": 2,
+    "uniqueNativeEncryptedHandoffs": 6,
+    "independentOracle": "pre-authored fixture constants held outside the parent/model response",
+    "parentInstructedToSendOracleVerbatim": true,
+    "actualParentToolCallPlaintextObservable": false,
+    "privatePayloadsRetained": false,
+    "ciphertextRetained": false,
+    "productionRoutingChanged": false,
+    "deployed": false
+  },
+  "temporarySetup": {
+    "providerPathVerifiedBeforeCorpus": true,
+    "firstNamedChildReachedProxyBeforeRemainingSequentialCases": true,
+    "firstNamedChildReachedProxyAt": "2026-09-20T09:26:40.718Z",
+    "isolatedAppServerTransport": "stdio-jsonl",
+    "childThreadProviderVerifiedByProtocol": true,
+    "parentCollaborationPromptsObservable": false,
+    "existingProviderChanged": false,
+    "cleanup": {
+      "providerRemoved": "cli-only",
+      "agentRemoved": "cli-only",
+      "roleFileRemoved": true
+    }
+  },
+  "extraction": {
+    "allExact": true,
+    "cacheObserved": true,
+    "cases": [
+      {
+        "case": 1,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 124,
+            "expectedUtf8Bytes": 124,
+            "totalMs": 2255,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2231,
+              "usage": {
+                "inputTokens": 162,
+                "cachedTokens": 0,
+                "outputTokens": 54,
+                "totalTokens": 216
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 124,
+            "expectedUtf8Bytes": 124,
+            "totalMs": 4,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      },
+      {
+        "case": 2,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 244,
+            "expectedUtf8Bytes": 244,
+            "totalMs": 2877,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2870,
+              "usage": {
+                "inputTokens": 190,
+                "cachedTokens": 0,
+                "outputTokens": 82,
+                "totalTokens": 272
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 244,
+            "expectedUtf8Bytes": 244,
+            "totalMs": 3,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      },
+      {
+        "case": 3,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 205,
+            "expectedUtf8Bytes": 205,
+            "totalMs": 2358,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2351,
+              "usage": {
+                "inputTokens": 176,
+                "cachedTokens": 0,
+                "outputTokens": 68,
+                "totalTokens": 244
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 205,
+            "expectedUtf8Bytes": 205,
+            "totalMs": 2,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      },
+      {
+        "case": 4,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 198,
+            "expectedUtf8Bytes": 198,
+            "totalMs": 2571,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2564,
+              "usage": {
+                "inputTokens": 184,
+                "cachedTokens": 0,
+                "outputTokens": 78,
+                "totalTokens": 262
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 198,
+            "expectedUtf8Bytes": 198,
+            "totalMs": 3,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      },
+      {
+        "case": 5,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 215,
+            "expectedUtf8Bytes": 215,
+            "totalMs": 2731,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2725,
+              "usage": {
+                "inputTokens": 180,
+                "cachedTokens": 0,
+                "outputTokens": 75,
+                "totalTokens": 255
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 215,
+            "expectedUtf8Bytes": 215,
+            "totalMs": 2,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      },
+      {
+        "case": 6,
+        "envelopeBoundaryUnambiguous": true,
+        "observations": [
+          {
+            "observation": 1,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 249,
+            "expectedUtf8Bytes": 249,
+            "totalMs": 2968,
+            "relayCalls": 1,
+            "nativeRelay": {
+              "latencyMs": 2962,
+              "usage": {
+                "inputTokens": 185,
+                "cachedTokens": 0,
+                "outputTokens": 77,
+                "totalTokens": 262
+              }
+            },
+            "cacheHitDelta": 0
+          },
+          {
+            "observation": 2,
+            "exactMatch": true,
+            "recoveredUtf8Bytes": 249,
+            "expectedUtf8Bytes": 249,
+            "totalMs": 2,
+            "relayCalls": 0,
+            "nativeRelay": null,
+            "cacheHitDelta": 1
+          }
+        ]
+      }
+    ],
+    "latencyMs": {
+      "relayMiss": {
+        "values": [
+          2231,
+          2870,
+          2351,
+          2564,
+          2725,
+          2962
+        ],
+        "median": 2645,
+        "p95Observed": 2962,
+        "maximum": 2962
+      },
+      "cachedEndToEnd": {
+        "values": [
+          4,
+          3,
+          2,
+          3,
+          2,
+          2
+        ],
+        "median": 2.5,
+        "maximum": 4
+      }
+    },
+    "proposedProjectionDeadlineMs": 5000,
+    "nativeRelayUsageAggregate": {
+      "inputTokens": 1077,
+      "cachedTokens": 0,
+      "outputTokens": 434,
+      "totalTokens": 1511
+    }
+  },
+  "currentComparisons": {
+    "encryptedSolFallback": {
+      "observations": 6,
+      "responseLatencyMs": [
+        1517,
+        1961,
+        1702,
+        1556,
+        2139,
+        4347
+      ],
+      "medianResponseLatencyMs": 1832,
+      "decisionLatencyMs": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "plaintextJev": {
+      "observations": 1,
+      "decisionLatencyMs": 266,
+      "totalResponseLatencyMs": 2473,
+      "responseUsage": {
+        "inputTokens": 53,
+        "cachedTokens": 0,
+        "outputTokens": 36,
+        "totalTokens": 89
+      },
+      "finalTarget": "luna_max"
+    }
+  },
+  "limitations": [
+    "Six synthetic assignments are a bounded fidelity probe, not a proof for arbitrary payloads.",
+    "The native relay is model-generated extraction and is not a documented decrypt API.",
+    "This app-server build emitted subAgentActivity and child result messages without exposing spawn_agent or followup_task arguments. Any exactness failure would remain ambiguous between non-verbatim parent delivery and relay extraction corruption.",
+    "Jev decision responses expose latency but no comparable token usage or price; no dollar savings are inferred.",
+    "The proposed deadline is derived from this run's observed maximum with bounded headroom and requires lead acceptance."
+  ],
+  "fixtureDeviation": "Earlier fixtures made zero extraction calls because they used an incompatible response-stream oracle parser, relied on request-scoped provider inheritance, reused an app-server that had already loaded agent definitions, used an unsupported remote-exec combination, and finally named a task without explicitly selecting agent_type. This corrected fixture used CLI-only isolated provider and agents.<name>.config_file layers with the app-server stdio protocol. It explicitly selected agent_type, verified the child thread provider through thread/read, and verified the first encrypted request before completing the unchanged six-case corpus.",
+  "recommendation": "G1 accepted: proceed to separately dispatched G2 with automatic routing, the measured bounded overhead, and a 5000 ms extraction fallback deadline.",
+  "diagnosis": {
+    "taskNameIsThreadLabelNotRoleSelector": true,
+    "explicitAgentTypeRequiredForNamedRole": true,
+    "crossProviderControl": {
+      "parentProvider": "openai",
+      "selectedRoleProvider": "isolated observation provider",
+      "observedChildModel": "switchyard/auto",
+      "observedChildProvider": "openai",
+      "conclusion": "The role model override applied, while the spawned child inherited the parent provider instead of applying the role model_provider."
+    },
+    "provenHarnessMechanism": "Start the isolated parent on the observation provider and explicitly select agent_type; the child inherits the observation provider and applies the role switchyard/auto model.",
+    "protocolEvidence": [
+      "thread/read reported the effective child modelProvider and model.",
+      "subAgentActivity identified the spawned child thread in this app-server build.",
+      "The first encrypted child request reached the proxy before cases 2 through 6 were sent."
+    ]
+  },
+  "review": {
+    "reviewedAt": "2026-09-20",
+    "mechanicalFinding": "no blocking finding",
+    "independentUncachedExtractions": 6,
+    "cacheReplays": 6,
+    "automaticRoutingAccepted": true,
+    "boundedOverheadAccepted": true,
+    "acceptedProjectionDeadlineMs": 5000,
+    "g2Started": false,
+    "productionChanged": false
+  }
+}

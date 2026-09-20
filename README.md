@@ -137,10 +137,15 @@ for the trust boundaries and private vulnerability reporting.
 
 **Switchyard Auto also sends task text to OpenRouter/Jev for model selection, even
 though its answer comes from a native GPT model.** The checked-in classifier sends
-only the latest genuine user turn. Empty and control-only pseudo-user messages are
-skipped. Media or unsupported meaningful content in the selected turn bypasses
-Jev and selects Sol; older media does not block a later text-only classification.
-The full request still goes to the native answer model. See the
+only the latest genuine user turn. For ordinary plaintext history, trailing empty
+or control-only pseudo-user items are skipped, so the most recent genuine user
+turn can still be selected. For an encrypted native child handoff, Router inspects
+only the final item and uses the caller's native account to recover that current
+task through its bounded relay. Relay failure, the five-second projection deadline,
+or a recognized but unsafe media, ambiguous, or oversized child assignment releases
+prior affinity and selects the Sol fallback without a Jev call. An earlier child
+assignment is never substituted. The full, unchanged request still goes to the
+native answer model. See the
 [routing policy](config/switchyard/README.md#routing-policy) for details.
 
 Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),

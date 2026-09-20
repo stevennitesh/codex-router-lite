@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "routerCommit": "849941ac4834e45b90820f7f06d84ca954962492",
+  "executionSurface": "native Codex CLI parent and one router_switchyard_auto child",
+  "startedAt": "2026-09-19T23:49:40.511Z",
+  "finishedAt": "2026-09-19T23:51:22.443Z",
+  "sameChildAcrossFourTurns": true,
+  "encryptedHandoffs": 4,
+  "sandbox": "workspace-write",
+  "arithmeticResults": [
+    42,
+    43,
+    44,
+    45
+  ],
+  "allFourMarkersReturned": true,
+  "originalProjectLabelRetained": true,
+  "previousToolResultsRetained": true,
+  "modelSwitchingObserved": false,
+  "selectedModel": "switchyard/sol-medium",
+  "classification": "Encrypted native handoffs were treated as non_text_state and fell back locally to Sol Medium; no Jev classification of these tasks occurred.",
+  "routerCompletions": [
+    {
+      "at": "2026-09-19T23:49:49.537Z",
+      "status": 200,
+      "totalMs": 8577,
+      "outputTokens": 138,
+      "cachedTokens": 12928
+    },
+    {
+      "at": "2026-09-19T23:49:52.707Z",
+      "status": 200,
+      "totalMs": 2479,
+      "outputTokens": 48,
+      "cachedTokens": 24448
+    },
+    {
+      "at": "2026-09-19T23:50:10.882Z",
+      "status": 200,
+      "totalMs": 7139,
+      "outputTokens": 291,
+      "cachedTokens": 24576
+    },
+    {
+      "at": "2026-09-19T23:50:19.363Z",
+      "status": 200,
+      "totalMs": 5799,
+      "outputTokens": 171,
+      "cachedTokens": 24832
+    },
+    {
+      "at": "2026-09-19T23:50:23.864Z",
+      "status": 200,
+      "totalMs": 3760,
+      "outputTokens": 78,
+      "cachedTokens": 25088
+    },
+    {
+      "at": "2026-09-19T23:50:38.638Z",
+      "status": 200,
+      "totalMs": 5421,
+      "outputTokens": 128,
+      "cachedTokens": 25472
+    },
+    {
+      "at": "2026-09-19T23:50:44.842Z",
+      "status": 200,
+      "totalMs": 5555,
+      "outputTokens": 206,
+      "cachedTokens": 25600
+    },
+    {
+      "at": "2026-09-19T23:51:00.834Z",
+      "status": 200,
+      "totalMs": 8586,
+      "outputTokens": 389,
+      "cachedTokens": 25856
+    },
+    {
+      "at": "2026-09-19T23:51:07.239Z",
+      "status": 200,
+      "totalMs": 4863,
+      "outputTokens": 174,
+      "cachedTokens": 26240
+    },
+    {
+      "at": "2026-09-19T23:51:11.090Z",
+      "status": 200,
+      "totalMs": 3069,
+      "outputTokens": 88,
+      "cachedTokens": 26624
+    }
+  ],
+  "routing": [
+    {
+      "at": "2026-09-19T23:49:49.532Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 24604,
+      "cachedTokens": 12928,
+      "completionTokens": 138
+    },
+    {
+      "at": "2026-09-19T23:49:52.703Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 24800,
+      "cachedTokens": 24448,
+      "completionTokens": 48
+    },
+    {
+      "at": "2026-09-19T23:50:10.877Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 25012,
+      "cachedTokens": 24576,
+      "completionTokens": 291
+    },
+    {
+      "at": "2026-09-19T23:50:19.360Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 25327,
+      "cachedTokens": 24832,
+      "completionTokens": 171
+    },
+    {
+      "at": "2026-09-19T23:50:23.858Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 25588,
+      "cachedTokens": 25088,
+      "completionTokens": 78
+    },
+    {
+      "at": "2026-09-19T23:50:38.633Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 25835,
+      "cachedTokens": 25472,
+      "completionTokens": 128
+    },
+    {
+      "at": "2026-09-19T23:50:44.836Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 26022,
+      "cachedTokens": 25600,
+      "completionTokens": 206
+    },
+    {
+      "at": "2026-09-19T23:51:00.829Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 26394,
+      "cachedTokens": 25856,
+      "completionTokens": 389
+    },
+    {
+      "at": "2026-09-19T23:51:07.234Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 26807,
+      "cachedTokens": 26240,
+      "completionTokens": 174
+    },
+    {
+      "at": "2026-09-19T23:51:11.085Z",
+      "model": "switchyard/sol-medium",
+      "promptTokens": 27072,
+      "cachedTokens": 26624,
+      "completionTokens": 88
+    }
+  ],
+  "fallbackObservations": [
+    {
+      "at": "2026-09-19T23:49:40.962986Z",
+      "source": "fail_open",
+      "reasonCode": "non_text_state",
+      "finalTarget": "sol_medium"
+    },
+    {
+      "at": "2026-09-19T23:50:03.747358Z",
+      "source": "fail_open",
+      "finalTarget": "sol_medium",
+      "reasonCode": "non_text_state",
+      "confidence": 0,
+      "threshold": 0.35,
+      "decisionLatencyMs": 0
+    },
+    {
+      "at": "2026-09-19T23:50:33.220017Z",
+      "source": "fail_open",
+      "finalTarget": "sol_medium",
+      "reasonCode": "non_text_state",
+      "confidence": 0,
+      "threshold": 0.35,
+      "decisionLatencyMs": 0
+    },
+    {
+      "at": "2026-09-19T23:50:52.252676Z",
+      "source": "fail_open",
+      "finalTarget": "sol_medium",
+      "reasonCode": "non_text_state",
+      "confidence": 0,
+      "threshold": 0.35,
+      "decisionLatencyMs": 0
+    }
+  ],
+  "privatePayloadsRetained": false,
+  "conclusion": "Native v2 tool use and same-child continuity passed; the desired Luna-to-Sol-to-Astra-to-Sol switching did not occur on encrypted native subagent handoffs."
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "candidateOnly": true,
+  "assignment": "CHILD-ROUTING-G2",
+  "sourceBaseline": "eaef9c8338c923b49476eaad1b6647222bcc617a",
+  "executionSurface": "isolated candidate Router, locked candidate Switchyard, native Codex app-server parent and one explicit synthetic child role",
+  "productionRuntimeChanged": false,
+  "installedConfigurationChanged": false,
+  "sameChildAcrossFourTurns": true,
+  "authoredWorkModes": [
+    "extraction",
+    "implementation",
+    "architecture review",
+    "implementation"
+  ],
+  "selectedTargetsForNewAssignments": [
+    "switchyard/luna-max",
+    "switchyard/sol-medium",
+    "switchyard/astra-medium",
+    "switchyard/sol-medium"
+  ],
+  "exactCurrentTaskProjections": 4,
+  "encryptedHandoffsByteSemanticallyUnchanged": 4,
+  "toolContinuationsWithoutRepeatedProjection": 5,
+  "preservedOriginalFacts": true,
+  "preservedToolProducedState": true,
+  "classifierInput": "Each new assignment reached the authenticated Switchyard hop as its exact current plaintext projection; tool continuations carried no projection.",
+  "firstRequestGate": "The first actual named child used the temporary provider and switchyard/auto role before later turns ran.",
+  "failureTransitionTest": "An integrated Rust server test retains a non-default target for a tool continuation, then consumes a null new-assignment projection marker, releases affinity, selects Sol Medium and leaves the Jev call count unchanged.",
+  "nativeCompatibilityFinding": "Responses Lite requires synthesized relay calls to set reasoning.context=all_turns and parallel_tool_calls=false; the candidate now does so and has focused Router coverage.",
+  "sourceRoute": "v1",
+  "proofStatus": "draft",
+  "compatibilityPatchSha256": "73e28f54a4bcd780d602390e6aebf2f8979ab05c03d5b1511ecaab959605385d",
+  "candidateBinarySha256": "097c3e405a74bdd623e01a02a48f41a621eb5109a0ffa458fe1a8c679bd48cc8",
+  "limitations": [
+    "This is isolated predeployment evidence and cannot certify or promote the installed runtime to v2.",
+    "The run used four fresh synthetic assignments and one child; it is bounded evidence rather than a statistical reliability guarantee.",
+    "G1 observed projection latency and native relay token cost on its six-case corpus; the code enforces a 5-second projection wait, but neither G1 nor this isolated run guarantees a token bound or future latency distribution.",
+    "The native relay is model-generated extraction, not a documented decrypt API."
+  ],
+  "privatePayloadsRetained": false,
+  "ciphertextRetained": false,
+  "credentialsRetained": false
+}
