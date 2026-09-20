@@ -13,7 +13,7 @@ The current applications are:
 - retired historical acceptance:
   [`openrouter/union-alpha`](openrouter/union-alpha/proof.md) (does not certify Pareto)
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- draft pending fresh deployment-bound acceptance: [`switchyard/auto`](switchyard/auto/proof.md)
+- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 
 Create or refresh an application by copying both
 [`_template/proof.json`](_template/proof.json) and

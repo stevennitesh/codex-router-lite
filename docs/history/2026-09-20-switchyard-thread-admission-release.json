@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "testedAt": "2026-09-20T21:19:30.855Z",
+  "routerVersion": "0.7.0",
+  "candidateCommit": "0cf7625d50b7f05822ca0eb3687dd82fea14232a",
+  "runtimeBinding": {
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
+    "patchSha256": "6ddc87abe19cf709b3b548304b27b683420323a18fab0bc753bbe627c7b28bad",
+    "binarySha256": "e68f40edb014cacd0bcdec781d41bc7bb537a65a25c08daf569a11f9833a5876",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"
+  },
+  "realAppThread": {
+    "executionSurface": "codex-desktop-native",
+    "producerShape": {
+      "type": "function_call_output",
+      "idPrefix": "fco_",
+      "namespace": "codex_app",
+      "functions": [
+        "create_thread",
+        "send_message_to_thread"
+      ],
+      "callIdPresent": false
+    },
+    "successes": 6,
+    "failures": 0,
+    "classifierDecisions": 4,
+    "providerModel": "typesafe/jev-1.13-20260917",
+    "currentAssignments": [
+      "switchyard/luna-max",
+      "switchyard/luna-max",
+      "switchyard/astra-xhigh",
+      "switchyard/luna-max"
+    ],
+    "ordinaryCallLinkedContinuations": {
+      "target": "switchyard/astra-xhigh",
+      "additionalClassifierDecisions": 0
+    },
+    "currentAfterOlderComplexHistory": "switchyard/luna-max",
+    "privatePayloadsRetained": false
+  },
+  "maintainedLiveVerifier": {
+    "outcome": "pass",
+    "evidenceSha256": "ab5241a63fc1746f5f5f5b126d8b7ed4a95e79d934c8945422653d3c5a1d8a74",
+    "selectedTargets": [
+      "switchyard/luna-max",
+      "switchyard/luna-max"
+    ],
+    "ordinaryToolAffinity": true,
+    "nonTextFallbackZeroProviderCalls": true,
+    "compactionBypassedClassifier": true,
+    "requiredFailures": []
+  },
+  "nativeV2": {
+    "executionSurface": "codex-desktop-native",
+    "role": "router_switchyard_auto",
+    "isolatedChild": true,
+    "sameChildFollowUp": true,
+    "tool": {
+      "kind": "PowerShell",
+      "result": 42,
+      "exitCode": 0
+    },
+    "markers": [
+      "CERT_FIRST_OK",
+      "CERT_SECOND_OK"
+    ],
+    "routerCompletions": [
+      {
+        "at": "2026-09-20T21:18:03.361Z",
+        "status": 200,
+        "totalMs": 7701
+      },
+      {
+        "at": "2026-09-20T21:18:05.951Z",
+        "status": 200,
+        "totalMs": 1808
+      },
+      {
+        "at": "2026-09-20T21:18:15.228Z",
+        "status": 200,
+        "totalMs": 5623
+      }
+    ],
+    "selectedTargets": [
+      "switchyard/luna-max",
+      "switchyard/luna-max",
+      "switchyard/luna-max"
+    ],
+    "classifierDecisions": 2,
+    "activeTurnCancellation": false,
+    "privatePayloadsRetained": false,
+    "requiredFailures": []
+  },
+  "ci": {
+    "run": 35537818891,
+    "conclusion": "success"
+  },
+  "rollbackRetained": true,
+  "limitations": [
+    "Bounded synthetic Windows app and native-child runs, not a manual UI soak.",
+    "The real Rust integration uses a controlled classifier provider stub; live Jev behavior is evidenced separately by deployed routing records.",
+    "Other v2 routes were not recertified."
+  ]
+}
