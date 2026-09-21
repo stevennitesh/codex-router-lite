@@ -1,5 +1,8 @@
 # switchyard/auto v2 certification
 
+Source renewal pending after data-only terminal classification changes. The
+acceptance below remains historical evidence for installed runtime `75ddd5d5`.
+
 Accepted on 2026-09-21T04:09:21.308Z against deployed Router `75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f`
 (version 0.7.0), codex-cli 0.155.0-alpha.9.2, native CLI parent and exact-route child.
 Endpoint: local-switchyard; no endpoint substitution.

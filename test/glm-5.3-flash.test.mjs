@@ -43,8 +43,8 @@ function assertGlmContract(slug, endpoint, multiAgentVersion) {
 }
 
 test("OpenRouter GLM routes own their exact endpoint contracts", () => {
-  assertGlmContract("openrouter/glm-5.3-flash", "novita", "v2");
-  assertGlmContract("openrouter/glm-5.3-flash-gmicloud", "gmicloud", "v2");
+  assertGlmContract("openrouter/glm-5.3-flash", "novita", "v1");
+  assertGlmContract("openrouter/glm-5.3-flash-gmicloud", "gmicloud", "v1");
 });
 
 test("OpenRouter GLM accepts any one explicitly selected endpoint", () => {

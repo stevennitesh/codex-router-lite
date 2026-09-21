@@ -33,6 +33,51 @@ function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
 }
 
+test("Router withholds data-only empty success after reasoning and recovers replaceable empty turns", async () => {
+  let mode, attempts;
+  const hop = await mockServer(async (request, response) => {
+    await bodyJson(request);
+    attempts += 1;
+    const encode = data => `data: ${JSON.stringify(data)}\n\n`;
+    const output = mode === "answer" || attempts === 2 ? [{ type: "message", role: "assistant",
+      content: [{ type: "output_text", text: "real answer" }] }] : [];
+    const prelude = mode === "reasoning" ? encode({ type: "response.reasoning_summary_text.delta", delta: "thinking" }) : "";
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(prelude + encode({ type: "response.completed", response: { id: "resp_data_only", status: "completed", output } })
+      + (mode === "reasoning" ? "data: [DONE]\n\n" : ""));
+  });
+  const state = mkdtempSync(path.join(os.tmpdir(), "data-only-guard-"));
+  const port = await openPort();
+  const router = run("router.mjs", { CODEX_ROUTER_PORT: String(port), CODEX_ROUTER_STATE_DIR: state,
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${hop.port}/v1`,
+    CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1", CODEX_ROUTER_QUIET: "1" });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    for (mode of ["reasoning", "empty", "answer"]) {
+      attempts = 0;
+      const response = await fetch(`${routerBase(port)}/responses`, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "Synthetic data-only completion test", stream: true }) });
+      const wire = await response.text();
+      assert.equal(response.status, 200, wire);
+      if (mode === "reasoning") {
+        assert.match(wire, /thinking/);
+        assert.match(wire, /empty_completion/);
+        assert.doesNotMatch(wire, /response\.completed|\[DONE\]/);
+      } else {
+        assert.match(wire, /real answer/);
+        assert.match(wire, /response\.completed/);
+        assert.doesNotMatch(wire, /empty_completion/);
+      }
+      assert.equal(attempts, mode === "empty" ? 2 : 1);
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(hop.server);
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
 for (const model of ["switchyard/auto", "openrouter/glm-5.3-flash"]) {
   test(`${model} empty-completion recovery preserves its no-redirect boundary`, async () => {
     const stateDir = mkdtempSync(path.join(os.tmpdir(), "retry-boundary-"));

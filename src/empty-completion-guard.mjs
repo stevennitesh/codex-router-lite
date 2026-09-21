@@ -34,6 +34,15 @@ export function isEmptyCompletionPreludeLimitError(error) {
 // gateways emit instead. All three close the response, so the guard holds
 // them until it knows the turn actually produced something.
 function isTerminalEvent(eventType, dataText) {
+  // Match content/liveness classification when the optional SSE event field
+  // is absent. Both guards, including their flush paths, use this predicate.
+  if (eventType === undefined && dataText && dataText !== "[DONE]") {
+    try {
+      eventType = JSON.parse(dataText)?.type;
+    } catch {
+      // Unparseable data is not evidence of a successful terminal.
+    }
+  }
   return (
     dataText === "[DONE]" ||
     eventType === "response.completed" ||

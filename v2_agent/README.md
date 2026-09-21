@@ -6,14 +6,15 @@ not current instructions or proof of a later candidate. Keep these paths because
 the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
-The four active routes have accepted applications for deployed Router
+The four source applications are draft pending deployment and exact-route renewal
+after data-only terminal classification changes. They retain historical acceptance for Router
 `75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f`. Each application records its exact runtime
 and passing native collaboration window:
 
-- accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
-- accepted: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md)
-- accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
+- draft; prior installed runtime accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
+- draft; prior installed runtime accepted: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md)
+- draft; prior installed runtime accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
+- draft; prior installed runtime accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
 Create or refresh an application by copying both
