@@ -92,9 +92,15 @@ export function prepareOpenRouterRequest(payload) {
   }
   // Codex sends an empty tool list on compaction and plain turns. Omitting it
   // has the same meaning and avoids strict OpenAI-compatible validators that
-  // reject `tools: []`. Drop tool_choice only when that empty list was present;
+  // reject `tools: []`. Only non-forcing choices are redundant with that list;
   // a request that never sent tools keeps its original choice contract.
   if (Array.isArray(clean.tools) && clean.tools.length === 0) {
+    if (clean.tool_choice !== undefined && !["auto", "none"].includes(clean.tool_choice)) {
+      throw safeLocalHttpError("A forced tool choice requires a non-empty tool list.", {
+        status: 400,
+        code: "unsupported_tool_choice",
+      });
+    }
     delete clean.tools;
     delete clean.tool_choice;
   }

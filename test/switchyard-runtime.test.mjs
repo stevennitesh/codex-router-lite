@@ -18,6 +18,7 @@ import {
   validateSwitchyardConfigContract,
 } from "../scripts/switchyard-config-contract.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
+import { PROVIDERS, resolveProviderBaseUrl } from "../src/routed-models.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +60,23 @@ test("the service injects the managed OpenRouter key only into the Switchyard ch
   assert.match(source, /resolveProviderCredential\("openrouter"\)/u);
   assert.match(source, /OPENROUTER_API_KEY: switchyardOpenRouterCredential\.value/u);
   assert.doesNotMatch(source, /process\.env\.OPENROUTER_API_KEY\s*=/u);
+});
+
+test("Switchyard loopback validation rejects DNS lookalikes and preserves literal addresses", () => {
+  const provider = PROVIDERS.get("switchyard");
+  for (const host of ["127.not-loopback.invalid", "127.0.0.1.not-loopback.invalid", "192.0.2.10"]) {
+    const env = { CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://${host}:4000/v1` };
+    const resolved = resolveProviderBaseUrl(provider, env);
+    assert.equal(resolved.refusedOverride, true, host);
+    assert.equal(resolved.baseUrl, provider.baseUrl);
+    assert.throws(() => switchyardHealthUrl({ env }), /must bind to loopback/, host);
+  }
+  for (const host of ["localhost", "127.0.0.1", "127.42.3.4", "127.1", "[::1]"]) {
+    const url = new URL(`http://${host}:4000/v1`);
+    const env = { CODEX_ROUTER_SWITCHYARD_BASE_URL: url.href };
+    assert.equal(resolveProviderBaseUrl(provider, env).refusedOverride, false, host);
+    assert.equal(switchyardHealthUrl({ env }), `${url.origin}/health`, host);
+  }
 });
 
 test("managed Switchyard rejects a non-loopback bind", () => {

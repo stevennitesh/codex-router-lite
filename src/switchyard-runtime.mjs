@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isIPv4 } from "node:net";
 
 import {
   PROVIDERS,
@@ -18,7 +19,7 @@ export function switchyardHealthUrl({ env = process.env } = {}) {
   }
   const baseUrl = new URL(resolved.baseUrl);
   const host = baseUrl.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const loopback = host === "localhost" || host === "::1" || /^127(?:\.|$)/u.test(host);
+  const loopback = host === "localhost" || host === "::1" || (isIPv4(host) && host.startsWith("127."));
   if (!loopback) {
     throw new Error(
       `Managed Switchyard must bind to loopback; refusing ${baseUrl.origin}.`,

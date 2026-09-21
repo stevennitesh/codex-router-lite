@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isIPv4 } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -181,7 +182,7 @@ export function resolveProviderBaseUrl(provider, env = process.env) {
   const candidate = configured || provider.baseUrl;
   const parsed = new URL(candidate);
   const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const loopback = host === "localhost" || host === "::1" || /^127(?:\.|$)/u.test(host);
+  const loopback = host === "localhost" || host === "::1" || (isIPv4(host) && host.startsWith("127."));
   const refusedOverride = provider.id === "switchyard" && configured !== "" && !loopback;
   return { baseUrl: refusedOverride ? provider.baseUrl : parsed.href.replace(/\/$/u, ""), refusedOverride };
 }

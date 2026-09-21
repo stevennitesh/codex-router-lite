@@ -40,6 +40,25 @@ test("final OpenRouter preparation pins each endpoint and preserves caller input
   }
 });
 
+test("empty tools preserve non-forcing semantics and reject impossible forced choices", () => {
+  for (const route of externalRoutes.filter(route => route.requestProfile === "glm-5.3-flash")) {
+    for (const tool_choice of [undefined, "auto", "none"]) {
+      const result = prepareOpenRouterRequest({ model: route.slug, tools: [], tool_choice });
+      assert.equal(Object.hasOwn(result, "tools"), false);
+      assert.equal(Object.hasOwn(result, "tool_choice"), false);
+    }
+    for (const tool_choice of ["required", { type: "function", name: "must_run" },
+      { type: "function", function: { name: "must_run" } },
+      { type: "allowed_tools", mode: "required", tools: [{ type: "function", name: "must_run" }] }]) {
+      assert.throws(() => prepareOpenRouterRequest({ model: route.slug, tools: [], tool_choice }),
+        error => error.status === 400 && error.code === "unsupported_tool_choice");
+    }
+    const result = prepareOpenRouterRequest({ model: route.slug,
+      tools: [{ type: "function", name: "must_run", parameters: { type: "object" } }], tool_choice: "required" });
+    assert.equal(result.tool_choice, "required");
+  }
+});
+
 test("internal callers cannot bypass final hosted-search bounds", () => {
   for (const route of externalRoutes) {
     for (const tools of [[{ type: "web_search" }], [{ type: "openrouter:unknown" }],

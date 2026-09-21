@@ -171,6 +171,18 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
     assert.equal(seen[1].body.tools, undefined);
     assert.equal(seen[1].body.tool_choice, undefined);
 
+    for (const tool_choice of ["required", { type: "function", name: "must_run" },
+      { type: "allowed_tools", mode: "required", tools: [{ type: "function", name: "must_run" }] }]) {
+      const forced = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openrouter-glm-5-3-flash", tools: [], tool_choice }),
+      });
+      assert.equal(forced.status, 400);
+      assert.equal((await forced.json()).error.code, "unsupported_tool_choice");
+      assert.equal(seen.length, 2, "unsatisfiable tool choice reached the provider");
+    }
+
     const gmiCloud = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
