@@ -2409,18 +2409,19 @@ async function handleResponses(request, response, requestUrl) {
     if (route && !switchyard) {
       assertRoutedSearchContract(route, builtSearchMode, searchContract);
     }
+    const upstreamInit = {
+      method: "POST",
+      headers,
+      body: routedBody,
+      signal: controller.signal,
+      // A routed hop has a fixed loopback owner. Following 307/308 would
+      // replay the prompt and, for Switchyard, native authorization to a
+      // destination outside that route contract. Recovery uses this same policy.
+      ...(route ? { redirect: "error" } : {}),
+    };
     let { response: upstream, retries } = await fetchWithRetry(
       target,
-      {
-        method: "POST",
-        headers,
-        body: routedBody,
-        signal: controller.signal,
-        // A routed hop has a fixed loopback owner. Following 307/308 would
-        // replay the prompt and, for Switchyard, native authorization to a
-        // destination outside that route contract.
-        ...(route ? { redirect: "error" } : {}),
-      },
+      upstreamInit,
       {
         // Routed traffic terminates at the local gateway, which has its own
         // error translation and Retry-After handling below; leave it exactly
@@ -2645,12 +2646,7 @@ async function handleResponses(request, response, requestUrl) {
       try {
         const retried = await fetchWithRetry(
           target,
-          {
-            method: "POST",
-            headers,
-            body: routedBody,
-            signal: controller.signal,
-          },
+          upstreamInit,
           {
             retries: 0,
             canRetry: () => nothingRelayed(response),

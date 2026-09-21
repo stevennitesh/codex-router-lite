@@ -33,6 +33,77 @@ function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
 }
 
+for (const model of ["switchyard/auto", "openrouter/glm-5.3-flash"]) {
+  test(`${model} empty-completion recovery preserves its no-redirect boundary`, async () => {
+    const stateDir = mkdtempSync(path.join(os.tmpdir(), "retry-boundary-"));
+    const switchyardRoot = path.join(stateDir, "switchyard");
+    mkdirSync(switchyardRoot);
+    writeFileSync(path.join(switchyardRoot, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
+    writeFileSync(path.join(switchyardRoot, "routes.toml"), "# fixture\n");
+    writeFileSync(path.join(stateDir, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["openrouter", "switchyard"] }));
+    let redirectedRequests = 0;
+    const destination = await mockServer(async (request, response) => {
+      redirectedRequests += 1;
+      request.resume();
+      json(response, 200, { output: [] });
+    });
+    let attempts = [];
+    let outcome;
+    const hop = await mockServer(async (request, response) => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      attempts.push({ body: Buffer.concat(chunks), headers: request.headers });
+      if (attempts.length === 2 && outcome !== "success") {
+        response.writeHead(outcome, { Location: `http://127.0.0.1:${destination.port}/redirected` });
+        response.end();
+        return;
+      }
+      const output = attempts.length === 1 ? [] : [{
+        type: "message", role: "assistant", status: "completed",
+        content: [{ type: "output_text", text: "recovered" }],
+      }];
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: {
+        id: "resp_retry_fixture", status: "completed", output,
+      } })}\n\n`);
+    });
+    const port = await openPort();
+    const router = run("router.mjs", {
+      CODEX_ROUTER_PORT: String(port), CODEX_ROUTER_STATE_DIR: stateDir,
+      CODEX_ROUTER_SWITCHYARD_ROOT: switchyardRoot,
+      CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${hop.port}/v1`,
+      CODEX_ROUTER_SWITCHYARD_CAPABILITY: "synthetic-retry-capability",
+      CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${hop.port}/v1`,
+      CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1", CODEX_ROUTER_QUIET: "1",
+    });
+    try {
+      await waitFor(`${routerBase(port)}/models`, router);
+      for (outcome of [307, 308, "success"]) {
+        attempts = [];
+        const response = await fetch(`${routerBase(port)}/responses`, {
+          method: "POST", headers: { "Content-Type": "application/json",
+            Authorization: "Bearer synthetic-native-token", "chatgpt-account-id": "synthetic-account" },
+          body: JSON.stringify({ model, stream: true, input: "Synthetic retry boundary test" }),
+        });
+        const wire = await response.text();
+        assert.equal(response.status, outcome === "success" ? 200 : 502, wire);
+        if (outcome === "success") assert.match(wire, /recovered/);
+        else {
+          assert.equal(JSON.parse(wire).error.code, "empty_completion_retry_failed");
+          assert.doesNotMatch(wire, /synthetic-native-token|synthetic-account|synthetic-retry-capability|redirected/);
+        }
+        assert.equal(attempts.length, 2, "exactly one recovery attempt");
+        assert.deepEqual(attempts[1], attempts[0], "retry preserves headers and Buffer body bytes");
+        assert.equal(redirectedRequests, 0);
+      }
+    } finally {
+      await stopChild(router);
+      await Promise.all([closeServer(hop.server), closeServer(destination.server)]);
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+}
+
 test("GLM keeps colliding tool identities distinct in declarations, forced choices, and replay", async () => {
   const seen = [];
   const gateway = await mockServer(async (request, response) => {

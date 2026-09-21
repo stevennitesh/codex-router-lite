@@ -23,6 +23,8 @@ The installer preserves the current Codex login and user-owned settings. It refu
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
 native Codex requests remain available during that setup interval.
+Startup still launches and waits for the local LiteLLM gateway, so native-only
+operation requires the installed Python runtime even without an OpenRouter key.
 
 To use OpenRouter routes, set the credential with the protected prompt:
 
