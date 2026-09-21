@@ -1,3 +1,7 @@
+Historical completed plan. The interim status and pending-release statements below
+are retained as planning history, not current authority. Delivery and four-route
+acceptance completed in the [release record](2026-09-20-relay-release.md).
+
 # Hop credentials and local error propagation
 
 2026-09-20. Baseline `84e19e3cae9f58baf1dcd7b49bb59440fbbe401b`.

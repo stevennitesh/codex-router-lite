@@ -15,6 +15,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Switchyard delivery and evidence
 
+- [Relay hardening deployed acceptance, 2026-09-20](2026-09-20-relay-release.md) and [four-route certification evidence](2026-09-20-relay-release-certification.json)
 - [Thread-admission correction and release, 2026-09-20](2026-09-20-switchyard-thread-admission-completed.md) and [release evidence](2026-09-20-switchyard-thread-admission-release.json)
 - [Native child automatic-routing G2 deployed acceptance, 2026-09-20](2026-09-20-switchyard-child-routing-g2-deployed-evidence.json), [live verifier](2026-09-20-switchyard-g2-live-verification.json), and [isolated candidate evidence](2026-09-20-switchyard-child-routing-g2-isolated-evidence.json)
 - [Completed native child routing plan](2026-09-20-switchyard-child-routing-plan-completed.md) and [handoff](2026-09-20-switchyard-child-routing-handoff-completed.md), 2026-09-20

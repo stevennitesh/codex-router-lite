@@ -1,3 +1,7 @@
+Historical completed plan. The interim status and pending-release statements below
+are retained as planning history, not current authority. Delivery and four-route
+acceptance completed in the [release record](2026-09-20-relay-release.md).
+
 # Relay response validation and safe local errors
 
 Delivery plan, 2026-09-20. Status: RV1 source candidate implemented and verified;

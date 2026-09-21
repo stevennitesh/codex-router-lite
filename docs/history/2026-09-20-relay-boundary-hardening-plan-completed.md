@@ -1,3 +1,7 @@
+Historical completed plan. The interim status and pending-release statements below
+are retained as planning history, not current authority. Delivery and four-route
+acceptance completed in the [release record](2026-09-20-relay-release.md).
+
 # Relay boundary hardening
 
 2026-09-20. Baseline: `097dea8f4afb46622e2dc01b024c224544feedae`.

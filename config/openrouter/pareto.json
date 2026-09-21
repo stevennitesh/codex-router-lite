@@ -17,7 +17,7 @@
       "inputModalities": ["text", "image"],
       "supportsToolSearch": true,
       "requestProfile": "pareto",
-      "multiAgentVersion": "v1",
+      "multiAgentVersion": "v2",
       "behaviorTemplate": "gpt-5.6-sol",
       "openRouterProviderPolicy": {
         "order": ["unbiased"],
