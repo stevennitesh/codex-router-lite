@@ -1,3 +1,7 @@
+> Historical completed delivery record. Source behavior is maintained in the
+> installation and architecture guides. Accepted runtime: `75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f`.
+> See [release evidence](2026-09-20-startup-stream-release-certification.json).
+
 # Optional-provider startup and stream boundaries
 
 2026-09-20. Comparison baseline: local `d64dd75b` (accepted deployment is
@@ -115,3 +119,11 @@ provider, service, user configuration, commit, or remote was changed.
 Integrated review caught and resolved a chunk-partition discrepancy in complete
 line size checks. Final review found no remaining blocking findings within SS1.
 Deployment and exact-route certification remain separate release gates.
+
+## Release acceptance
+
+The startup/stream candidate and subsequent retry redirect-policy correction were
+deployed as `75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f`. All four exact routes passed fresh native
+CLI collaboration, actual sandboxed tool output, and same-child follow-up.
+Installed Switchyard live checks passed tools, media fallback, and compaction.
+Earlier provisional statuses above describe the pre-release phase only.

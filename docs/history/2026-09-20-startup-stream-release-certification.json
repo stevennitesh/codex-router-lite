@@ -1,0 +1,195 @@
+{
+  "routerCommit": "75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f",
+  "codexVersion": "codex-cli 0.155.0-alpha.9.2",
+  "runtimeBinding": {
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "deployedAt": "2026-09-21T04:04:29.2247452Z",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
+    "routerCommit": "75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "version": 1,
+    "patchSha256": "6ddc87abe19cf709b3b548304b27b683420323a18fab0bc753bbe627c7b28bad",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "binarySha256": "e68f40edb014cacd0bcdec781d41bc7bb537a65a25c08daf569a11f9833a5876",
+    "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a"
+  },
+  "reports": [
+    {
+      "slug": "openrouter/glm-5.3-flash",
+      "startedAt": "2026-09-21T04:05:46.947Z",
+      "endedAt": "2026-09-21T04:07:12.307Z",
+      "encryptedHandoffCount": 2,
+      "tools": [
+        {
+          "at": "2026-09-21T04:06:05.436Z",
+          "name": "exec_command",
+          "success": true,
+          "defaultSandbox": true
+        }
+      ],
+      "finals": [
+        {
+          "at": "2026-09-21T04:06:11.294Z",
+          "marker": "NOVITA_75DDD5D5_FIRST_OK"
+        },
+        {
+          "at": "2026-09-21T04:07:01.939Z",
+          "marker": "NOVITA_75DDD5D5_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-09-21T04:06:04.537Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 11009
+        },
+        {
+          "at": "2026-09-21T04:06:11.265Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 5745
+        },
+        {
+          "at": "2026-09-21T04:07:01.931Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 46410
+        }
+      ]
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash-gmicloud",
+      "startedAt": "2026-09-21T04:07:12.308Z",
+      "endedAt": "2026-09-21T04:08:03.071Z",
+      "encryptedHandoffCount": 2,
+      "tools": [
+        {
+          "at": "2026-09-21T04:07:31.324Z",
+          "name": "exec_command",
+          "success": true,
+          "defaultSandbox": true
+        }
+      ],
+      "finals": [
+        {
+          "at": "2026-09-21T04:07:39.923Z",
+          "marker": "GMI_75DDD5D5_FIRST_OK"
+        },
+        {
+          "at": "2026-09-21T04:07:55.187Z",
+          "marker": "GMI_75DDD5D5_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-09-21T04:07:30.521Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 11843
+        },
+        {
+          "at": "2026-09-21T04:07:39.856Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 8466
+        },
+        {
+          "at": "2026-09-21T04:07:55.180Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 10770
+        }
+      ]
+    },
+    {
+      "slug": "openrouter/pareto",
+      "startedAt": "2026-09-21T04:08:03.071Z",
+      "endedAt": "2026-09-21T04:08:31.145Z",
+      "encryptedHandoffCount": 2,
+      "tools": [
+        {
+          "at": "2026-09-21T04:08:15.677Z",
+          "name": "exec_command",
+          "success": true,
+          "defaultSandbox": true
+        }
+      ],
+      "finals": [
+        {
+          "at": "2026-09-21T04:08:17.148Z",
+          "marker": "PARETO_75DDD5D5_FIRST_OK"
+        },
+        {
+          "at": "2026-09-21T04:08:24.160Z",
+          "marker": "PARETO_75DDD5D5_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-09-21T04:08:14.805Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 5678
+        },
+        {
+          "at": "2026-09-21T04:08:17.121Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 1370
+        },
+        {
+          "at": "2026-09-21T04:08:24.152Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 4154
+        }
+      ]
+    },
+    {
+      "slug": "switchyard/auto",
+      "startedAt": "2026-09-21T04:08:31.145Z",
+      "endedAt": "2026-09-21T04:09:21.308Z",
+      "encryptedHandoffCount": 2,
+      "tools": [
+        {
+          "at": "2026-09-21T04:08:57.986Z",
+          "name": "exec",
+          "success": true,
+          "defaultSandbox": true
+        }
+      ],
+      "finals": [
+        {
+          "at": "2026-09-21T04:09:00.273Z",
+          "marker": "SWITCHYARD_75DDD5D5_FIRST_OK"
+        },
+        {
+          "at": "2026-09-21T04:09:11.514Z",
+          "marker": "SWITCHYARD_75DDD5D5_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-09-21T04:08:57.094Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 19782
+        },
+        {
+          "at": "2026-09-21T04:09:00.277Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 2230
+        },
+        {
+          "at": "2026-09-21T04:09:11.546Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 5516
+        }
+      ]
+    }
+  ]
+}

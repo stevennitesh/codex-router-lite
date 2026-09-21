@@ -3,7 +3,7 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
@@ -16,39 +16,39 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:48:11.829Z"
+      "observedAt": "2026-09-21T04:09:21.308Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:48:11.829Z",
+      "observedAt": "2026-09-21T04:09:21.308Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:48:11.829Z"
+      "observedAt": "2026-09-21T04:09:21.308Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:48:11.829Z"
+      "observedAt": "2026-09-21T04:09:21.308Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:48:11.829Z"
+      "observedAt": "2026-09-21T04:09:21.308Z"
     }
   },
-  "testedAt": "2026-09-21T01:48:11.829Z",
-  "routerCommit": "19d1ac399f0df4851b56c9f0be64c3a8bb8de682",
+  "testedAt": "2026-09-21T04:09:21.308Z",
+  "routerCommit": "75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f",
   "runtimeBinding": {
     "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "upstreamContributionSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a",
     "patchSha256": "6ddc87abe19cf709b3b548304b27b683420323a18fab0bc753bbe627c7b28bad",
     "binarySha256": "e68f40edb014cacd0bcdec781d41bc7bb537a65a25c08daf569a11f9833a5876",
-    "routerCommit": "19d1ac399f0df4851b56c9f0be64c3a8bb8de682",
+    "routerCommit": "75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f",
     "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
     "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
     "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"

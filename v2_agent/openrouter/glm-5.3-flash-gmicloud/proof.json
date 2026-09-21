@@ -3,7 +3,7 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash-gmicloud",
-  "status": "draft",
+  "status": "accepted",
   "endpointProvider": "gmicloud",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash",
@@ -16,30 +16,30 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:46:54.563Z"
+      "observedAt": "2026-09-21T04:08:03.071Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:46:54.563Z",
+      "observedAt": "2026-09-21T04:08:03.071Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:46:54.563Z"
+      "observedAt": "2026-09-21T04:08:03.071Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:46:54.563Z"
+      "observedAt": "2026-09-21T04:08:03.071Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-21T01:46:54.563Z"
+      "observedAt": "2026-09-21T04:08:03.071Z"
     }
   },
-  "testedAt": "2026-09-21T01:46:54.563Z",
-  "routerCommit": "19d1ac399f0df4851b56c9f0be64c3a8bb8de682"
+  "testedAt": "2026-09-21T04:08:03.071Z",
+  "routerCommit": "75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f"
 }
