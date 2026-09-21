@@ -1296,6 +1296,7 @@ function parseRelayedAgentPayloadSse(text) {
     return undefined;
   }
   const observedRelayIdentities = {};
+  const completedRelayItems = [];
   let completedResponse;
   let terminalCount = 0;
   let rejected = false;
@@ -1322,6 +1323,7 @@ function parseRelayedAgentPayloadSse(text) {
         event.item.name === AGENT_PAYLOAD_RELAY_TOOL
       ) {
         const identities = relayedCallIdentities(event.item);
+        if (event.type === "response.output_item.done") completedRelayItems.push(event.item);
         if (!identities) {
           rejected = true;
         } else {
@@ -1357,18 +1359,29 @@ function parseRelayedAgentPayloadSse(text) {
     }
   }
   if (rejected || terminalCount !== 1 || !completedResponse) return undefined;
-  const finalCalls = Array.isArray(completedResponse.output)
+  let finalCalls = Array.isArray(completedResponse.output)
     ? completedResponse.output.filter(
       (item) => item?.type === "function_call" && item.name === AGENT_PAYLOAD_RELAY_TOOL,
     )
     : [];
+  // Responses Lite closes items individually and leaves terminal output empty.
+  // Closed items are usable only after the successful terminal above, never at
+  // argument completion or EOF. Do not reconstruct from speculative deltas.
+  if (completedRelayItems.length > 1) return undefined;
+  if (finalCalls.length === 0 && Array.isArray(completedResponse.output) &&
+      completedResponse.output.length === 0) {
+    finalCalls = completedRelayItems;
+  }
   if (finalCalls.length !== 1) return undefined;
   const finalIdentities = relayedCallIdentities(finalCalls[0]);
   if (!finalIdentities) return undefined;
   for (const [field, identity] of Object.entries(observedRelayIdentities)) {
     if (finalIdentities[field] !== identity) return undefined;
   }
-  return parseRelayedAgentPayload(completedResponse, { requireStatus: false });
+  if (completedRelayItems.length &&
+      parseRelayedAgentArguments(completedRelayItems[0].arguments) !==
+      parseRelayedAgentArguments(finalCalls[0].arguments)) return undefined;
+  return parseRelayedAgentPayload({ ...completedResponse, output: finalCalls }, { requireStatus: false });
 }
 
 function nativeRelayContext(request) {

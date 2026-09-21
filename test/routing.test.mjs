@@ -940,7 +940,21 @@ test("relay extraction requires one completed final call and caches only success
       return;
     }
     const call = relayCall(`payload:${token}`);
-    if (token === "gAAAAA-unicode-json=") {
+    if (token === "gAAAAA-lite-completed=") {
+      sse(response, [
+        { type: "response.output_item.added", item: { ...call, arguments: "" } },
+        { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+        { type: "response.output_item.done", item: call },
+        { type: "response.completed", response: { status: "completed", output: [] } },
+      ]);
+    } else if (["gAAAAA-lite-failed=", "gAAAAA-lite-incomplete=", "gAAAAA-lite-duplicate="].includes(token)) {
+      const status = token.includes("failed") ? "failed" : token.includes("incomplete") ? "incomplete" : "completed";
+      sse(response, [
+        { type: "response.output_item.done", item: call },
+        ...(token.includes("duplicate") ? [{ type: "response.output_item.done", item: call }] : []),
+        { type: `response.${status}`, response: { status, output: [] } },
+      ]);
+    } else if (token === "gAAAAA-unicode-json=") {
       json(response, 200, {
         status: "completed",
         output: [relayCall('Unicode: café 🌍\n"quoted"')],
@@ -1106,6 +1120,9 @@ test("relay extraction requires one completed final call and caches only success
       "gAAAAA-duplicate-envelope-json=",
       "gAAAAA-duplicate-arguments-json=",
       "gAAAAA-duplicate-event-sse=",
+      "gAAAAA-lite-failed=",
+      "gAAAAA-lite-incomplete=",
+      "gAAAAA-lite-duplicate=",
     ]) {
       const before = gatewayRequests.length;
       const response = await send(token);
@@ -1116,6 +1133,7 @@ test("relay extraction requires one completed final call and caches only success
     for (const [token, expected] of [
       ["gAAAAA-unicode-json=", 'Unicode: café 🌍\n"quoted"'],
       ["gAAAAA-comment-crlf-sse=", "CRLF_KEEPALIVE_OK"],
+      ["gAAAAA-lite-completed=", "payload:gAAAAA-lite-completed="],
     ]) {
       const response = await send(token);
       assert.equal(response.status, 200, await response.text());
@@ -1126,7 +1144,7 @@ test("relay extraction requires one completed final call and caches only success
     const failed = await send(token);
     assert.equal(failed.status, 502);
     assert.equal(attempts.get(token), 1);
-    assert.equal(gatewayRequests.length, 2);
+    assert.equal(gatewayRequests.length, 3);
     const succeeded = await send(token);
     assert.equal(succeeded.status, 200, await succeeded.text());
     assert.equal(attempts.get(token), 2, "failed extraction must not populate the cache");
@@ -1134,7 +1152,7 @@ test("relay extraction requires one completed final call and caches only success
     const cached = await send(token);
     assert.equal(cached.status, 200, await cached.text());
     assert.equal(attempts.get(token), 2, "completed extraction should be reused");
-    assert.equal(gatewayRequests.length, 4);
+    assert.equal(gatewayRequests.length, 5);
   } finally {
     await stopChild(router);
     await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
