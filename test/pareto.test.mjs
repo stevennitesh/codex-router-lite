@@ -162,6 +162,7 @@ test("Pareto uses the authenticated direct Responses hop for native tools, repla
   const [apiPort, routerPort] = await Promise.all([openPort(), openPort()]);
   const env = { CODEX_ROUTER_STATE_DIR: state, MODEL_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_INTERNAL_KEY: internal, CODEX_ROUTER_CALLER_KEY: caller,
+    MODEL_ROUTER_MAX_BODY_BYTES: "65536",
     CODEX_ROUTER_API_PORT: String(apiPort), CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${apiPort}/v1`,
     CODEX_ROUTER_GATEWAY_BASE_URL: "http://127.0.0.1:1/v1", CODEX_ROUTER_QUIET: "1", CODEX_ROUTER_SHOW_ALL_MODELS: "1",
@@ -303,6 +304,22 @@ test("Pareto uses the authenticated direct Responses hop for native tools, repla
       assert.doesNotMatch(JSON.stringify(invalidError), /PRIVATE_FORWARDER_MARKER/);
     }
     assert.equal(seen.length, count);
+    const oversizeMarker = "PRIVATE_FORWARDER_OVERSIZE_MARKER";
+    const oversized = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${internal}` },
+      body: JSON.stringify({ model: route.slug, input: `${oversizeMarker}:${"x".repeat(65536)}` }),
+    });
+    assert.equal(oversized.status, 413);
+    const oversizedError = (await oversized.json()).error;
+    assert.deepEqual(oversizedError, {
+      type: "invalid_request_error",
+      code: "request_body_too_large",
+      message: "Request body is too large.",
+    });
+    assert.doesNotMatch(JSON.stringify(oversizedError), new RegExp(oversizeMarker));
+    assert.doesNotMatch(forwarder.errors(), new RegExp(oversizeMarker));
+    assert.equal(seen.length, count, "oversized body must fail before provider traffic");
     const beforePartial = seen.length;
     const interrupted = await post({ tools: customTools, stream: true, max_output_tokens: 17 });
     const partialWire = await interrupted.text();

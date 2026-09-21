@@ -1261,6 +1261,12 @@ function parseRelayedAgentPayload(payload, { requireStatus = true } = {}) {
 
 function parseRelayedAgentArguments(value) {
   try {
+    if (
+      typeof value === "string" &&
+      !jsonIsUnambiguousForRewrite(value, { allowLossyNumbers: true })
+    ) {
+      return undefined;
+    }
     const args = typeof value === "string" ? JSON.parse(value) : value;
     return typeof args?.payload === "string" ? args.payload : undefined;
   } catch {
@@ -1268,8 +1274,23 @@ function parseRelayedAgentArguments(value) {
   }
 }
 
-function parseRelayedAgentPayloadSse(bytes) {
-  const events = bytes.toString("utf8").split(/\r?\n\r?\n/);
+function decodeRelayResponse(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseRelayedAgentPayloadSse(text) {
+  const events = text.split(/\r?\n\r?\n/);
+  const trailing = events.pop() || "";
+  // An event is authoritative only after its blank-line terminator. Ignore a
+  // trailing comment/whitespace keepalive, but fail closed on unfinished data
+  // or event fields that could otherwise hide a terminal error.
+  if (trailing.split(/\r?\n/).some((line) => line.trim() && !line.startsWith(":"))) {
+    return undefined;
+  }
   const observedRelayIdentities = {};
   let completedResponse;
   let terminalCount = 0;
@@ -1282,6 +1303,10 @@ function parseRelayedAgentPayloadSse(bytes) {
       .join("\n")
       .trim();
     if (!data || data === "[DONE]") continue;
+    if (!jsonIsUnambiguousForRewrite(data, { allowLossyNumbers: true })) {
+      rejected = true;
+      continue;
+    }
     try {
       const event = JSON.parse(data);
       if (["response.failed", "response.incomplete", "error"].includes(event?.type)) {
@@ -1324,8 +1349,7 @@ function parseRelayedAgentPayloadSse(bytes) {
         completedResponse = event.response;
       }
     } catch {
-      // A malformed unrelated frame cannot establish completion. Continue so a
-      // valid terminal response can still be assessed from the complete body.
+      rejected = true;
     }
   }
   if (rejected || terminalCount !== 1 || !completedResponse) return undefined;
@@ -1498,12 +1522,16 @@ async function relayEncryptedAgentPayloadOnce(
   }
   let plaintext;
   const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
-  const looksLikeSse = /^(?:event|data):/m.test(bytes.toString("utf8"));
+  const decoded = decodeRelayResponse(bytes);
+  const looksLikeSse = /^(?:event|data):/m.test(decoded || "");
   if (contentType.includes("text/event-stream") || looksLikeSse) {
-    plaintext = parseRelayedAgentPayloadSse(bytes);
-  } else {
+    if (decoded !== undefined) plaintext = parseRelayedAgentPayloadSse(decoded);
+  } else if (
+    decoded !== undefined &&
+    jsonIsUnambiguousForRewrite(decoded, { allowLossyNumbers: true })
+  ) {
     try {
-      plaintext = parseRelayedAgentPayload(JSON.parse(bytes.toString("utf8")));
+      plaintext = parseRelayedAgentPayload(JSON.parse(decoded));
     } catch {
       // The error below intentionally avoids logging the opaque collaboration body.
     }

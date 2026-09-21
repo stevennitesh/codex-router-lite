@@ -515,6 +515,48 @@ test("malformed request JSON returns safe stable diagnostics without input discl
   }
 });
 
+test("oversized Router requests retain safe 413 diagnostics without provider traffic", async () => {
+  const marker = "PRIVATE_OVERSIZE_ROUTER_MARKER";
+  let gatewayRequests = 0;
+  const gateway = await mockServer(async (_request, response) => {
+    gatewayRequests += 1;
+    json(response, 200, { output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_MAX_BODY_BYTES: "256",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/glm-5.3-flash",
+        input: `${marker}:${"x".repeat(512)}`,
+      }),
+    });
+    assert.equal(response.status, 413);
+    const payload = await response.json();
+    assert.deepEqual(payload, {
+      error: {
+        type: "local_router_error",
+        code: "request_body_too_large",
+        message: "Request body is too large.",
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(payload), new RegExp(marker));
+    assert.doesNotMatch(router.testErrors(), new RegExp(marker));
+    assert.equal(gatewayRequests, 0);
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
 test("native agent relay selection is deterministic and fails before unavailable upstream calls", async () => {
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
@@ -898,7 +940,63 @@ test("relay extraction requires one completed final call and caches only success
       return;
     }
     const call = relayCall(`payload:${token}`);
-    if (token === "gAAAAA-incomplete-json=") {
+    if (token === "gAAAAA-unicode-json=") {
+      json(response, 200, {
+        status: "completed",
+        output: [relayCall('Unicode: café 🌍\n"quoted"')],
+      });
+    } else if (token === "gAAAAA-comment-crlf-sse=") {
+      const completed = {
+        type: "response.completed",
+        response: { status: "completed", output: [relayCall("CRLF_KEEPALIVE_OK")] },
+      };
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`: heartbeat\r\n\r\nevent: ping\r\n\r\ndata:\r\n\r\ndata: ${JSON.stringify(completed)}\r\n\r\ndata: [DONE]\r\n\r\n`);
+    } else if (token === "gAAAAA-invalid-utf8-json=") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(Buffer.concat([
+        Buffer.from('{"status":"completed","output":[{"type":"function_call","id":"fc_relay","name":"relay_external_agent_payload","arguments":{"payload":"before'),
+        Buffer.from([0xc3, 0x28]),
+        Buffer.from('after"}}]}'),
+      ]));
+    } else if (token === "gAAAAA-invalid-utf8-sse=") {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(Buffer.concat([
+        Buffer.from(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [call] } })}\n\n`),
+        Buffer.from(": "),
+        Buffer.from([0xc3, 0x28]),
+        Buffer.from("\n\n"),
+      ]));
+    } else if (token === "gAAAAA-unterminated-completion-sse=") {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [call] } })}`);
+    } else if (token === "gAAAAA-malformed-after-completion-sse=") {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [call] } })}\n\ndata: {\n\n`);
+    } else if (token === "gAAAAA-unfinished-after-completion-sse=") {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [call] } })}\n\ndata: {"type":"error"`);
+    } else if (token === "gAAAAA-duplicate-envelope-json=") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(`{"status":"failed","\\u0073tatus":"completed","output":[${JSON.stringify(call)}]}`);
+    } else if (token === "gAAAAA-duplicate-arguments-json=") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
+        status: "completed",
+        output: [{ ...call, arguments: '{"payload":"first","pay\\u006coad":"second"}' }],
+      }));
+    } else if (token === "gAAAAA-duplicate-event-sse=") {
+      const completed = JSON.stringify({
+        type: "response.completed",
+        response: { status: "failed", output: [] },
+      });
+      const duplicate = completed.replace(
+        '"response":{"status":"failed","output":[]}',
+        `"response":{"status":"failed","output":[]},"\\u0072esponse":{"status":"completed","output":[${JSON.stringify(call)}]}`,
+      );
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(`data: ${duplicate}\n\n`);
+    } else if (token === "gAAAAA-incomplete-json=") {
       json(response, 200, { status: "incomplete", output: [call] });
     } else if (token === "gAAAAA-multiple-json=") {
       json(response, 200, { status: "completed", output: [call, relayCall("other", "fc_other")] });
@@ -1000,6 +1098,14 @@ test("relay extraction requires one completed final call and caches only success
       "gAAAAA-wrong-tool-sse=",
       "gAAAAA-conflict-sse=",
       "gAAAAA-call-id-conflict-sse=",
+      "gAAAAA-invalid-utf8-json=",
+      "gAAAAA-invalid-utf8-sse=",
+      "gAAAAA-unterminated-completion-sse=",
+      "gAAAAA-malformed-after-completion-sse=",
+      "gAAAAA-unfinished-after-completion-sse=",
+      "gAAAAA-duplicate-envelope-json=",
+      "gAAAAA-duplicate-arguments-json=",
+      "gAAAAA-duplicate-event-sse=",
     ]) {
       const before = gatewayRequests.length;
       const response = await send(token);
@@ -1007,11 +1113,20 @@ test("relay extraction requires one completed final call and caches only success
       assert.equal(gatewayRequests.length, before, `${token} reached the external provider`);
     }
 
+    for (const [token, expected] of [
+      ["gAAAAA-unicode-json=", 'Unicode: café 🌍\n"quoted"'],
+      ["gAAAAA-comment-crlf-sse=", "CRLF_KEEPALIVE_OK"],
+    ]) {
+      const response = await send(token);
+      assert.equal(response.status, 200, await response.text());
+      assert.equal(gatewayRequests.at(-1).input[0].content.at(-1).text, expected);
+    }
+
     const token = "gAAAAA-failure-then-success=";
     const failed = await send(token);
     assert.equal(failed.status, 502);
     assert.equal(attempts.get(token), 1);
-    assert.equal(gatewayRequests.length, 0);
+    assert.equal(gatewayRequests.length, 2);
     const succeeded = await send(token);
     assert.equal(succeeded.status, 200, await succeeded.text());
     assert.equal(attempts.get(token), 2, "failed extraction must not populate the cache");
@@ -1019,7 +1134,7 @@ test("relay extraction requires one completed final call and caches only success
     const cached = await send(token);
     assert.equal(cached.status, 200, await cached.text());
     assert.equal(attempts.get(token), 2, "completed extraction should be reused");
-    assert.equal(gatewayRequests.length, 2);
+    assert.equal(gatewayRequests.length, 4);
   } finally {
     await stopChild(router);
     await Promise.all([closeServer(native.server), closeServer(gateway.server)]);

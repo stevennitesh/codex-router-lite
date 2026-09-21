@@ -288,8 +288,10 @@ export async function readRequestBody(
         // Stop retaining caller-controlled bytes immediately, but keep consuming
         // the stream so the response can stay keep-alive and the next request
         // cannot be parsed out of the rejected body's tail.
-        overflow = new Error(`Request body exceeds ${limit} bytes.`);
-        overflow.status = 413;
+        overflow = safeLocalHttpError("Request body is too large.", {
+          status: 413,
+          code: "request_body_too_large",
+        });
         continue;
       }
       chunks.push(chunk);
