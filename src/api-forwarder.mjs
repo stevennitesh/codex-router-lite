@@ -20,6 +20,7 @@ import { fetchWithRetry } from "./upstream-retry.mjs";
 import { zaiCacheUsageTransform } from "./zai-cache-usage.mjs";
 import { installStableFetchTransport } from "./fetch-transport.mjs";
 import { prepareOpenRouterRequest } from "./openrouter-request.mjs";
+import { FORWARDER_LOCAL_ERROR_HEADER } from "./error-translation.mjs";
 
 installStableFetchTransport();
 
@@ -29,6 +30,10 @@ const INTERNAL_KEY = process.env.CODEX_ROUTER_INTERNAL_KEY || process.env.MODEL_
 if (!INTERNAL_KEY) throw new Error("CODEX_ROUTER_INTERNAL_KEY is required.");
 
 const provider = PROVIDERS.get("openrouter");
+const PROVIDER_RESPONSE_DENYLIST = new Set([
+  ...HOP_BY_HOP_HEADERS,
+  FORWARDER_LOCAL_ERROR_HEADER,
+]);
 
 function targetFor(requestUrl) {
   const pathname = new URL(requestUrl, "http://loopback").pathname.replace(/^\/v1/u, "");
@@ -81,6 +86,7 @@ async function handle(request, response) {
     payload = prepareOpenRouterRequest(parseJsonObjectRequest(await readRequestBody(request)));
   } catch (error) {
     const safe = safeLocalHttpErrorPayload(error);
+    if (safe) response.setHeader(FORWARDER_LOCAL_ERROR_HEADER, "1");
     writeJson(response, safe ? error.status : 400, safe || {
       error: {
         type: "invalid_request_error",
@@ -128,7 +134,7 @@ async function handle(request, response) {
     }
     const contentType = upstream.headers.get("content-type") || "";
     const transform = zaiCacheUsageTransform("openrouter", contentType);
-    await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS, transform);
+    await pipeResponse(upstream, response, PROVIDER_RESPONSE_DENYLIST, transform);
   } finally {
     request.off("aborted", onAborted);
     response.off("close", onClosed);

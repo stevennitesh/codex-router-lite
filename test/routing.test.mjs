@@ -1515,6 +1515,9 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(nativeRequests[1].url, "/backend-api/codex/responses/compact");
     assert.equal(nativeRequests[1].body.model, "gpt-5.6-sol");
     assert.equal(nativeRequests[1].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+    assert.equal(nativeRequests[1].headers["chatgpt-account-id"], "account-id");
+    assert.equal(nativeRequests[1].headers["x-codex-router-switchyard-capability"], undefined);
+    assert.equal(nativeRequests[1].headers["content-encoding"], "zstd");
 
     const compactV2 = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
@@ -1532,6 +1535,9 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(nativeRequests[2].url, "/backend-api/codex/responses");
     assert.equal(nativeRequests[2].body.model, "gpt-5.6-sol");
     assert.equal(nativeRequests[2].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
+    assert.equal(nativeRequests[2].headers["chatgpt-account-id"], "account-id");
+    assert.equal(nativeRequests[2].headers["x-codex-router-switchyard-capability"], undefined);
+    assert.equal(nativeRequests[2].headers["content-encoding"], "zstd");
 
     const health = await fetch(`${routerBase(routerPort)}/health`);
     assert.equal(health.status, 503);

@@ -8,7 +8,14 @@ Never keep a permanent upstream checkout or alternate runtime tree.
 
 Load only the branch needed for the task:
 
-- Native encrypted-child routing delivery: the completed [delivery plan](../../docs/history/2026-09-20-switchyard-child-routing-plan-completed.md) and [execution handoff](../../docs/history/2026-09-20-switchyard-child-routing-handoff-completed.md).
+- Native encrypted-child relay and classifier projection: the current contract is
+  [Security and request flow](#security-and-request-flow). Router extraction,
+  currentness and relay are owned by [`src/router.mjs`](../../src/router.mjs);
+  Switchyard projection removal and consumption are owned by the locked
+  [compatibility patch](patches/switchyard-codex-compat.patch). The completed
+  [delivery plan](../../docs/history/2026-09-20-switchyard-child-routing-plan-completed.md)
+  and [execution handoff](../../docs/history/2026-09-20-switchyard-child-routing-handoff-completed.md)
+  are historical rationale only.
 - Classifier behavior and routing criteria: the routing policy below and
   `routes.template.toml`. Completed delivery records live under
   [`docs/history`](../../docs/history/README.md).

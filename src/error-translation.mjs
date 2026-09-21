@@ -6,6 +6,26 @@
 
 const DETAIL_LIMIT = 300;
 
+export const FORWARDER_LOCAL_ERROR_HEADER = "x-codex-router-forwarder-local-error";
+
+const LOCAL_FORWARDER_VALIDATION_ERRORS = new Map([
+  ["invalid_request_json", { status: 400, message: "Request body must contain valid JSON." }],
+  ["invalid_request_json_object", { status: 400, message: "Request JSON must be an object." }],
+  ["request_body_too_large", { status: 413, message: "Request body is too large." }],
+  ["model_search_not_supported", {
+    status: 400,
+    message: "The selected model cannot preserve this request's web-search contract.",
+  }],
+  ["unsupported_response_format", {
+    status: 400,
+    message: "The selected model does not support the requested response format.",
+  }],
+  ["unsupported_tool_choice", {
+    status: 400,
+    message: "The selected model does not support the requested tool choice.",
+  }],
+]);
+
 // LiteLLM appends its routing state after the upstream message; neither line
 // helps the caller and both leak internal gateway naming.
 const ROUTING_NOISE = [
@@ -42,6 +62,28 @@ function parseUpstreamError(bodyText) {
   } catch {
     // Non-JSON bodies (HTML gateway pages, plain text) pass through as-is.
     return { message: bodyText, type: undefined };
+  }
+}
+
+function localForwarderValidation(bodyText, localForwarderError) {
+  if (!localForwarderError || typeof bodyText !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(bodyText);
+    const code = parsed?.error?.code;
+    const known = LOCAL_FORWARDER_VALIDATION_ERRORS.get(code);
+    if (!known) return undefined;
+    return {
+      status: known.status,
+      payload: {
+        error: {
+          type: "invalid_request_error",
+          code,
+          message: known.message,
+        },
+      },
+    };
+  } catch {
+    return undefined;
   }
 }
 
@@ -151,7 +193,9 @@ function contextLengthFailure(bodyText) {
 // ordinary gateway statuses byte-for-status. Only this deterministic request
 // rejection is corrected from the gateway's 5xx wrapper to the OpenAI-shaped
 // 400 that tells Codex not to retry.
-export function gatewayErrorStatus({ status, bodyText }) {
+export function gatewayErrorStatus({ status, bodyText, localForwarderError = false }) {
+  const local = localForwarderValidation(bodyText, localForwarderError);
+  if (local) return local.status;
   return contextLengthFailure(bodyText) ? 400 : Number(status);
 }
 
@@ -257,7 +301,10 @@ export function translateGatewayError({
   providerKind,
   providerAuthMode,
   retryAfterSeconds,
+  localForwarderError = false,
 }) {
+  const local = localForwarderValidation(bodyText, localForwarderError);
+  if (local) return local.payload;
   const detail = extractUpstreamDetail(bodyText);
   const context = contextLengthFailure(bodyText);
   if (context) {

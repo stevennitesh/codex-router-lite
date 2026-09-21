@@ -107,7 +107,11 @@ import { jsonIsUnambiguousForRewrite, NamespaceToolCallTransform } from "./names
 import { prepareRoutedRequest, routedSearchCompatibility, payloadHasHostedSearchIntent } from "./routed-request.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
-import { gatewayErrorStatus, translateGatewayError } from "./error-translation.mjs";
+import {
+  FORWARDER_LOCAL_ERROR_HEADER,
+  gatewayErrorStatus,
+  translateGatewayError,
+} from "./error-translation.mjs";
 import { describeTransportFailure } from "./transport-failure.mjs";
 import {
   endpointCapabilityError,
@@ -2274,6 +2278,7 @@ async function handleResponses(request, response, requestUrl) {
       Array.isArray(payload.input) &&
       payload.input.at(-1)?.type === "compaction_trigger";
     const switchyard = isSwitchyardRoute(route);
+    const switchyardHop = switchyard && !compactV1 && !compactV2;
 
     if (route && !switchyard && (compactV1 || compactV2)) {
       const compaction = await handleRoutedCompaction(
@@ -2338,7 +2343,7 @@ async function handleResponses(request, response, requestUrl) {
       // local runtime. Native GPT requests keep their original model.
       if (switchyard) {
         native.model = compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel;
-        if (!compactV1 && !compactV2) {
+        if (switchyardHop) {
           const projection = await switchyardTaskProjection(
             request,
             payload.input,
@@ -2364,7 +2369,7 @@ async function handleResponses(request, response, requestUrl) {
       if (substitutedCaller) {
         normalizeNativeForSubstitutedCaller(native, { compact: compactV1 });
       }
-      target = switchyard && !compactV1 && !compactV2
+      target = switchyardHop
         ? switchyardTarget(route, requestUrl.pathname)
         : nativeTarget(requestUrl.pathname);
       // Provenance is the credential the caller brought, not whatever
@@ -2373,9 +2378,9 @@ async function handleResponses(request, response, requestUrl) {
         bearerToken(request.headers.authorization),
       );
       if (observesNativeAuth) nativeAuthDesktop = await codexDesktopStateAsync();
-      headers = switchyard ? switchyardHeaders(request) : nativeHeaders(request);
+      headers = switchyardHop ? switchyardHeaders(request) : nativeHeaders(request);
       const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
-      routedBody = switchyard && !compactV1 && !compactV2
+      routedBody = switchyardHop
         ? nativeBody
         : await compressedNativeBody(nativeBody, headers);
     }
@@ -2440,11 +2445,14 @@ async function handleResponses(request, response, requestUrl) {
     // Native traffic passes through untouched: OpenAI errors are already clear.
     if (route && !upstream.ok) {
       const provider = providerForModel(route);
+      const localForwarderError =
+        upstream.headers.get(FORWARDER_LOCAL_ERROR_HEADER) === "1";
       const retryAfterHeader = upstream.headers.get("retry-after");
       const retrySeconds = retryAfterSeconds(upstream.headers);
       const translatedStatus = gatewayErrorStatus({
         status: upstream.status,
         bodyText: failedBodyText,
+        localForwarderError,
       });
       if (retryAfterHeader) response.setHeader("Retry-After", retryAfterHeader);
       writeJson(
@@ -2459,6 +2467,7 @@ async function handleResponses(request, response, requestUrl) {
           providerKind: provider?.kind,
           providerAuthMode: provider?.authMode,
           retryAfterSeconds: retrySeconds,
+          localForwarderError,
         }),
       );
       finalStatus = translatedStatus;

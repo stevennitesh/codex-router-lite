@@ -72,6 +72,107 @@ test("only explicitly safe local errors may expose their message", () => {
   assert.equal(safeLocalHttpErrorPayload(arbitrary), undefined);
 });
 
+test("Router preserves authenticated forwarder validation codes without trusting provider imitations", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "forwarder-local-errors-"));
+  let providerRequests = 0;
+  const upstream = http.createServer(async (request, response) => {
+    providerRequests += 1;
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks));
+    assert.match(JSON.stringify(body), /IMITATE_LOCAL_ERROR/);
+    response.writeHead(400, {
+      "Content-Type": "application/json",
+      "x-codex-router-forwarder-local-error": "1",
+    });
+    response.end(JSON.stringify({
+      error: {
+        type: "invalid_request_error",
+        code: "request_body_too_large",
+        message: "provider-owned rejection",
+      },
+    }));
+  });
+  await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  const [apiPort, routerPort] = await Promise.all([openPort(), openPort()]);
+  const common = {
+    CODEX_ROUTER_STATE_DIR: state,
+    MODEL_ROUTER_STATE_DIR: state,
+    CODEX_ROUTER_INTERNAL_KEY: internal,
+    CODEX_ROUTER_CALLER_KEY: caller,
+    CODEX_ROUTER_API_PORT: String(apiPort),
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${apiPort}/v1`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: "http://127.0.0.1:1/v1",
+    CODEX_ROUTER_QUIET: "1",
+    CODEX_ROUTER_SHOW_ALL_MODELS: "1",
+    OPENROUTER_API_KEY: "PARETO_SYNTHETIC_CREDENTIAL",
+    OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1`,
+  };
+  const forwarder = launch("api-forwarder.mjs", {
+    ...common,
+    MODEL_ROUTER_MAX_BODY_BYTES: "2048",
+  });
+  const router = launch("router.mjs", {
+    ...common,
+    MODEL_ROUTER_MAX_BODY_BYTES: "65536",
+  });
+  const base = callerBaseUrl(routerPort, caller);
+  const post = input => fetch(`${base}/responses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: route.slug, input, stream: false }),
+  });
+  try {
+    await ready(`${base}/models`, router);
+    await ready(`http://127.0.0.1:${apiPort}/v1/responses`, forwarder, {
+      Authorization: `Bearer ${internal}`,
+    });
+
+    const oversized = await post(`PRIVATE_FORWARDER_BODY:${"x".repeat(4096)}`);
+    assert.equal(oversized.status, 413);
+    assert.deepEqual(await oversized.json(), {
+      error: {
+        type: "invalid_request_error",
+        code: "request_body_too_large",
+        message: "Request body is too large.",
+      },
+    });
+    assert.equal(providerRequests, 0, "forwarder rejection must happen before provider traffic");
+
+    const directImitation = await fetch(`http://127.0.0.1:${apiPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${internal}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: route.slug,
+        input: "IMITATE_LOCAL_ERROR_DIRECT",
+        stream: false,
+      }),
+    });
+    assert.equal(directImitation.status, 400);
+    assert.equal(directImitation.headers.get("x-codex-router-forwarder-local-error"), null);
+    const directError = (await directImitation.json()).error;
+    assert.equal(directError.code, "request_body_too_large");
+    assert.equal(directError.message, "provider-owned rejection");
+    assert.equal(providerRequests, 1);
+
+    const imitation = await post("IMITATE_LOCAL_ERROR");
+    assert.equal(imitation.status, 400);
+    assert.equal(imitation.headers.get("x-codex-router-forwarder-local-error"), null);
+    const imitationError = (await imitation.json()).error;
+    assert.equal(imitationError.code, "400");
+    assert.match(imitationError.message, /provider-owned rejection/);
+    assert.equal(providerRequests, 2);
+  } finally {
+    await Promise.all([stop(router), stop(forwarder)]);
+    await new Promise(resolve => upstream.close(resolve));
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
 test("Pareto uses the authenticated direct Responses hop for native tools, replay, and compaction", async () => {
   const state = mkdtempSync(path.join(os.tmpdir(), "pareto-router-"));
   const seen = [];
