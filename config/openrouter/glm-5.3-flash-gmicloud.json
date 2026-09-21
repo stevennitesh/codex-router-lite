@@ -48,7 +48,7 @@
       "requestProfile": "glm-5.3-flash",
       "behaviorTemplate": "gpt-5.6-sol",
       "instructionProfile": "glm-5.3-flash-codex",
-      "multiAgentVersion": "v2",
+      "multiAgentVersion": "v1",
       "openRouterProviderPolicy": {
         "order": [
           "gmicloud"

@@ -20,7 +20,11 @@ Set-Location codex-router-lite
 
 The installer preserves the current Codex login and user-owned settings. It refuses to replace an unmarked base URL, foreign scheduled task, or unrecognized source root.
 
-Set the OpenRouter credential with the protected prompt:
+The Router starts in native-only mode without an OpenRouter credential. Provider
+health reports OpenRouter as unavailable until the optional key is configured;
+native Codex requests remain available during that setup interval.
+
+To use OpenRouter routes, set the credential with the protected prompt:
 
 ```powershell
 .\model-router.ps1 codex provider-key openrouter set
@@ -43,9 +47,10 @@ The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
 other.
 
-Pareto is a separate v2 entry pinned to the exact Unbiased endpoint. It has
-automatic tool selection and provider-controlled reasoning. See its
-[endpoint contract](agents/pareto.md) for measured capabilities.
+Pareto is pinned to the exact Unbiased endpoint. It has automatic tool selection
+and provider-controlled reasoning. See its [endpoint contract](agents/pareto.md)
+for measured capabilities and the authoritative [application index](../v2_agent/README.md)
+for current exact-route subagent eligibility.
 
 The running service checks every five minutes for an installed Codex binary or
 native account-catalog change. When signed in, it refreshes account visibility

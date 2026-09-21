@@ -7,8 +7,8 @@ import {
   zaiCacheUsageTransform,
 } from "../src/zai-cache-usage.mjs";
 
-async function transformed(chunks) {
-  const stream = Readable.from(chunks).pipe(new ZaiCacheUsageCompatTransform());
+async function transformed(chunks, options) {
+  const stream = Readable.from(chunks).pipe(new ZaiCacheUsageCompatTransform(options));
   const output = [];
   for await (const chunk of stream) output.push(chunk);
   return Buffer.concat(output).toString("utf8");
@@ -74,4 +74,34 @@ test("Z.ai choice-bearing terminal usage is normalized to a usage-only chunk", a
   assert.equal(payloads[1].usage.completion_tokens, 8);
   assert.equal(payloads[1].usage.prompt_tokens_details.cached_tokens, 800);
   assert.equal(payloads[1].usage.prompt_cache_hit_tokens, 800);
+});
+
+test("Z.ai optional rewriting releases an oversized pending line and preserves later bytes", async () => {
+  const chunks = ["data: ", "x".repeat(20), " later", "\nnext"];
+  assert.equal(await transformed(chunks, { maxPendingBytes: 16 }), chunks.join(""));
+});
+
+test("Z.ai rewriting accepts long streams made of bounded lines", async () => {
+  const event = 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n';
+  const input = event.repeat(100) + "data: [DONE]\n\n";
+  assert.equal(await transformed([input], { maxPendingBytes: 64 }), input);
+});
+
+test("Z.ai applies the same complete-line limit to coalesced and split input", async () => {
+  const input = `data: ${JSON.stringify({
+    choices: [{ finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    padding: "x".repeat(40),
+  })}\r\n`;
+  for (const chunks of [[input], [...input]]) {
+    assert.equal(await transformed(chunks, { maxPendingBytes: 32 }), input);
+  }
+});
+
+test("Z.ai excludes a split CRLF terminator from the line budget", async () => {
+  const content = "data: [DONE]";
+  assert.equal(
+    await transformed([content, "\r", "\n"], { maxPendingBytes: Buffer.byteLength(content) }),
+    `${content}\r\n`,
+  );
 });

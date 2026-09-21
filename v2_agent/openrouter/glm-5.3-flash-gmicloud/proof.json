@@ -3,7 +3,7 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash-gmicloud",
-  "status": "accepted",
+  "status": "draft",
   "endpointProvider": "gmicloud",
   "officialSources": [
     "https://openrouter.ai/z-ai/glm-5.3-flash",

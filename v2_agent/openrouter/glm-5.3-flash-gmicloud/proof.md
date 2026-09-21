@@ -1,4 +1,7 @@
-# openrouter/glm-5.3-flash-gmicloud v2 certification
+# openrouter/glm-5.3-flash-gmicloud v2 certification (source renewal pending)
+
+Source status: draft after startup and shared stream-boundary changes. The
+acceptance below remains historical evidence for the unchanged installed runtime.
 
 Accepted on 2026-09-21T01:46:54.563Z against deployed Router `19d1ac399f0df4851b56c9f0be64c3a8bb8de682`
 (version 0.7.0), codex-cli 0.155.0-alpha.9.2, native CLI parent and exact-route child.

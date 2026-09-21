@@ -57,9 +57,11 @@ async function handle(request, response) {
   const requestUrl = new URL(request.url || "/", "http://loopback");
   if (request.method === "GET" && requestUrl.pathname === "/health") {
     const credential = resolveProviderCredential(provider, { persistent: true });
-    writeJson(response, credential?.value ? 200 : 503, {
-      ok: Boolean(credential?.value),
+    writeJson(response, 200, {
+      ok: true,
+      service: "api-forwarder",
       provider: "openrouter",
+      ready: Boolean(credential?.value),
       model: defaultRoute.slug,
       endpoint_provider: defaultRoute.openRouterProviderPolicy.only[0],
       credential_present: Boolean(credential?.value),

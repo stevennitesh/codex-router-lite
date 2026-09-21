@@ -682,6 +682,16 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
     if (data === "[DONE]") return true;
     return onEvent(data);
   };
+  const assertLineBound = (line, { pending = false, eof = false } = {}) => {
+    let content = line;
+    if (!pending && content.endsWith("\r")) content = content.slice(0, -1);
+    const bytes = Buffer.byteLength(content, "utf8");
+    const splitCr = pending && !eof && content.endsWith("\r");
+    if (bytes <= maxEventBytes + (splitCr ? 1 : 0)) return;
+    const error = new Error(`Responses SSE line exceeds ${maxEventBytes} bytes.`);
+    error.code = "ERR_RESPONSES_WS_EVENT_TOO_LARGE";
+    throw error;
+  };
   const consumeLine = async (line) => {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     if (line === "") return dispatch();
@@ -707,21 +717,19 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
       const { done, value } = await reader.read();
       if (done) break;
       text += decoder.decode(value, { stream: true });
-      if (Buffer.byteLength(text, "utf8") > maxEventBytes) {
-        const error = new Error(`Responses SSE line exceeds ${maxEventBytes} bytes.`);
-        error.code = "ERR_RESPONSES_WS_EVENT_TOO_LARGE";
-        throw error;
-      }
       let newline;
       while ((newline = text.indexOf("\n")) !== -1) {
         const line = text.slice(0, newline);
         text = text.slice(newline + 1);
+        assertLineBound(line);
         if ((await consumeLine(line)) === false) return;
       }
+      assertLineBound(text, { pending: true });
     }
     text += decoder.decode();
-    if (text && (await consumeLine(text)) === false) return;
-    await dispatch();
+    assertLineBound(text, { pending: true, eof: true });
+    // EOF does not terminate an SSE event. Discard any unfinished line/event;
+    // the caller's existing missing-completion path reports the failed stream.
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock?.();

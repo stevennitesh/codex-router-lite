@@ -138,8 +138,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else if (command === "ensure-configured") {
       const explicit = existsSync(PROVIDER_SELECTION_PATH);
       const providers = explicit ? readProviderSelection() : writeProviderSelection(defaultProviderIds());
-      const configured = new Set(configuredProviderIds());
-      const missing = providers.filter((provider) => !configured.has(provider));
+      // API-key providers can be selected before their optional credential is
+      // installed. Their forwarder remains live and reports ready:false until
+      // the key is set; only a provider whose local runtime is itself missing
+      // blocks installation.
+      const missing = providers.filter((provider) => !providerRuntimeAvailable(provider));
       if (missing.length) throw new Error(`Selected providers are unavailable: ${missing.join(", ")}.`);
       process.stdout.write(`${JSON.stringify({ providers, idle: providers.length === 0 }, null, 2)}\n`);
     } else {

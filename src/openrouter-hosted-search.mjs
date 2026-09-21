@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 const NATIVE_SEARCH_TYPES = new Set(["web_search", "web_search_preview"]);
 const OPENROUTER_SEARCH_TYPE = "openrouter:web_search";
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
+const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 
 function isObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -127,9 +128,10 @@ export class OpenRouterHostedSearchTransform extends Transform {
   #jsonChunks = [];
   #jsonBytes = 0;
 
-  constructor(contentType = "") {
+  constructor(contentType = "", { maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
     super();
     this.#eventStream = String(contentType).toLowerCase().includes("text/event-stream");
+    this.maxPendingBytes = maxPendingBytes;
   }
 
   _transform(chunk, _encoding, callback) {
@@ -143,9 +145,14 @@ export class OpenRouterHostedSearchTransform extends Transform {
       callback();
       return;
     }
-    this.#buffer += this.#decoder.write(chunk);
-    this.#consumeLines();
-    callback();
+    try {
+      this.#buffer += this.#decoder.write(chunk);
+      this.#consumeLines();
+      this.#assertPendingBound();
+      callback();
+    } catch (error) {
+      callback(error);
+    }
   }
 
   _flush(callback) {
@@ -164,9 +171,14 @@ export class OpenRouterHostedSearchTransform extends Transform {
       callback();
       return;
     }
-    this.#buffer += this.#decoder.end();
-    this.#consumeLines(true);
-    callback();
+    try {
+      this.#buffer += this.#decoder.end();
+      this.#assertPendingBound({ eof: true });
+      this.#consumeLines(true);
+      callback();
+    } catch (error) {
+      callback(error);
+    }
   }
 
   #consumeLines(flush = false) {
@@ -174,13 +186,33 @@ export class OpenRouterHostedSearchTransform extends Transform {
       const newline = this.#buffer.indexOf("\n");
       if (newline === -1) break;
       const line = this.#buffer.slice(0, newline + 1);
+      this.#assertLineBound(line);
       this.#buffer = this.#buffer.slice(newline + 1);
       this.push(this.#restoreLine(line));
     }
     if (flush && this.#buffer) {
+      this.#assertLineBound(this.#buffer, { terminated: false });
       this.push(this.#restoreLine(this.#buffer));
       this.#buffer = "";
     }
+  }
+
+  #assertPendingBound({ eof = false } = {}) {
+    const bytes = Buffer.byteLength(this.#buffer, "utf8");
+    const splitCr = !eof && this.#buffer.endsWith("\r");
+    if (bytes <= this.maxPendingBytes + (splitCr ? 1 : 0)) return;
+    throw new Error(
+      `OpenRouter hosted-search SSE line exceeds ${this.maxPendingBytes} bytes.`,
+    );
+  }
+
+  #assertLineBound(line, { terminated = true } = {}) {
+    let content = terminated && line.endsWith("\n") ? line.slice(0, -1) : line;
+    if (terminated && content.endsWith("\r")) content = content.slice(0, -1);
+    if (Buffer.byteLength(content, "utf8") <= this.maxPendingBytes) return;
+    throw new Error(
+      `OpenRouter hosted-search SSE line exceeds ${this.maxPendingBytes} bytes.`,
+    );
   }
 
   #restoreLine(line) {

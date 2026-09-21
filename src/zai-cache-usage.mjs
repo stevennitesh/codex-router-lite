@@ -1,6 +1,7 @@
 import { Transform } from "node:stream";
 
 const LINE_FEED = 0x0a;
+const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 
 // Z.ai reports authoritative prompt/cache usage on the same terminal chunk as
 // finish_reason. LiteLLM 1.95/1.96 loses usage details on that choice-bearing
@@ -25,10 +26,27 @@ function choiceBearingUsage(payload) {
 
 export class ZaiCacheUsageCompatTransform extends Transform {
   #pending = Buffer.alloc(0);
+  #released = false;
+
+  constructor({ maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
+    super();
+    this.maxPendingBytes = maxPendingBytes;
+  }
 
   _transform(chunk, _encoding, callback) {
+    if (this.#released) {
+      this.push(chunk);
+      callback();
+      return;
+    }
     this.#pending = this.#pending.length ? Buffer.concat([this.#pending, chunk]) : chunk;
     this.#consumeLines();
+    const splitCr = this.#pending.at(-1) === 0x0d;
+    if (!this.#released && this.#pending.length > this.maxPendingBytes + (splitCr ? 1 : 0)) {
+      this.#released = true;
+      this.push(this.#pending);
+      this.#pending = Buffer.alloc(0);
+    }
     callback();
   }
 
@@ -41,11 +59,26 @@ export class ZaiCacheUsageCompatTransform extends Transform {
     while (true) {
       const index = this.#pending.indexOf(LINE_FEED);
       if (index === -1) break;
+      const contentBytes = index > 0 && this.#pending[index - 1] === 0x0d
+        ? index - 1
+        : index;
+      if (contentBytes > this.maxPendingBytes) {
+        this.#released = true;
+        this.push(this.#pending);
+        this.#pending = Buffer.alloc(0);
+        return;
+      }
       const line = this.#pending.subarray(0, index + 1);
       this.#pending = this.#pending.subarray(index + 1);
       this.push(this.#rewriteLine(line));
     }
     if (flush && this.#pending.length) {
+      if (this.#pending.length > this.maxPendingBytes) {
+        this.#released = true;
+        this.push(this.#pending);
+        this.#pending = Buffer.alloc(0);
+        return;
+      }
       this.push(this.#rewriteLine(this.#pending));
       this.#pending = Buffer.alloc(0);
     }

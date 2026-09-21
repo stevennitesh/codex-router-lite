@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 
 const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
+const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 
 // Bytes of *model-visible* request body per prompt token.
 //
@@ -325,7 +326,7 @@ export class ResponseUsageTransform extends Transform {
   // `estimatedInputTokens` arrives only on routed requests large enough that a
   // reported zero cannot be true. Without it this transform observes and
   // forwards the response byte for byte, exactly as it always did.
-  constructor(contentType = "", { estimatedInputTokens } = {}) {
+  constructor(contentType = "", { estimatedInputTokens, maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
     super();
     const declared = String(contentType).toLowerCase();
     this.#eventStream = declared.includes("text/event-stream");
@@ -341,6 +342,7 @@ export class ResponseUsageTransform extends Transform {
       Number.isInteger(estimatedInputTokens) && estimatedInputTokens > 0
         ? estimatedInputTokens
         : undefined;
+    this.maxPendingBytes = maxPendingBytes;
   }
 
   _transform(chunk, _encoding, callback) {
@@ -372,6 +374,10 @@ export class ResponseUsageTransform extends Transform {
     this.#pending = this.#pending.length ? Buffer.concat([this.#pending, chunk]) : chunk;
     if (this.#eventStream) {
       this.#consumeRewrittenLines();
+      const splitCr = this.#pending.at(-1) === 0x0d;
+      if (!this.#released && this.#pending.length > this.maxPendingBytes + (splitCr ? 1 : 0)) {
+        this.#release();
+      }
       return;
     }
     // A non-streaming body has to be held to be rewritten. Oversized ones are
@@ -390,7 +396,12 @@ export class ResponseUsageTransform extends Transform {
     if (this.#estimate === undefined) {
       this.#buffer += this.#decoder.end();
       if (this.#eventStream) {
-        this.#consumeEventLines(true);
+        if (Buffer.byteLength(this.#buffer, "utf8") > this.maxPendingBytes) {
+          this.#buffer = "";
+          this.#released = true;
+        } else {
+          this.#consumeEventLines(true);
+        }
       } else if (this.#buffer) {
         try {
           this.#observe(JSON.parse(this.#buffer));
@@ -442,9 +453,16 @@ export class ResponseUsageTransform extends Transform {
 
   #observeOnly(chunk) {
     this.push(chunk);
+    if (this.#released) return;
     if (this.#eventStream) {
       this.#buffer += this.#decoder.write(chunk);
       this.#consumeEventLines();
+      const pendingBytes = Buffer.byteLength(this.#buffer, "utf8");
+      const splitCr = this.#buffer.endsWith("\r");
+      if (!this.#released && pendingBytes > this.maxPendingBytes + (splitCr ? 1 : 0)) {
+        this.#buffer = "";
+        this.#released = true;
+      }
       return;
     }
     if (this.#capturedBytes > MAX_JSON_CAPTURE_BYTES) return;
@@ -463,9 +481,27 @@ export class ResponseUsageTransform extends Transform {
   }
 
   #consumeEventLines(flush = false) {
-    const lines = this.#buffer.split(/\r?\n/);
-    this.#buffer = flush ? "" : lines.pop() || "";
-    for (const line of lines) this.#observeEventLine(line);
+    while (true) {
+      const newline = this.#buffer.indexOf("\n");
+      if (newline === -1) break;
+      let line = this.#buffer.slice(0, newline);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (Buffer.byteLength(line, "utf8") > this.maxPendingBytes) {
+        this.#buffer = "";
+        this.#released = true;
+        return;
+      }
+      this.#buffer = this.#buffer.slice(newline + 1);
+      this.#observeEventLine(line);
+    }
+    if (flush && this.#buffer) {
+      if (Buffer.byteLength(this.#buffer, "utf8") <= this.maxPendingBytes) {
+        this.#observeEventLine(this.#buffer);
+      } else {
+        this.#released = true;
+      }
+      this.#buffer = "";
+    }
   }
 
   // Each complete line is forwarded as soon as it is whole, carrying its own
@@ -475,11 +511,22 @@ export class ResponseUsageTransform extends Transform {
     while (true) {
       const index = this.#pending.indexOf(LINE_FEED);
       if (index === -1) break;
+      const contentBytes = index > 0 && this.#pending[index - 1] === 0x0d
+        ? index - 1
+        : index;
+      if (contentBytes > this.maxPendingBytes) {
+        this.#release();
+        return;
+      }
       const line = this.#pending.subarray(0, index + 1);
       this.#pending = this.#pending.subarray(index + 1);
       this.push(this.#rewriteEventLine(line) || line);
     }
     if (flush && this.#pending.length) {
+      if (this.#pending.length > this.maxPendingBytes) {
+        this.#release();
+        return;
+      }
       const line = this.#pending;
       this.#pending = Buffer.alloc(0);
       this.push(this.#rewriteEventLine(line) || line);

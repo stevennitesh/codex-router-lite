@@ -11,8 +11,8 @@ import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 
 const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
 
-async function transformBody(chunks, contentType) {
-  const transform = new OpenRouterHostedSearchTransform(contentType);
+async function transformBody(chunks, contentType, options) {
+  const transform = new OpenRouterHostedSearchTransform(contentType, options);
   const output = [];
   transform.on("data", (chunk) => output.push(chunk));
   await new Promise((resolve, reject) => {
@@ -129,4 +129,41 @@ test("hosted-search response leaves unrelated provider payloads byte-identical",
   assert.strictEqual(restoreOpenRouterHostedSearchPayload(payload), payload);
   const body = `${JSON.stringify(payload)}\n`;
   assert.equal(await transformBody([Buffer.from(body)], "application/json"), body);
+});
+
+test("hosted-search fails explicitly when an unfinished SSE line exceeds its retained limit", async () => {
+  await assert.rejects(
+    transformBody(["data: ", "x".repeat(20)], "text/event-stream", { maxPendingBytes: 16 }),
+    /hosted-search SSE line exceeds 16 bytes/u,
+  );
+});
+
+test("hosted-search applies the same complete-line limit to coalesced and split input", async () => {
+  const line = `data: ${"x".repeat(20)}\r\n`;
+  for (const chunks of [[line], [...line]]) {
+    await assert.rejects(
+      transformBody(chunks, "text/event-stream", { maxPendingBytes: 16 }),
+      /hosted-search SSE line exceeds 16 bytes/u,
+    );
+  }
+});
+
+test("hosted-search excludes a split CRLF terminator from the line budget", async () => {
+  const content = 'data: {"type":"fixture"}';
+  const input = `${content}\r\n\r\n`;
+  assert.equal(
+    await transformBody([content, "\r", "\n\r\n"], "text/event-stream", {
+      maxPendingBytes: Buffer.byteLength(content),
+    }),
+    input,
+  );
+});
+
+test("hosted-search accepts long streams made of individually bounded events", async () => {
+  const event = 'data: {"type":"response.output_text.delta","delta":"ok"}\n\n';
+  const input = event.repeat(100);
+  assert.equal(
+    await transformBody([Buffer.from(input)], "text/event-stream", { maxPendingBytes: 128 }),
+    input,
+  );
 });

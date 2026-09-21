@@ -81,6 +81,7 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
     responsesUrl: options.responsesUrl || "http://loopback/responses",
     authenticateUpgrade: () => "/responses",
     fetchImpl,
+    ...(options.maxEventBytes ? { maxEventBytes: options.maxEventBytes } : {}),
   }), true);
   assert.match(socket.writes[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
   return socket;
@@ -130,6 +131,115 @@ test("WebSocket turns an unterminated internal stream into one stated failure", 
   ));
   assert.deepEqual(events.map(event => event.type), ["response.output_text.delta", "error"]);
   assert.equal(events[1].error.type, "local_router_stream_failed");
+});
+
+for (const ending of ["\n", ""]) {
+  test(`WebSocket discards a completion at EOF with ${ending ? "one newline" : "no delimiter"}`, async () => {
+    let fetches = 0;
+    const socket = openPeer(async () => {
+      fetches += 1;
+      return new Response(
+        `data: {"type":"response.completed","response":{"id":"resp_unfinished","status":"completed","output":[]}}${ending}`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    const first = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+    assert.deepEqual(first.map(event => event.type), ["error"]);
+    const replay = await sendRequest(socket, {
+      type: "response.create", previous_response_id: "resp_unfinished", input: [], stream: true,
+    });
+    assert.equal(replay[0].error.code, "previous_response_not_found");
+    assert.equal(fetches, 1);
+  });
+}
+
+for (const delimiter of ["\n\n", "\r\n\r\n"]) {
+  test(`WebSocket accepts a completion with ${JSON.stringify(delimiter)} framing`, async () => {
+    const { events } = await exchange(async () => new Response(
+      `data: {"type":"response.completed","response":{"id":"resp_complete","status":"completed","output":[]}}${delimiter}`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    ));
+    assert.deepEqual(events.map(event => event.type), ["response.completed"]);
+  });
+}
+
+test("WebSocket SSE limits are independent of network chunk partitioning", async () => {
+  const body = [
+    'data: {"type":"response.output_text.delta","delta":"a"}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"b"}\n\n',
+    'data: {"type":"response.completed","response":{"id":"resp_partition","status":"completed","output":[]}}\n\n',
+  ].join("");
+  const run = async (chunks) => {
+    const socket = openPeer(async () => new Response(new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(Buffer.from(chunk));
+        controller.close();
+      },
+    }), { status: 200, headers: { "content-type": "text/event-stream" } }), {}, {
+      maxEventBytes: 128,
+    });
+    return sendRequest(socket, { type: "response.create", input: [], stream: true });
+  };
+  const whole = await run([body]);
+  const split = await run([...body]);
+  assert.deepEqual(split, whole);
+  assert.deepEqual(whole.map(event => event.type), [
+    "response.output_text.delta", "response.output_text.delta", "response.completed",
+  ]);
+});
+
+test("WebSocket rejects oversized individual SSE lines", async () => {
+  const socket = openPeer(async () => new Response(
+    `data: ${"x".repeat(129)}\n\n`,
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  ), {}, { maxEventBytes: 128 });
+  const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+  assert.deepEqual(events.map(event => event.type), ["error"]);
+  assert.equal(events[0].error.type, "ERR_RESPONSES_WS_EVENT_TOO_LARGE");
+});
+
+test("WebSocket rejects oversized SSE events made of bounded lines", async () => {
+  const socket = openPeer(async () => new Response(
+    `data: ${"a".repeat(70)}\ndata: ${"b".repeat(70)}\n\n`,
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  ), {}, { maxEventBytes: 128 });
+  const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+  assert.deepEqual(events.map(event => event.type), ["error"]);
+  assert.equal(events[0].error.type, "ERR_RESPONSES_WS_EVENT_TOO_LARGE");
+});
+
+test("WebSocket applies the same complete comment-line limit to coalesced and split input", async () => {
+  const input = `:${"x".repeat(128)}\r\n\r\n`;
+  const run = async (chunks) => {
+    const socket = openPeer(async () => new Response(new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(Buffer.from(chunk));
+        controller.close();
+      },
+    }), { status: 200, headers: { "content-type": "text/event-stream" } }), {}, {
+      maxEventBytes: 128,
+    });
+    return sendRequest(socket, { type: "response.create", input: [], stream: true });
+  };
+  for (const chunks of [[input], [...input]]) {
+    const events = await run(chunks);
+    assert.deepEqual(events.map(event => event.type), ["error"]);
+    assert.equal(events[0].error.type, "ERR_RESPONSES_WS_EVENT_TOO_LARGE");
+  }
+});
+
+test("WebSocket excludes a split CRLF terminator from the line budget", async () => {
+  const content = 'data: {"type":"response.completed","response":{"id":"resp_crlf_edge","status":"completed","output":[]}}';
+  const socket = openPeer(async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const chunk of [content, "\r", "\n\r\n"]) controller.enqueue(Buffer.from(chunk));
+      controller.close();
+    },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } }), {}, {
+    maxEventBytes: Buffer.byteLength(content),
+  });
+  const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+  assert.deepEqual(events.map(event => event.type), ["response.completed"]);
 });
 
 for (const terminalType of ["error", "response.failed", "response.incomplete"]) {

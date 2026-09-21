@@ -3,7 +3,7 @@
   "provider": "openrouter",
   "model": "unbiased/pareto",
   "slug": "openrouter/pareto",
-  "status": "accepted",
+  "status": "draft",
   "officialSources": [
     "https://openrouter.ai/unbiased/pareto"
   ],
