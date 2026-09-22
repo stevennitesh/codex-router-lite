@@ -41,6 +41,24 @@ Load only the branch needed for the task:
 An installed hash or proof is evidence about one deployment. It never overrides
 the checked-in lock, patch, template, or current Router source.
 
+The same corpus has a small `fidelity` section for offline classifier-input
+regression. Run it through the maintained evaluator against a local Git object
+store that contains the locked upstream commit:
+
+```powershell
+node scripts/evaluate-switchyard-routing.mjs --input-fidelity-source `
+  <local-switchyard-git> docs/switchyard-routing-corpus.json <output-json>
+```
+
+The evaluator creates and removes a disposable checkout, verifies and applies
+the two `source.lock` patches in order, and compiles a test-only integration
+crate that reuses the actual patched Responses decoder, `/v1/decision` handler,
+and classifier. Its recording `TypeSafeProvider` is the precise test-only
+transport delta. It uses no provider credential or answer endpoint. This proves
+the locked source path's exact outgoing state and zero-call fallback behavior;
+it does not prove installed-binary parity because the production Decisions URL
+is immutable and Windows process-local test certificates are not trusted.
+
 The lock owns the selected public upstream revision and ordered patch identities. Changes to classifier categories
 or routing policy require a routing-quality evaluation, not just a clean patch
 application. The [dated pin review](../../docs/history/2026-09-12-switchyard-pin.md)

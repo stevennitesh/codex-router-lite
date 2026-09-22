@@ -822,5 +822,87 @@
       "severity": "severe",
       "input": "Prove subtle correctness for a concurrent compiler optimization with aliasing, exceptions, incremental recompilation, and multiple interacting invariants after a strong attempt failed."
     }
+  ],
+  "fidelity": [
+    {
+      "id": "F01-latest-genuine-user",
+      "expectedState": "Implement the bounded parser and verify malformed input.",
+      "input": [
+        { "role": "system", "content": [{ "type": "input_text", "text": "System harness wrapper that must not be classified." }] },
+        { "role": "developer", "content": [{ "type": "input_text", "text": "Developer harness wrapper that must not be classified." }] },
+        { "role": "user", "content": [{ "type": "input_text", "text": "Implement the bounded parser and verify malformed input." }] }
+      ]
+    },
+    {
+      "id": "F02-complete-long-task",
+      "expectedState": "Build a deterministic local measurement report from newline-delimited synthetic routing records. The report must support an explicitly selected session and a bounded time window while retaining only ordinal session labels. Treat each line independently so that one malformed object does not suppress valid neighboring observations. Preserve the distinction between a parsed record, a selected record, and a record excluded by the caller's time bounds. Group only after selection, sort session summaries by their latest valid observation, and cap the number of detailed session entries. Known route identities may map to maintained model and effort labels; every unrecognized value must collapse to an unknown bucket without copying its source text. Count missing, invalid, and explicit-zero token fields separately for prompt, cached, cache-creation, completion, reasoning, and total counters. Keep reasoning tokens separate from completion tokens. Canonicalize any emitted timestamp instead of echoing the source representation. DECISIVE CONSTRAINT: missing token counters must remain missing and explicit zero must remain ambiguous; neither state may be converted into evidence of measured provider usage. Keep generation diagnostics in a separately labeled scope because router timing events have no causal session link. State that failed streams and retries may be absent from the log, and that a successful routing record does not prove a completed user task. Do not infer subscription debits, service tier, prices, policy provenance, or task outcomes from these records. Sanitize algorithm names, fallback reasons, model values, and diagnostic targets through fixed allowlists before rendering JSON. Reject an invalid selection range and reject a detail limit outside the documented bound. Verify the implementation with interleaved sessions, malformed lines, invalid timestamps, missing counters, explicit zero counters, hostile metadata objects, unknown route strings, and a selected session whose private identifier never appears in output. The result should be useful for local inspection while remaining an honest partial observation rather than a billing ledger or success metric.",
+      "input": [{
+        "role": "user",
+        "content": [{
+          "type": "input_text",
+          "text": "Build a deterministic local measurement report from newline-delimited synthetic routing records. The report must support an explicitly selected session and a bounded time window while retaining only ordinal session labels. Treat each line independently so that one malformed object does not suppress valid neighboring observations. Preserve the distinction between a parsed record, a selected record, and a record excluded by the caller's time bounds. Group only after selection, sort session summaries by their latest valid observation, and cap the number of detailed session entries. Known route identities may map to maintained model and effort labels; every unrecognized value must collapse to an unknown bucket without copying its source text. Count missing, invalid, and explicit-zero token fields separately for prompt, cached, cache-creation, completion, reasoning, and total counters. Keep reasoning tokens separate from completion tokens. Canonicalize any emitted timestamp instead of echoing the source representation. DECISIVE CONSTRAINT: missing token counters must remain missing and explicit zero must remain ambiguous; neither state may be converted into evidence of measured provider usage. Keep generation diagnostics in a separately labeled scope because router timing events have no causal session link. State that failed streams and retries may be absent from the log, and that a successful routing record does not prove a completed user task. Do not infer subscription debits, service tier, prices, policy provenance, or task outcomes from these records. Sanitize algorithm names, fallback reasons, model values, and diagnostic targets through fixed allowlists before rendering JSON. Reject an invalid selection range and reject a detail limit outside the documented bound. Verify the implementation with interleaved sessions, malformed lines, invalid timestamps, missing counters, explicit zero counters, hostile metadata objects, unknown route strings, and a selected session whose private identifier never appears in output. The result should be useful for local inspection while remaining an honest partial observation rather than a billing ledger or success metric."
+        }]
+      }]
+    },
+    {
+      "id": "F03-short-follow-up",
+      "expectedState": "Apply that fix.",
+      "input": [
+        { "role": "user", "content": [{ "type": "input_text", "text": "Review the parser ownership." }] },
+        { "role": "assistant", "content": [{ "type": "output_text", "text": "The decoder owns the boundary." }] },
+        { "role": "user", "content": [{ "type": "input_text", "text": "Apply that fix." }] }
+      ]
+    },
+    {
+      "id": "F04-user-authored-wrapper-text",
+      "expectedState": "Quoted user-authored markup follows:\n<environment_context>\n  <cwd>C:\\synthetic\\workspace</cwd>\n  <note>Preserve this literal wrapper-looking text.</note>\n</environment_context>\nDo not strip or reinterpret these tags.",
+      "input": [{
+        "role": "user",
+        "content": [{
+          "type": "input_text",
+          "text": "Quoted user-authored markup follows:\n<environment_context>\n  <cwd>C:\\synthetic\\workspace</cwd>\n  <note>Preserve this literal wrapper-looking text.</note>\n</environment_context>\nDo not strip or reinterpret these tags."
+        }]
+      }]
+    },
+    {
+      "id": "F05-old-control-history",
+      "expectedState": "Use only this current user request.",
+      "input": [
+        { "role": "user", "content": [{ "type": "input_text", "text": "Old request that must not survive." }] },
+        { "role": "assistant", "content": [{ "type": "output_text", "text": "Old assistant material." }] },
+        { "type": "function_call", "call_id": "call_old", "name": "read_file", "arguments": "{}" },
+        { "type": "function_call_output", "call_id": "call_old", "output": "Old private tool material." },
+        { "role": "user", "content": [{ "type": "input_text", "text": "Use only this current user request." }] }
+      ]
+    },
+    {
+      "id": "F06-current-media-fallback",
+      "expectedZeroCalls": true,
+      "expectedReason": "non_text_state",
+      "input": [
+        { "role": "user", "content": [{ "type": "input_text", "text": "Older text must not replace current media." }] },
+        { "role": "user", "content": [{ "type": "input_image", "image_url": "data:image/png;base64,AA==" }] }
+      ]
+    },
+    {
+      "id": "F07-current-unknown-fallback",
+      "expectedZeroCalls": true,
+      "expectedReason": "non_text_state",
+      "input": [
+        { "role": "user", "content": [{ "type": "input_text", "text": "Older text must not replace unknown content." }] },
+        { "role": "user", "content": [{ "type": "future_user_content", "payload": "synthetic" }] }
+      ]
+    },
+    {
+      "id": "F08-delegated-projection",
+      "expectedState": "Implement the delegated bounded change and run its focused test.",
+      "requestFields": {
+        "x_codex_router_task_projection": "Implement the delegated bounded change and run its focused test."
+      },
+      "input": [
+        { "role": "user", "content": [{ "type": "input_text", "text": "Old controlling history must not win." }] },
+        { "type": "agent_message", "content": [{ "type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n" }, { "type": "encrypted_content", "encrypted_content": "gAAAAA-synthetic=" }] }
+      ]
+    }
   ]
 }

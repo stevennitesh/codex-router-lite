@@ -50,6 +50,29 @@ immutable startup readiness (`ready`, `unavailable` with a local reason, or
 and do not mutate readiness. Use the raw log only when this redacted summary
 cannot distinguish the failing owner.
 
+For read-only serving-record usage, add `--usage`. The default groups every
+observed `routing.jsonl` record into bounded local session ordinals and keeps
+latest-generation Router diagnostics in a separate scope:
+
+```powershell
+.\model-router.ps1 codex switchyard-trace --usage --limit 20
+```
+
+Select a private session locally, or bound the report by an explicit time
+window, without printing the session identifier:
+
+```powershell
+.\model-router.ps1 codex switchyard-trace --usage --session-id <private-id> `
+  --since 2026-09-21T01:00:00Z --until 2026-09-21T02:00:00Z
+```
+
+The report sums only finite non-negative integer counters that are actually
+present. It reports missing, invalid, and explicit-zero coverage separately;
+zero remains ambiguous for this log version. These are partial recorded sums,
+not inferred task totals, costs, subscription debits, retries, outcomes, or
+complete attempts. Failed streams can be absent from `routing.jsonl`, and the
+unassociated Router timing scope must not be added to serving records.
+
 Interpret current Jev fallback reasons before opening raw logs:
 
 | Reason | Meaning and first action |

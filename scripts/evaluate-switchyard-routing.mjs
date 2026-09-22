@@ -16,7 +16,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function assertCorpus(corpus) {
+export function assertCorpus(corpus, options = {}) {
   if (corpus.schemaVersion !== 1 || corpus.privateData !== false) {
     throw new Error("routing corpus must be schema v1 synthetic data");
   }
@@ -39,6 +39,21 @@ function assertCorpus(corpus) {
     }
     if (!["normal", "severe"].includes(item.severity)) {
       throw new Error(`routing corpus case ${item.id} has invalid severity`);
+    }
+  }
+  if (options.requireFidelity) {
+    if (!Array.isArray(corpus.fidelity) || corpus.fidelity.length === 0) {
+      throw new Error("routing corpus requires synthetic fidelity cases");
+    }
+    for (const item of corpus.fidelity) {
+      if (!item.id || !Array.isArray(item.input)) {
+        throw new Error("routing fidelity case lacks id or Responses input");
+      }
+      const stateCase = typeof item.expectedState === "string";
+      const fallbackCase = item.expectedZeroCalls === true && typeof item.expectedReason === "string";
+      if (stateCase === fallbackCase) {
+        throw new Error(`routing fidelity case ${item.id} must expect exact state or zero calls`);
+      }
     }
   }
   if (corpus.gates?.maximumRetriesPerRequest !== 1) {
@@ -268,7 +283,12 @@ export async function requestVector(base, capability, item, maxRetries, options 
         },
         body: JSON.stringify({
           input_format: "openai_responses",
-          request: { model: "switchyard-auto", input: item.input, store: false, stream: false },
+          request: {
+            model: "switchyard-auto",
+            input: item.input,
+            store: false,
+            stream: false,
+          },
         }),
         signal: AbortSignal.timeout(options.timeoutMs || requestTimeoutMs),
       });
@@ -320,6 +340,138 @@ export async function requestVector(base, capability, item, maxRetries, options 
   throw new Error("decision retry loop exhausted");
 }
 
+function checkedCommand(program, args, cwd, options = {}) {
+  const result = spawnSync(program, args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+    env: options.env || process.env,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    const detail = `${result.stderr || ""}\n${result.stdout || ""}`
+      .slice(-8_000)
+      .replace(/https?:\/\/[^\s"']+/gu, "[endpoint]")
+      .replace(/[\r\n]+/gu, " ")
+      .replace(/[^A-Za-z0-9 _.:\/-]/gu, "")
+      .trim()
+      .slice(-2_000);
+    throw new Error(`${program} ${args[0]} failed${detail ? `: ${detail}` : ""}`);
+  }
+  return String(result.stdout || "").trim();
+}
+
+export function verifyFidelitySourceInputs(sourceLockBytes, contributionBytes, patchBytes) {
+  const lock = JSON.parse(sourceLockBytes.toString("utf8"));
+  if (lock.upstreamContribution?.patchSha256 !== sha256(contributionBytes)) {
+    throw new Error("source lock does not bind the upstream contribution patch");
+  }
+  if (lock.patchSha256 !== sha256(patchBytes)) {
+    throw new Error("source lock does not bind the compatibility patch");
+  }
+  return lock;
+}
+
+export async function runInputFidelitySource(sourceGit, corpusPath, outputPath) {
+  const sourceLockPath = path.join(root, "config", "switchyard", "source.lock");
+  const patchPath = path.join(root, "config", "switchyard", "patches", "switchyard-codex-compat.patch");
+  const contributionPath = path.join(root, "config", "switchyard", "patches", "switchyard-typesafe-pr-762.patch");
+  const fixturePath = path.join(root, "scripts", "fixtures", "switchyard-input-fidelity.rs");
+  const corpusBytes = readFileSync(corpusPath);
+  const corpus = JSON.parse(corpusBytes.toString("utf8"));
+  assertCorpus(corpus, { requireFidelity: true });
+  const sourceLockBytes = readFileSync(sourceLockPath);
+  const patchBytes = readFileSync(patchPath);
+  const contributionBytes = readFileSync(contributionPath);
+  const fixtureBytes = readFileSync(fixturePath);
+  const lock = verifyFidelitySourceInputs(sourceLockBytes, contributionBytes, patchBytes);
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "switchyard-input-fidelity-"));
+  const sourceRoot = path.join(tempRoot, "source");
+  const evidence = {
+    schemaVersion: 1,
+    checkpoint: "switchyard-classifier-input-fidelity",
+    status: "predeclared",
+    syntheticAuthoredFixtures: true,
+    privateDataSent: false,
+    paidDecisionRequests: 0,
+    productionChanged: false,
+    identities: {
+      source: { configuredCommit: lock.commit, verifiedCheckout: false },
+      sourceLock: { providedSha256: sha256(sourceLockBytes), verifiedPatchBindings: true },
+      upstreamContribution: {
+        configuredCommit: lock.upstreamContribution.sourceCommit,
+        providedSha256: sha256(contributionBytes),
+        applied: false,
+      },
+      compatibilityPatch: {
+        providedSha256: sha256(patchBytes),
+        applied: false,
+      },
+      testOnlyDelta: { providedSha256: sha256(fixtureBytes), applied: false },
+      corpus: { providedSha256: sha256(corpusBytes) },
+      evaluator: { providedSha256: sha256(readFileSync(import.meta.filename)) },
+    },
+    transport: {
+      classifier: "in-process recording TypeSafeProvider injected through existing test ServerState",
+      answerTarget: "closed loopback port; /v1/decision does not dispatch an answer",
+      credentials: "none",
+    },
+    evidenceLimit: "Exercises the exact locked and patched Rust decoder/classifier handler; installed-binary parity is not claimed because its production Decisions transport is immutable.",
+  };
+  writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  try {
+    checkedCommand("git", ["clone", "--no-checkout", "--shared", path.resolve(sourceGit), sourceRoot], tempRoot);
+    checkedCommand("git", ["checkout", "--detach", lock.commit], sourceRoot);
+    const checkout = checkedCommand("git", ["rev-parse", "HEAD"], sourceRoot);
+    if (checkout !== lock.commit) throw new Error("materialized source does not match source.lock");
+    evidence.identities.source.verifiedCheckout = true;
+    checkedCommand("git", ["apply", "--whitespace=nowarn", contributionPath], sourceRoot);
+    evidence.identities.upstreamContribution.applied = true;
+    checkedCommand("git", ["apply", "--whitespace=nowarn", patchPath], sourceRoot);
+    evidence.identities.compatibilityPatch.applied = true;
+    const testPath = path.join(sourceRoot, "crates", "switchyard-server", "tests", "measurement_input_fidelity.rs");
+    const serverTestPath = path.join(sourceRoot, "crates", "switchyard-server", "tests", "server.rs");
+    writeFileSync(testPath, `${readFileSync(serverTestPath, "utf8")}\n${fixtureBytes.toString("utf8")}`);
+    evidence.identities.testOnlyDelta.applied = true;
+    const env = {
+      ...process.env,
+      OPENROUTER_API_KEY: "",
+      SWITCHYARD_FIDELITY_CORPUS: path.resolve(corpusPath),
+    };
+    const cargoVersion = checkedCommand("cargo", ["--version"], sourceRoot, { env });
+    checkedCommand("cargo", [
+      "test", "--locked", "-p", "switchyard-server", "--test", "measurement_input_fidelity",
+      "measurement_classifier_input_fidelity_from_corpus", "--", "--exact",
+    ], sourceRoot, { env });
+    evidence.status = "input_fidelity_passed";
+    evidence.cases = corpus.fidelity.length;
+    evidence.exactStateCases = corpus.fidelity.filter((item) => typeof item.expectedState === "string").length;
+    evidence.zeroCallFallbackCases = corpus.fidelity.filter((item) => item.expectedZeroCalls === true).length;
+    evidence.toolchain = cargoVersion;
+    evidence.completedAt = new Date().toISOString();
+    writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({
+      outputPath,
+      status: evidence.status,
+      cases: evidence.cases,
+      exactStateCases: evidence.exactStateCases,
+      zeroCallFallbackCases: evidence.zeroCallFallbackCases,
+      paidDecisionRequests: 0,
+      sourceCommit: lock.commit,
+    }, null, 2)}\n`);
+    return evidence;
+  } catch (error) {
+    evidence.status = "input_fidelity_failed";
+    evidence.failure = {
+      message: error instanceof Error ? error.message.replace(/[^A-Za-z0-9 _-]/gu, "") : "unknown",
+    };
+    writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
+    throw error;
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 async function evaluate(binary, configPath, credential, items, maxRetries, threshold) {
   const vectors = [];
   const attempts = [];
@@ -339,6 +491,13 @@ async function evaluate(binary, configPath, credential, items, maxRetries, thres
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  if (argv[0] === "--input-fidelity-source") {
+    if (argv.length !== 4) {
+      throw new Error("usage: evaluate-switchyard-routing.mjs --input-fidelity-source SOURCE_GIT CORPUS_JSON OUTPUT_JSON");
+    }
+    const [, sourceArg, corpusArg, outputArg] = argv;
+    return await runInputFidelitySource(path.resolve(sourceArg), path.resolve(corpusArg), path.resolve(outputArg));
+  }
   if (argv.length < 3) {
     throw new Error("usage: evaluate-switchyard-routing.mjs BINARY CORPUS_JSON OUTPUT_JSON");
   }

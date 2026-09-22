@@ -3,8 +3,30 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LOG_PATH } from "./paths.mjs";
+import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
+const TOKEN_FIELDS = Object.freeze([
+  ["prompt_tokens", "promptTokens"],
+  ["cached_tokens", "cachedTokens"],
+  ["cache_creation_tokens", "cacheCreationTokens"],
+  ["completion_tokens", "completionTokens"],
+  ["reasoning_tokens", "reasoningTokens"],
+  ["total_tokens", "totalTokens"],
+]);
+const KNOWN_TARGETS = Object.freeze({
+  "switchyard/luna-max": Object.freeze({ key: "lunaMax", model: "gpt-5.6-luna", effort: "max" }),
+  "switchyard/sol-medium": Object.freeze({ key: "solMedium", model: "gpt-5.6-sol", effort: "medium" }),
+  "switchyard/astra-medium": Object.freeze({ key: "astraMedium", model: "gpt-6-astra", effort: "medium" }),
+  "switchyard/astra-xhigh": Object.freeze({ key: "astraXhigh", model: "gpt-6-astra", effort: "xhigh" }),
+});
+const KNOWN_ALGORITHMS = new Set(["type_safe_task_classifier", "noop"]);
+const KNOWN_FALLBACK_REASONS = new Set([
+  "empty_state", "non_text_state", "low_confidence", "classifier_unavailable",
+  "classifier_timeout", "provider_http_error", "malformed_response", "state_too_large",
+  "invalid_confidence", "unresolved_label",
+]);
+const KNOWN_CLASSIFIER_TARGETS = new Set(["luna_max", "sol_medium", "astra_medium", "astra_xhigh"]);
 
 export function latestSwitchyardGeneration(contents) {
   const text = String(contents || "");
@@ -14,8 +36,8 @@ export function latestSwitchyardGeneration(contents) {
   return text.slice(lineStart);
 }
 
-function increment(record, key) {
-  record[key] = (record[key] || 0) + 1;
+function increment(record, key, amount = 1) {
+  record[key] = (record[key] || 0) + amount;
 }
 
 function statusFrom(line) {
@@ -155,10 +177,288 @@ export function summarizeSwitchyardTrace(contents) {
   return summary;
 }
 
+function emptyUsageCoverage() {
+  return Object.fromEntries(TOKEN_FIELDS.map(([, output]) => [output, {
+    recordedSum: 0,
+    validRecords: 0,
+    missingRecords: 0,
+    invalidRecords: 0,
+    explicitZeroRecords: 0,
+  }]));
+}
+
+function recordUsage(coverage, record) {
+  for (const [input, output] of TOKEN_FIELDS) {
+    if (!Object.hasOwn(record, input) || record[input] === null) {
+      coverage[output].missingRecords += 1;
+      continue;
+    }
+    const value = record[input];
+    if (!Number.isSafeInteger(value) || value < 0) {
+      coverage[output].invalidRecords += 1;
+      continue;
+    }
+    coverage[output].validRecords += 1;
+    coverage[output].recordedSum += value;
+    if (value === 0) coverage[output].explicitZeroRecords += 1;
+  }
+}
+
+function safeTimestamp(value) {
+  if (typeof value !== "string") return undefined;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds)
+    ? { value: new Date(milliseconds).toISOString(), milliseconds }
+    : undefined;
+}
+
+function selectionTime(value, name) {
+  if (value === undefined) return undefined;
+  const timestamp = safeTimestamp(value);
+  if (!timestamp) throw new Error(`${name} must be an ISO-8601 timestamp`);
+  return timestamp;
+}
+
+function safeBucket(value, known) {
+  return typeof value === "string" && known.has(value) ? value : "unknown";
+}
+
+function incrementSession(session, record, targetKey) {
+  session.records += 1;
+  increment(session.targets, targetKey);
+  recordUsage(session.usage, record);
+  const timestamp = safeTimestamp(record.ts);
+  if (timestamp) {
+    if (!session.since || timestamp.milliseconds < session.sinceMs) {
+      session.since = timestamp.value;
+      session.sinceMs = timestamp.milliseconds;
+    }
+    if (!session.until || timestamp.milliseconds > session.untilMs) {
+      session.until = timestamp.value;
+      session.untilMs = timestamp.milliseconds;
+    }
+  }
+}
+
+/**
+ * Summarize Switchyard serving records without exposing grouping identifiers or
+ * treating normalized zeros as proof that usage was observed by the provider.
+ */
+export function summarizeSwitchyardUsage(routingContents, options = {}) {
+  const since = selectionTime(options.since, "--since");
+  const until = selectionTime(options.until, "--until");
+  if (since && until && since.milliseconds > until.milliseconds) {
+    throw new Error("--since must not be after --until");
+  }
+  const sessionId = options.sessionId;
+  if (sessionId !== undefined && (typeof sessionId !== "string" || sessionId.length === 0)) {
+    throw new Error("--session-id must be non-empty");
+  }
+  const detailLimit = options.limit ?? 20;
+  if (!Number.isInteger(detailLimit) || detailLimit < 1 || detailLimit > 50) {
+    throw new Error("--limit must be an integer from 1 through 50");
+  }
+
+  const summary = {
+    version: 1,
+    scope: "observed Switchyard routing.jsonl serving records only",
+    selection: {
+      session: sessionId === undefined ? "all sessions" : "one explicitly selected private session",
+      since: since?.value ?? null,
+      until: until?.value ?? null,
+      taskBoundary: "user-selected segment; no task boundary or outcome inferred",
+    },
+    coverage: {
+      totalLines: 0,
+      parsedRecords: 0,
+      malformedLines: 0,
+      selectedRecords: 0,
+      recordsOutsideSelection: 0,
+      recordsWithoutUsableSession: 0,
+      recordsWithoutValidTimestamp: 0,
+      excludedWithoutValidTimestamp: 0,
+    },
+    targets: {
+      lunaMax: { model: "gpt-5.6-luna", effort: "max", records: 0 },
+      solMedium: { model: "gpt-5.6-sol", effort: "medium", records: 0 },
+      astraMedium: { model: "gpt-6-astra", effort: "medium", records: 0 },
+      astraXhigh: { model: "gpt-6-astra", effort: "xhigh", records: 0 },
+      unknown: { model: "unknown", effort: "unknown", records: 0 },
+    },
+    algorithms: {},
+    fallbackReasons: {},
+    usage: emptyUsageCoverage(),
+    sessions: [],
+    sessionsOmitted: 0,
+    serviceTier: {
+      status: "unavailable",
+      note: "blank or present routing-log tier values do not establish the billed service tier",
+    },
+    policyProvenance: {
+      routingRecords: "unavailable",
+      note: "current source or template identity is not assigned retroactively to routing records",
+    },
+    limitations: [
+      "Recorded sums are partial observations, not task totals or subscription debits.",
+      "Missing counters remain missing; explicit zero is ambiguous in this log version.",
+      "Failed streaming attempts may have no routing record, and retries or extraction overhead are unlinked.",
+      "Reasoning tokens are reported separately and are never added to completion tokens.",
+      "HTTP success, a routing record, a session, and a completed user task are distinct facts.",
+    ],
+  };
+  const sessions = new Map();
+  for (const line of String(routingContents || "").split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    summary.coverage.totalLines += 1;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      summary.coverage.malformedLines += 1;
+      continue;
+    }
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      summary.coverage.malformedLines += 1;
+      continue;
+    }
+    summary.coverage.parsedRecords += 1;
+    const recordSession = typeof record.session_id === "string" && record.session_id.length
+      ? record.session_id
+      : undefined;
+    if (!recordSession) summary.coverage.recordsWithoutUsableSession += 1;
+    const timestamp = safeTimestamp(record.ts);
+    if (!timestamp) summary.coverage.recordsWithoutValidTimestamp += 1;
+    const sessionMatches = sessionId === undefined || recordSession === sessionId;
+    const requiresTimestamp = Boolean(since || until);
+    const timeMatches = !requiresTimestamp || Boolean(timestamp &&
+      (!since || timestamp.milliseconds >= since.milliseconds) &&
+      (!until || timestamp.milliseconds <= until.milliseconds));
+    if (requiresTimestamp && !timestamp && sessionMatches) {
+      summary.coverage.excludedWithoutValidTimestamp += 1;
+    }
+    if (!sessionMatches || !timeMatches) {
+      summary.coverage.recordsOutsideSelection += 1;
+      continue;
+    }
+    summary.coverage.selectedRecords += 1;
+    const target = typeof record.model === "string" && Object.hasOwn(KNOWN_TARGETS, record.model)
+      ? KNOWN_TARGETS[record.model]
+      : undefined;
+    const targetKey = target?.key || "unknown";
+    summary.targets[targetKey].records += 1;
+    increment(summary.algorithms, safeBucket(record.algorithm, KNOWN_ALGORITHMS));
+    if (Object.hasOwn(record, "fallback_reason") && record.fallback_reason !== null) {
+      increment(summary.fallbackReasons, safeBucket(record.fallback_reason, KNOWN_FALLBACK_REASONS));
+    }
+    recordUsage(summary.usage, record);
+
+    const groupingKey = recordSession ?? null;
+    let session = sessions.get(groupingKey);
+    if (!session) {
+      session = {
+        records: 0,
+        since: null,
+        until: null,
+        sinceMs: Number.POSITIVE_INFINITY,
+        untilMs: Number.NEGATIVE_INFINITY,
+        targets: {},
+        usage: emptyUsageCoverage(),
+      };
+      sessions.set(groupingKey, session);
+    }
+    incrementSession(session, record, targetKey);
+  }
+
+  const ordered = [...sessions.entries()].sort((left, right) =>
+    right[1].untilMs - left[1].untilMs || right[1].records - left[1].records);
+  summary.sessions = ordered.slice(0, detailLimit).map(([key, session], index) => ({
+    label: sessionId !== undefined
+      ? "selected-session"
+      : key === null ? "unassociated" : `session-${index + 1}`,
+    records: session.records,
+    since: session.since,
+    until: session.until,
+    targets: session.targets,
+    usage: session.usage,
+  }));
+  summary.sessionsOmitted = Math.max(0, ordered.length - summary.sessions.length);
+  return summary;
+}
+
+export function buildSwitchyardUsageReport(routingContents, routerContents, options = {}) {
+  const trace = summarizeSwitchyardTrace(routerContents);
+  const safeClassifier = trace.classifier ? {
+    ...trace.classifier,
+    providerModels: Object.entries(trace.classifier.providerModels).reduce((counts, [key, count]) => {
+      increment(counts, /^typesafe\/jev-1\.13-[A-Za-z0-9.-]+$/u.test(key) ? "jev113" : "unknown", count);
+      return counts;
+    }, {}),
+    finalTargets: Object.entries(trace.classifier.finalTargets).reduce((counts, [key, count]) => {
+      increment(counts, safeBucket(key, KNOWN_CLASSIFIER_TARGETS), count);
+      return counts;
+    }, {}),
+    recent: trace.classifier.recent.map((entry) => ({
+      ...entry,
+      ...(entry.providerModel ? {
+        providerModel: /^typesafe\/jev-1\.13-[A-Za-z0-9.-]+$/u.test(entry.providerModel)
+          ? "jev-1.13 build"
+          : "unknown",
+      } : {}),
+      ...(entry.finalTarget ? { finalTarget: safeBucket(entry.finalTarget, KNOWN_CLASSIFIER_TARGETS) } : {}),
+      ...(entry.reasonCode ? { reasonCode: safeBucket(entry.reasonCode, KNOWN_FALLBACK_REASONS) } : {}),
+    })),
+  } : undefined;
+  const safeSelectedTargets = Object.entries(trace.selectedTargets || {}).reduce((counts, [key, count]) => {
+    increment(counts, KNOWN_TARGETS[key]?.key || "unknown", count);
+    return counts;
+  }, {});
+  return {
+    ...summarizeSwitchyardUsage(routingContents, options),
+    generationDiagnostics: {
+      scope: "unassociated Router and classifier observations from the latest logged generation",
+      ...trace,
+      ...(safeClassifier ? { classifier: safeClassifier } : {}),
+      ...(trace.selectedTargets ? { selectedTargets: safeSelectedTargets } : {}),
+    },
+  };
+}
+
+function parseUsageArguments(argv) {
+  const options = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    const value = () => {
+      const next = argv[index + 1];
+      if (!next) throw new Error(`${argument} requires a value`);
+      index += 1;
+      return next;
+    };
+    if (argument === "--session-id") options.sessionId = value();
+    else if (argument === "--since") options.since = value();
+    else if (argument === "--until") options.until = value();
+    else if (argument === "--limit") options.limit = Number(value());
+    else throw new Error(`unknown switchyard-trace --usage argument: ${argument}`);
+  }
+  return options;
+}
+
 function main() {
-  const summary = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+  const argv = process.argv.slice(2);
+  let summary;
+  if (argv[0] === "--usage") {
+    const runtime = switchyardRuntimeStatus();
+    const routingPath = path.join(runtime.runtimeRoot, "routing.jsonl");
+    summary = buildSwitchyardUsageReport(
+      readFileSync(routingPath, "utf8"),
+      readFileSync(LOG_PATH, "utf8"),
+      parseUsageArguments(argv.slice(1)),
+    );
+  } else {
+    if (argv.length) throw new Error("usage: switchyard-trace [--usage [--session-id ID] [--since ISO] [--until ISO] [--limit N]]");
+    summary = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+  }
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
-  if (!summary.generationFound) process.exitCode = 1;
+  if (argv[0] !== "--usage" && !summary.generationFound) process.exitCode = 1;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

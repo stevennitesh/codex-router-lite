@@ -6,10 +6,12 @@ import test from "node:test";
 
 import {
   allGatesPass,
+  assertCorpus,
   requestVector,
   runtimeParity,
   stableProviderBuild,
   validateEvidence,
+  verifyFidelitySourceInputs,
 } from "../scripts/evaluate-switchyard-routing.mjs";
 
 const item = { id: "D01", input: "Continue." };
@@ -117,6 +119,56 @@ test("full-body latency includes response parsing", async () => {
   assert.ok(result.vector.fullBodyLatencyMs >= 20);
 });
 
+test("paid vectors retain their fixed request contract", async () => {
+  let sent;
+  await requestVector("http://local", "cap", {
+    ...item,
+    requestFields: {
+      model: "hostile-model",
+      input: "hostile-input",
+      store: true,
+      stream: true,
+    },
+  }, 0, {
+    fetchImpl: async (_url, options) => {
+      sent = JSON.parse(options.body).request;
+      return new Response(JSON.stringify(decisionBody()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  assert.deepEqual(sent, {
+    model: "switchyard-auto",
+    input: item.input,
+    store: false,
+    stream: false,
+  });
+});
+
+test("ordinary paid corpus validation does not require fidelity fixtures", () => {
+  const caseBase = {
+    input: "Synthetic request",
+    expected: "sol_medium",
+    acceptable: ["sol_medium"],
+    severity: "normal",
+  };
+  const corpus = {
+    schemaVersion: 1,
+    privateData: false,
+    labels: ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"],
+    development: [{ ...caseBase, id: "D01" }],
+    holdout: [{ ...caseBase, id: "H01" }],
+    gates: { maximumRetriesPerRequest: 1, minimumAcceptablePerSplit: 1 },
+  };
+  assert.doesNotThrow(() => assertCorpus(corpus));
+  assert.doesNotThrow(() => assertCorpus({ ...corpus, fidelity: "ignored paid-path metadata" }));
+  assert.throws(
+    () => assertCorpus(corpus, { requireFidelity: true }),
+    /requires synthetic fidelity cases/u,
+  );
+});
+
 test("expected local fallback is admitted separately from provider vectors", () => {
   const mediaItem = {
     id: "M01",
@@ -169,6 +221,24 @@ test("runtime parity, provider stability, and promotion gates are behavioral", (
 
   assert.equal(allGatesPass({ semantic: true, runtimeParity: false }), false);
   assert.equal(allGatesPass({ semantic: true, runtimeParity: true }), true);
+});
+
+test("offline fidelity binds the ordered source patches and authored Rust fixture", () => {
+  const lockBytes = readFileSync(path.join(root, "config", "switchyard", "source.lock"));
+  const contributionBytes = readFileSync(path.join(
+    root, "config", "switchyard", "patches", "switchyard-typesafe-pr-762.patch",
+  ));
+  const patchBytes = readFileSync(path.join(
+    root, "config", "switchyard", "patches", "switchyard-codex-compat.patch",
+  ));
+  const lock = verifyFidelitySourceInputs(lockBytes, contributionBytes, patchBytes);
+  assert.equal(lock.commit, "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877");
+  const fixture = readFileSync(path.join(
+    root, "scripts", "fixtures", "switchyard-input-fidelity.rs",
+  ), "utf8");
+  assert.match(fixture, /exact outgoing classifier state/u);
+  assert.match(fixture, /expected zero classifier calls/u);
+  assert.doesNotMatch(fixture, /OPENROUTER|api_key|reqwest/u);
 });
 
 test("C2 review evidence binds the repaired evaluator and every frozen gate", () => {

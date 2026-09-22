@@ -313,9 +313,12 @@ test("Switchyard keeps one maintained routing evaluator over the actual decision
   assert.equal(corpus.gates.maximumRetriesPerRequest, 1);
   assert.equal(corpus.gates.minimumAcceptablePerSplit, 17);
   assert.equal(corpus.gates.maximumSevereUnderRoutes, 0);
+  assert.equal(corpus.fidelity.length, 8);
   assert.match(evaluator, /fetchImpl\(`\$\{base\}\/v1\/decision`/u);
-  assert.match(evaluator, /request: \{ model: "switchyard-auto", input: item\.input/u);
+  assert.match(evaluator, /request:\s*\{[\s\S]{0,160}model: "switchyard-auto",[\s\S]{0,160}input: item\.input/u);
   assert.doesNotMatch(evaluator, /fetch\("https:\/\/openrouter\.ai/u);
+  assert.match(evaluator, /--input-fidelity-source/u);
+  assert.match(evaluator, /verifyFidelitySourceInputs/u);
   assert.match(evaluator, /candidate_frozen_before_holdout/u);
   const materializer = readFileSync(path.join(root, "scripts", "materialize-switchyard-routes.mjs"), "utf8");
   assert.match(materializer, /validateSwitchyardConfigContract/u);
