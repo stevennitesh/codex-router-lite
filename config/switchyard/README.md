@@ -83,6 +83,11 @@ records the earlier integration decision.
    endpoint for Jev 1.13, chooses a configured Luna, Sol, or Astra target, and
    effort, and sends the native request back through Router's capability-gated
    Responses endpoint.
+   The authenticated hop always derives a one-way generation marker and carries
+   it back to Router, which removes it before the native provider request. When
+   native-attempt diagnostics are explicitly enabled, Router uses the marker to
+   distinguish the selected native answer attempt from unrelated direct-native
+   traffic. The marker has no Switchyard authentication authority.
 4. `forward_auth = true` preserves the original Codex authorization and account
    envelope for the native ChatGPT backend. Switchyard must not substitute or
    log it.
@@ -109,7 +114,11 @@ model and control over additional request fields. The patch adds and tests:
 - authenticated classifier projections that are removed before decode, raw
   preservation, observability, and upstream forwarding;
 - local-hop capability enforcement and removal; and
-- target-URL redaction in decision output.
+- target-URL redaction in decision output; and
+- a locked-source regression that decodes native Responses usage through both
+  buffered and streaming paths and verifies the routing log keeps inclusive
+  input totals while preserving cache-read, cache-write-zero, and missing-write
+  distinctions before the historical log schema maps a missing write to zero.
 
 Every target sets `store = false`, `stream = true`, and removes
 `max_output_tokens` for the ChatGPT subscription Responses backend.

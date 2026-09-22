@@ -9,7 +9,7 @@
     "patchSha256": "c5e4328c2b305d769b5f8776cf666ec6c61ec34c65ea29ac7202b27587e10e7a"
   },
   "patch": "patches/switchyard-codex-compat.patch",
-  "patchSha256": "6ddc87abe19cf709b3b548304b27b683420323a18fab0bc753bbe627c7b28bad",
+  "patchSha256": "dc6550f08a2c6ca4996bb4347f1f36a8b1d28416b608bcc1d18a6841aefcba83",
   "rustToolchain": "1.96.1",
   "binary": "target/release/switchyard-server.exe"
 }

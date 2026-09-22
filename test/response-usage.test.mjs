@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { ResponseUsageTransform } from "../src/response-usage.mjs";
+import {
+  ResponseUsageTransform,
+  mergeTokenUsage,
+  reportedTokenUsageFromPayload,
+  tokenUsageFromPayload,
+} from "../src/response-usage.mjs";
 
 async function run(chunks, options = {}) {
   const transform = new ResponseUsageTransform("text/event-stream", options);
@@ -37,6 +42,114 @@ test("usage observation accepts long streams made of bounded lines", async () =>
   const { body, transform } = await run([input], { maxPendingBytes: 128 });
   assert.equal(body.toString("utf8"), input);
   assert.deepEqual(transform.tokenUsage(), { inputTokens: 7, outputTokens: 3, totalTokens: 10 });
+});
+
+test("usage observation preserves cache reads and writes without inventing absent counters", async () => {
+  const fixtures = [
+    [
+      { cached_tokens: 8_000, cache_write_tokens: 4_000 },
+      { cachedInputTokens: 8_000, cacheWriteTokens: 4_000 },
+    ],
+    [
+      { cached_tokens: 8_000, cache_write_tokens: 0 },
+      { cachedInputTokens: 8_000, cacheWriteTokens: 0 },
+    ],
+    [
+      { cached_tokens: 8_000 },
+      { cachedInputTokens: 8_000 },
+    ],
+    [
+      { cached_tokens: 8_000, cache_write_tokens: null },
+      { cachedInputTokens: 8_000 },
+    ],
+    [
+      { cached_tokens: 8_000, cache_write_tokens: "invalid" },
+      { cachedInputTokens: 8_000 },
+    ],
+  ];
+  for (const [details, expectedDetails] of fixtures) {
+    const usage = {
+      input_tokens: 12_000,
+      output_tokens: 100,
+      total_tokens: 12_100,
+      input_tokens_details: details,
+    };
+    const expected = {
+      inputTokens: 12_000,
+      outputTokens: 100,
+      totalTokens: 12_100,
+      ...expectedDetails,
+    };
+    assert.deepEqual(tokenUsageFromPayload({ usage }), expected);
+
+    const wire = `data: ${JSON.stringify({ type: "response.completed", response: { usage } })}\n\n`;
+    const { transform } = await run([...wire]);
+    assert.deepEqual(transform.tokenUsage(), expected);
+  }
+});
+
+test("provider attempt observation preserves missing counters and terminal metadata", async () => {
+  assert.deepEqual(reportedTokenUsageFromPayload({
+    usage: { output_tokens: 2, input_tokens_details: { cached_tokens: 0 } },
+  }), { cachedInputTokens: 0, outputTokens: 2 });
+  assert.equal(reportedTokenUsageFromPayload({
+    usage: { input_tokens: "12", output_tokens: 1.5 },
+  }), undefined, "invalid provider counter types are not coerced or rounded");
+  const wire = `data: ${JSON.stringify({
+    type: "response.incomplete",
+    response: {
+      status: "incomplete",
+      model: "gpt-6-astra",
+      service_tier: "priority",
+      usage: { output_tokens: 2, input_tokens_details: { cached_tokens: 0 } },
+    },
+  })}\n\n`;
+  const { transform } = await run([wire], { estimatedInputTokens: 1_234 });
+  assert.deepEqual(transform.reportedTokenUsage(), { cachedInputTokens: 0, outputTokens: 2 });
+  assert.deepEqual(transform.providerResponseObservation(), {
+    outcome: "incomplete",
+    returnedModel: "gpt-6-astra",
+    returnedTier: "priority",
+  });
+  assert.equal(transform.reportedTokenUsage().inputTokens, undefined,
+    "a compaction estimate is not provider-reported input");
+});
+
+test("retry usage aggregation reports optional-counter and whole-attempt coverage", () => {
+  const first = {
+    inputTokens: 12_000,
+    outputTokens: 100,
+    totalTokens: 12_100,
+    cachedInputTokens: 8_000,
+    cacheWriteTokens: 4_000,
+  };
+  const second = {
+    inputTokens: 6_000,
+    outputTokens: 50,
+    totalTokens: 6_050,
+    cachedInputTokens: 3_000,
+  };
+  assert.deepEqual(mergeTokenUsage(first, second), {
+    inputTokens: 18_000,
+    outputTokens: 150,
+    totalTokens: 18_150,
+    usageComplete: true,
+    cachedInputTokens: 11_000,
+    cachedInputTokensComplete: true,
+    cacheWriteTokens: 4_000,
+    cacheWriteTokensComplete: false,
+  });
+  assert.deepEqual(mergeTokenUsage(first, undefined), {
+    inputTokens: 12_000,
+    outputTokens: 100,
+    totalTokens: 12_100,
+    usageComplete: false,
+    cachedInputTokens: 8_000,
+    cachedInputTokensComplete: false,
+    cacheWriteTokens: 4_000,
+    cacheWriteTokensComplete: false,
+  });
+  assert.equal(mergeTokenUsage(undefined, undefined), undefined);
 });
 
 test("usage rewriting accepts long streams made of bounded lines", async () => {

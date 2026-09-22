@@ -476,6 +476,7 @@ async function scenario(
     requestPayload = routedRequestPayload,
     routerEnv = {},
     prepareRouterEnv,
+    followupPayload,
     expectedStatus = 200,
   } = {},
 ) {
@@ -521,7 +522,19 @@ async function scenario(
     });
     assert.equal(response.status, expectedStatus, `router status ${response.status}`);
     const clientBody = await response.text();
-    return { gatewayBodies, clientBody, router, status: response.status };
+    let followup;
+    if (followupPayload) {
+      const next = await fetch(`${routerBase(routerPort)}${endpoint}`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer CODEX_CALLER_SECRET",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(followupPayload(stream, model, clientBody)),
+      });
+      followup = { status: next.status, body: await next.text() };
+    }
+    return { gatewayBodies, clientBody, followup, router, status: response.status };
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);
@@ -679,6 +692,87 @@ test("non-streaming routed responses restore namespace calls before client dispa
     execution: "client",
     arguments: { query: "calendar", limit: 2 },
   });
+});
+
+test("restored native tool discovery survives the completion guard and its result continues", async () => {
+  const searchArguments = { query: "synthetic calendar", limit: 1 };
+  const discoveredTools = [{
+    type: "namespace",
+    name: "mcp__calendar",
+    tools: [{
+      type: "function",
+      name: "list_events",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    }],
+  }];
+  const initialPayload = (stream, model) => ({
+    model,
+    stream,
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "discover calendar tools" }] }],
+    tools: [routedRequestPayload(stream, model).tools[0]],
+  });
+  const followupPayload = (stream, model) => ({
+    ...initialPayload(stream, model),
+    input: [
+      ...initialPayload(stream, model).input,
+      { type: "tool_search_call", call_id: "search-only", execution: "client", arguments: searchArguments },
+      { type: "tool_search_output", call_id: "search-only", status: "completed", execution: "client", tools: discoveredTools },
+    ],
+  });
+  const providerCall = {
+    type: "function_call",
+    name: "tool_search",
+    call_id: "search-only",
+    arguments: JSON.stringify(searchArguments),
+  };
+  const providerMessage = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "continued" }],
+  };
+
+  for (const stream of [true, false]) {
+    const result = await scenario(stream, {
+      requestPayload: initialPayload,
+      followupPayload,
+      sseBody: (body) => body.input.some((item) => item.call_id === "search-only")
+        ? [
+            sseEvent({ type: "response.output_item.done", item: providerMessage }),
+            sseEvent({ type: "response.completed", response: { status: "completed", output: [providerMessage] } }),
+            "data: [DONE]\n\n",
+          ].join("")
+        : [
+            sseEvent({ type: "response.output_item.done", item: providerCall }),
+            sseEvent({ type: "response.completed", response: { status: "completed", output: [providerCall] } }),
+            "data: [DONE]\n\n",
+          ].join(""),
+      jsonBody: (body) => body.input.some((item) => item.call_id === "search-only")
+        ? { id: "resp-followup", status: "completed", output: [providerMessage] }
+        : { id: "resp-search", status: "completed", output: [providerCall] },
+    });
+
+    assert.equal(result.gatewayBodies.length, 2, `no guard retry for stream=${stream}`);
+    const restored = stream
+      ? responseItemsFromSse(result.clientBody).find((item) => item.call_id === "search-only")
+      : JSON.parse(result.clientBody).output[0];
+    assert.deepEqual(restored, {
+      type: "tool_search_call",
+      call_id: "search-only",
+      execution: "client",
+      arguments: searchArguments,
+    });
+    const continuation = result.gatewayBodies[1];
+    assert.ok(continuation.tools.some((tool) => tool.name === "mcp__calendar__list_events"));
+    assert.deepEqual(
+      continuation.input.filter((item) => item.call_id === "search-only"),
+      [
+        { type: "function_call", name: "tool_search", call_id: "search-only", arguments: JSON.stringify(searchArguments) },
+        { type: "function_call_output", call_id: "search-only", output: JSON.stringify({ tools: continuation.tools.filter((tool) => tool.name === "mcp__calendar__list_events") }) },
+      ],
+    );
+    assert.equal(result.followup.status, 200);
+    assert.match(result.followup.body, /continued/u);
+  }
 });
 
 test("routed tool_search history declares discovered tools and restores their calls", async () => {

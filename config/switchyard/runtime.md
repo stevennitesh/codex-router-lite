@@ -73,6 +73,38 @@ not inferred task totals, costs, subscription debits, retries, outcomes, or
 complete attempts. Failed streams can be absent from `routing.jsonl`, and the
 unassociated Router timing scope must not be added to serving records.
 
+Native-attempt transition diagnostics are separately opt-in. Start a candidate
+Router generation with `CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION=1`; it
+appends sanitized records to `native-attempts.jsonl` under the Switchyard
+runtime root. `CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG` may select another protected
+local path for an isolated experiment. The ordinary `--usage` report includes
+the latest observed generation when that file exists.
+
+The managed Switchyard hop derives a one-way marker from its ephemeral
+generation capability. Switchyard carries that marker to Router, and Router
+consumes it before the OpenAI request. This identifies the native answering
+attempt without exposing the capability or relying on timestamps. The log uses
+bounded process-local association and request ordinals; it never writes raw
+session, account or request identifiers, prompt/tool content, credentials or
+content fingerprints. Missing or conflicting identity, overlapping requests,
+eviction and restart break transition ordering. Compaction and classifier work
+are outside the native-answer attempt set. A diagnostic write failure disables
+the optional observer for that Router process so later records cannot reuse an
+incompletely recorded generation.
+
+Transition counts describe explicitly associated requests. Each transition's
+detail bucket includes all actual destination attempts, including retries, and
+reports counter coverage, weighted read share and attempt-weighted latency.
+Missing or noncontiguous request/attempt ordinals cannot bridge a transition.
+Usage preserves provider field presence, including explicit zero; input
+estimates used for compaction never enter these records. Read share uses only
+records with both input and cached-input counters and rejects cached input above
+input as invalid coverage. Returned-tier coverage distinguishes matching,
+different and unavailable provider reports. Compaction-item metadata is only
+`present` or `absent` when the ordinary native input is inspectable as an item
+array; other shapes remain `unknown`. These observations are not task outcomes,
+cache-causality results, subscription debits or serving-policy gates.
+
 Interpret current Jev fallback reasons before opening raw logs:
 
 | Reason | Meaning and first action |

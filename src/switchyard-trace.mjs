@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LOG_PATH } from "./paths.mjs";
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
+import { nativeAttemptLogPath } from "./switchyard-native-observation.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
 const TOKEN_FIELDS = Object.freeze([
@@ -385,7 +386,316 @@ export function summarizeSwitchyardUsage(routingContents, options = {}) {
   return summary;
 }
 
-export function buildSwitchyardUsageReport(routingContents, routerContents, options = {}) {
+const NATIVE_MODELS = new Map([
+  ["gpt-5.6-luna", "luna"],
+  ["gpt-5.6-sol", "sol"],
+  ["gpt-6-astra", "astra"],
+]);
+const NATIVE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max", "unknown"]);
+const NATIVE_TIERS = new Set(["default", "priority", "flex", "unknown"]);
+const NATIVE_OUTCOMES = new Set([
+  "completed", "incomplete", "cancelled", "http_error", "stream_error",
+  "transport_error", "empty_completion", "retryable_http", "unknown",
+]);
+
+function attemptCounterCoverage() {
+  return Object.fromEntries([
+    "inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens",
+  ].map((field) => [field, {
+    recordedSum: 0,
+    validRecords: 0,
+    missingRecords: 0,
+    invalidRecords: 0,
+    explicitZeroRecords: 0,
+  }]));
+}
+
+function recordAttemptCounters(coverage, usage) {
+  for (const [field, result] of Object.entries(coverage)) {
+    if (!usage || !Object.hasOwn(usage, field)) {
+      result.missingRecords += 1;
+      continue;
+    }
+    const value = usage[field];
+    if (!Number.isSafeInteger(value) || value < 0) {
+      result.invalidRecords += 1;
+      continue;
+    }
+    result.validRecords += 1;
+    result.recordedSum += value;
+    if (value === 0) result.explicitZeroRecords += 1;
+  }
+}
+
+function readShareCohort() {
+  return {
+    records: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    share: null,
+    excludedRecords: 0,
+    invalidRecords: 0,
+  };
+}
+
+function recordReadShare(cohort, usage) {
+  const input = usage?.inputTokens;
+  const cached = usage?.cachedInputTokens;
+  if (!Number.isSafeInteger(input) || input < 0 ||
+      !Number.isSafeInteger(cached) || cached < 0) {
+    cohort.excludedRecords += 1;
+    return;
+  }
+  if (cached > input) {
+    cohort.excludedRecords += 1;
+    cohort.invalidRecords += 1;
+    return;
+  }
+  cohort.records += 1;
+  cohort.inputTokens += input;
+  cohort.cachedInputTokens += cached;
+}
+
+function finalizeReadShare(cohort) {
+  if (cohort.inputTokens > 0) cohort.share = cohort.cachedInputTokens / cohort.inputTokens;
+}
+
+function tierCoverage() {
+  return {
+    reportedAttempts: 0,
+    matchingRequestedAttempts: 0,
+    differentRequestedAttempts: 0,
+    missingAttempts: 0,
+    unknownRequestedAttempts: 0,
+  };
+}
+
+function recordTierCoverage(coverage, record) {
+  if (!NATIVE_TIERS.has(record.returnedTier) || record.returnedTier === "unknown") {
+    coverage.missingAttempts += 1;
+    return;
+  }
+  coverage.reportedAttempts += 1;
+  if (!NATIVE_TIERS.has(record.requestedTier) || record.requestedTier === "unknown") {
+    coverage.unknownRequestedAttempts += 1;
+  } else if (record.returnedTier === record.requestedTier) {
+    coverage.matchingRequestedAttempts += 1;
+  } else {
+    coverage.differentRequestedAttempts += 1;
+  }
+}
+
+function compactionCoverage() {
+  return { present: 0, absent: 0, unknown: 0 };
+}
+
+function recordCompactionCoverage(coverage, value) {
+  if (value === "present" || value === "absent") coverage[value] += 1;
+  else coverage.unknown += 1;
+}
+
+function transitionBucket() {
+  return {
+    requests: 0,
+    attempts: 0,
+    usage: attemptCounterCoverage(),
+    readShareCohort: readShareCohort(),
+    latency: {
+      recordedMs: 0,
+      validAttempts: 0,
+      missingAttempts: 0,
+      invalidAttempts: 0,
+      weightedAverageMs: null,
+    },
+    returnedTier: tierCoverage(),
+    compactionItems: compactionCoverage(),
+  };
+}
+
+function recordTransitionGroup(bucket, records) {
+  bucket.requests += 1;
+  bucket.attempts += records.length;
+  recordCompactionCoverage(bucket.compactionItems, records[0]?.compactionItems);
+  for (const record of records) {
+    recordAttemptCounters(bucket.usage, record.usage);
+    recordReadShare(bucket.readShareCohort, record.usage);
+    recordTierCoverage(bucket.returnedTier, record);
+    if (!Object.hasOwn(record, "elapsedMs")) bucket.latency.missingAttempts += 1;
+    else if (!Number.isSafeInteger(record.elapsedMs) || record.elapsedMs < 0) {
+      bucket.latency.invalidAttempts += 1;
+    } else {
+      bucket.latency.validAttempts += 1;
+      bucket.latency.recordedMs += record.elapsedMs;
+    }
+  }
+}
+
+function finalizeTransitionBucket(bucket) {
+  finalizeReadShare(bucket.readShareCohort);
+  if (bucket.latency.validAttempts) {
+    bucket.latency.weightedAverageMs = bucket.latency.recordedMs / bucket.latency.validAttempts;
+  }
+}
+
+export function summarizeNativeAttemptObservations(contents) {
+  const lines = String(contents || "").split(/\r?\n/u).filter((line) => line.trim());
+  let latestStart = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    try {
+      if (JSON.parse(lines[index])?.event === "generation_start") latestStart = index;
+    } catch {}
+  }
+  const summary = {
+    version: 1,
+    scope: "latest opt-in attributable native answering generation only",
+    generationFound: latestStart >= 0,
+    coverage: {
+      totalLines: latestStart >= 0 ? lines.length - latestStart - 1 : lines.length,
+      parsedAttempts: 0,
+      malformedRecords: 0,
+      associatedAttempts: 0,
+      unassociatedAttempts: 0,
+      associationResets: 0,
+      invalidOrdering: 0,
+    },
+    targets: {},
+    outcomes: {},
+    transitions: {},
+    transitionDetails: {},
+    usage: attemptCounterCoverage(),
+    readShareCohort: readShareCohort(),
+    metadataCoverage: {
+      returnedTier: tierCoverage(),
+      compactionItems: compactionCoverage(),
+    },
+    outsideTransitions: {
+      initialRequests: 0,
+      orderingInvalidRequests: 0,
+      unassociatedAttempts: 0,
+    },
+    limitations: [
+      "Transitions use explicit process-local association and request ordinals; resets, overlap, eviction and restart break continuity.",
+      "Attempts are transport observations, not task outcomes, causal cache effects, subscription debits or complete task costs.",
+      "Read share includes only attempts reporting both input and cached-input counters; missing counters are never zero-filled.",
+      "Historical routing.jsonl records remain a separate partial accounting surface.",
+    ],
+  };
+  if (latestStart < 0) return summary;
+  const groups = [];
+  const groupByAssociation = new Map();
+  const flushGroups = (breakOrdering = false) => {
+    for (const group of groupByAssociation.values()) {
+      if (breakOrdering) group.contiguous = false;
+      groups.push(group);
+    }
+    groupByAssociation.clear();
+  };
+  for (const line of lines.slice(latestStart + 1)) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      summary.coverage.malformedRecords += 1;
+      flushGroups(true);
+      continue;
+    }
+    if (!record || typeof record !== "object" || Array.isArray(record) || record.schemaVersion !== 1) {
+      summary.coverage.malformedRecords += 1;
+      flushGroups(true);
+      continue;
+    }
+    if (record.event === "association_reset") {
+      if (Number.isSafeInteger(record.association) && record.association > 0) {
+        const group = groupByAssociation.get(record.association);
+        if (group) groups.push(group);
+        groups.push({ association: record.association, reset: true });
+        groupByAssociation.delete(record.association);
+        summary.coverage.associationResets += 1;
+      }
+      continue;
+    }
+    if (record.event !== "native_attempt") continue;
+    summary.coverage.parsedAttempts += 1;
+    const model = NATIVE_MODELS.get(record.model) || "unknown";
+    const effort = NATIVE_EFFORTS.has(record.effort) ? record.effort : "unknown";
+    const tier = NATIVE_TIERS.has(record.requestedTier) ? record.requestedTier : "unknown";
+    const target = `${model}:${effort}:${tier}`;
+    increment(summary.targets, target);
+    increment(summary.outcomes, NATIVE_OUTCOMES.has(record.outcome) ? record.outcome : "unknown");
+    recordAttemptCounters(summary.usage, record.usage);
+    recordReadShare(summary.readShareCohort, record.usage);
+    recordTierCoverage(summary.metadataCoverage.returnedTier, record);
+    recordCompactionCoverage(summary.metadataCoverage.compactionItems, record.compactionItems);
+    const associated = Number.isSafeInteger(record.association) && record.association > 0 &&
+      Number.isSafeInteger(record.request) && record.request > 0 &&
+      Number.isSafeInteger(record.attempt) && record.attempt > 0;
+    if (!associated) {
+      summary.coverage.unassociatedAttempts += 1;
+      summary.outsideTransitions.unassociatedAttempts += 1;
+      continue;
+    }
+    summary.coverage.associatedAttempts += 1;
+    const current = groupByAssociation.get(record.association);
+    if (record.attempt === 1) {
+      const duplicateRequest = current?.request === record.request;
+      if (current) {
+        if (duplicateRequest) {
+          current.contiguous = false;
+          summary.coverage.invalidOrdering += 1;
+        }
+        groups.push(current);
+      }
+      groupByAssociation.set(record.association, {
+        association: record.association,
+        request: record.request,
+        target,
+        records: [record],
+        contiguous: !duplicateRequest,
+      });
+      continue;
+    }
+    if (!current || current.request !== record.request || record.attempt !== current.records.length + 1) {
+      summary.coverage.invalidOrdering += 1;
+      if (current) current.contiguous = false;
+      continue;
+    }
+    current.records.push(record);
+  }
+  flushGroups();
+  const lastByAssociation = new Map();
+  for (const group of groups) {
+    if (group.reset) {
+      lastByAssociation.delete(group.association);
+      continue;
+    }
+    const previous = lastByAssociation.get(group.association);
+    const sequential = previous && group.request === previous.request + 1;
+    if (!group.contiguous || (previous && !sequential) || (!previous && group.request !== 1)) {
+      summary.outsideTransitions.orderingInvalidRequests += 1;
+      lastByAssociation.set(group.association, group.contiguous ? group : undefined);
+      continue;
+    }
+    if (!previous) {
+      summary.outsideTransitions.initialRequests += 1;
+    } else {
+      const key = `${previous.target}->${group.target}`;
+      increment(summary.transitions, key);
+      const bucket = summary.transitionDetails[key] ??= transitionBucket();
+      recordTransitionGroup(bucket, group.records);
+    }
+    lastByAssociation.set(group.association, group);
+  }
+  finalizeReadShare(summary.readShareCohort);
+  for (const bucket of Object.values(summary.transitionDetails)) finalizeTransitionBucket(bucket);
+  return summary;
+}
+
+export function buildSwitchyardUsageReport(
+  routingContents,
+  routerContents,
+  options = {},
+  nativeAttemptContents = "",
+) {
   const trace = summarizeSwitchyardTrace(routerContents);
   const safeClassifier = trace.classifier ? {
     ...trace.classifier,
@@ -414,6 +724,7 @@ export function buildSwitchyardUsageReport(routingContents, routerContents, opti
   }, {});
   return {
     ...summarizeSwitchyardUsage(routingContents, options),
+    nativeAttempts: summarizeNativeAttemptObservations(nativeAttemptContents),
     generationDiagnostics: {
       scope: "unassociated Router and classifier observations from the latest logged generation",
       ...trace,
@@ -448,10 +759,15 @@ function main() {
   if (argv[0] === "--usage") {
     const runtime = switchyardRuntimeStatus();
     const routingPath = path.join(runtime.runtimeRoot, "routing.jsonl");
+    const attemptsPath = nativeAttemptLogPath({
+      ...process.env,
+      CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION: "1",
+    });
     summary = buildSwitchyardUsageReport(
       readFileSync(routingPath, "utf8"),
       readFileSync(LOG_PATH, "utf8"),
       parseUsageArguments(argv.slice(1)),
+      attemptsPath && existsSync(attemptsPath) ? readFileSync(attemptsPath, "utf8") : "",
     );
   } else {
     if (argv.length) throw new Error("usage: switchyard-trace [--usage [--session-id ID] [--since ISO] [--until ISO] [--limit N]]");

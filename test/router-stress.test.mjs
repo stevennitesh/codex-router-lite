@@ -321,10 +321,12 @@ test("stress: seeded function arguments preserve identity and never invent conte
     if (mode === "control") controls.push(events);
   }
   assert.deepEqual(controls[0], controls[1]);
-  for (let attempt = 0; attempt < 100 && !f.errors().includes("empty_function_arguments"); attempt += 1)
+  const inconsistentDiagnostic =
+    `"code":"empty_function_arguments","sourceCharacters":0,"restoredCharacters":0,"deltaCharacters":${privateArgs.length},"doneCharacters":${privateArgs.length}`;
+  for (let attempt = 0; attempt < 100 && !f.errors().includes(inconsistentDiagnostic); attempt += 1)
     await new Promise(resolve => setTimeout(resolve, 10));
   assert.match(f.errors(), /empty_function_arguments/u);
-  assert.ok(f.errors().includes(`"sourceCharacters":0,"restoredCharacters":0,"deltaCharacters":${privateArgs.length},"doneCharacters":${privateArgs.length}`));
+  assert.ok(f.errors().includes(inconsistentDiagnostic));
   for (const sentinel of PRIVATE_SENTINELS) assert.ok(!f.errors().includes(sentinel));
   assert.equal(f.seen.length, 4);
 });

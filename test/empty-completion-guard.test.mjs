@@ -69,3 +69,25 @@ test("explicit unsuccessful Responses terminals survive empty output and DONE wi
     }
   }
 });
+
+test("only explicitly actionable native call items satisfy the completion guard", async () => {
+  for (const [type, actionable] of [
+    ["function_call", true],
+    ["custom_tool_call", true],
+    ["tool_search_call", true],
+    ["future_tool_call", false],
+    ["reasoning", false],
+  ]) {
+    const event = {
+      type: "response.completed",
+      response: { status: "completed", output: [{ type }] },
+    };
+    const wire = `data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`;
+    const guard = new EmptyCompletionGuard("text/event-stream");
+    let output = "";
+    for await (const chunk of Readable.from([wire]).pipe(guard)
+      .pipe(new EmptyCompletionTerminalGuard(guard, "text/event-stream"))) output += chunk;
+    assert.equal(guard.isEmpty(), !actionable, type);
+    assert.equal(output, actionable ? wire : "", type);
+  }
+});

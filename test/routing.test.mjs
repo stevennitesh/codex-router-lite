@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -186,13 +188,33 @@ test("GLM keeps colliding tool identities distinct in declarations, forced choic
 test("native replay removes only foreign item IDs and unknown routed models stay local", async () => {
   const seen = [];
   const native = await mockServer(async (request, response) => {
-    seen.push(await bodyJson(request));
-    json(response, 200, { output: [] });
+    seen.push({ headers: request.headers, body: await bodyJson(request) });
+    json(response, 200, {
+      status: "completed",
+      model: "gpt-5.6-sol",
+      service_tier: "default",
+      output: [],
+      usage: {
+        input_tokens: 12_000,
+        input_tokens_details: { cached_tokens: 8_000, cache_write_tokens: 4_000 },
+        output_tokens: 100,
+        total_tokens: 12_100,
+      },
+    });
   });
+  const observationRoot = mkdtempSync(path.join(os.tmpdir(), "native-attempt-observation-"));
+  const observationPath = path.join(observationRoot, "attempts.jsonl");
+  const switchyardCapability = "test-switchyard-observation-capability";
+  const observationMarker = createHash("sha256")
+    .update(switchyardCapability)
+    .digest("hex");
   const port = await openPort();
   const router = run("router.mjs", {
     CODEX_ROUTER_PORT: String(port),
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_SWITCHYARD_CAPABILITY: switchyardCapability,
+    CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION: "1",
+    CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG: observationPath,
     CODEX_ROUTER_QUIET: "1",
   });
   const input = [
@@ -206,21 +228,72 @@ test("native replay removes only foreign item IDs and unknown routed models stay
     { type: "custom_tool_call", id: "ctc_native", call_id: "native_custom", name: "exec", input: "1" },
     { type: "item_reference", id: "msg_reference" },
   ];
+  const tools = [
+    { type: "function", name: "fixture_lookup", description: "Synthetic lookup", parameters: { type: "object" } },
+    { type: "custom", name: "fixture_patch", description: "Synthetic patch", format: { type: "text" } },
+  ];
   try {
     await waitFor(`${routerBase(port)}/models`, router);
-    for (const endpoint of ["responses", "responses/compact"]) {
+    for (const endpoint of ["responses", "responses", "responses/compact"]) {
       const response = await fetch(`${routerBase(port)}/${endpoint}`, {
-        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer fixture-native" },
-        body: JSON.stringify({ model: "gpt-5.6-sol", input }),
+        method: "POST", headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer fixture-native",
+          "session-id": "synthetic-observation-session",
+          "x-codex-router-switchyard-observation": observationMarker,
+        },
+        body: JSON.stringify({
+          model: "gpt-5.6-sol",
+          input,
+          instructions: "Stable synthetic instruction prefix.",
+          tools,
+          tool_choice: "auto",
+          prompt_cache_options: { ttl: "30m" },
+          prompt_cache_key: "synthetic-stable-prefix-key",
+          reasoning: { effort: "medium" },
+          service_tier: "default",
+        }),
       });
       assert.equal(response.status, 200, router.testErrors());
       await response.arrayBuffer();
-      assert.deepEqual(seen.at(-1).input, input.map((item, index) => {
+      assert.deepEqual(seen.at(-1).body.input, input.map((item, index) => {
         if (![0, 1, 3].includes(index)) return item;
         const { id: _id, ...rest } = item;
         return rest;
       }));
+      assert.equal(seen.at(-1).headers["x-codex-router-switchyard-observation"], undefined);
     }
+    assert.deepEqual(seen[0].body, seen[1].body,
+      "repeated answering requests preserve prefix, tool order and ids, and supported cache options");
+    assert.equal(seen[0].body.prompt_cache_key, "synthetic-stable-prefix-key");
+    const attempts = readFileSync(observationPath, "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line));
+    assert.equal(attempts.filter((record) => record.event === "native_attempt").length, 2,
+      "answering requests are observed once and compaction is excluded");
+    assert.deepEqual(attempts.at(-1), {
+      schemaVersion: 1,
+      event: "native_attempt",
+      association: 1,
+      request: 2,
+      attempt: 1,
+      model: "gpt-5.6-sol",
+      effort: "medium",
+      requestedTier: "default",
+      compactionItems: "absent",
+      elapsedMs: attempts.at(-1).elapsedMs,
+      httpStatus: 200,
+      outcome: "completed",
+      returnedModel: "gpt-5.6-sol",
+      returnedTier: "default",
+      usage: {
+        inputTokens: 12_000,
+        cachedInputTokens: 8_000,
+        cacheWriteTokens: 4_000,
+        outputTokens: 100,
+      },
+    });
     const count = seen.length;
     const retired = await fetch(`${routerBase(port)}/responses`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -242,6 +315,7 @@ test("native replay removes only foreign item IDs and unknown routed models stay
   } finally {
     await stopChild(router);
     await closeServer(native.server);
+    rmSync(observationRoot, { recursive: true, force: true });
   }
 });
 

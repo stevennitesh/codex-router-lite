@@ -92,6 +92,7 @@ import {
   SWITCHYARD_CAPABILITY_HEADER,
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
+import { SwitchyardNativeAttemptObserver } from "./switchyard-native-observation.mjs";
 import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
@@ -163,6 +164,9 @@ const INTERNAL_KEY =
   process.env.CODEX_ROUTER_INTERNAL_KEY;
 const CALLER_KEY = process.env.CODEX_ROUTER_CALLER_KEY;
 const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
+const switchyardNativeAttempts = new SwitchyardNativeAttemptObserver({
+  capability: SWITCHYARD_CAPABILITY,
+});
 const QUIET =
   process.env.CODEX_ROUTER_QUIET === "1";
 function positiveByteLimit(value, fallback) {
@@ -2238,6 +2242,10 @@ async function handleResponses(request, response, requestUrl) {
   let emptyCompletionPreludeLimit;
   let preludeLimitRetryable = false;
   let finalStatus;
+  let observedNativeRequest;
+  let observedUpstreamStatus;
+  let observedTransportFailure = false;
+  const switchyardNativeCallback = switchyardNativeAttempts.consumeAttribution(request.headers);
   bindClientAbort(request, response, () => {
     clientGone = true;
     controller.abort();
@@ -2292,6 +2300,19 @@ async function handleResponses(request, response, requestUrl) {
       payload.input.at(-1)?.type === "compaction_trigger";
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
+
+    if (switchyardNativeCallback && !route && !compactV1 && !compactV2) {
+      observedNativeRequest = switchyardNativeAttempts.beginRequest(request.headers, {
+        model: payload.model,
+        effort: payload.reasoning?.effort,
+        requestedTier: payload.service_tier,
+        compactionItems: Array.isArray(payload.input)
+          ? payload.input.some((item) => ["compaction", "compaction_trigger"].includes(item?.type))
+            ? "present"
+            : "absent"
+          : "unknown",
+      });
+    }
 
     if (route && !switchyard && (compactV1 || compactV2)) {
       const compaction = await handleRoutedCompaction(
@@ -2419,6 +2440,29 @@ async function handleResponses(request, response, requestUrl) {
       // destination outside that route contract. Recovery uses this same policy.
       ...(route ? { redirect: "error" } : {}),
     };
+    const observedFetch = observedNativeRequest
+      ? async (...args) => {
+        switchyardNativeAttempts.beginAttempt(observedNativeRequest);
+        observedUpstreamStatus = undefined;
+        observedTransportFailure = false;
+        try {
+          const result = await fetch(...args);
+          observedUpstreamStatus = result.status;
+          return result;
+        } catch (error) {
+          observedTransportFailure = true;
+          throw error;
+        }
+      }
+      : undefined;
+    const noteObservedRetry = (event) => {
+      if (observedNativeRequest) {
+        switchyardNativeAttempts.finishAttempt(observedNativeRequest, {
+          ...(event.status !== undefined ? { httpStatus: event.status } : {}),
+          outcome: event.error ? "transport_error" : "retryable_http",
+        });
+      }
+    };
     let { response: upstream, retries } = await fetchWithRetry(
       target,
       upstreamInit,
@@ -2428,7 +2472,11 @@ async function handleResponses(request, response, requestUrl) {
         // as it was.
         retries: route ? 0 : undefined,
         canRetry: () => nothingRelayed(response),
-        onRetry: (event) => logUpstreamRetry(event, requestedModel, requestUrl.pathname),
+        onRetry: (event) => {
+          noteObservedRetry(event);
+          logUpstreamRetry(event, requestedModel, requestUrl.pathname);
+        },
+        ...(observedFetch ? { fetchImpl: observedFetch } : {}),
       },
     );
     upstreamRetries = retries;
@@ -2643,6 +2691,14 @@ async function handleResponses(request, response, requestUrl) {
         assertRoutedSearchContract(route, builtSearchMode, searchContract);
       }
       emptyCompletionRetried = true;
+      if (observedNativeRequest) {
+        switchyardNativeAttempts.finishAttempt(observedNativeRequest, {
+          httpStatus: upstream.status,
+          usage: usageTransform?.reportedTokenUsage(),
+          ...usageTransform?.providerResponseObservation(),
+          outcome: "empty_completion",
+        });
+      }
       try {
         const retried = await fetchWithRetry(
           target,
@@ -2650,7 +2706,11 @@ async function handleResponses(request, response, requestUrl) {
           {
             retries: 0,
             canRetry: () => nothingRelayed(response),
-            onRetry: (event) => logUpstreamRetry(event, requestedModel, requestUrl.pathname),
+            onRetry: (event) => {
+              noteObservedRetry(event);
+              logUpstreamRetry(event, requestedModel, requestUrl.pathname);
+            },
+            ...(observedFetch ? { fetchImpl: observedFetch } : {}),
           },
         );
         upstream2 = retried.response;
@@ -2857,10 +2917,11 @@ async function handleResponses(request, response, requestUrl) {
     }
     if (retryEmptyCompletionGuard?.hasContent()) emptyCompletion = false;
     if (usageTransform) {
-      usage = mergeTokenUsage(
-        usageTransform.tokenUsage(),
-        retryUsageTransform?.tokenUsage() ?? retryUsage,
-      );
+      const firstAttemptUsage = usageTransform.tokenUsage();
+      const secondAttemptUsage = retryUsageTransform?.tokenUsage() ?? retryUsage;
+      usage = emptyCompletionRetried
+        ? mergeTokenUsage(firstAttemptUsage, secondAttemptUsage)
+        : firstAttemptUsage;
       estimatedInputTokens = sumEstimatedInputTokens(
         usageTransform.substitutedInputTokens(),
         retryUsageTransform?.substitutedInputTokens(),
@@ -2901,6 +2962,34 @@ async function handleResponses(request, response, requestUrl) {
     throw error;
   } finally {
     const status = finalStatus ?? response.statusCode;
+    if (observedNativeRequest) {
+      const attemptUsage = emptyCompletionRetried
+        ? retryUsageTransform?.reportedTokenUsage()
+        : usageTransform?.reportedTokenUsage();
+      const providerObservation = emptyCompletionRetried
+        ? retryUsageTransform?.providerResponseObservation()
+        : usageTransform?.providerResponseObservation();
+      const completed = providerObservation?.outcome === "completed";
+      const outcome = completed
+        ? "completed"
+        : clientGone || status === 0
+          ? "cancelled"
+          : providerObservation?.outcome ||
+            (observedTransportFailure
+              ? "transport_error"
+              : Number(observedUpstreamStatus) >= 400
+                ? "http_error"
+                : Number(status) >= 400
+                  ? "stream_error"
+                  : "unknown");
+      switchyardNativeAttempts.finishAttempt(observedNativeRequest, {
+        ...(observedUpstreamStatus !== undefined ? { httpStatus: observedUpstreamStatus } : {}),
+        outcome,
+        usage: attemptUsage,
+        ...providerObservation,
+      });
+      switchyardNativeAttempts.endRequest(observedNativeRequest);
+    }
     execution.finish();
     // Timestamped per-request timing for latency diagnosis. Never gated on
     // QUIET because the Windows service suppresses ordinary request logs. A
@@ -2909,6 +2998,20 @@ async function handleResponses(request, response, requestUrl) {
     // `model` and `provider` always name the pair that served the turn.
     console.error(
       `[codex-router] timing at=${new Date().toISOString()} model=${route?.slug || requestedModel || "unknown"} provider=${route?.provider || "openai"} status=${status} total_ms=${Date.now() - startedAt} upstream_ms=${timingMetric(upstreamLatencyMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}${
+        usage?.cacheWriteTokens !== undefined
+          ? ` cache_write_tokens=${usage.cacheWriteTokens}`
+          : ""
+      }${
+        usage?.usageComplete === false ? " usage_complete=false" : ""
+      }${
+        usage?.cachedInputTokensComplete === false
+          ? " cached_tokens_complete=false"
+          : ""
+      }${
+        usage?.cacheWriteTokensComplete === false
+          ? " cache_write_tokens_complete=false"
+          : ""
+      }${
         estimatedInputTokens ? ` est_input=${estimatedInputTokens}` : ""
       }`,
     );

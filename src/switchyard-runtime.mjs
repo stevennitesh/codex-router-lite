@@ -10,6 +10,7 @@ import { probeRegularFile } from "./file-probe.mjs";
 
 export const SWITCHYARD_CAPABILITY_ENV = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
 export const SWITCHYARD_CAPABILITY_HEADER = "x-codex-router-switchyard-capability";
+export const SWITCHYARD_OBSERVATION_HEADER = "x-codex-router-switchyard-observation";
 
 export function switchyardHealthUrl({ env = process.env } = {}) {
   const provider = PROVIDERS.get("switchyard");

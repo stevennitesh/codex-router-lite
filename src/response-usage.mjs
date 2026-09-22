@@ -136,6 +136,10 @@ function endOfJsonString(buffer, start) {
 }
 
 function tokenCount(value) {
+  if (
+    typeof value !== "number" &&
+    !(typeof value === "string" && value.trim().length > 0)
+  ) return undefined;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : undefined;
 }
@@ -160,6 +164,11 @@ function normalizeTokenUsage(value) {
       value.prompt_tokens_details?.cached_tokens ??
       value.prompt_cache_hit_tokens,
   );
+  const cacheWriteTokens = tokenCount(
+    value.input_tokens_details?.cache_write_tokens ??
+      value.prompt_tokens_details?.cache_write_tokens ??
+      value.prompt_tokens_details?.cache_creation_tokens,
+  );
   const retries = tokenCount(value.retries);
   const progressOnlyRetried =
     value.progress_only_retried === true || value.progressOnlyRetried === true;
@@ -174,6 +183,7 @@ function normalizeTokenUsage(value) {
     outputTokens: outputTokens || 0,
     totalTokens,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     ...(retries !== undefined && retries > 0 ? { retries } : {}),
     ...(progressOnlyRetried ? { progressOnlyRetried: true } : {}),
     ...(billedInputTokens !== undefined ? { billedInputTokens } : {}),
@@ -185,21 +195,38 @@ function normalizeTokenUsage(value) {
 // send twice cost twice; the meter has to say so, or the retry marker names a
 // turn whose reported spend still looks like one attempt.
 export function mergeTokenUsage(first, second) {
-  if (!first) return second;
-  if (!second) return first;
-  const cachedInputTokens =
-    first.cachedInputTokens === undefined && second.cachedInputTokens === undefined
-      ? undefined
-      : (first.cachedInputTokens || 0) + (second.cachedInputTokens || 0);
+  if (!first && !second) return undefined;
+  const attempts = [first, second];
+  const usageComplete = attempts.every(Boolean) &&
+    attempts.every((usage) => usage.usageComplete !== false);
+  const aggregateOptionalCounter = (field, completenessField) => {
+    const reported = attempts.filter((usage) => usage?.[field] !== undefined);
+    if (!reported.length) return {};
+    return {
+      [field]: reported.reduce((sum, usage) => sum + usage[field], 0),
+      [completenessField]: usageComplete && reported.length === attempts.length &&
+        reported.every((usage) => usage[completenessField] !== false),
+    };
+  };
+  const cached = aggregateOptionalCounter(
+    "cachedInputTokens",
+    "cachedInputTokensComplete",
+  );
+  const written = aggregateOptionalCounter(
+    "cacheWriteTokens",
+    "cacheWriteTokensComplete",
+  );
   const retries =
-    first.retries === undefined && second.retries === undefined
+    first?.retries === undefined && second?.retries === undefined
       ? undefined
-      : (first.retries || 0) + (second.retries || 0);
+      : (first?.retries || 0) + (second?.retries || 0);
   return {
-    inputTokens: (first.inputTokens || 0) + (second.inputTokens || 0),
-    outputTokens: (first.outputTokens || 0) + (second.outputTokens || 0),
-    totalTokens: (first.totalTokens || 0) + (second.totalTokens || 0),
-    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    inputTokens: (first?.inputTokens || 0) + (second?.inputTokens || 0),
+    outputTokens: (first?.outputTokens || 0) + (second?.outputTokens || 0),
+    totalTokens: (first?.totalTokens || 0) + (second?.totalTokens || 0),
+    usageComplete,
+    ...cached,
+    ...written,
     ...(retries !== undefined && retries > 0 ? { retries } : {}),
   };
 }
@@ -209,6 +236,40 @@ export function tokenUsageFromPayload(payload) {
   for (const candidate of [payload.usage, payload.response?.usage]) {
     const usage = normalizeTokenUsage(candidate);
     if (usage) return usage;
+  }
+  return undefined;
+}
+
+// Provider observation keeps field presence separate from the meter's
+// compatibility defaults. In particular, a missing input count is not an
+// observed zero, and an input estimate substituted into the relayed response
+// never enters this object.
+export function reportedTokenUsageFromPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  for (const candidate of [payload.usage, payload.response?.usage]) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const reportedCount = (value) => Number.isSafeInteger(value) && value >= 0
+      ? value
+      : undefined;
+    const inputTokens = reportedCount(candidate.input_tokens ?? candidate.prompt_tokens);
+    const cachedInputTokens = reportedCount(
+      candidate.input_tokens_details?.cached_tokens ??
+        candidate.prompt_tokens_details?.cached_tokens ??
+        candidate.prompt_cache_hit_tokens,
+    );
+    const cacheWriteTokens = reportedCount(
+      candidate.input_tokens_details?.cache_write_tokens ??
+        candidate.prompt_tokens_details?.cache_write_tokens ??
+        candidate.prompt_tokens_details?.cache_creation_tokens,
+    );
+    const outputTokens = reportedCount(candidate.output_tokens ?? candidate.completion_tokens);
+    const reported = {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+      ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+    };
+    if (Object.keys(reported).length) return reported;
   }
   return undefined;
 }
@@ -307,6 +368,8 @@ export class ResponseUsageTransform extends Transform {
   #buffer = "";
   #capturedBytes = 0;
   #usage;
+  #reportedUsage;
+  #providerResponse = {};
   #estimate;
   #substituted;
   // Rewrite mode holds the raw bytes rather than decoded text: everything the
@@ -443,6 +506,14 @@ export class ResponseUsageTransform extends Transform {
     return this.#usage;
   }
 
+  reportedTokenUsage() {
+    return this.#reportedUsage;
+  }
+
+  providerResponseObservation() {
+    return { ...this.#providerResponse };
+  }
+
   // The estimate written into the response, or undefined when the upstream
   // reported its own prompt count. Never folded into `tokenUsage()`: what the
   // provider said and what the router substituted stay separate all the way
@@ -568,7 +639,24 @@ export class ResponseUsageTransform extends Transform {
 
   #observe(payload) {
     this.#noteFirstToken(payload);
-    if (payload?.type === "response.completed") this.#completedResponseObserved = true;
+    const response = payload?.response && typeof payload.response === "object"
+      ? payload.response
+      : payload;
+    const status = typeof response?.status === "string" ? response.status : undefined;
+    if (payload?.type === "response.completed" || status === "completed") {
+      this.#completedResponseObserved = true;
+      this.#providerResponse.outcome = "completed";
+    } else if (payload?.type === "response.incomplete" || status === "incomplete") {
+      this.#providerResponse.outcome = "incomplete";
+    } else if (payload?.type === "response.failed" || status === "failed") {
+      this.#providerResponse.outcome = "stream_error";
+    }
+    if (typeof response?.model === "string") this.#providerResponse.returnedModel = response.model;
+    if (typeof response?.service_tier === "string") {
+      this.#providerResponse.returnedTier = response.service_tier;
+    }
+    const reportedUsage = reportedTokenUsageFromPayload(payload);
+    if (reportedUsage) this.#reportedUsage = reportedUsage;
     const usage = tokenUsageFromPayload(payload);
     if (usage) this.#usage = usage;
   }

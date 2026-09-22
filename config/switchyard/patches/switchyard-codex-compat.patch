@@ -5058,3 +5058,262 @@ index 0e72b6b0..a1899751 100644
  switchyard-server --config routes.toml --dry-run
  switchyard-server --config routes.toml \
    --host 127.0.0.1 --port 4000
+diff --git a/crates/switchyard-server/src/usage_metrics.rs b/crates/switchyard-server/src/usage_metrics.rs
+index 045f51c8..bc4f56c1 100644
+--- a/crates/switchyard-server/src/usage_metrics.rs
++++ b/crates/switchyard-server/src/usage_metrics.rs
+@@ -183,7 +183,12 @@ fn record_latency(model: &str, latency: Duration) {
+ #[cfg(test)]
+ mod tests {
+     use futures_util::{StreamExt, stream};
++    use serde_json::{Value, json};
+     use switchyard_protocol::{LlmResponseChunk, LlmResponseStreamEvent, Metadata, Response};
++    use switchyard_translation::{
++        StreamTranslationState, TranslationEngine, TranslationPolicy, WireFormat,
++        decode_stream_event,
++    };
+ 
+     use super::*;
+ 
+@@ -242,4 +247,151 @@ mod tests {
+         assert_eq!(process.models["model/worker"].prompt_tokens, 10);
+         assert_eq!(process.models["model/worker"].completion_tokens, 3);
+     }
++
++    fn responses_usage_fixture(cache_write_tokens: Option<u64>) -> Value {
++        let mut input_details = json!({"cached_tokens": 8_000});
++        if let Some(tokens) = cache_write_tokens {
++            input_details["cache_write_tokens"] = json!(tokens);
++        }
++        json!({
++            "input_tokens": 12_000,
++            "output_tokens": 100,
++            "total_tokens": 12_100,
++            "input_tokens_details": input_details,
++        })
++    }
++
++    fn assert_normalized_usage(usage: &Usage, cache_write_tokens: Option<u64>) {
++        assert_eq!(usage.cached_input_tokens(), Some(8_000));
++        assert_eq!(usage.cache_creation_input_tokens(), cache_write_tokens);
++        assert_eq!(
++            usage.input_tokens,
++            Some(4_000_u64.saturating_sub(cache_write_tokens.unwrap_or(0))),
++        );
++        assert_eq!(usage.output_tokens, Some(100));
++        assert_eq!(usage.total_tokens, Some(12_100));
++    }
++
++    async fn assert_routing_log_usage(
++        response: Response,
++        cache_write_tokens: Option<u64>,
++        expected_logged_write_tokens: u64,
++    ) {
++        let dir = tempfile::tempdir().expect("temp dir");
++        let path = dir.path().join("routing.jsonl");
++        let log = SharedRoutingLog::new(path.clone()).expect("routing log");
++        let context = RoutingLogContext::from_metadata(&Metadata {
++            session_id: Some("cache-usage-session".to_string()),
++            ..Metadata::default()
++        });
++        match observe(
++            response,
++            "model/cache-fixture",
++            Instant::now(),
++            StatsAccumulator::default(),
++            0.0,
++            Some((log, context)),
++        )
++        .llm_response
++        {
++            LlmResponse::Agg(response) => {
++                assert_normalized_usage(&response.usage, cache_write_tokens);
++            }
++            LlmResponse::Stream(mut response) => {
++                assert!(response.next().await.is_some());
++            }
++        }
++        let record: Value = serde_json::from_str(
++            std::fs::read_to_string(path)
++                .expect("read routing log")
++                .trim_end(),
++        )
++        .expect("parse routing record");
++        assert_eq!(record["prompt_tokens"], 12_000);
++        assert_eq!(record["cached_tokens"], 8_000);
++        assert_eq!(
++            record["cache_creation_tokens"],
++            expected_logged_write_tokens
++        );
++        assert_eq!(record["completion_tokens"], 100);
++        assert_eq!(record["total_tokens"], 12_100);
++    }
++
++    #[tokio::test]
++    async fn native_responses_usage_keeps_inclusive_input_through_routing_log() {
++        let engine = TranslationEngine::default();
++        for cache_write_tokens in [Some(4_000), Some(0), None] {
++            let usage_json = responses_usage_fixture(cache_write_tokens);
++            let body = json!({
++                "id": "resp_cache_fixture",
++                "object": "response",
++                "model": "gpt-cache-fixture",
++                "status": "completed",
++                "output": [{
++                    "type": "message",
++                    "role": "assistant",
++                    "content": [{"type": "output_text", "text": "ok"}],
++                }],
++                "usage": usage_json,
++            });
++            let decoded = engine
++                .decode_response(
++                    WireFormat::OpenAiResponses,
++                    &body,
++                    &TranslationPolicy::default(),
++                )
++                .expect("decode buffered Responses fixture")
++                .response;
++            assert_normalized_usage(&decoded.usage, cache_write_tokens);
++            assert_routing_log_usage(
++                Response {
++                    llm_response: LlmResponse::Agg(decoded),
++                    metadata: None,
++                    upstream_headers: http::HeaderMap::new(),
++                },
++                cache_write_tokens,
++                cache_write_tokens.unwrap_or(0),
++            )
++            .await;
++
++            let mut state = StreamTranslationState::new(
++                WireFormat::OpenAiResponses,
++                WireFormat::OpenAiResponses,
++            );
++            let completed = json!({
++                "type": "response.completed",
++                "response": {
++                    "id": "resp_cache_fixture_stream",
++                    "status": "completed",
++                    "usage": responses_usage_fixture(cache_write_tokens),
++                },
++            });
++            let chunks = decode_stream_event(&mut state, WireFormat::OpenAiResponses, &completed);
++            let usage = chunks
++                .iter()
++                .find_map(|chunk| match chunk {
++                    LlmResponseChunk::Usage(usage) => Some(usage),
++                    _ => None,
++                })
++                .expect("streamed Responses fixture has usage");
++            assert_normalized_usage(usage, cache_write_tokens);
++            assert!(
++                chunks
++                    .iter()
++                    .any(|chunk| matches!(chunk, LlmResponseChunk::MessageStop { .. }))
++            );
++            assert_routing_log_usage(
++                Response {
++                    llm_response: LlmResponse::Stream(Box::pin(stream::iter([Ok(
++                        LlmResponseStreamEvent::new(chunks),
++                    )]))),
++                    metadata: None,
++                    upstream_headers: http::HeaderMap::new(),
++                },
++                cache_write_tokens,
++                cache_write_tokens.unwrap_or(0),
++            )
++            .await;
++        }
++    }
+ }
+diff --git a/Cargo.lock b/Cargo.lock
+index d98cf9d0..dbf45e2e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2522,6 +2522,7 @@ dependencies = [
+  "rustls",
+  "serde",
+  "serde_json",
++ "sha2",
+  "switchyard-libsy",
+  "switchyard-llm-client",
+  "switchyard-protocol",
+diff --git a/crates/switchyard-server/Cargo.toml b/crates/switchyard-server/Cargo.toml
+index 1be8ee9f..9797542c 100644
+--- a/crates/switchyard-server/Cargo.toml
++++ b/crates/switchyard-server/Cargo.toml
+@@ -41,6 +41,7 @@ switchyard-llm-client.workspace = true
+ switchyard-protocol.workspace = true
+ switchyard-runner.workspace = true
+ serde_json.workspace = true
++sha2.workspace = true
+ switchyard-translation.workspace = true
+ humantime = "2.4"
+ tokio.workspace = true
+diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
+index a2b968f8..0a4d47b1 100644
+--- a/crates/switchyard-server/src/lib.rs
++++ b/crates/switchyard-server/src/lib.rs
+@@ -39,6 +39,7 @@ use libsy::{LibsyError, RoutingOutcome};
+ use parking_lot::Mutex;
+ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json};
++use sha2::{Digest, Sha256};
+ use switchyard_llm_client::{AuxiliaryOperation, RunObservation, RunObserver};
+ use switchyard_protocol::{LlmClientError, Metadata, ModelId, Request, Usage};
+ use switchyard_runner::{
+@@ -81,6 +82,7 @@ const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
+ /// the otherwise unauthenticated local Switchyard hop.
+ pub const LOCAL_HOP_CAPABILITY_ENV: &str = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
+ pub const LOCAL_HOP_CAPABILITY_HEADER: &str = "x-codex-router-switchyard-capability";
++pub const LOCAL_HOP_OBSERVATION_HEADER: &str = "x-codex-router-switchyard-observation";
+ const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
+ 
+ /// Whether an upstream header is safe and useful to expose downstream.
+@@ -613,9 +615,16 @@ async fn require_local_hop_capability(
+             "authentication_error",
+         );
+     }
+-    // This header authenticates only Router -> Switchyard. Removing it before
+-    // handlers build metadata also prevents forward_auth and the fallback
+-    // proxy from carrying it to an upstream.
++    // Carry only a one-way generation marker to the configured target. Router
++    // consumes it before the native provider hop; it cannot authenticate a
++    // request back to Switchyard and rotates with the supervised generation.
++    let marker = format!("{:x}", Sha256::digest(capability.as_bytes()));
++    if let Ok(marker) = HeaderValue::from_str(&marker) {
++        request.headers_mut().insert(
++            HeaderName::from_static(LOCAL_HOP_OBSERVATION_HEADER),
++            marker,
++        );
++    }
+     request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
+     next.run(request).await
+ }
+diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
+index b0eee6a8..dd0b8cd2 100644
+--- a/crates/switchyard-server/tests/server.rs
++++ b/crates/switchyard-server/tests/server.rs
+@@ -32,8 +32,8 @@ use switchyard_protocol::{Category, ModelId, WireFormat};
+ use switchyard_runner::{DecisionTarget, ModelCapabilities, Route, Runner, RuntimeModels};
+ use switchyard_server::config::load_server_state;
+ use switchyard_server::{
+-    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState, build_llm_router,
+-    build_switchyard_router,
++    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, LOCAL_HOP_OBSERVATION_HEADER,
++    ServerState, build_llm_router, build_switchyard_router,
+ };
+ use tokio::net::TcpListener;
+ use tokio::sync::Mutex;
+@@ -516,6 +516,10 @@ async fn upstream_responses_requires_forwarded_auth(
+             .and_then(|value| value.to_str().ok())
+             == Some("true")
+         && !headers.contains_key(LOCAL_HOP_CAPABILITY_HEADER)
++        && headers
++            .get(LOCAL_HOP_OBSERVATION_HEADER)
++            .and_then(|value| value.to_str().ok())
++            == Some("187b7cad3cc71e7175ab051ca9cfe458ffed452215299a61aecdec7b53f45541")
+         && !headers.contains_key("x-api-key")
+         && !headers.contains_key("anthropic-beta");
+     if !has_expected_headers {

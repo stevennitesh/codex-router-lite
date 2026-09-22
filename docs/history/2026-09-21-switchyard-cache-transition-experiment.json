@@ -1,0 +1,1335 @@
+{
+  "schemaVersion": 1,
+  "historical": true,
+  "description": "Bounded synthetic fixed-target Switchyard to Router native cache transition experiment.",
+  "startedAt": "2026-09-22T03:21:20.167Z",
+  "finishedAt": "2026-09-22T03:22:16.420Z",
+  "requestBudget": 28,
+  "requestsAttempted": 28,
+  "retriesEnabled": false,
+  "privatePayloadsRetained": false,
+  "classifierRequests": 0,
+  "transport": "isolated Switchyard passthrough routes -> candidate Router -> native Responses",
+  "scope": "Fixed-target transport observation; no Jev selection, serving-policy gate, task-savings claim, or deployed-runtime parity.",
+  "candidate": {
+    "baseCommit": "64ee4b8658eeb3f42e80d14f7cfd1baa9eed706e",
+    "upstreamCommit": "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877",
+    "compatibilityPatchSha256": "dc6550f08a2c6ca4996bb4347f1f36a8b1d28416b608bcc1d18a6841aefcba83",
+    "binarySha256": "a85c9e0fee0f55059c21cae1e0cf071e6420605867c3f90e8694e2b012e3cdf2",
+    "deployedIdentity": "not inspected or changed"
+  },
+  "report": {
+    "version": 1,
+    "scope": "latest opt-in attributable native answering generation only",
+    "generationFound": true,
+    "coverage": {
+      "totalLines": 28,
+      "parsedAttempts": 28,
+      "malformedRecords": 0,
+      "associatedAttempts": 28,
+      "unassociatedAttempts": 0,
+      "associationResets": 0,
+      "invalidOrdering": 0
+    },
+    "targets": {
+      "sol:medium:default": 14,
+      "astra:medium:default": 12,
+      "astra:xhigh:default": 2
+    },
+    "outcomes": {
+      "completed": 28
+    },
+    "transitions": {
+      "astra:medium:default->sol:medium:default": 4,
+      "sol:medium:default->sol:medium:default": 6,
+      "astra:medium:default->astra:medium:default": 2,
+      "astra:medium:default->astra:xhigh:default": 2,
+      "sol:medium:default->astra:medium:default": 2
+    },
+    "transitionDetails": {
+      "astra:medium:default->sol:medium:default": {
+        "requests": 4,
+        "attempts": 4,
+        "usage": {
+          "inputTokens": {
+            "recordedSum": 15624,
+            "validRecords": 4,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cachedInputTokens": {
+            "recordedSum": 3840,
+            "validRecords": 4,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 3
+          },
+          "cacheWriteTokens": {
+            "recordedSum": 0,
+            "validRecords": 4,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 4
+          },
+          "outputTokens": {
+            "recordedSum": 24,
+            "validRecords": 4,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          }
+        },
+        "readShareCohort": {
+          "records": 4,
+          "inputTokens": 15624,
+          "cachedInputTokens": 3840,
+          "share": 0.2457757296466974,
+          "excludedRecords": 0,
+          "invalidRecords": 0
+        },
+        "latency": {
+          "recordedMs": 6779,
+          "validAttempts": 4,
+          "missingAttempts": 0,
+          "invalidAttempts": 0,
+          "weightedAverageMs": 1694.75
+        },
+        "returnedTier": {
+          "reportedAttempts": 4,
+          "matchingRequestedAttempts": 4,
+          "differentRequestedAttempts": 0,
+          "missingAttempts": 0,
+          "unknownRequestedAttempts": 0
+        },
+        "compactionItems": {
+          "present": 0,
+          "absent": 0,
+          "unknown": 4
+        }
+      },
+      "sol:medium:default->sol:medium:default": {
+        "requests": 6,
+        "attempts": 6,
+        "usage": {
+          "inputTokens": {
+            "recordedSum": 23444,
+            "validRecords": 6,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cachedInputTokens": {
+            "recordedSum": 15360,
+            "validRecords": 6,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 2
+          },
+          "cacheWriteTokens": {
+            "recordedSum": 0,
+            "validRecords": 6,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 6
+          },
+          "outputTokens": {
+            "recordedSum": 36,
+            "validRecords": 6,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          }
+        },
+        "readShareCohort": {
+          "records": 6,
+          "inputTokens": 23444,
+          "cachedInputTokens": 15360,
+          "share": 0.6551782972189046,
+          "excludedRecords": 0,
+          "invalidRecords": 0
+        },
+        "latency": {
+          "recordedMs": 12075,
+          "validAttempts": 6,
+          "missingAttempts": 0,
+          "invalidAttempts": 0,
+          "weightedAverageMs": 2012.5
+        },
+        "returnedTier": {
+          "reportedAttempts": 6,
+          "matchingRequestedAttempts": 6,
+          "differentRequestedAttempts": 0,
+          "missingAttempts": 0,
+          "unknownRequestedAttempts": 0
+        },
+        "compactionItems": {
+          "present": 0,
+          "absent": 0,
+          "unknown": 6
+        }
+      },
+      "astra:medium:default->astra:medium:default": {
+        "requests": 2,
+        "attempts": 2,
+        "usage": {
+          "inputTokens": {
+            "recordedSum": 7812,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cachedInputTokens": {
+            "recordedSum": 3840,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 1
+          },
+          "cacheWriteTokens": {
+            "recordedSum": 0,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 2
+          },
+          "outputTokens": {
+            "recordedSum": 12,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          }
+        },
+        "readShareCohort": {
+          "records": 2,
+          "inputTokens": 7812,
+          "cachedInputTokens": 3840,
+          "share": 0.4915514592933948,
+          "excludedRecords": 0,
+          "invalidRecords": 0
+        },
+        "latency": {
+          "recordedMs": 4305,
+          "validAttempts": 2,
+          "missingAttempts": 0,
+          "invalidAttempts": 0,
+          "weightedAverageMs": 2152.5
+        },
+        "returnedTier": {
+          "reportedAttempts": 2,
+          "matchingRequestedAttempts": 2,
+          "differentRequestedAttempts": 0,
+          "missingAttempts": 0,
+          "unknownRequestedAttempts": 0
+        },
+        "compactionItems": {
+          "present": 0,
+          "absent": 0,
+          "unknown": 2
+        }
+      },
+      "astra:medium:default->astra:xhigh:default": {
+        "requests": 2,
+        "attempts": 2,
+        "usage": {
+          "inputTokens": {
+            "recordedSum": 7812,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cachedInputTokens": {
+            "recordedSum": 0,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 2
+          },
+          "cacheWriteTokens": {
+            "recordedSum": 0,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 2
+          },
+          "outputTokens": {
+            "recordedSum": 12,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          }
+        },
+        "readShareCohort": {
+          "records": 2,
+          "inputTokens": 7812,
+          "cachedInputTokens": 0,
+          "share": 0,
+          "excludedRecords": 0,
+          "invalidRecords": 0
+        },
+        "latency": {
+          "recordedMs": 5881,
+          "validAttempts": 2,
+          "missingAttempts": 0,
+          "invalidAttempts": 0,
+          "weightedAverageMs": 2940.5
+        },
+        "returnedTier": {
+          "reportedAttempts": 2,
+          "matchingRequestedAttempts": 2,
+          "differentRequestedAttempts": 0,
+          "missingAttempts": 0,
+          "unknownRequestedAttempts": 0
+        },
+        "compactionItems": {
+          "present": 0,
+          "absent": 0,
+          "unknown": 2
+        }
+      },
+      "sol:medium:default->astra:medium:default": {
+        "requests": 2,
+        "attempts": 2,
+        "usage": {
+          "inputTokens": {
+            "recordedSum": 7812,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cachedInputTokens": {
+            "recordedSum": 7680,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          },
+          "cacheWriteTokens": {
+            "recordedSum": 0,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 2
+          },
+          "outputTokens": {
+            "recordedSum": 12,
+            "validRecords": 2,
+            "missingRecords": 0,
+            "invalidRecords": 0,
+            "explicitZeroRecords": 0
+          }
+        },
+        "readShareCohort": {
+          "records": 2,
+          "inputTokens": 7812,
+          "cachedInputTokens": 7680,
+          "share": 0.9831029185867896,
+          "excludedRecords": 0,
+          "invalidRecords": 0
+        },
+        "latency": {
+          "recordedMs": 4996,
+          "validAttempts": 2,
+          "missingAttempts": 0,
+          "invalidAttempts": 0,
+          "weightedAverageMs": 2498
+        },
+        "returnedTier": {
+          "reportedAttempts": 2,
+          "matchingRequestedAttempts": 2,
+          "differentRequestedAttempts": 0,
+          "missingAttempts": 0,
+          "unknownRequestedAttempts": 0
+        },
+        "compactionItems": {
+          "present": 0,
+          "absent": 0,
+          "unknown": 2
+        }
+      }
+    },
+    "usage": {
+      "inputTokens": {
+        "recordedSum": 109376,
+        "validRecords": 28,
+        "missingRecords": 0,
+        "invalidRecords": 0,
+        "explicitZeroRecords": 0
+      },
+      "cachedInputTokens": {
+        "recordedSum": 30720,
+        "validRecords": 28,
+        "missingRecords": 0,
+        "invalidRecords": 0,
+        "explicitZeroRecords": 20
+      },
+      "cacheWriteTokens": {
+        "recordedSum": 0,
+        "validRecords": 28,
+        "missingRecords": 0,
+        "invalidRecords": 0,
+        "explicitZeroRecords": 28
+      },
+      "outputTokens": {
+        "recordedSum": 168,
+        "validRecords": 28,
+        "missingRecords": 0,
+        "invalidRecords": 0,
+        "explicitZeroRecords": 0
+      }
+    },
+    "readShareCohort": {
+      "records": 28,
+      "inputTokens": 109376,
+      "cachedInputTokens": 30720,
+      "share": 0.280866003510825,
+      "excludedRecords": 0,
+      "invalidRecords": 0
+    },
+    "metadataCoverage": {
+      "returnedTier": {
+        "reportedAttempts": 28,
+        "matchingRequestedAttempts": 28,
+        "differentRequestedAttempts": 0,
+        "missingAttempts": 0,
+        "unknownRequestedAttempts": 0
+      },
+      "compactionItems": {
+        "present": 0,
+        "absent": 0,
+        "unknown": 28
+      }
+    },
+    "outsideTransitions": {
+      "initialRequests": 12,
+      "orderingInvalidRequests": 0,
+      "unassociatedAttempts": 0
+    },
+    "limitations": [
+      "Transitions use explicit process-local association and request ordinals; resets, overlap, eviction and restart break continuity.",
+      "Attempts are transport observations, not task outcomes, causal cache effects, subscription debits or complete task costs.",
+      "Read share includes only attempts reporting both input and cached-input counters; missing counters are never zero-filled.",
+      "Historical routing.jsonl records remain a separate partial accounting surface."
+    ]
+  },
+  "limitations": [
+    "The native subscription backend may omit cache writes or vary cache behavior; missing counters remain unavailable.",
+    "Sequences use fixed passthrough targets to avoid paid Jev calls and do not validate automatic target selection.",
+    "Expected-answer equality is a narrow transport check, not general model-quality equivalence.",
+    "Every request repeated the same fixed history instead of appending conversational turns, so this does not test growing-conversation cache behavior.",
+    "The controlled-change sequence changed both instructions and the tool description, so it cannot isolate either field's effect.",
+    "Every sequence used the same synthetic prefix, so backend reuse across sequence and repetition boundaries prevents causal cold-versus-warm attribution."
+  ],
+  "findings": [
+    "All 28 bounded requests completed and returned the exact requested CACHE_OK answer.",
+    "All 28 attempts reported input, cached input, cache write, and output counters; cache writes were explicit zero on every attempt.",
+    "The complete input-plus-read cohort reported 109376 input tokens and 30720 cached input tokens, an observed read share of 0.280866003510825.",
+    "Both Sol-to-Sol repetitions reported 3840 cached tokens on the second request; Astra Medium-to-Astra Medium reported 0 then 3840 across the two repetitions.",
+    "Astra Medium-to-Astra XHigh reported zero cached tokens in both repetitions; Astra-to-Sol-to-Astra reported 3840 cached tokens on the returning Astra request in both repetitions.",
+    "The deliberate instruction-and-tool-description change reported zero cached tokens on the changed request in both repetitions.",
+    "Shared-prefix reuse elsewhere in the run makes the remaining cross-model observations inconclusive and does not support a serving-policy or full-task-savings claim."
+  ],
+  "requests": [
+    {
+      "repetition": 1,
+      "sequence": "sol-sol",
+      "step": 1,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1968,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 1,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1625,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "sol-sol",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 2000,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 1,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1996,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-medium-astra-medium",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 2262,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 2,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 2258,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-medium-astra-medium",
+      "step": 2,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 2495,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 2,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 2491,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-medium-astra-xhigh",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1851,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 3,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1847,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-medium-astra-xhigh",
+      "step": 2,
+      "target": "astraXhigh",
+      "changed": false,
+      "elapsedMs": 1872,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 3,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "xhigh",
+        "requestedTier": "default",
+        "elapsedMs": 1868,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-sol",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1459,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 4,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1454,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-sol",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1788,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 4,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1783,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-sol",
+      "step": 3,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1538,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 4,
+        "request": 3,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1534,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-astra",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1765,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 5,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1762,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-astra",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1768,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 5,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1764,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "astra-sol-astra",
+      "step": 3,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1879,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 5,
+        "request": 3,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1876,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "controlled-prefix-change",
+      "step": 1,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1501,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 6,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1498,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 1,
+      "sequence": "controlled-prefix-change",
+      "step": 2,
+      "target": "sol",
+      "changed": true,
+      "elapsedMs": 1591,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 6,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1588,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3910,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "sol-sol",
+      "step": 1,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1453,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 7,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1448,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "sol-sol",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 2870,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 7,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 2866,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-medium-astra-medium",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1847,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 8,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1843,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-medium-astra-medium",
+      "step": 2,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1818,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 8,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1814,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-medium-astra-xhigh",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1769,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 9,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1765,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-medium-astra-xhigh",
+      "step": 2,
+      "target": "astraXhigh",
+      "changed": false,
+      "elapsedMs": 4017,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 9,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "xhigh",
+        "requestedTier": "default",
+        "elapsedMs": 4013,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-sol",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 1349,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 10,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1345,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-sol",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1742,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 10,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1739,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-sol",
+      "step": 3,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1583,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 10,
+        "request": 3,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1580,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-astra",
+      "step": 1,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 2231,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 11,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 2228,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-astra",
+      "step": 2,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1496,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 11,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1493,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "astra-sol-astra",
+      "step": 3,
+      "target": "astraMedium",
+      "changed": false,
+      "elapsedMs": 3124,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 11,
+        "request": 3,
+        "attempt": 1,
+        "model": "gpt-6-astra",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 3120,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-6-astra",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 3840,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "controlled-prefix-change",
+      "step": 1,
+      "target": "sol",
+      "changed": false,
+      "elapsedMs": 1807,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 12,
+        "request": 1,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 1803,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3906,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    },
+    {
+      "repetition": 2,
+      "sequence": "controlled-prefix-change",
+      "step": 2,
+      "target": "sol",
+      "changed": true,
+      "elapsedMs": 2515,
+      "status": 200,
+      "outcome": "response.completed",
+      "expectedAnswer": true,
+      "observation": {
+        "schemaVersion": 1,
+        "event": "native_attempt",
+        "association": 12,
+        "request": 2,
+        "attempt": 1,
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "requestedTier": "default",
+        "elapsedMs": 2511,
+        "httpStatus": 200,
+        "outcome": "completed",
+        "returnedModel": "gpt-5.6-sol",
+        "returnedTier": "default",
+        "usage": {
+          "inputTokens": 3910,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 6
+        }
+      }
+    }
+  ]
+}

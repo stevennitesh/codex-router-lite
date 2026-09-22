@@ -15,6 +15,9 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Switchyard delivery and evidence
 
+- [Bounded synthetic native cache-transition experiment, 2026-09-21](2026-09-21-switchyard-cache-transition-experiment.json)
+- [Safe cache experiment reproduction procedure, 2026-09-21](2026-09-21-switchyard-cache-experiment-procedure.md)
+- [Completed cache-correctness and native-attempt observation delivery, 2026-09-21](2026-09-21-switchyard-cache-correctness-completed.md)
 - [Completed measurement and classifier-input fidelity delivery, 2026-09-21](2026-09-21-switchyard-measurement-completed.md)
 - [Startup/stream and retry release, 2026-09-20](2026-09-20-startup-stream-release.md), [four-route certification](2026-09-20-startup-stream-release-certification.json), and [completed delivery record](2026-09-20-startup-stream-boundaries-completed.md)
 - [Relay hardening deployed acceptance, 2026-09-20](2026-09-20-relay-release.md) and [four-route certification evidence](2026-09-20-relay-release-certification.json)

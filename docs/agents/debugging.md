@@ -57,6 +57,12 @@ a contradictory stream. Missing counters mean the corresponding events were not
 observed. These diagnostics do not retain arguments or repair calls. Pair them
 with request timing and the authorized local rollout before attributing a failure.
 
+Response timing records preserve provider-reported cache reads and cache writes
+as separate optional counters. Missing, null, and invalid values remain unknown;
+an explicit zero remains observed zero. When an empty-completion retry has only
+partial usage or cache-counter coverage, the timing record marks the affected
+aggregate as incomplete rather than treating the missing attempt as zero.
+
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
 scope predicate and a regression that fails without it. Remove unused transforms.
