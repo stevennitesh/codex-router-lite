@@ -46,6 +46,14 @@ This exception ends when custody returns or useful local work resumes.
 
 When a child agent finishes (FINAL_ANSWER, task_complete, or an idle/errored wait snapshot), call interrupt_agent on that child so Codex can mark it done. Do not leave finished children in the working state.`;
 
+const managedDelegationUsageHint = `## Delegation routing
+Follow the delegation policy established by the user, applicable AGENTS.md, or an invoked skill. Delegated work may intentionally be on the critical path when that workflow is optimizing lead-model context or cost.
+- Do not duplicate delegated work locally merely because the parent is waiting on its result.
+- Use the model, reasoning effort, and context fork required by the active workflow.
+- When overriding a child model or reasoning effort, use fork_turns="none" or a positive bounded turn count; a full-history fork inherits the parent model and effort.
+- If no active workflow defines another policy, delegate only concrete well-scoped work when the expected coordination cost is justified.
+`;
+
 const markerPairs = [
   [startMarker, endMarker],
   [providerStartMarker, providerEndMarker, `[model_providers.${routerProviderId}]`],
@@ -60,6 +68,7 @@ function managedMultiAgentV2FeatureLine() {
   return (
     `multi_agent_v2 = { enabled = true, max_concurrent_threads_per_session = ${managedAgentMaxConcurrency}, ` +
     `expose_spawn_agent_model_overrides = true, usage_hint_enabled = true, ` +
+    `usage_hint_text = ${tomlValue(managedDelegationUsageHint)}, ` +
     `root_agent_usage_hint_text = ${tomlValue(managedRootAgentUsageHint)} }`
   );
 }
