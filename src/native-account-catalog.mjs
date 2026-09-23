@@ -8,7 +8,7 @@ import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { codexVersion } from "./codex-binary.mjs";
 import { nativeAccountCatalogHeaders } from "./codex-native-session.mjs";
 import { writePrivateJsonAsync } from "./file-security.mjs";
-import { MODELS_CACHE_PATH } from "./paths.mjs";
+import { NATIVE_ACCOUNT_CATALOG_PATH } from "./paths.mjs";
 import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 import { MODEL_BY_SLUG } from "./routed-models.mjs";
 
@@ -19,7 +19,12 @@ const ACCOUNT_CATALOG_TIMEOUT_MS = 5_000;
 const ACCOUNT_CATALOG_URL = "https://chatgpt.com/backend-api/codex/models";
 
 function validCatalog(value) {
-  return value && Array.isArray(value.models) && value.models.length > 0;
+  if (!value || !Array.isArray(value.models) || value.models.length === 0) return false;
+  for (const model of value.models) {
+    const slug = typeof model?.slug === "string" ? model.slug.trim() : "";
+    if (!slug) return false;
+  }
+  return true;
 }
 
 function containsRoutedSlugs(catalog) {
@@ -42,20 +47,37 @@ function sameAccountSession(before, after) {
   if (!after?.authorization) return false;
   const beforeAccount = before?.["chatgpt-account-id"];
   const afterAccount = after?.["chatgpt-account-id"];
-  if (beforeAccount || afterAccount) {
-    return Boolean(beforeAccount && afterAccount && secretEqual(beforeAccount, afterAccount));
-  }
-  return secretEqual(before.authorization, after.authorization);
+  const sameAccount = beforeAccount || afterAccount
+    ? Boolean(beforeAccount && afterAccount && secretEqual(beforeAccount, afterAccount))
+    : secretEqual(before.authorization, after.authorization);
+  return sameAccount
+    && String(before?.["x-openai-residency"] || "") === String(after?.["x-openai-residency"] || "")
+    && String(before?.["x-openai-fedramp"] || "") === String(after?.["x-openai-fedramp"] || "");
 }
 
-export function readModelsCache(cachePath = MODELS_CACHE_PATH) {
+export function nativeAccountCatalogIdentity(headers) {
+  if (!headers?.authorization) return undefined;
+  const account = headers["chatgpt-account-id"];
+  const authorization = account ? undefined : headers.authorization;
+  return createHash("sha256").update(JSON.stringify({
+    account: account || null,
+    authorization: authorization || null,
+    residency: headers["x-openai-residency"] || null,
+    fedramp: headers["x-openai-fedramp"] || null,
+  })).digest("hex");
+}
+
+export function readNativeAccountCatalog(cachePath = NATIVE_ACCOUNT_CATALOG_PATH) {
   const missing = { catalog: undefined, fingerprint: undefined };
   if (!existsSync(cachePath)) return missing;
   try {
     const catalog = JSON.parse(readFileSync(cachePath, "utf8"));
-    // A prior Router version may have put its merged catalog here. Never use
-    // that as account authority or publish routed entries as native models.
-    if (!validCatalog(catalog) || containsRoutedSlugs(catalog)) return missing;
+    if (
+      catalog?.version !== 1
+      || typeof catalog.identity !== "string"
+      || !validCatalog(catalog)
+      || containsRoutedSlugs(catalog)
+    ) return missing;
     return { catalog, fingerprint: modelsFingerprint(catalog.models) };
   } catch {
     return missing;
@@ -68,8 +90,9 @@ export function codexClientVersion(value = codexVersion()) {
   )?.[1];
 }
 
-function cacheIsFresh(cache, clientVersion, now) {
+function cacheIsFresh(cache, clientVersion, identity, now) {
   if (!validCatalog(cache) || containsRoutedSlugs(cache)) return false;
+  if (cache.identity !== identity) return false;
   if (cache.client_version !== clientVersion) return false;
   const fetchedAt = Date.parse(cache.fetched_at);
   const age = now - fetchedAt;
@@ -125,9 +148,9 @@ function accountCatalogDispatcher({
 }
 
 // Caller must hold the catalog publication lock. Failures retain the previous
-// cache and return status only; credentials never enter errors or results.
+// snapshot and return status only; credentials never enter errors or results.
 export async function refreshNativeAccountCatalogUnlocked({
-  cachePath = MODELS_CACHE_PATH,
+  cachePath = NATIVE_ACCOUNT_CATALOG_PATH,
   force = false,
   now = Date.now(),
   version,
@@ -141,12 +164,30 @@ export async function refreshNativeAccountCatalogUnlocked({
   const clientVersion = version || versionProvider();
   if (!clientVersion) return { status: "unavailable" };
 
-  const current = readModelsCache(cachePath);
-  if (!force && cacheIsFresh(current.catalog, clientVersion, now)) {
+  const current = readNativeAccountCatalog(cachePath);
+  const invalidSnapshot = existsSync(cachePath) && !current.catalog;
+  const accountHeaders = await headersProvider();
+  if (!accountHeaders?.authorization) {
+    return {
+      status: "unavailable",
+      ...(invalidSnapshot ? { native_source_invalid: true } : {}),
+    };
+  }
+  const identity = nativeAccountCatalogIdentity(accountHeaders);
+  const identityMatches = current.catalog?.identity === identity;
+  const identityChanged = Boolean(current.catalog && !identityMatches);
+  const failed = (identityChange = identityChanged) => ({
+    status: "failed",
+    ...(identityChange ? { identity_changed: true } : {}),
+    ...(invalidSnapshot ? { native_source_invalid: true } : {}),
+  });
+  if (!force && cacheIsFresh(current.catalog, clientVersion, identity, now)) {
     return { status: "fresh", fingerprint: current.fingerprint };
   }
 
-  const safeCurrent = validCatalog(current.catalog) && !containsRoutedSlugs(current.catalog);
+  const safeCurrent = identityMatches
+    && validCatalog(current.catalog)
+    && !containsRoutedSlugs(current.catalog);
   const triple = (value) => /^(\d+)\.(\d+)\.(\d+)/u.exec(String(value || ""))?.slice(1).map(Number);
   const candidate = triple(clientVersion);
   const previous = triple(current.catalog?.client_version);
@@ -154,9 +195,8 @@ export async function refreshNativeAccountCatalogUnlocked({
   if (safeCurrent && differing >= 0 && candidate[differing] < previous[differing]) {
     return { status: "stale-client", fingerprint: current.fingerprint };
   }
-  const accountHeaders = await headersProvider();
-  if (!accountHeaders?.authorization) return { status: "unavailable" };
-  // Validators belong to the client version that obtained the model list.
+  // Validators belong to the client version and account identity that obtained
+  // the model list. A changed account or residency fetches unconditionally.
   const etag = safeCurrent && current.catalog.client_version === clientVersion
     ? safeEtag(current.catalog.etag) : undefined;
   const url = new URL(ACCOUNT_CATALOG_URL);
@@ -183,26 +223,36 @@ export async function refreshNativeAccountCatalogUnlocked({
     });
     if (response.status === 304) {
       await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
-      if (!etag) return { status: "failed" };
+      if (!etag) return failed();
+      if (!sameAccountSession(accountHeaders, await headersProvider())) {
+        return failed(true);
+      }
       return { status: "not-modified", fingerprint: current.fingerprint };
     }
     if (!response.ok || response.status >= 300) {
       await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
-      return { status: "failed" };
+      return failed();
     }
     const parsed = await boundedJson(response);
-    if (!validCatalog(parsed) || containsRoutedSlugs(parsed)) return { status: "failed" };
-    if (!sameAccountSession(accountHeaders, await headersProvider())) return { status: "failed" };
+    if (!validCatalog(parsed) || containsRoutedSlugs(parsed)) {
+      return failed();
+    }
+    if (!sameAccountSession(accountHeaders, await headersProvider())) {
+      return failed(true);
+    }
 
     const fingerprint = modelsFingerprint(parsed.models);
     const responseEtag = safeEtag(response.headers.get("etag"));
     if (
       safeCurrent && fingerprint === current.fingerprint
+      && current.catalog.client_version === clientVersion
       && (!responseEtag || responseEtag === etag)
     ) {
       return { status: "unchanged", fingerprint };
     }
     await writeCache(cachePath, {
+      version: 1,
+      identity,
       fetched_at: new Date(now).toISOString(),
       ...(responseEtag ? { etag: responseEtag } : {}),
       client_version: clientVersion,
@@ -213,7 +263,7 @@ export async function refreshNativeAccountCatalogUnlocked({
       fingerprint,
     };
   } catch {
-    return { status: "failed" };
+    return failed();
   } finally {
     await dispatcher?.close().catch(() => undefined);
   }

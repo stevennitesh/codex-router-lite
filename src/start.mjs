@@ -16,7 +16,7 @@ import {
 } from "./paths.mjs";
 import { SHUTDOWN_DRAIN_MS, SHUTDOWN_FLUSH_MS } from "./http-utils.mjs";
 import { waitForHealth as pollHealth } from "./health-probe.mjs";
-import { gatewaySupervisorLimits, superviseGateway } from "./gateway-supervisor.mjs";
+import { gatewaySupervisorLimits, superviseOptionalChild } from "./gateway-supervisor.mjs";
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
@@ -82,27 +82,6 @@ const litellm = configuredLiteLlm || path.join(
 const litellmArgs = usesBundledVenv
   ? ["-I", "-X", "utf8", "-c", "from litellm import run_server; run_server()"]
   : [];
-if (!existsSync(litellm)) {
-  throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
-}
-
-// A launcher file that exists on disk is not proof the venv works. Probe the
-// interpreter explicitly so a broken venv fails here with a readable message
-// and a fix path instead of entering a service restart loop.
-// The probe applies only to the bundled venv: a custom launcher
-// (MODEL_ROUTER_LITELLM_BIN or a codex-target alias) may deliberately ship
-// without the bundled `.venv`, and CI exercises startup with
-// MODEL_ROUTER_LITELLM_BIN=process.execPath on a fresh checkout that has no
-// venv at all.
-if (usesBundledVenv) {
-  const venvProblem = venvRuntimeProblem(litellm);
-  if (venvProblem) {
-    throw new Error(
-      `The LiteLLM virtual environment is broken at ${litellm} (${venvProblem}). ` +
-        `${dependencyFix}.`,
-    );
-  }
-}
 if (!existsSync(INTERNAL_SECRET_PATH)) {
   throw new Error("Internal service key is missing; run .\\install.ps1 -Target codex.");
 }
@@ -114,7 +93,6 @@ if (!internalKey) throw new Error("Internal service key is empty.");
 const callerKey = assertCallerSecret(
   readFileSync(CALLER_SECRET_PATH, "utf8").trim(),
 );
-writeLiteLlmConfig();
 
 const commonEnv = {
   MODEL_ROUTER_TARGET: "codex",
@@ -224,55 +202,102 @@ const FRONTEND = { script: "router.mjs", service: "codex-router", label: "Codex 
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stopChildren);
 
 async function main() {
-  // GLM uses the exact OpenRouter forwarder. Switchyard is a separate selected
-  // loopback runtime; no other provider process is part of this product.
-  const api = run(process.execPath, [path.join(SOURCE_ROOT, "src", "api-forwarder.mjs")]);
   const providerSelection = providerSelectionStatus();
-  const switchyardLaunch = installedSwitchyardLaunch({
-    selected: switchyardSelectedForStartup(providerSelection),
-  });
+  let switchyardLaunch;
+  try {
+    switchyardLaunch = installedSwitchyardLaunch({
+      selected: switchyardSelectedForStartup(providerSelection),
+    });
+  } catch (error) {
+    console.error(`[codex-router] Switchyard startup is unavailable: ${error instanceof Error ? error.message : String(error)}.`);
+  }
   // This ephemeral capability belongs only to the Router -> Switchyard hop.
   // It is separate from both caller and internal service credentials, never
   // enters argv or the route file, and rotates with the supervised service.
   const switchyardCapability = switchyardLaunch
     ? randomBytes(32).toString("hex")
     : undefined;
-  const switchyardOpenRouterCredential = switchyardLaunch
-    ? resolveProviderCredential("openrouter")
-    : undefined;
-  const switchyard = switchyardLaunch
-    ? run(switchyardLaunch.binary, switchyardLaunch.args, {
-      [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability,
-      ...(switchyardOpenRouterCredential?.value
-        ? { OPENROUTER_API_KEY: switchyardOpenRouterCredential.value }
-        : {}),
-    })
-    : undefined;
-  await Promise.all([
-    waitForHealth(
+  const frontend = FRONTEND;
+  const frontendService = frontend.service;
+  const router = run(
+    process.execPath,
+    [path.join(SOURCE_ROOT, "src", frontend.script)],
+    switchyardCapability
+      ? { [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability }
+      : {},
+  );
+  await waitForHealth(
+    frontend.label,
+    loopback(PORTS.router, "/live"),
+    {},
+    30_000,
+    frontendService,
+    router,
+  );
+  console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
+
+  const limits = gatewaySupervisorLimits();
+  const supervise = (label, start, healthy) => {
+    void superviseOptionalChild({
+      label,
+      start,
+      waitForExit,
+      waitForHealth: healthy,
+      isShuttingDown: () => shuttingDown,
+      log: (message) => console.error(`[${frontendService}] ${message}`),
+      ...limits,
+    }).catch((error) => {
+      if (!shuttingDown) console.error(`[${frontendService}] ${label} supervisor failed: ${error instanceof Error ? error.message : String(error)}.`);
+    });
+  };
+
+  supervise(
+    "API forwarder",
+    () => run(process.execPath, [path.join(SOURCE_ROOT, "src", "api-forwarder.mjs")]),
+    (child) => waitForHealth(
       "API forwarder",
       loopback(PORTS.api, "/health"),
       { Authorization: `Bearer ${internalKey}` },
       30_000,
       undefined,
-      api,
+      child,
     ),
-    ...(switchyard
-      ? [
-        waitForHealth(
-          "Switchyard",
-          switchyardLaunch.healthUrl,
-          {},
-          30_000,
-          undefined,
-          switchyard,
-        ),
-      ]
-      : []),
-  ]);
+  );
 
-  const startGateway = () =>
-    run(litellm, [
+  if (switchyardLaunch) {
+    const startSwitchyard = () => {
+      const credential = resolveProviderCredential("openrouter");
+      return run(switchyardLaunch.binary, switchyardLaunch.args, {
+        [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability,
+        ...(credential?.value ? { OPENROUTER_API_KEY: credential.value } : {}),
+      });
+    };
+    supervise(
+      "Switchyard",
+      startSwitchyard,
+      (child) => waitForHealth(
+        "Switchyard",
+        switchyardLaunch.healthUrl,
+        {},
+        30_000,
+        undefined,
+        child,
+      ),
+    );
+  }
+
+  const startGateway = () => {
+    if (!existsSync(litellm)) {
+      throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
+    }
+    if (usesBundledVenv) {
+      const venvProblem = venvRuntimeProblem(litellm);
+      if (venvProblem) {
+        throw new Error(`The LiteLLM virtual environment is broken at ${litellm} (${venvProblem}). ${dependencyFix}.`);
+      }
+    }
+    writeLiteLlmConfig();
+    return run(litellm, [
       ...litellmArgs,
       "--config",
       LITELLM_CONFIG_PATH,
@@ -281,6 +306,7 @@ async function main() {
       "--port",
       String(PORTS.gateway),
     ]);
+  };
   // LiteLLM cold starts can take minutes under heavy system load. Killing it
   // mid-import restarts the import from scratch and
   // the service loops forever, so wait long enough for a starved import.
@@ -293,54 +319,18 @@ async function main() {
       undefined,
       child,
     );
-  const gateway = startGateway();
-  await gatewayHealthy(gateway);
-
-  const frontend = FRONTEND;
-  const frontendService = frontend.service;
-  const router = run(
-    process.execPath,
-    [path.join(SOURCE_ROOT, "src", frontend.script)],
-    switchyardCapability
-      ? { [SWITCHYARD_CAPABILITY_ENV]: switchyardCapability }
-      : {},
+  supervise("LiteLLM gateway", startGateway, gatewayHealthy);
+  supervise(
+    "Catalog refresh watcher",
+    () => run(process.execPath, [path.join(SOURCE_ROOT, "src", "catalog-auto-refresh.mjs")]),
+    async (child) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`exited during startup (code=${String(child.exitCode)}, signal=${String(child.signalCode)})`);
+      }
+    },
   );
-  await waitForHealth(
-    frontend.label,
-    loopback(PORTS.router, "/health"),
-    {},
-    30_000,
-    frontendService,
-    router,
-  );
-
-  const catalogWatcher = run(
-    process.execPath,
-    [path.join(SOURCE_ROOT, "src", "catalog-auto-refresh.mjs")],
-  );
-
-  console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
-  // Only the gateway is supervised. The forwarders and the router are ours and
-  // are restarted by rebuilding the whole service; the gateway is a third-party
-  // Python process that can end itself on a single bad upstream response
-  // (a 429 raised out of LiteLLM's exception mapping), and taking
-  // the router down with it turned one failed request into a dead session.
-  const result = await Promise.race([
-    waitForExit(api, "API forwarder"),
-    ...(switchyard ? [waitForExit(switchyard, "Switchyard")] : []),
-    waitForExit(catalogWatcher, "Catalog refresh watcher"),
-    superviseGateway({
-      label: "LiteLLM gateway",
-      child: gateway,
-      start: startGateway,
-      waitForExit,
-      waitForHealth: gatewayHealthy,
-      isShuttingDown: () => shuttingDown,
-      log: (message) => console.error(`[${frontendService}] ${message}`),
-      ...gatewaySupervisorLimits(),
-    }),
-    waitForExit(router, frontend.label),
-  ]);
+  const result = await waitForExit(router, frontend.label);
   if (!shuttingDown) {
     console.error(
       `[${frontendService}] ${result.label} exited (code=${String(result.code)}, signal=${String(result.signal)}).`,

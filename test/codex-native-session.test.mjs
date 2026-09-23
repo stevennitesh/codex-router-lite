@@ -107,6 +107,14 @@ test("account model discovery uses the signed-in session without enabling model 
   assert.equal(nativeSessionHeaders(), undefined);
 });
 
+test("account model discovery carries the session residency identity", async () => {
+  const id_token = jwtWithClaims({
+    "https://api.openai.com/auth": { chatgpt_account_is_fedramp: true },
+  });
+  writeAuth({ access_token: ACCESS, account_id: ACCOUNT, id_token });
+  assert.equal((await nativeAccountCatalogHeaders())["x-openai-fedramp"], "true");
+});
+
 test("shared native session reconstructs the FedRAMP header from Codex identity claims", () => {
   const id_token = jwtWithClaims({
     "https://api.openai.com/auth": { chatgpt_account_is_fedramp: true },

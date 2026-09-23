@@ -58,7 +58,10 @@ test("Switchyard supervision derives one loopback process and health contract", 
 test("the service injects the managed OpenRouter key only into the Switchyard child", () => {
   const source = readFileSync(path.join(root, "src", "start.mjs"), "utf8");
   assert.match(source, /resolveProviderCredential\("openrouter"\)/u);
-  assert.match(source, /OPENROUTER_API_KEY: switchyardOpenRouterCredential\.value/u);
+  assert.match(
+    source,
+    /const credential = resolveProviderCredential\("openrouter"\)[\s\S]*OPENROUTER_API_KEY: credential\.value/u,
+  );
   assert.doesNotMatch(source, /process\.env\.OPENROUTER_API_KEY\s*=/u);
 });
 

@@ -13,15 +13,34 @@ The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
 a separate watcher process. The freshness identity is the resolved Codex
 binary path, file identity, reported version, and the content fingerprint of
 the current account or explicitly adopted native catalog. While signed in, the
-locked refresh may update Codex's own `models_cache.json` only from the fixed
-ChatGPT account-model endpoint. It bounds the response, rechecks account
-identity before writing, never stores credentials, and preserves the prior
-cache on every network, schema, or account-switch failure. Cache validators
-belong to one CLI version: upgrades fetch unconditionally and older clients
-cannot overwrite newer caches. Publication uses
-the normal state-ownership guard, catalog lock, and rollback path. A failed
-refresh leaves Router serving and retries on the next interval. The watcher
-does not override native `visibility` or manufacture account entitlements.
+locked refresh stores account metadata from the fixed ChatGPT account-model
+endpoint in Router's protected `native-account-models.json`; Codex alone owns
+`models_cache.json`. The snapshot contains no credential and is reusable only
+for the matching account or authentication identity, residency, and CLI
+version. Account, residency, and client changes discard prior validators; a
+failed identity-changing refresh cannot reuse the prior account's visibility.
+An explicitly adopted native source remains the selected authority and does not
+read or refresh the unused account snapshot; native authentication publication
+rules still apply to its models.
+The request is bounded, rechecks identity before writing, and preserves the
+last snapshot on network or schema failure. Publication uses the normal
+state-ownership guard, catalog lock, and rollback path. Every watcher pass
+derives the desired publication from the reusable capture and current local
+settings, then writes only changed catalog, announcement, or managed-agent
+output. A failed publication therefore retries on the next interval even when
+the native capture itself is current. Invalid native input preserves the last
+publication. An incompatible enabled optional route is omitted with its managed
+agent and a bounded diagnostic; disabled providers are not projected. The
+watcher does not weaken route compatibility, override native `visibility`, or
+manufacture account entitlements.
+
+Native discovery retains the managed static catalog until the installed client
+proves a supported refresh path that preserves the built-in provider, account
+authentication and full native model metadata. Before any migration, repeat the
+installed strict-config and same-process app-server probes and separately verify
+desktop picker adoption; an accepted unknown setting or an upstream symbol is not
+that proof. The current version-specific capability decision is retained in the
+[historical record](../history/2026-09-22-native-discovery-capability.md).
 
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 

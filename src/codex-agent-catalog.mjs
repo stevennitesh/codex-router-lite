@@ -124,12 +124,17 @@ export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
     ]),
   );
   const written = [];
+  const changed = [];
   const keep = new Set();
   try {
     for (const model of models) {
       const definition = routedAgentDefinition(model);
       const target = path.join(agentsDir, definition.fileName);
-      writeManagedAgent(target, definition.contents);
+      const current = previous.get(definition.fileName);
+      if (current === undefined || normalizedAgentContents(current) !== definition.contents) {
+        writeManagedAgent(target, definition.contents);
+        changed.push(definition.fileName);
+      }
       keep.add(definition.fileName);
       written.push({ model: model.slug, agent: definition.agentName, path: target });
     }
@@ -144,7 +149,7 @@ export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
         // rather than failing the catalog write.
       }
     }
-    return { written, removed };
+    return { written, changed, removed };
   } catch (error) {
     const restoreErrors = [];
     for (const entry of managedAgentFiles(agentsDir)) {

@@ -769,6 +769,11 @@ class ResponsesWebSocketPeer {
     this.closed = true;
     this.abortController.abort(new Error("Responses WebSocket closed."));
     this.continuations.clear();
+    this.options.unregisterPeer?.();
+  }
+
+  forceClose() {
+    this.fail(1012, "The local router is restarting.");
   }
 
   send(opcode, payload) {
@@ -958,6 +963,15 @@ class ResponsesWebSocketPeer {
 
   async process(text) {
     if (this.closed) return;
+    try {
+      this.options.admitRequest?.();
+    } catch {
+      this.sendError(503, {
+        type: "local_router_draining",
+        message: "The local router is draining for a service operation.",
+      });
+      return;
+    }
     let request;
     try {
       request = JSON.parse(text);
@@ -1257,6 +1271,9 @@ export function handleResponsesWebSocketUpgrade(
     maxErrorBytes = MAX_BUFFERED_RESPONSE_BYTES,
     maxContinuationBytes = maxMessageBytes,
     maxFragmentFrames = MAX_FRAGMENT_FRAMES,
+    admitUpgrade,
+    admitRequest,
+    onPeer,
   },
 ) {
   maxMessageBytes = Number.isFinite(maxMessageBytes) && maxMessageBytes > 0
@@ -1331,8 +1348,14 @@ export function handleResponsesWebSocketUpgrade(
     );
     return false;
   }
+  try {
+    admitUpgrade?.();
+  } catch {
+    rejectUpgrade(socket, 503, "The local router is draining for a service operation.");
+    return false;
+  }
   acceptUpgrade(request, socket);
-  new ResponsesWebSocketPeer(socket, request, {
+  const peer = new ResponsesWebSocketPeer(socket, request, {
     callerKey,
     responsesUrl,
     internalAuthorization,
@@ -1342,6 +1365,9 @@ export function handleResponsesWebSocketUpgrade(
     maxErrorBytes,
     maxContinuationBytes,
     maxFragmentFrames,
-  }).start(head);
+    admitRequest,
+  });
+  peer.options.unregisterPeer = onPeer?.(peer);
+  peer.start(head);
   return true;
 }

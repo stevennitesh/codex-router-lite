@@ -26,7 +26,7 @@ import {
   runCodex,
 } from "./codex-binary.mjs";
 import {
-  readModelsCache,
+  readNativeAccountCatalog,
   refreshNativeAccountCatalogUnlocked,
 } from "./native-account-catalog.mjs";
 import { syncRoutedCodexAgents } from "./codex-agent-catalog.mjs";
@@ -53,12 +53,18 @@ import {
   LISTED_MODELS,
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
+import { readProviderSelection } from "./provider-selection.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
 const refreshIfStale = process.argv.includes("--refresh-if-stale");
 
 function validNativeCatalog(parsed) {
-  return parsed && Array.isArray(parsed.models) && parsed.models.length > 0;
+  if (!parsed || !Array.isArray(parsed.models) || parsed.models.length === 0) return false;
+  for (const model of parsed.models) {
+    const slug = typeof model?.slug === "string" ? model.slug.trim() : "";
+    if (!slug) return false;
+  }
+  return true;
 }
 
 function nativeCatalogFingerprint(catalog) {
@@ -259,11 +265,11 @@ function restoreFileSnapshot(target, snapshot) {
   }
 }
 
-function captureNative(source = {}) {
+function captureNative(source) {
   // An explicitly adopted source owns account visibility. Otherwise use the
-  // fixed-endpoint-refreshed cache that Codex itself owns. Bundled models still
+  // fixed-endpoint-refreshed Router snapshot. Bundled models still
   // supply build-specific schema and provide a safe fallback when unavailable.
-  const accountSource = source.catalog ? source : readModelsCache();
+  const accountSource = source === undefined ? readNativeAccountCatalog() : source;
   const account = accountSource.catalog;
   let fallback;
   let fallbackError;
@@ -350,7 +356,7 @@ export function nativeCatalogRefreshNeeded({
   currentVersion = codexVersion(),
   currentBinary = findCodexBinary(),
   currentBinaryFingerprint = codexBinaryFingerprint(currentBinary),
-  accountCache = readModelsCache,
+  accountCache = readNativeAccountCatalog,
 } = {}) {
   let parsed;
   try {
@@ -375,7 +381,10 @@ export function nativeCatalogRefreshNeeded({
   );
 }
 
-export function nativeCatalog({ refreshNative = refresh } = {}) {
+export function nativeCatalog({
+  refreshNative = refresh,
+  accountSource = readNativeAccountCatalog(),
+} = {}) {
   const source = readNativeCatalogSource();
   if (source) {
     const catalog = readNativeCatalogFile(source.path);
@@ -402,8 +411,8 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
     // same current bundled capture used for Codex's account catalog.
     return captureNative({ catalog, fingerprint });
   }
-  const accountFingerprint = readModelsCache().fingerprint;
-  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative();
+  const accountFingerprint = accountSource.fingerprint;
+  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative(accountSource);
   const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
   if (nativeCatalogIsReusable(
     parsed,
@@ -415,7 +424,7 @@ export function nativeCatalog({ refreshNative = refresh } = {}) {
     return parsed;
   }
   try {
-    return captureNative();
+    return captureNative(accountSource);
   } catch (error) {
     // Version-mismatched is still better than empty: serve the stale capture
     // when the re-capture fails, but say so instead of hiding it.
@@ -1053,10 +1062,20 @@ function readAnnouncedAt() {
 }
 
 function writeAnnouncedAt(announcedAt) {
-  atomicJson(ANNOUNCED_MODELS_PATH, {
+  const value = {
     version: 1,
     models: Object.fromEntries([...announcedAt.entries()].sort()),
-  });
+  };
+  atomicJson(ANNOUNCED_MODELS_PATH, value);
+  return value;
+}
+
+function jsonFileEquals(target, value) {
+  try {
+    return isDeepStrictEqual(JSON.parse(readFileSync(target, "utf8")), value);
+  } catch {
+    return false;
+  }
 }
 
 function pickerProviderGroup(provider) {
@@ -1150,8 +1169,11 @@ function behaviorTemplateFor(nativeModels, model, fallback) {
 export function buildMergedCatalog(
   native,
   routedModelsList,
-  { includeNative = true, nativeSlugs } = {},
+  { includeNative = true, nativeSlugs, omittedRoutes = [] } = {},
 ) {
+  if (!validNativeCatalog(native)) {
+    throw new Error("Native model catalog is invalid.");
+  }
   const template =
     native.models.find((model) => model.slug === "gpt-5.5") ||
     native.models.find((model) => model.visibility === "list") ||
@@ -1173,16 +1195,23 @@ export function buildMergedCatalog(
   const ordered = routedPickerPriorities(native.models, routedModelsList);
   const published = publishedPickerPriorities(native.models, ordered);
   for (const model of ordered) {
-    const behaviorTemplate = switchyardCompatibilityTemplate(
-      native.models,
-      model,
-      behaviorTemplateFor(native.models, model, template),
-    );
-    const entry = routedModel(template, model, behaviorTemplate);
-    models.set(
-      model.slug,
-      published.has(model.slug) ? { ...entry, priority: published.get(model.slug) } : entry,
-    );
+    try {
+      const behaviorTemplate = switchyardCompatibilityTemplate(
+        native.models,
+        model,
+        behaviorTemplateFor(native.models, model, template),
+      );
+      const entry = routedModel(template, model, behaviorTemplate);
+      models.set(
+        model.slug,
+        published.has(model.slug) ? { ...entry, priority: published.get(model.slug) } : entry,
+      );
+    } catch (error) {
+      omittedRoutes.push({
+        slug: String(model?.slug || "<unknown>").slice(0, 200),
+        reason: String(error instanceof Error ? error.message : error).slice(0, 500),
+      });
+    }
   }
   return sortCatalogModels(models.values());
 }
@@ -1245,20 +1274,13 @@ async function publishCatalog({
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
-  const nativeAccountRefresh = await refreshNativeAccountCatalogUnlocked({
-    force: refreshNative,
-  });
-  if (onlyIfStale && !nativeCatalogRefreshNeeded()) {
-    const result = {
-      changed: false,
-      reason: "native_catalog_current",
-      native_account_refresh: nativeAccountRefresh.status,
-    };
-    if (output) process.stdout.write(`${JSON.stringify(result)}\n`);
-    return result;
-  }
+  const configuredNativeSource = readNativeCatalogSource();
+  const nativeAccountRefresh = configuredNativeSource
+    ? { status: "not-selected" }
+    : await refreshNativeAccountCatalogUnlocked({ force: refreshNative });
   const userSlugs = new Set();
-  const selectedModels = LISTED_MODELS;
+  const enabledProviders = new Set(readProviderSelection());
+  const selectedModels = LISTED_MODELS.filter((model) => enabledProviders.has(model.provider));
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();
@@ -1280,7 +1302,28 @@ async function publishCatalog({
     userSlugs,
     Date.now(),
   );
-  const captured = nativeCatalog({ refreshNative });
+  const auth = codexAuthStatus();
+  if (auth.reason === "probe-failed" || auth.reason === "access-denied") {
+    throw new Error(
+      `Could not ask Codex whether it is signed in (${auth.code || "spawn failed"} running ${auth.binary}). ` +
+        "Refusing to rebuild the catalog, because assuming a signed-out session would remove every native model. " +
+        "Set CODEX_BIN to a runnable Codex CLI and try again.",
+    );
+  }
+  if (auth.authenticated && nativeAccountRefresh.native_source_invalid) {
+    throw new Error(
+      "The Router-owned native account snapshot is invalid and could not be refreshed. " +
+        "Refusing to replace the last valid publication.",
+    );
+  }
+  const accountIdentityInvalid = auth.authenticated
+    && nativeAccountRefresh.identity_changed === true;
+  const captured = nativeCatalog({
+    refreshNative: refreshNative || accountIdentityInvalid,
+    accountSource: accountIdentityInvalid
+      ? { catalog: undefined, fingerprint: undefined }
+      : readNativeAccountCatalog(),
+  });
   // The router picker overlay is for routed models.  In a normal signed-in
   // Codex install the account's native entries remain Codex-owned; applying a
   // stale router `hidden` decision to them can erase the original Codex picker
@@ -1291,23 +1334,15 @@ async function publishCatalog({
     ...captured,
     models: promoteNativeMultiAgent(captured.models, multiAgentSettings, effectiveHiddenModels),
   };
-  // Dropping every native model is destructive, so only do it when Codex
-  // actually answered that the session is signed out. If the probe could not
-  // run at all we do not know, and guessing "signed out" is what silently
-  // emptied the picker for Windows npm installs.
-  const auth = codexAuthStatus();
-  if (auth.reason === "probe-failed" || auth.reason === "access-denied") {
-    throw new Error(
-      `Could not ask Codex whether it is signed in (${auth.code || "spawn failed"} running ${auth.binary}). ` +
-        "Refusing to rebuild the catalog, because assuming a signed-out session would remove every native model. " +
-        "Set CODEX_BIN to a runnable Codex CLI and try again.",
-    );
-  }
+  // Dropping every native model is destructive, so do it only when Codex
+  // answered that the session is signed out or when a known account switch
+  // invalidated the old visibility. Probe failure remains unknown and keeps
+  // the last publication instead of silently emptying the picker.
   // Publication is a cold path and needs a current generation. Native request
   // handling uses the module's bounded cache instead of probing per turn.
   const desktop = codexDesktopState({ forceRefresh: true });
   const nativeAuthObservation = readNativeAuthObservation({ desktop });
-  const nativePublication = nativeCatalogPublicationMode(
+  const nativePublication = accountIdentityInvalid ? "none" : nativeCatalogPublicationMode(
     auth,
     desktop,
     nativeAuthObservation,
@@ -1319,31 +1354,54 @@ async function publishCatalog({
   const routedCatalog = routedCatalogActive();
   // Both retained routed models accept images directly. No fallback vision
   // engine is advertised or invoked.
-  const catalogModels = routedModels;
+  const catalogModels = routedModels.filter((model) =>
+    model.provider !== "switchyard" || nativePublication === "all");
+  const omittedRoutes = [];
   const merged = buildMergedCatalog(native, routedCatalog ? catalogModels : [], {
     includeNative: nativePublication !== "none",
     nativeSlugs: preservedNativeSlugs,
+    omittedRoutes,
   });
+  for (const omitted of omittedRoutes) {
+    process.stderr.write(`${JSON.stringify({ warning: "routed_model_omitted", ...omitted })}\n`);
+  }
+  const admittedRoutedSlugs = new Set(
+    merged.map((model) => String(model.slug)).filter((slug) => MODEL_BY_SLUG.has(slug)),
+  );
+  const admittedRoutedModels = routedModels.filter((model) =>
+    admittedRoutedSlugs.has(String(model.slug)));
+  const publishedCatalog = {
+    models: applyPickerVisibility(merged, {
+      nativeBaseSlugs,
+      hiddenModels: effectiveHiddenModels,
+      visibleModels,
+      hasExplicitVisibility: pickerState.hasExplicitVisibility,
+    }),
+  };
+  const announcedValue = {
+    version: 1,
+    models: Object.fromEntries([...announcedAt.entries()].sort()),
+  };
   const snapshots = new Map(
     [MERGED_CATALOG_PATH, ANNOUNCED_MODELS_PATH]
       .map((target) => [target, fileSnapshot(target)]),
   );
   let routedAgents;
+  let catalogChanged = false;
+  let announcementsChanged = false;
   try {
-    writeAnnouncedAt(announcedAt);
-    atomicJson(MERGED_CATALOG_PATH, {
-      // A state file written by the new picker carries positive selections.
-      // Older installs had only `hidden`; preserve their behavior until an
-      // operator makes a picker change, at which point the write records the
-      // explicit allowlist permanently.
-      models: applyPickerVisibility(merged, {
-        nativeBaseSlugs,
-        hiddenModels: effectiveHiddenModels,
-        visibleModels,
-        hasExplicitVisibility: pickerState.hasExplicitVisibility,
-      }),
-    });
-    if (process.env.MODEL_ROUTER_TEST_FAIL_AFTER_CATALOG_WRITE === "1") {
+    if (!jsonFileEquals(ANNOUNCED_MODELS_PATH, announcedValue)) {
+      writeAnnouncedAt(announcedAt);
+      announcementsChanged = true;
+    }
+    if (!jsonFileEquals(MERGED_CATALOG_PATH, publishedCatalog)) {
+      atomicJson(MERGED_CATALOG_PATH, publishedCatalog);
+      catalogChanged = true;
+    }
+    if (
+      process.env.MODEL_ROUTER_TEST_FAIL_AFTER_CATALOG_WRITE === "1"
+      && (catalogChanged || announcementsChanged)
+    ) {
       throw new Error("Forced failure after model catalog publication.");
     }
     // Codex offers every file in the agents directory by name, so a model
@@ -1351,7 +1409,7 @@ async function publishCatalog({
     // this, switching it off changes multi_agent_version and nothing else, and
     // the model still answers when it is spawned by name.
     const eligibleAgents = routedCatalog
-      ? subagentEligibleModels(routedModels, multiAgentSettings)
+      ? subagentEligibleModels(admittedRoutedModels, multiAgentSettings)
       : [];
     routedAgents = syncRoutedCodexAgents(eligibleAgents);
     // Removing every definition is how an operator's subagents disappear, and
@@ -1372,6 +1430,10 @@ async function publishCatalog({
   } catch (error) {
     const restoreErrors = [];
     for (const [target, snapshot] of [...snapshots].reverse()) {
+      if (
+        (target === MERGED_CATALOG_PATH && !catalogChanged)
+        || (target === ANNOUNCED_MODELS_PATH && !announcementsChanged)
+      ) continue;
       try {
         restoreFileSnapshot(target, snapshot);
       } catch (restoreError) {
@@ -1387,11 +1449,17 @@ async function publishCatalog({
     if (error && typeof error === "object") error.catalogRollbackSafe = true;
     throw error;
   }
+  const changed = catalogChanged
+    || announcementsChanged
+    || routedAgents.changed.length > 0
+    || routedAgents.removed.length > 0;
   const result = {
-    changed: true,
+    changed,
+    ...(!changed && onlyIfStale ? { reason: "catalog_current" } : {}),
     path: MERGED_CATALOG_PATH,
     models: merged.length,
-    routed_models: routedModels.length,
+    routed_models: admittedRoutedModels.length,
+    omitted_routes: omittedRoutes,
     routed_agents: routedAgents.written.length,
     removed_agents: routedAgents.removed.length,
     native_models: merged.filter((model) => native.models.some(
@@ -1414,7 +1482,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // released only after probes and the coupled catalog-file transaction are
     // complete. Every app/CLI/autonomous caller executes this same entrypoint.
     await withCatalogPublicationLock(() => publishCatalog({
-      refreshNative: refresh || refreshIfStale,
+      refreshNative: refresh,
+      onlyIfStale: refreshIfStale,
     }));
   } catch (error) {
     // Ownership conflicts are an operator mistake with a specific remedy, so

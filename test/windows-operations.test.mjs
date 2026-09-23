@@ -165,7 +165,8 @@ test("the Windows restart helper uses the supported service transaction", () => 
   assert.match(source, /SpecialFolder]::LocalApplicationData/);
   assert.doesNotMatch(source, /\$HOME|\.local[\\/]share/);
   assert.match(source, /\$routerRoot\s*=\s*\[IO\.Path\]::GetFullPath\(\$InstallDir\)/);
-  assert.match(source, /src\\service\.mjs"\) restart/);
+  assert.match(source, /\$ServiceArguments\s*=\s*@\("restart"\)/);
+  assert.match(source, /src\\service\.mjs"\)\s*@ServiceArguments/);
   assert.match(source, /\$RestartExitCode\s*=\s*\$LASTEXITCODE/);
   assert.match(source, /if \(\$RestartExitCode -ne 0\)/);
   assert.doesNotMatch(source, /codex-router\.ps1"\) codex restart/);
@@ -194,6 +195,7 @@ test("Windows install and update retain one guarded service generation", () => {
   assert.deepEqual(parseArguments(["rollback", "--force"]), {
     command: parseArguments(["rollback"]).command,
     force: true,
+    forceServiceReplacement: false,
   });
 });
 
@@ -347,7 +349,22 @@ function deploymentFixture({ candidateFails }) {
     mkdirSync(path.join(rootPath, "src"), { recursive: true });
   }
   copyFileSync(path.join(root, "deploy-codex-router.ps1"), path.join(source, "deploy-codex-router.ps1"));
-  const files = ["install.ps1", "marker.txt", "src/start.mjs", "src/doctor.mjs"];
+  copyFileSync(
+    path.join(root, "src", "deployment-classification.mjs"),
+    path.join(source, "src", "deployment-classification.mjs"),
+  );
+  writeFileSync(
+    path.join(source, "src", "service-drain.mjs"),
+    `const command = process.argv[2];\nif (command === "prepare") process.stdout.write('{"status":"offline"}\\n');\nelse if (command === "resume") process.stdout.write('{"status":"resumed"}\\n');\nelse process.exitCode = 1;\n`,
+  );
+  const files = [
+    "install.ps1",
+    "marker.txt",
+    "src/start.mjs",
+    "src/doctor.mjs",
+    "src/deployment-classification.mjs",
+    "src/service-drain.mjs",
+  ];
   writeFileSync(
     path.join(source, "maintenance", "windows-package.json"),
     JSON.stringify({ version: 1, files }),

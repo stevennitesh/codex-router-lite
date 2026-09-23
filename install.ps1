@@ -3,6 +3,7 @@ param(
   [switch]$CheckoutInstall,
   [switch]$PrepareOnly,
   [switch]$ForceDeps,
+  [switch]$ForceServiceReplacement,
   [ValidateSet("codex")]
   [string]$Target = "codex",
   [string]$Providers,
@@ -15,6 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $env:MODEL_ROUTER_TARGET = $Target
+$ServiceMutationArguments = if ($ForceServiceReplacement) { @("--force-service-replacement") } else { @() }
 if ($NoProvider -and $Providers) {
   throw "-NoProvider cannot be combined with -Providers."
 }
@@ -209,6 +211,7 @@ $PythonCandidate = $null
 $PythonBackup = $null
 $PythonSwapStarted = $false
 $PythonVenvActivated = $false
+$AdmissionPrepared = $false
 
 function Assert-TransientPythonVenvPath([string]$Path) {
   $Root = [IO.Path]::GetFullPath($ScriptDirectory).TrimEnd([char[]]@('\', '/'))
@@ -410,6 +413,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
   }
 
+  # A live generation must agree to replacement before generated state, client
+  # configuration, manifests, or active dependencies change. Candidate
+  # dependency environments above are isolated and do not affect the service.
+  if ($ServiceWasInstalled -and -not $PrepareOnly) {
+    $DrainArguments = @("prepare") + $ServiceMutationArguments
+    & node src/service-drain.mjs @DrainArguments
+    if ($LASTEXITCODE -ne 0) { throw "Router replacement was deferred before installation state changed." }
+    $AdmissionPrepared = $true
+  }
+
   # Installing is the sanctioned way for a checkout to take over a state
   # directory: the generated files below are rebuilt here and the new owner is
   # recorded before the service step, so the ownership guard must not block a
@@ -464,7 +477,7 @@ try {
       Join-Path $ScriptDirectory ".venv-previous-$([Guid]::NewGuid().ToString('N'))"
     )
     $PythonSwapStarted = $true
-    & node src/service.mjs stop
+    & node src/service.mjs stop @ServiceMutationArguments
     if ($LASTEXITCODE -ne 0) { throw "The running Router could not enter the dependency activation transaction." }
     if (Test-Path -LiteralPath $PythonVenv -PathType Container) {
       Move-Item -LiteralPath $PythonVenv -Destination $PythonBackup
@@ -476,7 +489,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Recording the activated Python dependency state failed." }
   }
   $ServiceInstalled = $true
-  & node src/service.mjs install
+  & node src/service.mjs install @ServiceMutationArguments
   if ($LASTEXITCODE -ne 0) { throw "Background-service installation failed." }
   & node src/wait-health.mjs
   if ($LASTEXITCODE -ne 0) { throw "The router did not become healthy." }
@@ -508,7 +521,7 @@ try {
   $InstallFailure = $_
   if ($PythonSwapStarted) {
     try {
-      & node src/service.mjs stop 2>$null | Out-Null
+      & node src/service.mjs stop @ServiceMutationArguments 2>$null | Out-Null
       $FailedPythonVenv = Assert-TransientPythonVenvPath (
         Join-Path $ScriptDirectory ".venv-failed-$([Guid]::NewGuid().ToString('N'))"
       )
@@ -522,7 +535,7 @@ try {
       if (Test-Path -LiteralPath $FailedPythonVenv -PathType Container) {
         Remove-Item -LiteralPath $FailedPythonVenv -Recurse -Force
       }
-      & node src/service.mjs install
+      & node src/service.mjs install @ServiceMutationArguments
       if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
       & node src/wait-health.mjs
       if ($LASTEXITCODE -ne 0) { throw "The restored Router did not become healthy." }
@@ -535,7 +548,7 @@ try {
   # tearing out a service and disabling a client config that were both working
   # before the run turns that into an unrouted machine.
   if ($ServiceInstalled -and -not $ServiceWasInstalled) {
-    & node src/service.mjs uninstall 2>$null | Out-Null
+    & node src/service.mjs uninstall @ServiceMutationArguments 2>$null | Out-Null
   }
   if ($ConfigEnabled) {
     if (-not $ConfigWasEnabled) {
@@ -544,6 +557,9 @@ try {
   }
   throw $InstallFailure
 } finally {
+  if ($AdmissionPrepared) {
+    & node src/service-drain.mjs resume 2>$null | Out-Null
+  }
   if ($PythonCandidate -and (Test-Path -LiteralPath $PythonCandidate -PathType Container)) {
     Remove-Item -LiteralPath $PythonCandidate -Recurse -Force -ErrorAction SilentlyContinue
   }

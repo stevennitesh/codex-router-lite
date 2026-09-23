@@ -6,6 +6,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Native discovery capability decision, 2026-09-22](2026-09-22-native-discovery-capability.md)
 - [Pre-public history and repository audit, 2026-09-19](2026-09-19-public-release-audit.md)
 - [Codex compatibility review, 2026-09-18](2026-09-18-codex-compatibility.md)
 - [Pareto investigation, 2026-09-17](2026-09-17-pareto.md)

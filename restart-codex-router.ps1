@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+  [switch]$ForceServiceReplacement,
   [string]$InstallDir = $(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "codex-router")
 )
 
@@ -11,7 +12,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $routerRoot "src\service.mjs") -Path
 Push-Location $routerRoot
 try {
   Write-Host "Gracefully restarting Codex Router..."
-  & node (Join-Path $routerRoot "src\service.mjs") restart
+  $ServiceArguments = @("restart")
+  if ($ForceServiceReplacement) { $ServiceArguments += "--force-service-replacement" }
+  & node (Join-Path $routerRoot "src\service.mjs") @ServiceArguments
   $RestartExitCode = $LASTEXITCODE
   if ($RestartExitCode -ne 0) {
     throw "Codex Router restart failed with exit code $RestartExitCode."

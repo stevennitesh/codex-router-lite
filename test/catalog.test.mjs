@@ -282,22 +282,33 @@ test("Switchyard reconciles absent, null, and explicit native compaction limits"
   }).auto_compact_token_limit, 210000);
 });
 
-test("Switchyard rejects missing or incompatible native compatibility members", () => {
-  assert.throws(
-    () => buildMergedCatalog({ models: [
+test("Switchyard omits incompatible projections with their strict reason", () => {
+  for (const [models, pattern] of [
+    [[
       switchyardNative("gpt-5.6-luna"),
       switchyardNative("gpt-5.6-sol"),
-    ] }, [MODEL_BY_SLUG.get("switchyard/auto")]),
-    /missing compatibility model gpt-6-astra/u,
-  );
-  assert.throws(
-    () => mergedSwitchyard({ astra: { tool_mode: "different" } }),
-    /requires compatible tool_mode/u,
-  );
-  assert.throws(
-    () => mergedSwitchyard({ astra: { context_window: undefined } }),
-    /requires valid context_window/u,
-  );
+    ], /missing compatibility model gpt-6-astra/u],
+    [[
+      switchyardNative("gpt-5.6-luna"),
+      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6-astra", { tool_mode: "different" }),
+    ], /requires compatible tool_mode/u],
+    [[
+      switchyardNative("gpt-5.6-luna"),
+      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6-astra", { context_window: undefined }),
+    ], /requires valid context_window/u],
+  ]) {
+    const omittedRoutes = [];
+    const merged = buildMergedCatalog(
+      { models },
+      [MODEL_BY_SLUG.get("switchyard/auto")],
+      { omittedRoutes },
+    );
+    assert.equal(merged.some((model) => model.slug === "switchyard/auto"), false);
+    assert.equal(omittedRoutes.length, 1);
+    assert.match(omittedRoutes[0].reason, pattern);
+  }
 });
 
 test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract", () => {
@@ -388,6 +399,18 @@ test("native catalog merge preserves account visibility and bundled-only models"
     },
     { slug: "gpt-bundled-only", visibility: "list" },
   ]);
+});
+
+test("native catalog merge keeps the first duplicate account visibility", () => {
+  const merged = mergeNativeCatalogs(
+    { models: [
+      { slug: "gpt-synthetic", visibility: "hide" },
+      { slug: "gpt-synthetic", visibility: "list" },
+    ] },
+    { models: [{ slug: "gpt-synthetic", visibility: "list" }] },
+  );
+  assert.equal(merged.models.length, 1);
+  assert.equal(merged.models[0].visibility, "hide");
 });
 
 test("automatic catalog refresh reacts only to native authority changes", async () => {

@@ -10,9 +10,11 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  readModelsCache,
+  nativeAccountCatalogIdentity,
+  readNativeAccountCatalog,
   refreshNativeAccountCatalogUnlocked,
 } from "../src/native-account-catalog.mjs";
+import { privateFileIsProtected } from "../src/file-security.mjs";
 
 const ACCESS = "test-native-account-access-token";
 const ACCOUNT = "test-native-account-id";
@@ -27,6 +29,8 @@ function headers(account = ACCOUNT) {
 
 function fixture(models, overrides = {}) {
   return {
+    version: 1,
+    identity: nativeAccountCatalogIdentity(headers()),
     fetched_at: "2026-09-05T12:00:00.000Z",
     client_version: "0.153.4",
     etag: 'W/"old-catalog"',
@@ -37,7 +41,7 @@ function fixture(models, overrides = {}) {
 
 function withCache(run) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "router-native-account-"));
-  const cachePath = path.join(directory, "models_cache.json");
+  const cachePath = path.join(directory, "native-account-models.json");
   return Promise.resolve(run(cachePath)).finally(() => {
     rmSync(directory, { recursive: true, force: true });
   });
@@ -65,14 +69,55 @@ test("client upgrades refetch without old validators and reject unsolicited 304"
     }
   }));
 
+test("client-version revalidation records the new version for unchanged models", () =>
+  withCache(async (cachePath) => {
+    const models = [{ slug: "gpt-stable" }];
+    writeFileSync(cachePath, JSON.stringify(fixture(models, { client_version: "0.150.0" })));
+    const result = await refreshNativeAccountCatalogUnlocked({
+      cachePath,
+      version: "0.153.4",
+      headersProvider: async () => headers(),
+      fetchImpl: async (_url, init) => {
+        assert.equal(init.headers["if-none-match"], undefined);
+        return new Response(JSON.stringify({ models }), { status: 200 });
+      },
+      writeCache,
+    });
+    assert.equal(result.status, "revalidated");
+    assert.equal(JSON.parse(readFileSync(cachePath, "utf8")).client_version, "0.153.4");
+  }));
+
+test("304 revalidation rejects an account or residency switch", () =>
+  withCache(async (cachePath) => {
+    const contents = JSON.stringify(fixture([{ slug: "gpt-stable" }]));
+    for (const changedHeaders of [
+      headers("other-account"),
+      { ...headers(), "x-openai-fedramp": "true" },
+    ]) {
+      writeFileSync(cachePath, contents);
+      let reads = 0;
+      const result = await refreshNativeAccountCatalogUnlocked({
+        cachePath,
+        force: true,
+        version: "0.153.4",
+        headersProvider: async () => (++reads === 1 ? headers() : changedHeaders),
+        fetchImpl: async () => new Response(null, { status: 304 }),
+        writeCache,
+      });
+      assert.equal(reads, 2);
+      assert.deepEqual(result, { status: "failed", identity_changed: true });
+      assert.equal(readFileSync(cachePath, "utf8"), contents);
+    }
+  }));
+
 test("older clients cannot narrow a newer cache, including forced refresh", () =>
   withCache(async (cachePath) => {
     const original = JSON.stringify(fixture([{ slug: "gpt-new" }]));
     writeFileSync(cachePath, original);
-    const forbidden = () => { throw new Error("unexpected account operation"); };
+    const forbidden = () => { throw new Error("unexpected network or write operation"); };
     const result = await refreshNativeAccountCatalogUnlocked({
       cachePath, version: "0.150.0", force: true,
-      headersProvider: forbidden, fetchImpl: forbidden, writeCache: forbidden,
+      headersProvider: async () => headers(), fetchImpl: forbidden, writeCache: forbidden,
     });
     assert.equal(result.status, "stale-client");
     assert.equal(readFileSync(cachePath, "utf8"), original);
@@ -118,18 +163,34 @@ test("fixed account endpoint updates only a still-current signed-in session", ()
     assert.doesNotMatch(readFileSync(cachePath, "utf8"), new RegExp(ACCESS, "u"));
   }));
 
-test("fresh current-version account cache performs no credential or network read", () =>
+test("the Router-owned account snapshot uses protected private-file storage", {
+  skip: process.platform !== "win32",
+}, () => withCache(async (cachePath) => {
+  const result = await refreshNativeAccountCatalogUnlocked({
+    cachePath,
+    force: true,
+    version: "0.153.4",
+    headersProvider: async () => headers(),
+    fetchImpl: async () => new Response(JSON.stringify({
+      models: [{ slug: "gpt-protected", visibility: "list" }],
+    }), { status: 200 }),
+  });
+  assert.equal(result.status, "updated");
+  assert.equal(privateFileIsProtected(cachePath), true);
+}));
+
+test("fresh current-version account snapshot rechecks identity without a network read", () =>
   withCache(async (cachePath) => {
     writeFileSync(cachePath, JSON.stringify(fixture(
       [{ slug: "gpt-current" }],
       { fetched_at: "2026-09-05T17:59:00.000Z" },
     )));
-    const forbidden = () => { throw new Error("unexpected account operation"); };
+    const forbidden = () => { throw new Error("unexpected network or write operation"); };
     const result = await refreshNativeAccountCatalogUnlocked({
       cachePath,
       now: NOW,
       version: "0.153.4",
-      headersProvider: forbidden,
+      headersProvider: async () => headers(),
       fetchImpl: forbidden,
       writeCache: forbidden,
     });
@@ -181,12 +242,50 @@ test("account switch during refresh rejects the fetched catalog", () =>
     assert.equal(readFileSync(cachePath, "utf8"), contents);
   }));
 
-test("cache reader rejects a merged Router catalog as native authority", () =>
+test("account and residency changes discard validators and cannot reuse the prior snapshot", () =>
+  withCache(async (cachePath) => {
+    const contents = JSON.stringify(fixture([{ slug: "gpt-stable" }]));
+    for (const changedHeaders of [
+      headers("other-account"),
+      { ...headers(), "x-openai-fedramp": "true" },
+    ]) {
+      writeFileSync(cachePath, contents);
+      const result = await refreshNativeAccountCatalogUnlocked({
+        cachePath,
+        version: "0.153.4",
+        headersProvider: async () => changedHeaders,
+        fetchImpl: async (_url, init) => {
+          assert.equal(init.headers["if-none-match"], undefined);
+          throw new Error("synthetic network failure");
+        },
+        writeCache,
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.identity_changed, true);
+      assert.equal(readFileSync(cachePath, "utf8"), contents);
+    }
+  }));
+
+test("a malformed Router snapshot remains an explicit source failure", () =>
+  withCache(async (cachePath) => {
+    writeFileSync(cachePath, '{"models":[{}]}');
+    const result = await refreshNativeAccountCatalogUnlocked({
+      cachePath,
+      version: "0.153.4",
+      headersProvider: async () => headers(),
+      fetchImpl: async () => { throw new Error("synthetic network failure"); },
+      writeCache,
+    });
+    assert.deepEqual(result, { status: "failed", native_source_invalid: true });
+    assert.equal(readFileSync(cachePath, "utf8"), '{"models":[{}]}');
+  }));
+
+test("snapshot reader rejects a merged Router catalog as native authority", () =>
   withCache((cachePath) => {
     writeFileSync(cachePath, JSON.stringify({
       models: [{ slug: "openrouter/glm-5.3-flash" }],
     }));
-    assert.deepEqual(readModelsCache(cachePath), {
+    assert.deepEqual(readNativeAccountCatalog(cachePath), {
       catalog: undefined,
       fingerprint: undefined,
     });

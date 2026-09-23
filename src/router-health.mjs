@@ -29,7 +29,7 @@ function conclusivelyRefused(error) {
 
 export async function waitForRouterHealth({
   target = TARGET,
-  url = loopback(PORTS.router, "/health"),
+  url = loopback(PORTS.router, "/live"),
   timeoutMs = 30_000,
   requestTimeoutMs = 4_000,
   intervalMs = 250,
