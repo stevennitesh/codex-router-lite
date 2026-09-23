@@ -155,7 +155,6 @@ export class RouterAdmission {
         ...this.status(),
       });
     }, Math.max(1, timeoutMs));
-    timer.unref?.();
     this.#pendingDrain = { promise, resolve, timer };
     return promise;
   }
