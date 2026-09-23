@@ -16,6 +16,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Switchyard delivery and evidence
 
+- [Switchyard pin refresh, 2026-09-23](2026-09-23-switchyard-pin-refresh.md)
 - [Bounded synthetic native cache-transition experiment, 2026-09-21](2026-09-21-switchyard-cache-transition-experiment.json)
 - [Safe cache experiment reproduction procedure, 2026-09-21](2026-09-21-switchyard-cache-experiment-procedure.md)
 - [Completed cache-correctness and native-attempt observation delivery, 2026-09-21](2026-09-21-switchyard-cache-correctness-completed.md)

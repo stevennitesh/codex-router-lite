@@ -1,8 +1,8 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 216fefce2d498def7c4a6b003e261bc0f263ca86..a83b8387a55d1a0d0d99ae9c684f8ce2ad3b9f85 100644
+index c436d9e4..e03d3c95 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+@@ -17,6 +17,17 @@ See the
  
  ### Added
  
@@ -16,11 +16,48 @@ index 216fefce2d498def7c4a6b003e261bc0f263ca86..a83b8387a55d1a0d0d99ae9c684f8ce2
 +  three fixed candidate orders. Full probabilities and decision latency are
 +  recorded in routing evidence. Fails open on a low-confidence or invalid
 +  verdict, or a provider error. (#723)
- - **`timeout_ms` on `[llm_clients.<name>]`** — one deadline covers all attempts,
-   retry delays, and the complete response, including stream reads. Unset leaves
-   the wait unbounded; `0` is rejected. A timeout returns `504` without trying another
++
+ - **Benchmark reproduction paths** — DeepSWE v1.1 Harbor/Pier instructions,
+   Stage Router and Advisor Gate profiles, and qualification settings document
+   the workload, agent, budgets, scoring denominator, and provider differences.
+@@ -451,6 +462,17 @@ production-facing observability.
+ 
+ ### Added
+ 
++- **TypeSafe classifier routing** — new `type_safe_classifier` route type
++  routes through TypeSafe's Jev "System One Model" instead of a
++  chat-completion judge. `switchyard-libsy` stays I/O-free: the classifier
++  depends only on a new `TypeSafeProvider` port, and a new
++  `switchyard-typesafe-client` crate supplies the runner-owned HTTP
++  implementation, injected once per deployment via a `[type_safe_client]`
++  table. Routes compare user-configured candidate targets and average up to
++  three fixed candidate orders. Full probabilities and decision latency are
++  recorded in routing evidence. Fails open on a low-confidence or invalid
++  verdict, or a provider error. (#723)
++
+ - **Standalone Rust server** — `switchyard-server` serves OpenAI Chat
+   Completions, OpenAI Responses, and Anthropic Messages from one explicit TOML
+   deployment. It includes TLS, graceful shutdown, upstream retries, token
+@@ -593,6 +615,17 @@ traffic that sits between client applications and LLM backends.
+ 
+ ### Added
+ 
++- **TypeSafe classifier routing** — new `type_safe_classifier` route type
++  routes through TypeSafe's Jev "System One Model" instead of a
++  chat-completion judge. `switchyard-libsy` stays I/O-free: the classifier
++  depends only on a new `TypeSafeProvider` port, and a new
++  `switchyard-typesafe-client` crate supplies the runner-owned HTTP
++  implementation, injected once per deployment via a `[type_safe_client]`
++  table. Routes compare user-configured candidate targets and average up to
++  three fixed candidate orders. Full probabilities and decision latency are
++  recorded in routing evidence. Fails open on a low-confidence or invalid
++  verdict, or a provider error. (#723)
++
+ - **Four-role chain** — `RequestProcessor → LLMBackend → ResponseProcessor →
+   TranslationEngine`, executed by the Rust-backed core. See
+   the [0.1.0 architecture](https://github.com/NVIDIA-NeMo/Switchyard/blob/v0.1.0/docs/architecture.md).
 diff --git a/Cargo.lock b/Cargo.lock
-index b1cbce1be9d0d386289bd2c779a06c6765451fef..9cf17f4b739945b6e97d1f04a97f49bab66aa084 100644
+index b1cbce1b..9cf17f4b 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -2432,6 +2432,7 @@ dependencies = [
@@ -53,7 +90,7 @@ index b1cbce1be9d0d386289bd2c779a06c6765451fef..9cf17f4b739945b6e97d1f04a97f49ba
  name = "syn"
  version = "2.0.119"
 diff --git a/Cargo.toml b/Cargo.toml
-index 4151bc41549024d52f6d2611d71eccf0aed99a38..1a07d2da2d7090909cddf618a937e1b123fed9a3 100644
+index 4151bc41..1a07d2da 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -15,6 +15,7 @@ members = [
@@ -73,24 +110,22 @@ index 4151bc41549024d52f6d2611d71eccf0aed99a38..1a07d2da2d7090909cddf618a937e1b1
  thiserror = "2"
  tokio = { version = "1", features = ["full"] }
 diff --git a/README.md b/README.md
-index a302618642735cc6676b88eba45eefb4a29fb7df..a77cad584960d192c4fa18fd8e80ace0ac16726f 100644
+index e2b0f9ec..2624a596 100644
 --- a/README.md
 +++ b/README.md
-@@ -265,7 +265,8 @@ These names do not change the TOML configuration keys.
- > Auto requires a [source build](docs/getting_started.md#build-from-source) until v0.3.0 is published. The quickstart above uses `stage_router` directly.
+@@ -276,6 +276,7 @@ how requests move between an efficient model and a capable one.
+ |---|---|---|
+ | **[Auto](docs/routing_algorithms/overview.md#auto)** | You want Switchyard's recommended preset. | `auto` |
+ | **[Task](docs/routing_algorithms/llm_classifier_routing.md)** | You want an LLM to judge which model can handle the task. | `llm_classifier` |
++| **[TypeSafe Classifier](docs/routing_algorithms/type_safe_classifier_routing.md)** | You want TypeSafe Jev to classify the task without a chat-completion judge call. | `type_safe_classifier` |
+ | **[Execution](docs/routing_algorithms/stage_router_routing.md)** | You want tool results and agent progress to guide each request. | `stage_router` |
  
- See the [full routing catalog](docs/routing_algorithms/overview.md#more-options)
--for composite routing, escalation, custom policies, and other options.
-+for TypeSafe classification, composite routing, escalation, custom policies,
-+and other options.
- Performance results are listed under [Benchmark Provenance](#benchmark-provenance).
- 
- ## Documentation
+ Auto currently uses Execution with fixed defaults and no LLM judge. Task uses
 diff --git a/crates/libsy/src/algorithms.rs b/crates/libsy/src/algorithms.rs
-index fa6c2af5db339f36a4748daa097656e219222891..531c2095f98d9677817ac16e7e49fb6eef6e56d3 100644
+index cd2d36b5..0bd14814 100644
 --- a/crates/libsy/src/algorithms.rs
 +++ b/crates/libsy/src/algorithms.rs
-@@ -16,6 +16,7 @@ pub mod passthrough;
+@@ -17,6 +17,7 @@ pub mod plan_execute;
  pub mod rand;
  pub mod stage;
  pub mod subagent;
@@ -99,7 +134,7 @@ index fa6c2af5db339f36a4748daa097656e219222891..531c2095f98d9677817ac16e7e49fb6e
  pub mod util;
  
 diff --git a/crates/libsy/src/algorithms/llm_class.rs b/crates/libsy/src/algorithms/llm_class.rs
-index 12d9241d05bbb981c7478e04c7dcdeefda50ad5c..b2ff7c2ea8e3413e5126c972f8383de67de9fe9c 100644
+index 488bc658..37ad08f4 100644
 --- a/crates/libsy/src/algorithms/llm_class.rs
 +++ b/crates/libsy/src/algorithms/llm_class.rs
 @@ -92,7 +92,7 @@ impl TaskClassifierVerdict {
@@ -120,7 +155,7 @@ index 12d9241d05bbb981c7478e04c7dcdeefda50ad5c..b2ff7c2ea8e3413e5126c972f8383de6
      // Decoders also use the user role for tool results. Select ordinary user content
      // first, so a tool result cannot replace the opening task or latest follow-up.
      let is_task_content = |block: &ContentBlock| {
-@@ -519,7 +519,7 @@ impl JudgePolicy for CustomPolicyRuntime {
+@@ -523,7 +523,7 @@ impl JudgePolicy for CustomPolicyRuntime {
  }
  
  /// Builds the affinity router a trigger calls for, if any.
@@ -131,7 +166,7 @@ index 12d9241d05bbb981c7478e04c7dcdeefda50ad5c..b2ff7c2ea8e3413e5126c972f8383de6
  ) -> Option<Arc<AffinityRouter>> {
 diff --git a/crates/libsy/src/algorithms/type_safe_class.rs b/crates/libsy/src/algorithms/type_safe_class.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e8a32baaab93cbd023642d97e5c1b27ff692e515
+index 00000000..e8a32baa
 --- /dev/null
 +++ b/crates/libsy/src/algorithms/type_safe_class.rs
 @@ -0,0 +1,643 @@
@@ -779,7 +814,7 @@ index 0000000000000000000000000000000000000000..e8a32baaab93cbd023642d97e5c1b27f
 +    }
 +}
 diff --git a/crates/libsy/src/algorithms/util.rs b/crates/libsy/src/algorithms/util.rs
-index 0b96ca92a027936261c5804e5778a4f8de61495e..5272c819a1f5007064bfb8cbb6afedc606ab0420 100644
+index 0b96ca92..5272c819 100644
 --- a/crates/libsy/src/algorithms/util.rs
 +++ b/crates/libsy/src/algorithms/util.rs
 @@ -14,6 +14,7 @@ pub(crate) mod target_selector;
@@ -792,7 +827,7 @@ index 0b96ca92a027936261c5804e5778a4f8de61495e..5272c819a1f5007064bfb8cbb6afedc6
  
 diff --git a/crates/libsy/src/algorithms/util/typesafe_provider.rs b/crates/libsy/src/algorithms/util/typesafe_provider.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5fea15eea438ff628ba8851dc4fcd6954ebc9d30
+index 00000000..5fea15ee
 --- /dev/null
 +++ b/crates/libsy/src/algorithms/util/typesafe_provider.rs
 @@ -0,0 +1,133 @@
@@ -930,10 +965,10 @@ index 0000000000000000000000000000000000000000..5fea15eea438ff628ba8851dc4fcd695
 +    }
 +}
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 6e84c456af326c11cdd84a7f31f1d0f4116b5998..5d75cdff5027e2975ab51828a640c33bed6f90e5 100644
+index 9d07aeff..49221a35 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
-@@ -28,6 +28,7 @@ pub use algorithms::passthrough::Passthrough;
+@@ -29,6 +29,7 @@ pub use algorithms::plan_execute::{PlanExecute, PlanExecuteConfig};
  pub use algorithms::rand::{Random, RandomClassifier};
  pub use algorithms::stage::{LlmFallback, StageRouter, StageRouterConfig};
  pub use algorithms::subagent::{SubagentRouter, SubagentRouterConfig};
@@ -941,7 +976,7 @@ index 6e84c456af326c11cdd84a7f31f1d0f4116b5998..5d75cdff5027e2975ab51828a640c33b
  pub use algorithms::util::affinity::{AffinityRouter, ClassifyTrigger};
  pub use algorithms::util::classifier_contract::{
      ClassifierContractConfig, ClassifierResponseFormat,
-@@ -36,6 +37,10 @@ pub use algorithms::util::escalation::EscalationJudgeConfig;
+@@ -37,6 +38,10 @@ pub use algorithms::util::escalation::EscalationJudgeConfig;
  pub use algorithms::util::prompts::append_note;
  pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
  pub use algorithms::util::tool_signals::{DEFAULT_RECENT_WINDOW, ToolSemantics, ToolSignals};
@@ -953,7 +988,7 @@ index 6e84c456af326c11cdd84a7f31f1d0f4116b5998..5d75cdff5027e2975ab51828a640c33b
  // Stage-router scoring and tier selection — the shared signal-driven routing
  // core (scorer, picker, and the `StageClassifier`).
 diff --git a/crates/switchyard-nemo-relay-plugin/src/runtime.rs b/crates/switchyard-nemo-relay-plugin/src/runtime.rs
-index 95794f0d8e836b5cf63928ff350859986d3ab029..1c0ed9b91616bce12257e0c0011d85e74ba6790d 100644
+index 95794f0d..1c0ed9b9 100644
 --- a/crates/switchyard-nemo-relay-plugin/src/runtime.rs
 +++ b/crates/switchyard-nemo-relay-plugin/src/runtime.rs
 @@ -891,7 +891,7 @@ mod tests {
@@ -966,7 +1001,7 @@ index 95794f0d8e836b5cf63928ff350859986d3ab029..1c0ed9b91616bce12257e0c0011d85e7
          let route = Route::new(
              algorithm,
 diff --git a/crates/switchyard-runner/Cargo.toml b/crates/switchyard-runner/Cargo.toml
-index 3a80b61b38b764664d839671310a1b7df24d4d74..3b96fb43048537ae340665bf0f68b8afbcee99da 100644
+index 3a80b61b..3b96fb43 100644
 --- a/crates/switchyard-runner/Cargo.toml
 +++ b/crates/switchyard-runner/Cargo.toml
 @@ -24,6 +24,7 @@ serde.workspace = true
@@ -978,16 +1013,16 @@ index 3a80b61b38b764664d839671310a1b7df24d4d74..3b96fb43048537ae340665bf0f68b8af
  thiserror.workspace = true
  toml = "1.1"
 diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
-index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8c3b64bdb 100644
+index e742d48b..922a698c 100644
 --- a/crates/switchyard-runner/src/algorithm.rs
 +++ b/crates/switchyard-runner/src/algorithm.rs
 @@ -15,7 +15,8 @@ use libsy::{
      CustomClassifierPolicy, EscalationJudgeConfig, GateTrigger, HandoffNoteConfig,
-     LlmClassifierConfig, LlmFallback, LlmTaskClassifier, Noop, Passthrough, PickerMode, Random,
-     StageRouter, StageRouterConfig, SubagentRouter, SubagentRouterConfig, TaskClassifierConfig,
--    ToolSemantics,
-+    ToolSemantics, TypeSafeClassifierConfig, TypeSafeOption, TypeSafeProvider,
-+    TypeSafeTaskClassifier,
+     LlmClassifierConfig, LlmFallback, LlmTaskClassifier, Noop, Passthrough, PickerMode,
+     PlanExecute, PlanExecuteConfig, Random, StageRouter, StageRouterConfig, SubagentRouter,
+-    SubagentRouterConfig, TaskClassifierConfig, ToolSemantics,
++    SubagentRouterConfig, TaskClassifierConfig, ToolSemantics, TypeSafeClassifierConfig,
++    TypeSafeOption, TypeSafeProvider, TypeSafeTaskClassifier,
  };
  use serde::Deserialize;
  use switchyard_protocol::{Category, ModelId};
@@ -1045,7 +1080,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
                  )));
              }
          }
-@@ -428,6 +446,40 @@ pub enum AlgorithmSpec {
+@@ -444,6 +462,40 @@ pub enum AlgorithmSpec {
          /// Maximum prompts per encoder forward pass.
          batch_size: Option<usize>,
      },
@@ -1086,7 +1121,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
  }
  
  /// What fires an advisor route's review.
-@@ -586,6 +638,9 @@ impl AlgorithmSpec {
+@@ -607,6 +659,9 @@ impl AlgorithmSpec {
                  executor_target, ..
              } => vec![executor_target],
              Self::PrefillRouter { targets, .. } => targets.iter().map(String::as_str).collect(),
@@ -1096,7 +1131,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
          }
      }
  
-@@ -705,6 +760,15 @@ impl AlgorithmSpec {
+@@ -738,6 +793,15 @@ impl AlgorithmSpec {
                  (Category::Any, vec![executor_target.clone()]),
                  (Category::Judge, vec![advisor_target.clone()]),
              ]),
@@ -1112,7 +1147,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
          };
  
          let subagents = match self {
-@@ -745,7 +809,8 @@ impl AlgorithmSpec {
+@@ -779,7 +843,8 @@ impl AlgorithmSpec {
              | Self::StageRouter { .. }
              | Self::Auto { .. }
              | Self::Composite { .. }
@@ -1122,7 +1157,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
          }
      }
  
-@@ -754,8 +819,25 @@ impl AlgorithmSpec {
+@@ -788,8 +853,25 @@ impl AlgorithmSpec {
          &self,
          context: &str,
          targets: &BTreeMap<String, ModelId>,
@@ -1149,7 +1184,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
      }
  }
  
-@@ -1129,6 +1211,8 @@ fn build_algorithm(
+@@ -1163,6 +1245,8 @@ fn build_algorithm(
      route_name: &str,
      config: &AlgorithmSpec,
      targets: &BTreeMap<String, ModelId>,
@@ -1158,7 +1193,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
  ) -> AlgorithmResult<Arc<dyn Algorithm>> {
      match config {
          AlgorithmSpec::Noop { .. } => Ok(Arc::new(Noop {})),
-@@ -1400,6 +1484,103 @@ fn build_algorithm(
+@@ -1454,6 +1538,103 @@ fn build_algorithm(
                  )))
              }
          }
@@ -1263,7 +1298,7 @@ index c0630f199e8f81709028ea7295836b056b58e304..3f34330eed7a226bd86dcf57c40d37d8
  }
  
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index b6f9ca58dfac50a2ad6d344e5d460e04925edc9d..6b37e17df6507c74e0a45dbc4d3b5208171601e7 100644
+index 6da7a4f2..e24b8ad1 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -59,10 +59,30 @@ pub(crate) struct DeploymentConfig {
@@ -1409,7 +1444,7 @@ index b6f9ca58dfac50a2ad6d344e5d460e04925edc9d..6b37e17df6507c74e0a45dbc4d3b5208
      #[serde(default)]
      extra_body: BTreeMap<String, Value>,
      system_prompt: Option<String>,
-@@ -848,6 +942,274 @@ target = "weak"
+@@ -865,6 +959,274 @@ efficient_target = "weak"
          Ok(())
      }
  
@@ -1685,7 +1720,7 @@ index b6f9ca58dfac50a2ad6d344e5d460e04925edc9d..6b37e17df6507c74e0a45dbc4d3b5208
      fn duplicate_route_ids_are_rejected() {
          let config = format!(
 diff --git a/crates/switchyard-runner/tests/route.rs b/crates/switchyard-runner/tests/route.rs
-index 68bba56675c3c7eeff57323b1d21aed811abfefe..7910e568b0ec2751356448bf329eae2c5be436e8 100644
+index 68bba566..7910e568 100644
 --- a/crates/switchyard-runner/tests/route.rs
 +++ b/crates/switchyard-runner/tests/route.rs
 @@ -41,7 +41,7 @@ fn plugin_route(client: Arc<dyn RoutedLlmClient>) -> Route {
@@ -1699,7 +1734,7 @@ index 68bba56675c3c7eeff57323b1d21aed811abfefe..7910e568b0ec2751356448bf329eae2c
          BTreeMap::from([(ModelId::from("semantic-target"), client)])
 diff --git a/crates/switchyard-typesafe-client/Cargo.toml b/crates/switchyard-typesafe-client/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..df4c9da2121d63f42c5273f23a32b5d0228b9718
+index 00000000..df4c9da2
 --- /dev/null
 +++ b/crates/switchyard-typesafe-client/Cargo.toml
 @@ -0,0 +1,29 @@
@@ -1734,7 +1769,7 @@ index 0000000000000000000000000000000000000000..df4c9da2121d63f42c5273f23a32b5d0
 +wiremock = "0.6"
 diff --git a/crates/switchyard-typesafe-client/README.md b/crates/switchyard-typesafe-client/README.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..4209d031ebd89efb14375f8e33fd5bbf7c171fd5
+index 00000000..4209d031
 --- /dev/null
 +++ b/crates/switchyard-typesafe-client/README.md
 @@ -0,0 +1,98 @@
@@ -1838,7 +1873,7 @@ index 0000000000000000000000000000000000000000..4209d031ebd89efb14375f8e33fd5bbf
 +also contains the full averaged distribution and wall-clock decision latency.
 diff --git a/crates/switchyard-typesafe-client/examples/live_check.rs b/crates/switchyard-typesafe-client/examples/live_check.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1cae06d4a52148e2a438a06f8665af7440d250af
+index 00000000..1cae06d4
 --- /dev/null
 +++ b/crates/switchyard-typesafe-client/examples/live_check.rs
 @@ -0,0 +1,65 @@
@@ -1909,7 +1944,7 @@ index 0000000000000000000000000000000000000000..1cae06d4a52148e2a438a06f8665af74
 +}
 diff --git a/crates/switchyard-typesafe-client/src/error.rs b/crates/switchyard-typesafe-client/src/error.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..78b2e52af791cd7ede1c79ccd50c71f9e9ea8951
+index 00000000..78b2e52a
 --- /dev/null
 +++ b/crates/switchyard-typesafe-client/src/error.rs
 @@ -0,0 +1,48 @@
@@ -1963,7 +1998,7 @@ index 0000000000000000000000000000000000000000..78b2e52af791cd7ede1c79ccd50c71f9
 +impl std::error::Error for TypeSafeClientError {}
 diff --git a/crates/switchyard-typesafe-client/src/lib.rs b/crates/switchyard-typesafe-client/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..73d5621bf9596fae8f63c0676af5ab213e4c229f
+index 00000000..73d5621b
 --- /dev/null
 +++ b/crates/switchyard-typesafe-client/src/lib.rs
 @@ -0,0 +1,615 @@
@@ -2583,7 +2618,7 @@ index 0000000000000000000000000000000000000000..73d5621bf9596fae8f63c0676af5ab21
 +    }
 +}
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index d168a64dfa8e9e4a6510830a6643b3c5ab65da33..7baf1d39e8a3ab5ede4c7f9b34005d869a5d22dc 100644
+index 7fc96b70..4b5ce998 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -97,12 +97,30 @@ targets. The server rejects an Anthropic forwarding route called through an
@@ -2617,7 +2652,7 @@ index d168a64dfa8e9e4a6510830a6643b3c5ab65da33..7baf1d39e8a3ab5ede4c7f9b34005d86
  | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
  | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
  | `reasoning_effort` | No | unset | Reasoning effort forced on every request to this target, replacing the value the caller sent (`reasoning.effort` on `openai_responses`, `reasoning_effort` on `openai_chat`). Rejected on `anthropic_messages` clients. Use it to run one target at a different effort than the client asked for, for example a strong tier at `max` behind a client that sends `high`. Targets with different effort settings need distinct model IDs when used within one route. Separate routes may use the same model ID with separate `llm_clients` entries (same endpoint, different name). |
-@@ -280,6 +298,27 @@ Classifier prompts must not contain `{{RESPONSE_SCHEMA}}`. Switchyard supplies
+@@ -293,6 +311,27 @@ Classifier prompts must not contain `{{RESPONSE_SCHEMA}}`. Switchyard supplies
  the schema automatically: through the structured-output request in `json_schema`
  mode, or in the prompt in `json_object` mode.
  
@@ -2646,20 +2681,20 @@ index d168a64dfa8e9e4a6510830a6643b3c5ab65da33..7baf1d39e8a3ab5ede4c7f9b34005d86
  
  Scores tool signals to pick a tier per turn. See
 diff --git a/docs/routing_algorithms/overview.md b/docs/routing_algorithms/overview.md
-index fa26620c567fab03abd150f85faa29e2be2d70de..c13906e1229839ad53b16c81772dc91feb09f56f 100644
+index 6347ed83..ad041b83 100644
 --- a/docs/routing_algorithms/overview.md
 +++ b/docs/routing_algorithms/overview.md
-@@ -49,6 +49,7 @@ These options remain available when you need a different routing policy.
- | [Sub-Agent-Aware Routing](subagent_routing.md) | Delegated sub-agents should use a separate routing policy from the parent agent. | `passthrough` or `stage_router` with `subagents` |
+@@ -46,6 +46,7 @@ These options remain available when you need a different routing policy.
+ | [Composite](composite_routing.md) | Combine Task and Execution. A classifier sets the stage router's default tier. | `composite` |
+ | [Escalation](escalation_router_routing.md) | Start on the efficient model and escalate when an LLM judge detects trouble. | `llm_classifier` with `mode = "escalation"` |
+ | [Custom](llm_classifier_routing.md#custom-multi-target-routing) | Route among two or more models using your own classification schema and rules. | `llm_classifier` with `mode = "custom"` |
++| [TypeSafe Classifier](type_safe_classifier_routing.md) | Route by TypeSafe Jev without a chat-completion judge call. | `type_safe_classifier` |
+ | [Advisor Gate](advisor_gate_routing.md) | Keep one executor model and have a stronger advisor review its plans and completion claims. | `advisor` |
+ | [Sub-Agent-Aware Routing](subagent_routing.md) | Delegated sub-agents should use a separate routing policy from the parent agent. | `passthrough`, `stage_router`, or `composite` with `subagents` |
  | [Random Routing](random_routing.md) | You need a fixed traffic split for A/B tests, baselines, or cost experiments. | `random` |
- | [Fixed Model](#direct-model-routes) | Send every request to one target without a routing decision. | `passthrough` |
-+| [TypeSafe Classifier](type_safe_classifier_routing.md) | Use TypeSafe's Jev to compare configured targets without a chat-completion judge. | `type_safe_classifier` |
- 
- ### Experimental
- 
 diff --git a/docs/routing_algorithms/type_safe_classifier_routing.md b/docs/routing_algorithms/type_safe_classifier_routing.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e72b6b08f2a325e9aa8b9271a68b97d8807a407
+index 00000000..0e72b6b0
 --- /dev/null
 +++ b/docs/routing_algorithms/type_safe_classifier_routing.md
 @@ -0,0 +1,133 @@
@@ -2797,14 +2832,14 @@ index 0000000000000000000000000000000000000000..0e72b6b08f2a325e9aa8b9271a68b97d
 +
 +Treat the selected target as model-dependent output, not a fixed test result.
 diff --git a/mkdocs.yml b/mkdocs.yml
-index bcd19640281248ecb6ff6d1bee28af1d15e09a1f..498dde747295109d2c63b1580fa495c256b48212 100644
+index 5cd2a986..66f43992 100644
 --- a/mkdocs.yml
 +++ b/mkdocs.yml
-@@ -31,6 +31,7 @@ nav:
-       - Execution (Stage Router): routing_algorithms/stage_router_routing.md
-       - Sub-Agent-Aware Routing: routing_algorithms/subagent_routing.md
-       - Random Routing: routing_algorithms/random_routing.md
+@@ -30,6 +30,7 @@ nav:
+   - Routing:
+       - Overview: routing_algorithms/overview.md
+       - Task (LLM Classifier): routing_algorithms/llm_classifier_routing.md
 +      - TypeSafe Classifier: routing_algorithms/type_safe_classifier_routing.md
-       - Composite Routing: routing_algorithms/composite_routing.md
-       - Escalation-Router Routing: routing_algorithms/escalation_router_routing.md
-       - Advisor-Gate Routing: routing_algorithms/advisor_gate_routing.md
+       - Execution (Stage Router): routing_algorithms/stage_router_routing.md
+       - Plan/Execute Routing: routing_algorithms/plan_execute_routing.md
+       - Sub-Agent-Aware Routing: routing_algorithms/subagent_routing.md
