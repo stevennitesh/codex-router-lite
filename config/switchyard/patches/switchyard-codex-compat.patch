@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 9cf17f4b..d98cf9d0 100644
+index 9cf17f4b..dbf45e2e 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -278,6 +278,15 @@ dependencies = [
@@ -156,7 +156,15 @@ index 9cf17f4b..d98cf9d0 100644
   "strum_macros",
   "switchyard-libsy",
   "switchyard-llm-client",
-@@ -2590,7 +2650,7 @@ dependencies = [
+@@ -2462,6 +2522,7 @@ dependencies = [
+  "rustls",
+  "serde",
+  "serde_json",
++ "sha2",
+  "switchyard-libsy",
+  "switchyard-llm-client",
+  "switchyard-protocol",
+@@ -2590,7 +2651,7 @@ dependencies = [
   "getrandom 0.4.3",
   "once_cell",
   "rustix",
@@ -165,7 +173,7 @@ index 9cf17f4b..d98cf9d0 100644
  ]
  
  [[package]]
-@@ -2919,6 +2979,12 @@ dependencies = [
+@@ -2919,6 +2980,12 @@ dependencies = [
   "syn 2.0.119",
  ]
  
@@ -178,7 +186,7 @@ index 9cf17f4b..d98cf9d0 100644
  [[package]]
  name = "unicode-general-category"
  version = "1.1.0"
-@@ -3138,7 +3204,7 @@ version = "0.1.11"
+@@ -3138,7 +3205,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -200,10 +208,10 @@ index 1a07d2da..b592beb9 100644
  switchyard-llm-client = { path = "crates/libsy-llm-client", version = "0.3.0" }
  switchyard-protocol = { path = "crates/protocol", version = "0.3.0" }
 diff --git a/crates/libsy-llm-client/src/backend.rs b/crates/libsy-llm-client/src/backend.rs
-index da3b9aa2..03f64839 100644
+index 1e3784a7..d4f6a940 100644
 --- a/crates/libsy-llm-client/src/backend.rs
 +++ b/crates/libsy-llm-client/src/backend.rs
-@@ -192,21 +192,22 @@ impl Backend {
+@@ -233,21 +233,22 @@ impl Backend {
      }
  
      pub(crate) fn is_provider_owned_header(&self, name: &str) -> bool {
@@ -242,7 +250,7 @@ index da3b9aa2..03f64839 100644
  
      /// Applies only the caller credential accepted by this provider.
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index 948838f4..e4faaf48 100644
+index b32e5e58..453974d4 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -61,6 +61,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -1410,10 +1418,10 @@ index 5fea15ee..a4e2b744 100644
      }
  }
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 5d75cdff..62fd98aa 100644
+index 49221a35..3ea5bdc3 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
-@@ -28,7 +28,9 @@ pub use algorithms::passthrough::Passthrough;
+@@ -29,7 +29,9 @@ pub use algorithms::plan_execute::{PlanExecute, PlanExecuteConfig};
  pub use algorithms::rand::{Random, RandomClassifier};
  pub use algorithms::stage::{LlmFallback, StageRouter, StageRouterConfig};
  pub use algorithms::subagent::{SubagentRouter, SubagentRouterConfig};
@@ -1424,7 +1432,7 @@ index 5d75cdff..62fd98aa 100644
  pub use algorithms::util::affinity::{AffinityRouter, ClassifyTrigger};
  pub use algorithms::util::classifier_contract::{
      ClassifierContractConfig, ClassifierResponseFormat,
-@@ -39,7 +41,7 @@ pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
+@@ -40,7 +42,7 @@ pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
  pub use algorithms::util::tool_signals::{DEFAULT_RECENT_WINDOW, ToolSemantics, ToolSignals};
  pub use algorithms::util::typesafe_provider::{
      TypeSafeClassifierInput, TypeSafeOption, TypeSafeProvider, TypeSafeProviderError,
@@ -1434,7 +1442,7 @@ index 5d75cdff..62fd98aa 100644
  
  // Stage-router scoring and tier selection — the shared signal-driven routing
 diff --git a/crates/libsy/src/observability.rs b/crates/libsy/src/observability.rs
-index 69c6d929..bfc53e7c 100644
+index 4779540d..2c15f551 100644
 --- a/crates/libsy/src/observability.rs
 +++ b/crates/libsy/src/observability.rs
 @@ -78,6 +78,10 @@ pub(crate) fn run_span(algorithm: &str, request: &Request) -> Span {
@@ -1570,10 +1578,10 @@ index 3b96fb43..5b66b80f 100644
  switchyard-protocol.workspace = true
  switchyard-typesafe-client.workspace = true
 diff --git a/crates/switchyard-runner/src/algorithm.rs b/crates/switchyard-runner/src/algorithm.rs
-index 3f34330e..42e8ea3b 100644
+index 922a698c..0e64b66c 100644
 --- a/crates/switchyard-runner/src/algorithm.rs
 +++ b/crates/switchyard-runner/src/algorithm.rs
-@@ -476,9 +476,6 @@ pub enum AlgorithmSpec {
+@@ -492,9 +492,6 @@ pub enum AlgorithmSpec {
          /// session metadata is unavailable. Requires `classify_trigger = "new_session"`.
          #[serde(default)]
          message_hash_fallback: bool,
@@ -1583,7 +1591,7 @@ index 3f34330e..42e8ea3b 100644
      },
  }
  
-@@ -1492,7 +1489,6 @@ fn build_algorithm(
+@@ -1546,7 +1543,6 @@ fn build_algorithm(
              base_threshold,
              classify_trigger,
              message_hash_fallback,
@@ -1591,7 +1599,7 @@ index 3f34330e..42e8ea3b 100644
          } => {
              if candidates.len() < 2 {
                  return Err(AlgorithmConfigError::new(format!(
-@@ -1570,7 +1566,6 @@ fn build_algorithm(
+@@ -1624,7 +1620,6 @@ fn build_algorithm(
                  default_target: default_category,
                  classify_trigger: *classify_trigger,
                  message_hash_fallback: *message_hash_fallback,
@@ -1600,7 +1608,7 @@ index 3f34330e..42e8ea3b 100644
              let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
                  .map_err(|error| {
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 6b37e17d..5cc6eb60 100644
+index e24b8ad1..003a52ee 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -20,8 +20,8 @@ use switchyard_llm_client::{
@@ -1924,7 +1932,7 @@ index 6b37e17d..5cc6eb60 100644
  #[derive(Clone, Copy, Debug, Deserialize)]
  enum ClientFormat {
      #[serde(rename = "openai_chat")]
-@@ -989,6 +1086,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
+@@ -1006,6 +1103,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
          Ok(())
      }
  
@@ -1962,7 +1970,7 @@ index 6b37e17d..5cc6eb60 100644
      #[test]
      fn type_safe_classifier_without_a_client_table_is_rejected() {
          // `type_safe_config` always emits `[type_safe_client]`; drop the whole table to
-@@ -2006,6 +2134,84 @@ confidence_threshold = 0.5
+@@ -2024,6 +2152,84 @@ confidence_threshold = 0.5
          Ok(())
      }
  
@@ -2108,8 +2116,20 @@ index 249e3127..14bc4626 100644
      /// Returns the route registered for a model.
      pub fn route(&self, model: &str) -> Option<&Route> {
          self.routes
+diff --git a/crates/switchyard-server/Cargo.toml b/crates/switchyard-server/Cargo.toml
+index 1be8ee9f..9797542c 100644
+--- a/crates/switchyard-server/Cargo.toml
++++ b/crates/switchyard-server/Cargo.toml
+@@ -41,6 +41,7 @@ switchyard-llm-client.workspace = true
+ switchyard-protocol.workspace = true
+ switchyard-runner.workspace = true
+ serde_json.workspace = true
++sha2.workspace = true
+ switchyard-translation.workspace = true
+ humantime = "2.4"
+ tokio.workspace = true
 diff --git a/crates/switchyard-server/README.md b/crates/switchyard-server/README.md
-index bdf2f22f..cb18bfce 100644
+index 152dbfe0..8753151d 100644
 --- a/crates/switchyard-server/README.md
 +++ b/crates/switchyard-server/README.md
 @@ -65,6 +65,12 @@ cargo install --locked switchyard-server
@@ -2125,7 +2145,7 @@ index bdf2f22f..cb18bfce 100644
  Ctrl+C and Unix `SIGTERM` stop new connections and allow active requests to drain for up to
  `--shutdown-timeout` (30 seconds by default) before they are terminated.
  
-@@ -183,7 +189,7 @@ the caller's instructions. Omit the setting to add no target instructions.
+@@ -192,7 +198,7 @@ the caller's instructions. Omit the setting to add no target instructions.
  | `GET` | `/v1/stats` | Per-model usage plus curated algorithm stats |
  | `POST` | `/v1/stats/reset` | Clear accumulated stats |
  | `GET` | `/metrics` | Prometheus text, see [Metrics](#metrics) |
@@ -2165,10 +2185,14 @@ index 231d4e2b..42304412 100644
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index 58ebc0d9..a2b968f8 100644
+index d2d81fe4..3a19f1e0 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
-@@ -42,7 +42,8 @@ use serde_json::{Value, json};
+@@ -39,10 +39,12 @@ use libsy::{LibsyError, RoutingOutcome};
+ use parking_lot::Mutex;
+ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json};
++use sha2::{Digest, Sha256};
  use switchyard_llm_client::{AuxiliaryOperation, RunObservation, RunObserver};
  use switchyard_protocol::{LlmClientError, Metadata, ModelId, Request, Usage};
  use switchyard_runner::{
@@ -2178,7 +2202,7 @@ index 58ebc0d9..a2b968f8 100644
  };
  use tokio::net::{TcpListener, TcpSocket};
  use tokio::task;
-@@ -76,6 +77,10 @@ const FORWARDED_UPSTREAM_HEADERS: &[&str] = &[
+@@ -77,6 +79,12 @@ const FORWARDED_UPSTREAM_HEADERS: &[&str] = &[
  ];
  const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
      &["anthropic-ratelimit-", "x-ratelimit-", "x-upstream-"];
@@ -2186,10 +2210,12 @@ index 58ebc0d9..a2b968f8 100644
 +/// the otherwise unauthenticated local Switchyard hop.
 +pub const LOCAL_HOP_CAPABILITY_ENV: &str = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
 +pub const LOCAL_HOP_CAPABILITY_HEADER: &str = "x-codex-router-switchyard-capability";
++pub const LOCAL_HOP_OBSERVATION_HEADER: &str = "x-codex-router-switchyard-observation";
++pub const LOCAL_HOP_CALLBACK_LEASE_HEADER: &str = "x-codex-router-switchyard-callback-lease";
  const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
  
  /// Whether an upstream header is safe and useful to expose downstream.
-@@ -137,6 +142,8 @@ struct DecisionResponse {
+@@ -138,6 +146,8 @@ struct DecisionResponse {
      fallbacks: Vec<DecisionTargetResponse>,
      #[serde(skip_serializing_if = "Option::is_none")]
      response: Option<Value>,
@@ -2198,7 +2224,7 @@ index 58ebc0d9..a2b968f8 100644
  }
  
  /// Response view over one target's existing configuration.
-@@ -152,7 +159,9 @@ struct DecisionTargetResponse {
+@@ -153,7 +163,9 @@ struct DecisionTargetResponse {
  #[derive(Serialize)]
  struct DecisionLlmClientResponse {
      format: WireFormat,
@@ -2209,7 +2235,7 @@ index 58ebc0d9..a2b968f8 100644
  }
  
  /// Shared server state used by all endpoint handlers.
-@@ -165,6 +174,8 @@ pub struct ServerState {
+@@ -166,6 +178,8 @@ pub struct ServerState {
      stats: StatsAccumulator,
      routing_log: Option<SharedRoutingLog>,
      track_cache_eligibility: bool,
@@ -2218,7 +2244,7 @@ index 58ebc0d9..a2b968f8 100644
  }
  
  #[derive(Clone)]
-@@ -214,6 +225,7 @@ impl ServerState {
+@@ -215,6 +229,7 @@ impl ServerState {
              runner.models().map(|model| model.algorithm),
          );
          let redactor = redaction::Redactor::new(runner.provider_api_keys());
@@ -2226,7 +2252,7 @@ index 58ebc0d9..a2b968f8 100644
          Ok(Self {
              redactor: Arc::new(redactor),
              runner: Arc::new(runner),
-@@ -222,9 +234,23 @@ impl ServerState {
+@@ -223,9 +238,23 @@ impl ServerState {
              stats,
              routing_log: None,
              track_cache_eligibility: tracking_enabled_from_env(),
@@ -2250,7 +2276,7 @@ index 58ebc0d9..a2b968f8 100644
      /// Enables durable per-request routing records at `path`.
      pub fn with_routing_log(mut self, path: impl Into<PathBuf>) -> ServerResult<Self> {
          self.routing_log = Some(SharedRoutingLog::new(path.into())?);
-@@ -260,17 +286,50 @@ impl ServerState {
+@@ -261,17 +290,50 @@ impl ServerState {
              model: target.model,
              llm_client: DecisionLlmClientResponse {
                  format: target.format,
@@ -2302,7 +2328,7 @@ index 58ebc0d9..a2b968f8 100644
  /// Runtime options shared by server entry points.
  #[derive(Clone, Debug)]
  pub struct ServerRunOptions {
-@@ -522,15 +581,43 @@ fn primary_llm_routes() -> Router<ServerState> {
+@@ -523,15 +585,66 @@ fn primary_llm_routes() -> Router<ServerState> {
  
  // Applies the serving limits and request timing shared by both public router constructors.
  fn finish_router(router: Router<ServerState>, state: ServerState) -> Router {
@@ -2341,15 +2367,38 @@ index 58ebc0d9..a2b968f8 100644
 +            "authentication_error",
 +        );
 +    }
-+    // This header authenticates only Router -> Switchyard. Removing it before
-+    // handlers build metadata also prevents forward_auth and the fallback
-+    // proxy from carrying it to an upstream.
++    // Carry only a one-way generation marker to the configured target. Router
++    // consumes it before the native provider hop; it cannot authenticate a
++    // request back to Switchyard and rotates with the supervised generation.
++    let marker = format!("{:x}", Sha256::digest(capability.as_bytes()));
++    if let Ok(marker) = HeaderValue::from_str(&marker) {
++        request.headers_mut().insert(
++            HeaderName::from_static(LOCAL_HOP_OBSERVATION_HEADER),
++            marker,
++        );
++    }
++    // The Router issued this request-specific lease only after admitting the
++    // outer request. Keep a well-formed lease on the single configured target
++    // hop so its nested native callback can finish while Router is draining.
++    // Router consumes it before the native provider request.
++    let valid_callback_lease = request
++        .headers()
++        .get(LOCAL_HOP_CALLBACK_LEASE_HEADER)
++        .and_then(|value| value.to_str().ok())
++        .is_some_and(|value| {
++            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
++        });
++    if !valid_callback_lease {
++        request
++            .headers_mut()
++            .remove(LOCAL_HOP_CALLBACK_LEASE_HEADER);
++    }
 +    request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
 +    next.run(request).await
  }
  
  fn bind_tcp_listener(addr: SocketAddr, backlog: u32) -> ServerResult<TcpListener> {
-@@ -963,10 +1050,33 @@ fn llm_json_body(
+@@ -964,10 +1077,33 @@ fn llm_json_body(
  #[allow(clippy::type_complexity, clippy::result_large_err)]
  fn resolve_route(
      state: &ServerState,
@@ -2384,7 +2433,7 @@ index 58ebc0d9..a2b968f8 100644
      // Only trusted translation hops may supply exact request preservation state.
      // Strip it before decoding and retaining the raw body for upstream replay.
      if let Some(metadata) = body.get_mut("metadata").and_then(Value::as_object_mut) {
-@@ -1506,8 +1616,15 @@ async fn get_session_stats(
+@@ -1507,8 +1643,15 @@ async fn get_session_stats(
      }
  }
  
@@ -2402,8 +2451,177 @@ index 58ebc0d9..a2b968f8 100644
  }
  
  async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
+diff --git a/crates/switchyard-server/src/usage_metrics.rs b/crates/switchyard-server/src/usage_metrics.rs
+index 045f51c8..bc4f56c1 100644
+--- a/crates/switchyard-server/src/usage_metrics.rs
++++ b/crates/switchyard-server/src/usage_metrics.rs
+@@ -183,7 +183,12 @@ fn record_latency(model: &str, latency: Duration) {
+ #[cfg(test)]
+ mod tests {
+     use futures_util::{StreamExt, stream};
++    use serde_json::{Value, json};
+     use switchyard_protocol::{LlmResponseChunk, LlmResponseStreamEvent, Metadata, Response};
++    use switchyard_translation::{
++        StreamTranslationState, TranslationEngine, TranslationPolicy, WireFormat,
++        decode_stream_event,
++    };
+ 
+     use super::*;
+ 
+@@ -242,4 +247,151 @@ mod tests {
+         assert_eq!(process.models["model/worker"].prompt_tokens, 10);
+         assert_eq!(process.models["model/worker"].completion_tokens, 3);
+     }
++
++    fn responses_usage_fixture(cache_write_tokens: Option<u64>) -> Value {
++        let mut input_details = json!({"cached_tokens": 8_000});
++        if let Some(tokens) = cache_write_tokens {
++            input_details["cache_write_tokens"] = json!(tokens);
++        }
++        json!({
++            "input_tokens": 12_000,
++            "output_tokens": 100,
++            "total_tokens": 12_100,
++            "input_tokens_details": input_details,
++        })
++    }
++
++    fn assert_normalized_usage(usage: &Usage, cache_write_tokens: Option<u64>) {
++        assert_eq!(usage.cached_input_tokens(), Some(8_000));
++        assert_eq!(usage.cache_creation_input_tokens(), cache_write_tokens);
++        assert_eq!(
++            usage.input_tokens,
++            Some(4_000_u64.saturating_sub(cache_write_tokens.unwrap_or(0))),
++        );
++        assert_eq!(usage.output_tokens, Some(100));
++        assert_eq!(usage.total_tokens, Some(12_100));
++    }
++
++    async fn assert_routing_log_usage(
++        response: Response,
++        cache_write_tokens: Option<u64>,
++        expected_logged_write_tokens: u64,
++    ) {
++        let dir = tempfile::tempdir().expect("temp dir");
++        let path = dir.path().join("routing.jsonl");
++        let log = SharedRoutingLog::new(path.clone()).expect("routing log");
++        let context = RoutingLogContext::from_metadata(&Metadata {
++            session_id: Some("cache-usage-session".to_string()),
++            ..Metadata::default()
++        });
++        match observe(
++            response,
++            "model/cache-fixture",
++            Instant::now(),
++            StatsAccumulator::default(),
++            0.0,
++            Some((log, context)),
++        )
++        .llm_response
++        {
++            LlmResponse::Agg(response) => {
++                assert_normalized_usage(&response.usage, cache_write_tokens);
++            }
++            LlmResponse::Stream(mut response) => {
++                assert!(response.next().await.is_some());
++            }
++        }
++        let record: Value = serde_json::from_str(
++            std::fs::read_to_string(path)
++                .expect("read routing log")
++                .trim_end(),
++        )
++        .expect("parse routing record");
++        assert_eq!(record["prompt_tokens"], 12_000);
++        assert_eq!(record["cached_tokens"], 8_000);
++        assert_eq!(
++            record["cache_creation_tokens"],
++            expected_logged_write_tokens
++        );
++        assert_eq!(record["completion_tokens"], 100);
++        assert_eq!(record["total_tokens"], 12_100);
++    }
++
++    #[tokio::test]
++    async fn native_responses_usage_keeps_inclusive_input_through_routing_log() {
++        let engine = TranslationEngine::default();
++        for cache_write_tokens in [Some(4_000), Some(0), None] {
++            let usage_json = responses_usage_fixture(cache_write_tokens);
++            let body = json!({
++                "id": "resp_cache_fixture",
++                "object": "response",
++                "model": "gpt-cache-fixture",
++                "status": "completed",
++                "output": [{
++                    "type": "message",
++                    "role": "assistant",
++                    "content": [{"type": "output_text", "text": "ok"}],
++                }],
++                "usage": usage_json,
++            });
++            let decoded = engine
++                .decode_response(
++                    WireFormat::OpenAiResponses,
++                    &body,
++                    &TranslationPolicy::default(),
++                )
++                .expect("decode buffered Responses fixture")
++                .response;
++            assert_normalized_usage(&decoded.usage, cache_write_tokens);
++            assert_routing_log_usage(
++                Response {
++                    llm_response: LlmResponse::Agg(decoded),
++                    metadata: None,
++                    upstream_headers: http::HeaderMap::new(),
++                },
++                cache_write_tokens,
++                cache_write_tokens.unwrap_or(0),
++            )
++            .await;
++
++            let mut state = StreamTranslationState::new(
++                WireFormat::OpenAiResponses,
++                WireFormat::OpenAiResponses,
++            );
++            let completed = json!({
++                "type": "response.completed",
++                "response": {
++                    "id": "resp_cache_fixture_stream",
++                    "status": "completed",
++                    "usage": responses_usage_fixture(cache_write_tokens),
++                },
++            });
++            let chunks = decode_stream_event(&mut state, WireFormat::OpenAiResponses, &completed);
++            let usage = chunks
++                .iter()
++                .find_map(|chunk| match chunk {
++                    LlmResponseChunk::Usage(usage) => Some(usage),
++                    _ => None,
++                })
++                .expect("streamed Responses fixture has usage");
++            assert_normalized_usage(usage, cache_write_tokens);
++            assert!(
++                chunks
++                    .iter()
++                    .any(|chunk| matches!(chunk, LlmResponseChunk::MessageStop { .. }))
++            );
++            assert_routing_log_usage(
++                Response {
++                    llm_response: LlmResponse::Stream(Box::pin(stream::iter([Ok(
++                        LlmResponseStreamEvent::new(chunks),
++                    )]))),
++                    metadata: None,
++                    upstream_headers: http::HeaderMap::new(),
++                },
++                cache_write_tokens,
++                cache_write_tokens.unwrap_or(0),
++            )
++            .await;
++        }
++    }
+ }
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index 29bb561e..b0eee6a8 100644
+index dae5c1ad..d1e542d4 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2432,8 +2650,8 @@ index 29bb561e..b0eee6a8 100644
  use switchyard_server::config::load_server_state;
  use switchyard_server::{
 -    DEFAULT_MAX_REQUEST_BODY_BYTES, ServerState, build_llm_router, build_switchyard_router,
-+    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState, build_llm_router,
-+    build_switchyard_router,
++    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, LOCAL_HOP_OBSERVATION_HEADER,
++    ServerState, build_llm_router, build_switchyard_router,
  };
  use tokio::net::TcpListener;
  use tokio::sync::Mutex;
@@ -2455,25 +2673,27 @@ index 29bb561e..b0eee6a8 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -514,14 +515,9 @@ async fn upstream_responses_requires_forwarded_auth(
+@@ -514,14 +515,13 @@ async fn upstream_responses_requires_forwarded_auth(
              .get("x-openai-fedramp")
              .and_then(|value| value.to_str().ok())
              == Some("true")
--        && headers
++        && !headers.contains_key(LOCAL_HOP_CAPABILITY_HEADER)
+         && headers
 -            .get("x-api-key")
--            .and_then(|value| value.to_str().ok())
++            .get(LOCAL_HOP_OBSERVATION_HEADER)
+             .and_then(|value| value.to_str().ok())
 -            == Some("provider-api-key")
 -        && headers
 -            .get("anthropic-beta")
 -            .and_then(|value| value.to_str().ok())
 -            == Some("provider-beta");
-+        && !headers.contains_key(LOCAL_HOP_CAPABILITY_HEADER)
++            == Some("187b7cad3cc71e7175ab051ca9cfe458ffed452215299a61aecdec7b53f45541")
 +        && !headers.contains_key("x-api-key")
 +        && !headers.contains_key("anthropic-beta");
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -800,6 +796,195 @@ fn random_state_with_retries(
+@@ -800,6 +800,195 @@ fn random_state_with_retries(
      ServerState::from_runner(Runner::new(entries)).map_err(Into::into)
  }
  
@@ -2669,7 +2889,7 @@ index 29bb561e..b0eee6a8 100644
  async fn test_app(routes: &[(&str, &[&str])]) -> TestResult<(MockUpstream, Router)> {
      let upstream = MockUpstream::start().await?;
      let app = build_switchyard_router(random_state(&upstream.base_url, routes)?);
-@@ -842,6 +1027,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+@@ -842,6 +1031,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
  
@@ -2716,7 +2936,16 @@ index 29bb561e..b0eee6a8 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-@@ -1609,10 +1834,7 @@ base_threshold = 0.5
+@@ -1478,7 +1707,7 @@ fn assert_in_order(haystack: &str, needles: &[&str]) {
+ /// A route is a synthetic model (`switchyard/classify`) with no upstream of its own; its
+ /// algorithm picks real targets, and *those* name the client. One request can emit several
+ /// `Step::CallModel` for different targets, and two targets may sit on different
+-/// `[llm_clients.*]` sections — here the judge is on one provider and the serving models on
++/// `[llm_clients.*]` sections â€” here the judge is on one provider and the serving models on
+ /// another. Pin that each call reaches its own target's upstream, rather than one client
+ /// chosen per route serving all of them.
+ #[tokio::test]
+@@ -1609,10 +1838,7 @@ base_threshold = 0.5
      let response = response.json()?;
      assert_eq!(response["fallbacks"].as_array().map(Vec::len), Some(1));
      for target in [&response["selected"], &response["fallbacks"][0]] {
@@ -2728,7 +2957,7 @@ index 29bb561e..b0eee6a8 100644
      }
      Ok(())
  }
-@@ -1902,7 +2124,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1902,7 +2128,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2737,7 +2966,7 @@ index 29bb561e..b0eee6a8 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1911,7 +2133,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1911,7 +2137,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2746,7 +2975,7 @@ index 29bb561e..b0eee6a8 100644
                  },
                  "extra_body": {},
              }],
-@@ -2715,139 +2937,1058 @@ recent_turn_window = 1
+@@ -2715,140 +2941,1067 @@ recent_turn_window = 1
  }
  
  #[tokio::test]
@@ -3057,14 +3286,14 @@ index 29bb561e..b0eee6a8 100644
 +        &request_headers,
      )
      .await?;
--
 +    assert_eq!(first.status, StatusCode::OK, "{}", first.text()?);
 +    assert_eq!(
 +        first.headers["x-model-router-selected-model"],
 +        "model/complex"
 +    );
 +    assert_eq!(provider.inputs.lock().await.len(), 1);
-+
+ 
+-    assert_eq!(response.status, StatusCode::OK);
 +    let continuation = send_with_headers(
 +        &app,
 +        "POST",
@@ -3518,11 +3747,14 @@ index 29bb561e..b0eee6a8 100644
 +    assert_eq!(provider.inputs.lock().await.len(), 3);
 +
 +    let responses_provider = Arc::new(RecordingTypeSafeProvider::default());
-+    let responses_app = build_switchyard_router(type_safe_state_with_format(
++    let responses_state = type_safe_state_with_format(
 +        &upstream.base_url,
 +        Arc::clone(&responses_provider),
 +        WireFormat::OpenAiResponses,
-+    )?);
++    )?;
++    let responses_app = build_switchyard_router(
++        responses_state.with_local_hop_capability("test-local-hop-capability")?,
++    );
 +    upstream.calls.lock().await.clear();
 +    let response = send_with_headers(
 +        &responses_app,
@@ -3536,6 +3768,7 @@ index 29bb561e..b0eee6a8 100644
 +            ("authorization", "Bearer codex-login-token"),
 +            ("chatgpt-account-id", "account-123"),
 +            ("x-openai-fedramp", "true"),
++            (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
 +        ],
 +    )
 +    .await?;
@@ -3570,6 +3803,7 @@ index 29bb561e..b0eee6a8 100644
 +            ("authorization", "Bearer codex-login-token"),
 +            ("chatgpt-account-id", "account-123"),
 +            ("x-openai-fedramp", "true"),
++            (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
 +        ],
 +    )
 +    .await?;
@@ -3591,7 +3825,7 @@ index 29bb561e..b0eee6a8 100644
 +        inputs: Mutex::new(Vec::new()),
 +        label: "capable",
 +    });
-+    let app = build_switchyard_router(type_safe_state_with_targets(
++    let state = type_safe_state_with_targets(
 +        &upstream.base_url,
 +        Arc::clone(&provider),
 +        WireFormat::OpenAiResponses,
@@ -3603,11 +3837,14 @@ index 29bb561e..b0eee6a8 100644
 +        ],
 +        &["sol-medium"],
 +        &["astra-medium", "astra-xhigh"],
-+    )?);
++    )?;
++    let app =
++        build_switchyard_router(state.with_local_hop_capability("test-local-hop-capability")?);
 +    let headers = [
 +        ("authorization", "Bearer codex-login-token"),
 +        ("chatgpt-account-id", "account-123"),
 +        ("x-openai-fedramp", "true"),
++        (LOCAL_HOP_CAPABILITY_HEADER, "test-local-hop-capability"),
 +        (
 +            "x-codex-turn-metadata",
 +            r#"{"session_id":"native-tool-affinity"}"#,
@@ -3909,10 +4146,11 @@ index 29bb561e..b0eee6a8 100644
 +    )
 +    .await?;
 +
-     assert_eq!(response.status, StatusCode::OK);
++    assert_eq!(response.status, StatusCode::OK);
      let calls = upstream.calls.lock().await;
      let judge_call = calls
-@@ -3161,7 +4302,8 @@ target = "claude"
+         .iter()
+@@ -3161,7 +4314,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3922,7 +4160,7 @@ index 29bb561e..b0eee6a8 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +4319,7 @@ target = "claude"
+@@ -3177,6 +4331,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3930,7 +4168,7 @@ index 29bb561e..b0eee6a8 100644
          ],
      )
      .await?;
-@@ -3187,7 +4330,10 @@ target = "claude"
+@@ -3187,7 +4342,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -3942,7 +4180,7 @@ index 29bb561e..b0eee6a8 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +4366,29 @@ target = "openai"
+@@ -3220,7 +4378,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -3973,7 +4211,7 @@ index 29bb561e..b0eee6a8 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +4399,9 @@ target = "openai"
+@@ -3231,8 +4411,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3985,7 +4223,7 @@ index 29bb561e..b0eee6a8 100644
          ],
      )
      .await?;
-@@ -3247,6 +4416,7 @@ target = "openai"
+@@ -3247,6 +4428,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -3993,7 +4231,7 @@ index 29bb561e..b0eee6a8 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +4431,7 @@ target = "openai"
+@@ -3261,6 +4443,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -4001,7 +4239,7 @@ index 29bb561e..b0eee6a8 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +4454,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3283,7 +4466,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -4013,7 +4251,7 @@ index 29bb561e..b0eee6a8 100644
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +4500,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3326,6 +4512,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  
@@ -4062,11 +4300,38 @@ index 29bb561e..b0eee6a8 100644
  #[tokio::test]
  async fn json_extractor_statuses_keep_api_specific_error_envelopes() -> TestResult {
      let (_upstream, app) = test_app(&[(ROUTE_MODEL, &["model/a"])]).await?;
+@@ -4312,7 +5540,7 @@ async fn streaming_response_is_framed_for_the_inbound_api() -> TestResult {
+ }
+ 
+ // SWITCH-922: every streaming codec must report the routed target, not the route
+-// id the caller addressed — the route id is meaningless to anything reading the
++// id the caller addressed â€” the route id is meaningless to anything reading the
+ // trajectory (a Bench UI, a spend log, the client's own display).
+ #[tokio::test]
+ async fn streamed_response_model_names_the_served_model_not_the_route() -> TestResult {
+@@ -4865,7 +6093,7 @@ async fn advisor_route_routing_log_records_classifier_tier() -> TestResult {
+         .map(serde_json::from_str)
+         .collect::<Result<_, _>>()?;
+     // The consult is appended under the shared judge tier; the served turn is
+-    // the terminal answer row. The discarded-turn row does not exist in v1 —
++    // the terminal answer row. The discarded-turn row does not exist in v1 â€”
+     // its tokens live in the advisor_gate stats block instead.
+     assert_eq!(records.len(), 2);
+     assert!(
+@@ -5187,7 +6415,7 @@ async fn upstream_headers_forward_but_switchyard_writes_win() -> TestResult {
+     // Switchyard's own namespace never forwards from upstream.
+     assert!(!response.headers.contains_key("x-switchyard-session-id"));
+ 
+-    // …and Switchyard's routing write beats the upstream echo.
++    // â€¦and Switchyard's routing write beats the upstream echo.
+     assert_eq!(
+         response
+             .headers
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 6d185c8a..78a55948 100644
+index 724df4db..0c3fa026 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-@@ -1244,14 +1244,6 @@ fn encode_responses_input(
+@@ -1248,14 +1248,6 @@ fn encode_responses_input(
      // custom outputs. A tool result is typed by the call it answers, and Responses history
      // always lists the call before its output, so recording ids as calls are encoded is enough
      // to type the outputs that follow.
@@ -4082,10 +4347,10 @@ index 6d185c8a..78a55948 100644
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index 806e2141..d74aa6a1 100644
+index 6d2574db..e9c92c09 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
-@@ -2493,6 +2493,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
+@@ -2555,6 +2555,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
      Ok(())
  }
  
@@ -4914,7 +5179,7 @@ index 73d5621b..669d405c 100644
      }
  }
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 7baf1d39..38126764 100644
+index 4b5ce998..41ca77e8 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -99,17 +99,19 @@ endpoint, before it calls an upstream.
@@ -4952,7 +5217,7 @@ index 7baf1d39..38126764 100644
  | `llm_client` | Yes | — | Key under `[llm_clients]`. |
  | `routing_description` | No | generated from target name and model ID | Facts TypeSafe uses when comparing this target with other candidates. A route-level `candidate_descriptions` entry overrides it. |
  | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
-@@ -313,10 +318,12 @@ See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_rou
+@@ -326,10 +331,12 @@ See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_rou
  | `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
  | `classify_trigger` | No | `every_request` | When the classifier runs. Same semantics as `llm_classifier`. |
  | `message_hash_fallback` | No | `false` | Keys affinity on the first user message. Requires `classify_trigger = "new_session"`. |
@@ -5058,275 +5323,3 @@ index 0e72b6b0..a1899751 100644
  switchyard-server --config routes.toml --dry-run
  switchyard-server --config routes.toml \
    --host 127.0.0.1 --port 4000
-diff --git a/crates/switchyard-server/src/usage_metrics.rs b/crates/switchyard-server/src/usage_metrics.rs
-index 045f51c8..bc4f56c1 100644
---- a/crates/switchyard-server/src/usage_metrics.rs
-+++ b/crates/switchyard-server/src/usage_metrics.rs
-@@ -183,7 +183,12 @@ fn record_latency(model: &str, latency: Duration) {
- #[cfg(test)]
- mod tests {
-     use futures_util::{StreamExt, stream};
-+    use serde_json::{Value, json};
-     use switchyard_protocol::{LlmResponseChunk, LlmResponseStreamEvent, Metadata, Response};
-+    use switchyard_translation::{
-+        StreamTranslationState, TranslationEngine, TranslationPolicy, WireFormat,
-+        decode_stream_event,
-+    };
- 
-     use super::*;
- 
-@@ -242,4 +247,151 @@ mod tests {
-         assert_eq!(process.models["model/worker"].prompt_tokens, 10);
-         assert_eq!(process.models["model/worker"].completion_tokens, 3);
-     }
-+
-+    fn responses_usage_fixture(cache_write_tokens: Option<u64>) -> Value {
-+        let mut input_details = json!({"cached_tokens": 8_000});
-+        if let Some(tokens) = cache_write_tokens {
-+            input_details["cache_write_tokens"] = json!(tokens);
-+        }
-+        json!({
-+            "input_tokens": 12_000,
-+            "output_tokens": 100,
-+            "total_tokens": 12_100,
-+            "input_tokens_details": input_details,
-+        })
-+    }
-+
-+    fn assert_normalized_usage(usage: &Usage, cache_write_tokens: Option<u64>) {
-+        assert_eq!(usage.cached_input_tokens(), Some(8_000));
-+        assert_eq!(usage.cache_creation_input_tokens(), cache_write_tokens);
-+        assert_eq!(
-+            usage.input_tokens,
-+            Some(4_000_u64.saturating_sub(cache_write_tokens.unwrap_or(0))),
-+        );
-+        assert_eq!(usage.output_tokens, Some(100));
-+        assert_eq!(usage.total_tokens, Some(12_100));
-+    }
-+
-+    async fn assert_routing_log_usage(
-+        response: Response,
-+        cache_write_tokens: Option<u64>,
-+        expected_logged_write_tokens: u64,
-+    ) {
-+        let dir = tempfile::tempdir().expect("temp dir");
-+        let path = dir.path().join("routing.jsonl");
-+        let log = SharedRoutingLog::new(path.clone()).expect("routing log");
-+        let context = RoutingLogContext::from_metadata(&Metadata {
-+            session_id: Some("cache-usage-session".to_string()),
-+            ..Metadata::default()
-+        });
-+        match observe(
-+            response,
-+            "model/cache-fixture",
-+            Instant::now(),
-+            StatsAccumulator::default(),
-+            0.0,
-+            Some((log, context)),
-+        )
-+        .llm_response
-+        {
-+            LlmResponse::Agg(response) => {
-+                assert_normalized_usage(&response.usage, cache_write_tokens);
-+            }
-+            LlmResponse::Stream(mut response) => {
-+                assert!(response.next().await.is_some());
-+            }
-+        }
-+        let record: Value = serde_json::from_str(
-+            std::fs::read_to_string(path)
-+                .expect("read routing log")
-+                .trim_end(),
-+        )
-+        .expect("parse routing record");
-+        assert_eq!(record["prompt_tokens"], 12_000);
-+        assert_eq!(record["cached_tokens"], 8_000);
-+        assert_eq!(
-+            record["cache_creation_tokens"],
-+            expected_logged_write_tokens
-+        );
-+        assert_eq!(record["completion_tokens"], 100);
-+        assert_eq!(record["total_tokens"], 12_100);
-+    }
-+
-+    #[tokio::test]
-+    async fn native_responses_usage_keeps_inclusive_input_through_routing_log() {
-+        let engine = TranslationEngine::default();
-+        for cache_write_tokens in [Some(4_000), Some(0), None] {
-+            let usage_json = responses_usage_fixture(cache_write_tokens);
-+            let body = json!({
-+                "id": "resp_cache_fixture",
-+                "object": "response",
-+                "model": "gpt-cache-fixture",
-+                "status": "completed",
-+                "output": [{
-+                    "type": "message",
-+                    "role": "assistant",
-+                    "content": [{"type": "output_text", "text": "ok"}],
-+                }],
-+                "usage": usage_json,
-+            });
-+            let decoded = engine
-+                .decode_response(
-+                    WireFormat::OpenAiResponses,
-+                    &body,
-+                    &TranslationPolicy::default(),
-+                )
-+                .expect("decode buffered Responses fixture")
-+                .response;
-+            assert_normalized_usage(&decoded.usage, cache_write_tokens);
-+            assert_routing_log_usage(
-+                Response {
-+                    llm_response: LlmResponse::Agg(decoded),
-+                    metadata: None,
-+                    upstream_headers: http::HeaderMap::new(),
-+                },
-+                cache_write_tokens,
-+                cache_write_tokens.unwrap_or(0),
-+            )
-+            .await;
-+
-+            let mut state = StreamTranslationState::new(
-+                WireFormat::OpenAiResponses,
-+                WireFormat::OpenAiResponses,
-+            );
-+            let completed = json!({
-+                "type": "response.completed",
-+                "response": {
-+                    "id": "resp_cache_fixture_stream",
-+                    "status": "completed",
-+                    "usage": responses_usage_fixture(cache_write_tokens),
-+                },
-+            });
-+            let chunks = decode_stream_event(&mut state, WireFormat::OpenAiResponses, &completed);
-+            let usage = chunks
-+                .iter()
-+                .find_map(|chunk| match chunk {
-+                    LlmResponseChunk::Usage(usage) => Some(usage),
-+                    _ => None,
-+                })
-+                .expect("streamed Responses fixture has usage");
-+            assert_normalized_usage(usage, cache_write_tokens);
-+            assert!(
-+                chunks
-+                    .iter()
-+                    .any(|chunk| matches!(chunk, LlmResponseChunk::MessageStop { .. }))
-+            );
-+            assert_routing_log_usage(
-+                Response {
-+                    llm_response: LlmResponse::Stream(Box::pin(stream::iter([Ok(
-+                        LlmResponseStreamEvent::new(chunks),
-+                    )]))),
-+                    metadata: None,
-+                    upstream_headers: http::HeaderMap::new(),
-+                },
-+                cache_write_tokens,
-+                cache_write_tokens.unwrap_or(0),
-+            )
-+            .await;
-+        }
-+    }
- }
-diff --git a/Cargo.lock b/Cargo.lock
-index d98cf9d0..dbf45e2e 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -2522,6 +2522,7 @@ dependencies = [
-  "rustls",
-  "serde",
-  "serde_json",
-+ "sha2",
-  "switchyard-libsy",
-  "switchyard-llm-client",
-  "switchyard-protocol",
-diff --git a/crates/switchyard-server/Cargo.toml b/crates/switchyard-server/Cargo.toml
-index 1be8ee9f..9797542c 100644
---- a/crates/switchyard-server/Cargo.toml
-+++ b/crates/switchyard-server/Cargo.toml
-@@ -41,6 +41,7 @@ switchyard-llm-client.workspace = true
- switchyard-protocol.workspace = true
- switchyard-runner.workspace = true
- serde_json.workspace = true
-+sha2.workspace = true
- switchyard-translation.workspace = true
- humantime = "2.4"
- tokio.workspace = true
-diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index a2b968f8..0a4d47b1 100644
---- a/crates/switchyard-server/src/lib.rs
-+++ b/crates/switchyard-server/src/lib.rs
-@@ -39,6 +39,7 @@ use libsy::{LibsyError, RoutingOutcome};
- use parking_lot::Mutex;
- use serde::{Deserialize, Serialize};
- use serde_json::{Value, json};
-+use sha2::{Digest, Sha256};
- use switchyard_llm_client::{AuxiliaryOperation, RunObservation, RunObserver};
- use switchyard_protocol::{LlmClientError, Metadata, ModelId, Request, Usage};
- use switchyard_runner::{
-@@ -81,6 +82,8 @@ const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
- /// the otherwise unauthenticated local Switchyard hop.
- pub const LOCAL_HOP_CAPABILITY_ENV: &str = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
- pub const LOCAL_HOP_CAPABILITY_HEADER: &str = "x-codex-router-switchyard-capability";
-+pub const LOCAL_HOP_OBSERVATION_HEADER: &str = "x-codex-router-switchyard-observation";
-+pub const LOCAL_HOP_CALLBACK_LEASE_HEADER: &str = "x-codex-router-switchyard-callback-lease";
- const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
- 
- /// Whether an upstream header is safe and useful to expose downstream.
-@@ -613,9 +616,28 @@ async fn require_local_hop_capability(
-             "authentication_error",
-         );
-     }
--    // This header authenticates only Router -> Switchyard. Removing it before
--    // handlers build metadata also prevents forward_auth and the fallback
--    // proxy from carrying it to an upstream.
-+    // Carry only a one-way generation marker to the configured target. Router
-+    // consumes it before the native provider hop; it cannot authenticate a
-+    // request back to Switchyard and rotates with the supervised generation.
-+    let marker = format!("{:x}", Sha256::digest(capability.as_bytes()));
-+    if let Ok(marker) = HeaderValue::from_str(&marker) {
-+        request.headers_mut().insert(
-+            HeaderName::from_static(LOCAL_HOP_OBSERVATION_HEADER),
-+            marker,
-+        );
-+    }
-+    // The Router issued this request-specific lease only after admitting the
-+    // outer request. Keep a well-formed lease on the single configured target
-+    // hop so its nested native callback can finish while Router is draining.
-+    // Router consumes it before the native provider request.
-+    let valid_callback_lease = request
-+        .headers()
-+        .get(LOCAL_HOP_CALLBACK_LEASE_HEADER)
-+        .and_then(|value| value.to_str().ok())
-+        .is_some_and(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()));
-+    if !valid_callback_lease {
-+        request.headers_mut().remove(LOCAL_HOP_CALLBACK_LEASE_HEADER);
-+    }
-     request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
-     next.run(request).await
- }
-diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index b0eee6a8..dd0b8cd2 100644
---- a/crates/switchyard-server/tests/server.rs
-+++ b/crates/switchyard-server/tests/server.rs
-@@ -32,8 +32,8 @@ use switchyard_protocol::{Category, ModelId, WireFormat};
- use switchyard_runner::{DecisionTarget, ModelCapabilities, Route, Runner, RuntimeModels};
- use switchyard_server::config::load_server_state;
- use switchyard_server::{
--    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, ServerState, build_llm_router,
--    build_switchyard_router,
-+    DEFAULT_MAX_REQUEST_BODY_BYTES, LOCAL_HOP_CAPABILITY_HEADER, LOCAL_HOP_OBSERVATION_HEADER,
-+    ServerState, build_llm_router, build_switchyard_router,
- };
- use tokio::net::TcpListener;
- use tokio::sync::Mutex;
-@@ -516,6 +516,10 @@ async fn upstream_responses_requires_forwarded_auth(
-             .and_then(|value| value.to_str().ok())
-             == Some("true")
-         && !headers.contains_key(LOCAL_HOP_CAPABILITY_HEADER)
-+        && headers
-+            .get(LOCAL_HOP_OBSERVATION_HEADER)
-+            .and_then(|value| value.to_str().ok())
-+            == Some("187b7cad3cc71e7175ab051ca9cfe458ffed452215299a61aecdec7b53f45541")
-         && !headers.contains_key("x-api-key")
-         && !headers.contains_key("anthropic-beta");
-     if !has_expected_headers {

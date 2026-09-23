@@ -232,7 +232,7 @@ test("offline fidelity binds the ordered source patches and authored Rust fixtur
     root, "config", "switchyard", "patches", "switchyard-codex-compat.patch",
   ));
   const lock = verifyFidelitySourceInputs(lockBytes, contributionBytes, patchBytes);
-  assert.equal(lock.commit, "ee3715d10ad3e43a2d6f2efc6c4c7a0964b00877");
+  assert.equal(lock.commit, "70f277e094981706854f05674da2f2ec939ac443");
   const fixture = readFileSync(path.join(
     root, "scripts", "fixtures", "switchyard-input-fidelity.rs",
   ), "utf8");
