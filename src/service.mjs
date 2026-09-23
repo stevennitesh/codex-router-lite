@@ -6,6 +6,7 @@ import { SOURCE_ROOT } from "./paths.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
+import { prepareRouterServiceMutation, resumeRouterAdmission } from "./service-drain.mjs";
 
 const platform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
 if (platform !== "win32") {
@@ -15,6 +16,8 @@ const script = "service-windows.mjs";
 
 const mutatingCommands = new Set(["install", "uninstall", "start", "stop", "restart"]);
 const readinessCommands = new Set(["install", "start", "restart"]);
+const drainingCommands = new Set(["install", "uninstall", "stop", "restart"]);
+const FORCE_REPLACEMENT_ARGUMENT = "--force-service-replacement";
 // start.mjs allows the LiteLLM gateway 300s to cold start, so the readiness
 // wait has to cover at least that. A shorter wait reports failure while the
 // service is still booting, and the installer's rollback then uninstalls the
@@ -41,6 +44,8 @@ export async function runServiceCommandUnlocked(
   command = "status",
   args = [command],
 ) {
+  const forceReplacement = args.includes(FORCE_REPLACEMENT_ARGUMENT);
+  const platformArgs = args.filter((arg) => arg !== FORCE_REPLACEMENT_ARGUMENT);
   // The wrapper below is a separate Node process, so a direct
   // `node --use-env-proxy src/service.mjs ...` invocation would otherwise lose
   // its CLI-only opt-in before the platform renderer can persist it.
@@ -62,13 +67,22 @@ export async function runServiceCommandUnlocked(
       "The service operation deadline cannot preserve its platform and 300-second readiness allowances.",
     );
   }
+  let drain;
+  if (drainingCommands.has(command)) {
+    drain = await prepareRouterServiceMutation({ force: forceReplacement });
+  }
   const result = spawnSync(
     process.execPath,
-    [path.join(SOURCE_ROOT, "src", script), ...args],
+    [path.join(SOURCE_ROOT, "src", script), ...platformArgs],
     { stdio: "inherit", env: childEnvironment },
   );
   if (result.error) throw result.error;
-  if (result.status !== 0) return result.status ?? 1;
+  if (result.status !== 0) {
+    if (["drained", "forced"].includes(drain?.status)) {
+      await resumeRouterAdmission().catch(() => {});
+    }
+    return result.status ?? 1;
+  }
   if (!readinessCommands.has(command)) return 0;
 
   const readinessBudgetMs = remainingOperationMs();

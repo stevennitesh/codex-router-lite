@@ -178,3 +178,55 @@ export async function superviseGateway({
     }
   }
 }
+
+/**
+ * Start an optional child without making frontend lifetime depend on its first
+ * successful launch. Startup failures use the same bounded backoff as later
+ * crashes; once healthy, the established supervisor owns its lifetime.
+ */
+export async function superviseOptionalChild({
+  label,
+  start,
+  waitForExit,
+  waitForHealth,
+  stop = (target) => target.kill("SIGTERM"),
+  isShuttingDown = () => false,
+  log = (message) => console.error(message),
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  maxRestarts = DEFAULT_MAX_RESTARTS,
+  windowMs = DEFAULT_RESTART_WINDOW_MS,
+  backoffMs = DEFAULT_RESTART_BACKOFF_MS,
+} = {}) {
+  let child;
+  for (let attempt = 0; attempt <= maxRestarts; attempt += 1) {
+    if (isShuttingDown()) return { label, restarts: attempt };
+    try {
+      child = start();
+      await waitForHealth(child);
+      if (attempt > 0) log(`${label} became healthy after ${attempt} startup retry(s).`);
+      return superviseGateway({
+        label,
+        child,
+        start,
+        waitForExit,
+        waitForHealth,
+        stop,
+        isShuttingDown,
+        log,
+        sleep,
+        maxRestarts,
+        windowMs,
+        backoffMs,
+      });
+    } catch (error) {
+      if (isRunning(child)) stop(child);
+      if (attempt >= maxRestarts) {
+        log(`${label} did not become healthy after ${attempt + 1} attempt(s): ${reason(error)}; not restarting it again.`);
+        return { label, restarts: attempt, exhausted: true };
+      }
+      const wait = restartBackoffMs(attempt, backoffMs);
+      log(`${label} is unavailable: ${reason(error)}; retrying in ${wait} ms. The router stays up.`);
+      await sleep(wait);
+    }
+  }
+}

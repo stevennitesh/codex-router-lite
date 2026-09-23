@@ -106,8 +106,9 @@ export function currentCheckoutInstaller(
   };
 }
 
-function installCurrentCheckout() {
+function installCurrentCheckout(forceServiceReplacement = false) {
   const installer = currentCheckoutInstaller();
+  if (forceServiceReplacement) installer.args.push("-ForceServiceReplacement");
   const result = spawnSync(installer.command, installer.args, {
     cwd: SOURCE_ROOT,
     stdio: "inherit",
@@ -147,9 +148,27 @@ export function classifyUpdateRelation(current, available, isAncestor) {
   return "diverged";
 }
 
-function restoreRevision(revision) {
+function restoreRevision(revision, forceServiceReplacement = false) {
   git(["switch", "--detach", revision], { inherit: true });
-  installCurrentCheckout();
+  installCurrentCheckout(forceServiceReplacement);
+}
+
+function serviceDrainCommand(command, { forceServiceReplacement = false, ignoreFailure = false } = {}) {
+  const args = [path.join(SOURCE_ROOT, "src", "service-drain.mjs"), command];
+  if (forceServiceReplacement) args.push("--force-service-replacement");
+  const result = spawnSync(process.execPath, args, { cwd: SOURCE_ROOT, stdio: ignoreFailure ? "ignore" : "inherit" });
+  if (!ignoreFailure && result.status !== 0) {
+    throw new Error("Router replacement was deferred before the managed checkout changed.");
+  }
+}
+
+function withPreparedServiceReplacement(operation, options = {}) {
+  serviceDrainCommand("prepare", options);
+  try {
+    return operation();
+  } finally {
+    serviceDrainCommand("resume", { ignoreFailure: true });
+  }
 }
 
 function checkForUpdate() {
@@ -175,13 +194,16 @@ export function installationNeedsRefresh(manifest, revision) {
   return manifest?.current?.commit !== revision;
 }
 
-function updateCheckout({ force = false } = {}) {
+function updateCheckout({ force = false, forceServiceReplacement = false } = {}) {
   const status = checkForUpdate();
   if (!status.updateAvailable) {
     if (!installationNeedsRefresh(readInstallManifest(), status.current)) {
       return { ...status, updated: false, reinstalled: false };
     }
-    installCurrentCheckout();
+    withPreparedServiceReplacement(
+      () => installCurrentCheckout(forceServiceReplacement),
+      { forceServiceReplacement },
+    );
     return { ...status, updated: false, reinstalled: true };
   }
   requireReplaceableCheckout(force);
@@ -193,28 +215,30 @@ function updateCheckout({ force = false } = {}) {
   if (branch !== "main") {
     throw new Error("Updates require the managed checkout to be on its main branch.");
   }
-  git(["update-ref", "refs/codex-router/rollback", status.current]);
-  git(["merge", "--ff-only", status.available], { inherit: true });
-  try {
-    installCurrentCheckout();
-  } catch (error) {
+  withPreparedServiceReplacement(() => {
+    git(["update-ref", "refs/codex-router/rollback", status.current]);
+    git(["merge", "--ff-only", status.available], { inherit: true });
     try {
-      restoreRevision(status.current);
-    } catch (restoreError) {
-      throw new AggregateError(
-        [error, restoreError],
-        `Update failed and automatic rollback also failed. The previous commit is ${status.current}.`,
+      installCurrentCheckout(forceServiceReplacement);
+    } catch (error) {
+      try {
+        restoreRevision(status.current, forceServiceReplacement);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          `Update failed and automatic rollback also failed. The previous commit is ${status.current}.`,
+        );
+      }
+      throw new Error(
+        `Update failed; Codex Router was restored to ${status.current.slice(0, 12)}.`,
+        { cause: error },
       );
     }
-    throw new Error(
-      `Update failed; Codex Router was restored to ${status.current.slice(0, 12)}.`,
-      { cause: error },
-    );
-  }
+  }, { forceServiceReplacement });
   return { ...status, updated: true, reinstalled: true };
 }
 
-function rollbackCheckout({ force = false } = {}) {
+function rollbackCheckout({ force = false, forceServiceReplacement = false } = {}) {
   requireManagedCheckout();
   // A rollback checks out a different revision, so it overwrites tracked edits
   // exactly the way an update does.
@@ -230,20 +254,22 @@ function rollbackCheckout({ force = false } = {}) {
     throw new Error("No locally cached working revision is available to roll back to.");
   }
   if (target === current) throw new Error("The rollback revision is already installed.");
-  git(["update-ref", "refs/codex-router/rollback", current]);
-  try {
-    restoreRevision(target);
-  } catch (error) {
+  withPreparedServiceReplacement(() => {
+    git(["update-ref", "refs/codex-router/rollback", current]);
     try {
-      restoreRevision(current);
-    } catch (restoreError) {
-      throw new AggregateError(
-        [error, restoreError],
-        `Rollback failed and the current revision could not be restored (${current}).`,
-      );
+      restoreRevision(target, forceServiceReplacement);
+    } catch (error) {
+      try {
+        restoreRevision(current, forceServiceReplacement);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          `Rollback failed and the current revision could not be restored (${current}).`,
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  }, { forceServiceReplacement });
   return { rolledBack: true, from: current, to: target };
 }
 
@@ -262,16 +288,20 @@ function resolveCommand(args) {
 // A bare `update --force` has to keep working, so the flag is stripped before
 // the subcommand is read rather than being taken for one.
 export function parseArguments(args) {
-  return { command: resolveCommand(args), force: args.includes("--force") };
+  return {
+    command: resolveCommand(args),
+    force: args.includes("--force"),
+    forceServiceReplacement: args.includes("--force-service-replacement"),
+  };
 }
 
 async function main() {
-  const { command, force } = parseArguments(process.argv.slice(2));
+  const { command, force, forceServiceReplacement } = parseArguments(process.argv.slice(2));
   if (!command) {
-    console.error("Usage: update.mjs check|update|rollback [--force]");
+    console.error("Usage: update.mjs check|update|rollback [--force] [--force-service-replacement]");
     process.exit(2);
   }
-  process.stdout.write(`${JSON.stringify(command({ force }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(command({ force, forceServiceReplacement }), null, 2)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -36,9 +36,10 @@ function Invoke-RouterNode([string]$Script, [string[]]$ScriptArguments = @()) {
   }
 }
 
-function Remove-CodexIntegration {
+function Remove-CodexIntegration([string[]]$Arguments = @()) {
+  Invoke-RouterNode "src\service.mjs" (@("stop") + $Arguments)
   Invoke-RouterNode "src\config-manager.mjs" @("disable")
-  Invoke-RouterNode "src\service.mjs" @("uninstall")
+  Invoke-RouterNode "src\service.mjs" (@("uninstall") + $Arguments)
 }
 
 switch ($Command) {
@@ -49,8 +50,8 @@ switch ($Command) {
   "providers" { Invoke-RouterNode "src\control.mjs" (@("providers") + $CommandArguments) }
   "provider-key" { Invoke-RouterNode "src\provider-key.mjs" $CommandArguments }
   "caller-key" { Invoke-RouterNode "src\caller-key.mjs" $CommandArguments }
-  "disable" { Remove-CodexIntegration }
-  "uninstall" { Remove-CodexIntegration }
+  "disable" { Remove-CodexIntegration $CommandArguments }
+  "uninstall" { Remove-CodexIntegration $CommandArguments }
   "update" {
     $UpdateArguments = if ($CommandArguments.Count) { $CommandArguments } else { @("update") }
     Invoke-RouterNode "src\update.mjs" $UpdateArguments
@@ -65,8 +66,8 @@ switch ($Command) {
       throw "Usage: model-router.ps1 codex start [--foreground]."
     }
   }
-  "stop" { Invoke-RouterNode "src\service.mjs" @("stop") }
-  "restart" { Invoke-RouterNode "src\service.mjs" @("restart") }
+  "stop" { Invoke-RouterNode "src\service.mjs" (@("stop") + $CommandArguments) }
+  "restart" { Invoke-RouterNode "src\service.mjs" (@("restart") + $CommandArguments) }
   "subagents" { Invoke-RouterNode "src\control.mjs" (@("subagents") + $CommandArguments) }
   "refresh-catalog" { Invoke-RouterNode "src\refresh-catalog.mjs" $CommandArguments }
   "switchyard-trace" { Invoke-RouterNode "src\switchyard-trace.mjs" $CommandArguments }

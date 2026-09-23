@@ -5,6 +5,7 @@ import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 
 const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
+const MAX_OBSERVED_OUTPUT_ITEMS = 256;
 
 // Bytes of *model-visible* request body per prompt token.
 //
@@ -385,6 +386,9 @@ export class ResponseUsageTransform extends Transform {
   // model read as slow.
   #firstTokenAt;
   #completedResponseObserved = false;
+  #completedOutput;
+  #doneOutputItems = [];
+  #outputObservationOverflow = false;
 
   // `estimatedInputTokens` arrives only on routed requests large enough that a
   // reported zero cannot be true. Without it this transform observes and
@@ -639,12 +643,23 @@ export class ResponseUsageTransform extends Transform {
 
   #observe(payload) {
     this.#noteFirstToken(payload);
+    if (payload?.type === "response.output_item.done" && payload.item) {
+      if (this.#doneOutputItems.length < MAX_OBSERVED_OUTPUT_ITEMS) {
+        this.#doneOutputItems.push(payload.item);
+      } else {
+        this.#outputObservationOverflow = true;
+      }
+    }
     const response = payload?.response && typeof payload.response === "object"
       ? payload.response
       : payload;
     const status = typeof response?.status === "string" ? response.status : undefined;
     if (payload?.type === "response.completed" || status === "completed") {
       this.#completedResponseObserved = true;
+      if (Array.isArray(response?.output)) {
+        if (response.output.length <= MAX_OBSERVED_OUTPUT_ITEMS) this.#completedOutput = response.output;
+        else this.#outputObservationOverflow = true;
+      }
       this.#providerResponse.outcome = "completed";
     } else if (payload?.type === "response.incomplete" || status === "incomplete") {
       this.#providerResponse.outcome = "incomplete";
@@ -688,5 +703,24 @@ export class ResponseUsageTransform extends Transform {
 
   completedResponseObserved() {
     return this.#completedResponseObserved;
+  }
+
+  responseOutputObservation() {
+    if (!this.#completedResponseObserved || this.#outputObservationOverflow) {
+      return { complete: false, output: [] };
+    }
+    const output = Array.isArray(this.#completedOutput)
+      ? [...this.#completedOutput]
+      : [];
+    const known = new Set(output.map((item) => item?.call_id || item?.id).filter(Boolean));
+    for (const item of this.#doneOutputItems) {
+      const key = item?.call_id || item?.id;
+      if (!key || !known.has(key)) output.push(item);
+      if (key) known.add(key);
+    }
+    return {
+      complete: Array.isArray(this.#completedOutput) || this.#doneOutputItems.length > 0,
+      output,
+    };
   }
 }

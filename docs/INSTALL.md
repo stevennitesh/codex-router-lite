@@ -56,8 +56,12 @@ for current exact-route subagent eligibility.
 
 The running service checks every five minutes for an installed Codex binary or
 native account-catalog change. When signed in, it refreshes account visibility
-from Codex's fixed ChatGPT model endpoint and preserves the last cache if that
-read fails. A successful automatic refresh does not restart Router. Fully quit
+from Codex's fixed ChatGPT model endpoint into a protected Router snapshot;
+Codex retains sole ownership of `models_cache.json`. It republishes current
+local picker, provider, authentication, and subagent settings even when the
+native capture is unchanged, while leaving unchanged output untouched. A
+failed publication retries on the next pass. A successful automatic refresh
+does not restart Router. Fully quit
 and reopen the Codex app to reload its picker. Use `model-router.ps1 codex
 refresh-catalog` only for an immediate manual check.
 

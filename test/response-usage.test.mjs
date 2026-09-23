@@ -44,6 +44,27 @@ test("usage observation accepts long streams made of bounded lines", async () =>
   assert.deepEqual(transform.tokenUsage(), { inputTokens: 7, outputTokens: 3, totalTokens: 10 });
 });
 
+test("usage observation exposes completed client tool output without treating partial streams as complete", async () => {
+  const item = { type: "tool_search_call", id: "tool-search-1", arguments: {} };
+  const completed = { id: "resp_tools", status: "completed", output: [item] };
+  const { transform } = await run([
+    `data: ${JSON.stringify({ type: "response.output_item.done", item })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`,
+  ]);
+  assert.deepEqual(transform.responseOutputObservation(), {
+    complete: true,
+    output: [item],
+  });
+
+  const partial = await run([
+    `data: ${JSON.stringify({ type: "response.output_item.done", item })}\n\n`,
+  ]);
+  assert.deepEqual(partial.transform.responseOutputObservation(), {
+    complete: false,
+    output: [],
+  });
+});
+
 test("usage observation preserves cache reads and writes without inventing absent counters", async () => {
   const fixtures = [
     [

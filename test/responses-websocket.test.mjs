@@ -82,6 +82,9 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
     authenticateUpgrade: () => "/responses",
     fetchImpl,
     ...(options.maxEventBytes ? { maxEventBytes: options.maxEventBytes } : {}),
+    ...(options.admitUpgrade ? { admitUpgrade: options.admitUpgrade } : {}),
+    ...(options.admitRequest ? { admitRequest: options.admitRequest } : {}),
+    ...(options.onPeer ? { onPeer: options.onPeer } : {}),
   }), true);
   assert.match(socket.writes[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
   return socket;
@@ -122,6 +125,33 @@ test("WebSocket rejects an invalid completed terminal as one protocol failure", 
   ));
   assert.deepEqual(events.map(event => event.type), ["error"]);
   assert.equal(events[0].error.type, "local_router_protocol_error");
+});
+
+test("WebSocket admission rejects upgrades and later logical requests while force closes peers", async () => {
+  assert.throws(
+    () => openPeer(async () => new Response(), {}, { admitUpgrade: () => { throw new Error("draining"); } }),
+    /false !== true/u,
+  );
+
+  let open = true;
+  let registered;
+  const socket = openPeer(
+    async () => new Response(JSON.stringify({ id: "resp_ok", status: "completed", output: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+    {},
+    {
+      admitRequest: () => { if (!open) throw new Error("draining"); },
+      onPeer: (peer) => { registered = peer; return () => {}; },
+    },
+  );
+  open = false;
+  const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+  assert.equal(events[0].status, 503);
+  assert.equal(events[0].error.type, "local_router_draining");
+  registered.forceClose();
+  assert.equal(socket.writable, false);
 });
 
 test("WebSocket turns an unterminated internal stream into one stated failure", async () => {

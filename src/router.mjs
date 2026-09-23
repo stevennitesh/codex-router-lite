@@ -135,6 +135,13 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
+import {
+  clientToolCalls,
+  clientToolOutputs,
+  RouterAdmission,
+  SWITCHYARD_CALLBACK_LEASE_HEADER,
+  switchyardWorkflowIdentity,
+} from "./router-admission.mjs";
 
 installStableFetchTransport();
 
@@ -169,6 +176,7 @@ const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
 const switchyardNativeAttempts = new SwitchyardNativeAttemptObserver({
   capability: SWITCHYARD_CAPABILITY,
 });
+const routerAdmission = new RouterAdmission();
 const QUIET =
   process.env.CODEX_ROUTER_QUIET === "1";
 function positiveByteLimit(value, fallback) {
@@ -324,6 +332,10 @@ function beginRequestExecution({ request, controller } = {}) {
     error.code = "ERR_ROUTER_ACTIVE_REQUEST_LIMIT";
     throw error;
   }
+  const admission = routerAdmission.begin({
+    controller,
+    nestedCallbackLease: routerAdmission.consumeSwitchyardCallbackLease(request?.headers),
+  });
   const requestToken = {};
   let finished = false;
   let deadlineExceeded = false;
@@ -333,6 +345,7 @@ function beginRequestExecution({ request, controller } = {}) {
     finished = true;
     if (executionTimer) clearTimeout(executionTimer);
     inFlightRequests.delete(requestToken);
+    admission.finish();
   };
   const abortAtExecutionDeadline = () => {
     if (finished || deadlineExceeded) return;
@@ -355,6 +368,7 @@ function beginRequestExecution({ request, controller } = {}) {
   return {
     finish,
     deadlineExceeded: () => deadlineExceeded,
+    issueSwitchyardCallbackLease: admission.issueSwitchyardCallbackLease,
   };
 }
 
@@ -624,13 +638,14 @@ function switchyardTarget(route, pathname) {
   return `${baseUrl}${routePath}`;
 }
 
-function switchyardHeaders(request) {
+function switchyardHeaders(request, callbackLease) {
   if (!SWITCHYARD_CAPABILITY) {
     throw new Error("Switchyard local-hop capability is unavailable.");
   }
   return {
     ...nativeHeaders(request),
     [SWITCHYARD_CAPABILITY_HEADER]: SWITCHYARD_CAPABILITY,
+    ...(callbackLease ? { [SWITCHYARD_CALLBACK_LEASE_HEADER]: callbackLease } : {}),
   };
 }
 
@@ -930,7 +945,50 @@ async function healthPayload() {
     api,
     gateway,
     switchyard,
+    lifecycle: routerAdmission.status(),
   };
+}
+
+function internalManagementAuthenticated(request) {
+  const presented = bearerToken(request.headers.authorization);
+  return presented !== undefined && secretEqual(presented, INTERNAL_KEY || "");
+}
+
+async function handleLifecycleManagement(request, response, requestUrl) {
+  if (!internalManagementAuthenticated(request)) {
+    writeJson(response, 401, {
+      error: {
+        type: "authentication_error",
+        message: "Router lifecycle management requires the internal service capability.",
+      },
+    });
+    return;
+  }
+  if (request.method === "GET" && requestUrl.pathname === "/internal/lifecycle") {
+    writeJson(response, 200, routerAdmission.status());
+    return;
+  }
+  if (request.method === "POST" && requestUrl.pathname === "/internal/lifecycle/resume") {
+    writeJson(response, 200, routerAdmission.resume());
+    return;
+  }
+  if (request.method === "POST" && requestUrl.pathname === "/internal/lifecycle/drain") {
+    const encoded = await readRequestBody(request, { maxBytes: 16 * 1024 });
+    const body = parseJsonObjectRequest(encoded);
+    const requestedTimeout = Number(body.timeout_ms);
+    const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+      ? Math.min(Math.floor(requestedTimeout), 5 * 60_000)
+      : 30_000;
+    const result = await routerAdmission.drain({
+      timeoutMs,
+      force: body.force === true,
+    });
+    writeJson(response, result.status === "drained" || result.status === "forced" ? 200 : 409, result);
+    return;
+  }
+  writeJson(response, 404, {
+    error: { type: "management_route_not_found", message: "Unsupported lifecycle route." },
+  });
 }
 
 // A retained route is visible only while its provider is selected. Credential
@@ -2247,6 +2305,7 @@ async function handleResponses(request, response, requestUrl) {
   let observedNativeRequest;
   let observedUpstreamStatus;
   let observedTransportFailure = false;
+  let switchyardWorkflow;
   const switchyardNativeCallback = switchyardNativeAttempts.consumeAttribution(request.headers);
   bindClientAbort(request, response, () => {
     clientGone = true;
@@ -2302,6 +2361,12 @@ async function handleResponses(request, response, requestUrl) {
       payload.input.at(-1)?.type === "compaction_trigger";
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
+    if (switchyardHop) {
+      switchyardWorkflow = {
+        identity: switchyardWorkflowIdentity(request.headers, payload.client_metadata),
+        consumed: clientToolOutputs(payload.input),
+      };
+    }
 
     if (switchyardNativeCallback && !route && !compactV1 && !compactV2) {
       observedNativeRequest = switchyardNativeAttempts.beginRequest(request.headers, {
@@ -2417,7 +2482,9 @@ async function handleResponses(request, response, requestUrl) {
         bearerToken(request.headers.authorization),
       );
       if (observesNativeAuth) nativeAuthDesktop = await codexDesktopStateAsync();
-      headers = switchyardHop ? switchyardHeaders(request) : nativeHeaders(request);
+      headers = switchyardHop
+        ? switchyardHeaders(request, execution.issueSwitchyardCallbackLease())
+        : nativeHeaders(request);
       const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
       routedBody = switchyardHop
         ? nativeBody
@@ -2974,6 +3041,18 @@ async function handleResponses(request, response, requestUrl) {
     throw error;
   } finally {
     const status = finalStatus ?? response.statusCode;
+    if (switchyardWorkflow) {
+      const outputObservation = retryUsageTransform?.completedResponseObserved()
+        ? retryUsageTransform.responseOutputObservation()
+        : usageTransform?.responseOutputObservation();
+      if (outputObservation) {
+        routerAdmission.recordSwitchyardWorkflow({
+          ...switchyardWorkflow,
+          produced: clientToolCalls(outputObservation.output),
+          complete: outputObservation.complete,
+        });
+      }
+    }
     if (observedNativeRequest) {
       const attemptUsage = emptyCompletionRetried
         ? retryUsageTransform?.reportedTokenUsage()
@@ -3268,6 +3347,19 @@ async function handleRequest(request, response) {
     request.url || "/",
     `http://${request.headers.host || LISTEN_HOST}`,
   );
+  if (requestUrl.pathname === "/live" && request.method === "GET") {
+    writeJson(response, 200, {
+      ok: true,
+      service: "codex-router",
+      version: VERSION,
+      capabilities: ["drain-v1"],
+    });
+    return;
+  }
+  if (requestUrl.pathname.startsWith("/internal/lifecycle")) {
+    await handleLifecycleManagement(request, response, requestUrl);
+    return;
+  }
   if (request.method === "GET" && requestUrl.pathname === "/health") {
     const health = await healthPayload();
     writeJson(response, health.ok ? 200 : 503, {
@@ -3391,6 +3483,9 @@ server.on("upgrade", (request, socket, head) => {
     // credentials, retries, transforms, usage, and cancellation all
     // continue to have one implementation.
     responsesUrl: `${callerBaseUrl(LISTEN_PORT, CALLER_KEY)}/responses`,
+    admitUpgrade: () => routerAdmission.admitWebSocketMessage(),
+    admitRequest: () => routerAdmission.admitWebSocketMessage(),
+    onPeer: (peer) => routerAdmission.registerPeer(peer),
   });
 });
 // Without this an 'error' event is unhandled and the process exits silently.

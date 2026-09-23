@@ -5263,15 +5263,16 @@ index a2b968f8..0a4d47b1 100644
  use switchyard_llm_client::{AuxiliaryOperation, RunObservation, RunObserver};
  use switchyard_protocol::{LlmClientError, Metadata, ModelId, Request, Usage};
  use switchyard_runner::{
-@@ -81,6 +82,7 @@ const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
+@@ -81,6 +82,8 @@ const FORWARDED_UPSTREAM_HEADER_PREFIXES: &[&str] =
  /// the otherwise unauthenticated local Switchyard hop.
  pub const LOCAL_HOP_CAPABILITY_ENV: &str = "CODEX_ROUTER_SWITCHYARD_CAPABILITY";
  pub const LOCAL_HOP_CAPABILITY_HEADER: &str = "x-codex-router-switchyard-capability";
 +pub const LOCAL_HOP_OBSERVATION_HEADER: &str = "x-codex-router-switchyard-observation";
++pub const LOCAL_HOP_CALLBACK_LEASE_HEADER: &str = "x-codex-router-switchyard-callback-lease";
  const MAX_ROUTING_HEADER_VALUE_LEN: usize = 512;
  
  /// Whether an upstream header is safe and useful to expose downstream.
-@@ -613,9 +615,16 @@ async fn require_local_hop_capability(
+@@ -613,9 +616,28 @@ async fn require_local_hop_capability(
              "authentication_error",
          );
      }
@@ -5287,6 +5288,18 @@ index a2b968f8..0a4d47b1 100644
 +            HeaderName::from_static(LOCAL_HOP_OBSERVATION_HEADER),
 +            marker,
 +        );
++    }
++    // The Router issued this request-specific lease only after admitting the
++    // outer request. Keep a well-formed lease on the single configured target
++    // hop so its nested native callback can finish while Router is draining.
++    // Router consumes it before the native provider request.
++    let valid_callback_lease = request
++        .headers()
++        .get(LOCAL_HOP_CALLBACK_LEASE_HEADER)
++        .and_then(|value| value.to_str().ok())
++        .is_some_and(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()));
++    if !valid_callback_lease {
++        request.headers_mut().remove(LOCAL_HOP_CALLBACK_LEASE_HEADER);
 +    }
      request.headers_mut().remove(LOCAL_HOP_CAPABILITY_HEADER);
      next.run(request).await

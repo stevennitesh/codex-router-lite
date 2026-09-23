@@ -139,6 +139,7 @@ export async function nativeAccountCatalogHeaders() {
   return {
     authorization: `Bearer ${session.accessToken}`,
     ...(session.accountId ? { "chatgpt-account-id": session.accountId } : {}),
+    ...(session.fedramp ? { "x-openai-fedramp": "true" } : {}),
   };
 }
 

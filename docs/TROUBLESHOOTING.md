@@ -28,9 +28,12 @@ node scripts/check-codex-catalog-compat.mjs <codex-executable>
 The installed build owns native models. Do not repair drift by copying a catalog from another version.
 
 The managed service checks for native catalog authority changes every five
-minutes, refreshes the signed-in account cache from the fixed ChatGPT model
-endpoint, and republishes only when its content or the installed binary
-identity changed. A failed account read preserves the previous cache. A model
+minutes, refreshes the signed-in account metadata from the fixed ChatGPT model
+endpoint into a protected Router-owned snapshot, and reconciles the desired
+publication with current local settings. Codex's `models_cache.json` is never
+written by Router. A failed account read preserves a same-identity snapshot;
+an account, residency, or client change cannot reuse old validators or old
+visibility. A model
 whose native entry still has `visibility: "hide"` remains absent by design;
 automatic refresh cannot turn a staged account rollout into an entitlement.
 

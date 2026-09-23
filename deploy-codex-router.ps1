@@ -1,5 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
+  [switch]$ForceServiceReplacement,
   [string]$InstallDir = $(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "codex-router")
 )
 
@@ -148,6 +149,17 @@ function Assert-StagedFiles([string]$StageRoot, [string[]]$Files) {
   }
 }
 
+function Get-ChangedManagedFiles([string[]]$CurrentFiles, [string[]]$PreviousFiles) {
+  $AllFiles = @($CurrentFiles + $PreviousFiles | Sort-Object -Unique)
+  return @($AllFiles | Where-Object {
+    $SourceFile = Join-Path $sourceDir $_
+    $TargetFile = Resolve-ManagedTargetFile $_
+    if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $TargetFile -PathType Leaf)) { return $true }
+    (Get-Sha256 $SourceFile) -ne (Get-Sha256 $TargetFile)
+  })
+}
+
 function Restore-ManagedFiles(
   [string]$BackupRoot,
   [string[]]$ManagedFiles,
@@ -185,6 +197,13 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
   $CurrentDeployFiles = @(Get-DeploySourceFiles)
   $PreviousDeployFiles = @(Read-DeployManifest)
   $ManagedFiles = @($CurrentDeployFiles + $PreviousDeployFiles | Sort-Object -Unique)
+  $ChangedFiles = @(Get-ChangedManagedFiles $CurrentDeployFiles $PreviousDeployFiles)
+  $Classification = (& node (Join-Path $sourceDir "src\deployment-classification.mjs") @ChangedFiles).Trim()
+  if ($LASTEXITCODE -ne 0 -or $Classification -notin @("no-op", "documentation-only", "runtime")) {
+    throw "Unable to classify the staged Router deployment."
+  }
+  $NeedsRuntimeInstall = $Classification -eq "runtime"
+  $DrainPrepared = $false
   $PreviouslyExisting = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
   $TemporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "codex-router-deploy-$([Guid]::NewGuid().ToString('N'))"
   $StageRoot = Join-Path $TemporaryRoot "stage"
@@ -192,6 +211,13 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
   $ManifestExisted = Test-Path -LiteralPath $DeployManifestPath -PathType Leaf
   $KeepBackup = $false
   try {
+    if ($NeedsRuntimeInstall) {
+      $DrainArguments = @("prepare")
+      if ($ForceServiceReplacement) { $DrainArguments += "--force-service-replacement" }
+      & node (Join-Path $sourceDir "src\service-drain.mjs") @DrainArguments
+      if ($LASTEXITCODE -ne 0) { throw "Router replacement was deferred before installed files changed." }
+      $DrainPrepared = $true
+    }
     New-Item -ItemType Directory -Force -Path $StageRoot, $BackupRoot | Out-Null
     Copy-ManagedFiles $sourceDir $StageRoot $CurrentDeployFiles
     Assert-StagedFiles $StageRoot $CurrentDeployFiles
@@ -217,13 +243,17 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
         # generated catalogs, Codex configuration, manifest, service health,
         # and managed skills stay in one path. It reads the current provider
         # selection rather than replacing it.
-        & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
-        if (-not $?) { throw "The installed Codex Router update failed." }
+        if ($NeedsRuntimeInstall) {
+          $InstallArguments = @{ CheckoutInstall = $true; Target = "codex" }
+          if ($ForceServiceReplacement) { $InstallArguments.ForceServiceReplacement = $true }
+          & (Join-Path $installDir "install.ps1") @InstallArguments
+          if (-not $?) { throw "The installed Codex Router update failed." }
 
-        & node (Join-Path $installDir "src\doctor.mjs")
-        $DoctorExitCode = $LASTEXITCODE
-        if ($DoctorExitCode -ne 0) {
-          throw "Codex Router doctor failed with exit code $DoctorExitCode."
+          & node (Join-Path $installDir "src\doctor.mjs")
+          $DoctorExitCode = $LASTEXITCODE
+          if ($DoctorExitCode -ne 0) {
+            throw "Codex Router doctor failed with exit code $DoctorExitCode."
+          }
         }
       } finally {
         Pop-Location
@@ -239,10 +269,14 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
         }
         Push-Location $installDir
         try {
-          & (Join-Path $installDir "install.ps1") -CheckoutInstall -Target codex
-          if (-not $?) { throw "The previous Codex Router generation could not be restarted." }
-          & node (Join-Path $installDir "src\doctor.mjs")
-          if ($LASTEXITCODE -ne 0) { throw "The restored Codex Router generation failed doctor." }
+          if ($NeedsRuntimeInstall) {
+            $RollbackArguments = @{ CheckoutInstall = $true; Target = "codex" }
+            if ($ForceServiceReplacement) { $RollbackArguments.ForceServiceReplacement = $true }
+            & (Join-Path $installDir "install.ps1") @RollbackArguments
+            if (-not $?) { throw "The previous Codex Router generation could not be restarted." }
+            & node (Join-Path $installDir "src\doctor.mjs")
+            if ($LASTEXITCODE -ne 0) { throw "The restored Codex Router generation failed doctor." }
+          }
         } finally {
           Pop-Location
         }
@@ -252,8 +286,11 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
       }
       throw "Deployment failed; the previous healthy generation was restored: $($DeployError.Exception.Message)"
     }
-    Write-Host "Codex Router published, installed, and verified."
+    Write-Host "Codex Router published ($Classification)."
   } finally {
+    if ($DrainPrepared) {
+      & node (Join-Path $sourceDir "src\service-drain.mjs") resume 2>$null | Out-Null
+    }
     if (-not $KeepBackup -and (Test-Path -LiteralPath $TemporaryRoot)) {
       Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force
     }
