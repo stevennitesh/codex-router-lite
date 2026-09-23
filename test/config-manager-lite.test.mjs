@@ -52,6 +52,9 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     assert.match(routed, /## Delegated-agent waiting/u);
     assert.match(routed, /Wait again without commentary/u);
     assert.match(routed, /call interrupt_agent on that child/u);
+    assert.match(routed, /## Delegation routing/u);
+    assert.match(routed, /may intentionally be on the critical path/u);
+    assert.match(routed, /fork_turns=\\\"none\\\"/u);
     assert.match(routed, /developer_instructions = "USER_POLICY"/u);
     assert.match(routed, /\[desktop\]\nnotifications = true/u);
 
