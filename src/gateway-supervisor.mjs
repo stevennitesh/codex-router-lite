@@ -37,6 +37,7 @@ const DEFAULT_MAX_RESTARTS = 5;
 const DEFAULT_RESTART_WINDOW_MS = 10 * 60_000;
 const DEFAULT_RESTART_BACKOFF_MS = 1_000;
 const MAX_RESTART_BACKOFF_MS = 30_000;
+export const DEFAULT_STARTUP_BUDGETS = 3;
 
 // Doubling from the base, capped. The cap matters more than the curve: a
 // gateway that crashes on a poisoned request recovers on the first restart,
@@ -108,6 +109,7 @@ export async function superviseGateway({
   maxRestarts = DEFAULT_MAX_RESTARTS,
   windowMs = DEFAULT_RESTART_WINDOW_MS,
   backoffMs = DEFAULT_RESTART_BACKOFF_MS,
+  startupBudgets = DEFAULT_STARTUP_BUDGETS,
 } = {}) {
   let current = child;
   let restarts = 0;
@@ -144,7 +146,28 @@ export async function superviseGateway({
     restarts += 1;
     try {
       current = start();
-      await waitForHealth(current);
+      // A replacement that is still alive after one cold-start budget may be
+      // starved while importing rather than broken. Restarting that process
+      // would throw away all import progress and can create a permanent loop
+      // under the same load, so give the same child a few bounded budgets.
+      for (let budget = 1; ; budget += 1) {
+        try {
+          await waitForHealth(current);
+          break;
+        } catch (error) {
+          if (
+            budget >= startupBudgets ||
+            !isRunning(current) ||
+            isShuttingDown()
+          ) {
+            throw error;
+          }
+          log(
+            `${label} is still starting (${reason(error)}); waiting instead of restarting ` +
+              `its import (budget ${budget + 1} of ${startupBudgets}).`,
+          );
+        }
+      }
       log(`${label} is healthy again after ${restarts} restart(s).`);
     } catch (error) {
       log(`${label} did not come back: ${reason(error)}.`);

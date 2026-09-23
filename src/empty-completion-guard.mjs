@@ -7,6 +7,33 @@ const MAX_INCOMPLETE_EVENT_BYTES = 10 * 1024 * 1024;
 const MAX_PRECONTENT_BYTES = 1024 * 1024;
 const MAX_PRECONTENT_MS = 30_000;
 
+export const PRELUDE_MS_PER_THOUSAND_TOKENS = 150;
+export const PRELUDE_BUDGET_MAX_MS = 600_000;
+
+// Prefill time scales with prompt size. Keep the configured base unchanged for
+// small turns, then add a bounded allowance using the conservative four-bytes-
+// per-token estimate. This is a latency budget only; it does not change the
+// empty-completion verdict.
+export function preludeBudgetMs({
+  baseMs,
+  requestBytes = 0,
+  perThousandTokensMs = PRELUDE_MS_PER_THOUSAND_TOKENS,
+  maxMs = PRELUDE_BUDGET_MAX_MS,
+} = {}) {
+  const base = Number.isFinite(baseMs) && baseMs >= 0 ? baseMs : 0;
+  const bytes = Number.isFinite(requestBytes) && requestBytes > 0 ? requestBytes : 0;
+  const rate =
+    Number.isFinite(perThousandTokensMs) && perThousandTokensMs >= 0
+      ? perThousandTokensMs
+      : PRELUDE_MS_PER_THOUSAND_TOKENS;
+  const scaled = base + (bytes / 4 / 1000) * rate;
+  const ceiling = Math.max(
+    Number.isFinite(maxMs) && maxMs > 0 ? maxMs : PRELUDE_BUDGET_MAX_MS,
+    base,
+  );
+  return Math.max(base, Math.min(ceiling, Math.round(scaled)));
+}
+
 class EmptyCompletionPreludeLimitError extends Error {
   constructor(kind) {
     super(

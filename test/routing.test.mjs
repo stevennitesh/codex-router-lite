@@ -80,6 +80,57 @@ test("Router withholds data-only empty success after reasoning and recovers repl
   }
 });
 
+test("large routed prompts get a scaled pre-content budget before the first SSE byte", async () => {
+  let attempts = 0;
+  const gateway = await mockServer(async (request, response) => {
+    await bodyJson(request);
+    attempts += 1;
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.flushHeaders();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const completed = {
+      type: "response.completed",
+      response: {
+        id: "resp_scaled_prelude",
+        status: "completed",
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "scaled answer" }],
+        }],
+      },
+    };
+    response.end(`event: response.completed\ndata: ${JSON.stringify(completed)}\n\n`);
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_EMPTY_COMPLETION_PRELUDE_MS: "10",
+    CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    const response = await fetch(`${routerBase(port)}/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/glm-5.3-flash",
+        input: "x".repeat(40_000),
+        stream: true,
+      }),
+    });
+    const wire = await response.text();
+    assert.equal(response.status, 200, wire);
+    assert.match(wire, /scaled answer/);
+    assert.equal(attempts, 1, "large prefill should not trigger an empty-completion retry");
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
 for (const model of ["switchyard/auto", "openrouter/glm-5.3-flash"]) {
   test(`${model} empty-completion recovery preserves its no-redirect boundary`, async () => {
     const stateDir = mkdtempSync(path.join(os.tmpdir(), "retry-boundary-"));
@@ -183,6 +234,59 @@ test("GLM keeps colliding tool identities distinct in declarations, forced choic
       }
     }
   } finally { await stopChild(router); await closeServer(gateway.server); }
+});
+
+test("native model switches clamp a stale known reasoning effort to the selected model ladder", async () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "native-effort-switch-"));
+  const catalogPath = path.join(stateDir, "merged-models.json");
+  writeFileSync(catalogPath, JSON.stringify({
+    models: [{
+      slug: "gpt-6-astra",
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map(
+        (effort) => ({ effort, description: effort }),
+      ),
+    }],
+  }));
+  const seen = [];
+  const native = await mockServer(async (request, response) => {
+    seen.push(await bodyJson(request));
+    json(response, 200, { status: "completed", model: "gpt-6-astra", output: [] });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_CATALOG: catalogPath,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    for (const [requested, expected] of [
+      ["minimal", "low"],
+      ["high", "high"],
+      ["future", "future"],
+    ]) {
+      const response = await fetch(`${routerBase(port)}/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer fixture-native-session",
+        },
+        body: JSON.stringify({
+          model: "gpt-6-astra",
+          input: "native effort switch",
+          reasoning: { effort: requested, summary: "auto" },
+        }),
+      });
+      assert.equal(response.status, 200, router.testErrors());
+      assert.equal(seen.at(-1).reasoning.effort, expected);
+      assert.equal(seen.at(-1).reasoning.summary, "auto");
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(native.server);
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test("native replay removes only foreign item IDs and unknown routed models stay local", async () => {

@@ -1,7 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { EmptyCompletionGuard, EmptyCompletionTerminalGuard } from "../src/empty-completion-guard.mjs";
+import {
+  EmptyCompletionGuard,
+  EmptyCompletionTerminalGuard,
+  preludeBudgetMs,
+} from "../src/empty-completion-guard.mjs";
+
+test("pre-content budget grows with prompt size without shrinking the configured base", () => {
+  const base = 30_000;
+  assert.equal(preludeBudgetMs({ baseMs: base, requestBytes: 0 }), base);
+  assert.equal(preludeBudgetMs({ baseMs: base, requestBytes: 4_000 }), base + 150);
+  assert.equal(
+    preludeBudgetMs({ baseMs: base, requestBytes: 4 * 577_000 }),
+    base + 577 * 150,
+  );
+  assert.equal(
+    preludeBudgetMs({ baseMs: base, requestBytes: 4 * 10_000_000 }),
+    600_000,
+  );
+  assert.equal(
+    preludeBudgetMs({ baseMs: 700_000, requestBytes: 4 * 10_000_000 }),
+    700_000,
+  );
+  assert.equal(preludeBudgetMs({ baseMs: base, requestBytes: -1 }), base);
+});
 
 test("paired guards classify named and data-only completions identically across chunk layouts", async () => {
   for (const named of [true, false]) for (const mode of ["empty", "reasoning", "answer"])

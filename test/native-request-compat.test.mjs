@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   bearerToken,
   callerBroughtNoUpstreamCredential,
+  clampNativeReasoningEffort,
   normalizeNativeForSubstitutedCaller,
+  normalizeNativeReasoningEffort,
 } from "../src/native-request-compat.mjs";
 
 const CALLER = "caller-secret-0123456789abcdef";
@@ -102,4 +104,36 @@ test("bearer parsing is linear and rejects invalid schemes", () => {
   assert.equal(bearerToken(hostile), undefined);
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(elapsedMs < 250, `parsing took ${elapsedMs.toFixed(1)}ms`);
+});
+
+test("native reasoning effort clamps only known stale picker values", () => {
+  assert.equal(clampNativeReasoningEffort("minimal", ["low", "medium", "high"]), "low");
+  assert.equal(clampNativeReasoningEffort("medium", ["low", "high"]), "low");
+  assert.equal(clampNativeReasoningEffort("ultra", ["low", "high", "max"]), "max");
+  assert.equal(clampNativeReasoningEffort("high", ["low", "high"]), "high");
+  assert.equal(clampNativeReasoningEffort("future", ["low", "high"]), "future");
+});
+
+test("native reasoning normalization uses the selected model catalog ladder", () => {
+  const models = [{
+    slug: "gpt-6-astra",
+    supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map(
+      (effort) => ({ effort, description: effort }),
+    ),
+  }];
+  const payload = {
+    model: "gpt-6-astra",
+    reasoning: { effort: "minimal", summary: "auto" },
+    reasoning_effort: "ultra",
+  };
+  assert.deepEqual(normalizeNativeReasoningEffort(payload, models), [
+    { field: "reasoning.effort", from: "minimal", to: "low" },
+    { field: "reasoning_effort", from: "ultra", to: "max" },
+  ]);
+  assert.deepEqual(payload.reasoning, { effort: "low", summary: "auto" });
+  assert.equal(payload.reasoning_effort, "max");
+
+  const unknown = { model: "gpt-future", reasoning: { effort: "minimal" } };
+  assert.deepEqual(normalizeNativeReasoningEffort(unknown, models), []);
+  assert.equal(unknown.reasoning.effort, "minimal");
 });

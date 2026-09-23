@@ -22,6 +22,7 @@ import {
   callerBroughtNoUpstreamCredential,
   normalizeNativeForSubstitutedCaller,
   normalizeNativePromptCacheCompatibility,
+  normalizeNativeReasoningEffort,
 } from "./native-request-compat.mjs";
 import {
   CHECKPOINT_WARNING,
@@ -75,6 +76,7 @@ import {
   EmptyCompletionGuard,
   EmptyCompletionTerminalGuard,
   isEmptyCompletionPreludeLimitError,
+  preludeBudgetMs,
 } from "./empty-completion-guard.mjs";
 import { zaiResponsesCompatTransform } from "./zai-responses-compat.mjs";
 import {
@@ -2389,6 +2391,9 @@ async function handleResponses(request, response, requestUrl) {
           }
         }
       }
+      if (!switchyard) {
+        normalizeNativeReasoningEffort(native, catalogModels());
+      }
       normalizeNativePromptCacheCompatibility(native);
       if (Array.isArray(payload.input)) {
         native.input = normalizeNativeInput(payload.input, {
@@ -2551,7 +2556,14 @@ async function handleResponses(request, response, requestUrl) {
     // so it cannot fire on a provider that reports correctly and it disables
     // itself the moment the upstream starts reporting again.
     const upstreamContentType = upstream.headers.get("content-type") || "";
-    const createResponsePipeline = (contentType) => {
+    const requestPreludeMs = preludeBudgetMs({
+      baseMs: EMPTY_COMPLETION_PRELUDE_MS,
+      requestBytes: routedBody?.length || 0,
+    });
+    const createResponsePipeline = (
+      contentType,
+      preludeMs = requestPreludeMs,
+    ) => {
       const usageObserver = new ResponseUsageTransform(contentType, {
         estimatedInputTokens:
           ZERO_INPUT_ESTIMATE && route
@@ -2583,7 +2595,7 @@ async function handleResponses(request, response, requestUrl) {
         route && !compactV1 && !compactV2 && EMPTY_COMPLETION_RETRY
           ? new EmptyCompletionGuard(contentType, {
               maxPreludeBytes: EMPTY_COMPLETION_PRELUDE_BYTES,
-              maxPreludeMs: EMPTY_COMPLETION_PRELUDE_MS,
+              maxPreludeMs: preludeMs,
             })
           : undefined;
       if (guard) {
