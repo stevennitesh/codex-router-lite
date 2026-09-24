@@ -40,25 +40,22 @@ const MIN_ESTIMATED_INPUT_TOKENS = 1_000;
 
 // The one field of a routed body that is provably not prompt content.
 //
-// `encrypted_content` carries a reasoning item's ciphertext -- the hidden chain
-// of thought, sealed by whoever produced it. No routed provider reads it: the
-// gateway's Responses -> Chat Completions bridge drops reasoning items outright,
-// and a Responses-native routed provider cannot decrypt another vendor's token.
-// The router's own uses are already gone by the time a body is built --
-// `normalizeRoutedInput` turns compaction items into visible text, and
-// `normalizeRoutedAgentInput` inlines every collaboration payload as
-// `input_text` -- so what remains here is ciphertext and nothing else.
+// `encrypted_content` carries a reasoning item's opaque provider payload.
+// LiteLLM 1.102.1 now replays plaintext Responses reasoning as assistant
+// `reasoning_content` and can decode only the signed thinking-block encoding
+// it created itself. A Codex/OpenAI encrypted blob that reaches a GLM route is
+// neither visible prompt text nor usable by that provider, and a Responses-native
+// routed provider cannot decrypt another vendor's token. The router's own uses
+// are already gone by the time a body is built -- `normalizeRoutedInput` turns
+// compaction items into visible text, and `normalizeRoutedAgentInput` inlines
+// every collaboration payload as `input_text` -- so this key remains the one
+// provably non-visible field.
 //
 // It is also the largest thing left in the body when it survives at all.
-// `carryReasoningThroughInput` rewrites a reasoning item into assistant text
-// when it can, and the ciphertext goes with it -- but only for an item that
-// carries summary text and is immediately followed by the turn it belongs to.
-// A reasoning item with an empty summary, which is what a provider returns when
-// it has no summary to give, is forwarded whole. Measured through the router
-// itself on a twelve-turn tool loop: with summaries, no ciphertext reaches the
-// gateway at all; without them, every blob does and they are 64% of the body
-// the router sends. Charging that 64% at 3.3 bytes per token produces the
-// observed 3.9x-4.7x overcount.
+// Measured through the router itself on a twelve-turn tool loop, opaque
+// encrypted reasoning can dominate the serialized request. Charging those bytes
+// at the ordinary text rate materially overcounts the provider-visible prompt,
+// so the estimator excludes only this proven opaque field.
 //
 // Everything else stays counted. JSON escaping (0.2%-3%) and structural
 // scaffolding (1%-5%) are small and keep the estimate erring high, which is the

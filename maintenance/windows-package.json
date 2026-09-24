@@ -126,7 +126,6 @@
     "src/windows-launch-diagnosis.mjs",
     "src/windows-process-tree.ps1",
     "src/windows-task-state.mjs",
-    "src/zai-cache-usage.mjs",
     "src/zai-responses-compat.mjs"
   ]
 }

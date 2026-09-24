@@ -52,9 +52,12 @@ test("repairs the live LiteLLM reasoning-to-message Responses envelope", async (
   assert.equal(events[deltaIndex - 1].part.type, "output_text");
   assert.equal(events[deltaIndex].output_index, 1);
 
+  const reasoningDone = events.find((event) => event.type === "response.output_item.done" && event.item?.type === "reasoning");
   const textDone = events.find((event) => event.type === "response.output_text.done");
   const partDone = events.find((event) => event.type === "response.content_part.done");
   const messageDone = events.find((event) => event.type === "response.output_item.done" && event.item?.type === "message");
+  assert.equal(reasoningDone.item.id, "rs_1");
+  assert.equal(messageDone.item.id, "msg_1");
   assert.equal(textDone.output_index, 1);
   assert.equal(partDone.output_index, 1);
   assert.deepEqual(partDone.part, { type: "output_text", text: "HELLO", annotations: [] });

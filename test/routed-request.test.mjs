@@ -35,7 +35,7 @@ test("one request preparer preserves profile-specific turns and tool-disabled co
       assert.equal(turn.payload.reasoning, undefined);
     } else {
       assert.equal(turn.payload.reasoning.effort, "max");
-      assert.equal(turn.payload.input[1].content[0].type, "thinking");
+      assert.deepEqual(turn.payload.input, original.input);
       assert.equal(compact.payload.reasoning.effort, "high");
     }
   }
