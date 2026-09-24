@@ -86,8 +86,12 @@ export function score(items, vectors, threshold) {
     const vector = byId.get(item.id);
     if (!vector) throw new Error(`missing vector for ${item.id}`);
     const target = applyPolicy(vector, threshold);
-    const minimumRank = Math.min(...item.acceptable.map((label) => rank.get(label)));
-    const underRouteDistance = Math.max(0, minimumRank - rank.get(target));
+    const acceptableRanks = item.acceptable.map((label) => rank.get(label));
+    const minimumRank = Math.min(...acceptableRanks);
+    const maximumRank = Math.max(...acceptableRanks);
+    const targetRank = rank.get(target);
+    const underRouteDistance = Math.max(0, minimumRank - targetRank);
+    const overRouteDistance = Math.max(0, targetRank - maximumRank);
     return {
       id: item.id,
       expected: item.expected,
@@ -99,6 +103,8 @@ export function score(items, vectors, threshold) {
       acceptableResult: item.acceptable.includes(target),
       severeUnderRoute: item.severity === "severe" && underRouteDistance > 0,
       underRouteDistance,
+      expensiveOverRoute: overRouteDistance > 0,
+      overRouteDistance,
     };
   });
   return {
@@ -106,6 +112,195 @@ export function score(items, vectors, threshold) {
     acceptable: rows.filter((row) => row.acceptableResult).length,
     severeUnderRoutes: rows.filter((row) => row.severeUnderRoute).length,
     rows,
+  };
+}
+
+function rounded(value, digits = 6) {
+  if (!Number.isFinite(value)) return null;
+  return Number(value.toFixed(digits));
+}
+
+function emptyConfusionMatrix() {
+  return Object.fromEntries(labels.map((expected) => [
+    expected,
+    Object.fromEntries(labels.map((selected) => [selected, 0])),
+  ]));
+}
+
+function confusionMatrix(rows, field) {
+  const matrix = emptyConfusionMatrix();
+  for (const row of rows) matrix[row.expected][row[field]] += 1;
+  return matrix;
+}
+
+function providerDiagnosticRows(items, vectors, threshold) {
+  const byId = new Map(vectors.map((vector) => [vector.id, vector]));
+  const rows = [];
+  for (const item of items) {
+    const vector = byId.get(item.id);
+    if (!vector) throw new Error(`missing vector for ${item.id}`);
+    if (vector.measurementKind === "local_fallback") continue;
+    const finalTarget = applyPolicy(vector, threshold);
+    const acceptableRanks = item.acceptable.map((label) => rank.get(label));
+    const rawRank = rank.get(vector.rawSelected);
+    const finalRank = rank.get(finalTarget);
+    const minimumRank = Math.min(...acceptableRanks);
+    const maximumRank = Math.max(...acceptableRanks);
+    const sortedProbabilities = labels
+      .map((label) => vector.probabilities[label])
+      .sort((left, right) => right - left);
+    rows.push({
+      id: item.id,
+      expected: item.expected,
+      acceptable: item.acceptable,
+      severity: item.severity,
+      rawSelected: vector.rawSelected,
+      finalTarget,
+      confidence: vector.confidence,
+      probabilities: vector.probabilities,
+      rawExact: vector.rawSelected === item.expected,
+      rawAcceptable: item.acceptable.includes(vector.rawSelected),
+      finalExact: finalTarget === item.expected,
+      finalAcceptable: item.acceptable.includes(finalTarget),
+      underRouteDistance: Math.max(0, minimumRank - finalRank),
+      overRouteDistance: Math.max(0, finalRank - maximumRank),
+      rawRank,
+      finalRank,
+      probabilityMargin: sortedProbabilities[0] - sortedProbabilities[1],
+    });
+  }
+  return rows;
+}
+
+function confidenceReliability(rows) {
+  const buckets = Array.from({ length: 5 }, (_, index) => ({
+    lowerInclusive: index / 5,
+    upperExclusive: index === 4 ? null : (index + 1) / 5,
+    upperInclusive: index === 4 ? 1 : null,
+    rows: [],
+  }));
+  for (const row of rows) {
+    const index = Math.min(4, Math.floor(row.confidence * 5));
+    buckets[index].rows.push(row);
+  }
+  const summarized = buckets.map((bucket) => {
+    const count = bucket.rows.length;
+    const meanConfidence = count
+      ? bucket.rows.reduce((sum, row) => sum + row.confidence, 0) / count
+      : null;
+    const exactRate = count
+      ? bucket.rows.filter((row) => row.rawExact).length / count
+      : null;
+    const acceptableRate = count
+      ? bucket.rows.filter((row) => row.rawAcceptable).length / count
+      : null;
+    return {
+      lowerInclusive: bucket.lowerInclusive,
+      upperExclusive: bucket.upperExclusive,
+      upperInclusive: bucket.upperInclusive,
+      count,
+      meanConfidence: rounded(meanConfidence),
+      exactRate: rounded(exactRate),
+      acceptableRate: rounded(acceptableRate),
+    };
+  });
+  const total = rows.length;
+  const eceExact = total
+    ? summarized.reduce((sum, bucket) => {
+        if (!bucket.count) return sum;
+        return sum + (bucket.count / total) * Math.abs(bucket.meanConfidence - bucket.exactRate);
+      }, 0)
+    : null;
+  return {
+    calibratedProbabilityClaim: false,
+    calibrationBasis: "diagnostic only: Jev confidence versus exact raw-label correctness",
+    eceExact: rounded(eceExact),
+    buckets: summarized,
+  };
+}
+
+function probabilityDiagnostics(rows) {
+  if (!rows.length) {
+    return {
+      multiclassBrierExact: null,
+      meanTopTwoMargin: null,
+    };
+  }
+  const brier = rows.reduce((total, row) => {
+    return total + labels.reduce((sum, label) => {
+      const observed = label === row.expected ? 1 : 0;
+      const error = row.probabilities[label] - observed;
+      return sum + error * error;
+    }, 0);
+  }, 0) / rows.length;
+  const margin = rows.reduce((sum, row) => sum + row.probabilityMargin, 0) / rows.length;
+  return {
+    multiclassBrierExact: rounded(brier),
+    meanTopTwoMargin: rounded(margin),
+  };
+}
+
+function policyDiagnostics(items, vectors, threshold) {
+  const scored = score(items, vectors, threshold);
+  const providerRows = providerDiagnosticRows(items, vectors, threshold);
+  const fallbackCount = providerRows.filter((row) => row.confidence < threshold).length;
+  const exact = scored.rows.filter((row) => row.finalTarget === row.expected).length;
+  const underRouteDistance = scored.rows.reduce((sum, row) => sum + row.underRouteDistance, 0);
+  const overRouteDistance = scored.rows.reduce((sum, row) => sum + row.overRouteDistance, 0);
+  const expensiveOverRoutes = scored.rows.filter((row) => row.expensiveOverRoute).length;
+  return {
+    threshold,
+    count: scored.count,
+    classifierMeasured: providerRows.length,
+    fallbackCount,
+    fallbackRate: providerRows.length ? rounded(fallbackCount / providerRows.length) : null,
+    exact,
+    exactRate: scored.count ? rounded(exact / scored.count) : null,
+    acceptable: scored.acceptable,
+    acceptableRate: scored.count ? rounded(scored.acceptable / scored.count) : null,
+    severeUnderRoutes: scored.severeUnderRoutes,
+    underRouteDistance,
+    expensiveOverRoutes,
+    overRouteDistance,
+  };
+}
+
+function diagnosticThresholds(configuredThreshold) {
+  const thresholds = new Set([configuredThreshold]);
+  for (let index = 0; index <= 10; index += 1) thresholds.add(index / 10);
+  return [...thresholds].sort((left, right) => left - right);
+}
+
+export function routingDiagnostics(items, vectors, threshold, { includeThresholdSweep = false } = {}) {
+  const providerRows = providerDiagnosticRows(items, vectors, threshold);
+  const scored = score(items, vectors, threshold);
+  const finalRows = scored.rows.map((row) => ({
+    expected: row.expected,
+    rawSelected: row.rawSelected,
+    finalTarget: row.finalTarget,
+  }));
+  return {
+    interpretation: {
+      confidenceCalibratedProbability: false,
+      thresholdSelection: includeThresholdSweep
+        ? "development-only descriptive sweep; do not tune from holdout"
+        : "frozen configured threshold only",
+      candidateOrderStability: {
+        available: false,
+        reason: "runtime decision evidence exposes only the averaged probability ensemble, not per-order verdicts",
+      },
+    },
+    currentPolicy: policyDiagnostics(items, vectors, threshold),
+    rawConfusion: confusionMatrix(finalRows, "rawSelected"),
+    finalConfusion: confusionMatrix(finalRows, "finalTarget"),
+    confidenceReliability: confidenceReliability(providerRows),
+    probabilities: probabilityDiagnostics(providerRows),
+    ...(includeThresholdSweep
+      ? {
+          thresholdSweep: diagnosticThresholds(threshold)
+            .map((candidate) => policyDiagnostics(items, vectors, candidate)),
+        }
+      : {}),
   };
 }
 
@@ -563,10 +758,17 @@ export async function main(argv = process.argv.slice(2)) {
     const developmentScore = score(corpus.development, development.vectors, threshold);
     const developmentBuild = stableProviderBuild(development.vectors);
     const developmentParity = runtimeParity(corpus.development, development.vectors, threshold);
+    const developmentDiagnostics = routingDiagnostics(
+      corpus.development,
+      development.vectors,
+      threshold,
+      { includeThresholdSweep: true },
+    );
     evidence.runs.development = {
       vectors: development.vectors,
       attempts: development.attempts,
       score: developmentScore,
+      diagnostics: developmentDiagnostics,
     };
     evidence.developmentGates = {
       complete: development.vectors.length === corpus.development.length,
@@ -591,10 +793,25 @@ export async function main(argv = process.argv.slice(2)) {
     const allVectors = [...development.vectors, ...holdout.vectors];
     const finalBuild = stableProviderBuild(allVectors);
     const holdoutParity = runtimeParity(corpus.holdout, holdout.vectors, threshold);
+    const holdoutDiagnostics = routingDiagnostics(
+      corpus.holdout,
+      holdout.vectors,
+      threshold,
+    );
     evidence.runs.holdout = {
       vectors: holdout.vectors,
       attempts: holdout.attempts,
       score: holdoutScore,
+      diagnostics: holdoutDiagnostics,
+    };
+    evidence.diagnostics = {
+      calibrationClaim: "Jev confidence is treated as uncalibrated unless this deployment's data demonstrates otherwise",
+      developmentThresholdSweepOnly: true,
+      combinedFrozenThreshold: routingDiagnostics(
+        [...corpus.development, ...corpus.holdout],
+        allVectors,
+        threshold,
+      ),
     };
     evidence.gateResults = {
       ...evidence.developmentGates,
@@ -617,6 +834,8 @@ export async function main(argv = process.argv.slice(2)) {
       outputPath,
       developmentAcceptable: developmentScore.acceptable,
       holdoutAcceptable: holdoutScore.acceptable,
+      developmentDiagnostics: developmentDiagnostics.currentPolicy,
+      holdoutDiagnostics: holdoutDiagnostics.currentPolicy,
       providerBuilds: evidence.providerBuilds,
       paidDecisionRequests: evidence.paidDecisionRequests,
       gateResults: evidence.gateResults,

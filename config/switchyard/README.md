@@ -64,6 +64,15 @@ or routing policy require a routing-quality evaluation, not just a clean patch
 application. The [dated pin review](../../docs/history/2026-09-12-switchyard-pin.md)
 records the earlier integration decision.
 
+The paid routing evaluator also emits descriptive quality diagnostics. The
+development split gets a threshold sweep, confusion matrices, confidence
+reliability buckets, exact-label Brier/ECE-style diagnostics, probability
+margin, and under/over-routing distances. Holdout is reported only at the
+already-frozen configured threshold. Treat Jev confidence as uncalibrated unless
+deployment-specific evidence demonstrates otherwise. Candidate-order stability
+is not inferred from averaged probabilities; it remains unavailable until
+Switchyard exposes per-order verdict evidence.
+
 ## Security and request flow
 
 1. Codex sends `switchyard/auto` to Codex Router. Native Sol, Terra, Luna,

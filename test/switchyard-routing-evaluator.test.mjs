@@ -8,6 +8,7 @@ import {
   allGatesPass,
   assertCorpus,
   requestVector,
+  routingDiagnostics,
   runtimeParity,
   stableProviderBuild,
   validateEvidence,
@@ -221,6 +222,60 @@ test("runtime parity, provider stability, and promotion gates are behavioral", (
 
   assert.equal(allGatesPass({ semantic: true, runtimeParity: false }), false);
   assert.equal(allGatesPass({ semantic: true, runtimeParity: true }), true);
+});
+
+test("routing diagnostics expose selective risk without treating confidence as calibrated", () => {
+  const items = [
+    { id: "A", expected: "luna_max", acceptable: ["luna_max"], severity: "normal" },
+    { id: "B", expected: "astra_xhigh", acceptable: ["astra_medium", "astra_xhigh"], severity: "severe" },
+    { id: "C", expected: "sol_medium", acceptable: ["sol_medium"], severity: "normal" },
+    { id: "D", expected: "astra_medium", acceptable: ["sol_medium", "astra_medium"], severity: "normal" },
+  ];
+  const vector = (id, rawSelected, confidence, probabilities) => ({
+    id,
+    measurementKind: confidence < 0.35 ? "low_confidence" : "classifier",
+    rawSelected,
+    confidence,
+    probabilities,
+    runtimeFinalTarget: confidence < 0.35 ? "sol_medium" : rawSelected,
+    providerModel: "typesafe/jev-1.13-test",
+  });
+  const vectors = [
+    vector("A", "luna_max", 0.9, {
+      luna_max: 0.85, sol_medium: 0.05, astra_medium: 0.05, astra_xhigh: 0.05,
+    }),
+    vector("B", "sol_medium", 0.8, {
+      luna_max: 0.05, sol_medium: 0.7, astra_medium: 0.15, astra_xhigh: 0.1,
+    }),
+    vector("C", "astra_xhigh", 0.7, {
+      luna_max: 0.05, sol_medium: 0.1, astra_medium: 0.15, astra_xhigh: 0.7,
+    }),
+    vector("D", "astra_medium", 0.3, {
+      luna_max: 0.1, sol_medium: 0.15, astra_medium: 0.55, astra_xhigh: 0.2,
+    }),
+  ];
+
+  const diagnostics = routingDiagnostics(items, vectors, 0.35, {
+    includeThresholdSweep: true,
+  });
+
+  assert.equal(diagnostics.interpretation.confidenceCalibratedProbability, false);
+  assert.equal(diagnostics.interpretation.candidateOrderStability.available, false);
+  assert.equal(diagnostics.currentPolicy.classifierMeasured, 4);
+  assert.equal(diagnostics.currentPolicy.fallbackCount, 1);
+  assert.equal(diagnostics.currentPolicy.severeUnderRoutes, 1);
+  assert.equal(diagnostics.currentPolicy.expensiveOverRoutes, 1);
+  assert.equal(diagnostics.rawConfusion.astra_xhigh.sol_medium, 1);
+  assert.equal(diagnostics.finalConfusion.astra_medium.sol_medium, 1);
+  assert.equal(
+    diagnostics.confidenceReliability.buckets.reduce((sum, bucket) => sum + bucket.count, 0),
+    4,
+  );
+  assert.ok(Number.isFinite(diagnostics.confidenceReliability.eceExact));
+  assert.ok(Number.isFinite(diagnostics.probabilities.multiclassBrierExact));
+  assert.ok(Number.isFinite(diagnostics.probabilities.meanTopTwoMargin));
+  assert.ok(diagnostics.thresholdSweep.some((entry) => entry.threshold === 0.35));
+  assert.ok(diagnostics.thresholdSweep.some((entry) => entry.threshold === 0.5));
 });
 
 test("offline fidelity binds the ordered source patches and authored Rust fixture", () => {

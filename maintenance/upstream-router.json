@@ -3,35 +3,43 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "5e1b49e6e3fea1ada57f0e7fa6ca7612e9d17300",
+  "lastReviewedCommit": "1a339dda8e6934024d933f9a48f4b9a7d954f6d0",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
     "3706102a and 0829fa5a: malformed function JSON gate/retry; investigate with exact provider evidence before changing streamed execution and retry semantics",
-    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router"
+    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
+    "1a339dda and a7e37d45: bound the process-wide upstream connect phase and derive the retry budget from the same limit; retained-owner reliability candidate because the current 5s pre-retry budget can expire before undici's default connect timeout, but adoption changes connection racing and retry timing and needs isolated blackhole/proxy verification first"
   ],
-  "reviewedAt": "2026-09-18",
+  "reviewedAt": "2026-09-23",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
-      "b65ea270: missing Windows scheduled task cannot report successful start/restart"
+      "b65ea270: missing Windows scheduled task cannot report successful start/restart",
+      "2c1f7708: clamp a stale native reasoning effort after model switches against the selected model's live catalog ladder",
+      "fae956e8 and c450ddf3: preserve a still-alive LiteLLM cold start across bounded health budgets instead of restarting its import",
+      "16077577: scale the pre-content completion budget with routed request size while retaining the small-request base"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
       "c5ab6369: incompatible custom-call item IDs already removed by namespace relay",
       "799a7196: stored native reasoning retained; only duplicate-reference extension deferred",
-      "d9f61093: choice-bearing terminal usage normalized",
       "fa053c11: configured child effort written to exact generated roles",
       "448a593a: GLM native text/image modalities",
       "8e06051a: no keepalive after Responses terminal",
-      "6342daa9: root TOML assignments use the existing lexer"
+      "6342daa9: root TOML assignments use the existing lexer",
+      "d9f61093 and later LiteLLM 1.102.1 behavior: choice-bearing terminal usage and cached-token details are now preserved by the pinned gateway; the older local preprocessor was retired after differential verification",
+      "bb0cc4a2 and a9702a86: one provider-facing chat tool name maps to one native tool through request-local collision-safe namespace aliases",
+      "fd99bf4b and 532bae89: non-streaming Chat JSON reasoning replay for the retained GLM bridge is owned by pinned LiteLLM 1.102.1; Pareto remains direct Responses"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
       "Generic providers, Console Go/OpenCode Union, Muse, Moonshot, DeepSeek, Hy4, Grok, Vertex, DashScope, keyless discovery and other clients are outside Lite scope",
       "UI/tray/dashboard, POSIX distribution, catalog curation/discovery, failover/quota aggregation and generic YAML editing are outside retained owners",
       "Upstream-only release/build/test/docs and merge commits; native live app schema supersedes upstream app examples",
-      "d2a317aa: exposing additional Chat reasoning is a behavior expansion, not required app compatibility"
+      "d2a317aa: exposing additional Chat reasoning is a behavior expansion, not required app compatibility",
+      "a4709f75: upstream loopback-refusal hint wording is diagnostic UX, not a retained correctness dependency",
+      "The 15-commit 02b7ef98..1a339dda tail's control-center model curation, changelog tooling, skill-doc cleanup, and OpenCode-free client gating are outside Router Lite retained owners"
     ]
   }
 }
