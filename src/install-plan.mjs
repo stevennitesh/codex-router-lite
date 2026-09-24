@@ -15,17 +15,15 @@ import { venvRuntimeProblem } from "./venv-runtime.mjs";
 
 export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// litellm still needs fastapi<0.140: `get_flat_dependant` was removed in 0.140
-// and `litellm/proxy/management_endpoints/management_v1/common.py` imports it,
-// so the proxy dies on startup with an ImportError. Its own metadata does not
-// say so -- 1.96.2 declares `fastapi<1.0,>=0.136.3` -- which is why the cap is
-// held here and why lifting it needs the gateway *booted*, not just resolved.
-// Verified against 1.96.2 by starting the proxy with this pin.
+// Keep FastAPI 0.139.2 as the known-good gateway pair. LiteLLM 1.102.1 was
+// booted and exercised on Windows with CPython 3.10.19 against this exact pin.
+// FastAPI >=0.140 has not been independently requalified here, so lifting this
+// pin remains a separate dependency change that must regenerate the Windows
+// lock and boot the real gateway before acceptance.
 //
-// The litellm pin itself is a security floor as much as a version: 1.96.2
-// includes the upstream fix for CVE-2026-84377. Earlier 1.95.x releases also
-// required `cryptography>=48.0.1,<49.0`, which no patched cryptography can
-// satisfy (GHSA-g6cj-pr64-35w5 is fixed in 50.0.0). Do not move it back.
+// LiteLLM 1.102.1 remains above the 1.96.2 security floor that fixed
+// CVE-2026-84377 and resolves cleanly with cryptography 50.0.0. Do not move
+// below the prior floor merely to reduce dependency churn.
 const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.102.1", "fastapi==0.139.2"];
 
 // Pinning the two direct requirements left their whole transitive tree floating:
