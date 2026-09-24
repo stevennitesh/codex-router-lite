@@ -17,7 +17,6 @@ import { PORTS } from "./paths.mjs";
 import { OPENROUTER_MODELS as routes, CANONICAL_OPENROUTER_ROUTE as defaultRoute, PROVIDERS, resolveProviderBaseUrl } from "./routed-models.mjs";
 import { resolveProviderCredential } from "./provider-credentials.mjs";
 import { fetchWithRetry } from "./upstream-retry.mjs";
-import { zaiCacheUsageTransform } from "./zai-cache-usage.mjs";
 import { installStableFetchTransport } from "./fetch-transport.mjs";
 import { prepareOpenRouterRequest } from "./openrouter-request.mjs";
 import { FORWARDER_LOCAL_ERROR_HEADER } from "./error-translation.mjs";
@@ -134,9 +133,7 @@ async function handle(request, response) {
       });
       return;
     }
-    const contentType = upstream.headers.get("content-type") || "";
-    const transform = zaiCacheUsageTransform("openrouter", contentType);
-    await pipeResponse(upstream, response, PROVIDER_RESPONSE_DENYLIST, transform);
+    await pipeResponse(upstream, response, PROVIDER_RESPONSE_DENYLIST);
   } finally {
     request.off("aborted", onAborted);
     response.off("close", onClosed);
