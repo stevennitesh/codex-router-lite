@@ -14,6 +14,13 @@
 // `canRetry` predicate is the second line of defence, re-checked before every
 // single retry. Retrying after partial output would duplicate the stream.
 
+import { connectTimeoutMs } from "./connect-timeout.mjs";
+
+const MAX_RETRIES = 5;
+const MAX_BACKOFF_MS = 5_000;
+const MAX_BUDGET_MS = 60_000;
+const MAX_CAUSE_DEPTH = 8;
+
 const DEFAULT_RETRIES = 2;
 const DEFAULT_BACKOFF_MS = 250;
 // Backoff grows 250ms -> 750ms, so two retries add at most one second of
@@ -21,15 +28,14 @@ const DEFAULT_BACKOFF_MS = 250;
 // five times on its own and the two loops multiply, so the router's share has
 // to stay small enough that the product is still a fast failure.
 const BACKOFF_FACTOR = 3;
-// Retry only while the request has been cheap so far. Most of the retryable
-// failures below arrive in milliseconds, but two do not: a 504 the edge spent
-// half a minute producing, and a connect timeout. Tripling either turns a slow
-// failure into a hang, which is worse than the 503 this exists to absorb.
-const DEFAULT_BUDGET_MS = 5_000;
-const MAX_RETRIES = 5;
-const MAX_BACKOFF_MS = 5_000;
-const MAX_BUDGET_MS = 60_000;
-const MAX_CAUSE_DEPTH = 8;
+// Slow edge failures remain outside the retry budget, but TCP connect timeout
+// is different: the dispatcher now gives it an explicit bound, so a transient
+// connect failure is cheap enough to retry. Derive the default budget from the
+// same bound so the retryable error and the budget cannot drift apart again.
+const DEFAULT_BUDGET_MS = Math.min(
+  MAX_BUDGET_MS,
+  Math.max(5_000, 3 * connectTimeoutMs()),
+);
 
 function clampedInteger(raw, fallback, min, max) {
   const value = Number(raw);
