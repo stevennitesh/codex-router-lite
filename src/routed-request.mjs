@@ -45,7 +45,6 @@ export function prepareRoutedRequest(payload, route, {
   payload = search.payload;
   const hostedSearch = !compaction && search.searchMode === "hosted" && payloadHasHostedSearchIntent(payload);
   input = normalizeProviderAppToolOutputs(input);
-  if (!compaction && !hostedSearch && transport === "chat") carryReasoningThroughInput(input);
   const clientTools = compaction ? [] : restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata);
   const flat = compaction
     ? { tools: [], namespaces: new Map(), flattened: false }
@@ -111,106 +110,4 @@ function normalizeOrphanAppToolOutput(item) {
 function normalizeProviderAppToolOutputs(input) {
   if (!Array.isArray(input)) return input;
   return input.map(normalizeOrphanAppToolOutput);
-}
-
-// LiteLLM's Responses-to-chat translation drops `reasoning`
-// input items entirely (`_transform_responses_api_input_item_to_chat_completion_message`
-// returns nothing for an item whose `content` is null, which is the shape
-// Codex stores), so the reasoning text never reaches the provider at all.
-// Carry each run of reasoning items onto the assistant turn it belongs to, and
-// the translation keeps it as that message's content. In-place, no-op when
-// there is nothing to carry.
-//
-// Every assistant turn needs covering, not only the ones that call a tool.
-// This used to carry the reasoning solely into a following `function_call` or
-// an empty assistant filler, which is the shape of a tool loop -- so a turn
-// that answers in prose lost its reasoning, and the provider refused the
-// next request because its reasoning history is missing.
-function carryReasoningThroughInput(input) {
-  if (!Array.isArray(input) || input.length < 2) return;
-  for (let index = 0; index < input.length - 1; index += 1) {
-    if (input[index]?.type !== "reasoning") continue;
-    // One assistant turn can emit several reasoning items in a row, and they
-    // all belong to the turn that follows. Carrying only the item nearest the
-    // turn dropped everything the model thought before it.
-    let end = index;
-    const texts = [];
-    while (end < input.length && input[end]?.type === "reasoning") {
-      const text = reasoningItemText(input[end]);
-      if (text) texts.push(text);
-      end += 1;
-    }
-    const text = texts.join("\n");
-    const next = input[end];
-    // Only the last item of the run is rewritten. The earlier ones stay
-    // `reasoning` items, which the translation drops -- their text is already
-    // in the joined value, and leaving them in place keeps the array the same
-    // length for every other pass over it.
-    if (text && next) {
-      if (next.type === "function_call" || next.type === "custom_tool_call") {
-        input[end - 1] = assistantTextItem(text);
-      } else if (next.type === "message" && next.role === "assistant") {
-        // Merged into the assistant message rather than inserted in front of
-        // it. A separate message would put two assistant turns back to back,
-        // which the same strict chat-completions providers reject outright --
-        // and the tool-call branch above ends up merged anyway, because
-        // LiteLLM folds a following function_call into the assistant message
-        // it already emitted.
-        input[end] = mergeAssistantText(next, text);
-      }
-    }
-    index = end - 1;
-  }
-}
-
-function assistantTextItem(text) {
-  return {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "thinking", text }],
-  };
-}
-
-// The reasoning goes in front of the answer it produced. `content` is an array
-// of parts on everything Codex stores, but a bare string is equally legal on
-// the Responses API, so both shapes are handled rather than assumed away.
-function mergeAssistantText(item, text) {
-  const part = { type: "thinking", text };
-  if (typeof item.content === "string") {
-    return {
-      ...item,
-      content: item.content
-        ? [part, { type: "output_text", text: item.content }]
-        : [part],
-    };
-  }
-  return {
-    ...item,
-    content: [part, ...(Array.isArray(item.content) ? item.content : [])],
-  };
-}
-
-function reasoningItemText(item) {
-  const summary = item.summary;
-  if (typeof summary === "string" && summary) return summary;
-  if (Array.isArray(summary)) {
-    const text = summary
-      .map((part) => (part && typeof part.text === "string" ? part.text : undefined))
-      .filter(Boolean)
-      .join("\n");
-    if (text) return text;
-  }
-  const content = item.content;
-  if (typeof content === "string" && content) return content;
-  // Reasoning may use an array of output_text parts rather than a summary string.
-  // Without this, the reasoning never reaches the chat history and the
-  // following tool-call turn 400s for missing `reasoning_content`.
-  if (Array.isArray(content)) {
-    const text = content
-      .map((part) => (part && typeof part.text === "string" ? part.text : undefined))
-      .filter(Boolean)
-      .join("\n");
-    if (text) return text;
-  }
-  return undefined;
 }
