@@ -48,6 +48,7 @@
     "src/codex-native-session.mjs",
     "src/compaction-checkpoint.mjs",
     "src/config-manager.mjs",
+    "src/connect-timeout.mjs",
     "src/control-health.mjs",
     "src/control.mjs",
     "src/doctor.mjs",

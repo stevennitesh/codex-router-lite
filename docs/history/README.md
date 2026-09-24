@@ -6,6 +6,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Bounded connect retry integration, 2026-09-23](2026-09-23-connect-retry-budget.md)
 - [Router upstream review and Jev evaluator diagnostics, 2026-09-23](2026-09-23-router-upstream-and-jev-diagnostics.md)
 - [LiteLLM 1.102.1 shim retirement audit, 2026-09-23](2026-09-23-litellm-shim-retirement.md)
 - [LiteLLM 1.102.1 compatibility refresh, 2026-09-23](2026-09-23-litellm-1.102.1.md)

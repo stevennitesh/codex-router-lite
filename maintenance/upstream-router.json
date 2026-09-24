@@ -8,8 +8,7 @@
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
     "3706102a and 0829fa5a: malformed function JSON gate/retry; investigate with exact provider evidence before changing streamed execution and retry semantics",
-    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
-    "1a339dda and a7e37d45: bound the process-wide upstream connect phase and derive the retry budget from the same limit; retained-owner reliability candidate because the current 5s pre-retry budget can expire before undici's default connect timeout, but adoption changes connection racing and retry timing and needs isolated blackhole/proxy verification first"
+    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router"
   ],
   "reviewedAt": "2026-09-23",
   "disposition": {
@@ -18,7 +17,8 @@
       "b65ea270: missing Windows scheduled task cannot report successful start/restart",
       "2c1f7708: clamp a stale native reasoning effort after model switches against the selected model's live catalog ladder",
       "fae956e8 and c450ddf3: preserve a still-alive LiteLLM cold start across bounded health budgets instead of restarting its import",
-      "16077577: scale the pre-content completion budget with routed request size while retaining the small-request base"
+      "16077577: scale the pre-content completion budget with routed request size while retaining the small-request base",
+      "a9ccca2d, a7e37d45 and 1a339dda: bound direct/proxy TCP connect establishment at 3s by default, race address families, and derive the retry budget from the same bound so UND_ERR_CONNECT_TIMEOUT retries are reachable"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",

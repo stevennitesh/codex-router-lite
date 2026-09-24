@@ -1,5 +1,6 @@
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, setGlobalDispatcher } from "undici";
 
+import { connectTimeoutMs } from "./connect-timeout.mjs";
 import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 
 // Node 26's bundled fetch negotiates HTTP/2 by default. A live router process
@@ -21,10 +22,15 @@ import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 // hold connections longer than it does -- surfacing as UND_ERR_SOCKET on a
 // POST Undici will not retry. Only the loopback probe pool below, whose one
 // origin is our own server, raises it.
-function fetchDispatcherOptions() {
+const AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 250;
+
+function fetchDispatcherOptions(environment = process.env) {
   return {
     allowH2: false,
     pipelining: 1,
+    connectTimeout: connectTimeoutMs(environment),
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS,
   };
 }
 
@@ -38,7 +44,7 @@ export function installStableFetchTransport({
   const DispatcherClass = environmentHttpProxyConfigured(environment, execArgv)
     ? EnvHttpProxyAgentClass
     : AgentClass;
-  const dispatcher = new DispatcherClass(fetchDispatcherOptions());
+  const dispatcher = new DispatcherClass(fetchDispatcherOptions(environment));
   setDispatcher(dispatcher);
   return dispatcher;
 }

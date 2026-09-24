@@ -37,6 +37,24 @@ visibility. A model
 whose native entry still has `visibility: "hide"` remains absent by design;
 automatic refresh cannot turn a staged account rollout into an entitlement.
 
+## Native or provider requests fail with a connect timeout
+
+A transport error carrying `UND_ERR_CONNECT_TIMEOUT` means Router did not
+establish the TCP connection before its connect-phase bound. It is not evidence
+that the provider received or executed the request.
+
+The process-wide direct and opted-in proxy dispatchers use a 3-second default
+connect bound. `CODEX_ROUTER_CONNECT_TIMEOUT_MS` may override it from 500 ms
+through 30 seconds. The default pre-header retry budget is derived from the same
+bound, so the retry loop can actually absorb transient connect failures instead
+of discovering them only after its budget has expired.
+
+Do not raise the timeout merely to hide a persistently unreachable network
+path. Check DNS, proxy selection, local interface/routing, and whether the same
+origin is reachable outside Router. Slow HTTP failures such as an upstream 504
+remain subject to the retry budget and are not multiplied simply because TCP
+connects are bounded.
+
 ## GLM fails
 
 Confirm the selected slug is `openrouter/glm-5.3-flash` for Novita or
