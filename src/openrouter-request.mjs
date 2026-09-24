@@ -84,6 +84,18 @@ export function prepareOpenRouterRequest(payload) {
     prompt_cache_retention: _promptCacheRetention,
     ...clean
   } = payload;
+  // LiteLLM 1.102.x translates a Responses reasoning object into a
+  // Chat Completions `reasoning_effort` object. OpenRouter's documented chat
+  // contract names that object `reasoning`; retain scalar reasoning_effort for
+  // older OpenAI-compatible callers, but canonicalize only the object shape.
+  if (
+    clean.reasoning_effort &&
+    typeof clean.reasoning_effort === "object" &&
+    !Array.isArray(clean.reasoning_effort)
+  ) {
+    if (clean.reasoning === undefined) clean.reasoning = clean.reasoning_effort;
+    delete clean.reasoning_effort;
+  }
   // Endpoint quirks belong to the selected and certified endpoint record. A
   // provider change must update this flag and refresh exact-route proof rather
   // than inheriting Novita's measured behavior by accident.
