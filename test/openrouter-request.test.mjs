@@ -40,6 +40,35 @@ test("final OpenRouter preparation pins each endpoint and preserves caller input
   }
 });
 
+test("LiteLLM reasoning object is canonicalized without changing scalar compatibility", () => {
+  for (const route of externalRoutes.filter(route => route.requestProfile === "glm-5.3-flash")) {
+    const objectInput = {
+      model: route.gatewayModel,
+      reasoning_effort: { effort: "high", summary: "auto" },
+    };
+    const saved = structuredClone(objectInput);
+    const objectOutput = prepareOpenRouterRequest(objectInput);
+    assert.deepEqual(objectInput, saved);
+    assert.deepEqual(objectOutput.reasoning, { effort: "high", summary: "auto" });
+    assert.equal(Object.hasOwn(objectOutput, "reasoning_effort"), false);
+
+    const existing = prepareOpenRouterRequest({
+      model: route.gatewayModel,
+      reasoning: { effort: "medium" },
+      reasoning_effort: { effort: "high", summary: "auto" },
+    });
+    assert.deepEqual(existing.reasoning, { effort: "medium" });
+    assert.equal(Object.hasOwn(existing, "reasoning_effort"), false);
+
+    const scalar = prepareOpenRouterRequest({
+      model: route.gatewayModel,
+      reasoning_effort: "high",
+    });
+    assert.equal(scalar.reasoning_effort, "high");
+    assert.equal(Object.hasOwn(scalar, "reasoning"), false);
+  }
+});
+
 test("empty tools preserve non-forcing semantics and reject impossible forced choices", () => {
   for (const route of externalRoutes.filter(route => route.requestProfile === "glm-5.3-flash")) {
     for (const tool_choice of [undefined, "auto", "none"]) {

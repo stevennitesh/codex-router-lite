@@ -2,5 +2,5 @@
 #
 # Mirrors PYTHON_REQUIREMENTS in src/install-plan.mjs. Change both together,
 # then regenerate the lock with the command in compatibility-maintenance.md.
-litellm[proxy]==1.96.2
+litellm[proxy]==1.102.1
 fastapi==0.139.2
