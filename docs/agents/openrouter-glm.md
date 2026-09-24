@@ -15,19 +15,21 @@ flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
 
-The custom-tool relay follows the pinned LiteLLM input conversion: unwrap a
-string `content`, otherwise retain raw arguments, including its one-million
-Unicode-code-point parse limit. Reject incompatible non-string content and
-any disagreement between streamed, completed, and closed input. Fragmented
-response preludes may exceed the normal staging budget within the bounded
-10 MiB event limit; the empty-completion verdict still applies.
+LiteLLM 1.102.1 owns the GLM chat bridge's custom-tool conversion and reasoning
+history replay. It converts native custom tools to JSON-schema functions, retains
+their grammar in the description, restores completed calls to
+`custom_tool_call`, and replays Responses reasoning as assistant
+`reasoning_content`. Router Lite still owns namespace/collision restoration,
+Pareto's direct-Responses custom-tool bridge, and exact provider policy.
 
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
-`src/zai-responses-compat.mjs` repairs missing message envelopes, separates
-message IDs reused from reasoning items, and closes assistant text before an
-overlapping tool-call lifecycle on the two exact GLM routes. Test these repairs
-through the namespace relay: a duplicate identity can disable restoration of
-a later app call. Keep the generic relay's identity checks intact.
+`src/zai-responses-compat.mjs` remains required because 1.102.1 can still emit
+visible text after reasoning without the message/content opening events, can
+close that visible text with a `reasoning_text` part, and can overlap an open
+assistant message with a function-call lifecycle. The transform repairs only
+those envelope/order defects. LiteLLM 1.102.1 now generates distinct reasoning
+and message identities itself, so Router Lite no longer rewrites those IDs.
+Keep the generic namespace relay's identity checks intact.
 
 Fresh hosted-search turns bypass the Chat Completions translation and use the internal OpenRouter forwarder's direct Responses path. `src/openrouter-hosted-search.mjs` maps only native `web_search` and `web_search_preview` tools to the bounded `openrouter:web_search` server tool, restores returned items to `web_search_call`, preserves citations and sources, and reverses completed search history on another direct-search turn. A plain function named `web_search` is unrelated and must remain unchanged. Keep the checked-in Exa engine, result and call limits, exact endpoint policy, and fallback prohibition together. OpenRouter reports live search usage under `server_tool_use_details`; tolerate the documented `server_tool_use` spelling in diagnostics, but never infer zero from an absent field.
 
