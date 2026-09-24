@@ -26,7 +26,7 @@ export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
 // includes the upstream fix for CVE-2026-84377. Earlier 1.95.x releases also
 // required `cryptography>=48.0.1,<49.0`, which no patched cryptography can
 // satisfy (GHSA-g6cj-pr64-35w5 is fixed in 50.0.0). Do not move it back.
-const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.96.2", "fastapi==0.139.2"];
+const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.102.1", "fastapi==0.139.2"];
 
 // Pinning the two direct requirements left their whole transitive tree floating:
 // every install re-resolved `litellm[proxy]` against PyPI and executed whatever
