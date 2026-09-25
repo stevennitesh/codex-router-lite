@@ -43,7 +43,6 @@
     "src/catalog.mjs",
     "src/routed-request.mjs",
     "src/codex-agent-catalog.mjs",
-    "src/codex-app-tools.mjs",
     "src/codex-binary.mjs",
     "src/codex-native-session.mjs",
     "src/compaction-checkpoint.mjs",
