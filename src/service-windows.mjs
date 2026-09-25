@@ -87,7 +87,7 @@ function wrapper() {
     .join("\r\n")}\r\n"${cmdEscape(process.execPath)}" "${cmdEscape(start)}" >> "${cmdEscape(LOG_PATH)}" 2>&1\r\n`;
 }
 
-// The scheduled task launches this script through `wscript.exe //B //NoLogo`,
+// The scheduled task launches this script through `wscript.exe //E:VBScript //B //NoLogo`,
 // which is a windowless host, and the script starts the CMD wrapper with a
 // window style of 0. Without it the wrapper owned a console window that stayed
 // on screen for the router's lifetime and reappeared on every watchdog restart.
@@ -169,14 +169,25 @@ function writeLaunchers() {
   );
 }
 
-// `//B` suppresses script errors and prompts, `//NoLogo` suppresses the banner;
-// neither host allocates a console, so nothing is drawn at logon.
+// `//E:VBScript` selects the script engine explicitly so a user-level `.vbs`
+// file association cannot redirect the launcher into an editor. `//B` suppresses
+// script errors and prompts, `//NoLogo` suppresses the banner, and the host stays
+// windowless at logon.
 function taskAction() {
   return {
     execute: "wscript.exe",
     // Unlike cmd.exe, wscript.exe follows the standard command-line parser, so
-    // the launcher path takes a single quote pair. cmd.exe's doubled-quote form
-    // would parse as an empty argument followed by a split path.
+    // the launcher path takes a single quote pair. Select VBScript explicitly:
+    // a `.vbs` association owned by an editor must not disable Router startup.
+    argument: `//E:VBScript //B //NoLogo "${launcherPath}"`,
+  };
+}
+
+// Accept the immediately previous Router-owned action only for migration.
+// install rewrites it to taskAction(); unrelated wscript actions stay foreign.
+function previousTaskAction() {
+  return {
+    execute: "wscript.exe",
     argument: `//B //NoLogo "${launcherPath}"`,
   };
 }
@@ -191,6 +202,7 @@ function legacyTaskAction() {
 function taskSnapshot() {
   if (!taskExists()) return { exists: false };
   const canonical = taskAction();
+  const previous = previousTaskAction();
   const legacy = legacyTaskAction();
   const script = [
     "$task = Get-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -ErrorAction Stop",
@@ -203,7 +215,7 @@ function taskSnapshot() {
     "if ($actions.Count -eq 1) {",
     "  $execute = [string]$actions[0].Execute",
     "  $arguments = [string]$actions[0].Arguments",
-    "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
+    "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_PREVIOUS_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_PREVIOUS_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
     "}",
     "$scheduler = New-Object -ComObject Schedule.Service",
     "$scheduler.Connect()",
@@ -216,6 +228,8 @@ function taskSnapshot() {
     CODEX_ROUTER_TASK: taskName,
     CODEX_ROUTER_TASK_EXECUTE: canonical.execute,
     CODEX_ROUTER_TASK_ARGUMENT: canonical.argument,
+    CODEX_ROUTER_PREVIOUS_EXECUTE: previous.execute,
+    CODEX_ROUTER_PREVIOUS_ARGUMENT: previous.argument,
     CODEX_ROUTER_LEGACY_EXECUTE: legacy.execute,
     CODEX_ROUTER_LEGACY_ARGUMENT: legacy.argument,
   };
