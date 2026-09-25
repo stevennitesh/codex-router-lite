@@ -76,6 +76,7 @@ test("external routes do not inherit legacy native summary or parallel-tool flag
   const model = routedModel(native, routeFixture, native);
   assert.equal(Object.hasOwn(model, "supports_reasoning_summaries"), false);
   assert.equal(Object.hasOwn(model, "supports_parallel_tool_calls"), false);
+  assert.equal(model.supports_reasoning_effort_updates, false);
 });
 
 test("signed-in picker overlay cannot hide Codex native base entries", () => {
@@ -128,6 +129,7 @@ function switchyardNative(slug, overrides = {}) {
     truncation_policy: { mode: "tokens", limit: 10000 },
     support_verbosity: true,
     supports_search_tool: true,
+    supports_reasoning_effort_updates: false,
     supports_parallel_tool_calls: true,
     web_search_tool_type: "text_and_image",
     supports_image_detail_original: true,
@@ -168,6 +170,7 @@ function mergedSwitchyard(nativeOverrides = {}) {
         include_plugin_usage_instructions: false,
         include_apps_usage_instructions: false,
         supports_parallel_tool_calls: false,
+        supports_reasoning_effort_updates: true,
         node_repl_auto_review_required: true,
         experimental_supported_tools: ["shared", "clock"],
         multi_agent_reasoning_effort: "xhigh",
@@ -198,6 +201,7 @@ test("Switchyard publishes the common native contract with neutral Sol instructi
   assert.equal(model.node_repl_auto_review_required, true);
   assert.equal(model.node_repl_disabled, false);
   assert.equal(model.supports_parallel_tool_calls, false);
+  assert.equal(model.supports_reasoning_effort_updates, false);
   assert.equal(model.web_search_tool_type, "text_and_image");
   assert.equal(model.default_reasoning_summary, "none");
   assert.equal(model.default_verbosity, "low");
