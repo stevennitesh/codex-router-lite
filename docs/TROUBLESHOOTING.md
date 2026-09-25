@@ -82,7 +82,11 @@ an intentional verbosity preference in a native-only configuration when needed.
 
 ## App functions do not execute
 
-Compare the current Windows Codex tool definitions with `src/codex-app-tools.mjs`. Check the flattened call and restored namespace as a pair. A provider returning plausible JSON does not prove the app received a native tool call.
+Capture the failing request's current tool declaration and namespace metadata
+from the app turn, then check the flattened provider call and restored namespace
+as a pair. Router does not ship a static Desktop tool registry: the request-local
+client definition is the authority. A provider returning plausible JSON does not
+prove the app received a native tool call.
 
 ## Switchyard is unavailable
 
