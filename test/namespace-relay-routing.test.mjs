@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
+import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/codex-app-tools.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
@@ -171,7 +171,7 @@ function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash")
         type: "namespace",
         name: "codex_app",
         tools: [
-          ...CODEX_APP_TOOLS[0].tools,
+          ...CODEX_APP_TOOL_FIXTURE[0].tools,
           { type: "function", name: "navigate_to_codex_page" },
           { type: "function", name: "read_thread_terminal" },
         ],
