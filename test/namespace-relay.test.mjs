@@ -12,7 +12,7 @@ import {
   rewriteNamespaceResponsePayload,
   restorePreflattenedToolNamespaces,
 } from "../src/namespace-relay.mjs";
-import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/codex-app-tools.mjs";
+import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
 
 test("ordinary empty-call diagnostics locate the boundary without inventing arguments or logging content", async () => {
   const flat = flattenNamespaceTools([{ type: "namespace", name: "collaboration", tools: [
