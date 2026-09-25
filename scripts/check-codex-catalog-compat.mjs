@@ -161,6 +161,7 @@ function buildCandidate(binary, nativeOverride) {
     "include_apps_usage_instructions",
     "include_plugin_usage_instructions",
     "supports_search_tool",
+    "supports_reasoning_effort_updates",
     "supports_image_detail_original",
     "use_responses_lite",
   ]) {
@@ -219,6 +220,7 @@ function buildCandidate(binary, nativeOverride) {
     assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
     assert.equal("supports_reasoning_summaries" in builtGlm, false);
     assert.equal("supports_parallel_tool_calls" in builtGlm, false);
+    assert.equal(builtGlm.supports_reasoning_effort_updates, false);
     assert.deepEqual(builtGlm.experimental_supported_tools, []);
     assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
   }
