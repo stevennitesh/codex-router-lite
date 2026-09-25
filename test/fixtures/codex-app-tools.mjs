@@ -110,6 +110,20 @@ export const CODEX_APP_TOOL_FIXTURE = Object.freeze([
       },
       {
         type: "function",
+        name: "send_message_to_thread",
+        description: "Fixture thread-message tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            threadId: { type: "string" },
+            prompt: { type: "string" },
+          },
+          required: ["threadId", "prompt"],
+          additionalProperties: false,
+        },
+      },
+      {
+        type: "function",
         name: "read_thread",
         description: "Fixture read-thread tool.",
         inputSchema: {
