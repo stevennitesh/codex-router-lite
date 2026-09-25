@@ -244,8 +244,8 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
 }
 
 Write-Step "Result"
-if ($snapshotMatches -and $healthClean) {
-  Write-Host "Current repository, runtime, catalog, and app-tool snapshot checks passed."
+if ($appToolsVersion -and $healthClean) {
+  Write-Host "Current repository, runtime, catalog, and app-tool relay checks passed."
 } else {
   Write-Host "Source checks passed, but warnings above still require confirmation before declaring full compatibility."
 }
