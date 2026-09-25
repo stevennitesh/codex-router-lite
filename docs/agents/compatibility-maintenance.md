@@ -17,9 +17,9 @@ and writes disposable analysis evidence, but does not mutate the live runtime):
 ```
 
 It fetches repository heads, resolves and signature-checks the current Windows
-Codex build, compares it with the checked-in app-tool snapshot, checks the
-current native catalog, reads Router health, runs the retained suite, and
-reports Switchyard upstream drift. It does not edit product source, consume provider
+Codex build, records the bundled app-tools plugin identity when available,
+checks the current native catalog, reads Router health, runs the retained suite,
+and reports Switchyard upstream drift. It does not edit product source, consume provider
 quota, or restart the service. Use `-SkipFetch` only when offline and
 `-SkipTests` only for a quick diagnostic that will not support a compatibility
 claim.
