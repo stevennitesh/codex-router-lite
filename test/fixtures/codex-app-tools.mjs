@@ -9,6 +9,57 @@ export const CODEX_APP_TOOL_FIXTURE = Object.freeze([
     tools: [
       {
         type: "function",
+        name: "create_worktree",
+        description: "Fixture managed-worktree tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            ref: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        type: "function",
+        name: "attach_artifact",
+        description: "Fixture artifact attachment tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artifact_type: { type: "string" },
+            url: { type: "string" },
+          },
+          required: ["artifact_type", "url"],
+          additionalProperties: false,
+        },
+      },
+      {
+        type: "function",
+        name: "list_artifacts",
+        description: "Fixture artifact listing tool.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      {
+        type: "function",
+        name: "remove_artifact",
+        description: "Fixture artifact removal tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artifact_type: { type: "string" },
+            url: { type: "string" },
+          },
+          required: ["artifact_type", "url"],
+          additionalProperties: false,
+        },
+      },
+      {
+        type: "function",
         name: "create_thread",
         description: "Fixture create-thread tool.",
         inputSchema: {
