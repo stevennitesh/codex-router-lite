@@ -6,6 +6,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Complete Codex 0.158 compatibility update, 2026-09-25](2026-09-25-complete-codex-update.md)
 - [Codex app 26.924.1866 compatibility review, 2026-09-25](2026-09-25-codex-app-compatibility.md)
 - [Bounded connect retry integration, 2026-09-23](2026-09-23-connect-retry-budget.md)
 - [Router upstream review and Jev evaluator diagnostics, 2026-09-23](2026-09-23-router-upstream-and-jev-diagnostics.md)
