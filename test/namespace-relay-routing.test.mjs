@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/codex-app-tools.mjs";
+import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
