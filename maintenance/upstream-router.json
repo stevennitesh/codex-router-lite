@@ -3,14 +3,15 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "1a339dda8e6934024d933f9a48f4b9a7d954f6d0",
+  "lastReviewedCommit": "9fb6440d9f310ce03b28e9b4eaeaf3b970b2703f",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
     "3706102a and 0829fa5a: malformed function JSON gate/retry; investigate with exact provider evidence before changing streamed execution and retry semantics",
-    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router"
+    "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
+    "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
   ],
-  "reviewedAt": "2026-09-23",
+  "reviewedAt": "2026-09-25",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -18,7 +19,8 @@
       "2c1f7708: clamp a stale native reasoning effort after model switches against the selected model's live catalog ladder",
       "fae956e8 and c450ddf3: preserve a still-alive LiteLLM cold start across bounded health budgets instead of restarting its import",
       "16077577: scale the pre-content completion budget with routed request size while retaining the small-request base",
-      "a9ccca2d, a7e37d45 and 1a339dda: bound direct/proxy TCP connect establishment at 3s by default, race address families, and derive the retry budget from the same bound so UND_ERR_CONNECT_TIMEOUT retries are reachable"
+      "a9ccca2d, a7e37d45 and 1a339dda: bound direct/proxy TCP connect establishment at 3s by default, race address families, and derive the retry budget from the same bound so UND_ERR_CONNECT_TIMEOUT retries are reachable",
+      "259a04c7 and merge 8ff371ea: pin the Windows hidden launcher to //E:VBScript while recognizing the previous Router-owned action for safe migration"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -30,7 +32,9 @@
       "6342daa9: root TOML assignments use the existing lexer",
       "d9f61093 and later LiteLLM 1.102.1 behavior: choice-bearing terminal usage and cached-token details are now preserved by the pinned gateway; the older local preprocessor was retired after differential verification",
       "bb0cc4a2 and a9702a86: one provider-facing chat tool name maps to one native tool through request-local collision-safe namespace aliases",
-      "fd99bf4b and 532bae89: non-streaming Chat JSON reasoning replay for the retained GLM bridge is owned by pinned LiteLLM 1.102.1; Pareto remains direct Responses"
+      "fd99bf4b and 532bae89: non-streaming Chat JSON reasoning replay for the retained GLM bridge is owned by pinned LiteLLM 1.102.1; Pareto remains direct Responses",
+      "b6bb8cf7: Responses-native reasoning stays as reasoning because Router Lite retired its Chat reasoning carry when LiteLLM 1.102.1 took ownership of the GLM bridge",
+      "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
@@ -39,7 +43,12 @@
       "Upstream-only release/build/test/docs and merge commits; native live app schema supersedes upstream app examples",
       "d2a317aa: exposing additional Chat reasoning is a behavior expansion, not required app compatibility",
       "a4709f75: upstream loopback-refusal hint wording is diagnostic UX, not a retained correctness dependency",
-      "The 15-commit 02b7ef98..1a339dda tail's control-center model curation, changelog tooling, skill-doc cleanup, and OpenCode-free client gating are outside Router Lite retained owners"
+      "The 15-commit 02b7ef98..1a339dda tail's control-center model curation, changelog tooling, skill-doc cleanup, and OpenCode-free client gating are outside Router Lite retained owners",
+      "6100787d: string-input/non-streaming normalization serves generic clients using substituted native sessions; the retained Codex app already sends list input and streaming native turns, so this is outside the current app compatibility contract",
+      "28f7799b: BOM-tolerant hand-edited generic registry/user-model files are outside Router Lite's generated checked-in route and protected-state ownership",
+      "96da2880: search-sidecar deadline fix targets an upstream component Router Lite does not retain",
+      "77dde401 and e3058712: generic automatic model failover candidate controls are outside exact-route Router Lite policy",
+      "The remaining 1a339dda..9fb6440d commits are provider families (DeepSeek, Grok, Muse, Space Bunny), Control Center/browser-login/UI, CI/tests, changelog tooling, or upstream packaging behavior outside Lite's retained owners"
     ]
   }
 }

@@ -592,6 +592,7 @@ const SWITCHYARD_COMMON_BOOLEAN_FIELDS = Object.freeze([
   "supports_reasoning_summary_parameter",
   "support_verbosity",
   "supports_search_tool",
+  "supports_reasoning_effort_updates",
   "supports_parallel_tool_calls",
   "supports_image_detail_original",
   "supports_experimental_context",
@@ -911,6 +912,13 @@ export function routedModel(
     supports_search_tool: nativeRequestProfile
       ? behaviorTemplate.supports_search_tool === true
       : model.supportsToolSearch === true,
+    // Current Codex catalogs distinguish models that can accept a live
+    // reasoning-effort override. A composite/native route may advertise this
+    // only when every compatibility member supports it; external routes keep
+    // the conservative false value regardless of their native donor.
+    supports_reasoning_effort_updates: nativeRequestProfile
+      ? behaviorTemplate.supports_reasoning_effort_updates === true
+      : false,
     supports_image_detail_original: nativeRequestProfile
       ? behaviorTemplate.supports_image_detail_original === true
       : model.supportsImageDetailOriginal === true,
@@ -946,6 +954,7 @@ export function routedModel(
       "support_verbosity",
       "default_verbosity",
       "supports_search_tool",
+      "supports_reasoning_effort_updates",
       "supports_image_detail_original",
       "use_responses_lite",
       "apply_patch_tool_type",

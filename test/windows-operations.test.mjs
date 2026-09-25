@@ -186,6 +186,9 @@ test("Windows install and update retain one guarded service generation", () => {
   assert.match(service, /-Trigger @\(\$logon, \$heartbeat\)/);
   assert.match(service, /ensureProgramTreeReadable\(SOURCE_ROOT\)[\s\S]*writeLaunchers\(\)/);
   assert.match(service, /if \(command === "restart"\) endTask\(\)/);
+  assert.match(service, /\/\/E:VBScript \/\/B \/\/NoLogo/);
+  assert.match(service, /function previousTaskAction\(\)[\s\S]*\/\/B \/\/NoLogo/);
+  assert.match(service, /CODEX_ROUTER_PREVIOUS_EXECUTE[\s\S]*CODEX_ROUTER_PREVIOUS_ARGUMENT/);
 
   const update = currentCheckoutInstaller("win32", "codex");
   assert.equal(update.command, "powershell.exe");
