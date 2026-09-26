@@ -287,12 +287,37 @@ function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
 }
 
 function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit) {
+  # service install waits for Router liveness, but optional provider children can
+  # still be converging for a few seconds. A one-shot full-health probe turns a
+  # healthy cold start into a false candidate/rollback failure, so give the
+  # complete dependency graph a bounded acceptance window.
+  $health = $null
+  $healthDeadline = (Get-Date).AddSeconds(45)
+  $lastHealthError = "Router health did not answer."
+  do {
+    try {
+      $candidateHealth = Invoke-RestMethod -Uri "http://127.0.0.1:4202/health" -TimeoutSec 5
+      if ($candidateHealth.ok -eq $true -and @($candidateHealth.degraded).Count -eq 0) {
+        $health = $candidateHealth
+        break
+      }
+      $down = @($candidateHealth.degraded)
+      $lastHealthError = if ($down.Count) {
+        "Router reports degraded dependencies: $($down -join ', ')"
+      } else {
+        "Router health is not clean."
+      }
+    } catch {
+      $lastHealthError = $_.Exception.Message
+    }
+    if ((Get-Date) -lt $healthDeadline) { Start-Sleep -Milliseconds 500 }
+  } while ((Get-Date) -lt $healthDeadline)
+  if (-not $health) {
+    throw "Router full health did not become clean within 45 seconds: $lastHealthError"
+  }
+
   & node (Join-Path $Root "src\doctor.mjs") | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "Router Doctor failed from $Root." }
-  $health = Invoke-RestMethod -Uri "http://127.0.0.1:4202/health" -TimeoutSec 5
-  if ($health.ok -ne $true -or @($health.degraded).Count -ne 0) {
-    throw "Router health is not clean."
-  }
   $status = Invoke-NodeJson $Root @((Join-Path $Root "src\service.mjs"), "status") "Router status"
   if ($status.installed -ne $true -or $status.loaded -ne $true -or $status.state -ne "running") {
     throw "Router task identity is not one running managed generation."
