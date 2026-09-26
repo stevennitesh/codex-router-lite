@@ -109,18 +109,6 @@ index 4151bc41..1a07d2da 100644
  strum_macros = "0.28"
  thiserror = "2"
  tokio = { version = "1", features = ["full"] }
-diff --git a/README.md b/README.md
-index e2b0f9ec..2624a596 100644
---- a/README.md
-+++ b/README.md
-@@ -276,6 +276,7 @@ how requests move between an efficient model and a capable one.
- |---|---|---|
- | **[Auto](docs/routing_algorithms/overview.md#auto)** | You want Switchyard's recommended preset. | `auto` |
- | **[Task](docs/routing_algorithms/llm_classifier_routing.md)** | You want an LLM to judge which model can handle the task. | `llm_classifier` |
-+| **[TypeSafe Classifier](docs/routing_algorithms/type_safe_classifier_routing.md)** | You want TypeSafe Jev to classify the task without a chat-completion judge call. | `type_safe_classifier` |
- | **[Execution](docs/routing_algorithms/stage_router_routing.md)** | You want tool results and agent progress to guide each request. | `stage_router` |
- 
- Auto currently uses Execution with fixed defaults and no LLM judge. Task uses
 diff --git a/crates/libsy/src/algorithms.rs b/crates/libsy/src/algorithms.rs
 index cd2d36b5..0bd14814 100644
 --- a/crates/libsy/src/algorithms.rs

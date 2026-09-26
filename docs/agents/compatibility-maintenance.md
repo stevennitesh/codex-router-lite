@@ -17,9 +17,9 @@ and writes disposable analysis evidence, but does not mutate the live runtime):
 ```
 
 It fetches repository heads, resolves and signature-checks the current Windows
-Codex build, compares it with the checked-in app-tool snapshot, checks the
-current native catalog, reads Router health, runs the retained suite, and
-reports Switchyard upstream drift. It does not edit product source, consume provider
+Codex build, records the bundled app-tools plugin identity when available,
+checks the current native catalog, reads Router health, runs the retained suite,
+and reports Switchyard upstream drift. It does not edit product source, consume provider
 quota, or restart the service. Use `-SkipFetch` only when offline and
 `-SkipTests` only for a quick diagnostic that will not support a compatibility
 claim.
@@ -41,25 +41,28 @@ Before editing, confirm the report accounts for:
 
 1. The working tree, active branch, `HEAD`, `origin/main`, and `upstream/main`.
 2. The Windows package, resolved executable, signature, and `codex --version`.
-3. Native catalog parsing and the app-tool snapshot's paired build.
+3. Native catalog parsing and the installed bundled app-tools plugin identity when available.
 4. Router health and the retained product checks.
 5. The locked and current Switchyard upstream commits when that route applies.
 6. Whether the user authorized source edits, dependency changes, deployment,
    restart, commit, and push. These are separate permissions.
 
-An app-tool snapshot version mismatch is a required manual branch, not an
-automatic failure. Inspect the official Codex release notes and diff, capture
-the live tool registry from an ordinary Windows app turn, then update the
-snapshot and its narrow relay regression only when the contract changed.
+Router Lite does not ship a static Desktop app-tool schema snapshot.
+Desktop-only tools are private host capabilities and can change independently of
+the CLI. Runtime authority is always the caller's request-local tool definitions,
+tool-search discoveries, and namespace metadata. Compatibility tests use
+synthetic namespace fixtures so a Desktop patch cannot silently turn historical
+schemas into product authority.
 
 For a changed Windows app or CLI build:
 
-1. Capture the native app namespace, tool names, and JSON schemas from an ordinary
-   Windows app turn.
-2. Compare that inventory with `src/codex-app-tools.mjs`; a version change alone
-   does not prove a tool change.
-3. Refresh the native catalog and run the catalog, app-tool, and
-   namespace-relay tests.
+1. Record the Windows app, CLI, and bundled `codex-app-tools` plugin versions
+   when the current CLI exposes them.
+2. Refresh the native catalog and run the catalog and namespace-relay tests.
+3. Inspect the official Codex release notes/source for changes to model metadata,
+   tool exposure, namespace behavior, or app-server transport. Capture the live
+   Desktop registry only when investigating an actual app-tool failure; do not
+   copy private Desktop schemas into Router source.
 4. With quota authority, start a fresh native child and send a synthetic
    encrypted assignment. Verify the representation is recognized and the exact
    plaintext is recovered, then verify a readable routed-child assignment stays

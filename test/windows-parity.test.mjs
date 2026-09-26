@@ -57,7 +57,9 @@ test("the compatibility refresh stays read-only", () => {
   assert.match(refresh, /git -C \$analysisRoot apply --check/);
   assert.match(refresh, /GetTempPath\(\)\)\.TrimEnd/);
   assert.match(refresh, /GetDirectoryName\(\$analysisRoot\)/);
-  assert.match(refresh, /Codex app mismatch branch/);
+  assert.match(refresh, /Bundled codex-app-tools plugin/);
+  assert.match(refresh, /request-local client definitions and discoveries/);
+  assert.doesNotMatch(refresh, /Codex app mismatch branch/);
   assert.doesNotMatch(refresh, /service\.mjs.*(?:install|start|stop|restart)/);
   assert.doesNotMatch(refresh, /provider-key|caller-key|codex exec/);
 });

@@ -12,7 +12,7 @@ import {
   rewriteNamespaceResponsePayload,
   restorePreflattenedToolNamespaces,
 } from "../src/namespace-relay.mjs";
-import { CODEX_APP_TOOLS } from "../src/codex-app-tools.mjs";
+import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
 
 test("ordinary empty-call diagnostics locate the boundary without inventing arguments or logging content", async () => {
   const flat = flattenNamespaceTools([{ type: "namespace", name: "collaboration", tools: [
@@ -248,7 +248,7 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
     { type: "function", name: "apply_patch" },
     { type: "function", name: "web_search" },
   ];
-  const { tools, flattened } = flattenNamespaceTools([...inventory, ...CODEX_APP_TOOLS]);
+  const { tools, flattened } = flattenNamespaceTools([...inventory, ...CODEX_APP_TOOL_FIXTURE]);
   assert.equal(flattened, true);
   const names = tools.map((tool) => tool.name);
   // Nothing standard dropped.
@@ -284,7 +284,7 @@ test("full inventory survives merge + flatten with nothing dropped", () => {
 });
 
 test("response transform restores flattened calls to the native namespace shape", async () => {
-  const { namespaces } = flattenNamespaceTools([...clientRoutedTools(), ...CODEX_APP_TOOLS.map(tool => ({ ...tool, name: "codex_app" }))]);
+  const { namespaces } = flattenNamespaceTools([...clientRoutedTools(), ...CODEX_APP_TOOL_FIXTURE.map(tool => ({ ...tool, name: "codex_app" }))]);
   const events = [
     { type: "response.created" },
     {
@@ -487,7 +487,7 @@ test("response transform drops a spawn-agent model override not offered by the t
 test("every flattened app tool reaches the provider with an object root", async () => {
   const { hasObjectRoot } = await import("../src/tool-schema-root.mjs");
 
-  const { tools } = flattenNamespaceTools(CODEX_APP_TOOLS);
+  const { tools } = flattenNamespaceTools(CODEX_APP_TOOL_FIXTURE);
 
   const unionRooted = tools
     .filter((tool) => tool.parameters && !hasObjectRoot(tool.parameters))
@@ -846,7 +846,7 @@ test("native custom-tool arguments still fail closed where LiteLLM's input canno
 });
 
 test('new app worktree and artifact calls retain arguments and native namespaces', () => {
-  const {tools, namespaces} = flattenNamespaceTools(CODEX_APP_TOOLS);
+  const {tools, namespaces} = flattenNamespaceTools(CODEX_APP_TOOL_FIXTURE);
   const fixtures = {
     create_worktree: {name: 'synthetic-review', ref: 'HEAD'},
     attach_artifact: {artifact_type: 'pull_request', url: 'https://github.com/example/repo/pull/1'},

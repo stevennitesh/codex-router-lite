@@ -44,17 +44,18 @@ that proof. The current version-specific capability decision is retained in the
 
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 
-`src/codex-app-tools.mjs` is a reference snapshot for drift inspection. Runtime
-relay uses the caller's definitions and native tool-search discoveries, without
-adding snapshot tools. Current app tools use `mcp__codex_app`; legacy namespaces
-remain supported when explicitly supplied. Routed tools are flattened for the
-model and restored to those request-local identities before app execution.
-Custom calls retain both namespace and name. Codex may omit its default
-`functions` namespace in stored custom calls; resolve that shorthand against
-the current declaration so replay uses the same provider spelling. An exact
-plain declaration wins, and other namespaces must not be guessed.
-When Codex changes the tool set, capture it from an ordinary Windows app turn,
-update the paired build and snapshot, then test a routed round trip.
+Desktop app tools are never sourced from a checked-in snapshot. Runtime relay
+uses only the caller's request-local definitions and native tool-search
+discoveries, so a Desktop-only plugin can add, remove, or change schemas without
+Router manufacturing stale capabilities. Current app tools commonly use
+`mcp__codex_app`; legacy namespaces remain supported when explicitly supplied.
+Routed tools are flattened for the model and restored to those request-local
+identities before app execution. Custom calls retain both namespace and name.
+Codex may omit its default `functions` namespace in stored custom calls;
+resolve that shorthand against the current declaration so replay uses the same
+provider spelling. An exact plain declaration wins, and other namespaces must
+not be guessed. Tests use synthetic app namespaces to verify the generic relay
+contract rather than freezing a private Desktop schema.
 
 The catalog's `supports_search_tool` gates client-side deferred tool discovery,
 not hosted web search. External routes declare `supportsToolSearch` separately

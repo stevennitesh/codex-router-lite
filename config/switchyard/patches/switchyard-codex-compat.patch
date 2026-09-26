@@ -4328,10 +4328,10 @@ index dae5c1ad..d1e542d4 100644
          response
              .headers
 diff --git a/crates/switchyard-translation/src/codecs/responses/buffered.rs b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-index 724df4db..0c3fa026 100644
+index c9bb8828..140f5717 100644
 --- a/crates/switchyard-translation/src/codecs/responses/buffered.rs
 +++ b/crates/switchyard-translation/src/codecs/responses/buffered.rs
-@@ -1248,14 +1248,6 @@ fn encode_responses_input(
+@@ -1266,14 +1266,6 @@ fn encode_responses_input(
      // custom outputs. A tool result is typed by the call it answers, and Responses history
      // always lists the call before its output, so recording ids as calls are encoded is enough
      // to type the outputs that follow.
@@ -4347,10 +4347,10 @@ index 724df4db..0c3fa026 100644
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index 6d2574db..e9c92c09 100644
+index 078fa46d..ebdeef15 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
-@@ -2555,6 +2555,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
+@@ -2596,6 +2596,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
      Ok(())
  }
  

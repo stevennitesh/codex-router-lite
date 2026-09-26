@@ -152,22 +152,24 @@ if ($appPackage) {
   Write-Warning "The current process could not read the OpenAI Codex Appx package identity."
 }
 
-$snapshotJson = & node --input-type=module -e "import {CODEX_APP_TOOL_SNAPSHOT as s} from './src/codex-app-tools.mjs'; process.stdout.write(JSON.stringify(s))"
-if ($LASTEXITCODE -ne 0) {
-  throw "The checked-in Codex app tool snapshot metadata could not be read."
+$appToolsVersion = $null
+try {
+  $pluginJson = & $codexBinary plugin list --marketplace openai-bundled --json 2>$null
+  if ($LASTEXITCODE -eq 0 -and $pluginJson) {
+    $plugins = $pluginJson | ConvertFrom-Json
+    $appTools = @($plugins.installed | Where-Object { $_.pluginId -eq "codex-app-tools@openai-bundled" }) | Select-Object -First 1
+    if ($appTools) {
+      $appToolsVersion = [string]$appTools.version
+      Write-Host "Bundled codex-app-tools plugin: $appToolsVersion"
+    }
+  }
+} catch {
+  # Older Codex builds may not expose plugin inventory through the CLI.
 }
-$snapshot = $snapshotJson | ConvertFrom-Json
-Write-Host "App-tool snapshot: Windows $($snapshot.windowsAppVersion), $($snapshot.codexVersion), captured $($snapshot.capturedAt)"
-$snapshotMatches = $appVersion -and $appVersion -eq [string]$snapshot.windowsAppVersion -and $codexVersion -eq [string]$snapshot.codexVersion
-if (-not $snapshotMatches) {
-  Write-Warning "The installed Codex build differs from the app-tool snapshot. Capture the live app tool registry from an ordinary Windows app turn before declaring compatibility."
-  Write-Host "Codex app mismatch branch:"
-  Write-Host "1. Capture the native codex_app tool names and JSON schemas from an ordinary Windows app turn."
-  Write-Host "2. Compare that inventory with src/codex-app-tools.mjs; do not infer compatibility from version numbers."
-  Write-Host "3. Refresh the native catalog and run the catalog, app-tool, and namespace-relay tests."
-  Write-Host "4. Run one native routed tool call through both GLM endpoints, Pareto, and Switchyard."
-  Write-Host "5. Refresh affected exact-route v2 proofs when a bound contract changed; follow docs/SUBAGENT-CERTIFICATION.md."
+if (-not $appToolsVersion) {
+  Write-Warning "The bundled codex-app-tools plugin version could not be read from this Codex build."
 }
+Write-Host "App-tool relay authority: request-local client definitions and discoveries (no static Desktop schema snapshot is shipped)"
 
 Write-Step "Current Codex catalog compatibility"
 Invoke-Checked "node" @("scripts/check-codex-catalog-compat.mjs", $codexBinary)
@@ -242,8 +244,8 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
 }
 
 Write-Step "Result"
-if ($snapshotMatches -and $healthClean) {
-  Write-Host "Current repository, runtime, catalog, and app-tool snapshot checks passed."
+if ($appToolsVersion -and $healthClean) {
+  Write-Host "Current repository, runtime, catalog, and app-tool relay checks passed."
 } else {
   Write-Host "Source checks passed, but warnings above still require confirmation before declaring full compatibility."
 }
