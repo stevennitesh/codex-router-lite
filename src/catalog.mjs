@@ -618,6 +618,18 @@ const SWITCHYARD_DONOR_FIELDS = Object.freeze([
   "model_messages",
 ]);
 const SWITCHYARD_INTENTIONALLY_OMITTED_NATIVE_FIELDS = new Set([
+  // These fields describe native-model account rollout, reviewer/permission
+  // policy, client gating, or transport preference. switchyard/auto is a
+  // synthetic Router route spanning multiple native targets, so copying any of
+  // them would manufacture native semantics the composite route does not own.
+  "auto_review_model_override",
+  "available_access_programs",
+  "available_in_plans",
+  "guardian",
+  "minimal_client_version",
+  "model_specialty",
+  "prefer_websockets",
+  "requires_sandboxed_review",
   "multi_agent_reasoning_effort",
   "supports_reasoning_summaries",
 ]);
