@@ -228,9 +228,23 @@ test("Switchyard omits unknown top-level fields and preserves nested donor metad
   assert.equal(Object.hasOwn(model, "future_scalar"), false);
   assert.equal(Object.hasOwn(model, "future_object"), false);
   assert.deepEqual(model.model_messages.future_prompt_metadata, { retained: true });
+  const nativeOnly = {
+    auto_review_model_override: null,
+    available_access_programs: { cyber: ["standard"] },
+    available_in_plans: null,
+    guardian: null,
+    minimal_client_version: null,
+    model_specialty: null,
+    prefer_websockets: null,
+    requires_sandboxed_review: null,
+    multi_agent_reasoning_effort: "xhigh",
+  };
+  for (const field of Object.keys(nativeOnly)) {
+    assert.equal(Object.hasOwn(model, field), false, `${field} stays native-only`);
+  }
   assert.deepEqual(
     omittedSwitchyardNativeFields([
-      { future_scalar: "value", future_object: { nested: true }, multi_agent_reasoning_effort: "xhigh" },
+      { future_scalar: "value", future_object: { nested: true }, ...nativeOnly },
     ], model),
     { fields: ["future_object", "future_scalar"], total: 2 },
   );
