@@ -1,30 +1,35 @@
 # openrouter/pareto v2 certification
 
-Source renewal pending after data-only terminal classification changes. The
-acceptance below remains historical evidence for installed runtime `75ddd5d5`.
-
-Accepted on 2026-09-21T04:08:31.145Z against deployed Router `75ddd5d58c85f392f7b0c9c9f8ea8b1f4acc2f8f`
-(version 0.7.0), codex-cli 0.155.0-alpha.9.2, native CLI parent and exact-route child.
-Endpoint: unbiased; no endpoint substitution.
+Accepted on 2026-09-26T14:40:13.594Z against deployed Router `60cbefd571b5a87357bb0e0f0697728484afbbd5`
+(version 0.7.0), codex-cli 0.158.0-alpha.2.1, using a fresh native desktop parent
+and the generated `router_openrouter_pareto` role. Endpoint: unbiased.
+This historical proof applies only to the recorded runtime.
 
 ## Evidence
 
-[Bounded release evidence](../../../docs/history/2026-09-20-startup-stream-release-certification.json) records the passing window.
-All three child requests completed with HTTP 200. The child made a native
-sandboxed tool call computing 19+23 and received 42, returned the first marker,
-then returned the second marker after a second encrypted handoff to the same child.
-The parent waited for completion before cleanup; failed earlier windows are excluded.
+[Bounded native desktop evidence](../../../docs/history/2026-09-26-native-v2-certification.json) records
+the window 2026-09-26T14:39:42.332Z through 2026-09-26T14:40:13.594Z.
+The parent contains actual native spawn, wait, completed-child cleanup, and
+same-child follow-up calls. The one child rollout contains two encrypted
+`agent_message` handoffs, the native tool call and matching output, both final
+markers, and two `task_complete` events. Neither cleanup interrupted an active
+turn: each returned a previous status of completed, and the first cleanup
+preceded the same-child follow-up.
 
-| Check | Result |
+| Check | Observed result |
 | --- | --- |
-| Streaming Responses completion | pass |
-| Actual native tool call/output | pass |
-| Encrypted parent-to-child relay | pass; two handoffs |
-| First marker | pass |
-| Same-child follow-up marker | pass |
+| Streaming Responses completion | Three HTTP 200 requests; native tool/text items and two completed turns |
+| Actual native tool call/output | Default sandbox, `Write-Output (19+23)`, output `42` |
+| Encrypted relay | Two encrypted handoffs in the same child rollout |
+| First marker | `PARETO_60CBEFD5_FIRST_OK` |
+| Same-child follow-up marker | `PARETO_60CBEFD5_SECOND_OK` |
+
+Router request durations were 6522 ms, 1721 ms, 4339 ms.
 
 ## Limits
 
-This is synthetic native CLI collaboration evidence, not a GUI soak or proof of
-arbitrary extraction fidelity. Current acceptance does not certify later runtime changes. Switchyard's additional deployed identities, where
-applicable, are recorded in proof.json.
+This is a synthetic exact-route native desktop check, not a general workload or
+GUI soak. Raw SSE was not captured; successful Router Responses timings and
+native completed items/turns establish the streamed completion result. Earlier
+CLI attempts are excluded. No raw session identifiers, ciphertext, credentials,
+or private request payloads are retained. Later runtime changes require renewal.

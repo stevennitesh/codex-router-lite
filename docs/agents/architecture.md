@@ -98,6 +98,8 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Catalog derivation and native authority | `src/catalog.mjs`, `src/native-catalog-source.mjs`; [native Codex](native-codex.md) |
 | Paths, overrides and state locations | `src/paths.mjs`; inspect these before runtime work |
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
+| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
+| Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
 | Agent instructions and installed skills | [Context ownership](context-ownership.md) |
 | Runtime-bound subagent evidence | [Certification](../SUBAGENT-CERTIFICATION.md) |
 
@@ -107,6 +109,12 @@ builds. Do not keep source clones or alternate runtime trees as product files.
 Runtime replacement follows the installation transaction, never a standalone stop.
 
 ## Verification
+
+For documentation and instruction edits, check affected links, commands, ownership,
+and reading paths against their current sources, then run `npm run check`. Shipped
+skills are runtime instructions; exercise affected existing checks and keep source
+verification distinct from installed behavior. Editorial checks alone do not prove
+that new wording improves agent performance.
 
 For behavior changes, add or update a narrow regression and run `npm run check`,
 the affected tests, and the current Codex catalog check. Use `npm test` for shared

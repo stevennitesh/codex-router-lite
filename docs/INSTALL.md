@@ -23,8 +23,11 @@ The installer preserves the current Codex login and user-owned settings. It refu
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
 native Codex requests remain available during that setup interval.
-Startup still launches and waits for the local LiteLLM gateway, so native-only
-operation requires the installed Python runtime even without an OpenRouter key.
+The frontend starts before the optional API forwarder, LiteLLM, Switchyard, and
+catalog watcher become ready. Their bounded supervision keeps native serving
+available during an optional-child failure. The installer still prepares Python
+dependencies; a missing or unhealthy gateway prevents GLM service, not frontend
+liveness.
 
 To use OpenRouter routes, set the credential with the protected prompt:
 
@@ -44,6 +47,12 @@ Switchyard installation is maintainer work. Read its
 ```
 
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
+
+`/live` proves frontend liveness and service identity. `/health` and Doctor check
+dependency readiness; a live frontend can still report degraded optional routes.
+The service wrapper uses `/live` during launch. Verify full `/health` and Doctor
+for deployment acceptance; frontend liveness alone does not establish that the
+selected providers are ready.
 
 The model picker lists Novita and GMICloud as separate GLM routes. Selecting
 one changes only that request. Router never falls back from one endpoint to the
@@ -92,10 +101,12 @@ upstream head moved. The original Router remote is reviewed selectively and is
 never an installation or merge source.
 
 `maintenance/windows-package.json` is the complete installed file list.
-`deploy-codex-router.ps1` stages and hash-checks exactly those files, snapshots
-the previous managed generation, and removes only files recorded by the prior
-deployment manifest. If install or Doctor fails, it restores, reinstalls, and
-checks the previous generation before returning the candidate failure.
+`deploy-codex-router.ps1` compares the managed files before activation, stages and
+hash-checks the candidate, and removes only files recorded by the prior deployment
+manifest. Identical files and recognized documentation/test/evidence-only changes
+skip runtime installation; source/configuration changes use the guarded replacement
+path. If runtime install or Doctor fails, it restores, reinstalls, and checks the
+previous generation before returning the candidate failure.
 
 For a separate installed directory, deploy edited source from the current checkout with:
 
@@ -118,4 +129,28 @@ selection change requires it:
 
 Do not run a standalone stop. The transaction stages one generation, checks readiness, and restores the prior generation on failure.
 
-A source edit, deployment, restart, commit, and push each require their own authority.
+### Replacement and drain
+
+`src/service.mjs` serializes service mutations and asks the running Router to drain
+before install, stop, restart, or uninstall. The drain endpoint accepts only the
+internal service capability. It rejects new inference while admitted requests
+settle, including nested Switchyard callbacks. An outstanding Switchyard tool
+workflow also defers normal replacement between requests; zero active sockets
+does not prove that the workflow finished.
+
+A timeout or workflow conflict restores admission and leaves the running generation
+unchanged. A live older generation without drain support also defers normal
+replacement. Settle the active work before retrying. Only an explicit operator
+choice to interrupt it permits the force option: `-ForceServiceReplacement` on
+the install, separate-directory deploy, or restart PowerShell entrypoint, or
+`--force-service-replacement` on update/service commands. Force never bypasses
+service identity or credential checks. The updater's separate `--force` flag can
+discard tracked checkout edits; it is not the service-interruption option.
+
+Catalog publication uses its existing refresh owner and does not hot-install
+route code. The separate-directory deployer classifies file changes through
+`src/deployment-classification.mjs`; other entrypoints retain their own guarded
+transactions. Do not infer that every update is restart-free from its Git diff.
+
+Apply source edits, deployment, restart, commit, and push only within the effects
+authorized by the user. Authorization for one does not imply the others.

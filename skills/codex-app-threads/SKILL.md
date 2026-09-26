@@ -14,10 +14,12 @@ authoritative; a reference snapshot does not establish tool availability.
 ## Durable behavior
 
 - Create a separate user-visible task only when the user explicitly asks for
-  one. Use collaboration subagents for bounded subtasks of the current request.
+  one. When delegation is authorized, use collaboration subagents for bounded
+  subtasks of the current request; this skill does not authorize delegation.
 - Before creating a project task, call `list_projects`. Use the returned
-  `projectId` and choose the environment from `isGitRepository` unless the user
-  explicitly asks to use the saved checkout directly.
+  `projectId`. Default to the local environment. Use a worktree only when the
+  user explicitly requests one and `isGitRepository` is true; follow the current
+  tool's environment schema.
 - Omit `model` and `thinking` unless the user requests overrides. The Router
   preserves the routed parent model for local task creation.
 - Creation is non-blocking. A ready task returns a real `threadId`; worktree

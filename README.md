@@ -51,14 +51,14 @@ Set-Location codex-router-lite
 The installer preserves your Codex login and user-owned settings, adds the managed
 Codex routing configuration, and installs a local Windows scheduled background task.
 
-**2. Add your OpenRouter key**
+**2. Add your OpenRouter key if using an external route or Switchyard**
 
 ```powershell
 .\model-router.ps1 codex provider-key openrouter set
 ```
 
 Enter it through the protected prompt. Keep keys out of chat, command arguments,
-and repository files.
+and repository files. Native GPT access uses your existing Codex login.
 
 **3. Check your setup**
 
@@ -90,19 +90,21 @@ This is a maintainer-led personal project, so external pull requests are not
 accepted. Use the privacy-safe issue forms for bugs or route and behavior ideas,
 or fork the repository for your own changes.
 
-Run the local checks after making changes:
+Install JavaScript dependencies with `npm ci` for a fresh checkout or a changed
+lockfile. For code changes, run the local verification:
 
 ```powershell
-npm ci
 npm run verify
-npm run audit:ci
 ```
 
-Maintainers also audit the hashed Python production lock before release; the
-exact pinned command is in the [GLM dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
+Use the [verification guide](docs/agents/architecture.md#verification) for checks
+specific to documentation, catalog, and shared behavior changes. Before release,
+run `npm run audit:ci` and audit the hashed Python production lock with the
+command in the [GLM dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
 
-Then follow the [deployment guide](docs/INSTALL.md#update) to install your edited
-source. Restarting alone does not deploy changes.
+When installing edited source, follow the [deployment guide](docs/INSTALL.md#update).
+It owns admission draining, rollback, and the distinction between file-only
+updates and runtime replacement. Restarting alone does not deploy changes.
 
 ## Keeping up with Codex
 

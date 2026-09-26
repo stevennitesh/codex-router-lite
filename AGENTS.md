@@ -1,7 +1,8 @@
 # Codex Router agent entry
 
-This checkout owns the Windows Codex Router. Read only the task branch below;
-follow its conditional pointers rather than loading all documentation.
+This checkout owns Codex Router Lite for Windows. Start with the row matching
+the task, then follow its conditional pointers. Load another branch only when
+the work crosses that boundary.
 
 | Task | Start here |
 | --- | --- |
@@ -12,10 +13,12 @@ follow its conditional pointers rather than loading all documentation.
 | Install, deploy, or restart | [Installation](docs/INSTALL.md); for a failing service, first [troubleshooting](docs/TROUBLESHOOTING.md) |
 | Change Switchyard classifier, targets, pin, or binary | [Switchyard integration specification](config/switchyard/README.md) |
 | Change subagent eligibility or certify a route | [Certification](docs/SUBAGENT-CERTIFICATION.md) |
-| Edit repository instructions or documentation | [Context ownership](docs/agents/context-ownership.md) |
+| Audit or edit repository context, documentation, or shipped agent skills | [Context ownership](docs/agents/context-ownership.md) |
 | Work on issues or labels | [Tracker](docs/agents/issue-tracker.md) |
 
-Before substantive code work, also read the [engineering contract](docs/agents/engineering-contract.md).
+For implementation, design, or changes to engineering guidance, also read the
+[engineering contract](docs/agents/engineering-contract.md). Verification commands
+and their scope live in the [system specification](docs/agents/architecture.md#verification).
 Inspect Git status and branch; preserve existing work. Keep credentials and private
 payloads out of source and output. Commit and push only within user authorization.
 Historical evidence is not current runtime authority.

@@ -1,6 +1,12 @@
 # Security
 
-All Router, LiteLLM, and Switchyard listeners bind to loopback. Codex reaches Router through a random capability in the managed local URL. Internal hops use separate protected capabilities.
+All Router, LiteLLM, and Switchyard listeners bind to loopback. Inference requests
+authenticate through the managed capability URL or an accepted bearer on the
+direct `/v1/*` surface. Router accepts its caller capability or the current native
+session token there; a native upstream request still requires native authorization.
+The frontend `/live` and service-health leaves are liveness/readiness probes, not
+inference access. Internal hops and lifecycle management use separate protected
+capabilities. See [the boundary map](docs/agents/architecture.md#boundaries-and-identities).
 
 Native Codex requests retain Codex authorization and account headers. OpenRouter requests never receive the caller's authorization, ChatGPT account ID, installation ID, residency headers, or FedRAMP headers. The OpenRouter hop replaces them with the one protected provider key.
 

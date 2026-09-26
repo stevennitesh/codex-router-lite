@@ -15,7 +15,7 @@ Responses hop. They do not pass through LiteLLM.
 Pareto keeps Sol's native Codex behavior template, a 262,144-token context
 window, and a 220,000-token automatic compaction limit. It accepts text and
 image input and supports native deferred tool discovery independently of hosted
-web search. It is published as v2 with an [accepted native CLI proof](../../v2_agent/openrouter/pareto/proof.md).
+web search. It is published as v2 with an [accepted native collaboration proof](../../v2_agent/openrouter/pareto/proof.md).
 The retired Union Alpha proof does not apply to this route.
 
 ## Measured controls

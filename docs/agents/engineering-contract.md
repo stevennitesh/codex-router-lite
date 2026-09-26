@@ -1,24 +1,24 @@
 # Engineering contract
 
-Use this guidance to make engineering decisions within the requested change.
-Repository-specific requirements and accepted domain decisions supply the local
-meaning. Apply a conditional practice only when its condition is present.
+Use this contract for implementation, design, and changes to engineering guidance.
+The [system specification](architecture.md) owns Router's supported behavior and
+invariants; its conditional guides own commands and operating procedures. Apply
+the practices below only where the requested change needs them.
 
 Implement requested capabilities and guarantees needed by actual supported
 workflows. Do not infer scale, concurrency, independent consumers, crash recovery,
 or future reuse from general goals such as reliability or reproducibility.
-A plausible failure or an agent-written plan alone does not establish a requirement. Preserve explicit user commitments and accepted domain
-decisions. Revise unnecessary implementation choices within scope; surface a
-proposed change to an accepted guarantee to its owner.
+A plausible failure or an agent-written plan alone does not establish a requirement.
+Preserve explicit user commitments, accepted guarantees, and unrelated work.
+Simplify implementation choices within scope; resolve a proposed change to an
+accepted guarantee with its owner before changing it.
 
 ## Understand the behavior
 
-Trace enough of the owning code and affected callers to establish the changed
-behavior and its consequences. Investigate further when uncertainty, shared
-impact, or failure risk warrants it. Distinguish intended behavior from an
-implementation accident. Preserve
-accepted contracts and unrelated work; resolve consequential ambiguity from
-the user or the source that owns the decision.
+Trace the owning code and affected callers far enough to establish the behavior
+and consequences of the change. Distinguish required behavior from implementation
+accidents. Resolve consequential ambiguity from the authoritative source or user;
+routine implementation choices remain engineering judgment.
 
 Work in the smallest useful slice that completes the requested outcome. When a
 named uncertainty warrants an early probe, build a thin real path to learn from,
@@ -26,22 +26,22 @@ then complete the outcome. The probe is evidence, not completion.
 
 ## Choose a design callers can use
 
-Evaluate interface changes from real caller usage, including relevant errors,
-ordering, and state transitions. Keep behavior
-in its current owner unless moving it solves a demonstrated design problem.
+Evaluate interface changes from real caller usage, including errors, ordering,
+and state transitions. Keep behavior in its current owner unless moving it solves
+a demonstrated design problem.
 
 Subtract or reuse before adding machinery. Prefer language, platform, and
 repository capabilities. Add abstractions for meaningful policy or variation;
 keep together decisions that must change together. Separate independent policies
 when sharing an owner creates demonstrated coupling; small duplication is
-preferable to coupling different domain meanings. If deleting a layer removes
-complexity, collapse it. If complexity spreads to callers, the layer earns its place.
+preferable to coupling different domain meanings. Retain a layer only when it
+contains complexity that callers would otherwise have to manage.
 Keep a value's source, governing policy, and possible mutations easy to locate
 without tracing unnecessary layers or hidden state.
 
-Model valid states and domain distinctions in data. Use the type system and
-existing schemas to prevent meaningful mistakes without adding precision no
-caller needs. Keep one source for derived state. Avoid casts or assertions that
+Model valid states and domain distinctions in data. Use the existing schemas and
+types to prevent meaningful mistakes without adding precision no caller needs.
+Keep one source for derived state. Avoid casts or assertions that
 conceal a missing validity check. When an authoritative schema defines a boundary,
 use existing tooling to derive or check its types rather than maintaining a parallel
 definition. Preserve domain distinctions where the boundary representation differs.
@@ -65,18 +65,18 @@ representation or ownership before adding another workaround. Revise the affecte
 design within scope when that resolves a demonstrated problem; isolated exceptions
 do not justify a broad rewrite.
 
-Preserve meaningful failure
-behavior; a fallback must not turn an error or incomplete result into apparent
-success. Make partial outcomes explicit when callers need to handle them.
+Preserve meaningful failure behavior; a fallback must not turn an error or
+incomplete result into apparent success. Make partial outcomes explicit when
+callers need to handle them.
 
 Migrate owned callers and remove displaced code, configuration, and tests
 together when compatibility permits. Follow removed consumers upstream: remove
 producers, helpers, tests, and documentation that no longer serve a supported use,
 after checking remaining consumers. Use staged migration when real consumers
 or deployment ordering require coexistence. Keep the reason and removal
-condition for a temporary compatibility path clear. When existing stored data must remain
-usable across the change or consumers upgrade independently, account for old and new readers and writers,
-existing-data conversion, and rollback limitations.
+condition for a temporary compatibility path clear. When existing stored data must
+remain usable or consumers upgrade independently, account for old and new readers
+and writers, data conversion, and rollback limitations.
 
 Update documentation when behavior, operations, or a non-obvious decision
 changes. Prefer an existing type, constraint, or check to repeated prose when
@@ -87,8 +87,9 @@ depend on them.
 
 ## Match proof to the claim
 
-Run required checks and the nearest useful check that can fail for the changed
-behavior. Add or change tests when they protect a meaningful contract. Assert
+Follow the [verification scope](architecture.md#verification) and run the nearest
+useful check that can fail for the changed behavior. Add or change tests when
+they protect a meaningful contract; reuse sufficient existing coverage. Assert
 observable behavior rather than implementation wording or private structure.
 A test does not establish that the mechanism it protects is required. When retiring
 an unnecessary mechanism, revise or remove its tests while preserving proof of
@@ -98,9 +99,9 @@ For a fix, distinguish the reported defect. When a plausible wrong rule also
 passes the ordinary case, choose an input or state where the outcomes differ.
 Derive expected results independently of the implementation under test.
 
-For numerical and data transformations, preserve material units, identity, time
-and availability semantics, missing-value meaning, and precision. Validate
-consequential method assumptions with an independent reference, analytic case,
+For measurements, classifier evaluation, and other data transformations, preserve
+units, identity, time and availability semantics, missing-value meaning, and
+precision. Validate consequential method assumptions with an independent reference, analytic case,
 or invariant; internally consistent calculations can still answer the wrong question.
 
 For a changed integration, prove that the ordinary caller reaches the new
@@ -109,18 +110,18 @@ the meaning it could lose. A reconstructed object or a passing isolated helper
 does not prove that connection. Check failure or partial-success paths when
 their behavior is part of the changed contract.
 
-Preserve the mechanism relevant to the claim. A substitute may prove application
-policy while leaving persistence, concurrency, transport, or rendering behavior
-unproved.
+Preserve the mechanism relevant to the claim. A mock can prove application policy
+while leaving provider behavior, persistence, concurrency, transport, or rendering
+unproved. A documentation or instruction review establishes consistency and
+discoverability; it does not establish improved agent performance.
 
 Reuse evidence while the relevant code, inputs, dependencies, and environment
 remain valid. Broaden verification for shared impact, repository policy, or an
 unresolved risk. If execution is unavailable, report the strongest available
-evidence and the unproved claim. Completion follows the requested outcome,
-not merely a successful command or an exhausted budget.
-Continue through implementation, verification, and necessary corrections within
-the authorized scope. An intermediate finding or passing check is not a stopping
-point unless the requested outcome or an explicit gate makes it one.
+evidence and the unproved claim. Complete the authorized implementation,
+verification, and necessary corrections. A passing check or intermediate finding
+is a stopping point only when it fulfills the requested outcome or an explicit
+gate requires it. Existing authorization remains valid across those steps.
 
 ## Handle effects where they occur
 
@@ -141,9 +142,10 @@ and cancellation behavior so a slow dependency or caller cannot cause unbounded
 growth or exhaust unrelated work.
 
 For consequential performance or resource claims, compare equivalent work
-against a baseline under relevant conditions. For external mutations, establish
-the target and authority and read back the result. Review findings and delegated
-results against the actual candidate and artifacts.
+against a baseline under relevant conditions, preserving the same correctness
+and required effects. For external mutations, establish the target and authority
+and read back the result. Review findings and delegated results against the actual
+candidate and artifacts.
 
 These conditions do not start additional workflows. Use TDD, delegation, formal
 review, and operational procedures when the user or applicable instructions

@@ -1,6 +1,17 @@
-# Native catalog and availability delivery
+# Native catalog and availability delivery history
 
-2026-09-21. Active delivery. Comparison base: `e14a17164c9d04889581049d243c89aa5f3c96fd`.
+Historical plan, dated 2026-09-21. Source integration was merged in
+`7b491df6995106e747bc933729fadf12794f95e0`; the progress entries below retain
+their original checkpoint status and do not describe current implementation or
+authorize further work. In particular, the statements that C3 is unimplemented
+predate the merged startup supervision, admission/drain, and deployment-classification
+code. This record does not establish that every original acceptance scenario ran
+or that a particular installed generation passed it.
+
+Current behavior and procedures live in [native Codex](../agents/native-codex.md),
+[installation](../INSTALL.md#replacement-and-drain), and
+[Switchyard operations](../../config/switchyard/runtime.md).
+Comparison base: `e14a17164c9d04889581049d243c89aa5f3c96fd`.
 
 ## Purpose and boundaries
 
@@ -11,9 +22,9 @@ after failed publication, and an incompatible optional overlay can block valid
 native metadata. These are the first delivery slice. Refreshable client discovery
 and safer Windows replacement follow as separate, evidence-gated slices.
 
-Current authority: [architecture](agents/architecture.md),
-[native Codex](agents/native-codex.md), [installation](INSTALL.md),
-[Switchyard](../config/switchyard/README.md), and [security](../SECURITY.md).
+Current authority: [architecture](../agents/architecture.md),
+[native Codex](../agents/native-codex.md), [installation](../INSTALL.md),
+[Switchyard](../../config/switchyard/README.md), and [security](../../SECURITY.md).
 Keep native models, credentials, instructions, tools, effort, tier and history
 under their existing native contracts. External routes retain only their declared
 capabilities. Do not change Jev policy, model choices, provider fallback, or native

@@ -44,9 +44,10 @@ The exact response helper varies by transport; the invariant is that
 
 Compaction recovers historical definitions solely to translate history. It sends
 no tools or tool choice, removes previous-response references, appends the source
-catalog and summary instructions, and uses non-streaming Responses. GLM thinking
-carry is an ordinary-turn adaptation, not a compaction adaptation. Pareto's
-custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
+catalog and summary instructions, and uses non-streaming Responses. GLM reasoning
+replay belongs to the pinned LiteLLM bridge described in the
+[GLM guide](openrouter-glm.md); the preparer has no separate reasoning-carry shim.
+Pareto's custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
 search uses the direct Responses hop; ordinary GLM requests still use LiteLLM.
 
 The forwarder calls `prepareOpenRouterRequest` for final payload validation and

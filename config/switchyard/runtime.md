@@ -7,10 +7,11 @@ First read the [integration boundaries](README.md). For live replacement, use
 ## Runtime supervision and diagnosis
 
 Router starts Switchyard only when the `switchyard` provider is selected. It
-validates the installed binary and route file, rejects non-loopback overrides,
-waits for `/health`, watches the child, and owns its lifetime. Do not start a
-second process. A Switchyard exit ends the Router generation so the OS
-supervisor can rebuild one coherent stack.
+validates the installed binary and route file and rejects non-loopback overrides.
+The native frontend starts independently; the optional-child supervisor waits
+for Switchyard `/health` and owns bounded recovery after startup failures or
+exits. Do not start a second process. Exhausted recovery leaves Switchyard
+unavailable while the native frontend remains alive.
 
 Defaults and supported overrides:
 
@@ -30,7 +31,8 @@ Diagnose the first failing owner instead of restarting blindly:
 | 401 from `/v1/models`, `/v1/decision`, or serving endpoints | Expected without the ephemeral hop capability. Test through Router unless specifically proving the negative boundary. |
 | `local-hop capability is unavailable` | Router and Switchyard were not started as one supervised generation. Find the lifecycle/config split; do not paste a static capability into files. |
 | Router health reports `degraded: ["switchyard"]` | The selected child is unreachable. Inspect the supervised child exit and active config before any restart. |
-| Switchyard exits and the whole Router service exits | Expected generation ownership. Fix the child root cause; the service supervisor restarts the coherent stack. |
+| Switchyard exits while Router remains live | The optional-child supervisor retries within its bound. Inspect the child failure and current readiness; exhaustion does not authorize fallback or a second process. |
+| The whole Router generation exits | Check the core frontend exit or an explicit service mutation; a Switchyard exit alone should not end the generation. |
 | Task Scheduler reports `0x800710E0` while Router is healthy | The minute heartbeat tried to start the running task and `MultipleInstances=IgnoreNew` rejected the duplicate. Use Router health, managed task state, and process identity as authority. |
 
 Summarize only the latest supervised generation without copying request bodies,

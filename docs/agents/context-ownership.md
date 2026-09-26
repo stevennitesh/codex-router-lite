@@ -11,8 +11,9 @@ model/endpoint additions, to current guides; it is not an operations manual.
 - Model onboarding owns the integration path; endpoint guides own measured route rules.
 - Debugging owns diagnosis; compatibility maintenance owns app/upstream refresh;
   installation and Switchyard guides own their runtime transactions.
-- The engineering contract owns engineering discipline. Tracker guidance is
-  conditional; ordinary endpoint work does not require a tracker or new ADR.
+- The [engineering contract](engineering-contract.md) owns engineering discipline.
+  Tracker guidance is conditional; ordinary endpoint work does not require a
+  tracker or new ADR.
 - README is the user-facing overview and links to maintainer entry points.
 - Portable technical plans and design documents may be tracked when they contain
   durable problem statements, constraints and acceptance evidence without worker
@@ -34,6 +35,13 @@ Keep one authoritative owner for each rule, with concrete task triggers on inbou
 links. When moving a document, preserve useful evidence and repair inbound and
 relative links. Audit unlinked Markdown and instruction-bearing configuration too.
 Do not replace current contracts with conclusions from an old investigation.
+
+For a repository context audit, include root guides, `docs/agents`, operational
+guides, plans outside `docs/history`, history indexes, and the runtime instruction
+owners below. Check commands against their scripts and status claims against
+current source and exact-route applications. Preserve dated evidence while
+retiring superseded active instructions. A documentation cleanup does not install
+shipped skills, change model eligibility, spend provider quota, or start deployment.
 
 ## Runtime instructions
 

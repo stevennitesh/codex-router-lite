@@ -1,8 +1,11 @@
 # Codex app 26.924.1866 compatibility review - 2026-09-25
 
-Historical compatibility evidence. Current authority remains the Router source,
-the native catalog read from the installed Codex binary, the app-tool snapshot,
-and the upstream review records.
+Historical initial-review evidence. The later
+[complete update](2026-09-25-complete-codex-update.md) supersedes this record's
+app-tool snapshot and Switchyard pin recommendations. Current authority remains
+the Router source, installed native catalog, request-local app-tool definitions,
+upstream review pointer, and Switchyard lock. The observations below describe
+the earlier review stage.
 
 ## Installed app and CLI
 

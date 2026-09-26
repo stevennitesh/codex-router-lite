@@ -29,7 +29,7 @@ and HTTP status in sanitized evidence. Locate the earliest violated contract:
 | Wrong/missing tool or custom arguments | `src/namespace-relay.mjs`; compare declaration, produced call and replay identity together |
 | Missing/duplicate stream events | `src/zai-responses-compat.mjs` for GLM; generic relay, `src/message-phase.mjs`, `src/empty-completion-guard.mjs` for shared behavior |
 | Lost context or false compaction success | `src/compaction-checkpoint.mjs` and compaction callers in `src/router.mjs` |
-| Native handoff/auth failure | `src/codex-native-session.mjs`, `src/native-request-compat.mjs`; [native Codex](native-codex.md) |
+| Native handoff/auth failure | `src/router.mjs` owns encrypted handoff extraction/relay; `src/codex-native-session.mjs` owns session credentials; [native Codex](native-codex.md) |
 | Disconnect, retry or proxy anomaly | `src/api-forwarder.mjs`, `src/upstream-retry.mjs`, `src/fetch-transport.mjs`, `src/proxy-environment.mjs` |
 | Wrong Switchyard target/classifier output | [Switchyard runtime diagnostics](../../config/switchyard/runtime.md) |
 | Missing or duplicate agent instructions | [Instruction ownership](context-ownership.md#runtime-instructions) |

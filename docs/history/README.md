@@ -6,6 +6,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Four-route native desktop v2 certification, 2026-09-26](2026-09-26-native-v2-certification.json)
 - [Complete Codex 0.158 compatibility update, 2026-09-25](2026-09-25-complete-codex-update.md)
 - [Codex app 26.924.1866 compatibility review, 2026-09-25](2026-09-25-codex-app-compatibility.md)
 - [Bounded connect retry integration, 2026-09-23](2026-09-23-connect-retry-budget.md)
@@ -13,6 +14,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 - [LiteLLM 1.102.1 shim retirement audit, 2026-09-23](2026-09-23-litellm-shim-retirement.md)
 - [LiteLLM 1.102.1 compatibility refresh, 2026-09-23](2026-09-23-litellm-1.102.1.md)
 - [Native discovery capability decision, 2026-09-22](2026-09-22-native-discovery-capability.md)
+- [Native availability delivery plan and checkpoint history, 2026-09-21](2026-09-21-native-availability-plan.md) (source integrated; original progress preserved)
 - [Pre-public history and repository audit, 2026-09-19](2026-09-19-public-release-audit.md)
 - [Codex compatibility review, 2026-09-18](2026-09-18-codex-compatibility.md)
 - [Pareto investigation, 2026-09-17](2026-09-17-pareto.md)
@@ -33,7 +35,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 - [Native child automatic-routing G2 deployed acceptance, 2026-09-20](2026-09-20-switchyard-child-routing-g2-deployed-evidence.json), [live verifier](2026-09-20-switchyard-g2-live-verification.json), and [isolated candidate evidence](2026-09-20-switchyard-child-routing-g2-isolated-evidence.json)
 - [Completed native child routing plan](2026-09-20-switchyard-child-routing-plan-completed.md) and [handoff](2026-09-20-switchyard-child-routing-handoff-completed.md), 2026-09-20
 - [Native child encrypted-handoff G1 accepted evidence, 2026-09-20](2026-09-20-switchyard-child-routing-g1-evidence.json)
-- [Encrypted-handoff routing design review, 2026-09-20](2026-09-20-switchyard-encrypted-handoff-design.md) (proposal; not implemented)
+- [Encrypted-handoff routing design review, 2026-09-20](2026-09-20-switchyard-encrypted-handoff-design.md) (historical proposal; delivery recorded in the completed child-routing plan above)
 - [Native child transition limitation, 2026-09-19](2026-09-19-switchyard-native-child-transitions.json)
 - [Live same-conversation model transitions, 2026-09-19](2026-09-19-switchyard-live-model-transitions.json)
 - [Version 0.6.1 certification, 2026-09-19](2026-09-19-switchyard-v061-certification.json)

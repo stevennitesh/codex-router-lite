@@ -10,9 +10,11 @@ This guide owns service and operator diagnosis. Start with read-only checks:
 
 If a restricted shell reports that protected state is missing, Codex is signed
 out, or a provider runtime is unavailable, repeat the same read-only check with
-the local authority that owns `%CODEX_HOME%`. Treat the elevated result as the
-diagnostic authority. Do not repair ACLs or reinstall from the restricted
-shell's false negative.
+the supported approval mechanism under the Windows user that owns `%CODEX_HOME%`.
+Distinguish access denial from confirmed absence; a successful owner-context read
+resolves that ambiguity. Administrator elevation is not required merely to read
+the user's state. Do not change ownership, weaken ACLs, or reinstall to bypass
+the sandbox's access restrictions.
 
 Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, prompt bodies, or unredacted logs into an issue.
 
@@ -21,8 +23,10 @@ Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, pr
 Resolve the Codex executable actually used by the app and run:
 
 ```powershell
-codex --version
-node scripts/check-codex-catalog-compat.mjs <codex-executable>
+$codexBinary = node --input-type=module -e "import {findCodexBinary} from './src/codex-binary.mjs'; process.stdout.write(findCodexBinary() || '')"
+if (-not $codexBinary) { throw "Current Codex binary was not found" }
+& $codexBinary --version
+node scripts/check-codex-catalog-compat.mjs $codexBinary
 ```
 
 The installed build owns native models. Do not repair drift by copying a catalog from another version.
@@ -126,6 +130,12 @@ A task with the expected name but different launcher, arguments, source root, AC
 The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.
+
+If replacement reports `ERR_ROUTER_DRAIN_DEFERRED` or
+`ERR_ROUTER_DRAIN_UNSUPPORTED`, follow the
+[replacement and drain policy](INSTALL.md#replacement-and-drain). A deferral
+preserves the running generation; it is not a reason to kill the process or
+automatically force replacement.
 
 The service task has a minute heartbeat and `MultipleInstances=IgnoreNew`.
 While Router is running, a duplicate heartbeat launch may set Task Scheduler's

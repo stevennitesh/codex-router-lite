@@ -117,8 +117,10 @@ The transaction must:
 2. Snapshot the exact active binary, `routes.toml`, `SOURCE_COMMIT`, and any
    provenance file into one private same-volume rollback directory. Record
    which files did not previously exist.
-3. Enter one `try`/rollback boundary; stop the Router service inside that
-   boundary, replace the complete staged set, write the locked commit and
+3. Enter one `try`/rollback boundary; use the guarded service operation and its
+   [admission drain](../../docs/INSTALL.md#replacement-and-drain) before stopping
+   Router. A deferral leaves the running generation in place; do not bypass it
+   with a standalone stop. Replace the complete staged set, write the locked commit and
    binary/patch/route/Router hashes, then start the same service and wait for
    readiness.
 4. On any copy, start, or readiness failure, stop the failed generation if
