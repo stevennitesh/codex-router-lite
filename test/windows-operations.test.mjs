@@ -93,6 +93,8 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /config-manager\.mjs"\) enable[\s\S]*\$activationStarted = \$true[\s\S]*Invoke-RouterService \$runningRouterRoot "stop"/);
   assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
+  assert.match(source, /AddSeconds\(45\)[\s\S]*Router full health did not become clean within 45 seconds/u);
+  assert.match(source, /Start-Sleep -Milliseconds 500/u);
   assert.match(source, /check-codex-catalog-compat\.mjs"\) \$codexBinary --catalog \$catalogPath/);
   assert.match(source, /install-manifest\.json/);
   assert.match(source, /\$installManifest\.current\.commit/);
