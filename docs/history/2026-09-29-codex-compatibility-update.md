@@ -47,6 +47,28 @@ private routes in `--dry-run` mode. `git diff --check` passed.
 
 The candidate binary SHA-256 is
 `03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968`.
-Switchyard eligibility is v1 and its application is draft until fresh native
-certification accepts the changed runtime. Deployment and live proof are
-recorded separately after their actual completion.
+The candidate was committed with Switchyard eligibility at v1 and its application
+draft. After deployment, the authorized proof window restored v2 and fresh native
+certification accepted the changed runtime.
+
+## Deployment and acceptance
+
+The guarded deployment activated Router commit
+`36fd7c787c76b58412d5bdafd41c16d6d727b060` and the locked Switchyard binary.
+Installed binary, routes, source/patch provenance, scheduled service, full health,
+unauthenticated protected-endpoint rejection, and current catalog checks passed.
+The refreshed account catalog contained 16 models at deployment (14 were
+available during the earlier source check).
+
+[Live Switchyard evidence](2026-09-29-switchyard-live.json) passed the tool
+round trip, continuation affinity, native/routed media control, zero-decision
+media fallback, native compaction bypass, and Jev 1.13 binding checks.
+[Native v2 evidence](2026-09-29-native-v2-certification.json) records each of
+Novita GLM, GMICloud GLM, Pareto, and Switchyard returning two markers on the
+same child, with two encrypted handoffs and a real default-sandbox tool call.
+Each route had three HTTP 200 requests and two completed turns. Cleanup only
+acted on already-completed children. All four exact applications are accepted.
+
+The proof binds the deployed candidate commit, not the later evidence and v2
+publication commit. No provider, target model, reasoning policy, or classifier
+criterion was changed as part of certification.

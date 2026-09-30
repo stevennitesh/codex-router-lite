@@ -1,35 +1,24 @@
 # openrouter/glm-5.3-flash v2 certification
 
-Accepted on 2026-09-26T14:38:16.631Z against deployed Router `60cbefd571b5a87357bb0e0f0697728484afbbd5`
-(version 0.7.0), codex-cli 0.158.0-alpha.2.1, using a fresh native desktop parent
-and the generated `router_openrouter_glm_5_3_flash` role. Endpoint: novita.
-This historical proof applies only to the recorded runtime.
+Accepted on 2026-09-30T01:29:00.360Z against deployed Router `36fd7c787c76b58412d5bdafd41c16d6d727b060`
+(version 0.7.0), codex-cli 0.159.0 and Windows app 26.928.1915.0.
+The native desktop parent used the generated `router_openrouter_glm_5_3_flash` role with no
+inherited conversation. This historical proof applies only to the recorded runtime.
 
 ## Evidence
 
-[Bounded native desktop evidence](../../../docs/history/2026-09-26-native-v2-certification.json) records
-the window 2026-09-26T14:37:31.103Z through 2026-09-26T14:38:16.631Z.
-The parent contains actual native spawn, wait, completed-child cleanup, and
-same-child follow-up calls. The one child rollout contains two encrypted
-`agent_message` handoffs, the native tool call and matching output, both final
-markers, and two `task_complete` events. Neither cleanup interrupted an active
-turn: each returned a previous status of completed, and the first cleanup
-preceded the same-child follow-up.
+[Bounded evidence](../../../docs/history/2026-09-29-native-v2-certification.json) records actual spawn and follow-up
+events, two encrypted handoffs in one child rollout, a default-sandbox command
+`Write-Output (19+23)` returning `42`, and both final markers:
+`NOVITA_36FD7C78_FIRST_OK` and `NOVITA_36FD7C78_SECOND_OK`.
+Tool call/output identities matched. Both cleanup calls reported the child
+already completed; no running turn was interrupted.
 
-| Check | Observed result |
-| --- | --- |
-| Streaming Responses completion | Three HTTP 200 requests; native tool/text items and two completed turns |
-| Actual native tool call/output | Default sandbox, `Write-Output (19+23)`, output `42` |
-| Encrypted relay | Two encrypted handoffs in the same child rollout |
-| First marker | `NOVITA_60CBEFD5_FIRST_OK` |
-| Same-child follow-up marker | `NOVITA_60CBEFD5_SECOND_OK` |
-
-Router request durations were 18288 ms, 6758 ms, 8852 ms.
-
+All three Router requests returned HTTP 200, with durations
+17383, 6902, 8510 ms.
 ## Limits
 
-This is a synthetic exact-route native desktop check, not a general workload or
-GUI soak. Raw SSE was not captured; successful Router Responses timings and
-native completed items/turns establish the streamed completion result. Earlier
-CLI attempts are excluded. No raw session identifiers, ciphertext, credentials,
-or private request payloads are retained. Later runtime changes require renewal.
+Native completed items and turns establish streamed completion; raw SSE was not
+retained. No ciphertext, raw session identifiers, credentials or private task
+payloads are included. This is a synthetic certification, not a workload soak.
+Later runtime or route-contract changes require renewed proof.

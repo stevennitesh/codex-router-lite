@@ -3,57 +3,57 @@
   "provider": "switchyard",
   "model": "gpt-5.6-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
   "routerVersion": "0.7.0",
-  "codexVersion": "codex-cli 0.158.0-alpha.2.1",
+  "codexVersion": "codex-cli 0.159.0",
   "executionSurface": "codex-desktop-native",
   "endpointProvider": "local-switchyard",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-26T14:40:44.469Z"
+      "observedAt": "2026-09-30T01:29:16.649Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-26T14:40:29.719Z",
+      "observedAt": "2026-09-30T01:28:29.383Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-26T14:40:44.440Z"
+      "observedAt": "2026-09-30T01:29:16.562Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-26T14:40:33.021Z"
+      "observedAt": "2026-09-30T01:28:33.692Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-26T14:40:44.440Z"
+      "observedAt": "2026-09-30T01:29:16.562Z"
     }
   },
-  "testedAt": "2026-09-26T14:40:46.831Z",
-  "routerCommit": "60cbefd571b5a87357bb0e0f0697728484afbbd5",
+  "testedAt": "2026-09-30T01:29:26.154Z",
+  "routerCommit": "36fd7c787c76b58412d5bdafd41c16d6d727b060",
   "runtimeBinding": {
-    "upstreamCommit": "9cf6fadfc60bfdf59ee61bf8a14226807c2540bc",
-    "upstreamContributionSha256": "89ac116a528c7fbb7ece50119f89f3adde12eb87c4fe3f60159fd7f03b01aad1",
-    "routerCommit": "60cbefd571b5a87357bb0e0f0697728484afbbd5",
-    "version": 1,
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
     "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
-    "deployedAt": "2026-09-26T05:21:33.9638801Z",
-    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
-    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
-    "patchSha256": "0714847ebbb265086ee7c83a9078ec1c4c5f3e119be1101c4089750af3f3826c",
-    "binarySha256": "9802851259b41714bd305c97f030d13e570baa3c2095da6e8b32054b45ebb856"
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
+    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+    "version": 1,
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
+    "deployedAt": "2026-09-30T01:25:50.0373064Z",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "36fd7c787c76b58412d5bdafd41c16d6d727b060"
   },
-  "evidence": "docs/history/2026-09-26-native-v2-certification.json"
+  "evidence": "docs/history/2026-09-29-native-v2-certification.json"
 }

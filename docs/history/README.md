@@ -7,6 +7,7 @@ Current work starts at [the repository entry](../../AGENTS.md).
 ## Compatibility and retired routes
 
 - [Codex compatibility update, 2026-09-29](2026-09-29-codex-compatibility-update.md)
+- [Four-route native v2 certification, 2026-09-29](2026-09-29-native-v2-certification.json)
 
 - [Four-route native desktop v2 certification, 2026-09-26](2026-09-26-native-v2-certification.json)
 - [Complete Codex 0.158 compatibility update, 2026-09-25](2026-09-25-complete-codex-update.md)
