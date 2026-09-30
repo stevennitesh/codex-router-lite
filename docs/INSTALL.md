@@ -48,6 +48,11 @@ Switchyard installation is maintainer work. Read its
 
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
+Initial process-record creation allows cold Windows PowerShell probes 45 seconds
+and retries a timeout once. Ordinary ownership and stop probes retain their
+five-second budget. A completed negative probe is not retried, and private-state
+ACL failures still prevent publication.
+
 `/live` proves frontend liveness and service identity. `/health` and Doctor check
 dependency readiness; a live frontend can still report degraded optional routes.
 The service wrapper uses `/live` during launch. Verify full `/health` and Doctor

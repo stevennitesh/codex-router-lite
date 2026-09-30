@@ -1,15 +1,15 @@
 {
   "repository": "https://github.com/NVIDIA-NeMo/Switchyard.git",
-  "commit": "9cf6fadfc60bfdf59ee61bf8a14226807c2540bc",
+  "commit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
   "upstreamContribution": {
     "kind": "github-pull-request",
     "pullRequest": 762,
     "sourceCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "patch": "patches/switchyard-typesafe-pr-762.patch",
-    "patchSha256": "89ac116a528c7fbb7ece50119f89f3adde12eb87c4fe3f60159fd7f03b01aad1"
+    "patchSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e"
   },
   "patch": "patches/switchyard-codex-compat.patch",
-  "patchSha256": "0714847ebbb265086ee7c83a9078ec1c4c5f3e119be1101c4089750af3f3826c",
+  "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
   "rustToolchain": "1.96.1",
   "binary": "target/release/switchyard-server.exe"
 }

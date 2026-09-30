@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "9fb6440d9f310ce03b28e9b4eaeaf3b970b2703f",
+  "lastReviewedCommit": "84c6e1ba9c7545e7206d9d13b3b002601034ee48",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -11,7 +11,7 @@
     "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
     "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
   ],
-  "reviewedAt": "2026-09-25",
+  "reviewedAt": "2026-09-29",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -20,7 +20,9 @@
       "fae956e8 and c450ddf3: preserve a still-alive LiteLLM cold start across bounded health budgets instead of restarting its import",
       "16077577: scale the pre-content completion budget with routed request size while retaining the small-request base",
       "a9ccca2d, a7e37d45 and 1a339dda: bound direct/proxy TCP connect establishment at 3s by default, race address families, and derive the retry budget from the same bound so UND_ERR_CONNECT_TIMEOUT retries are reachable",
-      "259a04c7 and merge 8ff371ea: pin the Windows hidden launcher to //E:VBScript while recognizing the previous Router-owned action for safe migration"
+      "259a04c7 and merge 8ff371ea: pin the Windows hidden launcher to //E:VBScript while recognizing the previous Router-owned action for safe migration",
+      "ce40ef5b and merge 84c6e1ba: update Undici to 8.11.2",
+      "c089d403, 6d450845 and merge 60e9421a: adapt startup-only timeout retries and absolute system PowerShell resolution; retain strict private-file ACL handling"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -48,7 +50,12 @@
       "28f7799b: BOM-tolerant hand-edited generic registry/user-model files are outside Router Lite's generated checked-in route and protected-state ownership",
       "96da2880: search-sidecar deadline fix targets an upstream component Router Lite does not retain",
       "77dde401 and e3058712: generic automatic model failover candidate controls are outside exact-route Router Lite policy",
-      "The remaining 1a339dda..9fb6440d commits are provider families (DeepSeek, Grok, Muse, Space Bunny), Control Center/browser-login/UI, CI/tests, changelog tooling, or upstream packaging behavior outside Lite's retained owners"
+      "The remaining 1a339dda..9fb6440d commits are provider families (DeepSeek, Grok, Muse, Space Bunny), Control Center/browser-login/UI, CI/tests, changelog tooling, or upstream packaging behavior outside Lite's retained owners",
+      "c089d403 ACL warning fallback: retain fail-closed private-state writes",
+      "6c693260, c8cd2e92 and merges 52edc1d4/cc8adfcc: Homebrew stable Node paths are outside the Windows runtime requirement",
+      "0d4468d7, 8af533c5 and merge dc77cf54: generic Responses gateway streaming compaction is outside exact retained endpoints",
+      "70dc75f5, 63755b9c, f3c1c295, bc2ea60b and merge 7dccbede: Azure delegation and image filtering are outside retained providers",
+      "Remaining 9fb6440d..84c6e1ba commits: CommandCode/Space Bunny/Gemini, Ollama, Control Center, Homebrew CI, documentation and merge-only changes are outside retained owners"
     ]
   }
 }

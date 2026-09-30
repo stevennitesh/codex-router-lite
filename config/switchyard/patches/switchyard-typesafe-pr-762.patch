@@ -953,7 +953,7 @@ index 00000000..5fea15ee
 +    }
 +}
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 9d07aeff..49221a35 100644
+index a1f1ef02..157cea55 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
 @@ -29,6 +29,7 @@ pub use algorithms::plan_execute::{PlanExecute, PlanExecuteConfig};
@@ -964,7 +964,7 @@ index 9d07aeff..49221a35 100644
  pub use algorithms::util::affinity::{AffinityRouter, ClassifyTrigger};
  pub use algorithms::util::classifier_contract::{
      ClassifierContractConfig, ClassifierResponseFormat,
-@@ -37,6 +38,10 @@ pub use algorithms::util::escalation::EscalationJudgeConfig;
+@@ -37,6 +38,10 @@ pub use algorithms::util::escalation::{DeescalationConfig, EscalationJudgeConfig
  pub use algorithms::util::prompts::append_note;
  pub use algorithms::util::subagent::{SubagentGate, SubagentOverride};
  pub use algorithms::util::tool_signals::{DEFAULT_RECENT_WINDOW, ToolSemantics, ToolSignals};
@@ -1286,7 +1286,7 @@ index e742d48b..922a698c 100644
  }
  
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index 6da7a4f2..e24b8ad1 100644
+index f37b4cda..756aa42f 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -59,10 +59,30 @@ pub(crate) struct DeploymentConfig {
@@ -1333,7 +1333,7 @@ index 6da7a4f2..e24b8ad1 100644
              match seen_client_model_ids.entry((target.llm_client.as_str(), target.id.as_str())) {
                  std::collections::hash_map::Entry::Vacant(slot) => {
                      slot.insert((target_name, target));
-@@ -211,7 +237,31 @@ impl DeploymentConfig {
+@@ -212,7 +238,31 @@ impl DeploymentConfig {
          let mut provider_api_keys = Vec::new();
          let clients = self.build_clients(&mut provider_api_keys)?;
          let targets = self.build_targets();
@@ -1365,7 +1365,7 @@ index 6da7a4f2..e24b8ad1 100644
          let mut routes = Vec::with_capacity(self.routes.len());
          for (route_name, config) in &self.routes {
              for target_name in config.callable_target_names() {
-@@ -229,7 +279,12 @@ impl DeploymentConfig {
+@@ -230,7 +280,12 @@ impl DeploymentConfig {
              }
              let algorithm = config
                  .algorithm
@@ -1379,7 +1379,7 @@ index 6da7a4f2..e24b8ad1 100644
                  .map_err(|error| RunnerError::configuration_source(error.to_string(), error))?;
              let (route_clients, caller_auth) =
                  self.build_route_clients(route_name, config, &clients)?;
-@@ -468,6 +523,43 @@ impl DeploymentConfig {
+@@ -476,6 +531,43 @@ impl DeploymentConfig {
          Ok(Some(config.base_url.as_str().to_string()))
      }
  
@@ -1423,7 +1423,7 @@ index 6da7a4f2..e24b8ad1 100644
      fn build_anthropic_auxiliary_target(
          &self,
          route: &RouteConfig,
-@@ -577,6 +669,8 @@ struct LlmClientConfig {
+@@ -585,6 +677,8 @@ struct LlmClientConfig {
  struct TargetConfig {
      id: ModelId,
      llm_client: String,
@@ -1431,8 +1431,8 @@ index 6da7a4f2..e24b8ad1 100644
 +    routing_description: Option<String>,
      #[serde(default)]
      extra_body: BTreeMap<String, Value>,
-     system_prompt: Option<String>,
-@@ -865,6 +959,274 @@ efficient_target = "weak"
+     /// Top-level request fields dropped from the outbound body before `extra_body` is merged.
+@@ -879,6 +973,274 @@ efficient_target = "weak"
          Ok(())
      }
  
@@ -2606,7 +2606,7 @@ index 00000000..73d5621b
 +    }
 +}
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 7fc96b70..4b5ce998 100644
+index 8bf382a0..d4f1354b 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -97,12 +97,30 @@ targets. The server rejects an Anthropic forwarding route called through an
@@ -2640,7 +2640,7 @@ index 7fc96b70..4b5ce998 100644
  | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
  | `extra_body` | No | `{}` | Values merged into the upstream request when the request does not already set that key. |
  | `reasoning_effort` | No | unset | Reasoning effort forced on every request to this target, replacing the value the caller sent (`reasoning.effort` on `openai_responses`, `reasoning_effort` on `openai_chat`). Rejected on `anthropic_messages` clients. Use it to run one target at a different effort than the client asked for, for example a strong tier at `max` behind a client that sends `high`. Targets with different effort settings need distinct model IDs when used within one route. Separate routes may use the same model ID with separate `llm_clients` entries (same endpoint, different name). |
-@@ -293,6 +311,27 @@ Classifier prompts must not contain `{{RESPONSE_SCHEMA}}`. Switchyard supplies
+@@ -298,6 +316,27 @@ Classifier prompts must not contain `{{RESPONSE_SCHEMA}}`. Switchyard supplies
  the schema automatically: through the structured-output request in `json_schema`
  mode, or in the prompt in `json_object` mode.
  
@@ -2669,10 +2669,10 @@ index 7fc96b70..4b5ce998 100644
  
  Scores tool signals to pick a tier per turn. See
 diff --git a/docs/routing_algorithms/overview.md b/docs/routing_algorithms/overview.md
-index 6347ed83..ad041b83 100644
+index 1a1eac7f..43651480 100644
 --- a/docs/routing_algorithms/overview.md
 +++ b/docs/routing_algorithms/overview.md
-@@ -46,6 +46,7 @@ These options remain available when you need a different routing policy.
+@@ -44,6 +44,7 @@ These options remain available when you need a different routing policy.
  | [Composite](composite_routing.md) | Combine Task and Execution. A classifier sets the stage router's default tier. | `composite` |
  | [Escalation](escalation_router_routing.md) | Start on the efficient model and escalate when an LLM judge detects trouble. | `llm_classifier` with `mode = "escalation"` |
  | [Custom](llm_classifier_routing.md#custom-multi-target-routing) | Route among two or more models using your own classification schema and rules. | `llm_classifier` with `mode = "custom"` |
@@ -2820,10 +2820,10 @@ index 00000000..0e72b6b0
 +
 +Treat the selected target as model-dependent output, not a fixed test result.
 diff --git a/mkdocs.yml b/mkdocs.yml
-index 5cd2a986..66f43992 100644
+index 57cf32d6..6203e19e 100644
 --- a/mkdocs.yml
 +++ b/mkdocs.yml
-@@ -30,6 +30,7 @@ nav:
+@@ -32,6 +32,7 @@ nav:
    - Routing:
        - Overview: routing_algorithms/overview.md
        - Task (LLM Classifier): routing_algorithms/llm_classifier_routing.md

@@ -1,3 +1,5 @@
+Pending renewed certification for the 2026-09-29 source update. The prior proof below is historical and does not certify the new runtime.
+
 # switchyard/auto v2 certification
 
 Accepted on 2026-09-26T14:40:46.831Z against deployed Router `60cbefd571b5a87357bb0e0f0697728484afbbd5`

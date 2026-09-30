@@ -208,10 +208,10 @@ index 1a07d2da..b592beb9 100644
  switchyard-llm-client = { path = "crates/libsy-llm-client", version = "0.3.0" }
  switchyard-protocol = { path = "crates/protocol", version = "0.3.0" }
 diff --git a/crates/libsy-llm-client/src/backend.rs b/crates/libsy-llm-client/src/backend.rs
-index 1e3784a7..d4f6a940 100644
+index 064b1354..04be0799 100644
 --- a/crates/libsy-llm-client/src/backend.rs
 +++ b/crates/libsy-llm-client/src/backend.rs
-@@ -233,21 +233,22 @@ impl Backend {
+@@ -241,21 +241,22 @@ impl Backend {
      }
  
      pub(crate) fn is_provider_owned_header(&self, name: &str) -> bool {
@@ -250,7 +250,7 @@ index 1e3784a7..d4f6a940 100644
  
      /// Applies only the caller credential accepted by this provider.
 diff --git a/crates/libsy-llm-client/src/client.rs b/crates/libsy-llm-client/src/client.rs
-index b32e5e58..453974d4 100644
+index f2d0301d..724a27e3 100644
 --- a/crates/libsy-llm-client/src/client.rs
 +++ b/crates/libsy-llm-client/src/client.rs
 @@ -61,6 +61,9 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -368,7 +368,7 @@ index b32e5e58..453974d4 100644
          let mut body = encode_request(&llm_request, wire_format)
              .map_err(|error| LlmClientError::RequestEncoding(error.to_string()))?;
          // `encode_request` round-trips a preserved same-format body verbatim,
-@@ -263,7 +290,9 @@ impl TranslatingLlmClient {
+@@ -264,7 +291,9 @@ impl TranslatingLlmClient {
          merge_extra_body(&mut body, backend.extra_body());
          // After the merge on purpose: the effort override must win over both the caller's
          // value and any `reasoning` default a target set through `extra_body`.
@@ -378,7 +378,7 @@ index b32e5e58..453974d4 100644
          if matches!(backend, Backend::Anthropic(_)) {
              enable_anthropic_prompt_caching(&mut body);
          }
-@@ -518,22 +547,20 @@ impl TranslatingLlmClient {
+@@ -519,22 +548,20 @@ impl TranslatingLlmClient {
              .ok_or_else(|| LlmClientError::InvalidRequest {
                  message: "no model given".to_string(),
              })?;
@@ -406,7 +406,7 @@ index b32e5e58..453974d4 100644
  
          let http_response = self
              .send_encoded(
-@@ -541,7 +568,7 @@ impl TranslatingLlmClient {
+@@ -542,7 +569,7 @@ impl TranslatingLlmClient {
                  wire_format,
                  llm_request,
                  metadata.as_ref(),
@@ -415,7 +415,7 @@ index b32e5e58..453974d4 100644
                  UpstreamEndpoint::Completion,
              )
              .await?;
-@@ -662,6 +689,18 @@ impl TranslatingLlmClient {
+@@ -663,6 +690,18 @@ impl TranslatingLlmClient {
      }
  }
  
@@ -434,7 +434,7 @@ index b32e5e58..453974d4 100644
  #[async_trait]
  impl RoutedLlmClient for TranslatingLlmClient {
      async fn call(&self, request: Request) -> Result<Response> {
-@@ -1145,6 +1184,47 @@ fn merge_extra_body(body: &mut Value, extra_body: &BTreeMap<String, Value>) {
+@@ -1155,6 +1194,47 @@ fn omit_configured_body_fields(body: &mut Value, omit_body_fields: &BTreeSet<Str
      }
  }
  
@@ -482,7 +482,7 @@ index b32e5e58..453974d4 100644
  // Anthropic and Bedrock both cap a request at four blocks carrying
  // `cache_control`, counting tools, system blocks and message blocks together.
  const MAX_CACHE_CONTROL_BLOCKS: usize = 4;
-@@ -2054,6 +2134,73 @@ mod tests {
+@@ -2118,6 +2198,76 @@ mod tests {
          Ok(())
      }
  
@@ -494,6 +494,7 @@ index b32e5e58..453974d4 100644
 +            .and(path("/v1/chat/completions"))
 +            .and(wiremock::matchers::body_partial_json(json!({
 +                "model": "gpt-5.6-luna",
++                "reintroduced": "from-extra",
 +                "reasoning": {
 +                    "effort": "max",
 +                    "context": "preserved-context",
@@ -519,17 +520,18 @@ index b32e5e58..453974d4 100644
 +            .mount(&server)
 +            .await;
 +
-+        let model = ModelConfig::new(
-+            "switchyard/luna-max",
-+            Backend::OpenAiChat(config(&format!("{}/v1", server.uri()))),
-+            None,
-+        )
-+        .with_upstream_model("gpt-5.6-luna")
-+        .with_body_overrides(BTreeMap::from([(
-+            "reasoning".to_string(),
-+            json!({"effort": "max"}),
-+        )]))
-+        .with_body_removals(vec!["max_output_tokens".to_string()]);
++        let mut backend = config(&format!("{}/v1", server.uri()));
++        backend.omit_body_fields.insert("reintroduced".to_string());
++        backend
++            .extra_body
++            .insert("reintroduced".to_string(), json!("from-extra"));
++        let model = ModelConfig::new("switchyard/luna-max", Backend::OpenAiChat(backend), None)
++            .with_upstream_model("gpt-5.6-luna")
++            .with_body_overrides(BTreeMap::from([
++                ("reasoning".to_string(), json!({"effort": "max"})),
++                ("max_output_tokens".to_string(), json!(999)),
++            ]))
++            .with_body_removals(vec!["max_output_tokens".to_string()]);
 +        let client = TranslatingLlmClient::new(&[model])?;
 +        let raw = json!({
 +            "model": "switchyard-auto",
@@ -539,7 +541,8 @@ index b32e5e58..453974d4 100644
 +                "context": "preserved-context",
 +                "summary": "auto"
 +            },
-+            "max_output_tokens": 600
++            "max_output_tokens": 600,
++            "reintroduced": "from-request"
 +        });
 +
 +        client
@@ -556,7 +559,7 @@ index b32e5e58..453974d4 100644
      // A weak OpenAI-format tier emits thinking blocks with no signature. Replaying
      // them to Anthropic is rejected (Bedrock reports it as a SigV4 mismatch), so
      // the Anthropic leg must drop them while keeping signed ones.
-@@ -2684,8 +2831,8 @@ mod tests {
+@@ -2748,8 +2898,8 @@ mod tests {
                  "Bearer client-key",
              ))
              .and(wiremock::matchers::header(
@@ -567,7 +570,7 @@ index b32e5e58..453974d4 100644
              ))
              .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                  "id": "1", "model": "gpt",
-@@ -2704,6 +2851,10 @@ mod tests {
+@@ -2768,6 +2918,10 @@ mod tests {
              "x-goog-api-key",
              http::HeaderValue::from_static("client-google-key"),
          );
@@ -578,7 +581,7 @@ index b32e5e58..453974d4 100644
          headers.insert("host", http::HeaderValue::from_static("client.example"));
          headers.insert("content-type", http::HeaderValue::from_static("text/plain"));
          headers.insert("connection", http::HeaderValue::from_static("x-hop-by-hop"));
-@@ -2727,6 +2878,7 @@ mod tests {
+@@ -2791,6 +2945,7 @@ mod tests {
          let received = received.first().ok_or("expected one upstream request")?;
          assert_ne!(received.headers["host"], "client.example");
          assert_eq!(received.headers["content-type"], "application/json");
@@ -1418,7 +1421,7 @@ index 5fea15ee..a4e2b744 100644
      }
  }
 diff --git a/crates/libsy/src/lib.rs b/crates/libsy/src/lib.rs
-index 49221a35..3ea5bdc3 100644
+index 157cea55..6fe32ac0 100644
 --- a/crates/libsy/src/lib.rs
 +++ b/crates/libsy/src/lib.rs
 @@ -29,7 +29,9 @@ pub use algorithms::plan_execute::{PlanExecute, PlanExecuteConfig};
@@ -1608,7 +1611,7 @@ index 922a698c..0e64b66c 100644
              let algorithm = TypeSafeTaskClassifier::new(Arc::clone(provider), classifier_config)
                  .map_err(|error| {
 diff --git a/crates/switchyard-runner/src/config.rs b/crates/switchyard-runner/src/config.rs
-index e24b8ad1..003a52ee 100644
+index 756aa42f..abb5e625 100644
 --- a/crates/switchyard-runner/src/config.rs
 +++ b/crates/switchyard-runner/src/config.rs
 @@ -20,8 +20,8 @@ use switchyard_llm_client::{
@@ -1680,17 +1683,17 @@ index e24b8ad1..003a52ee 100644
                  std::collections::hash_map::Entry::Vacant(slot) => {
                      slot.insert((target_name, target));
                  }
-@@ -219,6 +244,9 @@ impl DeploymentConfig {
-                     let (first_name, first) = slot.get();
+@@ -220,6 +245,9 @@ impl DeploymentConfig {
                      if first.reasoning_effort != target.reasoning_effort
                          || first.extra_body != target.extra_body
+                         || first.omit_body_fields != target.omit_body_fields
 +                        || first.id != target.id
 +                        || first.body_overrides != target.body_overrides
 +                        || first.body_removals != target.body_removals
                      {
                          return Err(RunnerError::configuration(format!(
-                             "targets {first_name} and {target_name} both name model {} on llm client {} but with different reasoning_effort or extra_body; one target per model id is kept, so give each its own model id or llm client",
-@@ -257,10 +285,10 @@ impl DeploymentConfig {
+                             "targets {first_name} and {target_name} both name model {} on llm client {} but with different reasoning_effort, extra_body, or omit_body_fields; one target per model id is kept, so give each its own model id or llm client",
+@@ -258,10 +286,10 @@ impl DeploymentConfig {
              .routes
              .values()
              .any(|route| matches!(route.algorithm, AlgorithmSpec::TypeSafeClassifier { .. }));
@@ -1703,7 +1706,7 @@ index e24b8ad1..003a52ee 100644
          };
          let mut routes = Vec::with_capacity(self.routes.len());
          for (route_name, config) in &self.routes {
-@@ -319,6 +347,7 @@ impl DeploymentConfig {
+@@ -320,6 +348,7 @@ impl DeploymentConfig {
          }
          let runner = Runner::new(routes)
              .with_fallback_url(fallback_base_url)
@@ -1711,7 +1714,7 @@ index e24b8ad1..003a52ee 100644
              .with_provider_api_keys(provider_api_keys);
          Ok(runner)
      }
-@@ -367,16 +396,21 @@ impl DeploymentConfig {
+@@ -374,17 +403,22 @@ impl DeploymentConfig {
                      )));
                  }
              }
@@ -1721,6 +1724,7 @@ index e24b8ad1..003a52ee 100644
 -                    &target.llm_client,
 -                    client_config,
 -                    &target.extra_body,
+-                    &target.omit_body_fields,
 -                    target.reasoning_effort.clone(),
 -                )?,
 -                None,
@@ -1732,6 +1736,7 @@ index e24b8ad1..003a52ee 100644
 +                        &target.llm_client,
 +                        client_config,
 +                        &target.extra_body,
++                        &target.omit_body_fields,
 +                        target.reasoning_effort.clone(),
 +                    )?,
 +                    None,
@@ -1743,7 +1748,7 @@ index e24b8ad1..003a52ee 100644
          }
  
          let mut clients = BTreeMap::new();
-@@ -393,7 +427,7 @@ impl DeploymentConfig {
+@@ -401,7 +435,7 @@ impl DeploymentConfig {
      fn build_targets(&self) -> BTreeMap<String, ModelId> {
          self.targets
              .iter()
@@ -1752,7 +1757,7 @@ index e24b8ad1..003a52ee 100644
              .collect()
      }
  
-@@ -441,7 +475,7 @@ impl DeploymentConfig {
+@@ -449,7 +483,7 @@ impl DeploymentConfig {
                  caller_auth = Some(target_auth);
              }
              let client: Arc<dyn RoutedLlmClient> = client.clone();
@@ -1761,7 +1766,7 @@ index e24b8ad1..003a52ee 100644
          }
          let completion_targets = route
              .routing_target_names()
-@@ -471,7 +505,7 @@ impl DeploymentConfig {
+@@ -479,7 +513,7 @@ impl DeploymentConfig {
              })?;
              let prompt = target.system_prompt.as_deref();
              if aliases
@@ -1770,7 +1775,7 @@ index e24b8ad1..003a52ee 100644
                  .is_some_and(|configured| configured != prompt)
              {
                  return Err(RunnerError::configuration(format!(
-@@ -480,7 +514,7 @@ impl DeploymentConfig {
+@@ -488,7 +522,7 @@ impl DeploymentConfig {
                  )));
              }
              if let Some(prompt) = prompt {
@@ -1779,7 +1784,7 @@ index e24b8ad1..003a52ee 100644
              }
          }
          let mut policy = TargetPromptPolicy {
-@@ -495,19 +529,19 @@ impl DeploymentConfig {
+@@ -503,19 +537,19 @@ impl DeploymentConfig {
          let response = self.targets.get(response_name).ok_or_else(|| {
              RunnerError::configuration(format!("route references unknown target {response_name}"))
          })?;
@@ -1802,7 +1807,7 @@ index e24b8ad1..003a52ee 100644
          Ok(policy)
      }
  
-@@ -526,16 +560,47 @@ impl DeploymentConfig {
+@@ -534,16 +568,47 @@ impl DeploymentConfig {
      /// Builds the deployment-wide TypeSafe provider from `[type_safe_client]`, if
      /// configured. The API key always comes from the environment, never from
      /// this TOML document.
@@ -1858,7 +1863,7 @@ index e24b8ad1..003a52ee 100644
          if let Some(base_url) = &config.base_url {
              // The API key travels as a bearer token on every request to this URL, so an
              // http:// override must be rejected before it reaches the client (which stays
-@@ -555,9 +620,30 @@ impl DeploymentConfig {
+@@ -563,9 +628,30 @@ impl DeploymentConfig {
              })?;
          }
          if let Some(model) = &config.model {
@@ -1873,8 +1878,7 @@ index e24b8ad1..003a52ee 100644
 +                .map_err(|error| {
 +                    RunnerError::configuration_source(format!("type_safe_client: {error}"), error)
 +                })?;
-         }
--        Ok(Some(Arc::new(client)))
++        }
 +        if !credential_available {
 +            return Ok((
 +                Some(Arc::new(
@@ -1886,12 +1890,13 @@ index e24b8ad1..003a52ee 100644
 +                    reason: "missing_credentials",
 +                },
 +            ));
-+        }
+         }
+-        Ok(Some(Arc::new(client)))
 +        Ok((Some(Arc::new(client)), ClassifierReadiness::Ready))
      }
  
      fn build_anthropic_auxiliary_target(
-@@ -600,9 +686,9 @@ impl DeploymentConfig {
+@@ -608,9 +694,9 @@ impl DeploymentConfig {
          let target = self.targets.get(name)?;
          let client = clients.get(&target.llm_client)?;
          client
@@ -1903,7 +1908,7 @@ index e24b8ad1..003a52ee 100644
                  client: client.clone(),
              })
      }
-@@ -668,10 +754,15 @@ struct LlmClientConfig {
+@@ -676,10 +762,15 @@ struct LlmClientConfig {
  #[serde(deny_unknown_fields)]
  struct TargetConfig {
      id: ModelId,
@@ -1917,9 +1922,9 @@ index e24b8ad1..003a52ee 100644
 +    body_removals: Vec<String>,
 +    #[serde(default)]
      extra_body: BTreeMap<String, Value>,
-     system_prompt: Option<String>,
-     /// Reasoning effort forced on every request to this target, replacing the caller's value.
-@@ -679,6 +770,12 @@ struct TargetConfig {
+     /// Top-level request fields dropped from the outbound body before `extra_body` is merged.
+     /// For providers that reject an otherwise standard field.
+@@ -691,6 +782,12 @@ struct TargetConfig {
      reasoning_effort: Option<String>,
  }
  
@@ -1932,7 +1937,7 @@ index e24b8ad1..003a52ee 100644
  #[derive(Clone, Copy, Debug, Deserialize)]
  enum ClientFormat {
      #[serde(rename = "openai_chat")]
-@@ -1006,6 +1103,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
+@@ -1020,6 +1117,37 @@ candidate_descriptions = {{ strong = "complex, multi-step work", weak = "short,
          Ok(())
      }
  
@@ -1970,7 +1975,7 @@ index e24b8ad1..003a52ee 100644
      #[test]
      fn type_safe_classifier_without_a_client_table_is_rejected() {
          // `type_safe_config` always emits `[type_safe_client]`; drop the whole table to
-@@ -2024,6 +2152,84 @@ confidence_threshold = 0.5
+@@ -2081,6 +2209,84 @@ confidence_threshold = 0.5
          Ok(())
      }
  
@@ -2185,7 +2190,7 @@ index 231d4e2b..42304412 100644
              (Some(cert), Some(key)) => {
                  if !cert.exists() || !key.exists() {
 diff --git a/crates/switchyard-server/src/lib.rs b/crates/switchyard-server/src/lib.rs
-index d2d81fe4..3a19f1e0 100644
+index fe5bdef8..4e07abc9 100644
 --- a/crates/switchyard-server/src/lib.rs
 +++ b/crates/switchyard-server/src/lib.rs
 @@ -39,10 +39,12 @@ use libsy::{LibsyError, RoutingOutcome};
@@ -2433,7 +2438,7 @@ index d2d81fe4..3a19f1e0 100644
      // Only trusted translation hops may supply exact request preservation state.
      // Strip it before decoding and retaining the raw body for upstream replay.
      if let Some(metadata) = body.get_mut("metadata").and_then(Value::as_object_mut) {
-@@ -1507,8 +1643,15 @@ async fn get_session_stats(
+@@ -1517,8 +1653,15 @@ async fn get_session_stats(
      }
  }
  
@@ -2621,7 +2626,7 @@ index 045f51c8..bc4f56c1 100644
 +    }
  }
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index dae5c1ad..d1e542d4 100644
+index cd21d3c9..89aaf3ca 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -2693,7 +2698,7 @@ index dae5c1ad..d1e542d4 100644
      if !has_expected_headers {
          return (
              StatusCode::UNAUTHORIZED,
-@@ -800,6 +800,195 @@ fn random_state_with_retries(
+@@ -801,6 +801,196 @@ fn random_state_with_retries(
      ServerState::from_runner(Runner::new(entries)).map_err(Into::into)
  }
  
@@ -2794,6 +2799,7 @@ index dae5c1ad..d1e542d4 100644
 +        api_key: (format == WireFormat::OpenAiChat).then(|| "test-key".to_string()),
 +        forward_auth: format == WireFormat::OpenAiResponses,
 +        extra_headers: BTreeMap::new(),
++        omit_body_fields: Default::default(),
 +        extra_body: BTreeMap::new(),
 +        reasoning_effort: None,
 +        max_retries: 0,
@@ -2889,7 +2895,7 @@ index dae5c1ad..d1e542d4 100644
  async fn test_app(routes: &[(&str, &[&str])]) -> TestResult<(MockUpstream, Router)> {
      let upstream = MockUpstream::start().await?;
      let app = build_switchyard_router(random_state(&upstream.base_url, routes)?);
-@@ -842,6 +1031,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
+@@ -843,6 +1033,46 @@ async fn llm_router_exposes_only_primary_llm_endpoints() -> TestResult {
      Ok(())
  }
  
@@ -2936,7 +2942,7 @@ index dae5c1ad..d1e542d4 100644
  fn empty_token_totals() -> Value {
      json!({
          "prompt": 0,
-@@ -1478,7 +1707,7 @@ fn assert_in_order(haystack: &str, needles: &[&str]) {
+@@ -1479,7 +1709,7 @@ fn assert_in_order(haystack: &str, needles: &[&str]) {
  /// A route is a synthetic model (`switchyard/classify`) with no upstream of its own; its
  /// algorithm picks real targets, and *those* name the client. One request can emit several
  /// `Step::CallModel` for different targets, and two targets may sit on different
@@ -2945,7 +2951,7 @@ index dae5c1ad..d1e542d4 100644
  /// another. Pin that each call reaches its own target's upstream, rather than one client
  /// chosen per route serving all of them.
  #[tokio::test]
-@@ -1609,10 +1838,7 @@ base_threshold = 0.5
+@@ -1610,10 +1840,7 @@ base_threshold = 0.5
      let response = response.json()?;
      assert_eq!(response["fallbacks"].as_array().map(Vec::len), Some(1));
      for target in [&response["selected"], &response["fallbacks"][0]] {
@@ -2957,7 +2963,7 @@ index dae5c1ad..d1e542d4 100644
      }
      Ok(())
  }
-@@ -1902,7 +2128,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1903,7 +2130,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/weak",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2966,7 +2972,7 @@ index dae5c1ad..d1e542d4 100644
                  },
                  "extra_body": {"service_tier": "priority"},
              },
-@@ -1911,7 +2137,7 @@ escalation = {{ confirmations = 1 }}
+@@ -1912,7 +2139,7 @@ escalation = {{ confirmations = 1 }}
                  "model": "model/strong",
                  "llm_client": {
                      "format": "openai_chat",
@@ -2975,7 +2981,7 @@ index dae5c1ad..d1e542d4 100644
                  },
                  "extra_body": {},
              }],
-@@ -2715,140 +2941,1067 @@ recent_turn_window = 1
+@@ -2716,140 +2943,1067 @@ recent_turn_window = 1
  }
  
  #[tokio::test]
@@ -4150,7 +4156,7 @@ index dae5c1ad..d1e542d4 100644
      let calls = upstream.calls.lock().await;
      let judge_call = calls
          .iter()
-@@ -3161,7 +4314,8 @@ target = "claude"
+@@ -3162,7 +4316,8 @@ target = "claude"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -4160,7 +4166,7 @@ index dae5c1ad..d1e542d4 100644
  
      let response = send_with_headers(
          &app,
-@@ -3177,6 +4331,7 @@ target = "claude"
+@@ -3178,6 +4333,7 @@ target = "claude"
              ("anthropic-beta", "oauth-2025-04-20,unsupported-beta"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -4168,7 +4174,7 @@ index dae5c1ad..d1e542d4 100644
          ],
      )
      .await?;
-@@ -3187,7 +4342,10 @@ target = "claude"
+@@ -3188,7 +4344,10 @@ target = "claude"
          "POST",
          "/v1/responses",
          Some(json!({"model": "switchyard/claude", "input": "hello"})),
@@ -4180,7 +4186,7 @@ index dae5c1ad..d1e542d4 100644
      )
      .await?;
      assert_eq!(wrong_api.status, StatusCode::BAD_REQUEST);
-@@ -3220,7 +4378,29 @@ target = "openai"
+@@ -3221,7 +4380,29 @@ target = "openai"
  "#,
          base_url = upstream.base_url
      ))?;
@@ -4211,7 +4217,7 @@ index dae5c1ad..d1e542d4 100644
  
      let response = send_with_headers(
          &app,
-@@ -3231,8 +4411,9 @@ target = "openai"
+@@ -3232,8 +4413,9 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -4223,7 +4229,7 @@ index dae5c1ad..d1e542d4 100644
          ],
      )
      .await?;
-@@ -3247,6 +4428,7 @@ target = "openai"
+@@ -3248,6 +4430,7 @@ target = "openai"
              ("authorization", "Bearer codex-login-token"),
              ("chatgpt-account-id", "account-123"),
              ("x-openai-fedramp", "true"),
@@ -4231,7 +4237,7 @@ index dae5c1ad..d1e542d4 100644
              ("x-test-redirect", "1"),
          ],
      )
-@@ -3261,6 +4443,7 @@ target = "openai"
+@@ -3262,6 +4445,7 @@ target = "openai"
          Some(json!({"model": "switchyard/codex", "input": "hello"})),
          &[
              ("authorization", "Bearer codex-login-token"),
@@ -4239,7 +4245,7 @@ index dae5c1ad..d1e542d4 100644
              ("x-test-echo-auth", "1"),
          ],
      )
-@@ -3283,7 +4466,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3284,7 +4468,10 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
  
      let health = send(&app, "GET", "/health", None).await?;
      assert_eq!(health.status, StatusCode::OK);
@@ -4251,7 +4257,7 @@ index dae5c1ad..d1e542d4 100644
  
      let models = send(&app, "GET", "/v1/models", None).await?;
      assert_eq!(models.status, StatusCode::OK);
-@@ -3326,6 +4512,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
+@@ -3327,6 +4514,48 @@ async fn routes_dispatch_and_discovery_endpoints_are_stable() -> TestResult {
      Ok(())
  }
  
@@ -4300,7 +4306,7 @@ index dae5c1ad..d1e542d4 100644
  #[tokio::test]
  async fn json_extractor_statuses_keep_api_specific_error_envelopes() -> TestResult {
      let (_upstream, app) = test_app(&[(ROUTE_MODEL, &["model/a"])]).await?;
-@@ -4312,7 +5540,7 @@ async fn streaming_response_is_framed_for_the_inbound_api() -> TestResult {
+@@ -4313,7 +5542,7 @@ async fn streaming_response_is_framed_for_the_inbound_api() -> TestResult {
  }
  
  // SWITCH-922: every streaming codec must report the routed target, not the route
@@ -4309,7 +4315,7 @@ index dae5c1ad..d1e542d4 100644
  // trajectory (a Bench UI, a spend log, the client's own display).
  #[tokio::test]
  async fn streamed_response_model_names_the_served_model_not_the_route() -> TestResult {
-@@ -4865,7 +6093,7 @@ async fn advisor_route_routing_log_records_classifier_tier() -> TestResult {
+@@ -4866,7 +6095,7 @@ async fn advisor_route_routing_log_records_classifier_tier() -> TestResult {
          .map(serde_json::from_str)
          .collect::<Result<_, _>>()?;
      // The consult is appended under the shared judge tier; the served turn is
@@ -4318,7 +4324,7 @@ index dae5c1ad..d1e542d4 100644
      // its tokens live in the advisor_gate stats block instead.
      assert_eq!(records.len(), 2);
      assert!(
-@@ -5187,7 +6415,7 @@ async fn upstream_headers_forward_but_switchyard_writes_win() -> TestResult {
+@@ -5188,7 +6417,7 @@ async fn upstream_headers_forward_but_switchyard_writes_win() -> TestResult {
      // Switchyard's own namespace never forwards from upstream.
      assert!(!response.headers.contains_key("x-switchyard-session-id"));
  
@@ -4347,10 +4353,10 @@ index c9bb8828..140f5717 100644
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
-index 078fa46d..ebdeef15 100644
+index 2af80f9d..478f4909 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
 +++ b/crates/switchyard-translation/tests/request_translation.rs
-@@ -2596,6 +2596,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
+@@ -2602,6 +2602,36 @@ fn chat_json_schema_response_format_maps_to_responses_text_format() -> TestResul
      Ok(())
  }
  
@@ -5179,7 +5185,7 @@ index 73d5621b..669d405c 100644
      }
  }
 diff --git a/docs/reference/toml_schema.md b/docs/reference/toml_schema.md
-index 4b5ce998..41ca77e8 100644
+index d4f1354b..b7b5c741 100644
 --- a/docs/reference/toml_schema.md
 +++ b/docs/reference/toml_schema.md
 @@ -99,17 +99,19 @@ endpoint, before it calls an upstream.
@@ -5217,7 +5223,7 @@ index 4b5ce998..41ca77e8 100644
  | `llm_client` | Yes | — | Key under `[llm_clients]`. |
  | `routing_description` | No | generated from target name and model ID | Facts TypeSafe uses when comparing this target with other candidates. A route-level `candidate_descriptions` entry overrides it. |
  | `system_prompt` | No | unset | System prompt prepended when this target serves a completion. |
-@@ -326,10 +331,12 @@ See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_rou
+@@ -331,10 +336,12 @@ See [TypeSafe Classifier Routing](../routing_algorithms/type_safe_classifier_rou
  | `question` | No | generic model-selection prompt | Instruction sent as TypeSafe's `instructions` field. |
  | `classify_trigger` | No | `every_request` | When the classifier runs. Same semantics as `llm_classifier`. |
  | `message_hash_fallback` | No | `false` | Keys affinity on the first user message. Requires `classify_trigger = "new_session"`. |

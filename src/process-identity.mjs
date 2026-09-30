@@ -1,6 +1,27 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 const WINDOWS_PROCESS_PROBE_TIMEOUT_MS = 5_000;
+// Startup may wait for cold PowerShell; stop/ownership checks retain their
+// short budgets. Retry only a timeout, never a completed negative result.
+export const SERVICE_START_PROBE_BUDGET = Object.freeze({ timeoutMs: 45_000, attempts: 2 });
+
+function probe(script, spawn, budget, environment) {
+  const root = environment.SystemRoot || environment.WINDIR;
+  const systemShell = root && path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const executable = systemShell && existsSync(systemShell) ? systemShell : "powershell.exe";
+  const timeout = budget?.timeoutMs ?? WINDOWS_PROCESS_PROBE_TIMEOUT_MS;
+  const attempts = budget?.attempts ?? 1;
+  let result;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    result = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+      encoding: "utf8", windowsHide: true, timeout,
+    });
+    if (result.error?.code !== "ETIMEDOUT") break;
+  }
+  return result;
+}
 
 // A PID alone is not an identity: the operating system reuses them, and a
 // router that remembers only a number can eventually send a signal to whatever
@@ -10,15 +31,15 @@ const WINDOWS_PROCESS_PROBE_TIMEOUT_MS = 5_000;
 // Service shutdown uses this check before signaling a recorded process.
 export function processStartIdentity(
   pid,
-  { spawn = spawnSync } = {},
+  { spawn = spawnSync, budget, environment = process.env } = {},
 ) {
-  const result = processStartIdentityProbe(pid, { spawn });
+  const result = processStartIdentityProbe(pid, { spawn, budget, environment });
   return result.state === "alive" ? result.identity : undefined;
 }
 
 function processStartIdentityProbe(
   pid,
-  { spawn = spawnSync } = {},
+  { spawn = spawnSync, budget, environment = process.env } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid < 1) return { state: "unknown" };
   try {
@@ -26,15 +47,7 @@ function processStartIdentityProbe(
       `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
       "if ($null -eq $p) { exit 3 }; " +
       `[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path)`;
-    const result = spawn(
-      "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
-      },
-    );
+    const result = probe(script, spawn, budget, environment);
     const identity = String(result.stdout || "").trim();
     if (result.status === 0 && identity) return { state: "alive", identity };
     if (result.status === 3) return { state: "absent" };
@@ -50,7 +63,7 @@ function processStartIdentityProbe(
 // recursively terminates the router tree.
 export function processCommandLine(
   pid,
-  { spawn = spawnSync } = {},
+  { spawn = spawnSync, budget, environment = process.env } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid < 1) return undefined;
   try {
@@ -59,15 +72,7 @@ export function processCommandLine(
       `$p = Get-WmiObject Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop; [Console]::Out.Write($p.CommandLine)`,
     ];
     for (const script of scripts) {
-      const result = spawn(
-        "powershell.exe",
-        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-        {
-          encoding: "utf8",
-          windowsHide: true,
-          timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
-        },
-      );
+      const result = probe(script, spawn, budget, environment);
       const value = String(result.stdout || "").trim();
       if (result.status === 0 && value) return value;
     }

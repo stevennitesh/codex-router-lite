@@ -8,7 +8,7 @@ import {
   SOURCE_ROOT,
   STATE_DIR,
 } from "./paths.mjs";
-import { processCommandLine, processStartIdentity } from "./process-identity.mjs";
+import { processCommandLine, processStartIdentity, SERVICE_START_PROBE_BUDGET } from "./process-identity.mjs";
 
 const STATE_VERSION = 1;
 
@@ -31,11 +31,12 @@ export function buildServiceProcessState({
   sourceRoot = SOURCE_ROOT,
   stateDir = STATE_DIR,
   ports = PORTS,
+  probeBudget,
 } = {}) {
   const safe = safePid(pid);
   if (!safe) return undefined;
-  const processIdentity = identity(safe);
-  const liveCommandLine = commandLine(safe);
+  const processIdentity = identity(safe, { budget: probeBudget });
+  const liveCommandLine = commandLine(safe, { budget: probeBudget });
   if (!processIdentity || !liveCommandLine) return undefined;
   const entrypoint = entrypointFor(sourceRoot);
   if (!normalized(liveCommandLine).includes(entrypoint)) return undefined;
@@ -57,7 +58,7 @@ export function buildServiceProcessState({
 }
 
 export function writeServiceProcessState(options = {}) {
-  const state = buildServiceProcessState(options);
+  const state = buildServiceProcessState({ ...options, probeBudget: SERVICE_START_PROBE_BUDGET });
   if (!state) {
     throw new Error(
       "The Windows service could not verify its own start.mjs process identity; refusing to run without a stoppable process record.",
