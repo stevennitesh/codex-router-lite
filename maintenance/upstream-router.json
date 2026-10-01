@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "84c6e1ba9c7545e7206d9d13b3b002601034ee48",
+  "lastReviewedCommit": "1e209887fd31ff99cb711909d04a7d2784104113",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -11,7 +11,7 @@
     "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
     "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
   ],
-  "reviewedAt": "2026-09-29",
+  "reviewedAt": "2026-10-01",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -22,7 +22,8 @@
       "a9ccca2d, a7e37d45 and 1a339dda: bound direct/proxy TCP connect establishment at 3s by default, race address families, and derive the retry budget from the same bound so UND_ERR_CONNECT_TIMEOUT retries are reachable",
       "259a04c7 and merge 8ff371ea: pin the Windows hidden launcher to //E:VBScript while recognizing the previous Router-owned action for safe migration",
       "ce40ef5b and merge 84c6e1ba: update Undici to 8.11.2",
-      "c089d403, 6d450845 and merge 60e9421a: adapt startup-only timeout retries and absolute system PowerShell resolution; retain strict private-file ACL handling"
+      "c089d403, 6d450845 and merge 60e9421a: adapt startup-only timeout retries and absolute system PowerShell resolution; retain strict private-file ACL handling",
+      "753a18de and merge 1e209887: reject out-of-range reset timestamps after conversion so routed 429 errors do not invent retry estimates"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -36,7 +37,8 @@
       "bb0cc4a2 and a9702a86: one provider-facing chat tool name maps to one native tool through request-local collision-safe namespace aliases",
       "fd99bf4b and 532bae89: non-streaming Chat JSON reasoning replay for the retained GLM bridge is owned by pinned LiteLLM 1.102.1; Pareto remains direct Responses",
       "b6bb8cf7: Responses-native reasoning stays as reasoning because Router Lite retired its Chat reasoning carry when LiteLLM 1.102.1 took ownership of the GLM bridge",
-      "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge"
+      "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge",
+      "9b344199 and merge 4294adfa: managed periodic native catalog refresh already uses the current binary and catalog authority"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
@@ -55,7 +57,10 @@
       "6c693260, c8cd2e92 and merges 52edc1d4/cc8adfcc: Homebrew stable Node paths are outside the Windows runtime requirement",
       "0d4468d7, 8af533c5 and merge dc77cf54: generic Responses gateway streaming compaction is outside exact retained endpoints",
       "70dc75f5, 63755b9c, f3c1c295, bc2ea60b and merge 7dccbede: Azure delegation and image filtering are outside retained providers",
-      "Remaining 9fb6440d..84c6e1ba commits: CommandCode/Space Bunny/Gemini, Ollama, Control Center, Homebrew CI, documentation and merge-only changes are outside retained owners"
+      "Remaining 9fb6440d..84c6e1ba commits: CommandCode/Space Bunny/Gemini, Ollama, Control Center, Homebrew CI, documentation and merge-only changes are outside retained owners",
+      "0d9981b0 and merge 592be375: macOS ChatGPT bundled CLI discovery is outside the retained Windows runtime; Windows hashed CLI discovery already works",
+      "e6b499aa and merge 15ca2db2: ClinePass completion-envelope normalization targets an unretained provider",
+      "a5541d8f and merge 4fdac873: dependency updates only affect upstream Control Center and docs-site"
     ]
   }
 }

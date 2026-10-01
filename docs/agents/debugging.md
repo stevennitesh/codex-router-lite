@@ -63,6 +63,11 @@ an explicit zero remains observed zero. When an empty-completion retry has only
 partial usage or cache-counter coverage, the timing record marks the affected
 aggregate as incomplete rather than treating the missing attempt as zero.
 
+Routed 429 guidance uses `src/rate-limit-headers.mjs` to interpret `Retry-After`.
+Resets outside JavaScript's Date range, including overflow during unit conversion
+or addition, leave the estimated delay unknown. The provider's status and original
+header still pass through; invalid telemetry does not become a numeric wait hint.
+
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
 scope predicate and a regression that fails without it. Remove unused transforms.

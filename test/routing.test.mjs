@@ -1582,6 +1582,44 @@ test("router fails closed when an encrypted subagent payload cannot be relayed",
   }
 });
 
+test("routed 429 errors ignore impossible retry delays and preserve valid guidance", async () => {
+  let retryAfter;
+  const gateway = await mockServer(async (request, response) => {
+    await bodyJson(request);
+    response.setHeader("Retry-After", retryAfter);
+    json(response, 429, { error: { message: "Too many requests" } });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`${routerBase(port)}/models`, router);
+    for (retryAfter of ["60", "1e20", "999999999999999h"]) {
+      const response = await fetch(`${routerBase(port)}/responses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "Synthetic rate-limit check", stream: true }),
+      });
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("retry-after"), retryAfter);
+      const { error } = await response.json();
+      assert.equal(error.type, "rate_limit_error");
+      assert.match(error.message, /Too many requests/);
+      if (retryAfter === "60") assert.match(error.message, /Retry in about 60s\./);
+      else {
+        assert.match(error.message, /Wait a bit and retry\./);
+        assert.doesNotMatch(error.message, /Retry in about/);
+      }
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
 test("rate-limited child handoffs cool down per account without reaching the gateway", async () => {
   let nativeRequests = 0;
   let gatewayRequests = 0;
