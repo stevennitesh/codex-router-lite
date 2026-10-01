@@ -7,8 +7,8 @@ the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The four active applications record accepted native desktop certification for
-Router `60cbefd571b5a87357bb0e0f0697728484afbbd5` with Codex
-`0.158.0-alpha.2.1` on 2026-09-26. Each application records its exact runtime
+Router `3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f` with Codex
+`0.159.2` on 2026-10-01. Each application records its exact runtime
 and passing native collaboration window:
 
 - accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)

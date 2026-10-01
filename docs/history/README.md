@@ -6,6 +6,9 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Four-route native v2 certification, 2026-10-01](2026-10-01-native-v2-certification.json)
+- [Switchyard live certification, 2026-10-01](2026-10-01-switchyard-live-certification.json)
+
 - [Checkout deployment recovery, 2026-10-01](2026-10-01-deployment-recovery.md)
 
 - [Windows compatibility and rate-limit reset fix, 2026-10-01](2026-10-01-rate-limit-reset-bounds.md)

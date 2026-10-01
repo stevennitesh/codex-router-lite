@@ -11,37 +11,37 @@
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
   ],
   "routerVersion": "0.7.0",
-  "codexVersion": "codex-cli 0.159.0",
+  "codexVersion": "codex-cli 0.159.2",
   "executionSurface": "codex-desktop-native",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:48.507Z"
+      "observedAt": "2026-10-01T18:16:52.679Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:08.249Z",
+      "observedAt": "2026-10-01T18:16:17.132Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:48.514Z"
+      "observedAt": "2026-10-01T18:16:42.319Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:15.254Z"
+      "observedAt": "2026-10-01T18:16:23.413Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:48.514Z"
+      "observedAt": "2026-10-01T18:16:52.689Z"
     }
   },
-  "testedAt": "2026-09-30T01:29:00.360Z",
-  "routerCommit": "36fd7c787c76b58412d5bdafd41c16d6d727b060",
-  "evidence": "docs/history/2026-09-29-native-v2-certification.json"
+  "testedAt": "2026-10-01T18:17:01.466Z",
+  "routerCommit": "3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f",
+  "evidence": "docs/history/2026-10-01-native-v2-certification.json"
 }

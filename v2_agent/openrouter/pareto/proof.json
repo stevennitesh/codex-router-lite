@@ -7,39 +7,39 @@
   "officialSources": [
     "https://openrouter.ai/unbiased/pareto"
   ],
-  "testedAt": "2026-09-30T01:28:54.145Z",
+  "testedAt": "2026-10-01T18:17:26.947Z",
   "routerVersion": "0.7.0",
   "endpointProvider": "unbiased",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:40.816Z"
+      "observedAt": "2026-10-01T18:17:17.606Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:13.199Z",
+      "observedAt": "2026-10-01T18:16:33.179Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:40.826Z"
+      "observedAt": "2026-10-01T18:17:13.203Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:14.302Z"
+      "observedAt": "2026-10-01T18:16:35.260Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-09-30T01:28:40.826Z"
+      "observedAt": "2026-10-01T18:17:17.614Z"
     }
   },
-  "codexVersion": "codex-cli 0.159.0",
+  "codexVersion": "codex-cli 0.159.2",
   "executionSurface": "codex-desktop-native",
-  "routerCommit": "36fd7c787c76b58412d5bdafd41c16d6d727b060",
-  "evidence": "docs/history/2026-09-29-native-v2-certification.json"
+  "routerCommit": "3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f",
+  "evidence": "docs/history/2026-10-01-native-v2-certification.json"
 }
