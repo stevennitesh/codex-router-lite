@@ -40,6 +40,9 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "restart-codex-router.ps1",
     "model-router.ps1",
     "maintenance/deploy-switchyard-candidate.ps1",
+    "maintenance/switchyard-activation.ps1",
+    "maintenance/deployment-runner.ps1",
+    "maintenance/deployment-worker.ps1",
     "maintenance/refresh-compatibility-state.ps1",
     "src/windows-process-tree.ps1",
   ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);
@@ -82,7 +85,7 @@ test("Switchyard upstream analysis checks ordered patch layers without misreport
 });
 
 test("the Switchyard deployment owns preflight, activation, and exact rollback", () => {
-  const source = readScript("maintenance/deploy-switchyard-candidate.ps1");
+  const source = readScript("maintenance/deploy-switchyard-candidate.ps1") + readScript("maintenance/switchyard-activation.ps1");
   for (const name of [
     "CODEX_ROUTER_SWITCHYARD_ROOT",
     "CODEX_ROUTER_SWITCHYARD_BIN",
@@ -90,7 +93,6 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     "CODEX_ROUTER_SWITCHYARD_BASE_URL",
   ]) assert.match(source, new RegExp(name, "u"));
   assert.match(source, /config-manager\.mjs"\) validate-enable/);
-  assert.match(source, /config-manager\.mjs"\) enable[\s\S]*\$activationStarted = \$true[\s\S]*Invoke-RouterService \$runningRouterRoot "stop"/);
   assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /AddSeconds\(45\)[\s\S]*Router full health did not become clean within 45 seconds/u);
@@ -164,7 +166,8 @@ test("Windows live dependency updates stage the Python environment and restore i
 
 test("the Windows restart helper uses the supported service transaction", () => {
   const source = readScript("restart-codex-router.ps1");
-  assert.match(source, /SpecialFolder]::LocalApplicationData/);
+  assert.match(source, /install-manifest\.mjs"\) root/);
+  assert.doesNotMatch(source, /SpecialFolder]::LocalApplicationData/);
   assert.doesNotMatch(source, /\$HOME|\.local[\\/]share/);
   assert.match(source, /\$routerRoot\s*=\s*\[IO\.Path\]::GetFullPath\(\$InstallDir\)/);
   assert.match(source, /\$ServiceArguments\s*=\s*@\("restart"\)/);

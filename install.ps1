@@ -423,6 +423,11 @@ try {
     $AdmissionPrepared = $true
   }
 
+  if (-not $PrepareOnly) {
+    & node src/service-process.mjs assert-replacement
+    if ($LASTEXITCODE -ne 0) { throw "The previous Router checkout must stop before installation ownership changes." }
+  }
+
   # Installing is the sanctioned way for a checkout to take over a state
   # directory: the generated files below are rebuilt here and the new owner is
   # recorded before the service step, so the ownership guard must not block a
@@ -516,7 +521,7 @@ try {
     Write-Warning "Managed Codex skills could not be refreshed; the router is installed: $($_.Exception.Message)"
   }
 
-  Write-Host "Installed the selected external model routes. Fully quit and reopen Codex."
+  Write-Host "Codex Router installation completed. Fully quit and reopen Codex to reload its model catalog."
 } catch {
   $InstallFailure = $_
   if ($PythonSwapStarted) {

@@ -156,6 +156,14 @@ $routerCommit = (& git rev-parse HEAD).Trim()
   -ExpectedRouterCommit $routerCommit
 ```
 
+This command launches a hidden Windows worker outside the caller's process
+tree and returns its process ID, `resultPath`, and `logPath`. Read `resultPath`
+until `state` is `completed`; only `succeeded: true` confirms deployment. Closing
+Codex or terminating the calling tool does not terminate the worker or its
+rollback. The worker owns an exclusive deployment lock and writes private logs.
+`-InProcess` is the worker's internal entrypoint; use the independent default
+for live maintenance.
+
 The script validates Codex configuration before stopping Router, deploys from
 the active repository root, and restores through the detached checkout if
 activation fails. It refuses Switchyard path or address overrides so its file
@@ -174,6 +182,22 @@ runtime rollback with `-PreservedRuntimeRollbackRoot`. The transaction validates
 its metadata, files, rollback checkout, ancestry, and singular ownership before
 activation; a repair deployment failure restores the original pre-candidate
 generation. Do not delete the retained rollback to make a second deployment pass.
+
+A refused admission drain aborts before activation and performs no second stop
+or rollback. After activation begins, recovery stops the verified live checkout
+and refuses to overwrite runtime files if that stop fails. The retained backup
+is preserved on incomplete recovery, and the result reports both failures.
+Installation also refuses to transfer ownership away from a live process in
+another checkout; HTTP health alone cannot prove installation succeeded.
+
+If an interrupted older deployment or manual install left the manifest naming
+the candidate while the rollback checkout still serves requests, add
+`-RecoverInterruptedDeployment` together with `-PreservedRuntimeRollbackRoot`.
+Recovery requires a live, identity-verified rollback process, its exact clean
+checkout, runtime files equal to the retained snapshot, and a candidate-owned
+manifest whose commit is in candidate history. It tolerates the missing scheduled
+launcher only during that recovery preflight. Final acceptance still requires
+the live process, scheduled task, manifest, and runtime provenance to agree.
 
 ## Switchyard v2 promotion
 

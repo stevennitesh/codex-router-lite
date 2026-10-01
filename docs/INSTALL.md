@@ -119,11 +119,19 @@ For a separate installed directory, deploy edited source from the current checko
 .\deploy-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
 
+Without `-InstallDir`, the deploy and restart helpers resolve the current source
+root from the protected install manifest. They do not assume the bootstrap's
+default installation directory. A missing manifest requires an explicit directory.
+
 When the active service runs directly from this checkout with Switchyard, use
 the [checkout deployment transaction](../config/switchyard/maintenance.md#deploy-and-roll-back).
 It retains an unchanged Switchyard binary when supplied as the candidate and
 restores Router through an exact previous checkout on failure. The separate-directory
 deployer above rejects overlapping source and destination paths.
+The checkout transaction runs in an independent hidden Windows worker and returns
+private result and log paths. Verify its completed result and installed identities
+before reporting deployment success. Its rollback continues if the calling app
+or tool exits.
 
 Restart the existing installed files only when a configuration or provider
 selection change requires it:

@@ -11,11 +11,21 @@ param(
   [string]$PreservedRuntimeRollbackRoot,
   [string]$RollbackRouterRoot,
   [string]$ExpectedRollbackRouterCommit,
+  [switch]$RecoverInterruptedDeployment,
+  [switch]$InProcess,
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)
+if (-not $InProcess -and -not $WhatIfPreference) {
+  . (Join-Path $PSScriptRoot "deployment-runner.ps1")
+  $deploymentParameters = @{} + $PSBoundParameters
+  $deploymentParameters.Remove("InProcess")
+  $deploymentParameters["RepoDir"] = $repoRoot
+  Start-IndependentDeployment -ScriptPath $PSCommandPath -Parameters $deploymentParameters -RepoRoot $repoRoot
+  return
+}
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
 $stateRoot = [IO.Path]::GetFullPath((Join-Path $codexHome "codex-router"))
 $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $codexHome "switchyard"))
@@ -38,6 +48,9 @@ if ($installedRouterCommit -notmatch '^[0-9a-f]{40}$') {
   throw "Installed Router manifest does not contain a valid current commit."
 }
 $preservingRollback = -not [string]::IsNullOrWhiteSpace($PreservedRuntimeRollbackRoot)
+if ($RecoverInterruptedDeployment -and -not $preservingRollback) {
+  throw "Interrupted deployment recovery requires the preserved runtime rollback."
+}
 $preservedRollback = if ($preservingRollback) {
   [IO.Path]::GetFullPath($PreservedRuntimeRollbackRoot)
 } else { $null }
@@ -286,7 +299,34 @@ function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
   throw "The running Router source root is not an approved candidate or rollback checkout: $runningRoot."
 }
 
-function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit) {
+function Resolve-LiveRouterRoot([string[]]$AllowedRoots) {
+  foreach ($root in $AllowedRoots) {
+    $verified = Invoke-NodeJson $repoRoot @(
+      (Join-Path $repoRoot "src\service-process.mjs"), "verify", $root
+    ) "Router process identity"
+    if ($verified.owned -eq $true) { return $root }
+  }
+  Assert-LoopbackOffline 4202
+  return $null
+}
+
+function Assert-LoopbackOffline([int]$Port) {
+  $probe = "const s = (await import('node:net')).createConnection({host:'127.0.0.1',port:Number(process.argv[1])}); s.setTimeout(3000); s.on('connect',()=>{s.destroy();process.exitCode=1}); s.on('timeout',()=>{s.destroy();process.exitCode=1}); s.on('error',e=>{if(e.code!=='ECONNREFUSED')process.exitCode=1});"
+  & node --input-type=module -e $probe $Port
+  if ($LASTEXITCODE -ne 0) { throw "Managed port $Port is still listening or its shutdown is unknown; refusing file replacement." }
+}
+
+function Stop-RouterGeneration([string]$Root) {
+  Invoke-RouterService $Root "stop"
+  if (Resolve-LiveRouterRoot @($repoRoot, $rollbackRouterRoot)) {
+    throw "Router stop returned success while a managed process was still running."
+  }
+  # The previous checkout may contain an older service manager. Independently
+  # require Switchyard to have exited before its locked executable is replaced.
+  Assert-LoopbackOffline 4000
+}
+
+function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$RecoveryPreflight) {
   # service install waits for Router liveness, but optional provider children can
   # still be converging for a few seconds. A one-shot full-health probe turns a
   # healthy cold start into a false candidate/rollback failure, so give the
@@ -319,12 +359,14 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit) {
   & node (Join-Path $Root "src\doctor.mjs") | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "Router Doctor failed from $Root." }
   $status = Invoke-NodeJson $Root @((Join-Path $Root "src\service.mjs"), "status") "Router status"
-  if ($status.installed -ne $true -or $status.loaded -ne $true -or $status.state -ne "running") {
+  if ($status.installed -ne $true -or (-not $RecoveryPreflight -and ($status.loaded -ne $true -or $status.state -ne "running"))) {
     throw "Router task identity is not one running managed generation."
   }
   $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $stateRoot = Join-Path $codexHome "codex-router"
   $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $verified = Invoke-NodeJson $repoRoot @((Join-Path $repoRoot "src\service-process.mjs"), "verify", $Root) "Live Router process identity"
+  if ($verified.owned -ne $true) { throw "Router process identity is not live and owned by $Root." }
   if (-not [string]::Equals(
     [IO.Path]::GetFullPath($processState.sourceRoot),
     [IO.Path]::GetFullPath($Root),
@@ -333,7 +375,8 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit) {
     throw "Router process source root does not match $Root."
   }
   $manifest = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "install-manifest.json") | ConvertFrom-Json
-  if ($manifest.current.commit -ne $ExpectedCommit) {
+  if (-not $RecoveryPreflight -and ($manifest.current.commit -ne $ExpectedCommit -or
+      -not [string]::Equals([IO.Path]::GetFullPath($manifest.current.sourceRoot), [IO.Path]::GetFullPath($Root), [StringComparison]::OrdinalIgnoreCase))) {
     throw "Router install manifest does not match commit $ExpectedCommit."
   }
 }
@@ -457,7 +500,25 @@ if (-not (Test-Path -LiteralPath (Join-Path $rollbackRouterRoot "install.ps1") -
   throw "Rollback Router checkout has no installer."
 }
 $runningRouterRoot = Resolve-RunningRouterRoot @($repoRoot, $rollbackRouterRoot)
-Assert-RouterHealth $runningRouterRoot $installedRouterCommit
+if ($RecoverInterruptedDeployment) {
+  if (-not [string]::Equals($runningRouterRoot, $rollbackRouterRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Recovery requires the verified rollback checkout to be the running generation."
+  }
+  Assert-CheckoutIdentity $runningRouterRoot $expectedRollbackCommit "Interrupted running rollback checkout"
+  if (-not [string]::Equals([IO.Path]::GetFullPath($installManifest.current.sourceRoot), $repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Interrupted manifest is not owned by the candidate checkout."
+  }
+  & git -C $repoRoot merge-base --is-ancestor $installedRouterCommit $expectedRouterCommit
+  if ($LASTEXITCODE -ne 0) { throw "Interrupted manifest commit is not in candidate history." }
+  foreach ($name in @($preservedMetadata.files)) {
+    if ($runtimeFiles -notcontains $name) { throw "Preserved rollback metadata names an unsupported file: $name" }
+    Assert-FileHash (Join-Path $runtimeRoot $name) (Get-Sha256 (Join-Path $rollbackRoot $name)) "Interrupted runtime $name"
+  }
+  $installedRouterCommit = $expectedRollbackCommit
+  Assert-RouterHealth $runningRouterRoot $installedRouterCommit -RecoveryPreflight
+} else {
+  Assert-RouterHealth $runningRouterRoot $installedRouterCommit
+}
 Assert-SwitchyardHealth
 $subagentPlan = Get-SubagentPublicationPlan
 $preflight = [ordered]@{
@@ -516,86 +577,8 @@ try {
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8
   }
 
-  try {
-    # Canonicalize the managed block while the known-good service is still up.
-    # If this write fails, the transaction aborts before any process stops.
-    & node (Join-Path $repoRoot "src\config-manager.mjs") enable | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Codex configuration update failed before restart." }
+  . (Join-Path $PSScriptRoot "switchyard-activation.ps1")
 
-    Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
-    $activationStarted = $true
-    Invoke-RouterService $runningRouterRoot "stop"
-    Copy-RuntimeFile $stageRoot $runtimeRoot "switchyard-server.exe"
-    Copy-RuntimeFile $stageRoot $runtimeRoot "routes.toml"
-    Protect-PrivateFile (Join-Path $runtimeRoot "routes.toml")
-    "$($lock.commit) + PR $($upstreamContribution.pullRequest) $($upstreamPatchHash.Substring(0, 12)) + local patch $($lock.patchSha256.Substring(0, 12))" |
-      Set-Content -LiteralPath (Join-Path $runtimeRoot "SOURCE_COMMIT") -Encoding ASCII
-    @{
-      version = 1
-      upstreamCommit = $lock.commit
-      upstreamContributionCommit = "$($upstreamContribution.sourceCommit)".ToLowerInvariant()
-      upstreamContributionSha256 = $upstreamPatchHash
-      patchSha256 = $lock.patchSha256.ToLowerInvariant()
-      binarySha256 = $expectedBinaryHash
-      templateSha256 = $templateHash
-      templateSourceSha256 = $templateSourceHash
-      routesSha256 = $expectedRoutesHash
-      routerCommit = $routerCommit
-      deployedAt = (Get-Date).ToUniversalTime().ToString("o")
-    } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $runtimeRoot "provenance.json") -Encoding UTF8
-
-    Invoke-RouterInstall $repoRoot
-    Assert-FileHash (Join-Path $runtimeRoot "switchyard-server.exe") $expectedBinaryHash "Installed Switchyard binary"
-    Assert-FileHash (Join-Path $runtimeRoot "routes.toml") $expectedRoutesHash "Installed Switchyard routes"
-    Assert-RouterHealth $repoRoot $routerCommit
-    Assert-SwitchyardHealth
-    foreach ($path in @("/v1/models", "/v1/decision")) { Assert-ProtectedSwitchyardEndpoint $path }
-    Assert-CodexCatalog $repoRoot
-    Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Running Router candidate checkout"
-    $provenance = Get-Content -Raw -LiteralPath (Join-Path $runtimeRoot "provenance.json") | ConvertFrom-Json
-    if (
-      $provenance.upstreamCommit -ne $lock.commit -or
-      $provenance.upstreamContributionCommit -ne "$($upstreamContribution.sourceCommit)".ToLowerInvariant() -or
-      $provenance.upstreamContributionSha256 -ne $upstreamPatchHash -or
-      $provenance.patchSha256 -ne $lock.patchSha256.ToLowerInvariant() -or
-      $provenance.binarySha256 -ne $expectedBinaryHash -or
-      $provenance.templateSha256 -ne $templateHash -or
-      $provenance.templateSourceSha256 -ne $templateSourceHash -or
-      $provenance.routesSha256 -ne $expectedRoutesHash -or
-      $provenance.routerCommit -ne $routerCommit
-    ) {
-      throw "Installed Switchyard provenance does not match the candidate."
-    }
-    $keepRollback = $true
-    [pscustomobject]@{
-      deployed = $true
-      routerCommit = $routerCommit
-      switchyardCommit = $lock.commit
-      switchyardBinarySha256 = $expectedBinaryHash
-      switchyardRoutesSha256 = $expectedRoutesHash
-      rollbackRoot = $rollbackRoot
-      rollbackRouterRoot = $rollbackRouterRoot
-    } | ConvertTo-Json -Depth 3
-  } catch {
-    $deploymentError = $_
-    if (-not $activationStarted) {
-      throw "Candidate deployment aborted before the running service changed: $($deploymentError.Exception.Message)"
-    }
-    try {
-      try { Invoke-RouterService $repoRoot "stop" } catch {}
-      Restore-Switchyard $existing
-      Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Rollback Router checkout"
-      Invoke-RouterInstall $rollbackRouterRoot
-      Assert-RouterHealth $rollbackRouterRoot $expectedRollbackCommit
-      Assert-SwitchyardHealth
-      Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Running rollback Router checkout"
-      $keepRollback = $true
-    } catch {
-      $keepRollback = $true
-      throw "Candidate deployment failed ($($deploymentError.Exception.Message)) and rollback failed ($($_.Exception.Message)). Recovery files remain at $rollbackRoot."
-    }
-    throw "Candidate deployment failed; the exact previous Router and Switchyard generation was restored: $($deploymentError.Exception.Message)"
-  }
 } finally {
   if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
   if (-not $preservingRollback -and -not $keepRollback -and (Test-Path -LiteralPath $rollbackRoot)) {

@@ -1,10 +1,16 @@
 [CmdletBinding()]
 param(
   [switch]$ForceServiceReplacement,
-  [string]$InstallDir = $(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "codex-router")
+  [string]$InstallDir
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+  $InstallDir = (& node (Join-Path $PSScriptRoot "src\install-manifest.mjs") root | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $InstallDir) {
+    throw "The recorded Codex Router installation could not be resolved. Pass -InstallDir explicitly."
+  }
+}
 $routerRoot = [IO.Path]::GetFullPath($InstallDir)
 if (-not (Test-Path -LiteralPath (Join-Path $routerRoot "src\service.mjs") -PathType Leaf)) {
   throw "Installed Codex Router not found at $routerRoot. Pass -InstallDir to restart a different installation."

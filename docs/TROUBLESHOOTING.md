@@ -125,6 +125,13 @@ use the bounded redacted view instead of copying either raw log:
 
 ## Windows task mismatch
 
+For a checkout deployment, read the private `resultPath` and `logPath` returned
+by the deployment command. A started worker or healthy HTTP endpoint does not
+confirm completion. If a manual install recorded the candidate while a verified
+rollback checkout remains live, use the retained-backup recovery option in
+[Switchyard maintenance](../config/switchyard/maintenance.md#deploy-and-roll-back).
+Do not reinstall repeatedly over the live old process or discard its backup.
+
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
 
 The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.

@@ -1,5 +1,6 @@
 import { readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { writePrivateJson } from "./file-security.mjs";
 import {
@@ -125,4 +126,37 @@ export function serviceProcessOwns(
   if (identity(pid) !== state.processIdentity) return false;
   const liveCommandLine = commandLine(pid);
   return Boolean(liveCommandLine && normalized(liveCommandLine).includes(entrypoint));
+}
+
+// Stopping a task is insufficient: its detached process tree can survive.
+export function assertServiceProcessStopped(state, {
+  owns = serviceProcessOwns,
+  listening = () => false,
+} = {}) {
+  if ((state && owns(state)) || listening(state)) {
+    throw new Error("The previous Router process or managed listener is still running; refusing to replace it.");
+  }
+}
+
+export function assertServiceReplacementOwnership(state, {
+  sourceRoot = SOURCE_ROOT,
+  owns = (value) => serviceProcessOwns(value, { sourceRoot: value.sourceRoot }),
+} = {}) {
+  if (state && owns(state) && normalized(state.sourceRoot) !== normalized(path.resolve(sourceRoot))) {
+    throw new Error("A live Router from another checkout still owns the state. Use the guarded deployment transaction before transferring installation ownership.");
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv[2] === "assert-replacement") {
+    try { assertServiceReplacementOwnership(readServiceProcessState()); }
+    catch (error) { console.error(error.message); process.exitCode = 1; }
+  } else if (process.argv[2] !== "verify" || !process.argv[3]) {
+    console.error("Usage: service-process.mjs verify <expected-source-root>|assert-replacement");
+    process.exitCode = 2;
+  } else {
+    const state = readServiceProcessState();
+    const owned = serviceProcessOwns(state, { sourceRoot: path.resolve(process.argv[3]) });
+    process.stdout.write(`${JSON.stringify({ owned, sourceRoot: owned ? state.sourceRoot : null })}\n`);
+  }
 }

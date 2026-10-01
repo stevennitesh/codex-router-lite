@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Checkout deployment recovery, 2026-10-01](2026-10-01-deployment-recovery.md)
+
 - [Windows compatibility and rate-limit reset fix, 2026-10-01](2026-10-01-rate-limit-reset-bounds.md)
 - [Codex compatibility update, 2026-09-29](2026-09-29-codex-compatibility-update.md)
 - [Four-route native v2 certification, 2026-09-29](2026-09-29-native-v2-certification.json)

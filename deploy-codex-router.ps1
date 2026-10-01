@@ -1,7 +1,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
   [switch]$ForceServiceReplacement,
-  [string]$InstallDir = $(Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "codex-router")
+  [string]$InstallDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +9,12 @@ $scriptDir = (Resolve-Path (Split-Path -Parent $MyInvocation.MyCommand.Path)).Pa
 $sourceDir = $scriptDir
 if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "src\start.mjs") -PathType Leaf)) {
   throw "Router source not found next to this script: $sourceDir."
+}
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+  $InstallDir = (& node (Join-Path $sourceDir "src\install-manifest.mjs") root | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $InstallDir) {
+    throw "The recorded Codex Router installation could not be resolved. Pass -InstallDir explicitly."
+  }
 }
 $installDir = [IO.Path]::GetFullPath($InstallDir)
 $DeployManifestName = ".codex-router-deploy-manifest.json"
@@ -181,7 +187,7 @@ function Restore-ManagedFiles(
 
 if ((Test-NestedDirectory $sourceDir $installDir) -or
     (Test-NestedDirectory $installDir $sourceDir)) {
-  throw "Source and install directories must be separate and neither may contain the other."
+  throw "Source and install directories must be separate and neither may contain the other. For a service running from this checkout with Switchyard, use maintenance\deploy-switchyard-candidate.ps1."
 }
 if (-not (Test-Path (Join-Path $sourceDir "src\start.mjs"))) {
   throw "Router source not found at $sourceDir."

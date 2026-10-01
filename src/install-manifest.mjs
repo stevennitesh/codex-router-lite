@@ -47,6 +47,14 @@ export function readInstallManifest() {
   }
 }
 
+export function installedSourceRoot(manifest = readInstallManifest()) {
+  const root = manifest?.current?.sourceRoot;
+  if (typeof root !== "string" || !root.trim() || !path.isAbsolute(root)) {
+    throw new Error("Unable to resolve the recorded Router installation; pass an explicit installation directory.");
+  }
+  return path.resolve(root);
+}
+
 function atomicWrite(value) {
   writePrivateJson(INSTALL_MANIFEST_PATH, value);
 }
@@ -92,12 +100,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const command = process.argv[2] || "status";
   if (command === "record") {
     process.stdout.write(`${JSON.stringify(recordInstall(), null, 2)}\n`);
+  } else if (command === "root") {
+    try { process.stdout.write(`${installedSourceRoot()}\n`); }
+    catch (error) { console.error(error.message); process.exitCode = 1; }
   } else if (command === "status") {
     process.stdout.write(
       `${JSON.stringify(readInstallManifest() || { installed: false }, null, 2)}\n`,
     );
   } else {
-    console.error("Usage: install-manifest.mjs record|status");
+    console.error("Usage: install-manifest.mjs record|status|root");
     process.exit(2);
   }
 }

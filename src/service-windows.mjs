@@ -17,6 +17,8 @@ import {
 } from "./paths.mjs";
 import {
   clearServiceProcessState,
+  assertServiceProcessStopped,
+  assertServiceReplacementOwnership,
   readServiceProcessState,
   serviceProcessOwns,
 } from "./service-process.mjs";
@@ -447,6 +449,12 @@ function stopOwnedServiceTree() {
   if (skipServiceManagerCall()) return;
   const state = readServiceProcessState();
   if (!state || state.pid === process.pid || !serviceProcessOwns(state, { platform: effectivePlatform })) {
+    // In particular, an orphan from another checkout must not be reported as
+    // stopped or masked by a healthy HTTP response from that old generation.
+    assertServiceProcessStopped(state, {
+      owns: (value) => serviceProcessOwns(value, { sourceRoot: value.sourceRoot }),
+      listening: managedPortStillListening,
+    });
     return;
   }
   try {
@@ -476,7 +484,9 @@ function stopOwnedServiceTree() {
     !managedPortStillListening(state)
   ) {
     clearServiceProcessState();
+    return;
   }
+  assertServiceProcessStopped(state, { listening: managedPortStillListening });
 }
 
 function endTask() {
@@ -579,6 +589,7 @@ if (command === "render") {
   // test install is a safety violation, not a restricted Task Scheduler
   // failure, and must exit non-zero without touching the host filesystem.
   guardLauncherWrite();
+  if (!skipServiceManagerCall()) assertServiceReplacementOwnership(readServiceProcessState());
   const previousTask = taskSnapshot();
   assertOwnedTask(previousTask);
   const previousLaunchers = launcherSnapshot();
@@ -589,13 +600,13 @@ if (command === "render") {
     // Writing the launchers belongs inside the try: renameSync over the .vbs
     // raises a sharing violation while a running wscript.exe still holds it
     // open, and that used to throw out of install with nothing to catch it.
-    writeLaunchers();
     // An upgrade from the console-visible task may still have that instance
     // running. Register-ScheduledTask -Force replaces the definition under the
     // same task name, so no duplicate is left behind, but it does not stop the
     // running instance, and MultipleInstances IgnoreNew would then drop the new
     // hidden run — the console window would survive until the next logon.
     endTask();
+    writeLaunchers();
     installTask();
     const installedTask = taskSnapshot();
     if (!installedTask.exists) throw new Error(`${taskName} registration did not create a task.`);
@@ -660,6 +671,8 @@ if (command === "render") {
   if (previousTask.exists) {
     schtasks(["/Change", "/TN", taskName, "/DISABLE"], { quiet: true, mutating: true });
     endTask();
+  } else {
+    stopOwnedServiceTree();
   }
   process.stdout.write(`${JSON.stringify({ state: "stopped" })}\n`);
 } else {
