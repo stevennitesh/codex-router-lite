@@ -18,7 +18,7 @@ try {
   Protect-PrivateFile (Join-Path $runtimeRoot "routes.toml")
   "$($lock.commit) + PR $($upstreamContribution.pullRequest) $($upstreamPatchHash.Substring(0, 12)) + local patch $($lock.patchSha256.Substring(0, 12))" |
     Set-Content -LiteralPath (Join-Path $runtimeRoot "SOURCE_COMMIT") -Encoding ASCII
-  @{
+  $candidateProvenance = @{
     version = 1
     upstreamCommit = $lock.commit
     upstreamContributionCommit = "$($upstreamContribution.sourceCommit)".ToLowerInvariant()
@@ -30,7 +30,8 @@ try {
     routesSha256 = $expectedRoutesHash
     routerCommit = $routerCommit
     deployedAt = (Get-Date).ToUniversalTime().ToString("o")
-  } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $runtimeRoot "provenance.json") -Encoding UTF8
+  }
+  Write-DeploymentJson (Join-Path $runtimeRoot "provenance.json") $candidateProvenance
 
   Invoke-RouterInstall $repoRoot
   Assert-FileHash (Join-Path $runtimeRoot "switchyard-server.exe") $expectedBinaryHash "Installed Switchyard binary"

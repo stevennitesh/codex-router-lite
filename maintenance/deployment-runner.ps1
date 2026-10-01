@@ -1,6 +1,7 @@
 # A WMI-created process is parented by the Windows provider, independently of
 # the desktop tool's process tree. Closing the app/tool cannot kill recovery.
 function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters, [string]$RepoRoot) {
+  . (Join-Path $PSScriptRoot "deployment-json.ps1")
   $deploymentHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $operationRoot = Join-Path $deploymentHome "codex-router\deployments\$([Guid]::NewGuid().ToString('N'))"
   New-Item -ItemType Directory -Path $operationRoot -Force | Out-Null
@@ -17,9 +18,8 @@ function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters
   foreach ($name in @("MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "CODEX_ROUTER_SWITCHYARD_ROOT", "CODEX_ROUTER_SWITCHYARD_BIN", "CODEX_ROUTER_SWITCHYARD_CONFIG", "CODEX_ROUTER_SWITCHYARD_BASE_URL", "CODEX_ROUTER_OPERATION_DEADLINE_MS", "NODE_USE_ENV_PROXY")) {
     if (Test-Path -LiteralPath "Env:\$name") { $environment[$name] = [Environment]::GetEnvironmentVariable($name) }
   }
-  @{ script = $ScriptPath; parameters = $Parameters; environment = $environment } |
-    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $requestPath -Encoding UTF8
-  '{"state":"starting"}' | Set-Content -LiteralPath $resultPath -Encoding UTF8
+  Write-DeploymentJson $requestPath @{ script = $ScriptPath; parameters = $Parameters; environment = $environment }
+  Write-DeploymentJson $resultPath @{ state = "starting" }
   New-Item -ItemType File -Path $logPath | Out-Null
   $securityModule = ([Uri](Join-Path $RepoRoot "src\file-security.mjs")).AbsoluteUri
   $protect = "const {protectPrivateFile}=await import(process.argv[1]); for(const p of process.argv.slice(2))protectPrivateFile(p);"

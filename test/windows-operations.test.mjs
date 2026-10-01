@@ -43,6 +43,7 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "maintenance/switchyard-activation.ps1",
     "maintenance/deployment-runner.ps1",
     "maintenance/deployment-worker.ps1",
+    "maintenance/deployment-json.ps1",
     "maintenance/refresh-compatibility-state.ps1",
     "src/windows-process-tree.ps1",
   ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);

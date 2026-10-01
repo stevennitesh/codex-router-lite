@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "deployment-json.ps1")
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)
 if (-not $InProcess -and -not $WhatIfPreference) {
   . (Join-Path $PSScriptRoot "deployment-runner.ps1")
@@ -567,14 +568,15 @@ try {
         if ($name -eq "routes.toml") { Protect-PrivateFile (Join-Path $rollbackRoot $name) }
       }
     }
-    @{
+    $rollbackMetadata = @{
       version = 1
       previousRouterCommit = $expectedRollbackCommit
       previousRouterRoot = $runningRouterRoot
       rollbackRouterRoot = $rollbackRouterRoot
       files = @($existing)
       createdAt = (Get-Date).ToUniversalTime().ToString("o")
-    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8
+    }
+    Write-DeploymentJson (Join-Path $rollbackRoot "rollback.json") $rollbackMetadata
   }
 
   . (Join-Path $PSScriptRoot "switchyard-activation.ps1")

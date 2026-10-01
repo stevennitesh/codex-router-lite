@@ -1,5 +1,6 @@
 param([string]$CodeRoot, [string]$FixtureRoot, [string]$Failure)
 $ErrorActionPreference = "Stop"
+. (Join-Path $CodeRoot "maintenance\deployment-json.ps1")
 $repoRoot = Join-Path $FixtureRoot "candidate"
 $rollbackRouterRoot = Join-Path $FixtureRoot "previous"
 $runtimeRoot = Join-Path $FixtureRoot "runtime"

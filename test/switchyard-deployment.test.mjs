@@ -65,7 +65,7 @@ test("the independent deployment worker survives termination of the entire calle
       try { return JSON.parse(readFileSync(launch.resultPath, "utf8").replace(/^\uFEFF/u, "")).state === "completed"; }
       catch { return false; }
     });
-    assert.equal(JSON.parse(readFileSync(launch.resultPath, "utf8").replace(/^\uFEFF/u, "")).succeeded, true);
+    assert.equal(JSON.parse(readFileSync(launch.resultPath, "utf8")).succeeded, true);
     assert.equal(readFileSync(path.join(directory, "transaction/runtime/switchyard-server.exe"), "utf8"), "previous-switchyard-server.exe");
     assert.match(readFileSync(path.join(directory, "transaction/trace.txt"), "utf8"), /stop-candidate\s+install-previous\s+healthy-previous/u);
   } finally {
@@ -124,7 +124,8 @@ for (const failure of ["none", "drain", "install", "health", "stop", "rollback-s
       }
       if (failure === "none") {
         assert.deepEqual(trace, ["drain", "stop-previous", "install-candidate", "healthy-candidate"]);
-        assert.equal(JSON.parse(read("runtime/provenance.json")).routerCommit, "a".repeat(40));
+        // Consume the actual PowerShell-produced file through the Node handoff.
+        assert.equal(JSON.parse(readFileSync(path.join(directory, "runtime/provenance.json"), "utf8")).routerCommit, "a".repeat(40));
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });

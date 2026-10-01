@@ -26,3 +26,16 @@ and exact restoration. The independent-worker fixture terminates the entire call
 tree before failing candidate activation and completing rollback. This establishes
 local transaction policy and caller-disconnect survival, not provider routing or
 renewed runtime certification. Live deployment acceptance remains separate.
+
+The independent Windows PowerShell worker exposed an encoding difference:
+`Set-Content -Encoding UTF8` adds a byte-order mark in Windows PowerShell.
+PowerShell could accept the resulting provenance, while the Node live-verification
+consumer could not parse it. Deployment JSON now uses explicit UTF-8 without a
+byte-order mark. Coverage parses the actual produced provenance and worker result
+directly in Node, preserving that cross-runtime handoff.
+
+The root script review retained the five maintained entrypoints. Restart and
+separate-directory deployment now resolve their default destination from the
+protected installation manifest. Checkout overlap directs the caller to the
+Switchyard transaction, and the installer completion message covers native-only
+installations as well as external routes.

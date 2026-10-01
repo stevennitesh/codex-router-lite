@@ -1,5 +1,6 @@
 param([Parameter(Mandatory = $true)][string]$RequestPath)
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "deployment-json.ps1")
 $operationRoot = Split-Path -Parent $RequestPath
 $resultPath = Join-Path $operationRoot "result.json"
 $logPath = Join-Path $operationRoot "deployment.log"
@@ -18,7 +19,7 @@ try {
   $deploymentLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
   Start-Transcript -LiteralPath $logPath -Append | Out-Null
   $transcribing = $true
-  @{ state = "running"; processId = $PID } | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
+  Write-DeploymentJson $resultPath @{ state = "running"; processId = $PID }
   $parameters = @{}
   foreach ($property in $request.parameters.PSObject.Properties) { $parameters[$property.Name] = $property.Value }
   & $request.script @parameters
@@ -32,5 +33,5 @@ try {
   if ($transcribing) { Stop-Transcript | Out-Null }
   if ($deploymentLock) { $deploymentLock.Dispose() }
 }
-$completion | ConvertTo-Json | Set-Content -LiteralPath $resultPath -Encoding UTF8
+Write-DeploymentJson $resultPath $completion
 exit $exitCode
