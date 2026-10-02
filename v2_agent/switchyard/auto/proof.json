@@ -9,51 +9,51 @@
     "https://developers.openai.com/codex"
   ],
   "routerVersion": "0.7.0",
-  "codexVersion": "codex-cli 0.159.2",
+  "codexVersion": "codex-cli 0.159.0-alpha.12.1",
   "executionSurface": "codex-desktop-native",
   "endpointProvider": "local-switchyard",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-01T18:17:39.263Z"
+      "observedAt": "2026-10-02T10:39:15.102Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-01T18:16:48.554Z",
+      "observedAt": "2026-10-02T10:38:44.712Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-01T18:17:32.336Z"
+      "observedAt": "2026-10-02T10:39:11.623Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-01T18:16:50.693Z"
+      "observedAt": "2026-10-02T10:38:47.893Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-01T18:17:39.184Z"
+      "observedAt": "2026-10-02T10:39:15.086Z"
     }
   },
-  "testedAt": "2026-10-01T18:18:14.255Z",
-  "routerCommit": "3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f",
+  "testedAt": "2026-10-02T10:39:28.920Z",
+  "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
   "runtimeBinding": {
     "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
     "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
-    "routerCommit": "3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f",
+    "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
     "version": 1,
     "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
-    "deployedAt": "2026-10-01T17:26:52.8876667Z",
+    "deployedAt": "2026-10-02T10:26:21.2477058Z",
     "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
     "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
     "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
   },
-  "evidence": "docs/history/2026-10-01-native-v2-certification.json"
+  "evidence": "docs/history/2026-10-02-native-v2-certification.json"
 }

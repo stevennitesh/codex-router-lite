@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "switchyard-live",
+  "testedAt": "2026-10-02T10:30:03.333Z",
+  "binding": {
+    "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd"
+  },
+  "ordinaryToolRoundTrip": {
+    "first": {
+      "status": 200,
+      "latencyMs": 4647,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "function_call",
+          "name": "synthetic_lookup"
+        }
+      ]
+    },
+    "second": {
+      "status": 200,
+      "latencyMs": 2083,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "reasoning"
+        },
+        {
+          "type": "message"
+        }
+      ]
+    },
+    "callObserved": true,
+    "argumentsValid": true,
+    "selectedTargets": [
+      "switchyard/sol-medium",
+      "switchyard/sol-medium"
+    ],
+    "affinityStable": true
+  },
+  "nativeMediaControl": {
+    "status": 200,
+    "latencyMs": 1175,
+    "selected": null,
+    "publicModel": "gpt-5.6-sol",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red"
+  },
+  "mediaFallback": {
+    "status": 200,
+    "latencyMs": 1134,
+    "selected": null,
+    "publicModel": "switchyard/auto",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red",
+    "fallbackObserved": true,
+    "providerCallsBefore": 0,
+    "providerCallsAfter": 0,
+    "zeroProviderCalls": true
+  },
+  "nativeCompaction": {
+    "status": 200,
+    "latencyMs": 1953,
+    "publicModel": "switchyard/auto",
+    "classifierDecisionsBefore": 5,
+    "classifierDecisionsAfter": 5,
+    "bypassedClassifier": true
+  },
+  "classifier": {
+    "providerVersions": [],
+    "templateObserved": true,
+    "probabilityMapObserved": false,
+    "fallbacks": 5,
+    "recent": [
+      {
+        "at": "2026-10-02T10:29:52.152363Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "provider_http_error",
+        "httpStatus": 401,
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      },
+      {
+        "at": "2026-10-02T10:30:00.159726Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      }
+    ]
+  },
+  "privatePayloadsRetained": false,
+  "priorInvalidFixture": {
+    "status": 400,
+    "reason": "The former one-pixel PNG was rejected because its data did not represent a valid image; it was replaced by a programmatically generated 128x128 PNG."
+  },
+  "limitations": [
+    "Expired OpenRouter key caused classifier HTTP 401 and configured Sol fallback. Passing tool, image and compaction checks do not certify the classifier binding."
+  ],
+  "requiredFailures": [
+    "classifier binding evidence is incomplete"
+  ],
+  "historical": true,
+  "accepted": false,
+  "runnerEvidenceSha256": "733e76d6ae883f7b965e80fd1581916c075a56f01b51e9bd7d8ce441c530146c"
+}

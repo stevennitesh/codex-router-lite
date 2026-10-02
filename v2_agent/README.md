@@ -7,8 +7,8 @@ the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The four active applications record accepted native desktop certification for
-Router `3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f` with Codex
-`0.159.2` on 2026-10-01. Each application records its exact runtime
+Router `04a971fc98d3d19c5818e8492a92c0e53fe9a596` with Codex
+`0.159.0-alpha.12.1` on 2026-10-02. Each application records its exact runtime
 and passing native collaboration window:
 
 - accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
@@ -16,6 +16,11 @@ and passing native collaboration window:
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
+
+The [2026-10-02 renewal](../docs/history/2026-10-02-native-v2-certification.json)
+passed all five checks for each route after a protected credential refresh and
+managed restart. The [earlier expired-key attempt](../docs/history/2026-10-02-expired-key-certification-attempt.json)
+remains separate failed evidence and does not contribute to the accepted window.
 
 Create or refresh an application by copying both
 [`_template/proof.json`](_template/proof.json) and

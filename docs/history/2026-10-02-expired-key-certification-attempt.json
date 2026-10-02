@@ -1,0 +1,545 @@
+{
+  "version": 1,
+  "historical": true,
+  "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
+  "routerVersion": "0.7.0",
+  "codexVersion": "codex-cli 0.159.0-alpha.12.1",
+  "windowsAppVersion": "26.930.2377.0",
+  "executionSurface": "codex-desktop-native",
+  "runtimeBinding": {
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
+    "version": 1,
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "deployedAt": "2026-10-02T10:26:21.2477058Z",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
+  },
+  "runtimeHashesVerified": true,
+  "reports": [
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "effort": "medium",
+      "startedAt": "2026-10-02T10:28:27.096Z",
+      "endedAt": "2026-10-02T10:29:20.434Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-02T10:28:27.737Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-02T10:29:07.823Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-02T10:28:39.155Z",
+        "outputAt": "2026-10-02T10:28:44.187Z",
+        "name": "exec",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "successEvidence": "native script completed and shell output 42",
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-02T10:28:47.117Z",
+          "marker": "SWITCHYARD_04A971FC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-02T10:29:12.311Z",
+          "marker": "SWITCHYARD_04A971FC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-02T10:28:47.207Z",
+        "2026-10-02T10:29:12.348Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-02T10:29:04.321Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-02T10:29:07.304Z",
+        "secondCleanupAt": "2026-10-02T10:29:20.434Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-02T10:28:32.648Z",
+          "model": "switchyard/auto",
+          "status": 401,
+          "totalMs": 4872
+        },
+        {
+          "at": "2026-10-02T10:28:39.195Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 6324
+        },
+        {
+          "at": "2026-10-02T10:28:47.101Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 2614
+        },
+        {
+          "at": "2026-10-02T10:29:12.325Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 4460
+        }
+      ],
+      "accepted": false,
+      "failure": "The native sequence includes an initial HTTP 401; successful retries do not certify a clean window."
+    }
+  ],
+  "limitations": [
+    "Synthetic exact-route native desktop proof, not a general workload soak.",
+    "Raw SSE was not retained; successful Router requests and native tool/text completions establish streamed completion per route.",
+    "No ciphertext, raw session identifiers, credentials or private task payloads retained.",
+    "Certification is not accepted: expired OpenRouter credential blocks three routed models and the Switchyard classifier.",
+    "Switchyard completed native collaboration through its configured Sol fallback, but its first request returned 401 and the classifier probability-map binding was not observed.",
+    "Existing application proofs remain historical records of the prior deployed generation; this attempt does not renew them."
+  ],
+  "status": "failed",
+  "accepted": false,
+  "blockedRoutes": [
+    {
+      "slug": "openrouter/glm-5.3-flash",
+      "accepted": false,
+      "outcome": "blocked",
+      "reason": "OpenRouter rejected the stored credential: API key expired.",
+      "timings": [
+        {
+          "at": "2026-10-02T10:28:11.467Z",
+          "status": 401,
+          "totalMs": 4183
+        },
+        {
+          "at": "2026-10-02T10:28:11.720Z",
+          "status": 401,
+          "totalMs": 52
+        },
+        {
+          "at": "2026-10-02T10:28:12.172Z",
+          "status": 401,
+          "totalMs": 39
+        },
+        {
+          "at": "2026-10-02T10:28:13.102Z",
+          "status": 401,
+          "totalMs": 39
+        },
+        {
+          "at": "2026-10-02T10:28:14.854Z",
+          "status": 401,
+          "totalMs": 40
+        },
+        {
+          "at": "2026-10-02T10:28:17.895Z",
+          "status": 401,
+          "totalMs": 40
+        },
+        {
+          "at": "2026-10-02T10:28:18.002Z",
+          "status": 401,
+          "totalMs": 103
+        },
+        {
+          "at": "2026-10-02T10:28:18.043Z",
+          "status": 401,
+          "totalMs": 38
+        },
+        {
+          "at": "2026-10-02T10:28:21.919Z",
+          "status": 401,
+          "totalMs": 3500
+        },
+        {
+          "at": "2026-10-02T10:28:22.167Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:28:22.207Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:28:25.786Z",
+          "status": 401,
+          "totalMs": 3237
+        },
+        {
+          "at": "2026-10-02T10:28:26.215Z",
+          "status": 401,
+          "totalMs": 38
+        },
+        {
+          "at": "2026-10-02T10:28:26.275Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:28:30.351Z",
+          "status": 401,
+          "totalMs": 3758
+        },
+        {
+          "at": "2026-10-02T10:28:31.196Z",
+          "status": 401,
+          "totalMs": 36
+        },
+        {
+          "at": "2026-10-02T10:28:31.234Z",
+          "status": 401,
+          "totalMs": 35
+        },
+        {
+          "at": "2026-10-02T10:28:35.012Z",
+          "status": 401,
+          "totalMs": 3429
+        },
+        {
+          "at": "2026-10-02T10:28:36.569Z",
+          "status": 401,
+          "totalMs": 46
+        },
+        {
+          "at": "2026-10-02T10:28:36.613Z",
+          "status": 401,
+          "totalMs": 41
+        },
+        {
+          "at": "2026-10-02T10:28:40.252Z",
+          "status": 401,
+          "totalMs": 3332
+        },
+        {
+          "at": "2026-10-02T10:28:46.717Z",
+          "status": 401,
+          "totalMs": 3137
+        },
+        {
+          "at": "2026-10-02T10:28:50.647Z",
+          "status": 401,
+          "totalMs": 3927
+        },
+        {
+          "at": "2026-10-02T10:28:54.292Z",
+          "status": 401,
+          "totalMs": 3362
+        }
+      ],
+      "firstMarkerObserved": false,
+      "sameChildFollowupObserved": false
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash-gmicloud",
+      "accepted": false,
+      "outcome": "blocked",
+      "reason": "OpenRouter rejected the stored credential: API key expired.",
+      "timings": [
+        {
+          "at": "2026-10-02T10:28:17.705Z",
+          "status": 401,
+          "totalMs": 3665
+        },
+        {
+          "at": "2026-10-02T10:28:18.075Z",
+          "status": 401,
+          "totalMs": 151
+        },
+        {
+          "at": "2026-10-02T10:28:21.875Z",
+          "status": 401,
+          "totalMs": 3367
+        },
+        {
+          "at": "2026-10-02T10:28:25.919Z",
+          "status": 401,
+          "totalMs": 3249
+        },
+        {
+          "at": "2026-10-02T10:28:32.141Z",
+          "status": 401,
+          "totalMs": 4760
+        },
+        {
+          "at": "2026-10-02T10:28:38.295Z",
+          "status": 401,
+          "totalMs": 3111
+        },
+        {
+          "at": "2026-10-02T10:28:41.690Z",
+          "status": 401,
+          "totalMs": 3388
+        },
+        {
+          "at": "2026-10-02T10:28:41.737Z",
+          "status": 401,
+          "totalMs": 43
+        },
+        {
+          "at": "2026-10-02T10:28:46.775Z",
+          "status": 401,
+          "totalMs": 4711
+        },
+        {
+          "at": "2026-10-02T10:28:50.216Z",
+          "status": 401,
+          "totalMs": 3242
+        },
+        {
+          "at": "2026-10-02T10:28:53.593Z",
+          "status": 401,
+          "totalMs": 3374
+        },
+        {
+          "at": "2026-10-02T10:28:57.414Z",
+          "status": 401,
+          "totalMs": 3483
+        },
+        {
+          "at": "2026-10-02T10:28:57.885Z",
+          "status": 401,
+          "totalMs": 41
+        },
+        {
+          "at": "2026-10-02T10:28:57.925Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:29:02.026Z",
+          "status": 401,
+          "totalMs": 3777
+        },
+        {
+          "at": "2026-10-02T10:29:06.631Z",
+          "status": 401,
+          "totalMs": 3854
+        },
+        {
+          "at": "2026-10-02T10:29:06.672Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:29:10.648Z",
+          "status": 401,
+          "totalMs": 3603
+        },
+        {
+          "at": "2026-10-02T10:29:15.533Z",
+          "status": 401,
+          "totalMs": 3271
+        },
+        {
+          "at": "2026-10-02T10:29:19.802Z",
+          "status": 401,
+          "totalMs": 4266
+        },
+        {
+          "at": "2026-10-02T10:29:24.784Z",
+          "status": 401,
+          "totalMs": 4653
+        },
+        {
+          "at": "2026-10-02T10:29:28.242Z",
+          "status": 401,
+          "totalMs": 51
+        },
+        {
+          "at": "2026-10-02T10:29:28.280Z",
+          "status": 401,
+          "totalMs": 35
+        },
+        {
+          "at": "2026-10-02T10:29:32.462Z",
+          "status": 401,
+          "totalMs": 3862
+        }
+      ],
+      "firstMarkerObserved": false,
+      "sameChildFollowupObserved": false
+    },
+    {
+      "slug": "openrouter/pareto",
+      "accepted": false,
+      "outcome": "blocked",
+      "reason": "OpenRouter rejected the stored credential: API key expired.",
+      "timings": [
+        {
+          "at": "2026-10-02T10:28:23.048Z",
+          "status": 401,
+          "totalMs": 3408
+        },
+        {
+          "at": "2026-10-02T10:28:26.367Z",
+          "status": 401,
+          "totalMs": 3110
+        },
+        {
+          "at": "2026-10-02T10:28:30.088Z",
+          "status": 401,
+          "totalMs": 3325
+        },
+        {
+          "at": "2026-10-02T10:28:30.951Z",
+          "status": 401,
+          "totalMs": 38
+        },
+        {
+          "at": "2026-10-02T10:28:35.954Z",
+          "status": 401,
+          "totalMs": 3448
+        },
+        {
+          "at": "2026-10-02T10:28:42.488Z",
+          "status": 401,
+          "totalMs": 3608
+        },
+        {
+          "at": "2026-10-02T10:28:45.642Z",
+          "status": 401,
+          "totalMs": 3150
+        },
+        {
+          "at": "2026-10-02T10:28:45.685Z",
+          "status": 401,
+          "totalMs": 39
+        },
+        {
+          "at": "2026-10-02T10:28:49.518Z",
+          "status": 401,
+          "totalMs": 3551
+        },
+        {
+          "at": "2026-10-02T10:28:49.754Z",
+          "status": 401,
+          "totalMs": 39
+        },
+        {
+          "at": "2026-10-02T10:28:49.793Z",
+          "status": 401,
+          "totalMs": 36
+        },
+        {
+          "at": "2026-10-02T10:28:53.410Z",
+          "status": 401,
+          "totalMs": 3294
+        },
+        {
+          "at": "2026-10-02T10:28:58.090Z",
+          "status": 401,
+          "totalMs": 4265
+        },
+        {
+          "at": "2026-10-02T10:29:01.337Z",
+          "status": 401,
+          "totalMs": 3243
+        },
+        {
+          "at": "2026-10-02T10:29:05.955Z",
+          "status": 401,
+          "totalMs": 4218
+        },
+        {
+          "at": "2026-10-02T10:29:06.728Z",
+          "status": 401,
+          "totalMs": 38
+        },
+        {
+          "at": "2026-10-02T10:29:06.768Z",
+          "status": 401,
+          "totalMs": 38
+        },
+        {
+          "at": "2026-10-02T10:29:10.733Z",
+          "status": 401,
+          "totalMs": 3372
+        },
+        {
+          "at": "2026-10-02T10:29:12.467Z",
+          "status": 401,
+          "totalMs": 42
+        },
+        {
+          "at": "2026-10-02T10:29:12.509Z",
+          "status": 401,
+          "totalMs": 39
+        },
+        {
+          "at": "2026-10-02T10:29:16.079Z",
+          "status": 401,
+          "totalMs": 3254
+        },
+        {
+          "at": "2026-10-02T10:29:19.056Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:29:19.097Z",
+          "status": 401,
+          "totalMs": 37
+        },
+        {
+          "at": "2026-10-02T10:29:26.397Z",
+          "status": 401,
+          "totalMs": 6914
+        }
+      ],
+      "firstMarkerObserved": false,
+      "sameChildFollowupObserved": false
+    }
+  ],
+  "deployment": {
+    "succeeded": true,
+    "runtimeCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
+    "independentWorkerCompleted": true,
+    "fullHealthPassed": true,
+    "installedCatalogModels": 16,
+    "installedCatalogParsed": true,
+    "binaryAndRoutesHashesVerified": true,
+    "freshPreviousGenerationRollbackPrepared": true,
+    "rollbackCommit": "3ed405b5ba1973aed72c7fdca797ac7c9ce11c8f",
+    "actualRollbackRequired": false,
+    "initialPreflightRefusal": "Previous rollback backup existed; archived before preparing a fresh rollback. No live activation on that refused attempt."
+  },
+  "installedDependencies": {
+    "python": "3.12.12",
+    "litellm": "1.103.0",
+    "fastapi": "0.141.1",
+    "PyJWT": "2.15.1",
+    "urllib3": "2.8.0",
+    "oauthlib": "4.0.0"
+  },
+  "validation": {
+    "ownerContextTests": {
+      "total": 360,
+      "passed": 360,
+      "failed": 0,
+      "skipped": 0
+    },
+    "sourceCheckPassed": true,
+    "pythonLockAuditKnownVulnerabilities": 0,
+    "nodeProductionAuditKnownVulnerabilities": 0,
+    "sandboxTestLimitation": "The WMI worker fixture requires the normal Windows owner context; sandbox run returned Access denied. Owner-context rerun passed all 360 tests."
+  },
+  "switchyardSmokeEvidence": "docs/history/2026-10-02-expired-key-switchyard-attempt.json",
+  "nextAction": "Refresh the key through model-router.ps1 codex provider-key openrouter set, verify credential reload, then rerun fresh native sequences for all four exact routes and the bounded Switchyard smoke check.",
+  "supersededBy": "docs/history/2026-10-02-native-v2-certification.json",
+  "resolvedAfterProtectedCredentialRefresh": true
+}
