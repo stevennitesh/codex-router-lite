@@ -6,6 +6,9 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Python security and gateway refresh, 2026-10-02](2026-10-02-python-security-refresh.md)
+- [Local gateway qualification, 2026-10-02](2026-10-02-local-gateway-qualification.json)
+
 - [Four-route native v2 certification, 2026-10-01](2026-10-01-native-v2-certification.json)
 - [Switchyard live certification, 2026-10-01](2026-10-01-switchyard-live-certification.json)
 

@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "1e209887fd31ff99cb711909d04a7d2784104113",
+  "lastReviewedCommit": "0a70b48c0ed7039034d097b4fd6a0e7e1e969143",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -11,7 +11,7 @@
     "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
     "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
   ],
-  "reviewedAt": "2026-10-01",
+  "reviewedAt": "2026-10-02",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -60,7 +60,8 @@
       "Remaining 9fb6440d..84c6e1ba commits: CommandCode/Space Bunny/Gemini, Ollama, Control Center, Homebrew CI, documentation and merge-only changes are outside retained owners",
       "0d9981b0 and merge 592be375: macOS ChatGPT bundled CLI discovery is outside the retained Windows runtime; Windows hashed CLI discovery already works",
       "e6b499aa and merge 15ca2db2: ClinePass completion-envelope normalization targets an unretained provider",
-      "a5541d8f and merge 4fdac873: dependency updates only affect upstream Control Center and docs-site"
+      "a5541d8f and merge 4fdac873: dependency updates only affect upstream Control Center and docs-site",
+      "0c59050c and merge 0a70b48c: Control Center and docs-site dependency lock updates do not affect any shipped Router Lite dependency"
     ]
   }
 }

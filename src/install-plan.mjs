@@ -15,16 +15,13 @@ import { venvRuntimeProblem } from "./venv-runtime.mjs";
 
 export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Keep FastAPI 0.139.2 as the known-good gateway pair. LiteLLM 1.102.1 was
-// booted and exercised on Windows with CPython 3.10.19 against this exact pin.
-// FastAPI >=0.140 has not been independently requalified here, so lifting this
-// pin remains a separate dependency change that must regenerate the Windows
-// lock and boot the real gateway before acceptance.
+// Keep the gateway pair synchronized with requirements/python.in. A pin change
+// must regenerate the Windows lock and boot the real gateway before acceptance.
 //
-// LiteLLM 1.102.1 remains above the 1.96.2 security floor that fixed
+// LiteLLM 1.103.0 remains above the 1.96.2 security floor that fixed
 // CVE-2026-84377 and resolves cleanly with cryptography 50.0.0. Do not move
 // below the prior floor merely to reduce dependency churn.
-const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.102.1", "fastapi==0.141.1"];
+const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.103.0", "fastapi==0.141.1"];
 
 // Pinning the two direct requirements left their whole transitive tree floating:
 // every install re-resolved `litellm[proxy]` against PyPI and executed whatever

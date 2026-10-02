@@ -15,7 +15,7 @@ flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
 
-LiteLLM 1.102.1 owns the GLM chat bridge's custom-tool conversion and reasoning
+LiteLLM 1.103.0 owns the GLM chat bridge's custom-tool conversion and reasoning
 history replay. It converts native custom tools to JSON-schema functions, retains
 their grammar in the description, restores completed calls to
 `custom_tool_call`, and replays Responses reasoning as assistant
@@ -23,12 +23,12 @@ their grammar in the description, restores completed calls to
 Pareto's direct-Responses custom-tool bridge, and exact provider policy.
 
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
-`src/zai-responses-compat.mjs` remains required because 1.102.1 can still emit
-visible text after reasoning without the message/content opening events, can
-close that visible text with a `reasoning_text` part, and can overlap an open
-assistant message with a function-call lifecycle. The transform repairs only
-those envelope/order defects. LiteLLM 1.102.1 now generates distinct reasoning
-and message identities itself, so Router Lite no longer rewrites those IDs.
+`src/zai-responses-compat.mjs` repairs malformed GLM envelopes: visible text
+after reasoning without message/content opening events, a visible-text close
+with a `reasoning_text` part, and overlapping assistant-message and
+function-call lifecycles. The transform repairs only those envelope/order
+defects and leaves valid streams unchanged. LiteLLM generates distinct
+reasoning and message identities itself, so Router Lite does not rewrite those IDs.
 Keep the generic namespace relay's identity checks intact.
 
 Fresh hosted-search turns bypass the Chat Completions translation and use the internal OpenRouter forwarder's direct Responses path. `src/openrouter-hosted-search.mjs` maps only native `web_search` and `web_search_preview` tools to the bounded `openrouter:web_search` server tool, restores returned items to `web_search_call`, preserves citations and sources, and reverses completed search history on another direct-search turn. A plain function named `web_search` is unrelated and must remain unchanged. Keep the checked-in Exa engine, result and call limits, exact endpoint policy, and fallback prohibition together. OpenRouter reports live search usage under `server_tool_use_details`; tolerate the documented `server_tool_use` spelling in diagnostics, but never infer zero from an absent field.

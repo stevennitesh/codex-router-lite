@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "liteLlm": "1.103.0",
+  "python": "3.10.19",
+  "fastApi": "0.141.1",
+  "providerCalls": "loopback mock only",
+  "liveRuntimeChanged": false,
+  "cases": [
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "text, endpoint policy, reasoning and cached usage",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "real gateway reasoning/text stream and repaired envelopes",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "raw gateway envelope diagnostic",
+      "missingMessageEnvelope": false
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "reasoning history replay",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "function identity and arguments",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "function tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "native custom-tool conversion and restoration",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "custom tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "reasoning/text/tool stream ordering",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "upstream 401 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "upstream 429 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "text, endpoint policy, reasoning and cached usage",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "real gateway reasoning/text stream and repaired envelopes",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "raw gateway envelope diagnostic",
+      "missingMessageEnvelope": false
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "reasoning history replay",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "function identity and arguments",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "function tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "native custom-tool conversion and restoration",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "custom tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "reasoning/text/tool stream ordering",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "upstream 401 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "upstream 429 preserved",
+      "outcome": "pass"
+    }
+  ],
+  "historical": true,
+  "providerRequestCount": 26
+}
