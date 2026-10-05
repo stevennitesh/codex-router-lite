@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "historical": true,
+  "status": "failed",
+  "accepted": false,
+  "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+  "codexVersion": "codex-cli 0.160.0",
+  "windowsAppVersion": "26.930.4958.0",
+  "executionSurface": "codex-desktop-native",
+  "slug": "openrouter/glm-5.3-flash",
+  "endpointProvider": "novita",
+  "role": "router_openrouter_glm_5_3_flash",
+  "effort": "max",
+  "encryptedHandoffCount": 2,
+  "tool": {
+    "command": "Write-Output (19+23)",
+    "output": "42",
+    "defaultSandbox": true,
+    "callOutputIdentityMatched": true,
+    "observedAt": "2026-10-05T20:26:49.781Z"
+  },
+  "firstMarker": {
+    "marker": "NOVITA_2A9CA8AD_FIRST_OK",
+    "at": "2026-10-05T20:26:56.812Z"
+  },
+  "sameThreadFollowUp": {
+    "outcome": "fail",
+    "status": 429,
+    "observedAt": "2026-10-05T20:27:25.747Z",
+    "error": "provider 429 exhausted the native retry limit; second marker was not returned"
+  },
+  "timings": [
+    {
+      "at": "2026-10-05T20:26:11.213Z",
+      "model": "openrouter/glm-5.3-flash",
+      "status": 200,
+      "totalMs": 12202
+    },
+    {
+      "at": "2026-10-05T20:26:56.773Z",
+      "model": "openrouter/glm-5.3-flash",
+      "status": 200,
+      "totalMs": 6846
+    },
+    {
+      "at": "2026-10-05T20:27:25.747Z",
+      "model": "openrouter/glm-5.3-flash",
+      "status": 429,
+      "totalMs": 3028
+    }
+  ],
+  "lifecycle": {
+    "firstCleanupPreviousStatus": "completed",
+    "secondCleanupPreviousStatus": "errored",
+    "activeTurnCancelled": false
+  },
+  "retryAfterHeaderRetained": false,
+  "supersededBy": "docs/history/2026-10-05-native-v2-certification.json",
+  "limitations": [
+    "This failed window contributes no accepted proof.",
+    "No provider header or raw payload was retained; no retry delay is inferred."
+  ]
+}

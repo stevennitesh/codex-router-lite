@@ -1,26 +1,40 @@
 # openrouter/glm-5.3-flash v2 certification
 
-Accepted on 2026-10-02T10:39:25.959Z against deployed Router `04a971fc98d3d19c5818e8492a92c0e53fe9a596`
-(version 0.7.0), codex-cli 0.159.0-alpha.12.1 and Windows app 26.930.2377.0.
-The native desktop parent used the generated `router_openrouter_glm_5_3_flash` role with no
-inherited conversation. This historical proof applies only to the recorded runtime.
+Accepted on 2026-10-05T20:32:02.300Z against deployed Router `2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5`
+(version 0.7.0), codex-cli 0.160.0 and Windows app 26.930.4958.0.
+The native desktop parent spawned generated role `router_openrouter_glm_5_3_flash` with no inherited
+conversation, at its exact `max` effort. This historical proof applies
+only to the recorded runtime and endpoint.
 
 ## Evidence
 
-[Bounded native evidence](../../../docs/history/2026-10-02-native-v2-certification.json) records actual spawn and follow-up
-events, two encrypted handoffs in one child rollout, a default-sandbox command
-`Write-Output (19+23)` returning `42`, and both final markers:
-`NOVITA_04A971FC_R2_FIRST_OK` and `NOVITA_04A971FC_R2_SECOND_OK`.
-Tool call/output identities matched. Both cleanup calls reported the child
-already completed; no running turn was interrupted.
+[Native evidence](../../../docs/history/2026-10-05-native-v2-certification.json)
+records the actual parent spawn, two encrypted handoffs in one child rollout,
+`Write-Output (19+23)` producing `42` in the default sandbox, and both markers:
+`NOVITA_2A9CA8AD_R2_FIRST_OK`, `NOVITA_2A9CA8AD_R2_SECOND_OK`. Tool call/output identities matched. The first child turn completed
+before cleanup and same-child follow-up; both cleanup calls reported completed.
+No active child turn was interrupted.
 
-All three Router requests returned HTTP 200, with durations
-18859, 8700, 6827 ms. This fresh window follows the operator's protected credential
-refresh and managed restart; the earlier expired-key attempt is separate evidence.
+All 3 requests in the accepted bounded route window returned
+HTTP 200. Three primary completions establish tool selection, first marker and
+same-child follow-up. Raw session identifiers and ciphertext are omitted.
+
+| Router completion (UTC) | Duration (ms) | Kind | Status |
+| --- | ---: | --- | ---: |
+| 2026-10-05T20:30:35.231Z | 26841 | primary completion | 200 |
+| 2026-10-05T20:30:54.248Z | 5486 | primary completion | 200 |
+| 2026-10-05T20:31:49.318Z | 16172 | primary completion | 200 |
+
+The exact `novita` endpoint remained pinned with fallback disabled.
+
+The [earlier Novita capacity attempt](../../../docs/history/2026-10-05-novita-capacity-attempt.json)
+hit 429 on its second turn and remains failed evidence. This accepted proof uses
+a fresh child and a clean successful window; no failed request contributes to it.
 
 ## Limits
 
-Native completed items and turns establish streamed completion; raw SSE was not
-retained. No ciphertext, raw session identifiers, credentials or private task
-payloads are included. This is a synthetic certification, not a workload soak.
+Native completed items/turns and successful Router requests establish streamed
+completion; raw SSE was not retained. This is bounded synthetic compatibility
+proof, not a workload soak or comparative classifier evaluation. Credentials,
+capabilities, private task payloads, ciphertext and raw session IDs are excluded.
 Later runtime or route-contract changes require renewed proof.

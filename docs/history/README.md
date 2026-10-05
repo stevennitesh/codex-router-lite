@@ -6,6 +6,10 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Deployed four-route native certification, 2026-10-05](2026-10-05-native-v2-certification.json)
+- [Switchyard live certification, 2026-10-05](2026-10-05-switchyard-live-certification.json)
+- [Earlier Novita capacity attempt, 2026-10-05](2026-10-05-novita-capacity-attempt.json)
+
 - [Foreground startup, LiteLLM and complete upstream review, 2026-10-05](2026-10-05-compatibility-update.md)
 - [Complete compatibility review matrix, 2026-10-05](2026-10-05-compatibility-review.json)
 - [Local gateway qualification, 2026-10-05](2026-10-05-local-gateway-qualification.json)

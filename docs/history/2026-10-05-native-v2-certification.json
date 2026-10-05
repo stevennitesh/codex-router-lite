@@ -1,0 +1,492 @@
+{
+  "version": 1,
+  "historical": true,
+  "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+  "routerVersion": "0.7.0",
+  "codexVersion": "codex-cli 0.160.0",
+  "windowsAppVersion": "26.930.4958.0",
+  "executionSurface": "codex-desktop-native",
+  "runtimeBinding": {
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+    "version": 1,
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "deployedAt": "2026-10-05T20:22:44.4388226Z",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
+  },
+  "runtimeHashesVerified": true,
+  "reports": [
+    {
+      "slug": "openrouter/glm-5.3-flash",
+      "role": "router_openrouter_glm_5_3_flash",
+      "effort": "max",
+      "startedAt": "2026-10-05T20:30:07.558Z",
+      "endedAt": "2026-10-05T20:32:02.300Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-05T20:30:08.355Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-05T20:31:33.111Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-05T20:30:35.185Z",
+        "outputAt": "2026-10-05T20:30:48.626Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "successEvidence": "shell exit code 0 and output 42",
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "waitCellCorrelationVerified": false,
+        "waitCallOutputIdentitiesMatched": false,
+        "waitContinuationCalls": 0
+      },
+      "finals": [
+        {
+          "at": "2026-10-05T20:30:54.345Z",
+          "marker": "NOVITA_2A9CA8AD_R2_FIRST_OK"
+        },
+        {
+          "at": "2026-10-05T20:31:49.328Z",
+          "marker": "NOVITA_2A9CA8AD_R2_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-05T20:30:54.443Z",
+        "2026-10-05T20:31:49.380Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-05T20:31:27.980Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-05T20:31:33.042Z",
+        "secondCleanupAt": "2026-10-05T20:32:02.300Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-05T20:30:35.231Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 26841
+        },
+        {
+          "at": "2026-10-05T20:30:54.248Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 5486
+        },
+        {
+          "at": "2026-10-05T20:31:49.318Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 16172
+        }
+      ],
+      "primaryTimings": [
+        {
+          "at": "2026-10-05T20:30:35.231Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 26841
+        },
+        {
+          "at": "2026-10-05T20:30:54.248Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 5486
+        },
+        {
+          "at": "2026-10-05T20:31:49.318Z",
+          "model": "openrouter/glm-5.3-flash",
+          "status": 200,
+          "totalMs": 16172
+        }
+      ],
+      "waitContinuationTimings": [],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash-gmicloud",
+      "role": "router_openrouter_glm_5_3_flash_gmicloud",
+      "effort": "max",
+      "startedAt": "2026-10-05T20:26:04.944Z",
+      "endedAt": "2026-10-05T20:28:12.087Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-05T20:26:05.775Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-05T20:27:44.498Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-05T20:26:17.729Z",
+        "outputAt": "2026-10-05T20:27:04.630Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "successEvidence": "shell exit code 0 and output 42",
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "waitCellCorrelationVerified": false,
+        "waitCallOutputIdentitiesMatched": false,
+        "waitContinuationCalls": 0
+      },
+      "finals": [
+        {
+          "at": "2026-10-05T20:27:11.934Z",
+          "marker": "GMICLOUD_2A9CA8AD_FIRST_OK"
+        },
+        {
+          "at": "2026-10-05T20:27:55.341Z",
+          "marker": "GMICLOUD_2A9CA8AD_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-05T20:27:12.060Z",
+        "2026-10-05T20:27:55.376Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-05T20:27:26.633Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-05T20:27:44.427Z",
+        "secondCleanupAt": "2026-10-05T20:28:12.087Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-05T20:26:17.803Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 11993
+        },
+        {
+          "at": "2026-10-05T20:27:11.893Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 7136
+        },
+        {
+          "at": "2026-10-05T20:27:55.332Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 10799
+        }
+      ],
+      "primaryTimings": [
+        {
+          "at": "2026-10-05T20:26:17.803Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 11993
+        },
+        {
+          "at": "2026-10-05T20:27:11.893Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 7136
+        },
+        {
+          "at": "2026-10-05T20:27:55.332Z",
+          "model": "openrouter/glm-5.3-flash-gmicloud",
+          "status": 200,
+          "totalMs": 10799
+        }
+      ],
+      "waitContinuationTimings": [],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/pareto",
+      "role": "router_openrouter_pareto",
+      "effort": "none",
+      "startedAt": "2026-10-05T20:26:12.923Z",
+      "endedAt": "2026-10-05T20:28:17.051Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-05T20:26:13.760Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-05T20:27:53.013Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-05T20:26:22.803Z",
+        "outputAt": "2026-10-05T20:27:18.637Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "successEvidence": "shell exit code 0 and output 42",
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "waitCellCorrelationVerified": false,
+        "waitCallOutputIdentitiesMatched": false,
+        "waitContinuationCalls": 0
+      },
+      "finals": [
+        {
+          "at": "2026-10-05T20:27:20.322Z",
+          "marker": "PARETO_2A9CA8AD_FIRST_OK"
+        },
+        {
+          "at": "2026-10-05T20:27:57.982Z",
+          "marker": "PARETO_2A9CA8AD_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-05T20:27:20.441Z",
+        "2026-10-05T20:27:58.015Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-05T20:27:48.082Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-05T20:27:52.944Z",
+        "secondCleanupAt": "2026-10-05T20:28:17.051Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-05T20:26:22.812Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 9016
+        },
+        {
+          "at": "2026-10-05T20:27:20.285Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 1521
+        },
+        {
+          "at": "2026-10-05T20:27:57.972Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 4924
+        }
+      ],
+      "primaryTimings": [
+        {
+          "at": "2026-10-05T20:26:22.812Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 9016
+        },
+        {
+          "at": "2026-10-05T20:27:20.285Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 1521
+        },
+        {
+          "at": "2026-10-05T20:27:57.972Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 4924
+        }
+      ],
+      "waitContinuationTimings": [],
+      "accepted": true
+    },
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "effort": "medium",
+      "startedAt": "2026-10-05T20:26:19.172Z",
+      "endedAt": "2026-10-05T20:28:21.455Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-05T20:26:20.051Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-05T20:28:07.239Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-05T20:26:30.216Z",
+        "outputAt": "2026-10-05T20:27:49.452Z",
+        "name": "exec",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "successEvidence": "native script completed and shell output 42",
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "waitCellCorrelationVerified": true,
+        "waitCallOutputIdentitiesMatched": true,
+        "waitContinuationCalls": 2
+      },
+      "finals": [
+        {
+          "at": "2026-10-05T20:27:53.478Z",
+          "marker": "SWITCHYARD_2A9CA8AD_FIRST_OK"
+        },
+        {
+          "at": "2026-10-05T20:28:15.421Z",
+          "marker": "SWITCHYARD_2A9CA8AD_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-05T20:27:53.560Z",
+        "2026-10-05T20:28:15.488Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-05T20:28:00.945Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-05T20:28:07.174Z",
+        "secondCleanupAt": "2026-10-05T20:28:21.455Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-05T20:26:30.269Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 10166
+        },
+        {
+          "at": "2026-10-05T20:27:05.184Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 3804
+        },
+        {
+          "at": "2026-10-05T20:27:41.944Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 5761
+        },
+        {
+          "at": "2026-10-05T20:27:53.531Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 3989
+        },
+        {
+          "at": "2026-10-05T20:28:15.456Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 8184
+        }
+      ],
+      "primaryTimings": [
+        {
+          "at": "2026-10-05T20:26:30.269Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 10166
+        },
+        {
+          "at": "2026-10-05T20:27:53.531Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 3989
+        },
+        {
+          "at": "2026-10-05T20:28:15.456Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 8184
+        }
+      ],
+      "waitContinuationTimings": [
+        {
+          "at": "2026-10-05T20:27:05.184Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 3804
+        },
+        {
+          "at": "2026-10-05T20:27:41.944Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 5761
+        }
+      ],
+      "accepted": true
+    }
+  ],
+  "limitations": [
+    "Synthetic exact-route native desktop proof, not a general workload soak.",
+    "Raw SSE was not retained; successful Router requests and native tool/text completions establish streamed completion per route.",
+    "No ciphertext, raw session identifiers, credentials or private task payloads retained."
+  ],
+  "status": "accepted",
+  "accepted": true,
+  "codexSignature": "Valid",
+  "installedDependencies": {
+    "python": "3.12.12",
+    "litellm": "1.104.0",
+    "fastapi": "0.141.1"
+  },
+  "installedPythonLockSha256": "ab90dae3d271b00047c0056d557aad028bd9154c4772c764d6421eaf8a70632e",
+  "switchyardSmokeEvidence": "docs/history/2026-10-05-switchyard-live-certification.json",
+  "earlierFailedAttempt": "docs/history/2026-10-05-novita-capacity-attempt.json",
+  "deployment": {
+    "independentWorkerCompleted": true,
+    "succeeded": true,
+    "manifestProcessAgree": true,
+    "liveProcessOwned": true,
+    "doctorPassed": true,
+    "selectedProvidersReady": true,
+    "installedCatalogModels": 16,
+    "unauthenticatedSwitchyardStatuses": {
+      "/v1/models": 401,
+      "/v1/decision": 401,
+      "/v1/responses": 401
+    },
+    "freshRollbackPreviousCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
+    "rollbackRetainedPendingAllAcceptance": false,
+    "allAuthorizedAcceptancePassed": true,
+    "freshRollbackRetainedAfterAcceptance": true,
+    "obsoleteRecoveryHeldOutsideActiveRuntime": true,
+    "recoveryRetirementDeferred": "Verified recovery sets and their disposable exact rollback checkouts remain retained after acceptance."
+  },
+  "validation": {
+    "postAcceptanceSourceCheckPassed": true,
+    "postAcceptanceOwnerContextTests": {
+      "total": 363,
+      "passed": 363,
+      "failed": 0,
+      "skipped": 0
+    },
+    "postAcceptanceInstalledCatalogPassed": true,
+    "installedCatalogModels": 16,
+    "postAcceptanceDoctorPassed": true,
+    "installedPythonDependencyConsistencyPassed": true,
+    "nativeProofBindingsAndPrivacyVerified": true
+  }
+}

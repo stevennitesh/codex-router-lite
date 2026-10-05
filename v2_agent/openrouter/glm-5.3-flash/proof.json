@@ -11,37 +11,38 @@
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints"
   ],
   "routerVersion": "0.7.0",
-  "codexVersion": "codex-cli 0.159.0-alpha.12.1",
+  "codexVersion": "codex-cli 0.160.0",
   "executionSurface": "codex-desktop-native",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-02T10:39:08.290Z"
+      "observedAt": "2026-10-05T20:31:49.318Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-02T10:38:31.995Z",
+      "observedAt": "2026-10-05T20:30:48.626Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-02T10:39:01.432Z"
+      "observedAt": "2026-10-05T20:31:33.111Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-02T10:38:40.819Z"
+      "observedAt": "2026-10-05T20:30:54.345Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-02T10:39:08.298Z"
+      "observedAt": "2026-10-05T20:31:49.328Z"
     }
   },
-  "testedAt": "2026-10-02T10:39:25.959Z",
-  "routerCommit": "04a971fc98d3d19c5818e8492a92c0e53fe9a596",
-  "evidence": "docs/history/2026-10-02-native-v2-certification.json"
+  "testedAt": "2026-10-05T20:32:02.300Z",
+  "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+  "evidence": "docs/history/2026-10-05-native-v2-certification.json",
+  "windowsAppVersion": "26.930.4958.0"
 }

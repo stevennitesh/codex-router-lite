@@ -7,8 +7,8 @@ the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The four active applications record accepted native desktop certification for
-Router `04a971fc98d3d19c5818e8492a92c0e53fe9a596` with Codex
-`0.159.0-alpha.12.1` on 2026-10-02. Each application records its exact runtime
+Router `2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5` with Codex
+`0.160.0` on Windows app `26.930.4958.0`, on 2026-10-05. Each application records its exact runtime
 and passing native collaboration window:
 
 - accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
@@ -17,7 +17,14 @@ and passing native collaboration window:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [2026-10-02 renewal](../docs/history/2026-10-02-native-v2-certification.json)
+The [2026-10-05 renewal](../docs/history/2026-10-05-native-v2-certification.json)
+passed all five checks for each route after guarded deployment. The separate
+[Novita capacity attempt](../docs/history/2026-10-05-novita-capacity-attempt.json)
+failed its second turn; a fresh successful child supplied the accepted proof.
+[Switchyard live checks](../docs/history/2026-10-05-switchyard-live-certification.json)
+record the additional bounded tool, image-fallback, compaction and Jev checks.
+
+The earlier [2026-10-02 renewal](../docs/history/2026-10-02-native-v2-certification.json)
 passed all five checks for each route after a protected credential refresh and
 managed restart. The [earlier expired-key attempt](../docs/history/2026-10-02-expired-key-certification-attempt.json)
 remains separate failed evidence and does not contribute to the accepted window.

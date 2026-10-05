@@ -1,26 +1,36 @@
 # openrouter/pareto v2 certification
 
-Accepted on 2026-10-02T10:39:23.027Z against deployed Router `04a971fc98d3d19c5818e8492a92c0e53fe9a596`
-(version 0.7.0), codex-cli 0.159.0-alpha.12.1 and Windows app 26.930.2377.0.
-The native desktop parent used the generated `router_openrouter_pareto` role with no
-inherited conversation. This historical proof applies only to the recorded runtime.
+Accepted on 2026-10-05T20:28:17.051Z against deployed Router `2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5`
+(version 0.7.0), codex-cli 0.160.0 and Windows app 26.930.4958.0.
+The native desktop parent spawned generated role `router_openrouter_pareto` with no inherited
+conversation, at its exact `none` effort. This historical proof applies
+only to the recorded runtime and endpoint.
 
 ## Evidence
 
-[Bounded native evidence](../../../docs/history/2026-10-02-native-v2-certification.json) records actual spawn and follow-up
-events, two encrypted handoffs in one child rollout, a default-sandbox command
-`Write-Output (19+23)` returning `42`, and both final markers:
-`PARETO_04A971FC_R2_FIRST_OK` and `PARETO_04A971FC_R2_SECOND_OK`.
-Tool call/output identities matched. Both cleanup calls reported the child
-already completed; no running turn was interrupted.
+[Native evidence](../../../docs/history/2026-10-05-native-v2-certification.json)
+records the actual parent spawn, two encrypted handoffs in one child rollout,
+`Write-Output (19+23)` producing `42` in the default sandbox, and both markers:
+`PARETO_2A9CA8AD_FIRST_OK`, `PARETO_2A9CA8AD_SECOND_OK`. Tool call/output identities matched. The first child turn completed
+before cleanup and same-child follow-up; both cleanup calls reported completed.
+No active child turn was interrupted.
 
-All three Router requests returned HTTP 200, with durations
-6634, 1754, 3771 ms. This fresh window follows the operator's protected credential
-refresh and managed restart; the earlier expired-key attempt is separate evidence.
+All 3 requests in the accepted bounded route window returned
+HTTP 200. Three primary completions establish tool selection, first marker and
+same-child follow-up. Raw session identifiers and ciphertext are omitted.
+
+| Router completion (UTC) | Duration (ms) | Kind | Status |
+| --- | ---: | --- | ---: |
+| 2026-10-05T20:26:22.812Z | 9016 | primary completion | 200 |
+| 2026-10-05T20:27:20.285Z | 1521 | primary completion | 200 |
+| 2026-10-05T20:27:57.972Z | 4924 | primary completion | 200 |
+
+The exact `unbiased` endpoint remained pinned with fallback disabled.
 
 ## Limits
 
-Native completed items and turns establish streamed completion; raw SSE was not
-retained. No ciphertext, raw session identifiers, credentials or private task
-payloads are included. This is a synthetic certification, not a workload soak.
+Native completed items/turns and successful Router requests establish streamed
+completion; raw SSE was not retained. This is bounded synthetic compatibility
+proof, not a workload soak or comparative classifier evaluation. Credentials,
+capabilities, private task payloads, ciphertext and raw session IDs are excluded.
 Later runtime or route-contract changes require renewed proof.

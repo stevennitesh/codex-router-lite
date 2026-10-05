@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "switchyard-live",
+  "testedAt": "2026-10-05T20:31:18.049Z",
+  "binding": {
+    "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd"
+  },
+  "ordinaryToolRoundTrip": {
+    "first": {
+      "status": 200,
+      "latencyMs": 2457,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "function_call",
+          "name": "synthetic_lookup"
+        }
+      ]
+    },
+    "second": {
+      "status": 200,
+      "latencyMs": 3546,
+      "selected": null,
+      "publicModel": "switchyard/auto",
+      "completed": true,
+      "terminalType": "response.completed",
+      "outputKinds": [
+        {
+          "type": "reasoning"
+        },
+        {
+          "type": "message"
+        }
+      ]
+    },
+    "callObserved": true,
+    "argumentsValid": true,
+    "selectedTargets": [
+      "switchyard/luna-max",
+      "switchyard/luna-max"
+    ],
+    "affinityStable": true
+  },
+  "nativeMediaControl": {
+    "status": 200,
+    "latencyMs": 1335,
+    "selected": null,
+    "publicModel": "gpt-5.6-sol",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red"
+  },
+  "mediaFallback": {
+    "status": 200,
+    "latencyMs": 1113,
+    "selected": null,
+    "publicModel": "switchyard/auto",
+    "completed": true,
+    "terminalType": "response.completed",
+    "outputKinds": [
+      {
+        "type": "message"
+      }
+    ],
+    "answer": "red",
+    "fallbackObserved": true,
+    "providerCallsBefore": 3,
+    "providerCallsAfter": 3,
+    "zeroProviderCalls": true
+  },
+  "nativeCompaction": {
+    "status": 200,
+    "latencyMs": 2124,
+    "publicModel": "switchyard/auto",
+    "classifierDecisionsBefore": 4,
+    "classifierDecisionsAfter": 4,
+    "bypassedClassifier": true
+  },
+  "classifier": {
+    "providerVersions": [
+      "typesafe/jev-1.13-20260917"
+    ],
+    "templateObserved": true,
+    "probabilityMapObserved": true,
+    "fallbacks": 1,
+    "recent": [
+      {
+        "at": "2026-10-05T20:31:07.450628Z",
+        "source": "type_safe_classifier",
+        "providerModel": "typesafe/jev-1.13-20260917",
+        "finalTarget": "luna_max",
+        "confidence": 0.9155555555555556,
+        "threshold": 0.35,
+        "decisionLatencyMs": 206,
+        "probabilities": {
+          "luna_max": 0.9366666666666666,
+          "sol_medium": 0.06333333333333335,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        }
+      },
+      {
+        "at": "2026-10-05T20:31:14.665150Z",
+        "source": "fail_open",
+        "finalTarget": "sol_medium",
+        "reasonCode": "non_text_state",
+        "confidence": 0,
+        "threshold": 0.35,
+        "decisionLatencyMs": 0
+      }
+    ]
+  },
+  "privatePayloadsRetained": false,
+  "priorInvalidFixture": {
+    "status": 400,
+    "reason": "The former one-pixel PNG was rejected because its data did not represent a valid image; it was replaced by a programmatically generated 128x128 PNG."
+  },
+  "limitations": [],
+  "requiredFailures": [],
+  "evidenceSha256": "3ef4a4bd2f00a814c5dbea505bddca900412a2162a80931e13b9f58625f7a4f6"
+}
