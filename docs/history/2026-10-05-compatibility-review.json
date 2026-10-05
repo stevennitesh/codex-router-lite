@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "date": "2026-10-05",
+  "evidenceKind": "historical source compatibility and isolated integration review",
+  "sourceBase": "4900ea3b7688e87b38fcf131ef6f08effe4a8e75",
+  "nativeCodex": {
+    "windowsApp": "26.930.4958.0",
+    "cli": "0.160.0",
+    "signature": "Valid",
+    "bundledAppTools": "0.1.5",
+    "release": "https://github.com/openai/codex/releases/tag/rust-v0.160.0",
+    "releasePublishedAt": "2026-10-01T20:19:13Z",
+    "bundledDerivedCatalogModels": 15,
+    "previousReadOnlyInstalledCatalogModels": 16,
+    "specificDesktopPatchNotesVerified": false,
+    "nativeQuotaProofRenewed": false
+  },
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router",
+    "reviewedFromExclusive": "0a70b48c0ed7039034d097b4fd6a0e7e1e969143",
+    "reviewedThroughInclusive": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+    "commitCount": 52,
+    "commits": [
+      {
+        "commit": "895dd8f60499368ff1012682d12bd687c58d5d63",
+        "title": "fix: keep POSIX router updates after skill refresh failure",
+        "disposition": "excluded",
+        "reason": "POSIX nonfatal skill refresh and its changelog do not alter retained Windows installation transaction."
+      },
+      {
+        "commit": "f21b99b3336148be44a9e4183cc8263fd54e5b8a",
+        "title": "Allow local Ollama context and timeout overrides",
+        "disposition": "excluded",
+        "reason": "Local Ollama context, timeout, transport and explanatory changes are outside registered providers."
+      },
+      {
+        "commit": "71f084567c0accd7e6afea37c231ccb676a50b4d",
+        "title": "Keep local Ollama transport alive through configured timeout",
+        "disposition": "excluded",
+        "reason": "Local Ollama context, timeout, transport and explanatory changes are outside registered providers."
+      },
+      {
+        "commit": "7d815139b614f1e8a84efe4e482796528c1e0ec7",
+        "title": "fix: close finished subagents in their active namespace",
+        "disposition": "excluded",
+        "reason": "Changes retired automatic child-completion owner and would override caller-owned child lifecycle."
+      },
+      {
+        "commit": "5407dea82aa68a53e82ff24d8059262287c31697",
+        "title": "Merge upstream main after renderer fixture repair",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "e7efc9e84309a6ae7a3109edd3440977017bed4f",
+        "title": "Merge upstream main into local Ollama timeout branch",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "63a3efc94321a055f354c1baa221b7dca6b20836",
+        "title": "Explain local transport timeout margin",
+        "disposition": "excluded",
+        "reason": "Local Ollama context, timeout, transport and explanatory changes are outside registered providers."
+      },
+      {
+        "commit": "f35327d2d8ac5dc2afc472e2135c6ce828108fa1",
+        "title": "fix(windows): let start --foreground run without claiming the service record",
+        "disposition": "ported",
+        "reason": "Explicit foreground launch intent suppresses the managed process record; managed identity checks remain strict. Adapted Windows startup regression exercises the PowerShell entrypoint."
+      },
+      {
+        "commit": "9feb6289d78688a86b1a686d45eeda6f724e587c",
+        "title": "test(windows): boot the foreground supervisor past the service record",
+        "disposition": "ported",
+        "reason": "Explicit foreground launch intent suppresses the managed process record; managed identity checks remain strict. Adapted Windows startup regression exercises the PowerShell entrypoint."
+      },
+      {
+        "commit": "a143d29672e22b05f978881a2c919d7f1e1b8611",
+        "title": "Merge upstream main after Azure delegation repair",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "a49b3e72f1e36cbf8c15cdd72a6e5cd74faad7f2",
+        "title": "docs: add changelog for optional Codex skill refresh",
+        "disposition": "excluded",
+        "reason": "POSIX nonfatal skill refresh and its changelog do not alter retained Windows installation transaction."
+      },
+      {
+        "commit": "a7e0e825a78b1522293b455d38c23c1241f04833",
+        "title": "fix(macOS): prefer standalone Codex CLI over app bundle",
+        "disposition": "excluded",
+        "reason": "macOS standalone CLI priority is outside retained Windows executable resolution."
+      },
+      {
+        "commit": "c75ec419601f4bbd9c09c56fd1b4f0170a48b411",
+        "title": "fix(grok): recover from CLI version probe failures",
+        "disposition": "excluded",
+        "reason": "Grok CLI recovery and associated merge are outside registered providers."
+      },
+      {
+        "commit": "173f908cfc3d29ee0ef4774b4d5cf830bd9ddcdc",
+        "title": "fix(router): normalize generic Responses agent handoffs",
+        "disposition": "excluded",
+        "reason": "Generic Responses agent handoffs and substituted native sessions are outside exact retained routes."
+      },
+      {
+        "commit": "746335d204cb4ebe37c9be6a122ba9d662d875e4",
+        "title": "test(windows): use platform PATH delimiter in venv fixture",
+        "disposition": "excluded",
+        "reason": "Platform PATH delimiter correction affects upstream venv fixture; retained tests use Windows launch and owner-context process probes."
+      },
+      {
+        "commit": "894c4585e7da17e9d5b0304b89516aa43dad6e79",
+        "title": "fix(zai): separate reasoning idle deadline from prelude budget",
+        "disposition": "excluded",
+        "reason": "Direct Z.ai coding reasoning idle deadlines and Ollama transport policy do not apply to retained OpenRouter GLM routes."
+      },
+      {
+        "commit": "99264471af9f6d4ad53dc5b4b94a2f1aee3eef3a",
+        "title": "fix(media): preserve every MiniMax image batch output",
+        "disposition": "excluded",
+        "reason": "MiniMax image batch output and merge are outside registered providers."
+      },
+      {
+        "commit": "e936a413fb4a7cb756c6c118efdcd95e32cbec76",
+        "title": "fix(vision): preserve download catalog publication warnings",
+        "disposition": "excluded",
+        "reason": "Vision-download catalog warning belongs to an unretained provider component."
+      },
+      {
+        "commit": "db51955b77e5aa89e84a2505049ff9886a4dada8",
+        "title": "fix(replay): preserve reasoning across upstream chunk boundaries",
+        "disposition": "excluded",
+        "reason": "Changes retired chat-reasoning-replay owner; pinned LiteLLM owns retained GLM reasoning history."
+      },
+      {
+        "commit": "1972ac43ebd06f7eeb2fcd5c0885d3266cfbddf3",
+        "title": "fix: bound WebSocket SSE events independently of HTTP chunks",
+        "disposition": "already-covered",
+        "reason": "Local complete-line SSE consumption bounds events independently of HTTP chunk size, including partial, CRLF and EOF cases (local 7b491df6)."
+      },
+      {
+        "commit": "b3220fbb6bc168b1edfcbd72d254ceb7cedd3637",
+        "title": "fix: use billed retry spend consistently in usage totals",
+        "disposition": "excluded",
+        "reason": "Billed-retry usage UI totals and Control Center are outside retained Windows product."
+      },
+      {
+        "commit": "5ff25588b976803d7109645d374630e2f3d0d910",
+        "title": "test: navigate to Status through the renderer sidebar",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "e67e485b00016971f7877bf14e726a7680e984b5",
+        "title": "fix(tray): stop opening a blank Settings window at launch",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "0e9bf27a3aeeb97483b0b2d3cf41c0af6c8a78b7",
+        "title": "fix: preserve legacy picker visibility until complete migration",
+        "disposition": "excluded",
+        "reason": "Legacy generic model-picker registry migration is outside checked-in exact-route metadata."
+      },
+      {
+        "commit": "f3dab6bf4c83e94e5568402093bda2d286b1b17e",
+        "title": "feat(tray): open the Control Center on its Settings page from Settings...",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "a6aa0e7715e181adf138f04d88e1d246b02a8750",
+        "title": "fix: name the client a failed publication left behind",
+        "disposition": "excluded",
+        "reason": "Generic multi-client publication messages change retired target-integration owner."
+      },
+      {
+        "commit": "f1167fb014a580c4a3802faa265a7128712048a2",
+        "title": "feat(control-center): answer Settings... (Command-comma) from its own menu",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "f4e2108cf5aa78d035fe4915388dd962d1e0f0be",
+        "title": "fix: say later clients were skipped and relay the publisher's report whole",
+        "disposition": "excluded",
+        "reason": "Generic multi-client publication messages change retired target-integration owner."
+      },
+      {
+        "commit": "d1af6383c69a966a26697a3599e9abb146ac1d44",
+        "title": "Merge pull request #961 from c8dhjp4tyv-bit/fix/minimax-image-output-paths",
+        "disposition": "excluded",
+        "reason": "MiniMax image batch output and merge are outside registered providers."
+      },
+      {
+        "commit": "3990d576bb8b105e34b65a4848bfe2028bbcc1eb",
+        "title": "Merge branch 'main' into fix/vision-download-catalog-warning",
+        "disposition": "excluded",
+        "reason": "Vision-download catalog warning belongs to an unretained provider component."
+      },
+      {
+        "commit": "dd6fd6b16323eb3551186a84b7d2a06290670f1d",
+        "title": "Merge pull request #962 from c8dhjp4tyv-bit/fix/vision-download-catalog-warning",
+        "disposition": "excluded",
+        "reason": "Vision-download catalog warning belongs to an unretained provider component."
+      },
+      {
+        "commit": "e9fc70284b322175f810d3b00ee244ff051429b4",
+        "title": "Merge branch 'main' into fix/grok-cli-version-recovery",
+        "disposition": "excluded",
+        "reason": "Grok CLI recovery and associated merge are outside registered providers."
+      },
+      {
+        "commit": "6630375e238829003070c5528a87155987dbcc0d",
+        "title": "Merge pull request #953 from Leshabeats/fix/grok-cli-version-recovery",
+        "disposition": "excluded",
+        "reason": "Grok CLI recovery and associated merge are outside registered providers."
+      },
+      {
+        "commit": "19661465a5fb9646e969f3aec2626ef586098236",
+        "title": "Merge pull request #955 from PracticalSwan/fix/windows-installer-path-delimiter-20261003",
+        "disposition": "excluded",
+        "reason": "Platform PATH delimiter correction affects upstream venv fixture; retained tests use Windows launch and owner-context process probes."
+      },
+      {
+        "commit": "41479234ecf73ae3857b44736c4d09a15e8db1df",
+        "title": "Merge pull request #966 from c8dhjp4tyv-bit/fix/legacy-picker-visibility",
+        "disposition": "excluded",
+        "reason": "Legacy generic model-picker registry migration is outside checked-in exact-route metadata."
+      },
+      {
+        "commit": "564edd6a472409399b29aa116d0c35c71af297f4",
+        "title": "Merge pull request #933 from Woudart/fix/windows-foreground-start-identity",
+        "disposition": "ported",
+        "reason": "Explicit foreground launch intent suppresses the managed process record; managed identity checks remain strict. Adapted Windows startup regression exercises the PowerShell entrypoint."
+      },
+      {
+        "commit": "7b801fc5782ec30715bcd06027178e6b27a99425",
+        "title": "Merge pull request #963 from c8dhjp4tyv-bit/fix/reasoning-replay-chunk-boundaries",
+        "disposition": "excluded",
+        "reason": "Changes retired chat-reasoning-replay owner; pinned LiteLLM owns retained GLM reasoning history."
+      },
+      {
+        "commit": "fa371063d7a38fb93d2a63eb2e43a3fb8dd4cf7c",
+        "title": "Merge pull request #954 from B1gM8c/fix/generic-responses-agent-message",
+        "disposition": "excluded",
+        "reason": "Generic Responses agent handoffs and substituted native sessions are outside exact retained routes."
+      },
+      {
+        "commit": "37521bf2eae607d570d5118d437dd17a97d1ccf2",
+        "title": "Merge pull request #928 from virajchoudhary/fix/azure-subagent-close-namespace",
+        "disposition": "excluded",
+        "reason": "Changes retired automatic child-completion owner and would override caller-owned child lifecycle."
+      },
+      {
+        "commit": "a6d9013ec8828162bf64024881a6e0eeedc3338d",
+        "title": "Merge pull request #964 from c8dhjp4tyv-bit/fix/billed-usage-rollups",
+        "disposition": "excluded",
+        "reason": "Billed-retry usage UI totals and Control Center are outside retained Windows product."
+      },
+      {
+        "commit": "d65dc1699c46ebcfdec6855a7429c2d238164b40",
+        "title": "Merge pull request #960 from c8dhjp4tyv-bit/fix/websocket-sse-event-budget",
+        "disposition": "already-covered",
+        "reason": "Local complete-line SSE consumption bounds events independently of HTTP chunk size, including partial, CRLF and EOF cases (local 7b491df6)."
+      },
+      {
+        "commit": "3c12bd3c009303fb6f05c0c91c2fedc6f2415be6",
+        "title": "Merge remote-tracking branch 'origin/main' into codex/pr-925-conflict-resolution",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "01afbfb831a3c749e054badb516d60b7d135b634",
+        "title": "Merge Z.ai idle deadline fix and preserve local Ollama transport policy",
+        "disposition": "excluded",
+        "reason": "Direct Z.ai coding reasoning idle deadlines and Ollama transport policy do not apply to retained OpenRouter GLM routes."
+      },
+      {
+        "commit": "06a0a35c2152a19d7ce16abd996fdea94dbd2028",
+        "title": "Merge pull request #965 from 404kidwiz/fix/tray-blank-settings-window",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "a67fda812c9aa72179b7f70028b32ec5655209b7",
+        "title": "Merge pull request #970 from 404kidwiz/feat/tray-settings-destination",
+        "disposition": "excluded",
+        "reason": "Control Center menu, tray Settings destination/window and renderer fixture are not shipped by Router Lite."
+      },
+      {
+        "commit": "18c01b66a384b4d8ac0d6301f79dd931a005a93c",
+        "title": "Merge pull request #969 from 404kidwiz/fix/publication-error-messages",
+        "disposition": "excluded",
+        "reason": "Generic multi-client publication messages change retired target-integration owner."
+      },
+      {
+        "commit": "bd0862f2a81a069915c5539e0480032416f5b50e",
+        "title": "Merge pull request #959 from DeoLeung/fix/glm-stream-stall",
+        "disposition": "excluded",
+        "reason": "Direct Z.ai coding reasoning idle deadlines and Ollama transport policy do not apply to retained OpenRouter GLM routes."
+      },
+      {
+        "commit": "c7bc6c1e2f4b9985e806681192ce011bfde29cc2",
+        "title": "Merge pull request #891 from mattiamichini-design/fix/nonfatal-codex-skill-refresh",
+        "disposition": "excluded",
+        "reason": "POSIX nonfatal skill refresh and its changelog do not alter retained Windows installation transaction."
+      },
+      {
+        "commit": "f744dfceb9b22006429e87e25386bcbf75e3d947",
+        "title": "Merge current main into the Ollama timeout PR",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "411447c7379a4afa9ee21e170251998277aeb070",
+        "title": "Merge pull request #951 from Crich1187/fix/codex-cli-priority-20261002",
+        "disposition": "excluded",
+        "reason": "macOS standalone CLI priority is outside retained Windows executable resolution."
+      },
+      {
+        "commit": "adfe3902b0d66af929bbf480c34b1ccd68ed133a",
+        "title": "Merge commit '411447c7379a4afa9ee21e170251998277aeb070' into codex/pr-925-conflict-resolution",
+        "disposition": "excluded",
+        "reason": "Merge synchronization adds no independent retained fix; substantive parent changes are individually dispositioned in this matrix."
+      },
+      {
+        "commit": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+        "title": "Merge pull request #925 from tomasgal/feat/local-ollama-context-timeout",
+        "disposition": "excluded",
+        "reason": "Local Ollama context, timeout, transport and explanatory changes are outside registered providers."
+      }
+    ]
+  },
+  "switchyardUpstream": {
+    "lockedCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "observedHead": "c8848511a7e2e1d605070c7a68905bdc24c6481a",
+    "headUnchangedSince": "2026-10-03",
+    "commitsAfterPin": 17,
+    "decision": "retain pin, config and binary",
+    "contributionPatch": "conflicts in crates/switchyard-runner/src/algorithm.rs and docs/reference/toml_schema.md",
+    "compatibilityPatch": "not tested because required contribution input layer does not apply",
+    "commits": [
+      {
+        "commitPrefix": "649e91d1",
+        "subject": "Preserve native Anthropic thinking settings",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive Anthropic translation."
+      },
+      {
+        "commitPrefix": "0266133e",
+        "subject": "Decision model request and response types",
+        "disposition": "retain-current-pin",
+        "reason": "New decision protocol, unused by current TypeSafeJev classifier."
+      },
+      {
+        "commitPrefix": "abf90180",
+        "subject": "Redact advisor fail-open errors",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive advisor/audit paths."
+      },
+      {
+        "commitPrefix": "47bba06c",
+        "subject": "Require fresh consistent escalation failure evidence",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive escalation algorithm."
+      },
+      {
+        "commitPrefix": "3cdcf406",
+        "subject": "Linux systemd service",
+        "disposition": "retain-current-pin",
+        "reason": "Windows product."
+      },
+      {
+        "commitPrefix": "8a219527",
+        "subject": "Judges fail open on client errors and deadlines",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive routing judge path; current classifier retains its specified local fallback."
+      },
+      {
+        "commitPrefix": "edfce4fa",
+        "subject": "Preserve structured-output enforcement",
+        "disposition": "retain-current-pin",
+        "reason": "Cross-format translation not used by current native Responses target."
+      },
+      {
+        "commitPrefix": "841558bf",
+        "subject": "Failure cooldown after exhausted transient failures",
+        "disposition": "retain-current-pin",
+        "reason": "New optional cooldown capability; no current-route reproduction requires it."
+      },
+      {
+        "commitPrefix": "e9ef1d17",
+        "subject": "Typed decision calls in driver",
+        "disposition": "retain-current-pin",
+        "reason": "New decision input layer unused by TypeSafeJev."
+      },
+      {
+        "commitPrefix": "101b8af8",
+        "subject": "Single provider recipe update",
+        "disposition": "retain-current-pin",
+        "reason": "Example configuration; local checked-in routes are authoritative."
+      },
+      {
+        "commitPrefix": "12922d57",
+        "subject": "Rust 1.99 upgrade",
+        "disposition": "retain-current-pin",
+        "reason": "Toolchain transition needs deliberate ordered-patch rebasing, build and runtime proof."
+      },
+      {
+        "commitPrefix": "16cbe593",
+        "subject": "Shared capability input and separate judge settings",
+        "disposition": "retain-current-pin",
+        "reason": "Capability algorithm refactor unused by current route."
+      },
+      {
+        "commitPrefix": "3bbea7a7",
+        "subject": "Plan-execute Responses history requirement",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive plan-execute algorithm."
+      },
+      {
+        "commitPrefix": "41771336",
+        "subject": "Relative capability advantage decisions",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive capability algorithm."
+      },
+      {
+        "commitPrefix": "5b670a15",
+        "subject": "Codex Approve for me route reviews",
+        "disposition": "retain-current-pin",
+        "reason": "Shipped upstream configs use classifiers different from the local TypeSafeJev 1.13 route."
+      },
+      {
+        "commitPrefix": "84075f1f",
+        "subject": "Preserve Anthropic fallback_credit_token",
+        "disposition": "retain-current-pin",
+        "reason": "Inactive Anthropic translation."
+      },
+      {
+        "commitPrefix": "c8848511",
+        "subject": "Forward gateway key to OpenAI and Anthropic APIs",
+        "disposition": "retain-current-pin",
+        "reason": "Mixed gateway capability is outside the single private native Responses route."
+      }
+    ]
+  },
+  "dependencies": {
+    "python": "3.10.19",
+    "windowsLockPackages": 118,
+    "fastApi": "0.141.1",
+    "changes": {
+      "litellm": [
+        "1.103.0",
+        "1.104.0"
+      ],
+      "litellm-enterprise": [
+        "0.1.69",
+        "0.1.71"
+      ],
+      "litellm-proxy-extras": [
+        "0.4.100",
+        "0.4.102.post1"
+      ]
+    },
+    "dependencyConsistency": "pass",
+    "pipAuditVersion": "2.10.1",
+    "pythonVulnerabilities": 0,
+    "nodeVulnerabilities": 0
+  },
+  "checks": {
+    "sourceCheck": "pass",
+    "fullTests": {
+      "pass": 363,
+      "failed": 0,
+      "skipped": 0
+    },
+    "focusedForegroundTests": {
+      "pass": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "catalogParser": "pass",
+    "realGateway": {
+      "observations": 42,
+      "mockProviderRequests": 48,
+      "targetedStreamAccountingCases": 16,
+      "outcome": "pass"
+    },
+    "zeroUsageDifferential": {
+      "previousInputEstimate": 999,
+      "reportedInputTokens": 0,
+      "reportedOutputTokens": 17,
+      "newInputTokens": 0,
+      "newOutputTokens": 17
+    }
+  },
+  "effects": {
+    "providerRequests": "loopback mock only",
+    "liveRuntimeChanged": false,
+    "deploymentPerformed": false,
+    "nativeRouteCertificationPerformed": false,
+    "commitOrPushPerformed": false
+  },
+  "limits": [
+    "Local mock qualification does not establish live provider behavior or native encrypted assignment/tool compatibility for this app build.",
+    "Existing exact-route proofs cover older runtime identities and are not renewed by these checks.",
+    "Switchyard upstream pin upgrade remains unqualified until ordered patches, build and runtime proof pass."
+  ]
+}

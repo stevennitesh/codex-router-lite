@@ -1,4 +1,9 @@
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
+import { markForegroundSupervisor } from "./service-process.mjs";
+
+// The foreground launcher owns the lifecycle lock, but is not the managed
+// start.mjs payload identified by the Windows service-process record.
+markForegroundSupervisor();
 
 try {
   // Importing start.mjs does not resolve until its top-level supervisor finishes,

@@ -15,12 +15,16 @@ flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
 
-LiteLLM 1.103.0 owns the GLM chat bridge's custom-tool conversion and reasoning
+LiteLLM 1.104.0 owns the GLM chat bridge's custom-tool conversion and reasoning
 history replay. It converts native custom tools to JSON-schema functions, retains
 their grammar in the description, restores completed calls to
 `custom_tool_call`, and replays Responses reasoning as assistant
 `reasoning_content`. Router Lite still owns namespace/collision restoration,
 Pareto's direct-Responses custom-tool bridge, and exact provider policy.
+
+The pinned gateway also preserves explicit zero token usage in streamed provider
+reports and lets later usage reports clear stale cached-token counts. Missing
+usage can still require gateway estimation; a reported zero is authoritative.
 
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
 `src/zai-responses-compat.mjs` repairs malformed GLM envelopes: visible text
@@ -55,7 +59,7 @@ the required compile flags or hashes, and installer commands that bypass the
 lock. Audit the complete production closure with the pinned auditor used by CI:
 
 ```powershell
-uvx --python 3.10 --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes -r requirements/python.txt
+uvx --python 3.10 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps --require-hashes -r requirements/python.txt
 ```
 
 Do not suppress individual advisories to make the audit pass; update or otherwise

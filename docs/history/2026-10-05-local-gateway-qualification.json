@@ -1,0 +1,401 @@
+{
+  "version": 1,
+  "liteLlm": "1.104.0",
+  "python": "3.10.19",
+  "fastApi": "0.141.1",
+  "providerCalls": "loopback mock only",
+  "liveRuntimeChanged": false,
+  "providerRequests": 48,
+  "cases": [
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "text, endpoint policy, reasoning and cached usage",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "real gateway reasoning/text stream and repaired envelopes",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "raw gateway envelope diagnostic",
+      "missingMessageEnvelope": false
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "reasoning history replay",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "function identity and arguments",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "function tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "native custom-tool conversion and restoration",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "custom tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "reasoning/text/tool stream ordering",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "grammar custom tool conversion, restoration and produced-history continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "Spaces namespace payload and tool identity",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-input (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 17,
+        "output_tokens_details": {
+          "reasoning_tokens": 8,
+          "text_tokens": 9
+        },
+        "total_tokens": 17
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-output (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 20
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-both (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 0
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed cache-clear (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 7,
+        "output_tokens_details": {
+          "reasoning_tokens": 2
+        },
+        "total_tokens": 27
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-input (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 17,
+        "output_tokens_details": {
+          "reasoning_tokens": 8,
+          "text_tokens": 9
+        },
+        "total_tokens": 17
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-output (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 20
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed zero-both (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 0
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "streamed cache-clear (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 7,
+        "output_tokens_details": {
+          "reasoning_tokens": 2
+        },
+        "total_tokens": 27
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "upstream 401 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash",
+      "check": "upstream 429 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "text, endpoint policy, reasoning and cached usage",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "real gateway reasoning/text stream and repaired envelopes",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "raw gateway envelope diagnostic",
+      "missingMessageEnvelope": false
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "reasoning history replay",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "function identity and arguments",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "function tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "native custom-tool conversion and restoration",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "custom tool-output continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "reasoning/text/tool stream ordering",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "grammar custom tool conversion, restoration and produced-history continuation",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "Spaces namespace payload and tool identity",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-input (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 17,
+        "output_tokens_details": {
+          "reasoning_tokens": 8,
+          "text_tokens": 9
+        },
+        "total_tokens": 17
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-output (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 20
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-both (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 0
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed cache-clear (choice-bearing)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 7,
+        "output_tokens_details": {
+          "reasoning_tokens": 2
+        },
+        "total_tokens": 27
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-input (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 17,
+        "output_tokens_details": {
+          "reasoning_tokens": 8,
+          "text_tokens": 9
+        },
+        "total_tokens": 17
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-output (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 20
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed zero-both (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 0
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "streamed cache-clear (usage-only)",
+      "outcome": "pass",
+      "usage": {
+        "input_tokens": 20,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 7,
+        "output_tokens_details": {
+          "reasoning_tokens": 2
+        },
+        "total_tokens": 27
+      }
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "upstream 401 preserved",
+      "outcome": "pass"
+    },
+    {
+      "model": "openrouter/glm-5.3-flash-gmicloud",
+      "check": "upstream 429 preserved",
+      "outcome": "pass"
+    }
+  ]
+}

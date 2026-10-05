@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { openPort } from "./port-pool.mjs";
+import { serviceProcessOwns } from "../src/service-process.mjs";
 import { processCommandLine } from "../src/process-identity.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -59,8 +60,9 @@ async function waitForHealth(url, child) {
   throw new Error(`managed startup did not become healthy: ${child.errors()}`);
 }
 
+for (const foreground of [false, true]) {
 for (const selectedProviders of [[], ["openrouter"]]) {
-  test(`managed startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"})`,
+  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"})`,
     {
       skip: process.platform !== "win32" || !managedProcessProbeAvailable,
       timeout: 30_000,
@@ -93,10 +95,17 @@ for (const selectedProviders of [[], ["openrouter"]]) {
         path.join(state, "enabled-providers.json"),
         `${JSON.stringify({ version: 1, providers: selectedProviders })}\n`,
       );
-      const child = spawn(process.execPath, [path.join(root, "src", "start.mjs")], {
+      const recordPath = path.join(state, "service-process.json");
+      const previousRecord = '{"version":1,"managed":true,"synthetic":"prior managed record"}\n';
+      if (foreground) writeFileSync(recordPath, previousRecord);
+      const shell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      const child = spawn(foreground ? shell : process.execPath, foreground
+        ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "model-router.ps1"), "codex", "start", "--foreground"]
+        : [path.join(root, "src", "start.mjs")], {
         cwd: root,
         env: {
           ...process.env,
+          CODEX_HOME: path.join(state, "codex"),
           OPENROUTER_API_KEY: "",
           MODEL_ROUTER_STATE_DIR: state,
           CODEX_ROUTER_STATE_DIR: state,
@@ -122,6 +131,13 @@ for (const selectedProviders of [[], ["openrouter"]]) {
 
       const healthUrl = `http://127.0.0.1:${routerPort}/health`;
       assert.equal((await waitForHealth(healthUrl, child)).ok, true);
+      if (foreground) {
+        assert.equal(readFileSync(recordPath, "utf8"), previousRecord, "foreground startup preserves the managed record");
+      } else {
+        const record = JSON.parse(readFileSync(recordPath, "utf8"));
+        assert.equal(record.pid, child.pid);
+        assert.equal(serviceProcessOwns(record, { sourceRoot: root, stateDir: state }), true);
+      }
       const fullHealth = await fetch(
         `http://127.0.0.1:${routerPort}/_codex-router/caller-startup-capability-long-enough/v1/health`,
       );
@@ -160,4 +176,5 @@ for (const selectedProviders of [[], ["openrouter"]]) {
       );
       assert.equal(external.status, selectedProviders.length ? 401 : 409);
     });
+}
 }

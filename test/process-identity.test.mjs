@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { processCommandLine, processStartIdentity, SERVICE_START_PROBE_BUDGET } from "../src/process-identity.mjs";
-import { serviceProcessOwns, writeServiceProcessState } from "../src/service-process.mjs";
+import { buildServiceProcessState, serviceProcessOwns, writeServiceProcessState } from "../src/service-process.mjs";
 
 test("cold startup retries only timed-out process probes", () => {
   for (const probe of [processStartIdentity, processCommandLine]) {
@@ -67,5 +67,15 @@ test("service record opts into startup budget without widening later ownership c
     assert.deepEqual(budgets, [undefined, undefined]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("managed process records refuse foreground and unknown entrypoints", () => {
+  const sourceRoot = path.join(os.tmpdir(), "router-identity-fixture");
+  for (const entry of ["foreground-start.mjs", "unexpected-start.mjs"]) {
+    const options = { pid: 42, sourceRoot, identity: () => "42|node.exe",
+      commandLine: () => `node "${path.join(sourceRoot, "src", entry)}"` };
+    assert.equal(buildServiceProcessState(options), undefined);
+    assert.throws(() => writeServiceProcessState(options), /refusing to run without a stoppable process record/);
   }
 });

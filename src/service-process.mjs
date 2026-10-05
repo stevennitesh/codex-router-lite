@@ -25,6 +25,18 @@ function safePid(pid) {
   return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
+// Explicit launch intent must precede start.mjs evaluation. Inferring it from
+// argv would let an unexpected managed entrypoint bypass identity verification.
+let foregroundSupervisor = false;
+
+export function markForegroundSupervisor() {
+  foregroundSupervisor = true;
+}
+
+export function shouldRecordServiceProcess() {
+  return !foregroundSupervisor;
+}
+
 export function buildServiceProcessState({
   pid = process.pid,
   identity = processStartIdentity,

@@ -20,7 +20,7 @@ import { gatewaySupervisorLimits, superviseOptionalChild } from "./gateway-super
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
-import { clearServiceProcessState, writeServiceProcessState } from "./service-process.mjs";
+import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
   inheritedProxyEnvironment,
@@ -345,9 +345,12 @@ try {
   // Task Scheduler can report its wscript host as stopped while the detached
   // cmd/node descendants still own every router port. Record the verified
   // start.mjs identity so the Windows service manager can terminate that tree
-  // before it launches a replacement.
-  writeServiceProcessState();
-  serviceProcessRecorded = true;
+  // before it launches a replacement. The foreground launcher instead holds
+  // the lifecycle lock until it exits and must leave the managed record alone.
+  if (shouldRecordServiceProcess()) {
+    writeServiceProcessState();
+    serviceProcessRecorded = true;
+  }
   exitCode = await main();
 } catch (error) {
   if (!shuttingDown) {

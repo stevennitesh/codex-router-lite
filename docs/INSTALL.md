@@ -48,6 +48,12 @@ Switchyard installation is maintainer work. Read its
 
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
+For foreground debugging, run `model-router.ps1 codex start --foreground` after
+the managed service has released the listeners. The foreground supervisor holds
+the service-operation lock for its lifetime and leaves the managed process record
+untouched. Service operations wait and then fail while that lock is held; exit
+the foreground supervisor before using managed start, stop, or restart.
+
 Initial process-record creation allows cold Windows PowerShell probes 45 seconds
 and retries a timeout once. Ordinary ownership and stop probes retain their
 five-second budget. A completed negative probe is not retried, and private-state

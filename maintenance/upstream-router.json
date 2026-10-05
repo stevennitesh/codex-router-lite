@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "0a70b48c0ed7039034d097b4fd6a0e7e1e969143",
+  "lastReviewedCommit": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -11,7 +11,7 @@
     "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
     "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
   ],
-  "reviewedAt": "2026-10-02",
+  "reviewedAt": "2026-10-05",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -23,7 +23,8 @@
       "259a04c7 and merge 8ff371ea: pin the Windows hidden launcher to //E:VBScript while recognizing the previous Router-owned action for safe migration",
       "ce40ef5b and merge 84c6e1ba: update Undici to 8.11.2",
       "c089d403, 6d450845 and merge 60e9421a: adapt startup-only timeout retries and absolute system PowerShell resolution; retain strict private-file ACL handling",
-      "753a18de and merge 1e209887: reject out-of-range reset timestamps after conversion so routed 429 errors do not invent retry estimates"
+      "753a18de and merge 1e209887: reject out-of-range reset timestamps after conversion so routed 429 errors do not invent retry estimates",
+      "f35327d2, 9feb6289 and merge 564edd6a: foreground Windows supervisor explicitly leaves the managed process record untouched while retaining lifecycle locking; managed start identity remains fail-closed"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -38,7 +39,8 @@
       "fd99bf4b and 532bae89: non-streaming Chat JSON reasoning replay for the retained GLM bridge is owned by pinned LiteLLM 1.102.1; Pareto remains direct Responses",
       "b6bb8cf7: Responses-native reasoning stays as reasoning because Router Lite retired its Chat reasoning carry when LiteLLM 1.102.1 took ownership of the GLM bridge",
       "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge",
-      "9b344199 and merge 4294adfa: managed periodic native catalog refresh already uses the current binary and catalog authority"
+      "9b344199 and merge 4294adfa: managed periodic native catalog refresh already uses the current binary and catalog authority",
+      "1972ac43 and merge d65dc169: complete-line WebSocket SSE bounds already count events independently of HTTP chunks, including partial/CRLF/EOF coverage"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
@@ -61,7 +63,13 @@
       "0d9981b0 and merge 592be375: macOS ChatGPT bundled CLI discovery is outside the retained Windows runtime; Windows hashed CLI discovery already works",
       "e6b499aa and merge 15ca2db2: ClinePass completion-envelope normalization targets an unretained provider",
       "a5541d8f and merge 4fdac873: dependency updates only affect upstream Control Center and docs-site",
-      "0c59050c and merge 0a70b48c: Control Center and docs-site dependency lock updates do not affect any shipped Router Lite dependency"
+      "0c59050c and merge 0a70b48c: Control Center and docs-site dependency lock updates do not affect any shipped Router Lite dependency",
+      "db51955b and merge 7b801fc5: retired Chat reasoning replay owner; pinned LiteLLM owns the retained GLM bridge",
+      "7d815139 and merge 37521bf2: retired child completion owner; caller owns child lifecycle",
+      "173f908c and merge fa371063: generic Responses provider handoffs outside exact retained routes",
+      "894c4585 and merges bd0862f2/01afbfb8: direct Z.ai reasoning deadlines and Ollama transport outside retained OpenRouter endpoints",
+      "f4e2108c, a6aa0e77 and merge 18c01b66: retired generic multi-client publication owner",
+      "Remaining 0a70b48c..85259b67 commits are excluded Ollama/Grok/MiniMax/vision/registry/tray/UI/macOS/POSIX/docs/tests or merge synchronization; all 52 commits have individual dispositions in docs/history/2026-10-05-compatibility-review.json"
     ]
   }
 }

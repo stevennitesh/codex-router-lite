@@ -18,10 +18,10 @@ export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
 // Keep the gateway pair synchronized with requirements/python.in. A pin change
 // must regenerate the Windows lock and boot the real gateway before acceptance.
 //
-// LiteLLM 1.103.0 remains above the 1.96.2 security floor that fixed
+// LiteLLM 1.104.0 remains above the 1.96.2 security floor that fixed
 // CVE-2026-84377 and resolves cleanly with cryptography 50.0.0. Do not move
 // below the prior floor merely to reduce dependency churn.
-const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.103.0", "fastapi==0.141.1"];
+const PYTHON_REQUIREMENTS = ["litellm[proxy]==1.104.0", "fastapi==0.141.1"];
 
 // Pinning the two direct requirements left their whole transitive tree floating:
 // every install re-resolved `litellm[proxy]` against PyPI and executed whatever
