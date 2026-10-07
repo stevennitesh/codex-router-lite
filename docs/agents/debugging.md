@@ -63,6 +63,11 @@ an explicit zero remains observed zero. When an empty-completion retry has only
 partial usage or cache-counter coverage, the timing record marks the affected
 aggregate as incomplete rather than treating the missing attempt as zero.
 
+`src/response-usage.mjs` shares bounded capture and an incremental line scanner
+between observation and substitution. Observation forwards original chunks
+immediately; substitution holds only the current line or JSON body. JSON uses a
+raw-byte capture limit, while SSE observation retains its decoded UTF-8 limit.
+
 Routed 429 guidance uses `src/rate-limit-headers.mjs` to interpret `Retry-After`.
 Resets outside JavaScript's Date range, including overflow during unit conversion
 or addition, leave the estimated delay unknown. The provider's status and original

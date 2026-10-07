@@ -243,9 +243,9 @@ function Get-SubagentPublicationPlan {
 
 function Prepare-RollbackRouter([string]$Root) {
   # Rollback must not begin by downloading dependencies while the Router is
-  # already down. Prepare the exact rollback checkout against an isolated
-  # state directory before activation, then discard that generated state. The
-  # checkout's ignored node_modules and .venv remain ready for a fast install.
+  # already down. Prepare only the exact rollback checkout's dependencies;
+  # no live configuration, service, keys, or generated catalog are needed.
+  # The checkout's ignored node_modules and .venv remain ready for a fast install.
   $missingSteps = @()
   foreach ($step in @("node-deps", "python-deps")) {
     $status = (& node (Join-Path $Root "src\install-plan.mjs") status $step | Out-String).Trim()
@@ -257,33 +257,41 @@ function Prepare-RollbackRouter([string]$Root) {
   if ($WhatIfPreference) {
     throw "Rollback Router dependencies need preparation before WhatIf: $($missingSteps -join ', ')."
   }
-  $prepareRoot = [IO.Path]::GetFullPath((
-    Join-Path $Root "generated\rollback-prepare-$([Guid]::NewGuid().ToString('N'))"
-  ))
-  $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "generated"))
-  if (-not [string]::Equals(
-    [IO.Path]::GetDirectoryName($prepareRoot),
-    $expectedParent,
-    [StringComparison]::OrdinalIgnoreCase
-  )) {
-    throw "Unsafe rollback preparation path: $prepareRoot"
-  }
-  $savedModelState = $env:MODEL_ROUTER_STATE_DIR
-  $hadModelState = $null -ne (Get-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
-  $savedCodexState = $env:CODEX_ROUTER_STATE_DIR
-  $hadCodexState = $null -ne (Get-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
-  try {
-    $env:MODEL_ROUTER_STATE_DIR = $prepareRoot
-    $env:CODEX_ROUTER_STATE_DIR = $prepareRoot
-    & (Join-Path $Root "install.ps1") -CheckoutInstall -PrepareOnly -Target codex
+  $installer = Join-Path $Root "install.ps1"
+  $tokens = $null
+  $parseErrors = $null
+  $installerAst = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$parseErrors)
+  if (@($parseErrors).Count) { throw "Rollback Router installer is not valid PowerShell." }
+  $dependencyOnlySupported = @($installerAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) -contains "DependenciesOnly"
+  if ($dependencyOnlySupported) {
+    & $installer -CheckoutInstall -DependenciesOnly -Target codex
     if ($LASTEXITCODE -ne 0) { throw "Rollback Router dependency preparation failed from $Root." }
-  } finally {
-    if ($hadModelState) { $env:MODEL_ROUTER_STATE_DIR = $savedModelState }
-    else { Remove-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
-    if ($hadCodexState) { $env:CODEX_ROUTER_STATE_DIR = $savedCodexState }
-    else { Remove-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
-    if (Test-Path -LiteralPath $prepareRoot -PathType Container) {
-      Remove-Item -LiteralPath $prepareRoot -Recurse -Force
+  } else {
+    # Exact retained generations predate DependenciesOnly. Keep their original
+    # preparation contract until those historical recovery checkouts retire;
+    # never edit the prior installer or redirect its generated state to live.
+    $prepareRoot = [IO.Path]::GetFullPath((
+      Join-Path $Root "generated\rollback-prepare-$([Guid]::NewGuid().ToString('N'))"
+    ))
+    $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "generated"))
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($prepareRoot), $expectedParent, [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Unsafe rollback preparation path: $prepareRoot"
+    }
+    $savedModelState = $env:MODEL_ROUTER_STATE_DIR
+    $hadModelState = $null -ne (Get-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
+    $savedCodexState = $env:CODEX_ROUTER_STATE_DIR
+    $hadCodexState = $null -ne (Get-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue)
+    try {
+      $env:MODEL_ROUTER_STATE_DIR = $prepareRoot
+      $env:CODEX_ROUTER_STATE_DIR = $prepareRoot
+      & $installer -CheckoutInstall -PrepareOnly -Target codex
+      if ($LASTEXITCODE -ne 0) { throw "Rollback Router dependency preparation failed from $Root." }
+    } finally {
+      if ($hadModelState) { $env:MODEL_ROUTER_STATE_DIR = $savedModelState }
+      else { Remove-Item Env:\MODEL_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
+      if ($hadCodexState) { $env:CODEX_ROUTER_STATE_DIR = $savedCodexState }
+      else { Remove-Item Env:\CODEX_ROUTER_STATE_DIR -ErrorAction SilentlyContinue }
+      if (Test-Path -LiteralPath $prepareRoot -PathType Container) { Remove-Item -LiteralPath $prepareRoot -Recurse -Force }
     }
   }
   foreach ($step in $missingSteps) {

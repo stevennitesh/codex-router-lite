@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import http from "node:http";
 import {
@@ -25,6 +24,7 @@ import {
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { readSwitchyardConfigContract } from "../scripts/switchyard-config-contract.mjs";
 import { openPort } from "./port-pool.mjs";
+import { launch, ready, stop as stopChild } from "./router-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INTERNAL_KEY = "test-internal-service-key-with-sufficient-length";
@@ -278,7 +278,7 @@ test("native model switches clamp a stale known reasoning effort to the selected
           reasoning: { effort: requested, summary: "auto" },
         }),
       });
-      assert.equal(response.status, 200, router.testErrors());
+      assert.equal(response.status, 200, router.errors());
       assert.equal(seen.at(-1).reasoning.effort, expected);
       assert.equal(seen.at(-1).reasoning.summary, "auto");
     }
@@ -358,7 +358,7 @@ test("native replay removes only foreign item IDs and unknown routed models stay
           service_tier: "default",
         }),
       });
-      assert.equal(response.status, 200, router.testErrors());
+      assert.equal(response.status, 200, router.errors());
       await response.arrayBuffer();
       assert.deepEqual(seen.at(-1).body.input, input.map((item, index) => {
         if (![0, 1, 3].includes(index)) return item;
@@ -514,31 +514,12 @@ async function mockServer(handler) {
 }
 
 function run(script, env, { nodeArgs = [] } = {}) {
-  // Isolate from the user's real router state.
-  // unless the test provides its own state directory.
-  const stateIsolation =
-    env?.MODEL_ROUTER_STATE_DIR || env?.CODEX_ROUTER_STATE_DIR
-      ? {}
-      : { MODEL_ROUTER_STATE_DIR: mkdtempSync(path.join(os.tmpdir(), "routing-state-")) };
-  const child = spawn(process.execPath, [...nodeArgs, path.join(root, "src", script)], {
-    cwd: root,
-    env: {
-      ...process.env,
-      ...stateIsolation,
+  return launch(script, {
       CODEX_ROUTER_CALLER_KEY: CALLER_KEY,
       CODEX_ROUTER_INTERNAL_KEY: INTERNAL_KEY,
       CODEX_ROUTER_SHOW_ALL_MODELS: "1",
       ...env,
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  child.stderr.setEncoding("utf8");
-  let errors = "";
-  child.stderr.on("data", (chunk) => {
-    errors += chunk;
-  });
-  child.testErrors = () => errors;
-  return child;
+  }, { nodeArgs, stateDirPrefix: "routing-state-" });
 }
 
 function relayState(catalog = { models: [{ slug: "gpt-5.6-sol" }] }) {
@@ -554,26 +535,7 @@ function relayState(catalog = { models: [{ slug: "gpt-5.6-sol" }] }) {
 }
 
 async function waitFor(url, child, headers = {}) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`Child exited early (${child.exitCode}): ${child.testErrors()}`);
-    }
-    try {
-      const response = await fetch(url, { headers });
-      if (response.ok) return;
-    } catch {
-      // The child has not bound its port yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for ${url}: ${child.testErrors()}`);
-}
-
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise((resolve) => child.once("exit", resolve));
+  return ready(url, child, headers, { accept: response => response.ok });
 }
 
 async function closeServer(server) {
@@ -674,7 +636,7 @@ test("router preserves native auth and isolates every external route", async () 
           input: `${encoding} native test`,
         }))),
       });
-      assert.equal(compressedResponse.status, 200, router.testErrors());
+      assert.equal(compressedResponse.status, 200, router.errors());
       assert.equal(nativeRequests.at(-1).body.input, `${encoding} native test`);
     }
 
@@ -683,7 +645,7 @@ test("router preserves native auth and isolates every external route", async () 
       headers: callerHeaders,
       body: JSON.stringify({ model: "gpt-image-2", prompt: "native image test" }),
     });
-    assert.equal(imageResponse.status, 200, router.testErrors());
+    assert.equal(imageResponse.status, 200, router.errors());
     assert.equal(nativeRequests.at(-1).url, "/backend-api/codex/images/generations");
     assert.equal(nativeRequests.at(-1).body.prompt, "native image test");
 
@@ -787,7 +749,7 @@ test("malformed request JSON returns safe stable diagnostics without input discl
     });
     assert.doesNotMatch(JSON.stringify(malformedBody), new RegExp(marker));
     await new Promise((resolve) => setImmediate(resolve));
-    assert.doesNotMatch(router.testErrors(), new RegExp(marker));
+    assert.doesNotMatch(router.errors(), new RegExp(marker));
 
     for (const value of [null, [], "text", 7]) {
       const response = await fetch(`${routerBase(routerPort)}/responses`, {
@@ -843,7 +805,7 @@ test("oversized Router requests retain safe 413 diagnostics without provider tra
       },
     });
     assert.doesNotMatch(JSON.stringify(payload), new RegExp(marker));
-    assert.doesNotMatch(router.testErrors(), new RegExp(marker));
+    assert.doesNotMatch(router.errors(), new RegExp(marker));
     assert.equal(gatewayRequests, 0);
   } finally {
     await stopChild(router);
@@ -1518,7 +1480,7 @@ test("encrypted payload relay coalesces concurrent waiters when one caller cance
       }
       await new Promise(resolve => setTimeout(resolve, 5));
     }
-    assert.equal(coalesced, true, router.testErrors());
+    assert.equal(coalesced, true, router.errors());
     canceledController.abort();
     await canceledResult;
     releaseRelay.resolve();

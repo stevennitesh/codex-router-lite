@@ -958,9 +958,8 @@ function revokeExternalSkillsUnlocked(codexHome, names, { quiet = false } = {}) 
   return removed;
 }
 
-// Compare the installed pack against the checkout. Returns the names of
-// skills whose installed content differs from the source (missing, changed,
-// or extra files). The root ownership marker alone is ignored.
+// Bounded content equality excludes only the root ownership marker. Failed
+// comparisons do not establish equality or ownership.
 function sameDirContent(source, target) {
   const sourceDigest = directoryDigest(source);
   const targetDigest = directoryDigest(target, {
@@ -983,7 +982,7 @@ function installSkillsUnlocked(
     if (!quiet) {
       console.error("codex-router: no skills/ directory in this checkout; nothing to install.");
     }
-    return { installed: 0, skipped: 0, external: 0 };
+    return { installed: 0, skipped: 0, external: 0, unchanged: 0 };
   }
   const target = codexSkillsDir(codexHome);
   recoverAbandonedSkillRetirements(codexHome);
@@ -994,6 +993,7 @@ function installSkillsUnlocked(
   let installed = 0;
   let skipped = 0;
   let external = 0;
+  let unchanged = 0;
   let stateChanged = !ownership.valid;
   for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || !validSkillName(entry.name)) continue;
@@ -1032,6 +1032,15 @@ function installSkillsUnlocked(
       }
       skipped += 1;
       continue;
+    }
+    if (evidence.owned && sameDirContent(source, dest)) {
+      const marker = parseMarker(dest);
+      if (marker?.name === entry.name && marker.token === ownership.skills[entry.name].token &&
+          marker.source.packageVersion === provenance.packageVersion &&
+          marker.source.commit === provenance.commit) {
+        unchanged += 1;
+        continue;
+      }
     }
     const token = evidence.owned
       ? ownership.skills[entry.name].token
@@ -1162,10 +1171,10 @@ function installSkillsUnlocked(
       );
     }
   }
-  if (stateChanged || ownership.exists) {
+  if (stateChanged) {
     writeOwnership(ownership.path, ownership.skills, ownership.external);
   }
-  return { installed, skipped, external };
+  return { installed, skipped, external, unchanged };
 }
 
 function uninstallSkillsUnlocked(
@@ -1268,11 +1277,11 @@ if (invokedDirectly) {
   } else {
     try {
       if (command === "install") {
-        const { installed, skipped, external } = installSkills(codexHome());
+        const { installed, skipped, external, unchanged } = installSkills(codexHome());
         console.error(
           `codex-router: installed ${installed} skill(s) into ${codexSkillsDir(codexHome())}${
             external ? `, using ${external} approved external skill(s)` : ""
-          }${skipped ? `, skipped ${skipped} (existing content preserved)` : ""}.`,
+          }${skipped ? `, skipped ${skipped} (existing content preserved)` : ""}${unchanged ? `, unchanged ${unchanged}` : ""}.`,
         );
       } else if (command === "uninstall") {
         uninstallSkills(codexHome());

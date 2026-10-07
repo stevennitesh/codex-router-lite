@@ -160,6 +160,9 @@ function Get-ChangedManagedFiles([string[]]$CurrentFiles, [string[]]$PreviousFil
   return @($AllFiles | Where-Object {
     $SourceFile = Join-Path $sourceDir $_
     $TargetFile = Resolve-ManagedTargetFile $_
+    # Package membership is part of the generation even if a retired file
+    # still exists in the source checkout with identical bytes.
+    if ($_ -notin $CurrentFiles -or $_ -notin $PreviousFiles) { return $true }
     if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf) -or
         -not (Test-Path -LiteralPath $TargetFile -PathType Leaf)) { return $true }
     (Get-Sha256 $SourceFile) -ne (Get-Sha256 $TargetFile)
@@ -207,6 +210,10 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
   $Classification = (& node (Join-Path $sourceDir "src\deployment-classification.mjs") @ChangedFiles).Trim()
   if ($LASTEXITCODE -ne 0 -or $Classification -notin @("no-op", "documentation-only", "runtime")) {
     throw "Unable to classify the staged Router deployment."
+  }
+  if ($Classification -eq "no-op") {
+    Write-Host "Codex Router already matches the managed deployment; nothing changed."
+    return
   }
   $NeedsRuntimeInstall = $Classification -eq "runtime"
   $DrainPrepared = $false

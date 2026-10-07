@@ -1,31 +1,9 @@
 import { PORTS, TARGET, loopback } from "./paths.mjs";
+import { conclusivelyRefused } from "./transport-error-graph.mjs";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const ROUTER_SERVICE = "codex-router";
 const SUPPORTED_TARGETS = new Set(["codex"]);
-const MAX_ERROR_GRAPH_DEPTH = 8;
-
-function transportCodes(error) {
-  const codes = [];
-  const visited = new Set();
-  const pending = [{ value: error, depth: 0 }];
-  while (pending.length) {
-    const { value, depth } = pending.shift();
-    if (!value || typeof value !== "object" || visited.has(value)) continue;
-    visited.add(value);
-    if (typeof value.code === "string" && value.code) codes.push(value.code);
-    if (depth >= MAX_ERROR_GRAPH_DEPTH) continue;
-    if (value.cause) pending.push({ value: value.cause, depth: depth + 1 });
-    if (Array.isArray(value.errors)) {
-      for (const member of value.errors) pending.push({ value: member, depth: depth + 1 });
-    }
-  }
-  return codes;
-}
-
-function conclusivelyRefused(error) {
-  const codes = transportCodes(error);
-  return codes.length > 0 && codes.every((code) => code === "ECONNREFUSED");
-}
 
 export async function waitForRouterHealth({
   target = TARGET,
@@ -34,6 +12,7 @@ export async function waitForRouterHealth({
   requestTimeoutMs = 4_000,
   intervalMs = 250,
   fetchImpl = fetch,
+  signal,
 } = {}) {
   if (!SUPPORTED_TARGETS.has(target)) throw new Error(`Unknown router target: ${target}`);
   const expectedService = ROUTER_SERVICE;
@@ -53,6 +32,7 @@ export async function waitForRouterHealth({
   // this bit and fail closed on every other failure shape.
   let connectionRefused = false;
   do {
+    signal?.throwIfAborted();
     // The overall health budget is authoritative. A slow TCP/HTTP attempt near
     // its end must not consume a fresh full request timeout and make callers
     // wait past the deadline they supplied. Keep timeoutMs=0 as the existing
@@ -64,10 +44,13 @@ export async function waitForRouterHealth({
         : Math.max(1, Math.min(requestTimeoutMs, remainingRequestMs));
     try {
       const response = await fetchImpl(url, {
-        signal: AbortSignal.timeout(attemptTimeoutMs),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(attemptTimeoutMs)])
+          : AbortSignal.timeout(attemptTimeoutMs),
       });
       connectionRefused = false;
       const body = await response.text();
+      signal?.throwIfAborted();
       let payload = {};
       try {
         payload = JSON.parse(body);
@@ -89,13 +72,14 @@ export async function waitForRouterHealth({
         lastError = `HTTP ${response.status}`;
       }
     } catch (error) {
+      signal?.throwIfAborted();
       connectionRefused = conclusivelyRefused(error);
       lastError = error instanceof Error ? error.message : String(error);
     }
 
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remainingMs)));
+    await sleep(Math.min(intervalMs, remainingMs), undefined, { signal });
   } while (Date.now() <= deadline);
 
   return {

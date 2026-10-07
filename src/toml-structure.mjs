@@ -136,7 +136,7 @@ function tableHeaderAtLine(line, lineNumber) {
   return path;
 }
 
-function assignmentAtLine(line, lineNumber) {
+function assignmentAtLine(line, lineNumber, decodeBasicString) {
   let quote;
   let escaped = false;
   let equals = -1;
@@ -180,8 +180,8 @@ function assignmentAtLine(line, lineNumber) {
     if (quoteCharacter === '"' && rawValue[index] === "\\") {
       const start = index;
       index += 2;
-      if (rawValue[start + 1] === "u") index += 4;
-      else if (rawValue[start + 1] === "U") index += 8;
+      const width = rawValue[start + 1] === "u" ? 4 : rawValue[start + 1] === "U" ? 8 : 0;
+      if (width && new RegExp(`^[0-9a-fA-F]{${width}}$`).test(rawValue.slice(index, index + width))) index += width;
       body += rawValue.slice(start, index);
       continue;
     }
@@ -197,7 +197,7 @@ function assignmentAtLine(line, lineNumber) {
   if (remainder && !remainder.startsWith("#")) {
     ambiguousToml(lineNumber, "unexpected text follows a string assignment");
   }
-  const value = quoteCharacter === '"' ? tomlBasicKey(body) : body;
+  const value = quoteCharacter === '"' ? decodeBasicString(body) : body;
   if (value === undefined) ambiguousToml(lineNumber, "a basic string escape is invalid");
   return { key, kind: "string", value };
 }
@@ -205,7 +205,7 @@ function assignmentAtLine(line, lineNumber) {
 // A small fail-closed structural lexer, not a general TOML value parser. It
 // identifies real table boundaries and active assignments while ignoring
 // table-looking text and assignments inside multiline strings.
-export function scanTomlDocument(contents) {
+export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } = {}) {
   const lines = String(contents || "").split("\n");
   const headers = [];
   const assignments = [];
@@ -223,7 +223,7 @@ export function scanTomlDocument(contents) {
         headers.push({ index: lineIndex, path: header });
         continue;
       }
-      const assignment = assignmentAtLine(line, lineNumber);
+      const assignment = assignmentAtLine(line, lineNumber, decodeBasicString);
       if (assignment) {
         assignments.push({ index: lineIndex, tablePath: [...tablePath], ...assignment });
       }

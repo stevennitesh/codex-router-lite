@@ -1,6 +1,6 @@
 # Direct Python requirements for the LiteLLM gateway.
 #
-# Mirrors PYTHON_REQUIREMENTS in src/install-plan.mjs. Change both together,
-# then regenerate the lock with the command in compatibility-maintenance.md.
+# This file owns the direct pins. Regenerate the hashed Windows lock with
+# the command in docs/agents/openrouter-glm.md after changing them.
 litellm[proxy]==1.104.0
 fastapi==0.141.1

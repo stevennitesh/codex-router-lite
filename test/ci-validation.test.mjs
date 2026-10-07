@@ -49,7 +49,7 @@ test("product boundary sees new files before staging, skips ignored files, and s
   const dir = mkdtempSync(path.join(os.tmpdir(), "router-boundary-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const manifest = JSON.parse(readFileSync(path.join(root, "maintenance/windows-package.json"), "utf8"));
-  for (const file of [...new Set([...manifest.files, "scripts/check-product-boundary.mjs"])]) {
+  for (const file of [...new Set([...manifest.files, "scripts/check-product-boundary.mjs", "scripts/check-package-closure.mjs"])]) {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     copyFileSync(path.join(root, file), path.join(dir, file));
   }

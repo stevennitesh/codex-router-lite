@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { writePrivateFile } from "./file-security.mjs";
 import { CODEX_AGENTS_DIR } from "./paths.mjs";
+import { validateRoutedEffort } from "./routed-models.mjs";
 
 function safeIdentifier(value, separator) {
   return String(value)
@@ -80,14 +81,11 @@ export function routedAgentDefinition(model) {
   const agentName = `router_${safeIdentifier(slug, "_")}`;
   const displayName = String(model.displayName || model.display_name || slug).trim();
   const defaultEffort = String(model.defaultEffort || "").trim();
-  const supportedEfforts = new Set(
-    (Array.isArray(model.reasoningLevels) ? model.reasoningLevels : [])
-      .map((level) => String(level?.effort || "").trim())
-      .filter(Boolean),
-  );
-  if (!defaultEffort || !supportedEfforts.has(defaultEffort)) {
+  if (!defaultEffort) {
     throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`);
   }
+  try { validateRoutedEffort(model, defaultEffort); }
+  catch (cause) { throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`, {cause}); }
   const contents = [
     "# Managed by Codex Router. Refresh the model catalog to update this file.",
     `name = ${tomlString(agentName)}`,

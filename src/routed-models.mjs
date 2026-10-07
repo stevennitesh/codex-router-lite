@@ -198,6 +198,24 @@ export const OPENROUTER_MODELS = Object.freeze(MODELS.filter((model) => model.pr
 // Canonical identity for health and the legacy upstream-model alias, never a fallback.
 export const CANONICAL_OPENROUTER_ROUTE = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 
+export function supportedRoutedEfforts(route) {
+  return [...new Set((Array.isArray(route?.reasoningLevels) ? route.reasoningLevels : [])
+    .map(level => level?.effort).filter(effort => typeof effort === "string" && effort))];
+}
+
+// Clearing a local override follows the route's checked-in default. Explicit
+// values must match that exact endpoint's vocabulary; they are never clamped.
+export function validateRoutedEffort(route, effort) {
+  if (!route) throw new Error("An exact registered route is required for a reasoning effort.");
+  if (effort === undefined || effort === null || effort === "") return undefined;
+  const value = typeof effort === "string" ? effort.trim() : effort;
+  const supported = supportedRoutedEfforts(route);
+  if (!supported.includes(value)) {
+    throw new Error(`Unsupported reasoning effort for ${route.slug}. Choose: ${supported.join(", ")}; clear the override to use its default.`);
+  }
+  return value;
+}
+
 export function providerForModel(model) {
   const provider = PROVIDERS.get(model?.provider);
   if (!provider) throw new Error(`Unknown routed provider for ${model?.slug || "model"}.`);

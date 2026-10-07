@@ -20,6 +20,11 @@ Set-Location codex-router-lite
 
 The installer preserves the current Codex login and user-owned settings. It refuses to replace an unmarked base URL, foreign scheduled task, or unrecognized source root.
 
+Managed skill publication skips an already owned tree only when bounded content
+comparison and source provenance both match. Ownership still requires its
+protected token record. Changed skills use the existing recovery transaction;
+external content and abandoned-operation recovery retain their own checks.
+
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
 native Codex requests remain available during that setup interval.
@@ -64,6 +69,11 @@ dependency readiness; a live frontend can still report degraded optional routes.
 The service wrapper uses `/live` during launch. Verify full `/health` and Doctor
 for deployment acceptance; frontend liveness alone does not establish that the
 selected providers are ready.
+
+Readiness owns cancellation of its health fetches and waits when health succeeds,
+the task is definitively dead, or the deadline expires. Inconclusive task queries
+keep waiting. Health and drain share the same bounded refusal check; unknown or
+mixed transport failures cannot establish that Router is offline.
 
 The model picker labels StreamLake and Together as separate GLM routes, and
 Together and DeepInfra as separate DeepSeek routes. Selecting one changes only
@@ -112,12 +122,21 @@ upstream head moved. The original Router remote is reviewed selectively and is
 never an installation or merge source.
 
 `maintenance/windows-package.json` is the complete installed file list.
+The source checks validate its literal local JavaScript import dependencies, so adding a
+runtime helper without packaging it fails before deployment.
 `deploy-codex-router.ps1` compares the managed files before activation, stages and
 hash-checks the candidate, and removes only files recorded by the prior deployment
 manifest. Identical files and recognized documentation/test/evidence-only changes
 skip runtime installation; source/configuration changes use the guarded replacement
 path. If runtime install or Doctor fails, it restores, reinstalls, and checks the
 previous generation before returning the candidate failure.
+
+An identical managed file set returns before staging, backup, copying, or
+manifest writes. The deployer still validates managed paths and package
+membership before taking that path. Source verification is owned by the
+[common checks](agents/architecture.md#verification); unchanged results can be
+reused through the deployment workflow. Live acceptance still requires health
+and installed identity checks.
 
 For a separate installed directory, deploy edited source from the current checkout with:
 
@@ -138,6 +157,18 @@ The checkout transaction runs in an independent hidden Windows worker and return
 private result and log paths. Verify its completed result and installed identities
 before reporting deployment success. Its rollback continues if the calling app
 or tool exits.
+
+Rollback preparation uses `install.ps1 -CheckoutInstall -DependenciesOnly` for
+installers that support it. This phase prepares Node and Python dependencies
+without provisioning keys, generating catalogs, editing Codex configuration,
+or touching service state. Older retained checkouts use their isolated
+`-PrepareOnly` procedure. Keep that compatibility path until those older
+generations retire from recovery use.
+
+Python environment creation and locked installation share one installer phase;
+candidate relocation and activation remain inside the recovery transaction.
+Service installation owns frontend readiness, so the installer does not repeat
+its liveness poll. Full provider health and Doctor remain deployment checks.
 
 Restart the existing installed files only when a configuration or provider
 selection change requires it:

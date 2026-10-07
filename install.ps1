@@ -2,6 +2,7 @@
 param(
   [switch]$CheckoutInstall,
   [switch]$PrepareOnly,
+  [switch]$DependenciesOnly,
   [switch]$ForceDeps,
   [switch]$ForceServiceReplacement,
   [ValidateSet("codex")]
@@ -19,6 +20,9 @@ $env:MODEL_ROUTER_TARGET = $Target
 $ServiceMutationArguments = if ($ForceServiceReplacement) { @("--force-service-replacement") } else { @() }
 if ($NoProvider -and $Providers) {
   throw "-NoProvider cannot be combined with -Providers."
+}
+if ($DependenciesOnly -and ($PrepareOnly -or $Providers -or $NoProvider)) {
+  throw "-DependenciesOnly cannot be combined with -PrepareOnly or provider selection."
 }
 $PreviousRevision = $null
 $RepositoryUrl = if ($env:CODEX_ROUTER_REPOSITORY_URL) {
@@ -99,7 +103,7 @@ function Reset-ManagedCheckout([string]$Directory) {
 # The installed service uses a Windows Job Object so every child is contained.
 # Prove the PowerShell capabilities needed to create it before cloning, pulling,
 # installing dependencies, changing configuration, or touching service state.
-Assert-WindowsProcessContainmentCapability
+if (-not $DependenciesOnly) { Assert-WindowsProcessContainmentCapability }
 
 $ScriptDirectory = $PSScriptRoot
 if (-not $ScriptDirectory) { $ScriptDirectory = (Get-Location).Path }
@@ -165,8 +169,8 @@ if (-not $CheckoutInstall) {
     $Repository = $InstallDir
   }
 
-  if ($PrepareOnly) {
-    & (Join-Path $Repository "install.ps1") -CheckoutInstall -PrepareOnly -Target codex
+  if ($PrepareOnly -or $DependenciesOnly) {
+    & (Join-Path $Repository "install.ps1") -CheckoutInstall -PrepareOnly:$PrepareOnly -DependenciesOnly:$DependenciesOnly -ForceDeps:$ForceDeps -Target codex
     exit $LASTEXITCODE
   }
 
@@ -237,6 +241,45 @@ function Install-PinnedPythonRequirements(
   }
   if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
 }
+
+# Both isolated candidates and ordinary preparation install the same locked
+# environment. Activation and relocation validation remain with the caller.
+function Install-PythonEnvironment([string]$Venv, [bool]$Recreate = $false) {
+  $EnvironmentPython = Join-Path $Venv "Scripts\python.exe"
+  $UseUv = [bool](Get-Command "uv" -ErrorAction SilentlyContinue)
+  if ($UseUv) {
+    if ($Recreate -or -not (Test-Path -LiteralPath $EnvironmentPython -PathType Leaf)) {
+      $VenvArguments = @("venv", "--python", "3.12")
+      if ($Recreate -or (Test-Path -LiteralPath $Venv)) { $VenvArguments += "--clear" }
+      & uv @VenvArguments $Venv
+      if ($LASTEXITCODE -ne 0) { throw "uv could not create the Python environment." }
+    }
+  } else {
+    $LauncherArguments = @()
+    if (Get-Command "py" -ErrorAction SilentlyContinue) {
+      $Launcher = "py"
+      $LauncherArguments = @("-3")
+    } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
+      $Launcher = "python"
+    } else {
+      throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
+    }
+    & $Launcher @LauncherArguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+    if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
+    if ($Recreate -or -not (Test-Path -LiteralPath $EnvironmentPython -PathType Leaf)) {
+      $VenvArguments = @("-m", "venv")
+      if ($Recreate -or (Test-Path -LiteralPath $Venv)) { $VenvArguments += "--clear" }
+      & $Launcher @LauncherArguments @VenvArguments $Venv
+      if ($LASTEXITCODE -ne 0) { throw "The Python virtual environment was not created." }
+    }
+    if (-not (Test-Path -LiteralPath $EnvironmentPython -PathType Leaf)) {
+      throw "The Python virtual environment was not created."
+    }
+    & $EnvironmentPython -m pip install --upgrade pip
+    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
+  }
+  Install-PinnedPythonRequirements $EnvironmentPython $UseUv "LiteLLM installation failed."
+}
 Push-Location $ScriptDirectory
 
 # What this run found before it changed anything, so the catch block can undo
@@ -254,14 +297,19 @@ function Get-InstallerStateField {
 }
 
 try {
-  $ConfigWasEnabled = (Get-InstallerStateField @($ConfigManager, "status") "mode") -eq "router"
-  $ServiceWasInstalled = (Get-InstallerStateField @("src\service.mjs", "status") "installed") -eq $true
-  $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-  New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
-  if (-not $PrepareOnly) {
+  if (-not $DependenciesOnly) {
+    $ConfigWasEnabled = (Get-InstallerStateField @($ConfigManager, "status") "mode") -eq "router"
+    $ServiceWasInstalled = (Get-InstallerStateField @("src\service.mjs", "status") "installed") -eq $true
+    $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+    New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
+  }
+  if (-not $PrepareOnly -and -not $DependenciesOnly) {
     & node src/provider-selection.mjs ensure-configured | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Configure at least one provider before installing." }
   }
+
+  & node src/install-plan.mjs verify-lock
+  if ($LASTEXITCODE -ne 0) { throw "The Python dependency lock is not eligible for installation." }
 
   # Every update re-runs this installer, so the dependency steps are skipped
   # when their inputs are unchanged; -ForceDeps rebuilds them explicitly.
@@ -298,29 +346,7 @@ try {
       Join-Path $ScriptDirectory ".venv-candidate-$([Guid]::NewGuid().ToString('N'))"
     )
     $CandidatePython = Join-Path $PythonCandidate "Scripts\python.exe"
-    if (Get-Command "uv" -ErrorAction SilentlyContinue) {
-      & uv venv --python 3.12 $PythonCandidate
-      if ($LASTEXITCODE -ne 0) { throw "uv could not create the candidate Python environment." }
-      Install-PinnedPythonRequirements $CandidatePython $true "Candidate LiteLLM installation failed."
-    } else {
-      if (Get-Command "py" -ErrorAction SilentlyContinue) {
-        & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-        if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-        & py -3 -m venv $PythonCandidate
-      } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
-        & python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-        if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-        & python -m venv $PythonCandidate
-      } else {
-        throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
-      }
-      if ($LASTEXITCODE -ne 0 -or -not (Test-Path $CandidatePython)) {
-        throw "The candidate Python virtual environment was not created."
-      }
-      & $CandidatePython -m pip install --upgrade pip
-      if ($LASTEXITCODE -ne 0) { throw "Candidate pip upgrade failed." }
-      Install-PinnedPythonRequirements $CandidatePython $false "Candidate LiteLLM installation failed."
-    }
+    Install-PythonEnvironment $PythonCandidate
     # Prove that the environment is relocatable before touching the live
     # service. Windows console-script launchers retain their original absolute
     # interpreter path, while the bundled runtime intentionally launches the
@@ -335,82 +361,22 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "The candidate LiteLLM environment failed its import probe." }
     & $CandidatePython -I -X utf8 -c "from litellm import run_server; run_server()" --version | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The relocated candidate LiteLLM entry point failed its launch probe." }
-  } elseif (Get-Command "uv" -ErrorAction SilentlyContinue) {
-    $VenvHomeOk = (& node src/install-plan.mjs venv-home-ok 2>$null | Select-Object -Last 1) -eq "ok"
-    $VenvRuntimeOk = $false
-    if (Test-Path $Python) {
-      try {
-        & $Python -I -c "import encodings, sys" 2>$null | Out-Null
-        $VenvRuntimeOk = $LASTEXITCODE -eq 0
-      } catch {
-        $VenvRuntimeOk = $false
-      }
-    }
-    if (-not (Test-Path $Python)) {
-      if (Test-Path ".venv") {
-        Write-Host "The virtual environment's Python launcher is missing; recreating the venv."
-        & uv venv --clear --python 3.12 .venv
-      } else {
-        & uv venv --python 3.12 .venv
-      }
-      if ($LASTEXITCODE -ne 0) { throw "uv could not create the Python environment." }
-    } elseif (-not $VenvHomeOk -or -not $VenvRuntimeOk) {
-      # A venv whose recorded interpreter home disappeared must be recreated,
-      # not pip-installed into: the launcher may still exist while pyvenv.cfg
-      # points at a vanished home.
-      Write-Host "The virtual environment's interpreter home is missing; recreating the venv."
-      & uv venv --clear --python 3.12 .venv
-      if ($LASTEXITCODE -ne 0) { throw "uv could not create the Python environment." }
-    }
-    # requirements/python.txt is the hash-verified transitive closure of the
-    # pins in src/install-plan.mjs. Hash checking makes every wheel and sdist
-    # in that tree verify against the lock before it is executed; without it
-    # only the two top-level packages were pinned and the rest was whatever
-    # PyPI resolved that day. Regenerate with the documented uv command, never
-    # by editing the compiled lock.
-    Install-PinnedPythonRequirements $Python $true "LiteLLM installation failed."
-    & node src/install-plan.mjs record python-deps
-    if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
   } else {
     $VenvHomeOk = (& node src/install-plan.mjs venv-home-ok 2>$null | Select-Object -Last 1) -eq "ok"
     $VenvRuntimeOk = $false
-    if (Test-Path $Python) {
-      try {
-        & $Python -I -c "import encodings, sys" 2>$null | Out-Null
-        $VenvRuntimeOk = $LASTEXITCODE -eq 0
-      } catch {
-        $VenvRuntimeOk = $false
-      }
+    if (Test-Path -LiteralPath $Python -PathType Leaf) {
+      & node src/install-plan.mjs venv-runtime-ok 2>$null | Out-Null
+      $VenvRuntimeOk = $LASTEXITCODE -eq 0
     }
     $RecreateVenv = -not $VenvHomeOk -or -not $VenvRuntimeOk
-    if (Get-Command "py" -ErrorAction SilentlyContinue) {
-      & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-      if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-      if (-not (Test-Path $Python)) {
-        & py -3 -m venv .venv
-      } elseif ($RecreateVenv) {
-        Write-Host "The virtual environment's interpreter home is missing; recreating the venv."
-        & py -3 -m venv --clear .venv
-      }
-    } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
-      & python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-      if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
-      if (-not (Test-Path $Python)) {
-        & python -m venv .venv
-      } elseif ($RecreateVenv) {
-        Write-Host "The virtual environment's interpreter home is missing; recreating the venv."
-        & python -m venv --clear .venv
-      }
-    } else {
-      throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
-    }
-    if (-not (Test-Path $Python)) { throw "The Python virtual environment was not created." }
-    & $Python -m pip install --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
-    # Same hash-verified lock as the uv branch above; both stay hash-checked.
-    Install-PinnedPythonRequirements $Python $false "LiteLLM installation failed."
+    Install-PythonEnvironment $PythonVenv $RecreateVenv
     & node src/install-plan.mjs record python-deps
     if ($LASTEXITCODE -ne 0) { throw "Recording the Python dependency state failed." }
+  }
+
+  if ($DependenciesOnly) {
+    Write-Host "Dependencies are prepared; installation state was not changed."
+    return
   }
 
   # A live generation must agree to replacement before generated state, client
@@ -496,8 +462,6 @@ try {
   $ServiceInstalled = $true
   & node src/service.mjs install @ServiceMutationArguments
   if ($LASTEXITCODE -ne 0) { throw "Background-service installation failed." }
-  & node src/wait-health.mjs
-  if ($LASTEXITCODE -ne 0) { throw "The router did not become healthy." }
 
   if ($PythonBackup -and (Test-Path -LiteralPath $PythonBackup -PathType Container)) {
     try {
@@ -542,8 +506,6 @@ try {
       }
       & node src/service.mjs install @ServiceMutationArguments
       if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
-      & node src/wait-health.mjs
-      if ($LASTEXITCODE -ne 0) { throw "The restored Router did not become healthy." }
     } catch {
       throw "Install failed ($($InstallFailure.Exception.Message)) and Python environment rollback failed ($($_.Exception.Message))."
     }

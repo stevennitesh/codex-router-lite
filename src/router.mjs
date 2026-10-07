@@ -67,6 +67,7 @@ import {
   readResponseBody,
   readRequestBody,
   safeLocalHttpErrorPayload,
+  safeLocalHttpError,
   writeEventStreamHead,
   writeJson,
   writeStreamErrorEvent,
@@ -2256,11 +2257,23 @@ function requireCodexTransport(request, response) {
   return true;
 }
 
+function configuredChildEffort(request, route) {
+  if (!request.headers["x-openai-subagent"]) return undefined;
+  try { return subagentEffort(route.slug); }
+  catch {
+    // This local configuration error must be visible before a provider request.
+    // Do not return arbitrary private-state parsing or dependency error text.
+    throw safeLocalHttpError(`Invalid configured subagent reasoning effort for ${route.slug}. Run .\\model-router.ps1 codex subagents effort ${route.slug} [level]; omit level to clear the override.`, {
+      status: 400, code: "unsupported_reasoning_effort",
+    });
+  }
+}
+
 // Build the provider request without mutating the normalized client input.
 function buildRoutedRequest({ request, payload, route, normalizedInput }) {
   const prepared = prepareRoutedRequest(payload, route, {
     input: normalizedInput,
-    childEffort: request.headers["x-openai-subagent"] ? subagentEffort(route.slug) : undefined,
+    childEffort: configuredChildEffort(request, route),
   });
   return {
     body: Buffer.from(JSON.stringify(prepared.payload), "utf8"),

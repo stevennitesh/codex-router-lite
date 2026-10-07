@@ -20,14 +20,16 @@ import {
 } from "./paths.mjs";
 import {
   codexAuthStatus,
+  assertCodexExecutableIdentity,
   codexBinaryFingerprint,
+  codexExecutableIdentity,
   codexVersion,
-  findCodexBinary,
   runCodex,
 } from "./codex-binary.mjs";
 import {
   readNativeAccountCatalog,
   refreshNativeAccountCatalogUnlocked,
+  codexClientVersion,
 } from "./native-account-catalog.mjs";
 import { syncRoutedCodexAgents } from "./codex-agent-catalog.mjs";
 import {
@@ -265,7 +267,10 @@ function restoreFileSnapshot(target, snapshot) {
   }
 }
 
-function captureNative(source) {
+function captureNative(source, identity) {
+  if (!identity.version) {
+    throw new Error("Cannot capture a native catalog without the selected Codex executable's version.");
+  }
   // An explicitly adopted source owns account visibility. Otherwise use the
   // fixed-endpoint-refreshed Router snapshot. Bundled models still
   // supply build-specific schema and provide a safe fallback when unavailable.
@@ -277,14 +282,20 @@ function captureNative(source) {
   // omit, so use both when available. If it fails, account-only entries are
   // still normalized above and remain preferable to an empty picker.
   try {
+    assertCodexExecutableIdentity(identity);
     fallback = JSON.parse(runCodex(["debug", "models", "--bundled"], {
+      binary: identity.binary,
       encoding: "utf8",
       timeout: 30_000,
       maxBuffer: 32 * 1024 * 1024,
     }));
   } catch (error) {
+    if (error?.code === "codex_binary_changed") throw error;
     fallbackError = error;
   }
+  // Even a failed command must not let an account-only fallback acquire the
+  // identity of a different executable that appeared during capture.
+  assertCodexExecutableIdentity(identity);
   const parsed = mergeNativeCatalogs(account, fallback);
   if (!validNativeCatalog(parsed)) {
     const detail = fallbackError?.message;
@@ -297,9 +308,7 @@ function captureNative(source) {
       "Refusing to capture an already-merged catalog. Disable the router before refreshing native models.",
     );
   }
-  const capturedWith = codexVersion();
-  const capturedFrom = findCodexBinary();
-  const capturedBinaryFingerprint = codexBinaryFingerprint(capturedFrom);
+  const { version: capturedWith, binary: capturedFrom, fingerprint: capturedBinaryFingerprint } = identity;
   const sourceFingerprint = accountSource.fingerprint;
   atomicJson(NATIVE_CATALOG_PATH, {
     ...(capturedWith ? { captured_with: capturedWith } : {}),
@@ -350,14 +359,18 @@ function nativeCatalogIsReusable(
   return true;
 }
 
-export function nativeCatalogRefreshNeeded({
-  catalogPath = NATIVE_CATALOG_PATH,
-  source = readNativeCatalogSource(),
-  currentVersion = codexVersion(),
-  currentBinary = findCodexBinary(),
-  currentBinaryFingerprint = codexBinaryFingerprint(currentBinary),
-  accountCache = readNativeAccountCatalog,
-} = {}) {
+export function nativeCatalogRefreshNeeded(options = {}) {
+  const identity = options.codexIdentity || (!Object.hasOwn(options, "currentBinary") ? codexExecutableIdentity() : {});
+  const {
+    catalogPath = NATIVE_CATALOG_PATH,
+    source = readNativeCatalogSource(),
+    currentBinary = identity.binary,
+    currentVersion = Object.hasOwn(options, "currentBinary")
+      ? (currentBinary ? codexVersion({ binary: currentBinary }) : undefined) : identity.version,
+    currentBinaryFingerprint = Object.hasOwn(options, "currentBinary")
+      ? (currentBinary ? codexBinaryFingerprint(currentBinary) : undefined) : identity.fingerprint,
+    accountCache = readNativeAccountCatalog,
+  } = options;
   let parsed;
   try {
     parsed = JSON.parse(readFileSync(catalogPath, "utf8"));
@@ -384,7 +397,9 @@ export function nativeCatalogRefreshNeeded({
 export function nativeCatalog({
   refreshNative = refresh,
   accountSource = readNativeAccountCatalog(),
+  codexIdentity = codexExecutableIdentity(),
 } = {}) {
+  if (codexIdentity.binary) assertCodexExecutableIdentity(codexIdentity);
   const source = readNativeCatalogSource();
   if (source) {
     const catalog = readNativeCatalogFile(source.path);
@@ -398,10 +413,10 @@ export function nativeCatalog({
       const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
       if (nativeCatalogIsReusable(
         parsed,
-        codexVersion(),
+        codexIdentity.version,
         fingerprint,
-        findCodexBinary(),
-        codexBinaryFingerprint(),
+        codexIdentity.binary,
+        codexIdentity.fingerprint,
       )) {
         return parsed;
       }
@@ -409,23 +424,24 @@ export function nativeCatalog({
     // An adopted catalog owns account visibility and entries, but it cannot
     // own binary-schema fields such as shell_type. Normalize it through the
     // same current bundled capture used for Codex's account catalog.
-    return captureNative({ catalog, fingerprint });
+    return captureNative({ catalog, fingerprint }, codexIdentity);
   }
   const accountFingerprint = accountSource.fingerprint;
-  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative(accountSource);
+  if (!existsSync(NATIVE_CATALOG_PATH) || refreshNative) return captureNative(accountSource, codexIdentity);
   const parsed = JSON.parse(readFileSync(NATIVE_CATALOG_PATH, "utf8"));
   if (nativeCatalogIsReusable(
     parsed,
-    codexVersion(),
+    codexIdentity.version,
     accountFingerprint,
-    findCodexBinary(),
-    codexBinaryFingerprint(),
+    codexIdentity.binary,
+    codexIdentity.fingerprint,
   )) {
     return parsed;
   }
   try {
-    return captureNative(accountSource);
+    return captureNative(accountSource, codexIdentity);
   } catch (error) {
+    if (error?.code === "codex_binary_changed") throw error;
     // Version-mismatched is still better than empty: serve the stale capture
     // when the re-capture fails, but say so instead of hiding it.
     if (parsed && Array.isArray(parsed.models) && parsed.models.length > 0) {
@@ -505,9 +521,7 @@ export function clampModelEfforts(models, vocabulary) {
 function selectedModel() {
   if (!existsSync(CONFIG_PATH)) return undefined;
   const config = readFileSync(CONFIG_PATH, "utf8");
-  const firstTable = config.search(/^\s*\[/m);
-  const root = firstTable === -1 ? config : config.slice(0, firstTable);
-  return root.match(/^\s*model\s*=\s*["\']([^"\']+)["\']/m)?.[1];
+  return tomlStringValue(scanTomlDocument(config), [], "model");
 }
 
 // A merged catalog is useful only when the selected Codex transport reaches
@@ -1295,10 +1309,15 @@ async function publishCatalog({
   // that does not own this state directory is how the picker ends up
   // advertising models the running gateway has no route for.
   assertStateOwnership("write the Codex model catalog");
+  const codexIdentity = codexExecutableIdentity();
+  const selectedModelSlug = selectedModel();
   const configuredNativeSource = readNativeCatalogSource();
   const nativeAccountRefresh = configuredNativeSource
     ? { status: "not-selected" }
-    : await refreshNativeAccountCatalogUnlocked({ force: refreshNative });
+    : await refreshNativeAccountCatalogUnlocked({
+      force: refreshNative,
+      versionProvider: () => codexIdentity.version ? codexClientVersion(codexIdentity.version) : undefined,
+    });
   const userSlugs = new Set();
   const enabledProviders = new Set(readProviderSelection());
   const selectedModels = LISTED_MODELS.filter((model) => enabledProviders.has(model.provider));
@@ -1318,12 +1337,12 @@ async function publishCatalog({
   // picker levels, defaults, and announcement copy — stays inside the effort
   // vocabulary the installed build can actually deserialize.
   const { models: routedModels, announcedAt } = annotateNewModelAnnouncements(
-    clampModelEfforts(allMultiAgentModels, codexEffortVocabulary(codexVersion())),
+    clampModelEfforts(allMultiAgentModels, codexEffortVocabulary(codexIdentity.version)),
     readAnnouncedAt(),
     userSlugs,
     Date.now(),
   );
-  const auth = codexAuthStatus();
+  const auth = codexAuthStatus({ findBinary: () => codexIdentity.binary });
   if (auth.reason === "probe-failed" || auth.reason === "access-denied") {
     throw new Error(
       `Could not ask Codex whether it is signed in (${auth.code || "spawn failed"} running ${auth.binary}). ` +
@@ -1340,6 +1359,7 @@ async function publishCatalog({
   const accountIdentityInvalid = auth.authenticated
     && nativeAccountRefresh.identity_changed === true;
   const captured = nativeCatalog({
+    codexIdentity,
     refreshNative: refreshNative || accountIdentityInvalid,
     accountSource: accountIdentityInvalid
       ? { catalog: undefined, fingerprint: undefined }
@@ -1491,7 +1511,7 @@ async function publishCatalog({
     openai_auth_reason: auth.reason,
     native_publication: nativePublication,
     native_account_refresh: nativeAccountRefresh.status,
-    selected_model: selectedModel() || null,
+    selected_model: selectedModelSlug || null,
   };
   if (output) process.stdout.write(`${JSON.stringify(result)}\n`);
   return result;

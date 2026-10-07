@@ -51,18 +51,8 @@ passed all five checks for each route after a protected credential refresh and
 managed restart. The [earlier expired-key attempt](../docs/history/2026-10-02-expired-key-certification-attempt.json)
 remains separate failed evidence and does not contribute to the accepted window.
 
-Create or refresh an application by copying both
-[`_template/proof.json`](_template/proof.json) and
-[`_template/proof.md`](_template/proof.md). The JSON file is the machine-readable
-authority. The Markdown file records the evidence and limitations a reviewer
-needs. Do not add another provider or model without a separate product decision.
-
-An accepted proof must identify the public slug, provider, upstream model, Router
-and Codex versions, execution path, timestamps, and all five checks. Switchyard
-also records its upstream commit, patch, binary, Router, generated-route,
-deployed-template, and canonical template-source hashes.
-
-The checker rejects a v2 catalog declaration whose matching application is
-missing, draft, mismatched, or incomplete. It also rejects an application
-directory missing either proof file. Read `docs/SUBAGENT-CERTIFICATION.md` for
-the refresh conditions and quota boundary.
+For preparation, proof fields, acceptance, refresh conditions, and quota
+authorization, follow [certification](../docs/SUBAGENT-CERTIFICATION.md).
+The templates remain under [`_template/`](_template/proof.json).
+The application checker rejects missing, draft, mismatched, or incomplete
+applications and requires both proof files.

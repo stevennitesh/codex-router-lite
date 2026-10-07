@@ -35,8 +35,8 @@ function nativeModel(slug) {
   };
 }
 
-function runCatalog(environment, extra = {}) {
-  return spawnSync(process.execPath, [catalogScript, "--refresh-if-stale"], {
+function runCatalog(environment, extra = {}, args = ["--refresh-if-stale"]) {
+  return spawnSync(process.execPath, [catalogScript, ...args], {
     encoding: "utf8",
     env: { ...process.env, ...environment, ...extra },
     windowsHide: true,
@@ -54,6 +54,7 @@ test("real catalog refresh retries publication and converges optional routes wit
   const authModePath = path.join(root, "auth-mode.txt");
   const fakeCodex = path.join(root, "codex.cmd");
   const fakeCodexModule = path.join(root, "fake-codex.mjs");
+  const commandLog = path.join(root, "commands.jsonl");
   const codexCache = path.join(codexHome, "models_cache.json");
   const mergedPath = path.join(state, "merged-models.json");
   const nativePath = path.join(state, "native-models.json");
@@ -79,10 +80,20 @@ test("real catalog refresh retries publication and converges optional routes wit
     `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
   );
   writeFileSync(fakeCodex, '@node "%~dp0fake-codex.mjs" %*\r\n');
+  writeFileSync(path.join(codexHome, "config.toml"), [
+    'developer_instructions = """',
+    'model = "instruction-lookalike"',
+    '[not_a_real_table]',
+    '"""',
+    '"model" = "gpt-5.5"',
+    '',
+  ].join("\n"));
   writeFileSync(
     fakeCodexModule,
-    `import { readFileSync } from "node:fs";\n` +
+    `import { readFileSync, appendFileSync } from "node:fs";\n` +
       `const args = process.argv.slice(2).join(" ");\n` +
+      `appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify(args) + "\\n");\n` +
+      `if (args === "debug models --bundled" && process.env.CODEX_ROUTER_FIXTURE_DRIFT === "1") appendFileSync(${JSON.stringify(fakeCodex)}, "@rem changed build\\r\\n");\n` +
       `if (args === "--version") console.log("codex-cli 0.153.0");\n` +
       `else if (args === "debug models --bundled") console.log(${JSON.stringify(JSON.stringify(bundledCatalog))});\n` +
       `else if (args === "login status" && readFileSync(${JSON.stringify(authModePath)}, "utf8").trim() === "signed-in") console.log("Logged in");\n` +
@@ -103,6 +114,11 @@ test("real catalog refresh retries publication and converges optional routes wit
     });
     assert.equal(failed.status, 75, failed.stderr);
     assert.equal(existsSync(nativePath), true, "capture completes before forced publication failure");
+    const firstCommands = readFileSync(commandLog, "utf8").trim().split(/\r?\n/u).map(JSON.parse);
+    assert.deepEqual(firstCommands, ["--version", "login status", "debug models --bundled"], "publication selects and probes one producer instead of rediscovering per phase");
+    const produced = JSON.parse(readFileSync(nativePath, "utf8"));
+    assert.equal(produced.captured_from, fakeCodex);
+    assert.equal(produced.captured_with, "codex-cli 0.153.0");
     assert.equal(existsSync(mergedPath), false, "failed publication rolls back its output");
     const nativeMtime = statSync(nativePath).mtimeMs;
 
@@ -111,6 +127,7 @@ test("real catalog refresh retries publication and converges optional routes wit
     const recoveredResult = JSON.parse(recovered.stdout.trim());
     assert.equal(recoveredResult.changed, true);
     assert.equal(recoveredResult.native_account_refresh, "not-selected");
+    assert.equal(recoveredResult.selected_model, "gpt-5.5", "real quoted root model ignores multiline lookalikes");
     assert.equal(
       JSON.parse(readFileSync(mergedPath, "utf8")).models
         .find((model) => model.slug === "gpt-5.6-sol").visibility,
@@ -197,6 +214,23 @@ test("real catalog refresh retries publication and converges optional routes wit
     assert.notEqual(malformedNative.status, 0);
     assert.equal(readFileSync(mergedPath, "utf8"), lastGood);
     assert.equal(readFileSync(codexCache, "utf8"), "codex-owned-sentinel\n");
+
+    const configPath = path.join(codexHome, "config.toml");
+    const validConfig = readFileSync(configPath, "utf8");
+    writeFileSync(configPath, validConfig + 'model = "gpt-duplicate"\n');
+    const duplicateModel = runCatalog(environment);
+    assert.notEqual(duplicateModel.status, 0);
+    assert.match(duplicateModel.stderr, /duplicate TOML assignments for model/u);
+    assert.equal(readFileSync(mergedPath, "utf8"), lastGood, "duplicate actual model is rejected before publication");
+    writeFileSync(configPath, validConfig);
+
+    writeFileSync(sourcePath, `${JSON.stringify(sourceCatalog)}\n`);
+    const previousCapture = readFileSync(nativePath, "utf8");
+    const drift = runCatalog(environment, {CODEX_ROUTER_FIXTURE_DRIFT:"1"}, ["--refresh-native"]);
+    assert.notEqual(drift.status, 0, "replacement during capture must fail rather than publish mixed producer metadata");
+    assert.match(drift.stderr, /selected Codex executable changed/u);
+    assert.equal(readFileSync(nativePath, "utf8"), previousCapture);
+    assert.equal(readFileSync(mergedPath, "utf8"), lastGood);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

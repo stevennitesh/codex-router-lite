@@ -9,6 +9,11 @@ read [OpenRouter GLM](openrouter-glm.md).
 
 Native GPT entries come from the installed Codex catalog. Preserve unfamiliar fields generically. Never replace the native catalog with a copied list.
 
+`codexExecutableIdentity` selects one executable for each catalog publication or
+Doctor operation. Version, authentication, and capture use that path; later
+operations discover afresh. Capture checks its producer's fingerprint before and
+after execution and rejects drift instead of attaching another build's identity.
+
 The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
 a separate watcher process. The freshness identity is the resolved Codex
 binary path, file identity, reported version, and the content fingerprint of

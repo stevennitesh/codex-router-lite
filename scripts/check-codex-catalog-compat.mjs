@@ -13,7 +13,8 @@ import {
   effectivePickerHiddenModels,
   omittedSwitchyardNativeFields,
 } from "../src/catalog.mjs";
-import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
+import { CHECKED_IN_MODELS, MODEL_BY_SLUG } from "../src/routed-models.mjs";
+import { findCodexBinary } from "../src/codex-binary.mjs";
 import { spawnableCommand } from "../src/spawnable-command.mjs";
 import {
   applyMultiAgentCapabilities,
@@ -25,7 +26,8 @@ import {
   validateSwitchyardConfigContract,
 } from "./switchyard-config-contract.mjs";
 
-const binary = process.argv[2];
+const binaryArgument = process.argv[2];
+const binary = binaryArgument === "--current" ? findCodexBinary() : binaryArgument;
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const installedCatalogPath = process.argv[3] === "--catalog" ? process.argv[4] : undefined;
 if (
@@ -34,7 +36,7 @@ if (
   (process.argv.length === 5 && !installedCatalogPath)
 ) {
   console.error(
-    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX [--catalog PATH]",
+    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX|--current [--catalog PATH]",
   );
   process.exit(2);
 }
@@ -53,18 +55,7 @@ function runCodex(binary, args, options = {}) {
   return result.stdout;
 }
 
-const routed = [
-  "openrouter/glm-5.3-flash-streamlake",
-  "openrouter/glm-5.3-flash-together",
-  "openrouter/deepseek-v4.1-flash-together",
-  "openrouter/deepseek-v4.1-flash-deepinfra",
-  "openrouter/pareto",
-  "switchyard/auto",
-].map((slug) => {
-  const model = MODEL_BY_SLUG.get(slug);
-  if (!model) throw new Error(`Missing checked-in route ${slug}`);
-  return model;
-});
+const routed = CHECKED_IN_MODELS;
 
 function buildCandidate(binary, nativeOverride) {
   const version = runCodex(binary, ["--version"]).trim();

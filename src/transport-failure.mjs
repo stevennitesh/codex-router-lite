@@ -1,4 +1,5 @@
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
+import { transportErrorGraph } from "./transport-error-graph.mjs";
 
 // The router reaches every upstream through Undici's `fetch`, which reports a
 // socket failure as a bare `TypeError: fetch failed` and buries the code that
@@ -12,9 +13,6 @@ import { environmentProxyOptedIn } from "./proxy-environment.mjs";
 // `error-translation.mjs` uses for upstream *bodies*. The two are deliberately
 // separate: that module reads what an origin said, this one runs when nothing
 // was ever said.
-
-const MAX_CAUSE_DEPTH = 8;
-
 // `hostname` is set by Node's DNS and TLS errors but not by Undici's connect
 // errors, which name the address in their message instead. Read the field
 // first and fall back to the wordings actually observed in this router's log.
@@ -25,20 +23,8 @@ const HOST_PATTERNS = [
   /Host:\s*([^\s:,]+?)\.?\s/i,
 ];
 
-function causeChain(error) {
-  const chain = [];
-  let current = error;
-  for (let depth = 0; current && depth < MAX_CAUSE_DEPTH; depth += 1) {
-    if (typeof current !== "object") break;
-    chain.push(current);
-    current =
-      current.cause ?? (Array.isArray(current.errors) ? current.errors[0] : undefined);
-  }
-  return chain;
-}
-
-function transportFailureHost(error) {
-  for (const link of causeChain(error)) {
+function transportFailureHost(nodes) {
+  for (const link of nodes) {
     if (typeof link.hostname === "string" && link.hostname) return link.hostname;
     const message = typeof link.message === "string" ? link.message : "";
     for (const pattern of HOST_PATTERNS) {
@@ -49,8 +35,8 @@ function transportFailureHost(error) {
   return undefined;
 }
 
-function transportFailureCode(error) {
-  for (const link of causeChain(error)) {
+function transportFailureCode(nodes) {
+  for (const link of nodes) {
     if (typeof link.code === "string" && link.code) return link.code;
   }
   return undefined;
@@ -128,10 +114,11 @@ export function describeTransportFailure(
   error,
   { proxyConfigured = environmentProxyOptedIn() } = {},
 ) {
-  const code = transportFailureCode(error);
+  const { nodes } = transportErrorGraph(error);
+  const code = transportFailureCode(nodes);
   const diagnosis = code ? DIAGNOSES.get(code) : undefined;
   if (!diagnosis) return undefined;
-  const host = transportFailureHost(error) || "the upstream";
+  const host = transportFailureHost(nodes) || "the upstream";
   return {
     code,
     cause: diagnosis.describe(host),

@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import http from "node:http";
-import { mkdtempSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { openPort } from "./port-pool.mjs";
+import { launch, ready, stop as stopChild } from "./router-fixture.mjs";
 
 // End-to-end proof of the namespace relay through the REAL router: a routed
 // request carrying the client's namespace toolset must reach the (mock)
@@ -20,7 +16,6 @@ import { callerBaseUrl } from "../src/caller-auth.mjs";
 // not execute any app tool itself. The whole scenario runs twice and must
 // produce byte-identical outgoing and incoming bodies (determinism).
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CALLER_KEY = "test-router-caller-capability-with-sufficient-length";
 const INTERNAL_KEY = "test-internal-service-key-with-sufficient-length";
 const IMAGE =
@@ -46,19 +41,6 @@ async function bodyJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-async function openPort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  assert.ok(typeof address === "object" && address);
-  const port = address.port;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
-}
-
 async function mockServer(handler) {
   const server = http.createServer(handler);
   await new Promise((resolve, reject) => {
@@ -71,52 +53,16 @@ async function mockServer(handler) {
 }
 
 function run(script, env) {
-  const stateIsolation =
-    env?.MODEL_ROUTER_STATE_DIR || env?.CODEX_ROUTER_STATE_DIR
-      ? {}
-      : { MODEL_ROUTER_STATE_DIR: mkdtempSync(path.join(os.tmpdir(), "relay-routing-state-")) };
-  const child = spawn(process.execPath, [path.join(root, "src", script)], {
-    cwd: root,
-    env: {
-      ...process.env,
-      ...stateIsolation,
+  return launch(script, {
       CODEX_ROUTER_CALLER_KEY: CALLER_KEY,
       CODEX_ROUTER_INTERNAL_KEY: INTERNAL_KEY,
       CODEX_ROUTER_SHOW_ALL_MODELS: "1",
       ...env,
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  child.stderr.setEncoding("utf8");
-  let errors = "";
-  child.stderr.on("data", (chunk) => {
-    errors += chunk;
-  });
-  child.testErrors = () => errors;
-  return child;
+  }, { stateDirPrefix: "relay-routing-state-" });
 }
 
 async function waitFor(url, child, headers = {}) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`Child exited early (${child.exitCode}): ${child.testErrors()}`);
-    }
-    try {
-      const response = await fetch(url, { headers });
-      if (response.ok) return;
-    } catch {
-      // The child has not bound its port yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for ${url}: ${child.testErrors()}`);
-}
-
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise((resolve) => child.once("exit", resolve));
+  return ready(url, child, headers, { accept: response => response.ok });
 }
 
 async function closeServer(server) {

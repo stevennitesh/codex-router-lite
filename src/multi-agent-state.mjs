@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
+import { MODEL_BY_SLUG, validateRoutedEffort } from "./routed-models.mjs";
 
 const MULTI_AGENT_STATE_PATH =
   process.env.MODEL_ROUTER_MULTI_AGENT_STATE ||
@@ -136,19 +137,22 @@ function subagentEfforts() {
 }
 
 export function subagentEffort(slug) {
-  return subagentEfforts()[String(slug || "")];
+  const key = String(slug || "");
+  const effort = readMultiAgentSettings().efforts?.[key];
+  return effort === undefined ? undefined : validateRoutedEffort(MODEL_BY_SLUG.get(key), effort);
 }
 
 // `effort` of undefined/null clears the override and restores the model's own
 // default. Validation against the model's advertised levels belongs to the
-// caller, which is the layer that can see the registry.
+// settings owner, using the registry's exact endpoint vocabulary.
 export function setSubagentEffort(slug, effort) {
   const key = String(slug || "").trim();
   if (!key) throw new Error("A model slug is required.");
+  const value = validateRoutedEffort(MODEL_BY_SLUG.get(key), effort);
   const current = readMultiAgentSettings();
-  const efforts = { ...subagentEfforts() };
-  if (effort === undefined || effort === null || effort === "") delete efforts[key];
-  else efforts[key] = String(effort).trim();
+  const efforts = { ...current.efforts };
+  if (value === undefined) delete efforts[key];
+  else efforts[key] = value;
   const next = { ...current, version: 2 };
   if (Object.keys(efforts).length) next.efforts = efforts;
   else delete next.efforts;

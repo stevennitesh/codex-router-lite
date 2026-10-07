@@ -1,29 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { checkSyntax, syntaxCheckFiles } from "./scripts/check-syntax.mjs";
 import {
   readSwitchyardConfigContract,
   validateSwitchyardConfigContract,
 } from "./scripts/switchyard-config-contract.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const directories = [
-  root,
-  path.join(root, "scripts"),
-  path.join(root, "src"),
-  path.join(root, "test"),
-];
-
-for (const directory of directories) {
-  for (const entry of readdirSync(directory)) {
-    const target = path.join(directory, entry);
-    if (statSync(target).isFile() && target.endsWith(".mjs")) {
-      execFileSync(process.execPath, ["--check", target], { stdio: "inherit" });
-    }
-  }
-}
+await checkSyntax(syntaxCheckFiles(root));
 
 execFileSync(process.execPath, [path.join(root, "src", "install-plan.mjs"), "verify-lock"], {
   stdio: "inherit",

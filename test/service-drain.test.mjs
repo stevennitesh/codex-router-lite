@@ -22,6 +22,29 @@ test("service drain treats exact refusal as offline but fails closed on unknown 
   );
 });
 
+test("service replacement requires every complete transport branch to prove refusal", async () => {
+  const refused = () => Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+  const cyclic = refused(); cyclic.cause = cyclic;
+  const deep = refused(); let current = deep;
+  for (let index = 0; index < 10; index++) current = current.cause = refused();
+  const ambiguous = [
+    new AggregateError([refused(), new Error("unknown")]),
+    new AggregateError([refused(), Object.assign(new Error("reset"), { code: "ECONNRESET" })]),
+    new AggregateError([refused(), cyclic]),
+    new Error("wrapper", { cause: { code: "ECONNREFUSED", name: "AbortError" } }),
+    cyclic, deep, new AggregateError(Array.from({ length: 257 }, refused)),
+  ];
+  for (const error of ambiguous) {
+    await assert.rejects(prepareRouterServiceMutation({
+      force: true, fetchImpl: async () => { throw error; },
+    }), /liveness is unknown/u);
+  }
+  const shared = refused();
+  assert.deepEqual(await prepareRouterServiceMutation({
+    fetchImpl: async () => { throw new AggregateError([shared, new Error("wrapper", { cause: shared })]); },
+  }), { status: "offline" }, "shared leaves are not cycles");
+});
+
 test("an old exact Router generation defers normally and requires explicit force", async () => {
   const fetchImpl = async () => response(200, { ok: true, service: "codex-router", capabilities: [] });
   await assert.rejects(

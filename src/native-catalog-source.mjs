@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateJson } from "./file-security.mjs";
+import { scanTomlDocument } from "./toml-structure.mjs";
 import {
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
@@ -69,41 +70,9 @@ function decodeBasicString(body) {
   return decoded;
 }
 
-function readRootStringValues(contents, key) {
-  const firstTable = contents.search(/^\s*\[/m);
-  const root = firstTable === -1 ? contents : contents.slice(0, firstTable);
-  return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`, "gm"))]
-    .map((match) => match[1])
-    .map((raw) => {
-      if (raw.startsWith('"')) {
-        let closing = -1;
-        let escaped = false;
-        for (let index = 1; index < raw.length; index += 1) {
-          if (!escaped && raw[index] === '"') {
-            closing = index;
-            break;
-          }
-          escaped = !escaped && raw[index] === "\\";
-          if (raw[index] !== "\\") escaped = false;
-        }
-        if (closing === -1 || !/^(?:\s*#.*)?$/.test(raw.slice(closing + 1))) {
-          return undefined;
-        }
-        return decodeBasicString(raw.slice(1, closing));
-      }
-      if (!raw.startsWith("'")) return undefined;
-      const closing = raw.indexOf("'", 1);
-      return closing !== -1 && /^(?:\s*#.*)?$/.test(raw.slice(closing + 1))
-        ? raw.slice(1, closing)
-        : undefined;
-    })
-    .filter((value) => value !== undefined);
-}
-
-function rootAssignmentCount(contents, key) {
-  const firstTable = contents.search(/^\s*\[/m);
-  const root = firstTable === -1 ? contents : contents.slice(0, firstTable);
-  return [...root.matchAll(new RegExp(`^\\s*${key}\\s*=`, "gm"))].length;
+function rootAssignments(document, key) {
+  return document.assignments.filter((assignment) =>
+    assignment.tablePath.length === 0 && assignment.key.length === 1 && assignment.key[0] === key);
 }
 
 function validCatalog(catalog) {
@@ -154,11 +123,16 @@ function writeNativeCatalogSource(value) {
 
 function prepareNativeCatalogSourceFromConfig() {
   const contents = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : "";
-  const catalogs = readRootStringValues(contents, "model_catalog_json");
+  // Only this stored-path compatibility boundary uses legacy value decoding;
+  // the shared lexer still recognizes real assignments and strict TOML keys.
+  const document = scanTomlDocument(contents, { decodeBasicString });
+  const catalogAssignments = rootAssignments(document, "model_catalog_json");
+  const catalogs = catalogAssignments.filter(({ kind }) => kind === "string").map(({ value }) => value);
   const existing = readNativeCatalogSource();
 
   if (
     existing &&
+    catalogAssignments.length === 1 &&
     catalogs.length === 1 &&
     catalogPathsEqual(catalogs[0], MERGED_CATALOG_PATH)
   ) {
@@ -166,8 +140,8 @@ function prepareNativeCatalogSourceFromConfig() {
   }
   if (
     catalogs.length !== 1 ||
-    rootAssignmentCount(contents, "model_catalog_json") !== 1 ||
-    rootAssignmentCount(contents, "openai_base_url") !== 0
+    catalogAssignments.length !== 1 ||
+    rootAssignments(document, "openai_base_url").length !== 0
   ) {
     throw new Error(
       "Adoption requires exactly one model_catalog_json and no openai_base_url.",

@@ -37,5 +37,6 @@ Direct DeepSeek API workarounds do not automatically apply to these reseller
 endpoints. Do not import reasoning placeholders, forced-choice downgrades or a
 provider-specific prompt encoder without a reproduced defect through this path.
 The [dated research](../history/2026-10-06-openrouter-route-refresh.md) records
-sources, probes and the upstream comparison. Exact native proof remains draft
-until all five certification checks pass.
+sources, probes and the upstream comparison. The
+[application index](../../v2_agent/README.md) records exact-route acceptance;
+follow the certification procedure when refreshing proof.

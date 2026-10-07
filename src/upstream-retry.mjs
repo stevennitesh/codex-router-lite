@@ -15,11 +15,11 @@
 // single retry. Retrying after partial output would duplicate the stream.
 
 import { connectTimeoutMs } from "./connect-timeout.mjs";
+import { transportErrorGraph } from "./transport-error-graph.mjs";
 
 const MAX_RETRIES = 5;
 const MAX_BACKOFF_MS = 5_000;
 const MAX_BUDGET_MS = 60_000;
-const MAX_CAUSE_DEPTH = 8;
 
 const DEFAULT_RETRIES = 2;
 const DEFAULT_BACKOFF_MS = 250;
@@ -118,14 +118,11 @@ function isRetryableTransportError(error) {
   // An abort is the caller leaving, and a router-side error (a body that is too
   // large, an unsupported encoding) carries its own HTTP status and would fail
   // identically every time.
-  if (error.name === "AbortError" || error.name === "TimeoutError") return false;
-  if (error.status) return false;
-  let cause = error;
-  for (let depth = 0; cause && depth < MAX_CAUSE_DEPTH; depth += 1) {
-    if (typeof cause.code === "string" && RETRYABLE_ERROR_CODES.has(cause.code)) return true;
-    cause = cause.cause;
-  }
-  return false;
+  const graph = transportErrorGraph(error);
+  if (!graph.complete || !graph.leaves.length || graph.nodes.some(node =>
+    node.name === "AbortError" || node.name === "TimeoutError" || node.status ||
+    (typeof node.code === "string" && !RETRYABLE_ERROR_CODES.has(node.code)))) return false;
+  return graph.leaves.every(node => RETRYABLE_ERROR_CODES.has(node.code));
 }
 
 // A backoff that a departing caller does not have to sit through: an abort

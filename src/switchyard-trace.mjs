@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { LOG_PATH } from "./paths.mjs";
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 import { nativeAttemptLogPath } from "./switchyard-native-observation.mjs";
+import {
+  OBSERVED_NATIVE_MODELS, OBSERVED_NATIVE_EFFORTS, OBSERVED_NATIVE_TIERS,
+  OBSERVED_NATIVE_OUTCOMES, OBSERVED_TARGETS, OBSERVED_CLASSIFIER_LABELS,
+} from "./switchyard-observation-contract.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
 const TOKEN_FIELDS = Object.freeze([
@@ -15,19 +19,14 @@ const TOKEN_FIELDS = Object.freeze([
   ["reasoning_tokens", "reasoningTokens"],
   ["total_tokens", "totalTokens"],
 ]);
-const KNOWN_TARGETS = Object.freeze({
-  "switchyard/luna-max": Object.freeze({ key: "lunaMax", model: "gpt-5.6-luna", effort: "max" }),
-  "switchyard/sol-medium": Object.freeze({ key: "solMedium", model: "gpt-5.6-sol", effort: "medium" }),
-  "switchyard/astra-medium": Object.freeze({ key: "astraMedium", model: "gpt-6-astra", effort: "medium" }),
-  "switchyard/astra-xhigh": Object.freeze({ key: "astraXhigh", model: "gpt-6-astra", effort: "xhigh" }),
-});
+const KNOWN_TARGETS = OBSERVED_TARGETS;
 const KNOWN_ALGORITHMS = new Set(["type_safe_task_classifier", "noop"]);
 const KNOWN_FALLBACK_REASONS = new Set([
   "empty_state", "non_text_state", "low_confidence", "classifier_unavailable",
   "classifier_timeout", "provider_http_error", "malformed_response", "state_too_large",
   "invalid_confidence", "unresolved_label",
 ]);
-const KNOWN_CLASSIFIER_TARGETS = new Set(["luna_max", "sol_medium", "astra_medium", "astra_xhigh"]);
+const KNOWN_CLASSIFIER_TARGETS = new Set(OBSERVED_CLASSIFIER_LABELS);
 
 export function latestSwitchyardGeneration(contents) {
   const text = String(contents || "");
@@ -118,12 +117,7 @@ export function summarizeSwitchyardTrace(contents) {
       const confidence = Number(/\b(?:evidence\.confidence|evidence_confidence)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
       const threshold = Number(/\b(?:evidence\.threshold|evidence_threshold)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
       const decisionLatencyMs = Number(/\b(?:evidence\.decision_latency_ms|evidence_decision_latency_ms)=(\d+)/u.exec(line)?.[1]);
-      const probabilities = Object.fromEntries([
-        "luna_max",
-        "sol_medium",
-        "astra_medium",
-        "astra_xhigh",
-      ].flatMap((label) => {
+      const probabilities = Object.fromEntries(OBSERVED_CLASSIFIER_LABELS.flatMap((label) => {
         const value = Number(new RegExp(`\\b(?:evidence\\.probability_${label}|evidence_probability_${label})=([0-9]+(?:\\.[0-9]+)?)`, "u").exec(line)?.[1]);
         return Number.isFinite(value) && value >= 0 && value <= 1 ? [[label, value]] : [];
       }));
@@ -145,7 +139,7 @@ export function summarizeSwitchyardTrace(contents) {
         ...(Number.isFinite(confidence) ? { confidence } : {}),
         ...(Number.isFinite(threshold) ? { threshold } : {}),
         ...(Number.isFinite(decisionLatencyMs) ? { decisionLatencyMs } : {}),
-        ...(evidenceSource === "type_safe_classifier" && Object.keys(probabilities).length === 4
+        ...(evidenceSource === "type_safe_classifier" && Object.keys(probabilities).length === OBSERVED_CLASSIFIER_LABELS.length
           ? { probabilities }
           : {}),
       });
@@ -280,10 +274,7 @@ export function summarizeSwitchyardUsage(routingContents, options = {}) {
       excludedWithoutValidTimestamp: 0,
     },
     targets: {
-      lunaMax: { model: "gpt-5.6-luna", effort: "max", records: 0 },
-      solMedium: { model: "gpt-5.6-sol", effort: "medium", records: 0 },
-      astraMedium: { model: "gpt-6-astra", effort: "medium", records: 0 },
-      astraXhigh: { model: "gpt-6-astra", effort: "xhigh", records: 0 },
+      ...Object.fromEntries(Object.values(KNOWN_TARGETS).map(({key,model,effort}) => [key,{model,effort,records:0}])),
       unknown: { model: "unknown", effort: "unknown", records: 0 },
     },
     algorithms: {},
@@ -386,17 +377,10 @@ export function summarizeSwitchyardUsage(routingContents, options = {}) {
   return summary;
 }
 
-const NATIVE_MODELS = new Map([
-  ["gpt-5.6-luna", "luna"],
-  ["gpt-5.6-sol", "sol"],
-  ["gpt-6-astra", "astra"],
-]);
-const NATIVE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max", "unknown"]);
-const NATIVE_TIERS = new Set(["default", "priority", "flex", "unknown"]);
-const NATIVE_OUTCOMES = new Set([
-  "completed", "incomplete", "cancelled", "http_error", "stream_error",
-  "transport_error", "empty_completion", "retryable_http", "unknown",
-]);
+const NATIVE_MODELS = new Map(Object.entries(OBSERVED_NATIVE_MODELS));
+const NATIVE_EFFORTS = new Set([...OBSERVED_NATIVE_EFFORTS, "unknown"]);
+const NATIVE_TIERS = new Set([...OBSERVED_NATIVE_TIERS, "unknown"]);
+const NATIVE_OUTCOMES = new Set(OBSERVED_NATIVE_OUTCOMES);
 
 function attemptCounterCoverage() {
   return Object.fromEntries([

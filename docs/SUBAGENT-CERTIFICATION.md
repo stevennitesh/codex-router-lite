@@ -41,20 +41,26 @@ are diagnostics; they do not create or revoke certification.
 
 ## Certifying a new exact route
 
-Start with one read-only readiness check:
+Start with one read-only readiness check for the exact route, a subset, or all
+registered routes:
 
 ```powershell
 node maintenance/certification-preflight.mjs openrouter/pareto
+node maintenance/certification-preflight.mjs openrouter/pareto switchyard/auto
+node maintenance/certification-preflight.mjs --all
 ```
 
-Replace the slug with the exact candidate. The report checks source eligibility,
-local visibility, published catalog, generated role contents and deployed commit.
-It prints the exact role, pinned effort and a reusable synthetic parent prompt.
+Choose one command for the intended scope. The batch reads shared installed
+state once and checks each route's source eligibility, visibility, published
+catalog, generated role contents, and deployed commit. It derives exact roles,
+pinned efforts, prompts, application paths, and draft identity metadata from
+the registry. Draft checks stay pending until actual observations are collected.
 Access errors are not evidence of missing configuration; use the state owner's
 local authority. This command does not publish a route, spend quota or accept proof.
 
-For a v1 candidate, copy the proof templates into the reported application path,
-fill its exact identity, and keep status draft. During the authorized proof window,
+For a v1 candidate, use the reported draft identity with the proof templates at
+the reported application path. Fill runtime observations and keep status draft.
+During the authorized proof window,
 set the route's `multiAgentVersion` to `v2`, show it if hidden using the reported
 picker command, and refresh the catalog. Run preflight again before starting a
 fresh native parent. This window may temporarily fail the accepted-proof gate;
@@ -105,6 +111,45 @@ application draft until all five checks pass; accept the proof and registry
 claim together, then require `npm run check` to return green. If the native run
 does not complete, restore the route to v1 rather than committing a red gate.
 
+### Collecting evidence
+
+Preflight emits a `runManifestTemplate` alongside each draft. Save the template
+under ignored `generated/` storage and fill it from the actual run: the parent
+session ID, UTC start and end in `YYYY-MM-DDTHH:mm:ss.sssZ` form, observed CLI
+and Windows app versions, execution surface, and selected sandbox backend.
+Use the emitted route markers and prompts. Do not fill observations from an
+earlier run or infer the backend from a successful command.
+
+After the parent and both child turns complete, extract redacted drafts:
+
+```powershell
+node maintenance/certification-evidence.mjs extract --run generated/private-run.json --parent <parent-rollout.jsonl> --children <child-rollout-directory> --router-log <router-log> --output generated/certification-drafts.json
+```
+
+The extractor checks native child identity, pinned effort, command output,
+encrypted handoffs, same-child continuation, completion order, exact-provider
+timings, and the installed route binding. Switchyard also requires its locked
+runtime provenance and bounded routing evidence. It reads the supplied records
+and creates a new output file; it does not run models, overwrite evidence, accept
+proof, or change route eligibility.
+
+Parent and child observations are selected from the declared window. Resuming a
+child afterward does not invalidate the earlier run; incomplete or cancelled
+activity inside the window still fails extraction. Streaming stays pending:
+successful timings and rollout snapshots cannot prove SSE transport. Record the
+separately observed streamed text and completion before accepting the proof.
+
+The CLI version is checked against the parent transcript. The app version and
+backend remain runner-declared observations; the extractor cannot prove them
+from that transcript. A CLI proof does not certify the desktop's elevated
+backend. Review the emitted draft and its limitations, then place the reviewed
+`draftProof` and corresponding `proof.md` at the reported application path using
+the acceptance procedure above.
+
+Keep raw rollouts, ciphertext, run manifests, session identifiers, and private
+paths out of tracked files. Only reviewed, redacted applications belong in
+`v2_agent/`.
+
 ## When to refresh proof
 
 Refresh the exact route after any change to:
@@ -121,7 +166,10 @@ Do not reuse another provider's or another slug's result. A local selection is o
 
 Certification can consume provider or ChatGPT quota. Never run it without explicit authority. A deterministic mock test cannot replace the native parent, child, and same-thread observations.
 
-After an accepted change, run `npm run check`, `npm test`, and the installed-Codex catalog check. For Switchyard, also bind the proof to the locked commit, patch hash, binary hash, generated route hash, and Router commit.
+After acceptance, follow the [common source verification scope](agents/architecture.md#verification).
+Reuse unchanged test and catalog results; the application changes still require
+`npm run check`. For Switchyard, also bind the proof to the locked commit,
+patch hash, binary hash, generated route hash, and Router commit.
 
 For Switchyard evidence, run
 `.\model-router.ps1 codex switchyard-certification-evidence --limit 20`. The

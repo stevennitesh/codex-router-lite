@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
+import { writePrivateFile } from "./file-security.mjs";
 import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
 import { STATE_DIR } from "./paths.mjs";
 import { PROVIDERS } from "./routed-models.mjs";
@@ -81,6 +81,5 @@ export function writeProviderCredential(providerOrId, value) {
   }
   const target = primaryCredentialPath(provider);
   writePrivateFile(target, `${secret}\n`);
-  protectPrivateFile(target);
   return target;
 }

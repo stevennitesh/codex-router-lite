@@ -363,17 +363,20 @@ const LINE_FEED = 0x0a;
 export class ResponseUsageTransform extends Transform {
   #eventStream;
   #decoder = new StringDecoder("utf8");
-  #buffer = "";
-  #capturedBytes = 0;
+  #decodedLineBytes = 0;
+  #decodedLineEndsCr = false;
   #usage;
   #reportedUsage;
   #providerResponse = {};
   #estimate;
   #substituted;
-  // Rewrite mode holds the raw bytes rather than decoded text: everything the
-  // router is not rewriting has to leave as the exact buffer that arrived, so
-  // a malformed or non-UTF-8 byte can never be replaced on its way through.
-  #pending = Buffer.alloc(0);
+  // Both modes capture bounded raw bytes for parsing. Observation forwards
+  // incoming chunks immediately; rewriting holds them until a line/body is
+  // whole, preserving every byte of anything it does not change.
+  #pendingParts = [];
+  #pendingBytes = 0;
+  #pendingTailBytes = 0;
+  #nextPartBytes = 1_024;
   #released = false;
   #headerlessDetector;
   // When the first token of visible output arrived, relative to whenever the
@@ -427,27 +430,25 @@ export class ResponseUsageTransform extends Transform {
   }
 
   #transformChunk(chunk) {
-    if (this.#estimate === undefined) {
-      this.#observeOnly(chunk);
-      return;
-    }
+    const observeOnly = this.#estimate === undefined;
+    if (observeOnly) this.push(chunk);
     if (this.#released) {
-      this.push(chunk);
+      if (!observeOnly) this.push(chunk);
       return;
     }
-    this.#pending = this.#pending.length ? Buffer.concat([this.#pending, chunk]) : chunk;
     if (this.#eventStream) {
-      this.#consumeRewrittenLines();
-      const splitCr = this.#pending.at(-1) === 0x0d;
-      if (!this.#released && this.#pending.length > this.maxPendingBytes + (splitCr ? 1 : 0)) {
-        this.#release();
-      }
+      this.#consumeEventChunk(chunk);
       return;
     }
     // A non-streaming body has to be held to be rewritten. Oversized ones are
     // released and forwarded from then on, the way the observer stops
     // capturing past the same limit.
-    if (this.#pending.length > MAX_JSON_CAPTURE_BYTES) this.#release();
+    if (this.#pendingBytes + chunk.length > MAX_JSON_CAPTURE_BYTES) {
+      this.#release();
+      if (!observeOnly) this.push(chunk);
+    } else {
+      this.#appendPending(chunk);
+    }
   }
 
   _flush(callback) {
@@ -457,34 +458,23 @@ export class ResponseUsageTransform extends Transform {
       this.#eventStream = detected.decision === "event-stream";
       for (const buffered of detected.chunks) this.#transformChunk(buffered);
     }
-    if (this.#estimate === undefined) {
-      this.#buffer += this.#decoder.end();
-      if (this.#eventStream) {
-        if (Buffer.byteLength(this.#buffer, "utf8") > this.maxPendingBytes) {
-          this.#buffer = "";
-          this.#released = true;
-        } else {
-          this.#consumeEventLines(true);
-        }
-      } else if (this.#buffer) {
-        try {
-          this.#observe(JSON.parse(this.#buffer));
-        } catch {
-          // The response remains untouched when optional usage parsing fails.
-        }
+    const observeOnly = this.#estimate === undefined;
+    if (this.#eventStream) {
+      const contentBytes = observeOnly
+        ? this.#decodedLineBytes + Buffer.byteLength(this.#decoder.end(), "utf8")
+        : this.#pendingBytes;
+      if (contentBytes > this.maxPendingBytes) this.#release();
+      else if (this.#pendingBytes) {
+        const line = this.#takePending();
+        if (observeOnly) this.#observeEventLine(line.toString("utf8"));
+        else this.push(this.#rewriteEventLine(line) || line);
       }
       callback();
       return;
     }
-    if (this.#eventStream) {
-      this.#consumeRewrittenLines(true);
-      callback();
-      return;
-    }
-    const body = this.#pending;
-    this.#pending = Buffer.alloc(0);
+    const body = this.#takePending();
     if (this.#released || !body.length) {
-      if (body.length) this.push(body);
+      if (!observeOnly && body.length) this.push(body);
       callback();
       return;
     }
@@ -492,11 +482,15 @@ export class ResponseUsageTransform extends Transform {
     try {
       payload = JSON.parse(body.toString("utf8"));
     } catch {
-      this.push(body);
+      if (!observeOnly) this.push(body);
       callback();
       return;
     }
     this.#observe(payload);
+    if (observeOnly) {
+      callback();
+      return;
+    }
     const substituted = substituteZeroInputUsage(payload, this.#estimate);
     this.#substituted = substituted ? this.#estimate : undefined;
     this.push(substituted ? Buffer.from(JSON.stringify(substituted), "utf8") : body);
@@ -523,86 +517,109 @@ export class ResponseUsageTransform extends Transform {
     return this.#substituted;
   }
 
-  #observeOnly(chunk) {
-    this.push(chunk);
-    if (this.#released) return;
-    if (this.#eventStream) {
-      this.#buffer += this.#decoder.write(chunk);
-      this.#consumeEventLines();
-      const pendingBytes = Buffer.byteLength(this.#buffer, "utf8");
-      const splitCr = this.#buffer.endsWith("\r");
-      if (!this.#released && pendingBytes > this.maxPendingBytes + (splitCr ? 1 : 0)) {
-        this.#buffer = "";
-        this.#released = true;
-      }
-      return;
-    }
-    if (this.#capturedBytes > MAX_JSON_CAPTURE_BYTES) return;
-    this.#capturedBytes += chunk.length;
-    if (this.#capturedBytes <= MAX_JSON_CAPTURE_BYTES) {
-      this.#buffer += this.#decoder.write(chunk);
-    } else {
-      this.#buffer = "";
-    }
-  }
-
   #release() {
     this.#released = true;
-    if (this.#pending.length) this.push(this.#pending);
-    this.#pending = Buffer.alloc(0);
+    if (this.#estimate !== undefined) {
+      for (const part of this.#pendingBuffers()) this.push(part);
+    }
+    this.#clearPending();
   }
 
-  #consumeEventLines(flush = false) {
-    while (true) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline === -1) break;
-      let line = this.#buffer.slice(0, newline);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (Buffer.byteLength(line, "utf8") > this.maxPendingBytes) {
-        this.#buffer = "";
-        this.#released = true;
+  // Inspect complete lines by scanning only incoming bytes. Rewrite mode
+  // forwards each whole line with its terminator; observation has already
+  // forwarded the original chunk. Both retain only the current line.
+  #consumeEventChunk(chunk) {
+    const observeOnly = this.#estimate === undefined;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const index = chunk.indexOf(LINE_FEED, offset);
+      const piece = chunk.subarray(offset, index === -1 ? chunk.length : index + 1);
+      // Keep the observer's decoded UTF-8 budget, including replacement
+      // characters and incomplete code points, without revisiting the prefix.
+      if (observeOnly) {
+        const decoded = this.#decoder.write(piece);
+        this.#decodedLineBytes += Buffer.byteLength(decoded, "utf8");
+        if (decoded) this.#decodedLineEndsCr = decoded.endsWith("\r");
+      }
+      if (index === -1) {
+        const splitCr = observeOnly ? this.#decodedLineEndsCr : piece.at(-1) === 0x0d;
+        const pendingBytes = observeOnly ? this.#decodedLineBytes : this.#pendingBytes + piece.length;
+        if (pendingBytes > this.maxPendingBytes + (splitCr ? 1 : 0)) {
+          this.#release();
+          if (!observeOnly) this.push(piece);
+        } else this.#appendPending(piece);
         return;
       }
-      this.#buffer = this.#buffer.slice(newline + 1);
-      this.#observeEventLine(line);
-    }
-    if (flush && this.#buffer) {
-      if (Buffer.byteLength(this.#buffer, "utf8") <= this.maxPendingBytes) {
-        this.#observeEventLine(this.#buffer);
-      } else {
-        this.#released = true;
-      }
-      this.#buffer = "";
-    }
-  }
-
-  // Each complete line is forwarded as soon as it is whole, carrying its own
-  // terminator, so framing survives byte for byte and nothing is buffered
-  // beyond the line currently being written.
-  #consumeRewrittenLines(flush = false) {
-    while (true) {
-      const index = this.#pending.indexOf(LINE_FEED);
-      if (index === -1) break;
-      const contentBytes = index > 0 && this.#pending[index - 1] === 0x0d
-        ? index - 1
-        : index;
+      const preceding = piece.length > 1 ? piece[piece.length - 2] : this.#pendingLastByte();
+      const contentBytes = (observeOnly ? this.#decodedLineBytes : this.#pendingBytes + piece.length)
+        - 1 - (preceding === 0x0d ? 1 : 0);
       if (contentBytes > this.maxPendingBytes) {
         this.#release();
+        if (!observeOnly) this.push(chunk.subarray(offset));
         return;
       }
-      const line = this.#pending.subarray(0, index + 1);
-      this.#pending = this.#pending.subarray(index + 1);
-      this.push(this.#rewriteEventLine(line) || line);
-    }
-    if (flush && this.#pending.length) {
-      if (this.#pending.length > this.maxPendingBytes) {
-        this.#release();
-        return;
+      let line = piece;
+      if (this.#pendingBytes) {
+        this.#appendPending(piece);
+        line = this.#takePending();
       }
-      const line = this.#pending;
-      this.#pending = Buffer.alloc(0);
-      this.push(this.#rewriteEventLine(line) || line);
+      if (observeOnly) {
+        const text = line.toString("utf8");
+        this.#observeEventLine(text.slice(0, preceding === 0x0d ? -2 : -1));
+        this.#decodedLineBytes = 0;
+        this.#decodedLineEndsCr = false;
+      } else this.push(this.#rewriteEventLine(line) || line);
+      offset = index + 1;
     }
+  }
+
+  // Fragment storage grows geometrically to 64 KiB parts. Each captured byte
+  // is copied once, then at most once more when its complete line/body parses.
+  // Line scanning only visits the incoming chunk, not the accumulated prefix.
+  #appendPending(bytes) {
+    let offset = 0;
+    while (offset < bytes.length) {
+      let tail = this.#pendingParts.at(-1);
+      if (!tail || this.#pendingTailBytes === tail.length) {
+        tail = Buffer.allocUnsafe(this.#nextPartBytes);
+        this.#nextPartBytes = Math.min(64 * 1024, this.#nextPartBytes * 2);
+        this.#pendingParts.push(tail);
+        this.#pendingTailBytes = 0;
+      }
+      const count = Math.min(tail.length - this.#pendingTailBytes, bytes.length - offset);
+      bytes.copy(tail, this.#pendingTailBytes, offset, offset + count);
+      this.#pendingTailBytes += count;
+      this.#pendingBytes += count;
+      offset += count;
+    }
+  }
+
+  #pendingLastByte() {
+    return this.#pendingParts.at(-1)?.[this.#pendingTailBytes - 1];
+  }
+
+  #pendingBuffers() {
+    return this.#pendingParts.map((part, index) => index === this.#pendingParts.length - 1
+      ? part.subarray(0, this.#pendingTailBytes) : part);
+  }
+
+  #takePending() {
+    const parts = this.#pendingBuffers();
+    const body = parts.length === 1 ? parts[0] : Buffer.concat(parts, this.#pendingBytes);
+    this.#clearPending();
+    return body;
+  }
+
+  #clearPending() {
+    this.#pendingParts = [];
+    this.#pendingBytes = 0;
+    this.#pendingTailBytes = 0;
+    this.#nextPartBytes = 1_024;
+  }
+
+  _destroy(error, callback) {
+    this.#clearPending();
+    callback(error);
   }
 
   // Returns the replacement line, or undefined to forward the original bytes.

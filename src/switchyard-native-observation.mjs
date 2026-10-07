@@ -5,10 +5,15 @@ import path from "node:path";
 import { secretEqual } from "./caller-auth.mjs";
 import { STATE_DIR } from "./paths.mjs";
 import { SWITCHYARD_OBSERVATION_HEADER } from "./switchyard-runtime.mjs";
+import {
+  OBSERVED_NATIVE_MODELS, OBSERVED_NATIVE_EFFORTS,
+  OBSERVED_NATIVE_TIERS, OBSERVED_NATIVE_OUTCOMES,
+} from "./switchyard-observation-contract.mjs";
 
-const KNOWN_MODELS = new Set(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-6-astra"]);
-const KNOWN_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
-const KNOWN_TIERS = new Set(["default", "priority", "flex"]);
+const KNOWN_MODELS = new Set(Object.keys(OBSERVED_NATIVE_MODELS));
+const KNOWN_EFFORTS = new Set(OBSERVED_NATIVE_EFFORTS);
+const KNOWN_TIERS = new Set(OBSERVED_NATIVE_TIERS);
+const KNOWN_OUTCOMES = new Set(OBSERVED_NATIVE_OUTCOMES);
 const IDENTITY_HEADERS = ["session-id", "session_id", "x-session-id"];
 const MAX_ASSOCIATIONS = 128;
 
@@ -62,10 +67,7 @@ function observationMetadata(metadata = {}) {
     ...(Number.isInteger(metadata.httpStatus) && metadata.httpStatus >= 0 && metadata.httpStatus <= 599
       ? { httpStatus: metadata.httpStatus }
       : {}),
-    outcome: safeEnum(metadata.outcome, new Set([
-      "completed", "incomplete", "cancelled", "http_error", "stream_error",
-      "transport_error", "empty_completion", "retryable_http", "unknown",
-    ])),
+    outcome: safeEnum(metadata.outcome, KNOWN_OUTCOMES),
     ...(returnedModel !== "unknown" ? { returnedModel } : {}),
     ...(returnedTier !== "unknown" ? { returnedTier } : {}),
     ...(Object.keys(usage).length ? { usage } : {}),

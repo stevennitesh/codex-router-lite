@@ -3,31 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { INTERNAL_SECRET_PATH, PORTS, loopback } from "./paths.mjs";
+import { conclusivelyRefused } from "./transport-error-graph.mjs";
 
 const SERVICE = "codex-router";
 
 function errorMessage(value) {
   return value instanceof Error ? value.message : String(value);
-}
-
-function transportCodes(error) {
-  const result = [];
-  const pending = [error];
-  const seen = new Set();
-  while (pending.length) {
-    const value = pending.shift();
-    if (!value || typeof value !== "object" || seen.has(value)) continue;
-    seen.add(value);
-    if (typeof value.code === "string") result.push(value.code);
-    if (value.cause) pending.push(value.cause);
-    if (Array.isArray(value.errors)) pending.push(...value.errors);
-  }
-  return result;
-}
-
-function refused(error) {
-  const codes = transportCodes(error);
-  return codes.length > 0 && codes.every((code) => code === "ECONNREFUSED");
 }
 
 async function jsonResponse(response) {
@@ -52,7 +33,7 @@ export async function prepareRouterServiceMutation({
       redirect: "error",
     });
   } catch (error) {
-    if (refused(error)) return { status: "offline" };
+    if (conclusivelyRefused(error)) return { status: "offline" };
     throw new Error(`Router liveness is unknown; refusing service mutation: ${errorMessage(error)}.`);
   }
   const identity = await jsonResponse(live);

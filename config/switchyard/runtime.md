@@ -82,6 +82,11 @@ runtime root. `CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG` may select another protected
 local path for an isolated experiment. The ordinary `--usage` report includes
 the latest observed generation when that file exists.
 
+`src/switchyard-observation-contract.mjs` owns the historical model, effort, tier,
+outcome, target, and classifier-label vocabulary used by the writer and reader.
+Changing current routing configuration does not reinterpret old records. The
+accepted serving-policy check remains independent of this observation schema.
+
 The managed Switchyard hop derives a one-way marker from its ephemeral
 generation capability. Switchyard carries that marker to Router, and Router
 consumes it before the OpenAI request. This identifies the native answering

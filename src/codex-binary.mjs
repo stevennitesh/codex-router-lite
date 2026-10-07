@@ -173,6 +173,30 @@ export function codexBinaryFingerprint(binary = findCodexBinary()) {
   }
 }
 
+// One operation chooses one executable. Fresh operations still discover app
+// updates; version, authentication and capture within it use this exact path.
+export function codexExecutableIdentity({
+  findBinary = findCodexBinary,
+  versionFor = codexBinaryVersion,
+  fingerprintFor = codexBinaryFingerprint,
+} = {}) {
+  const binary = findBinary();
+  if (!binary) return Object.freeze({ binary: undefined, version: undefined, fingerprint: undefined });
+  const fingerprint = fingerprintFor(binary);
+  const version = versionFor(binary);
+  const identity = Object.freeze({ binary, version, fingerprint });
+  assertCodexExecutableIdentity(identity, { fingerprintFor });
+  return identity;
+}
+
+export function assertCodexExecutableIdentity(identity, { fingerprintFor = codexBinaryFingerprint } = {}) {
+  if (!identity?.binary || !identity.fingerprint || fingerprintFor(identity.binary) !== identity.fingerprint) {
+    const error = new Error("The selected Codex executable changed or could not be identified during this operation; retry with the current build.");
+    error.code = "codex_binary_changed";
+    throw error;
+  }
+}
+
 function requireCodexBinary() {
   const binary = findCodexBinary();
   if (!binary) {
@@ -184,20 +208,22 @@ function requireCodexBinary() {
 }
 
 export function runCodex(args, options = {}) {
-  const target = spawnableCommand(requireCodexBinary(), args);
+  const { binary = requireCodexBinary(), ...executionOptions } = options;
+  const target = spawnableCommand(binary, args);
   return execFileSync(target.command, target.args, {
     windowsHide: true,
     ...target.options,
-    ...options,
+    ...executionOptions,
   });
 }
 
 // Version and codexBinaryFingerprint() jointly identify the installed build.
 // Undefined means "could not ask", which callers treat as unknown rather than
 // as a mismatch.
-export function codexVersion() {
+export function codexVersion({ binary } = {}) {
   try {
     const output = runCodex(["--version"], {
+      binary,
       encoding: "utf8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "ignore"],
@@ -213,10 +239,11 @@ export function codexVersion() {
 // every native model from the catalog. Report the reason so callers can refuse
 // to act on an unknown instead of treating it as a definite "logged out".
 export function codexAuthStatus({
+  binary: selectedBinary,
   findBinary = findCodexBinary,
   execute = execFileSync,
 } = {}) {
-  const binary = findBinary();
+  const binary = selectedBinary || findBinary();
   if (!binary) return { authenticated: false, reason: "codex-not-found" };
   try {
     // Inside the try: a path this module refuses to hand to a shell is a probe

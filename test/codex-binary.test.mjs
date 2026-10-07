@@ -11,6 +11,8 @@ import test from "node:test";
 import {
   codexAuthStatus,
   codexBinaryFingerprint,
+  codexExecutableIdentity,
+  assertCodexExecutableIdentity,
   newestCodexBinary,
 } from "../src/codex-binary.mjs";
 
@@ -32,6 +34,41 @@ test("equal-version Codex app binaries select the newest installed build", () =>
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }
+});
+
+test("operation identity discovers once and retains the selected producer without caching later operations", () => {
+  let discoveries = 0, versions = 0;
+  const options = {
+    findBinary: () => `C:\\fixture\\codex-${++discoveries}.exe`,
+    versionFor: () => { versions++; return "codex-cli 1.2.3"; },
+    fingerprintFor: binary => `fingerprint:${binary}`,
+  };
+  const first = codexExecutableIdentity(options);
+  assert.equal(discoveries, 1);
+  assert.equal(versions, 1);
+  assert.equal(Object.isFrozen(first), true);
+  const auth = codexAuthStatus({ binary: first.binary,
+    findBinary: () => { throw new Error("must not rediscover"); },
+    execute: (_command, args) => assert.deepEqual(args, ["login", "status"]),
+  });
+  assert.equal(auth.binary, first.binary);
+  const second = codexExecutableIdentity(options);
+  assert.equal(discoveries, 2);
+  assert.notEqual(second.binary, first.binary);
+});
+
+test("operation identity rejects executable drift and preserves unavailable version as unknown", () => {
+  let fingerprint = "before";
+  assert.throws(() => codexExecutableIdentity({findBinary: () => "C:\\fixture\\codex.exe",
+    fingerprintFor: () => fingerprint,
+    versionFor: () => { fingerprint = "after"; return "codex-cli 1.2.3"; },
+  }), {code:"codex_binary_changed"});
+  const identity = codexExecutableIdentity({findBinary: () => "C:\\fixture\\codex.exe",
+    fingerprintFor: () => "unchanged", versionFor: () => undefined,
+  });
+  assert.equal(identity.version, undefined);
+  assert.throws(() => assertCodexExecutableIdentity(identity, {fingerprintFor: () => undefined}), {code:"codex_binary_changed"});
+  assert.deepEqual(codexExecutableIdentity({findBinary: () => undefined}), {binary:undefined,version:undefined,fingerprint:undefined});
 });
 
 test("Codex binary identity changes for a same-version runtime replacement", () => {

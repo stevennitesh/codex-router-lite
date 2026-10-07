@@ -20,9 +20,10 @@ It fetches repository heads, resolves and signature-checks the current Windows
 Codex build, records the bundled app-tools plugin identity when available,
 checks the current native catalog, reads Router health, runs the retained suite,
 and reports Switchyard upstream drift. It does not edit product source, consume provider
-quota, or restart the service. Use `-SkipFetch` only when offline and
-`-SkipTests` only for a quick diagnostic that will not support a compatibility
-claim.
+quota, or restart the service. Use `-SkipFetch` only when offline. Use
+`-SkipTests` for a quick diagnostic or an upstream-detail pass whose unchanged
+source tests are already covered by a complete refresh. A skipped suite alone
+does not support a compatibility claim.
 
 The default run reports how many original Router commits remain unreviewed
 since `maintenance/upstream-router.json`. When either upstream moved, request
@@ -116,12 +117,16 @@ families outside this repository's product boundary.
 
 ## Proof
 
-Run:
+Use the [common verification scope](architecture.md#verification):
 
 ```powershell
-npm run check
-npm test
-node scripts/check-codex-catalog-compat.mjs <codex-executable>
+npm run verify:codex
 ```
 
-Use the narrowest additional test that distinguishes the defect. Tests do not authorize deployment. After an authorized deployment, verify the installed source and package manifest, scheduled-task identity, Router health, selected-provider health, and one ordinary routed behavior.
+Reuse the diagnostic refresh's passing source tests and catalog check until a
+relevant input changes. If upstream detail is needed after a complete refresh,
+use `-AnalyzeUpstream -SkipTests` to avoid rerunning the unchanged suite; retain
+the initial report as evidence. Use the narrowest additional test that
+distinguishes the defect. After an authorized deployment, follow
+[installation verification](../INSTALL.md#verify) and prove one ordinary routed
+behavior. Source tests do not authorize deployment or establish live readiness.

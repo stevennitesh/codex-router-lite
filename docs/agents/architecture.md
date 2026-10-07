@@ -100,6 +100,9 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
 | Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
+| Async directory-lock lifecycle | `src/directory-lock.mjs`; named catalog, overlay, caller-key, and service wrappers retain their paths and policies |
+| Nested transport errors | `src/transport-error-graph.mjs`; health, diagnostics, and retry retain their own eligibility rules |
+| Switchyard observation vocabulary | `src/switchyard-observation-contract.mjs`; sanitized writer and historical reader share the schema, independently of serving-policy validation |
 | Agent instructions and installed skills | [Context ownership](context-ownership.md) |
 | Runtime-bound subagent evidence | [Certification](../SUBAGENT-CERTIFICATION.md) |
 
@@ -117,8 +120,18 @@ verification distinct from installed behavior. Editorial checks alone do not pro
 that new wording improves agent performance.
 
 For behavior changes, add or update a narrow regression and run `npm run check`,
-the affected tests, and the current Codex catalog check. Use `npm test` for shared
-impact. Resolve the current executable through `src/codex-binary.mjs`, then run
-`node scripts/check-codex-catalog-compat.mjs <codex-executable>`.
+the affected tests, and `node scripts/check-codex-catalog-compat.mjs --current`.
+For shared impact, `npm run verify:codex` runs the source checks, full suite, and
+current installed-Codex catalog check once. CI uses `npm run verify` because it
+does not have an installed Codex. An explicit executable and `--catalog <path>`
+remain available when checking a specific build or installed catalog.
+
+`npm run check` syntax-checks root, source, test, script, and maintenance modules
+with four bounded workers, then verifies the Python lock, independent product
+boundary and literal package import dependencies, accepted applications, and
+Switchyard configuration. These gates do
+not run model requests. Reuse passing checks for the same source, inputs,
+dependencies, and environment; rerun after a relevant change, rather than at
+every workflow step. Deployment and certification keep their distinct evidence.
 Deployment additionally requires installed hashes and live health/routed evidence;
 passing source tests does not renew a runtime-bound proof.

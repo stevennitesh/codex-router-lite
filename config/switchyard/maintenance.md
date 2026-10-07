@@ -76,15 +76,14 @@ the final replacements stay on one volume. Before stopping anything, run:
 
 ```powershell
 & $candidateBinary --config $stagedRoutes --dry-run
-$codexBinary = node --input-type=module -e "import {findCodexBinary} from './src/codex-binary.mjs'; process.stdout.write(findCodexBinary() || '')"
-if (-not $codexBinary) { throw "Current Codex binary was not found" }
-node scripts/check-codex-catalog-compat.mjs $codexBinary
 npm run check
 node --test test/switchyard-runtime.test.mjs test/routing.test.mjs test/catalog.test.mjs
+node scripts/check-codex-catalog-compat.mjs --current
 ```
 
-The catalog script checks current native-field inheritance and the specific
-Switchyard/GLM catalog assertions. It does not validate the patch, route-file
+Use the [common verification scope](../../docs/agents/architecture.md#verification)
+to reuse checks already passed for unchanged inputs. The catalog script checks
+current native-field inheritance and registered route assertions. It does not validate the patch, route-file
 privacy, local-hop authentication, loopback binding, decision redaction, or
 runtime health; those need their own checks above and below.
 

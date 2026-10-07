@@ -10,6 +10,7 @@
   "scripts": {
     "check": "node scripts-check.mjs",
     "verify": "npm run check && npm test",
+    "verify:codex": "npm run verify && node scripts/check-codex-catalog-compat.mjs --current",
     "audit:ci": "node scripts/audit-dependencies.mjs",
     "test": "node --test test/*.test.mjs",
     "test:stress": "node --test test/router-stress.test.mjs"

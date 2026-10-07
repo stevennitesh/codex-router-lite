@@ -42,6 +42,12 @@ Existing contracts: [GLM](openrouter-glm.md), [DeepSeek](openrouter-deepseek.md)
 [Switchyard](../../config/switchyard/README.md). Read only the one being reused
 or changed. Their provider-specific repairs are not default settings for a new model.
 
+The registry owns `supportedRoutedEfforts` and `validateRoutedEffort`. Generated
+agent defaults and local effort overrides use the same advertised route levels.
+Unsupported explicit overrides fail locally; clearing an override restores the
+route's default. Add endpoint levels to its metadata rather than maintaining a
+second vocabulary in settings or agent generation.
+
 ## Prove the ordinary path
 
 Run the [source checks](architecture.md#verification). Verify the actual Router

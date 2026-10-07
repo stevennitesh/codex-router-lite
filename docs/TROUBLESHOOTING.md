@@ -20,13 +20,10 @@ Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, pr
 
 ## Codex native models are wrong
 
-Resolve the Codex executable actually used by the app and run:
+Check the current installed Codex catalog:
 
 ```powershell
-$codexBinary = node --input-type=module -e "import {findCodexBinary} from './src/codex-binary.mjs'; process.stdout.write(findCodexBinary() || '')"
-if (-not $codexBinary) { throw "Current Codex binary was not found" }
-& $codexBinary --version
-node scripts/check-codex-catalog-compat.mjs $codexBinary
+node scripts/check-codex-catalog-compat.mjs --current
 ```
 
 The installed build owns native models. Do not repair drift by copying a catalog from another version.
@@ -87,6 +84,14 @@ control the selected model does not support. Remove that override to use each
 model's catalog default. External routes correctly advertise no verbosity
 support; do not change their capability flags to silence the warning. Preserve
 an intentional verbosity preference in a native-only configuration when needed.
+
+## Unsupported subagent effort
+
+`unsupported_reasoning_effort` means a saved override is outside that route's
+advertised levels. Router rejects it locally before contacting the provider.
+Set a supported level with `model-router.ps1 codex subagents effort <route> <level>`;
+omit the level to clear the override and follow the route's default. Other route
+settings remain unchanged.
 
 ## App functions do not execute
 

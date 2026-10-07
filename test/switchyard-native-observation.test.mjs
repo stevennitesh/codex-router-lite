@@ -86,6 +86,35 @@ test("explicit association rejects missing, conflicting, oversized, and malforme
   assert.equal(explicitConversationIdentity({ "session-id": "same", "x-session-id": "same" }), "same");
 });
 
+test("writer-produced observations retain the shared model, effort, tier and outcome vocabulary", () => {
+  const {root,log,observer} = fixture();
+  try {
+    const models = [["gpt-5.6-luna","luna"],["gpt-5.6-sol","sol"],["gpt-6-astra","astra"]];
+    const efforts = ["low","medium","high","xhigh","max"];
+    const tiers = ["default","priority","flex"];
+    const outcomes = ["completed","incomplete","cancelled","http_error","stream_error",
+      "transport_error","empty_completion","retryable_http","unknown"];
+    const expectedTargets = {}, expectedOutcomes = {};
+    let index = 0;
+    for (const [model,family] of models) for (const effort of efforts) {
+      const tier = tiers[index % tiers.length], outcome = outcomes[index % outcomes.length];
+      const request = observer.beginRequest({"session-id":`synthetic-vocabulary-${index}`},{model,effort,requestedTier:tier});
+      observer.beginAttempt(request,index * 2);
+      observer.finishAttempt(request,{outcome,httpStatus:200,returnedModel:model,returnedTier:tier},index * 2 + 1);
+      observer.endRequest(request);
+      const key = `${family}:${effort}:${tier}`;
+      expectedTargets[key] = (expectedTargets[key] || 0) + 1;
+      expectedOutcomes[outcome] = (expectedOutcomes[outcome] || 0) + 1;
+      index++;
+    }
+    const summary = summarizeNativeAttemptObservations(readFileSync(log,"utf8"));
+    assert.equal(summary.coverage.parsedAttempts,index);
+    assert.deepEqual(summary.targets,expectedTargets);
+    assert.deepEqual(summary.outcomes,expectedOutcomes);
+    assert.doesNotMatch(JSON.stringify(summary),/synthetic-vocabulary/u);
+  } finally { rmSync(root,{recursive:true,force:true}); }
+});
+
 test("a diagnostic write failure disables the observer for the process", () => {
   const env = {
     CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION: "1",

@@ -1,7 +1,6 @@
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 
-import lockfile from "proper-lockfile";
+import { withDirectoryLock } from "./directory-lock.mjs";
 
 import { STATE_DIR } from "./paths.mjs";
 
@@ -13,12 +12,6 @@ const DEFAULT_RETRY_MS = 250;
 // heartbeat makes a live async transaction safe to wait on.
 const DEFAULT_STALE_MS = 10 * 60_000;
 const DEFAULT_HEARTBEAT_MS = 10_000;
-
-function positiveInteger(value, fallback, minimum = 1) {
-  return Number.isFinite(value)
-    ? Math.max(minimum, Math.floor(value))
-    : fallback;
-}
 
 function modelOverlayLockTarget(stateDir = STATE_DIR) {
   return path.join(stateDir, "model-overlay-transaction");
@@ -51,70 +44,10 @@ export async function withModelOverlayLock(
     heartbeatMs = DEFAULT_HEARTBEAT_MS,
   } = {},
 ) {
-  const normalizedWaitMs = positiveInteger(waitMs, DEFAULT_WAIT_MS, 0);
-  const normalizedRetryMs = positiveInteger(retryMs, DEFAULT_RETRY_MS);
-  const normalizedStaleMs = positiveInteger(staleMs, DEFAULT_STALE_MS, 2_000);
-  const normalizedHeartbeatMs = Math.min(
-    positiveInteger(heartbeatMs, DEFAULT_HEARTBEAT_MS, 1_000),
-    normalizedStaleMs / 2,
-  );
-  const retries = Math.max(
-    0,
-    Math.ceil(normalizedWaitMs / normalizedRetryMs) - 1,
-  );
-
-  mkdirSync(stateDir, { recursive: true });
-  const target = modelOverlayLockTarget(stateDir);
-  let release;
-  try {
-    release = await lockfile.lock(target, {
-      realpath: false,
-      lockfilePath: `${target}.lock`,
-      stale: normalizedStaleMs,
-      update: normalizedHeartbeatMs,
-      retries: {
-        retries,
-        factor: 1,
-        minTimeout: normalizedRetryMs,
-        maxTimeout: normalizedRetryMs,
-        randomize: false,
-      },
-    });
-  } catch (error) {
-    if (error?.code === "ELOCKED") throw lockWaitError(normalizedWaitMs, error);
-    throw error;
-  }
-
-  let result;
-  let operationError;
-  try {
-    result = await operation();
-  } catch (error) {
-    operationError = error;
-  }
-
-  let releaseError;
-  try {
-    await release();
-  } catch (error) {
-    releaseError = error;
-  }
-
-  if (operationError) {
-    if (releaseError && typeof operationError === "object") {
-      try {
-        operationError.modelOverlayLockReleaseError = releaseError;
-      } catch {
-        // Preserve the original operation error even if it is frozen.
-      }
-    }
-    throw operationError;
-  }
-  if (releaseError) {
-    throw new Error(
-      `The model-overlay transaction completed, but its lock could not be released (${releaseError.message}).`,
-      { cause: releaseError },
-    );
-  }
-  return result;
+  return withDirectoryLock(operation, {
+    target: modelOverlayLockTarget(stateDir), waitMs, retryMs, staleMs, heartbeatMs,
+    defaults: {waitMs:DEFAULT_WAIT_MS,retryMs:DEFAULT_RETRY_MS,staleMs:DEFAULT_STALE_MS,heartbeatMs:DEFAULT_HEARTBEAT_MS},
+    lockedError: lockWaitError, releaseErrorKey: "modelOverlayLockReleaseError",
+    releaseErrorMessage: error => `The model-overlay transaction completed, but its lock could not be released (${error?.message}).`,
+  });
 }

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { codexAuthStatus, codexVersion, findCodexBinary } from "./codex-binary.mjs";
+import { codexAuthStatus, codexExecutableIdentity } from "./codex-binary.mjs";
 import { privateFileIsProtected } from "./file-security.mjs";
 import { routedCatalogConfigured } from "./catalog.mjs";
 import { readControlHealth } from "./control-health.mjs";
@@ -16,15 +16,20 @@ const add = (status, name, detail, fix) => checks.push({ status, name, detail, .
 
 export async function diagnose() {
   checks.length = 0;
-  const binary = findCodexBinary();
-  add(binary ? "ok" : "fail", "Codex binary", binary || "not found", "Install or update the Windows Codex app.");
-  add(binary ? "ok" : "warn", "Codex version", binary ? codexVersion() : "unavailable");
-  const auth = codexAuthStatus();
-  add(
-    auth.authenticated ? "ok" : auth.reason === "access-denied" ? "fail" : "warn",
-    "Native Codex authentication",
-    auth.authenticated ? "signed in" : auth.reason || "not signed in",
-  );
+  let identity;
+  try { identity = codexExecutableIdentity(); }
+  catch (error) { add("fail", "Codex binary identity", error.message, "Retry after the Windows Codex update has completed."); }
+  if (identity) {
+    const { binary, version } = identity;
+    add(binary ? "ok" : "fail", "Codex binary", binary || "not found", "Install or update the Windows Codex app.");
+    add(binary ? "ok" : "warn", "Codex version", binary ? version : "unavailable");
+    const auth = codexAuthStatus({ findBinary: () => binary });
+    add(
+      auth.authenticated ? "ok" : auth.reason === "access-denied" ? "fail" : "warn",
+      "Native Codex authentication",
+      auth.authenticated ? "signed in" : auth.reason || "not signed in",
+    );
+  }
 
   const openRouterRoutes = [...MODEL_BY_SLUG.values()].filter((model) => model.provider === "openrouter");
   const credential = credentialStatus("openrouter", { persistent: true });

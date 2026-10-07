@@ -6,6 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -180,11 +182,11 @@ test("Windows live dependency updates stage the Python environment and restore i
   const source = readScript("install.ps1");
   assert.match(
     source,
-    /Install-PinnedPythonRequirements \$CandidatePython \$true[\s\S]*src\/service\.mjs stop[\s\S]*Move-Item -LiteralPath \$PythonCandidate -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
+    /Install-PythonEnvironment \$PythonCandidate[\s\S]*src\/service\.mjs stop[\s\S]*Move-Item -LiteralPath \$PythonCandidate -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
   );
   assert.match(
     source,
-    /if \(\$PythonSwapStarted\)[\s\S]*Move-Item -LiteralPath \$PythonBackup -Destination \$PythonVenv[\s\S]*src\/service\.mjs install[\s\S]*src\/wait-health\.mjs/u,
+    /if \(\$PythonSwapStarted\)[\s\S]*Move-Item -LiteralPath \$PythonBackup -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
   );
   assert.match(source, /Assert-TransientPythonVenvPath/u);
   assert.match(
@@ -216,7 +218,7 @@ test("Windows install and update retain one guarded service generation", () => {
   const installer = readScript("install.ps1");
   const service = readScript("src/service-windows.mjs");
   assert.match(installer, /\[ValidateSet\("codex"\)\]/);
-  assert.match(installer, /src\/install-manifest\.mjs record[\s\S]*src\/service\.mjs install[\s\S]*src\/wait-health\.mjs/);
+  assert.match(installer, /src\/install-manifest\.mjs record[\s\S]*src\/service\.mjs install/);
   assert.match(installer, /if \(\$ServiceInstalled -and -not \$ServiceWasInstalled\)/);
   assert.match(service, /-MultipleInstances IgnoreNew/);
   assert.match(service, /New-ScheduledTaskTrigger -Once[\s\S]*-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
@@ -432,6 +434,58 @@ function deploymentFixture({ candidateFails }) {
   );
   return { directory, source, install, log, files };
 }
+
+function alignDeploymentFixture(fixture) {
+  for (const file of fixture.files) copyFileSync(path.join(fixture.source, file), path.join(fixture.install, file));
+  rmSync(path.join(fixture.install, "retired.txt"));
+  writeFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files: fixture.files }));
+}
+
+test("identical deployment preserves installed files and manifest without activation", { skip: process.platform !== "win32" }, () => {
+  const fixture = deploymentFixture({ candidateFails: true });
+  try {
+    alignDeploymentFixture(fixture);
+    const marker = path.join(fixture.install, "marker.txt");
+    const originalTime = new Date("2020-01-01T00:00:00Z");
+    utimesSync(marker, originalTime, originalTime);
+    const manifest = path.join(fixture.install, ".codex-router-deploy-manifest.json");
+    const manifestBytes = readFileSync(manifest);
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(fixture.source, "deploy-codex-router.ps1"), "-InstallDir", fixture.install], { encoding: "utf8", env: { ...process.env, DEPLOY_TEST_LOG: fixture.log } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /nothing changed/u);
+    assert.equal(statSync(marker).mtimeMs, originalTime.getTime());
+    assert.deepEqual(readFileSync(manifest), manifestBytes);
+    assert.throws(() => readFileSync(fixture.log), { code: "ENOENT" });
+  } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("no-op detection rejects unsafe stored paths before changing installed files", { skip: process.platform !== "win32" }, () => {
+  const fixture = deploymentFixture({ candidateFails: true });
+  try {
+    alignDeploymentFixture(fixture);
+    const manifest = path.join(fixture.install, ".codex-router-deploy-manifest.json");
+    writeFileSync(manifest, JSON.stringify({ version: 1, files: [...fixture.files, "../outside.txt"] }));
+    const prior = readFileSync(manifest);
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(fixture.source, "deploy-codex-router.ps1"), "-InstallDir", fixture.install], { encoding: "utf8", env: { ...process.env, DEPLOY_TEST_LOG: fixture.log } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unsafe relative path/u);
+    assert.deepEqual(readFileSync(manifest), prior);
+    assert.equal(readFileSync(path.join(fixture.install, "marker.txt"), "utf8"), "candidate\n");
+    assert.throws(() => readFileSync(fixture.log), { code: "ENOENT" });
+  } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("retired package membership remains a change even when source and installed bytes match", { skip: process.platform !== "win32" }, () => {
+  const fixture = deploymentFixture({ candidateFails: false });
+  try {
+    alignDeploymentFixture(fixture);
+    for (const directory of [fixture.source, fixture.install]) writeFileSync(path.join(directory, "retired.txt"), "same retired bytes");
+    writeFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files: [...fixture.files, "retired.txt"] }));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(fixture.source, "deploy-codex-router.ps1"), "-InstallDir", fixture.install], { encoding: "utf8", env: { ...process.env, DEPLOY_TEST_LOG: fixture.log } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.throws(() => readFileSync(path.join(fixture.install, "retired.txt")), { code: "ENOENT" });
+  } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
+});
 
 test("a staged Windows deployment prunes only the previous managed generation", { skip: process.platform !== "win32" }, () => {
   const fixture = deploymentFixture({ candidateFails: false });

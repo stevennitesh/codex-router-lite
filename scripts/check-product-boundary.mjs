@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validatePackageClosure } from "./check-package-closure.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requiredEntrypoints = [
@@ -81,6 +82,7 @@ const nodeManifest = JSON.parse(readFileSync(path.join(root, "package.json"), "u
 assert.equal(nodeManifest.name, "codex-router-lite", "private package identity drifted");
 assert.equal(packageManifest.version, 1);
 assert.equal(new Set(packageManifest.files).size, packageManifest.files.length, "duplicate package path");
+validatePackageClosure(root, packageManifest.files);
 for (const file of packageManifest.files) {
   assert.ok(existsSync(path.join(root, file)), `package file is missing: ${file}`);
   assert.ok(
