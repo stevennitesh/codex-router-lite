@@ -24,6 +24,14 @@ const LOCAL_FORWARDER_VALIDATION_ERRORS = new Map([
     status: 400,
     message: "The selected model does not support the requested tool choice.",
   }],
+  ["unsupported_output_limit", {
+    status: 400,
+    message: "The requested output limit is outside the selected route's supported range.",
+  }],
+  ["unsupported_reasoning_effort", {
+    status: 400,
+    message: "The selected route does not support the requested reasoning effort.",
+  }],
 ]);
 
 // LiteLLM appends its routing state after the upstream message; neither line

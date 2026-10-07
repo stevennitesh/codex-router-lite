@@ -28,11 +28,22 @@ class FixtureSocket extends EventEmitter {
 }
 
 function clientFrame(value) {
-  const payload = Buffer.from(JSON.stringify(value), "utf8");
+  return maskedFrame(Buffer.from(JSON.stringify(value), "utf8"));
+}
+
+function maskedFrame(payload, { opcode = 1, fin = true } = {}) {
   const mask = Buffer.from([1, 2, 3, 4]);
+  const first = (fin ? 0x80 : 0) | opcode;
   const header = payload.length < 126
-    ? Buffer.from([0x81, 0x80 | payload.length])
-    : Buffer.from([0x81, 0xfe, payload.length >> 8, payload.length & 0xff]);
+    ? Buffer.from([first, 0x80 | payload.length])
+    : payload.length <= 0xffff
+      ? Buffer.from([first, 0xfe, payload.length >> 8, payload.length & 0xff])
+      : Buffer.alloc(10);
+  if (payload.length > 0xffff) {
+    header[0] = first;
+    header[1] = 0xff;
+    header.writeBigUInt64BE(BigInt(payload.length), 2);
+  }
   const encoded = Buffer.allocUnsafe(payload.length);
   for (let index = 0; index < payload.length; index += 1) {
     encoded[index] = payload[index] ^ mask[index & 3];
@@ -82,6 +93,8 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
     authenticateUpgrade: () => "/responses",
     fetchImpl,
     ...(options.maxEventBytes ? { maxEventBytes: options.maxEventBytes } : {}),
+    ...(options.maxMessageBytes ? { maxMessageBytes: options.maxMessageBytes } : {}),
+    ...(options.maxFragmentFrames ? { maxFragmentFrames: options.maxFragmentFrames } : {}),
     ...(options.admitUpgrade ? { admitUpgrade: options.admitUpgrade } : {}),
     ...(options.admitRequest ? { admitRequest: options.admitRequest } : {}),
     ...(options.onPeer ? { onPeer: options.onPeer } : {}),
@@ -90,7 +103,7 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
   return socket;
 }
 
-async function sendRequest(socket, request) {
+async function sendRequest(socket, request, chunks = [clientFrame(request)]) {
   const priorEvents = serverEvents(socket).length;
   const completed = new Promise((resolve, reject) => {
     const terminal = new Set(["response.completed", "response.failed", "response.incomplete", "error"]);
@@ -107,7 +120,7 @@ async function sendRequest(socket, request) {
     }, 2_000);
     socket.on("server-write", finish);
   });
-  socket.emit("data", clientFrame(request));
+  for (const chunk of chunks) socket.emit("data", chunk);
   await completed;
   await setImmediate();
   return serverEvents(socket).slice(priorEvents);
@@ -117,6 +130,127 @@ async function exchange(fetchImpl, request = { type: "response.create", input: [
   const socket = openPeer(fetchImpl);
   return { socket, events: await sendRequest(socket, request) };
 }
+
+test("large masked requests are invariant under split headers and payload chunks", async () => {
+  const request = { type: "response.create", stream: true, input: [{ role: "user", content: '漢🙂\\\n"'.repeat(65_536) }] };
+  const bytes = clientFrame(request);
+  for (const chunkBytes of [bytes.length, 17, 16_384]) {
+    const observed = [];
+    const socket = openPeer(async (_url, init) => {
+      observed.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ id: "resp_large_masked", status: "completed", output: [] }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const chunks = [];
+    for (let offset = 0; offset < bytes.length; offset += chunkBytes) chunks.push(bytes.subarray(offset, offset + chunkBytes));
+    const events = await sendRequest(socket, request, chunks);
+    assert.equal(events.at(-1).type, "response.completed");
+    assert.deepEqual(observed, [{ stream: true, input: request.input }]);
+  }
+});
+
+test("split UTF-8 fragmented requests allow interleaved masked control frames", async () => {
+  const request = { type: "response.create", stream: true, input: [{ role: "user", content: "漢🙂" }] };
+  const bytes = Buffer.from(JSON.stringify(request));
+  const split = bytes.indexOf(Buffer.from("🙂")) + 1;
+  const ping = Buffer.from("fixture-ping");
+  const wire = Buffer.concat([
+    maskedFrame(bytes.subarray(0, split), { fin: false }),
+    maskedFrame(ping, { opcode: 9 }),
+    maskedFrame(bytes.subarray(split), { opcode: 0 }),
+  ]);
+  const socket = openPeer(async (_url, init) => {
+    assert.deepEqual(JSON.parse(init.body).input, request.input);
+    return new Response(JSON.stringify({ id: "resp_fragment", status: "completed", output: [] }), {
+      headers: { "content-type": "application/json" },
+    });
+  });
+  const events = await sendRequest(socket, request, [...wire].map(byte => Buffer.from([byte])));
+  assert.equal(events.at(-1).type, "response.completed");
+  const pong = socket.writes.find(bytes => bytes[0] === 0x8a);
+  assert.deepEqual(pong.subarray(2), ping);
+});
+
+test("masked receive rejects an oversized declared payload before receiving its body", () => {
+  const socket = openPeer(async () => { throw new Error("Unexpected request"); }, {}, { maxMessageBytes: 128 });
+  const header = maskedFrame(Buffer.alloc(129)).subarray(0, 8);
+  for (const byte of header) socket.emit("data", Buffer.from([byte]));
+  assert.equal(socket.writable, false);
+  assert.equal(socket.writes.at(-1).readUInt16BE(2), 1009);
+});
+
+test("masked receive rejects extensions and missing masks from the initial header", () => {
+  for (const header of [Buffer.from([0xc1, 0x80]), Buffer.from([0x81, 0])]) {
+    const socket = openPeer(async () => { throw new Error("Unexpected request"); });
+    socket.emit("data", header);
+    assert.equal(socket.writable, false);
+    assert.equal(socket.writes.at(-1).readUInt16BE(2), 1002);
+  }
+});
+
+test("masked receive retains fragment bounds and invalid UTF-8 failure codes", () => {
+  const cases = [
+    { frames: [maskedFrame(Buffer.from([0xff]))], code: 1007 },
+    { frames: [maskedFrame(Buffer.from("x"), { opcode: 0 })], code: 1002 },
+    { frames: [maskedFrame(Buffer.from("x"), { opcode: 2 })], code: 1003 },
+    { frames: [maskedFrame(Buffer.from("x"), { opcode: 9, fin: false })], code: 1002 },
+    { frames: [maskedFrame(Buffer.alloc(70), { fin: false }), maskedFrame(Buffer.alloc(70), { opcode: 0 })], code: 1009, maxMessageBytes: 128 },
+    { frames: [maskedFrame(Buffer.from("a"), { fin: false }), maskedFrame(Buffer.from("b"), { opcode: 0, fin: false })], code: 1009, maxFragmentFrames: 1 },
+  ];
+  for (const { frames, code, ...options } of cases) {
+    const socket = openPeer(async () => { throw new Error("Unexpected request"); }, {}, options);
+    for (const bytes of frames) for (const byte of bytes) socket.emit("data", Buffer.from([byte]));
+    assert.equal(socket.writable, false);
+    assert.equal(socket.writes.at(-1).readUInt16BE(2), code);
+  }
+});
+
+test("raw SSE event forwarding waits for socket backpressure before the terminal", async () => {
+  const socket = openPeer(async () => new Response(
+    'data: { "type": "response.output_text.delta", "delta":"漢🙂" }\n\ndata: {"type":"response.completed","response":{"id":"resp_drain","status":"completed","output":[]}}\n\n',
+    { headers: { "content-type": "text/event-stream" } },
+  ));
+  const write = socket.write.bind(socket);
+  socket.write = bytes => {
+    write(bytes);
+    return !bytes.includes(Buffer.from("response.output_text.delta"));
+  };
+  const pending = sendRequest(socket, { type: "response.create", input: [], stream: true });
+  await setImmediate();
+  assert.deepEqual(serverEvents(socket).map(event => event.type), ["response.output_text.delta"]);
+  socket.emit("drain");
+  assert.deepEqual((await pending).map(event => event.type), ["response.output_text.delta", "response.completed"]);
+});
+
+test("SSE relaying preserves validated raw JSON across byte-split UTF-8 and multiline data", async () => {
+  const raw = '{ "type" : "response.completed",\n"response" : {"id":"resp_raw","status":"completed","output":[],"fixture":"漢\\uD83D\\uDE42","unknown":1e2} }';
+  const body = Buffer.from(`: comment 漢🙂\r\ndata: ${raw.replaceAll("\n", "\r\ndata: ")}\r\n\r\n`);
+  for (const chunks of [[body], [...body].map(byte => Buffer.from([byte]))]) {
+    const socket = openPeer(async () => new Response(new ReadableStream({
+      start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    assert.deepEqual(await sendRequest(socket, { type: "response.create", input: [], stream: true }), [JSON.parse(raw)]);
+    const wire = socket.writes.at(-1);
+    const headerBytes = (wire[1] & 127) === 126 ? 4 : 2;
+    assert.equal(wire.subarray(headerBytes).toString(), raw);
+  }
+});
+
+test("UTF-8 SSE line byte bounds are exact across partial code points", async () => {
+  const line = `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_utf8", status: "completed", output: [], fixture: "漢🙂" } })}`;
+  const body = Buffer.from(`${line}\r\n\r\n`);
+  for (const maxEventBytes of [Buffer.byteLength(line), Buffer.byteLength(line) - 1]) {
+    for (const chunks of [[body], [...body].map(byte => Buffer.from([byte]))]) {
+      const socket = openPeer(async () => new Response(new ReadableStream({
+        start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
+      }), { headers: { "content-type": "text/event-stream" } }), {}, { maxEventBytes });
+      const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+      assert.equal(events[0].type, maxEventBytes === Buffer.byteLength(line) ? "response.completed" : "error");
+      if (events[0].type === "error") assert.equal(events[0].error.type, "ERR_RESPONSES_WS_EVENT_TOO_LARGE");
+    }
+  }
+});
 
 test("WebSocket rejects an invalid completed terminal as one protocol failure", async () => {
   const { events } = await exchange(async () => new Response(

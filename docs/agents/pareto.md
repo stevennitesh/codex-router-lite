@@ -18,6 +18,13 @@ image input and supports native deferred tool discovery independently of hosted
 web search. It is published as v2 with an [accepted native collaboration proof](../../v2_agent/openrouter/pareto/proof.md).
 The retired Union Alpha proof does not apply to this route.
 
+The exact Unbiased endpoint advertises a 131,072-token maximum output. Router
+rejects explicit limits above it during front preparation and final provider
+preparation. It does not set an implicit output budget or sampling defaults:
+OpenRouter does not publish those defaults for this endpoint. Context and output
+ceilings are separate; a request must also fit its prompt and output within the
+context window.
+
 ## Measured controls
 
 The exact endpoint accepts automatic function selection. OpenRouter's

@@ -10,8 +10,9 @@ is [model onboarding](model-onboarding.md); native child eligibility is owned by
 | `openrouter/deepseek-v4.1-flash-deepinfra` | `deepinfra/fp8` | 1,048,576 | 131,072 |
 
 Fallback is disabled and parameter support is required. The `/fp8` suffix pins
-DeepInfra's endpoint variant. The Together output cap uses the model's published
-limit; OpenRouter reports a larger endpoint allowance, which is not evidence that
+DeepInfra's endpoint variant. The Together output cap uses the direct DeepSeek
+API's [384K maximum](https://api-docs.deepseek.com/quick_start/pricing/), converted
+to 393,216 tokens; OpenRouter reports a larger endpoint allowance, which is not evidence that
 the model can produce that many tokens.
 
 ## Request contract
@@ -27,6 +28,9 @@ Sampling defaults are temperature 1 and top-p 0.95. Caller settings take precede
 The default output allowance is 128,000 tokens, including reasoning. Compaction
 starts at 900,000 tokens, leaving room for that allowance. Explicit output limits
 above the route's cap are rejected locally rather than silently reduced.
+Explicit unsupported efforts are rejected during front preparation and final
+provider preparation. This uses the same route vocabulary as agent defaults and
+saved effort overrides.
 
 Automatic, required and named function choices passed exact endpoint probes.
 Neither endpoint accepts `parallel_tool_calls` with required parameter support;

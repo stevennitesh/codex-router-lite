@@ -2293,11 +2293,16 @@ function configuredChildEffort(request, route) {
 }
 
 // Build the provider request without mutating the normalized client input.
-function buildRoutedRequest({ request, payload, route, normalizedInput }) {
+async function buildRoutedRequest({ request, payload, route, normalizedInput, largeBody, signal }) {
   const prepared = prepareRoutedRequest(payload, route, {
     input: normalizedInput,
     childEffort: configuredChildEffort(request, route),
   });
+  // Parsing/preparation and serialization can otherwise occupy one long turn
+  // for concurrent large histories. The size comes from decoded request bytes,
+  // so compressed and chunked callers receive the same scheduling behavior.
+  if (largeBody) await new Promise((resolve) => setImmediate(resolve));
+  signal.throwIfAborted();
   return {
     body: Buffer.from(JSON.stringify(prepared.payload), "utf8"),
     target: (prepared.transport === "responses" ? API_BASE : GATEWAY_BASE) + "/responses",
@@ -2466,6 +2471,8 @@ async function handleResponses(request, response, requestUrl) {
         payload,
         route,
         normalizedInput,
+        largeBody: body.length > 1024 * 1024,
+        signal: controller.signal,
       });
       flattenedNamespaces = built.flattenedNamespaces;
       target = built.target;

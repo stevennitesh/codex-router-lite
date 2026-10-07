@@ -59,6 +59,64 @@ test("reasoning route defaults respect explicit settings and reject output limit
   assert.equal(pareto.max_output_tokens, undefined);
 });
 
+test("Pareto enforces its 131072-token ceiling without inventing provider defaults", () => {
+  const route = MODEL_BY_SLUG.get("openrouter/pareto");
+  assert.equal(route.maxOutputTokens, 131072);
+  for (const field of ["max_output_tokens", "max_tokens", "max_completion_tokens"]) {
+    for (const value of [1, 131072]) {
+      const input = { model: route.slug, input: "synthetic", [field]: value };
+      assert.equal(prepareRoutedRequest(input, route).payload[field], value);
+      assert.equal(prepareOpenRouterRequest(input)[field], value);
+    }
+    for (const value of [0, -1, null, "4096", 1.5, 131073]) {
+      const input = { model: route.slug, input: "synthetic", [field]: value };
+      for (const prepare of [p => prepareRoutedRequest(p, route), prepareOpenRouterRequest]) {
+        assert.throws(() => prepare(input), e => e.status === 400 && e.code === "unsupported_output_limit");
+      }
+    }
+  }
+  for (const prepared of [prepareRoutedRequest({input: "synthetic"}, route).payload,
+    prepareOpenRouterRequest({model: route.slug, input: "synthetic"})]) {
+    for (const field of ["reasoning", "temperature", "top_p", "max_output_tokens", "max_tokens"]) {
+      assert.equal(prepared[field], undefined, field);
+    }
+  }
+  for (const maxOutputTokens of [undefined, 0, -1, 131072.5]) {
+    assert.throws(() => validateOpenRouterRoute({...route, maxOutputTokens}), /output limits/);
+  }
+});
+
+test("ordinary reasoning requests reject unsupported efforts before either provider boundary", () => {
+  for (const route of [streamlake, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-together"), ...deepseeks]) {
+    const shapes = effort => [{reasoning: {effort}}, {reasoning_effort: effort}, {reasoning_effort: {effort}}];
+    for (const effort of ["medium", "xhigh", "ultra", "none", "", null, 42]) {
+      for (const shape of shapes(effort)) {
+        const input = {model: route.slug, input: "synthetic", ...shape};
+        for (const prepare of [p => prepareRoutedRequest(p, route), prepareOpenRouterRequest]) {
+          assert.throws(() => prepare(input), e => e.status === 400 && e.code === "unsupported_reasoning_effort");
+        }
+      }
+    }
+    for (const effort of ["low", "high", "max"]) {
+      for (const shape of shapes(effort)) {
+        const input = {model: route.slug, input: "synthetic", ...shape}, saved = structuredClone(input);
+        assert.doesNotThrow(() => prepareRoutedRequest(input, route));
+        assert.doesNotThrow(() => prepareOpenRouterRequest(input));
+        assert.deepEqual(input, saved);
+      }
+    }
+    for (const reasoning of [{}, {summary: "auto"}, {effort: "low"}]) {
+      const input = {model: route.slug, input: "synthetic", reasoning, reasoning_effort: {effort: "medium"}};
+      const saved = structuredClone(input);
+      assert.deepEqual(prepareRoutedRequest(input, route).payload.reasoning, reasoning);
+      const final = prepareOpenRouterRequest(input);
+      assert.deepEqual(final.reasoning, reasoning);
+      assert.equal(final.reasoning_effort, undefined, "a translated alias cannot override a present primary object");
+      assert.deepEqual(input, saved);
+    }
+  }
+});
+
 test("external profiles retain produced reasoning and bridge custom tool history reversibly", () => {
   for (const route of [streamlake, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-together"), ...deepseeks]) {
     const reasoning = { type: "reasoning", id: "rs_synthetic", summary: [{ type: "summary_text", text: "Preserved reasoning 42." }] };

@@ -845,6 +845,9 @@ function flattenNamespaceChild(namespace, fn, providerName) {
     name: providerName ?? `${namespace}${NAMESPACE_DELIMITER}${fn.name}`,
     ...(parameters === undefined ? {} : { parameters }),
   };
+  // This is a provider-facing copy. Both Responses and the GLM chat adapter
+  // consume parameters; retaining inputSchema serializes the same schema twice.
+  if (fn.type === "function") delete flattened.inputSchema;
   if (fn.type === "custom") CUSTOM_TOOL_IDENTITIES.set(flattened, { namespace, name: fn.name });
   return flattened;
 }
@@ -905,14 +908,12 @@ export function flattenNamespaceTools(
         // Responses -> Chat Completions adapter reads only `parameters`.
         // Without this alias every flattened namespace child reaches the
         // provider as an empty object schema, so MCP calls cannot receive the
-        // arguments their server requires. Keep inputSchema too: it is the
-        // client's native representation and responses-native routes retain
-        // it untouched.
+        // arguments their server requires. External providers receive only
+        // parameters; the client's original declaration is never mutated.
         //
         // Make eligible object roots explicit while retaining union branches
         // and normalize literals that contradict their declared type. Only
-        // the provider-facing copy changes; `inputSchema` stays exactly as
-        // the client sent it.
+        // the provider-facing copy changes. Native requests bypass this relay.
         flattened.push(
           flattenNamespaceChild(
             tool.name,

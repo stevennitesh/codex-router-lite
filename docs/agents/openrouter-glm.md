@@ -20,6 +20,14 @@ StreamLake has a 1,024,000-token context and compacts at 880,000; Together has
 temperature 1, top-p 0.95 and 128,000 output tokens. Explicit caller settings
 take precedence; output above 128,000 tokens is rejected locally.
 
+These are conservative Router output caps, not a claim that every provider
+advertises the same ceiling. StreamLake advertises exactly 128,000; Together
+advertises a larger endpoint allowance. Router retains 128,000 on Together in
+line with Z.ai's [128K model output guidance](https://docs.z.ai/guides/vlm/glm-5.3-flash).
+Ordinary requests and final provider sends reject unsupported explicit reasoning
+efforts with `unsupported_reasoning_effort`; they cannot silently select maximum
+reasoning for a level absent from the route's vocabulary.
+
 StreamLake supports automatic tool selection only. Removing available tools
 implements `none`; required, named and forced hosted-search choices fail locally.
 Together supports required and named function choices. Both omit the unsupported

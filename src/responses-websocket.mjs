@@ -674,7 +674,9 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
   if (!body) throw new Error("The internal Responses endpoint returned no stream.");
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  let text = "";
+  let lineParts = [];
+  let lineBytes = 0;
+  let lineEndsWithCr = false;
   let dataLines = [];
   let dataChars = 0;
   const dispatch = async () => {
@@ -685,15 +687,18 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
     if (data === "[DONE]") return true;
     return onEvent(data);
   };
-  const assertLineBound = (line, { pending = false, eof = false } = {}) => {
-    let content = line;
-    if (!pending && content.endsWith("\r")) content = content.slice(0, -1);
-    const bytes = Buffer.byteLength(content, "utf8");
-    const splitCr = pending && !eof && content.endsWith("\r");
-    if (bytes <= maxEventBytes + (splitCr ? 1 : 0)) return;
+  const assertLineBound = (allowCr = true) => {
+    if (lineBytes <= maxEventBytes + (allowCr && lineEndsWithCr ? 1 : 0)) return;
     const error = new Error(`Responses SSE line exceeds ${maxEventBytes} bytes.`);
     error.code = "ERR_RESPONSES_WS_EVENT_TOO_LARGE";
     throw error;
+  };
+  const appendLinePart = (part) => {
+    if (!part) return;
+    lineParts.push(part);
+    lineBytes += Buffer.byteLength(part, "utf8");
+    lineEndsWithCr = part.endsWith("\r");
+    assertLineBound();
   };
   const consumeLine = async (line) => {
     if (line.endsWith("\r")) line = line.slice(0, -1);
@@ -719,18 +724,24 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
       if (signal.aborted) throw signal.reason || new Error("WebSocket closed.");
       const { done, value } = await reader.read();
       if (done) break;
-      text += decoder.decode(value, { stream: true });
+      const text = decoder.decode(value, { stream: true });
+      let offset = 0;
       let newline;
-      while ((newline = text.indexOf("\n")) !== -1) {
-        const line = text.slice(0, newline);
-        text = text.slice(newline + 1);
-        assertLineBound(line);
+      // Scan and count only each new decoded segment. A long provider data
+      // line must not rescan or recount its entire prefix on every TCP chunk.
+      while ((newline = text.indexOf("\n", offset)) !== -1) {
+        appendLinePart(text.slice(offset, newline));
+        const line = lineParts.join("");
+        lineParts = [];
+        lineBytes = 0;
+        lineEndsWithCr = false;
+        offset = newline + 1;
         if ((await consumeLine(line)) === false) return;
       }
-      assertLineBound(text, { pending: true });
+      appendLinePart(text.slice(offset));
     }
-    text += decoder.decode();
-    assertLineBound(text, { pending: true, eof: true });
+    appendLinePart(decoder.decode());
+    assertLineBound(false);
     // EOF does not terminate an SSE event. Discard any unfinished line/event;
     // the caller's existing missing-completion path reports the failed stream.
   } finally {
@@ -744,7 +755,10 @@ class ResponsesWebSocketPeer {
     this.socket = socket;
     this.request = request;
     this.options = options;
-    this.buffer = Buffer.alloc(0);
+    this.frameHeader = Buffer.allocUnsafe(14);
+    this.frameHeaderBytes = 0;
+    this.frameHeaderNeeded = 2;
+    this.frame = undefined;
     this.fragmentOpcode = undefined;
     this.fragments = [];
     this.fragmentBytes = 0;
@@ -789,8 +803,11 @@ class ResponsesWebSocketPeer {
     return this.send(0x1, Buffer.from(JSON.stringify(value), "utf8"));
   }
 
-  async sendJsonWithBackpressure(value) {
-    if (this.sendJson(value)) return true;
+  async sendJsonWithBackpressure(value, rawJson) {
+    // Upstream events are already parsed for protocol and continuation checks.
+    // Forward their validated JSON without serializing large unchanged output
+    // again. Locally generated metadata/errors retain ordinary serialization.
+    if (rawJson === undefined ? this.sendJson(value) : this.send(0x1, Buffer.from(rawJson, "utf8"))) return true;
     if (this.closed || this.socket.destroyed) return false;
     await new Promise((resolve) => {
       const finish = () => {
@@ -827,49 +844,69 @@ class ResponsesWebSocketPeer {
 
   feed(chunk) {
     if (this.closed || !chunk?.length) return;
-    this.buffer = this.buffer.length
-      ? Buffer.concat([this.buffer, chunk], this.buffer.length + chunk.length)
-      : Buffer.from(chunk);
-    while (!this.closed) {
-      if (this.buffer.length < 2) return;
-      const first = this.buffer[0];
-      const second = this.buffer[1];
-      const fin = Boolean(first & 0x80);
-      const opcode = first & 0x0f;
-      if (first & 0x70) return this.fail(1002, "WebSocket extensions were not negotiated.");
-      if (!(second & 0x80)) return this.fail(1002, "Client frames must be masked.");
-      let length = second & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (this.buffer.length < 4) return;
-        length = this.buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (length === 127) {
-        if (this.buffer.length < 10) return;
-        const longLength = this.buffer.readBigUInt64BE(2);
-        if (longLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-          return this.fail(1009, "WebSocket frame is too large.");
+    let offset = 0;
+    while (!this.closed && offset < chunk.length) {
+      if (!this.frame) {
+        const copied = Math.min(this.frameHeaderNeeded - this.frameHeaderBytes, chunk.length - offset);
+        chunk.copy(this.frameHeader, this.frameHeaderBytes, offset, offset + copied);
+        this.frameHeaderBytes += copied;
+        offset += copied;
+        if (this.frameHeaderBytes < this.frameHeaderNeeded) return;
+        if (this.frameHeaderNeeded === 2) {
+          if (this.frameHeader[0] & 0x70) return this.fail(1002, "WebSocket extensions were not negotiated.");
+          if (!(this.frameHeader[1] & 0x80)) return this.fail(1002, "Client frames must be masked.");
+          const lengthCode = this.frameHeader[1] & 0x7f;
+          this.frameHeaderNeeded = (lengthCode === 127 ? 10 : lengthCode === 126 ? 4 : 2) + 4;
+          continue;
         }
-        length = Number(longLength);
-        offset = 10;
+        const first = this.frameHeader[0];
+        const second = this.frameHeader[1];
+        const fin = Boolean(first & 0x80);
+        const opcode = first & 0x0f;
+        let length = second & 0x7f;
+        let maskOffset = 2;
+        if (length === 126) {
+          length = this.frameHeader.readUInt16BE(2);
+          maskOffset = 4;
+        } else if (length === 127) {
+          const longLength = this.frameHeader.readBigUInt64BE(2);
+          if (longLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+            return this.fail(1009, "WebSocket frame is too large.");
+          }
+          length = Number(longLength);
+          maskOffset = 10;
+        }
+        const control = opcode >= 0x8;
+        if (control && (!fin || length > 125)) {
+          return this.fail(1002, "Invalid WebSocket control frame.");
+        }
+        if (length > this.options.maxMessageBytes) {
+          return this.fail(1009, "WebSocket message is too large.");
+        }
+        this.frame = { fin, opcode, length, payload: Buffer.alloc(0), bytes: 0, maskOffset };
       }
-      const control = opcode >= 0x8;
-      if (control && (!fin || length > 125)) {
-        return this.fail(1002, "Invalid WebSocket control frame.");
+      const frame = this.frame;
+      const count = Math.min(frame.length - frame.bytes, chunk.length - offset);
+      const required = frame.bytes + count;
+      if (required > frame.payload.length) {
+        // Grow with received bytes, not an untrusted declared length. Doubling
+        // keeps capture linear without reserving a large frame for a tiny header.
+        const capacity = Math.min(frame.length, Math.max(required, frame.payload.length * 2, 16 * 1_024));
+        const payload = Buffer.allocUnsafe(capacity);
+        frame.payload.copy(payload, 0, 0, frame.bytes);
+        frame.payload = payload;
       }
-      if (length > this.options.maxMessageBytes) {
-        return this.fail(1009, "WebSocket message is too large.");
+      for (let index = 0; index < count; index += 1) {
+        const position = frame.bytes + index;
+        frame.payload[position] = chunk[offset + index] ^ this.frameHeader[frame.maskOffset + (position & 3)];
       }
-      const frameBytes = offset + 4 + length;
-      if (this.buffer.length < frameBytes) return;
-      const mask = this.buffer.subarray(offset, offset + 4);
-      const encoded = this.buffer.subarray(offset + 4, frameBytes);
-      const payload = Buffer.allocUnsafe(length);
-      for (let index = 0; index < length; index += 1) {
-        payload[index] = encoded[index] ^ mask[index & 3];
-      }
-      this.buffer = this.buffer.subarray(frameBytes);
-      this.handleFrame({ fin, opcode, payload });
+      frame.bytes += count;
+      offset += count;
+      if (frame.bytes < frame.length) return;
+      this.frame = undefined;
+      this.frameHeaderBytes = 0;
+      this.frameHeaderNeeded = 2;
+      this.handleFrame(frame);
     }
   }
 
@@ -929,7 +966,9 @@ class ResponsesWebSocketPeer {
     }
     this.fragments.push(payload);
     if (!fin) return;
-    const complete = Buffer.concat(this.fragments, this.fragmentBytes);
+    const complete = this.fragments.length === 1
+      ? payload
+      : Buffer.concat(this.fragments, this.fragmentBytes);
     this.fragments = [];
     this.fragmentBytes = 0;
     this.fragmentFrames = 0;
@@ -1012,15 +1051,21 @@ class ResponsesWebSocketPeer {
         prepared.payload = prepared.rebuildPayload(fullRequest.input);
         delete prepared.payload.previous_response_id;
       }
-      prepared.encoded = JSON.stringify({ ...prepared.payload, type: "response.create" });
-      const requestBytes = Buffer.byteLength(prepared.encoded, "utf8");
+      // Input is already a normalized JSON array. Reuse its serialization for
+      // the outgoing frame and exact continuation accounting, including UTF-8
+      // and escapes, rather than serializing large tool results twice.
+      const { input: normalizedInput, ...envelope } = prepared.payload;
+      const inputJson = JSON.stringify(normalizedInput);
+      const normalizedInputBytes = Buffer.byteLength(inputJson, "utf8");
+      const envelopeJson = JSON.stringify({ ...envelope, type: "response.create" });
+      prepared.encoded = `${envelopeJson.slice(0, -1)},"input":${inputJson}}`;
+      const requestBytes = Buffer.byteLength(envelopeJson, "utf8") + normalizedInputBytes + 9;
       if (requestBytes > this.options.maxMessageBytes) {
         status = 413;
         outcome = "failed";
         this.sendError(status, { type: "request_too_large", message: "Native Responses request exceeds its byte bound." });
         return true;
       }
-      const normalizedInput = prepared.payload.input;
       const continuing = Boolean(prepared.payload.previous_response_id && previous);
       const knownBaseline = !prepared.payload.previous_response_id || Boolean(previous);
       const input = continuing
@@ -1029,7 +1074,7 @@ class ResponsesWebSocketPeer {
       // Account for each incremental suffix once. Native turns need not
       // repeatedly serialize all previous input to bound their fallback state.
       const inputBytes = (continuing ? previous.inputBytes + previous.outputBytes : 0) +
-        Buffer.byteLength(JSON.stringify(normalizedInput), "utf8");
+        normalizedInputBytes;
       let outputItems = [];
       let outputItemsBytes = 0;
       let continuationOverflow = false;
@@ -1040,7 +1085,7 @@ class ResponsesWebSocketPeer {
           if (value) this.turnState = { value, turnId: metadataTurnId(clientMetadata) };
           return sendSuccessfulResponseHeaders(this, { headers: upstreamHeaders });
         },
-        onEvent: async (event) => {
+        onEvent: async (event, rawJson) => {
           if (event.type === "response.completed" && !validCompletedResponse(event.response)) {
             const error = new Error("Native Responses emitted an invalid completed response.");
             error.code = "local_router_protocol_error";
@@ -1061,7 +1106,7 @@ class ResponsesWebSocketPeer {
             event.type === "response.custom_tool_call_input.delta" ||
             event.type === "response.reasoning_summary_text.delta"
           )) firstTokenMs = Date.now() - startedAt;
-          return this.sendJsonWithBackpressure(event);
+          return this.sendJsonWithBackpressure(event, rawJson);
         },
       });
       status = terminal?.type === "response.completed" ? 200 : Number(terminal?.status) || 502;
@@ -1347,7 +1392,7 @@ class ResponsesWebSocketPeer {
             error.code = "local_router_protocol_error";
             throw error;
           }
-          if (!(await this.sendJsonWithBackpressure(event))) return false;
+          if (!(await this.sendJsonWithBackpressure(event, data))) return false;
           if (event.type === "response.output_item.done" && event.item) {
             const itemBytes = Buffer.byteLength(JSON.stringify(event.item), "utf8");
             if (outputItemsBytes + itemBytes <= this.options.maxContinuationBytes) {

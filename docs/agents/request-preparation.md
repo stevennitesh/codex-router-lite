@@ -5,6 +5,13 @@ compaction call `prepareRoutedRequest`; the result contains the provider payload
 transport choice, search mode, and the namespace context needed to restore the
 response. These values belong to one request and must travel together.
 
+Every external route declares its output ceiling. Explicit output aliases
+(`max_output_tokens`, `max_tokens`, `max_completion_tokens`) are validated at
+front preparation and final provider preparation. Output validation is independent
+of whether a route defines sampling or an implicit output default. Explicit
+reasoning efforts use the registry's advertised vocabulary. Provider-controlled
+Pareto reasoning is removed by its adapter before that validation.
+
 ## Owners
 
 | Concern | Owner |
@@ -50,6 +57,12 @@ when no literal normalization is needed. This shared external preparation applie
 both GLM chat routes, DeepSeek, Pareto, and ordinary functions alongside GLM hosted search;
 native and Switchyard-selected native requests bypass it.
 
+Flattened external function declarations carry the provider schema once, in
+`parameters`. The provider-facing copy omits Codex's `inputSchema`; the original
+native declaration remains unchanged, including the schema used for request-local
+subagent-model constraints and discovery. Both direct Responses endpoints and the
+GLM adapter consume `parameters`.
+
 The pinned LiteLLM adapter preserves these unions beneath an object root on
 the configured custom OpenAI-compatible loopback hop. Offline adapter and schema
 checks prove preservation through local preparation; they do not establish live
@@ -78,6 +91,14 @@ The forwarder calls `prepareOpenRouterRequest` for final payload validation and
 Pareto and endpoint parameter filtering at the external send boundary. This is intentional:
 internal callers can reach the
 forwarder directly, so validation only in the front Router would be bypassable.
+
+For completed request bodies above 1 MiB, the forwarder yields before parsing and
+before serialization. The front Router also yields between external preparation
+and serialization when the decoded body exceeds 1 MiB, including compressed and
+chunked callers. This lets concurrent loopback requests progress between large
+synchronous JSON stages. Each hop rechecks caller cancellation after yielding;
+authentication, final payload validation, and endpoint restrictions still precede
+the external send. Smaller requests do not incur these scheduling turns.
 
 ## Design decisions
 

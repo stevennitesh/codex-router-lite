@@ -70,6 +70,24 @@ and limits are listed in its [endpoint guide](agents/openrouter-deepseek.md).
 
 Do not turn on fallback or select an unproved provider to hide an endpoint failure.
 
+### StreamLake returns 429
+
+A 429 alone does not identify whose limit was reached. Inspect a sanitized
+OpenRouter error from the exact endpoint: `error.metadata.limit_source =
+"upstream_provider_shared_pool"` with `provider_name = "StreamLake"` means
+OpenRouter's shared StreamLake capacity refused the request. Check key status
+separately before concluding that the user's credits or key quota are exhausted.
+LiteLLM can omit this metadata from the translated error message.
+
+Restoring shared capacity requires OpenRouter/StreamLake to restore or raise its
+limit. Refreshing the OpenRouter key, reinstalling Router, or changing supported
+tool settings does not repair that cause. A missing `Retry-After` leaves the
+recovery time unknown. Retry later, or explicitly select the existing Together
+route if work must continue; the StreamLake route must retain its exact pin.
+OpenRouter's [provider-key integration](https://openrouter.ai/docs/guides/overview/auth/byok)
+can use a provider account's own limits where that integration is supported;
+verify StreamLake eligibility and capacity before treating BYOK as a resolution.
+
 ## Pareto fails
 
 Confirm the selected slug and exact Unbiased endpoint. Follow the

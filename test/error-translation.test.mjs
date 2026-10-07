@@ -56,3 +56,18 @@ test('authenticated forwarder validation keeps only recognized safe local errors
   assert.equal(unknown.error.code, '400');
   assert.match(unknown.error.message, /provider detail/);
 });
+
+test('authenticated output and effort rejections retain their actionable codes', () => {
+  for (const code of ['unsupported_output_limit', 'unsupported_reasoning_effort']) {
+    const bodyText = JSON.stringify({error: {code, message: 'synthetic private provider detail'}});
+    const translated = translateGatewayError({status: 400, bodyText, localForwarderError: true,
+      modelName: 'synthetic model', providerName: 'synthetic provider'});
+    assert.equal(translated.error.code, code);
+    assert.equal(translated.error.type, 'invalid_request_error');
+    assert.equal(translated.error.message.includes('synthetic private provider detail'), false);
+    assert.equal(gatewayErrorStatus({status: 400, bodyText, localForwarderError: true}), 400);
+    const untrusted = translateGatewayError({status: 400, bodyText, localForwarderError: false,
+      modelName: 'synthetic model', providerName: 'synthetic provider'});
+    assert.equal(untrusted.error.code, '400');
+  }
+});

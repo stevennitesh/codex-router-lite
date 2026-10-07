@@ -54,10 +54,10 @@ test("LiteLLM reasoning object is canonicalized without changing scalar compatib
 
     const existing = prepareOpenRouterRequest({
       model: route.gatewayModel,
-      reasoning: { effort: "medium" },
+      reasoning: { effort: "low" },
       reasoning_effort: { effort: "high", summary: "auto" },
     });
-    assert.deepEqual(existing.reasoning, { effort: "medium" });
+    assert.deepEqual(existing.reasoning, { effort: "low" });
     assert.equal(Object.hasOwn(existing, "reasoning_effort"), false);
 
     const scalar = prepareOpenRouterRequest({

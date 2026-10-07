@@ -40,7 +40,8 @@ test("object union branches retain every mode, required field, and duplicate pro
         const final = prepareOpenRouterRequest(prepared.payload);
         assert.equal(prepared.transport, hosted || route.requestProfile !== "glm-5.3-flash" ? "responses" : "chat");
         assert.deepEqual(final.tools[0].parameters, { ...original[0].tools[0].inputSchema, type: "object" });
-        assert.equal(final.tools[0].inputSchema, schema);
+        assert.equal(Object.hasOwn(final.tools[0], "inputSchema"), false);
+        assert.equal(tools[0].tools[0].inputSchema, schema);
         assert.equal(final.tools[1].parameters, ordinary);
         assert.equal(final.tools[0].parameters[keyword][0].properties.mode.const, "create");
         assert.deepEqual(final.tools[0].parameters[keyword][1].properties.mode.enum, ["update"]);
@@ -117,7 +118,10 @@ test("plain, nested function, client tool-search, and discovered declarations sh
     ] }, route);
     const discovered = prepareOpenRouterRequest(discovery.payload).tools.filter(tool => tool.name !== "tool_search");
     assert.equal(discovered.length, 2);
-    for (const tool of discovered) assert.deepEqual(tool.parameters, expected);
+    for (const tool of discovered) {
+      assert.deepEqual(tool.parameters, expected);
+      assert.equal(Object.hasOwn(tool, "inputSchema"), false);
+    }
     const args = JSON.stringify(legalCalls[1]);
     const restored = rewriteNamespaceFunctionCall({ type: "response.output_item.done", item: { type: "function_call", name: "discovered__action", call_id: "update", arguments: args } }, buildNamespaceLookups(discovery.namespaces));
     assert.deepEqual(restored.item, { type: "function_call", namespace: "discovered", name: "action", call_id: "update", arguments: args });

@@ -6,10 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
-import { CHECKED_IN_MODELS, MODEL_BY_SLUG, validateRoutedEffort } from "../src/routed-models.mjs";
+import { CHECKED_IN_MODELS, MODEL_BY_SLUG, OPENROUTER_MODELS, validateRoutedEffort } from "../src/routed-models.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { openPort } from "./port-pool.mjs";
-import { launch, ready, stop } from "./router-fixture.mjs";
+import { launch, ready, stop, responseJson } from "./router-fixture.mjs";
 
 const slug = "openrouter/glm-5.3-flash-streamlake";
 
@@ -82,5 +82,63 @@ test("Router diagnoses a persisted invalid child effort before its provider hop"
     assert.equal(captured[1].reasoning.effort,MODEL_BY_SLUG.get(slug).defaultEffort);
   } finally {
     await stop(router); await new Promise(resolve=>hop.close(resolve)); rmSync(state,{recursive:true,force:true});
+  }
+});
+
+test("ordinary Router and internal forwarder reject unsupported route settings before dispatch", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "router-settings-wire-"));
+  const captured = [];
+  const provider = http.createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    captured.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    responseJson(response, {id: "synthetic-settings-response", object: "response", status: "completed", output: [
+      {id: "synthetic-settings-message", type: "message", role: "assistant", content: [{type: "output_text", text: "ok"}]},
+    ]});
+  });
+  await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
+  const [routerPort, apiPort] = await Promise.all([openPort(), openPort()]);
+  const caller = "synthetic-settings-caller-capability-with-sufficient-length";
+  const internal = "synthetic-settings-internal-capability-with-sufficient-length";
+  const providerBase = `http://127.0.0.1:${provider.address().port}/v1`;
+  const env = {CODEX_HOME: state, MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_API_PORT: String(apiPort), CODEX_ROUTER_CALLER_KEY: caller, CODEX_ROUTER_INTERNAL_KEY: internal,
+    CODEX_ROUTER_SHOW_ALL_MODELS: "1", CODEX_ROUTER_QUIET: "1", OPENROUTER_API_KEY: "synthetic-provider-key",
+    OPENROUTER_API_BASE_URL: providerBase, CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${apiPort}/v1`,
+    CODEX_ROUTER_GATEWAY_BASE_URL: providerBase};
+  const api = launch("api-forwarder.mjs", env), router = launch("router.mjs", env);
+  const base = callerBaseUrl(routerPort, caller);
+  const post = (url, payload, headers = {}) => fetch(url, {method: "POST", headers: {"Content-Type": "application/json", ...headers},
+    body: JSON.stringify(payload)});
+  try {
+    await ready(`http://127.0.0.1:${apiPort}/health`, api, {Authorization: `Bearer ${internal}`});
+    await ready(`${base}/models`, router);
+    for (const route of OPENROUTER_MODELS) {
+      const body = {model: route.slug, input: "Synthetic settings validation", stream: false};
+      const invalids = [{payload: {...body, max_output_tokens: route.maxOutputTokens + 1}, code: "unsupported_output_limit"},
+        ...(route.requestProfile === "pareto" ? [] : [{payload: {...body, reasoning: {effort: "medium"}}, code: "unsupported_reasoning_effort"}])];
+      for (const {payload, code} of invalids) {
+        for (const [url, headers] of [[`${base}/responses`, {}],
+          [`http://127.0.0.1:${apiPort}/v1/responses`, {Authorization: `Bearer ${internal}`} ]]) {
+          const rejected = await post(url, payload, headers), result = await rejected.json();
+          assert.equal(rejected.status, 400, JSON.stringify(result));
+          assert.equal(result.error.code, code);
+          assert.equal(captured.length, 0, "invalid settings must not reach any provider");
+        }
+      }
+    }
+    for (const route of OPENROUTER_MODELS) {
+      const response = await post(`${base}/responses`, {model: route.slug, input: "Synthetic supported settings", stream: false,
+        max_output_tokens: 2048, ...(route.requestProfile === "pareto" ? {} : {reasoning: {effort: "low"}})});
+      assert.equal(response.status, 200, await response.text());
+    }
+    assert.equal(captured.length, OPENROUTER_MODELS.length);
+    for (const payload of captured) {
+      assert.equal(payload.max_output_tokens, 2048);
+      if (payload.model !== "unbiased/pareto") assert.equal(payload.reasoning.effort, "low");
+    }
+  } finally {
+    await Promise.all([stop(router), stop(api)]);
+    await new Promise(resolve => provider.close(resolve));
+    rmSync(state, {recursive: true, force: true});
   }
 });

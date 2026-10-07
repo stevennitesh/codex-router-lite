@@ -14,6 +14,7 @@
       "reasoningLevels": [{ "effort": "none", "description": "Provider-controlled; no reasoning-effort parameter" }],
       "contextWindow": 262144,
       "autoCompact": 220000,
+      "maxOutputTokens": 131072,
       "inputModalities": ["text", "image"],
       "supportsToolSearch": true,
       "requestProfile": "pareto",

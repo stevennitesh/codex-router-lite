@@ -527,11 +527,15 @@ test("flattened app tools retain native union constraints under an object root",
   assert.deepEqual(nonObjectRooted, []);
 
   const automationUpdate = tools.find((tool) => tool.name === "mcp__codex_app__automation_update");
+  const nativeAutomationUpdate = CODEX_APP_TOOL_FIXTURE
+    .flatMap((namespace) => namespace.tools ?? [])
+    .find((tool) => tool.name === "automation_update");
   assert.ok(automationUpdate, "automation_update is still relayed");
   assert.equal(automationUpdate.parameters.type, "object");
-  assert.deepEqual(automationUpdate.parameters.oneOf, automationUpdate.inputSchema.oneOf);
+  assert.deepEqual(automationUpdate.parameters.oneOf, nativeAutomationUpdate.inputSchema.oneOf);
+  assert.equal(Object.hasOwn(automationUpdate, "inputSchema"), false);
   assert.ok(
-    Array.isArray(automationUpdate.inputSchema.oneOf),
+    Array.isArray(nativeAutomationUpdate.inputSchema.oneOf),
     "inputSchema keeps the client's native declaration",
   );
 });

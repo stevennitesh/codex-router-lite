@@ -1,4 +1,5 @@
 import http from "node:http";
+import { setImmediate as yieldTurn } from "node:timers/promises";
 
 import {
   applyKeepAliveTimeouts,
@@ -83,8 +84,15 @@ async function handle(request, response) {
     return;
   }
   let payload;
+  let largeBody = false;
   try {
-    payload = prepareOpenRouterRequest(parseJsonObjectRequest(await readRequestBody(request)));
+    const body = await readRequestBody(request);
+    largeBody = body.length > 1024 * 1024;
+    // Separate large JSON stages so unrelated loopback requests can progress.
+    // Small tool turns avoid an extra event-loop turn.
+    if (largeBody) await yieldTurn();
+    if (request.aborted || response.destroyed) return;
+    payload = prepareOpenRouterRequest(parseJsonObjectRequest(body));
   } catch (error) {
     const safe = safeLocalHttpErrorPayload(error);
     if (safe) response.setHeader(FORWARDER_LOCAL_ERROR_HEADER, "1");
@@ -109,6 +117,8 @@ async function handle(request, response) {
     // request's aborted event then never fires; response close owns cancellation
     // during both the wait for provider headers and the response body.
     if (request.aborted || response.destroyed) return;
+    if (largeBody) await yieldTurn();
+    if (abort.signal.aborted || request.aborted || response.destroyed) return;
     let upstream;
     try {
       ({ response: upstream } = await fetchWithRetry(targetFor(request.url), {

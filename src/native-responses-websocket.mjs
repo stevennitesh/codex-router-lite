@@ -115,7 +115,8 @@ export class NativeResponsesWebSocket {
     });
     connection.websocket.addEventListener("message", ({ data }) => {
       if (connection.error) return;
-      if (typeof data !== "string" || Buffer.byteLength(data, "utf8") > this.bounds.maxEventBytes) {
+      const bytes = typeof data === "string" ? Buffer.byteLength(data, "utf8") : Infinity;
+      if (typeof data !== "string" || bytes > this.bounds.maxEventBytes) {
         connection.fail(failure("ERR_RESPONSES_WS_EVENT_TOO_LARGE", "Native Responses event exceeds its bound."));
         connection.socket?.destroy();
         return;
@@ -139,16 +140,15 @@ export class NativeResponsesWebSocket {
         }
         return;
       }
-      const bytes = Buffer.byteLength(data, "utf8");
       connection.queuedBytes += bytes;
       if (connection.queuedBytes > this.bounds.maxEventBytes * 2) {
         connection.fail(failure("ERR_RESPONSES_WS_EVENT_TOO_LARGE", "Native Responses queue exceeds its bound."));
         connection.socket?.destroy();
       } else if (connection.waiting) {
-        connection.waiting.resolve({ event, bytes });
+        connection.waiting.resolve({ event, bytes, rawJson: data });
         connection.waiting = undefined;
       } else {
-        connection.queued.push({ event, bytes });
+        connection.queued.push({ event, bytes, rawJson: data });
         connection.socket?.pause();
       }
     });
@@ -191,7 +191,9 @@ export class NativeResponsesWebSocket {
           connection.waiting = { resolve, reject };
         });
         connection.socket?.pause();
-        const forwarded = await onEvent(next.event);
+        // Keep the parsed event for protocol/state decisions, while the edge
+        // can forward unchanged native JSON without serializing it again.
+        const forwarded = await onEvent(next.event, next.rawJson);
         connection.queuedBytes -= next.bytes;
         if (TERMINALS.has(next.event.type)) {
           connection.responseId = next.event.type === "response.completed" ? next.event.response?.id : undefined;

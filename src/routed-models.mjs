@@ -174,14 +174,17 @@ export function validateOpenRouterRoute(model) {
     throw new Error(`Unsupported OpenRouter request profile: ${model?.requestProfile}`);
   }
   validate(model);
-  if (model.requestProfile !== "pareto") {
-    if (!Number.isInteger(model.defaultMaxOutputTokens) || model.defaultMaxOutputTokens <= 0 ||
-        !Number.isInteger(model.maxOutputTokens) || model.defaultMaxOutputTokens > model.maxOutputTokens ||
-        !Number.isInteger(model.contextWindow) || !Number.isInteger(model.autoCompact) ||
-        model.autoCompact <= 0 || model.contextWindow - model.autoCompact < model.defaultMaxOutputTokens ||
-        model.defaultSampling?.temperature !== 1 || model.defaultSampling?.top_p !== 0.95) {
-      throw new Error("OpenRouter reasoning routes need output limits, compaction headroom, and documented sampling defaults.");
-    }
+  const defaultOutput = model.defaultMaxOutputTokens;
+  if (!Number.isInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0 ||
+      !Number.isInteger(model.contextWindow) || model.contextWindow <= 0 ||
+      !Number.isInteger(model.autoCompact) || model.autoCompact <= 0 || model.autoCompact >= model.contextWindow ||
+      (defaultOutput !== undefined && (!Number.isInteger(defaultOutput) || defaultOutput <= 0 ||
+        defaultOutput > model.maxOutputTokens || model.contextWindow - model.autoCompact < defaultOutput))) {
+    throw new Error("OpenRouter routes need output limits and compaction headroom for any configured output default.");
+  }
+  if (model.requestProfile !== "pareto" &&
+      (defaultOutput === undefined || model.defaultSampling?.temperature !== 1 || model.defaultSampling?.top_p !== 0.95)) {
+    throw new Error("OpenRouter reasoning routes need an output default and documented sampling defaults.");
   }
   return model;
 }

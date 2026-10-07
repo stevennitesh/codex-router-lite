@@ -125,3 +125,93 @@ The maintained behavior lives in [native Codex](../agents/native-codex.md),
 [GLM compatibility](../agents/openrouter-glm.md) and
 [timing diagnostics](../agents/debugging.md). Source verification and local
 measurements do not substitute for an authorized deployment or native route proof.
+
+## Follow-up responsiveness improvements
+
+The next baseline was committed `dd38e572`. Five serving owners changed in the
+working-tree candidate: incremental masked-frame capture and external SSE line
+capture, native input JSON reuse with exact byte accounting, forwarding validated
+native/restored external JSON without another serialization, copied provider
+function schema deduplication, and scheduling yields between large external JSON
+stages. Frame storage grows with actual received bytes; a declared large frame
+alone does not reserve its full size. Protocol, credential, namespace, byte-bound,
+usage, cancellation and backpressure checks remain.
+
+Frozen baseline and candidate modules ran against real loopback sockets with
+synthetic output and independently checked histories, schemas and terminal data.
+Windows Node was v24.13.0. Alternating comparisons retained useful gains:
+
+| Workload / boundary | Baseline | Candidate |
+| --- | ---: | ---: |
+| 4 MiB masked receive, 16 KiB pieces, total CPU | 75.81 ms | 6.47 ms |
+| 4 MiB external SSE line, 16 KiB pieces, CPU | 230.66 ms | 5.59 ms |
+| 4.52 MB native input encoding CPU | 18.32 ms | 10.54 ms |
+| 4 MiB external WebSocket provider-send to completion, fresh 20-pair confirmation | 155.20 ms | 89.62 ms |
+| Four concurrent 8 MiB external requests, median worst Router health RTT per batch | 134.08 ms | 76.67 ms |
+| Same load, forwarder health RTT | 114.84 ms | 49.67 ms |
+
+The final preparation comparison validated 438 complete requests across three
+toolset/history sizes. Copied provider schema removal saved exactly 77,140,
+462,840 and 964,250 bytes per synthetic request. Original native/custom
+declarations, provider parameters and namespace restoration stayed intact.
+Small native WebSocket completion remained about 0.4 ms locally; small differences
+are noise. Receive CPU totals span separate feeds and are not single uninterrupted
+event-loop stalls. Health RTT is a loopback responsiveness measure, not UI paint.
+
+Native large-response socket results were less stable. A separate raw-forwarding
+discriminator held the other improvements fixed, used 30 alternating pairs and
+then reversed process startup and sample order for another 30. Native 4 MiB
+median delivery improved from 51.08 to 41.72 ms and from 53.84 to 45.35 ms.
+p95 and memory comparisons changed direction between runs. Raw forwarding is
+retained for the repeated median and CPU benefit; no consistent native tail,
+peak-memory or cloud latency improvement is claimed.
+
+### More aggressive prototypes and stopping point
+
+- Corked separate frame-header/payload writes worsened native delivery; rejected.
+- Primitive JSON source reuse with `JSON.rawJSON` saved time on artificial
+  escape-heavy strings but regressed ordinary text and mixed code/logs; rejected.
+- External preparation in a persistent worker increased ordinary request and
+  batch completion costs; rejected.
+- A native HTTP parse worker improved four-request 8 MiB Unicode health RTT
+  from 37.58 to 6.69 ms, while batch completion increased from 101.13 to
+  107.24 ms. It added about 5 MiB initial RSS and would require explicit queue,
+  failure, cancellation and package ownership. It does not help the persistent
+  native WebSocket path, and smaller/ASCII workloads gained little; deferred.
+- An auth-document cache could save roughly 0.44 ms per matching call, but adds
+  credential-freshness state for a submillisecond benefit; not introduced.
+- The pinned LiteLLM exhaustion-latch prototype removed repeated finalization,
+  but did not demonstrate a robust whole-path responsiveness gain; no dependency
+  or runtime monkeypatch was adopted.
+
+The loop stops here: ordinary local work is already small, and remaining measured
+candidates either regress representative work or add machinery for narrow stress
+cases. This is a measured stopping decision, not a claim of a global optimum.
+
+### Real provider calls and verification
+
+The candidate passed 12 real GPT 6.1 Sol requests comparing direct Codex backend
+and isolated Router WebSockets, including four prewarms and four produced tool
+continuations. Full isolated Router/forwarder calls then passed two requests each
+for DeepSeek Together, DeepSeek DeepInfra, Pareto and GLM Together, preserving
+actual generated tool identity/arguments and the consumed tool result. GLM used
+the pinned Python gateway. StreamLake returned HTTP 429 on its one call, so its
+continuation was not attempted. These 21 attempted requests used synthetic data;
+20 completed. No failed endpoint was retried or replaced by a fallback.
+
+These are actual integration checks, not a cloud speed comparison or renewed
+installed subagent proof. Native cloud timings varied too much to isolate local
+millisecond overhead. Switchyard classification was not live-tested here.
+
+`npm run verify:codex` passed **493 tests** and current Codex CLI
+0.162.0-alpha.2 compatibility for 17 models. The first sandboxed run could not
+write Git configuration or complete recovery/retirement in disposable fixtures;
+the same unchanged suite passed from the normal Windows user context. No sandbox
+policy or binary was changed. Independent review found no actionable regression,
+with 83 focused tests and 120 baseline/candidate framing comparisons. Serving
+file hashes stayed fixed throughout final review, full verification and live work.
+
+Detailed local scripts, baseline snapshots, hashes and observations are retained
+under ignored `generated/latency-improve-2026-10-07/`. The candidate remains in the
+working tree; installed-runtime replacement and runtime-bound certification are
+separate effects.

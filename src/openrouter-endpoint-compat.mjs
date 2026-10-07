@@ -1,4 +1,5 @@
 import { safeLocalHttpError } from "./http-utils.mjs";
+import { supportedRoutedEfforts } from "./routed-models.mjs";
 
 // Measured endpoint differences apply both before translation and at final send.
 export function prepareOpenRouterEndpointRequest(payload, route) {
@@ -17,11 +18,22 @@ export function prepareOpenRouterEndpointRequest(payload, route) {
       delete next.tool_choice;
     }
   }
-  if (!route.defaultSampling) return next;
-  for (const [key, value] of Object.entries(route.defaultSampling)) {
+  // The primary object wins even when it intentionally omits an effort.
+  const effort = next.reasoning !== undefined
+    ? next.reasoning?.effort
+    : next.reasoning_effort && typeof next.reasoning_effort === "object"
+      ? next.reasoning_effort.effort
+      : next.reasoning_effort;
+  const levels = supportedRoutedEfforts(route);
+  if (effort !== undefined && !levels.includes(effort)) {
+    throw safeLocalHttpError(`${route.displayName} supports reasoning efforts: ${levels.join(", ")}.`, {
+      status: 400, code: "unsupported_reasoning_effort",
+    });
+  }
+  for (const [key, value] of Object.entries(route.defaultSampling || {})) {
     if (next[key] === undefined) next[key] = value;
   }
-  if (next.reasoning === undefined && next.reasoning_effort === undefined) {
+  if (route.defaultSampling && next.reasoning === undefined && next.reasoning_effort === undefined) {
     next.reasoning = { effort: route.defaultEffort };
   }
   const outputFields = ["max_output_tokens", "max_tokens", "max_completion_tokens"];
@@ -33,7 +45,7 @@ export function prepareOpenRouterEndpointRequest(payload, route) {
       });
     }
   }
-  if (!present.length) {
+  if (!present.length && route.defaultMaxOutputTokens !== undefined) {
     // The final payload shape distinguishes translated Chat from direct Responses,
     // including GLM's hosted-search path, which also uses Responses.
     next[Array.isArray(next.messages) ? "max_tokens" : "max_output_tokens"] = route.defaultMaxOutputTokens;

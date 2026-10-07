@@ -60,6 +60,14 @@ backpressure and service drain apply to native WebSocket turns as well as HTTP.
 External routes, substituted native credentials and compaction triggers retain
 the HTTP preparation path.
 
+The WebSocket edge captures masked frames and external SSE lines incrementally,
+with allocation growing only as bytes arrive. Native request input is serialized
+once for both the outgoing JSON and exact continuation byte accounting. Validated
+native events and already restored external events retain their JSON when forwarded;
+parsed events still govern protocol, terminal, metadata and continuation checks.
+Locally generated events use normal serialization. Byte bounds, UTF-8 rejection,
+fragment/control handling and backpressure apply to both forwarding forms.
+
 Native HTTP inspection reuses original JSON bytes or zstd frames when compatibility
 normalization makes no changes. Effort metadata is cached by catalog file identity;
 replacement, rewrite or invalid state invalidates it. Desktop-generation capture

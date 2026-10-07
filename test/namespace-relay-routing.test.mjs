@@ -521,8 +521,9 @@ test("routed request flattens every namespace to the gateway and restores calls 
   assert.deepEqual(toolSearch.parameters.required, ["query"]);
   // The supplied codex_app tool definitions keep their schema.
   const createThread = outgoing.tools.find((tool) => tool.name === "codex_app__create_thread");
-  assert.ok(createThread?.inputSchema, "create_thread schema survives the relay");
-  assert.equal(createThread.inputSchema.type, "object");
+  assert.ok(createThread?.parameters, "create_thread provider schema survives the relay");
+  assert.equal(createThread.parameters.type, "object");
+  assert.equal(Object.hasOwn(createThread, "inputSchema"), false);
   const fetchIssue = outgoing.tools.find(
     (tool) => tool.name === "mcp__codex_apps__github__fetch_issue",
   );

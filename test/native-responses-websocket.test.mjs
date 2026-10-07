@@ -13,8 +13,8 @@ import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
 
-function frame(value) {
-  const body = Buffer.from(JSON.stringify(value));
+function frame(value, rawJson = JSON.stringify(value)) {
+  const body = Buffer.from(rawJson);
   const header = body.length < 126 ? Buffer.from([0x81, body.length]) : Buffer.alloc(4);
   if (body.length >= 126) { header[0] = 0x81; header[1] = 126; header.writeUInt16BE(body.length, 2); }
   return Buffer.concat([header, body]);
@@ -83,7 +83,7 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
           for (const [index, item] of output.entries()) send({ type: "response.output_item.done", output_index: index, item });
           send({ type: "response.completed", response: { id, status: "completed", output, usage: { input_tokens: 7, output_tokens: 2 } } });
         };
-        if (handle) handle({ payload, send, complete, socket, id, prior });
+        if (handle) handle({ payload, send, sendRaw: rawJson => socket.write(frame(undefined, rawJson)), complete, socket, id, prior });
         else complete([]);
       }
     });
@@ -125,6 +125,7 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
     admitRequest: () => { if (!admit) throw new Error("draining"); },
     onPeer: value => { peer = value; },
     maxEventBytes: nativeOptions.maxEventBytes || 1024 * 1024,
+    ...(nativeOptions.maxMessageBytes ? { maxMessageBytes: nativeOptions.maxMessageBytes } : {}),
     maxContinuationBytes: nativeOptions.maxContinuationBytes || 1024 * 1024,
     prepareNativeRequest: async arguments_ => {
       if (prepare && !prepare(arguments_)) return undefined;
@@ -201,6 +202,82 @@ test("native WebSocket passes real prewarming and tool continuation over one cre
   assert.equal(state.results.length, 3);
   assert.ok(state.results.every(result => result.status === 200));
   assert.ok(prewarm.some(event => event.type === "codex.rate_limits"));
+});
+
+test("native validated events preserve raw Unicode, escapes and unknown fields over the actual socket", async t => {
+  const tool = { type: "function_call", id: "fc_raw", call_id: "call_raw", name: "fixture_tool", arguments: '{"text":"漢🙂"}' };
+  let firstRaw;
+  const state = await fixture(t, { handle: ({ payload, sendRaw, complete, id }) => {
+    if (payload.previous_response_id) { complete([]); return; }
+    sendRaw(`{ "type": "response.output_item.done", "output_index": 0, "item": ${JSON.stringify(tool)}, "fixture_unknown": 1e2 }`);
+    firstRaw = `{ "type" : "response.completed", "response": {"id":${JSON.stringify(id)},"status":"completed","output":[${JSON.stringify(tool)}],"fixture":"漢\\uD83D\\uDE42"}, "fixture_unknown": true }`;
+    sendRaw(firstRaw);
+  } });
+  const rawEvents = [];
+  state.client.addEventListener("message", event => rawEvents.push(String(event.data)));
+  const first = await state.exchange({ input: [{ role: "user", content: '漢🙂\\\n"' }] });
+  assert.equal(rawEvents.find(raw => JSON.parse(raw).type === "response.completed"), firstRaw);
+  const produced = first.find(event => event.type === "response.output_item.done").item;
+  assert.deepEqual(produced, tool);
+  const suffix = { type: "function_call_output", call_id: produced.call_id, output: 'result 漢🙂\\\n"' };
+  const next = await state.exchange({ previous_response_id: first.at(-1).response.id, input: [suffix] });
+  assert.equal(next.at(-1).type, "response.completed");
+  assert.deepEqual(state.requests[1].input, [suffix]);
+  assert.equal(state.requests[1].previous_response_id, first.at(-1).response.id);
+});
+
+test("native raw JSON still rejects malformed events and invalid completions without creating a baseline", async t => {
+  for (const raw of ['{malformed}', '{"type":"response.completed","response":{"status":"completed","output":[]}}']) {
+    const state = await fixture(t, { handle: ({ sendRaw }) => sendRaw(raw) });
+    const first = await state.exchange({});
+    assert.equal(first.at(-1).type, "error");
+    assert.equal(first.filter(event => event.type === "response.completed").length, 0);
+    const next = await state.exchange({ previous_response_id: "resp_unproduced", input: [] });
+    assert.equal(next.at(-1).status, 409);
+    assert.equal(state.requests.length, 1);
+  }
+});
+
+test("native UTF-8 serialization keeps exact fallback bounds for initial input and produced tool output", async t => {
+  const input = [{ role: "user", content: '漢🙂\\\n"' }];
+  const tool = { type: "function_call", id: "fc_bytes", call_id: "call_bytes", name: "fixture_tool", arguments: "{}" };
+  const bound = Buffer.byteLength(JSON.stringify(input)) + Buffer.byteLength(JSON.stringify([tool])) + 32;
+  for (const maxContinuationBytes of [bound, bound - 1]) {
+    const state = await fixture(t, { nativeOptions: { maxContinuationBytes }, handle: ({ payload, complete }) => complete(payload.model === "gpt-6.1-sol" ? [tool] : []) });
+    const first = await state.exchange({ input });
+    const suffix = { type: "function_call_output", call_id: first.at(-1).response.output[0].call_id, output: '漢🙂\\\n"' };
+    const next = await state.exchange({ model: "gpt-6-astra", previous_response_id: first.at(-1).response.id, input: [suffix] });
+    if (maxContinuationBytes === bound) {
+      assert.equal(next.at(-1).type, "response.completed");
+      assert.deepEqual(state.requests[1].input, [...input, tool, suffix]);
+      assert.equal(state.requests[1].previous_response_id, undefined);
+    } else {
+      assert.equal(next.at(-1).status, 409);
+      assert.equal(state.requests.length, 1);
+    }
+  }
+});
+
+test("native normalized request byte bounds include envelope and UTF-8 input exactly", async t => {
+  const payload = { model: "gpt-6.1-sol", stream: true, input: [{ role: "user", content: '漢🙂\\\n"' }] };
+  const instructions = "漢🙂".repeat(40);
+  const bound = Buffer.byteLength(JSON.stringify({ ...payload, instructions, type: "response.create" }));
+  for (const maxMessageBytes of [bound, bound - 1]) {
+    const state = await fixture(t, { nativeOptions: { maxMessageBytes }, prepare: ({ payload }) => {
+      payload.instructions = instructions;
+      return true;
+    } });
+    const result = await state.exchange(payload);
+    if (maxMessageBytes === bound) {
+      assert.equal(result.at(-1).type, "response.completed");
+      assert.deepEqual(state.requests[0].input, payload.input);
+      assert.equal(state.requests[0].instructions, instructions);
+    } else {
+      assert.equal(result.at(-1).status, 413);
+      assert.equal(state.requests.length, 0);
+      assert.equal(state.handshakes.length, 0);
+    }
+  }
 });
 
 test("native model changes start a fresh normalized full baseline without a foreign previous ID", async t => {
