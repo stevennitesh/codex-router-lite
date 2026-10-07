@@ -184,6 +184,29 @@ helper or certify desktop elevated command execution. Optional MCP startup warni
 occurred during the CLI run; no MCP server tool was exercised, so this proof makes
 no claim about those servers' health.
 
+## Separate OpenAI Docs MCP startup failure
+
+After route acceptance, the documentation server's startup failure was reproduced
+from both sandboxed and normal Windows contexts. The configured `mcp-remote`
+Node bridge exited while binding `0.0.0.0:4916`, with `listen EACCES`. Windows
+reported an excluded TCP range of 4858 through 4957, containing that port. This
+failure occurred before MCP initialization; a larger startup timeout would not
+make the listener bind.
+
+The public endpoint accepted direct HTTP initialization and tool discovery.
+The [documented native HTTP connection](https://developers.openai.com/learn/docs-mcp)
+then passed actual installed-Codex MCP discovery in an isolated diagnostic
+configuration. After user approval, only the documentation server's bridge
+configuration was replaced with its public HTTP URL, and a protected recovery
+copy was retained. A fresh app-server using the actual user configuration
+discovered all five documentation tools with no discovery error. Readback kept
+the elevated sandbox setting and every unrelated TOML value unchanged.
+
+This repairs the documentation server's local startup mechanism. It is separate
+from the elevated sandbox helper's loaded-file bug, and does not require a Router
+runtime change or a Codex binary replacement. Tool discovery establishes a working
+connection; no model request or documentation-tool invocation was made.
+
 Sources: [official Windows recovery guidance](https://learn.chatgpt.com/docs/windows/windows-sandbox),
 [official sandbox configuration values](https://learn.chatgpt.com/docs/config-file/config-reference),
 [official setup API](https://learn.chatgpt.com/docs/app-server#windows-sandbox-setup-windowssandboxsetupstart),
