@@ -133,6 +133,10 @@ runtime provenance and bounded routing evidence. It reads the supplied records
 and creates a new output file; it does not run models, overwrite evidence, accept
 proof, or change route eligibility.
 
+The native CLI's empty follow-up acknowledgement is verified through the exact
+target and the observed second encrypted handoff and completed child marker.
+Structured acknowledgements must also match the child and report no failure.
+
 Parent and child observations are selected from the declared window. Resuming a
 child afterward does not invalidate the earlier run; incomplete or cancelled
 activity inside the window still fails extraction. Streaming stays pending:

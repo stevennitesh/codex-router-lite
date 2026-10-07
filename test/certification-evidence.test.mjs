@@ -74,6 +74,26 @@ test("a completed window remains extractable after the child is resumed", () => 
   }
 });
 
+test("empty native follow-up acknowledgements require actual same-child delivery", () => {
+  const nativeFixture = () => {
+    const input = fixture(undefined,true);
+    input.parent.find(row => row.payload.call_id === "private-followup" && row.payload.type === "function_call_output").payload.output = "";
+    return input;
+  };
+  assert.equal(extractCertificationEvidence(nativeFixture()).reports[0].draftProof.checks.sameThreadFollowUp.outcome,"pass");
+  for (const mutate of [
+    input => {input.parent = input.parent.filter(row => row.payload.call_id !== "private-followup" || row.payload.type !== "function_call_output");},
+    input => {input.children[0][8].payload.content = [{type:"text",text:"unencrypted"}];},
+    input => {input.children[0][8].timestamp = at(8);},
+    input => {input.children[0][9].payload.content[0].text = "WRONG_SECOND_OK";},
+    input => {input.parent.find(row => row.payload.name === "followup_task").payload.arguments = JSON.stringify({target:"different-child"});},
+    input => {input.parent.find(row => row.payload.call_id === "private-followup" && row.payload.type === "function_call_output").payload.output = "arbitrary acknowledgement";},
+  ]) {
+    const input = nativeFixture(); mutate(input);
+    assert.throws(() => extractCertificationEvidence(input));
+  }
+});
+
 test("failed, cancelled, mismatched and partial windows cannot become proof", () => {
   const mutations = [
     input => {input.run.endedAt = input.run.startedAt;},

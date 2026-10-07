@@ -7,7 +7,7 @@ the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The six current applications record accepted native CLI certification for
-Router `dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d` with Codex
+Router `4ca8bfa6012b6ba3a2057df23361761ce48bbdba` with Codex
 `0.162.0-alpha.2` on Windows app `26.1002.7124.0`, on 2026-10-07.
 The CLI used a session-only MXC sandbox override with workspace-write and
 on-request approval. The persistent app setting remained elevated and the
@@ -24,7 +24,14 @@ and passing collaboration window:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [2026-10-07 certification](../docs/history/2026-10-07-mxc-native-v2-certification.json)
+The [maintenance overhaul renewal](../docs/history/2026-10-07-maintenance-overhaul-certification.json)
+passed all five checks for all six routes. Six separate synthetic requests
+established streamed text and completion on the same deployed generation.
+All 18 native child requests completed with HTTP 200, with output 42, two
+encrypted handoffs and both markers for each child. The additional Switchyard
+tool continuation, image fallback and compaction checks also passed.
+
+The earlier [2026-10-07 certification](../docs/history/2026-10-07-mxc-native-v2-certification.json)
 passed all five checks for all six routes after deployment of the nullable
 tool-search namespace repair. Every child produced real sandboxed output 42,
 received two encrypted handoffs, and returned both markers; all 18 routed

@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Maintenance overhaul deployment and six-route certification, 2026-10-07](2026-10-07-maintenance-overhaul-certification.json)
+
 - [Six-route native CLI certification with scoped MXC, 2026-10-07](2026-10-07-mxc-native-v2-certification.json)
 
 - [Codex sandbox failure, test side effect, and original-helper recovery attempt, 2026-10-07](2026-10-07-codex-sandbox-investigation.md)

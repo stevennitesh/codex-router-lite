@@ -8,58 +8,55 @@
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
+  "testedAt": "2026-10-07T20:42:48.942Z",
   "routerVersion": "0.7.0",
+  "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
   "codexVersion": "codex-cli 0.162.0-alpha.2",
   "executionSurface": "codex-cli",
-  "endpointProvider": "local-switchyard",
+  "runtimeBinding": {
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
+    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"
+  },
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:55.741Z"
+      "observedAt": "2026-10-07T20:39:23.578Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:54.069Z",
+      "observedAt": "2026-10-07T20:42:30.225Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:17:04.767Z"
+      "observedAt": "2026-10-07T20:42:44.881Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:55.737Z"
+      "observedAt": "2026-10-07T20:42:34.172Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:17:08.542Z"
+      "observedAt": "2026-10-07T20:42:48.897Z"
     }
   },
-  "testedAt": "2026-10-07T17:17:11.227Z",
-  "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
-  "runtimeBinding": {
-    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
-    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
-    "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
-    "version": 1,
-    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
-    "deployedAt": "2026-10-07T17:00:27.0107442Z",
-    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
-    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
-    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
-    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
-    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
-  },
-  "evidence": "docs/history/2026-10-07-mxc-native-v2-certification.json",
   "windowsAppVersion": "26.1002.7124.0",
   "windowsSandbox": "mxc",
   "sandboxPolicy": "workspace-write",
   "approvalPolicy": "on-request",
   "persistentWindowsSandbox": "elevated",
-  "persistentConfigurationChanged": false
+  "persistentConfigurationChanged": false,
+  "evidence": "docs/history/2026-10-07-maintenance-overhaul-certification.json"
 }

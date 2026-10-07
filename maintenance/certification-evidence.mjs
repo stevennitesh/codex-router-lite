@@ -136,8 +136,18 @@ export function extractCertificationEvidence({ run, parent, children, routerLog,
     const childTargets = new Set([spawnArgs.task_name,childMeta.agent_path,childMeta.id,spawnResult.agent_id].filter(Boolean));
     const follows = parentItems.filter(row => payload(row).name === "followup_task" && childTargets.has(args(row).target));
     requireEvidence(follows.length === 1 && instant(follows[0].timestamp) >= instant(completions[0].timestamp) && instant(follows[0].timestamp) <= instant(handoffs[1].timestamp), "The same-child follow-up must occur after the first turn completes.");
-    const followResult = JSON.parse(payload(outputFor(follows[0],parentWindow)).output);
-    requireEvidence(followResult.task_name === childMeta.agent_path && followResult.error == null && followResult.isError !== true && followResult.success !== false && !["failed","error","cancelled","aborted"].includes(followResult.status), "The follow-up must successfully return the same child identity.");
+    const followOutput = payload(outputFor(follows[0],parentWindow)).output;
+    // Native CLI followup_task returns an empty acknowledgement. Delivery is
+    // established by its exact target, subsequent encrypted handoff, pinned
+    // second child context and completed marker, all checked here. When a
+    // runtime provides a structured acknowledgement, retain its identity and
+    // failure checks rather than treating arbitrary text as success.
+    if (followOutput !== "") {
+      let followResult;
+      try { followResult = JSON.parse(followOutput); }
+      catch { throw new EvidenceError("The follow-up acknowledgement is neither empty nor valid structured evidence."); }
+      requireEvidence(followResult?.task_name === childMeta.agent_path && followResult.error == null && followResult.isError !== true && followResult.success !== false && !["failed","error","cancelled","aborted"].includes(followResult.status), "The follow-up must successfully return the same child identity.");
+    }
     for (let index = 0; index < 2; index++) {
       requireEvidence(instant(handoffs[index].timestamp) <= instant(finals[index].timestamp) && instant(finals[index].timestamp) <= instant(completions[index].timestamp), "Each marker must follow its handoff and precede its completed turn.");
     }

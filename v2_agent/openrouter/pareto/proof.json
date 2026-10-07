@@ -7,45 +7,45 @@
   "officialSources": [
     "https://openrouter.ai/unbiased/pareto"
   ],
-  "testedAt": "2026-10-07T17:16:39.308Z",
+  "testedAt": "2026-10-07T20:42:13.018Z",
   "routerVersion": "0.7.0",
+  "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
+  "codexVersion": "codex-cli 0.162.0-alpha.2",
+  "executionSurface": "codex-cli",
   "endpointProvider": "unbiased",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:23.679Z"
+      "observedAt": "2026-10-07T20:39:21.731Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:22.501Z",
+      "observedAt": "2026-10-07T20:42:00.139Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:31.336Z"
+      "observedAt": "2026-10-07T20:42:09.928Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:23.703Z"
+      "observedAt": "2026-10-07T20:42:01.335Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T17:16:35.191Z"
+      "observedAt": "2026-10-07T20:42:12.995Z"
     }
   },
-  "codexVersion": "codex-cli 0.162.0-alpha.2",
-  "executionSurface": "codex-cli",
-  "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
-  "evidence": "docs/history/2026-10-07-mxc-native-v2-certification.json",
   "windowsAppVersion": "26.1002.7124.0",
   "windowsSandbox": "mxc",
   "sandboxPolicy": "workspace-write",
   "approvalPolicy": "on-request",
   "persistentWindowsSandbox": "elevated",
-  "persistentConfigurationChanged": false
+  "persistentConfigurationChanged": false,
+  "evidence": "docs/history/2026-10-07-maintenance-overhaul-certification.json"
 }
