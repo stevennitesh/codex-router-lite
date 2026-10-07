@@ -9,52 +9,52 @@
     "https://developers.openai.com/codex"
   ],
   "routerVersion": "0.7.0",
-  "codexVersion": "codex-cli 0.160.0",
+  "codexVersion": "codex-cli 0.160.1",
   "executionSurface": "codex-desktop-native",
   "endpointProvider": "local-switchyard",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:28:15.456Z"
+      "observedAt": "2026-10-07T03:12:18.023Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:49.452Z",
+      "observedAt": "2026-10-07T03:12:16.033Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:28:07.239Z"
+      "observedAt": "2026-10-07T03:12:48.390Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:53.478Z"
+      "observedAt": "2026-10-07T03:12:18.010Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:28:15.421Z"
+      "observedAt": "2026-10-07T03:12:53.233Z"
     }
   },
-  "testedAt": "2026-10-05T20:28:21.455Z",
-  "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+  "testedAt": "2026-10-07T03:13:08.169Z",
+  "routerCommit": "c8fea77e8d84e666fe4efd3d3921f380b019be50",
   "runtimeBinding": {
     "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
     "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
-    "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
+    "routerCommit": "c8fea77e8d84e666fe4efd3d3921f380b019be50",
     "version": 1,
     "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
-    "deployedAt": "2026-10-05T20:22:44.4388226Z",
+    "deployedAt": "2026-10-07T03:10:46.1232665Z",
     "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
     "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
     "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
   },
-  "evidence": "docs/history/2026-10-05-native-v2-certification.json",
-  "windowsAppVersion": "26.930.4958.0"
+  "evidence": "docs/history/2026-10-06-tool-union-native-v2-certification.json",
+  "windowsAppVersion": "26.930.7945.0"
 }

@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Tool union deployment and four-route native certification, 2026-10-06](2026-10-06-tool-union-native-v2-certification.json)
+
 - [Offline tool union preservation investigation, 2026-10-05](2026-10-05-tool-union-preservation.md)
 - [Deployed four-route native certification, 2026-10-05](2026-10-05-native-v2-certification.json)
 - [Switchyard live certification, 2026-10-05](2026-10-05-switchyard-live-certification.json)

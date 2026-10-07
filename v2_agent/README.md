@@ -7,8 +7,8 @@ the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
 The four active applications record accepted native desktop certification for
-Router `2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5` with Codex
-`0.160.0` on Windows app `26.930.4958.0`, on 2026-10-05. Each application records its exact runtime
+Router `c8fea77e8d84e666fe4efd3d3921f380b019be50` with Codex
+`0.160.1` on Windows app `26.930.7945.0`, on 2026-10-06 (local date). Each application records its exact runtime
 and passing native collaboration window:
 
 - accepted: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md)
@@ -17,7 +17,13 @@ and passing native collaboration window:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [2026-10-05 renewal](../docs/history/2026-10-05-native-v2-certification.json)
+The [2026-10-06 renewal](../docs/history/2026-10-06-tool-union-native-v2-certification.json)
+passed all five checks for each route after guarded deployment of the tool schema
+repair. Source CI passed both Windows jobs and the Python dependency audit.
+The three Switchyard requests also crossed from Sol Medium to Luna Max within
+one child session.
+
+The earlier [2026-10-05 renewal](../docs/history/2026-10-05-native-v2-certification.json)
 passed all five checks for each route after guarded deployment. The separate
 [Novita capacity attempt](../docs/history/2026-10-05-novita-capacity-attempt.json)
 failed its second turn; a fresh successful child supplied the accepted proof.

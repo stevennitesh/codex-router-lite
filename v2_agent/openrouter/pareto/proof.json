@@ -7,40 +7,40 @@
   "officialSources": [
     "https://openrouter.ai/unbiased/pareto"
   ],
-  "testedAt": "2026-10-05T20:28:17.051Z",
+  "testedAt": "2026-10-07T03:12:54.278Z",
   "routerVersion": "0.7.0",
   "endpointProvider": "unbiased",
   "checks": {
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:57.972Z"
+      "observedAt": "2026-10-07T03:12:14.483Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:18.637Z",
+      "observedAt": "2026-10-07T03:12:12.700Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:53.013Z"
+      "observedAt": "2026-10-07T03:12:43.277Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:20.322Z"
+      "observedAt": "2026-10-07T03:12:14.515Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-05T20:27:57.982Z"
+      "observedAt": "2026-10-07T03:12:47.304Z"
     }
   },
-  "codexVersion": "codex-cli 0.160.0",
+  "codexVersion": "codex-cli 0.160.1",
   "executionSurface": "codex-desktop-native",
-  "routerCommit": "2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5",
-  "evidence": "docs/history/2026-10-05-native-v2-certification.json",
-  "windowsAppVersion": "26.930.4958.0"
+  "routerCommit": "c8fea77e8d84e666fe4efd3d3921f380b019be50",
+  "evidence": "docs/history/2026-10-06-tool-union-native-v2-certification.json",
+  "windowsAppVersion": "26.930.7945.0"
 }

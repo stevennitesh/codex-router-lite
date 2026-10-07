@@ -1,36 +1,35 @@
 # openrouter/glm-5.3-flash-gmicloud v2 certification
 
-Accepted on 2026-10-05T20:28:12.087Z against deployed Router `2a9ca8ad72d6ae6ede4b1ee7a669f27dd8b817b5`
-(version 0.7.0), codex-cli 0.160.0 and Windows app 26.930.4958.0.
-The native desktop parent spawned generated role `router_openrouter_glm_5_3_flash_gmicloud` with no inherited
-conversation, at its exact `max` effort. This historical proof applies
-only to the recorded runtime and endpoint.
+Accepted on 2026-10-07T03:12:58.625Z against deployed Router
+`c8fea77e8d84e666fe4efd3d3921f380b019be50` (version 0.7.0),
+codex-cli 0.160.1, Windows app 26.930.7945.0.
+The execution surface was native desktop parent-to-child collaboration.
+
+Endpoint: gmicloud; the exact route retained its fail-closed endpoint policy.
 
 ## Evidence
 
-[Native evidence](../../../docs/history/2026-10-05-native-v2-certification.json)
-records the actual parent spawn, two encrypted handoffs in one child rollout,
-`Write-Output (19+23)` producing `42` in the default sandbox, and both markers:
-`GMICLOUD_2A9CA8AD_FIRST_OK`, `GMICLOUD_2A9CA8AD_SECOND_OK`. Tool call/output identities matched. The first child turn completed
-before cleanup and same-child follow-up; both cleanup calls reported completed.
-No active child turn was interrupted.
+[Bounded deployment evidence](../../../docs/history/2026-10-06-tool-union-native-v2-certification.json) records one passing window.
+The child made a native sandboxed tool call computing 19+23 and received exit
+code 0 with output 42. It returned the first marker and then the requested
+second marker after a second encrypted handoff to that same child.
+All three Router requests completed with HTTP 200. Both cleanup calls observed
+already-completed turns; no active turn was cancelled.
 
-All 3 requests in the accepted bounded route window returned
-HTTP 200. Three primary completions establish tool selection, first marker and
-same-child follow-up. Raw session identifiers and ciphertext are omitted.
-
-| Router completion (UTC) | Duration (ms) | Kind | Status |
-| --- | ---: | --- | ---: |
-| 2026-10-05T20:26:17.803Z | 11993 | primary completion | 200 |
-| 2026-10-05T20:27:11.893Z | 7136 | primary completion | 200 |
-| 2026-10-05T20:27:55.332Z | 10799 | primary completion | 200 |
-
-The exact `gmicloud` endpoint remained pinned with fallback disabled.
+| Check | Result |
+| --- | --- |
+| Streaming Responses completion | pass |
+| Actual native tool call and output | pass; 42 |
+| Encrypted parent-to-child relay | pass; two handoffs |
+| First requested marker | pass |
+| Same-child follow-up marker | pass |
 
 ## Limits
 
-Native completed items/turns and successful Router requests establish streamed
-completion; raw SSE was not retained. This is bounded synthetic compatibility
-proof, not a workload soak or comparative classifier evaluation. Credentials,
-capabilities, private task payloads, ciphertext and raw session IDs are excluded.
-Later runtime or route-contract changes require renewed proof.
+This synthetic native desktop window establishes exact-route collaboration.
+It is not a workload soak or exhaustive provider support for every JSON Schema
+keyword. Raw SSE was not retained; successful Router requests and native
+tool and text completions establish streamed completion. The separate offline
+checks establish preservation of union contracts through current request
+preparation and the pinned LiteLLM adapter. Acceptance does not certify later
+runtime changes. No ciphertext or private task payloads are published.
