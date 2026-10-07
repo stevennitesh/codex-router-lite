@@ -1,6 +1,7 @@
 # Codex Windows sandbox investigation, 2026-10-07
 
-Historical investigation evidence. Native certification remains incomplete.
+Historical investigation evidence. Native CLI certification subsequently passed
+with a session-only MXC backend; the elevated backend's loaded-Node defect remains.
 The installed helper is the signed original; the local source patch below is
 not installed or accepted for live use.
 
@@ -149,12 +150,42 @@ it does not accept any route's native collaboration proof.
 The exact source's `ensure_runtime_tree_readable` traverses the whole installed
 Codex runtime tree on refresh, regardless of whether the current command uses
 Node. Thus disabling a CLI's Node MCP server alone cannot avoid a file already
-loaded by the desktop. A signed CLI certification run must also keep the desktop
-closed and avoid starting its configured Node-based MCP servers. The sandbox
+loaded by the desktop. A CLI run using this elevated backend must also keep the
+desktop closed and avoid starting its configured Node-based MCP servers. The sandbox
 and approval policy remain enabled. This is a recorded execution condition;
 the concurrent desktop runtime bug still requires an official signed fix.
 
+## Supported MXC comparison and native CLI acceptance
+
+The installed release also supports `windows.sandbox = "mxc"`. Its exact source
+uses a separate process security environment rather than the elevated helper's
+runtime ACL refresh. A command-only app-server session with this override passed
+at 17:03:20 UTC while the desktop and Node remained running. It returned 42 with
+exit code 0 without a model request or binary replacement.
+
+At 17:05:38 UTC a second scoped probe wrote a canary inside its workspace and
+attempted to overwrite a fresh canary outside it. The outside write raised an
+access-denied exception; independent readback confirmed that canary was unchanged.
+The workspace write succeeded and the command returned 42 with exit code 0.
+The probes removed their own canaries. Network access was enabled by the existing
+workspace policy; these checks make no network-isolation claim.
+
+The user chose to retain the persistent elevated setting and use MXC only for CLI
+certification. A fresh native parent then used that session override, workspace-write,
+and on-request approval. All six authorized exact-route children passed their real
+shell call, two encrypted handoffs, first marker, and same-child continuation;
+all 18 route requests completed with HTTP 200. The
+[accepted evidence](2026-10-07-mxc-native-v2-certification.json) binds this run to
+deployed Router `dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d` and the current
+signed helper. No global configuration or Codex binary was changed.
+
+This establishes native CLI collaboration with MXC. It does not repair the elevated
+helper or certify desktop elevated command execution. Optional MCP startup warnings
+occurred during the CLI run; no MCP server tool was exercised, so this proof makes
+no claim about those servers' health.
+
 Sources: [official Windows recovery guidance](https://learn.chatgpt.com/docs/windows/windows-sandbox),
+[official sandbox configuration values](https://learn.chatgpt.com/docs/config-file/config-reference),
 [official setup API](https://learn.chatgpt.com/docs/app-server#windows-sandbox-setup-windowssandboxsetupstart),
 and the locally inspected official source at
 [`08a287137b1e11bf3566d53d6820b82177019f29`](https://github.com/openai/codex/tree/08a287137b1e11bf3566d53d6820b82177019f29/codex-rs/windows-sandbox-rs).

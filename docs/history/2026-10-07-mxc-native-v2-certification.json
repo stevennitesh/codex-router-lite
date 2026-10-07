@@ -1,0 +1,595 @@
+{
+  "version": 1,
+  "historical": true,
+  "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
+  "routerVersion": "0.7.0",
+  "codexVersion": "codex-cli 0.162.0-alpha.2",
+  "windowsAppVersion": "26.1002.7124.0",
+  "executionSurface": "codex-cli",
+  "windowsSandbox": "mxc",
+  "approvalPolicy": "on-request",
+  "sandboxPolicy": "workspace-write",
+  "persistentWindowsSandbox": "elevated",
+  "persistentConfigurationChanged": false,
+  "signedHelper": {
+    "sha256": "ab7b6f92a7fc6cf75230ff1ef212d1fdc3c242391b77e6491b0daba274174480",
+    "signatureStatus": "Valid",
+    "replaced": false
+  },
+  "runtimeBinding": {
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
+    "version": 1,
+    "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+    "deployedAt": "2026-10-07T17:00:27.0107442Z",
+    "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b",
+    "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+    "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968"
+  },
+  "runtimeHashesVerified": true,
+  "reports": [
+    {
+      "slug": "openrouter/glm-5.3-flash-streamlake",
+      "role": "router_openrouter_glm_5_3_flash_streamlake",
+      "effort": "max",
+      "startedAt": "2026-10-07T17:13:31.203Z",
+      "endedAt": "2026-10-07T17:14:08.382Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:13:31.980Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:13:59.505Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:13:43.789Z",
+        "outputAt": "2026-10-07T17:13:45.136Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": false
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:13:47.868Z",
+          "marker": "OPENROUTER_GLM_5_3_FLASH_STREAMLAKE_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:14:05.704Z",
+          "marker": "OPENROUTER_GLM_5_3_FLASH_STREAMLAKE_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:13:47.951Z",
+        "2026-10-07T17:14:05.729Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:13:51.095Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:13:59.457Z",
+        "secondCleanupAt": "2026-10-07T17:14:08.382Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:13:43.811Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "status": 200,
+          "totalMs": 11806
+        },
+        {
+          "at": "2026-10-07T17:13:47.842Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "status": 200,
+          "totalMs": 2607
+        },
+        {
+          "at": "2026-10-07T17:14:05.696Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "status": 200,
+          "totalMs": 6162
+        }
+      ],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/glm-5.3-flash-together",
+      "role": "router_openrouter_glm_5_3_flash_together",
+      "effort": "max",
+      "startedAt": "2026-10-07T17:14:14.769Z",
+      "endedAt": "2026-10-07T17:14:43.173Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:14:15.624Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:14:36.417Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:14:24.229Z",
+        "outputAt": "2026-10-07T17:14:25.528Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": false
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:14:26.675Z",
+          "marker": "OPENROUTER_GLM_5_3_FLASH_TOGETHER_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:14:40.870Z",
+          "marker": "OPENROUTER_GLM_5_3_FLASH_TOGETHER_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:14:26.776Z",
+        "2026-10-07T17:14:40.897Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:14:29.939Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:14:36.371Z",
+        "secondCleanupAt": "2026-10-07T17:14:43.173Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:14:24.211Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "status": 200,
+          "totalMs": 8564
+        },
+        {
+          "at": "2026-10-07T17:14:26.645Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "status": 200,
+          "totalMs": 1013
+        },
+        {
+          "at": "2026-10-07T17:14:40.864Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "status": 200,
+          "totalMs": 4425
+        }
+      ],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/deepseek-v4.1-flash-together",
+      "role": "router_openrouter_deepseek_v4_1_flash_together",
+      "effort": "high",
+      "startedAt": "2026-10-07T17:14:50.734Z",
+      "endedAt": "2026-10-07T17:15:20.240Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:14:51.527Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:15:05.823Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:14:55.785Z",
+        "outputAt": "2026-10-07T17:14:57.074Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": false
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:14:57.616Z",
+          "marker": "OPENROUTER_DEEPSEEK_V4_1_FLASH_TOGETHER_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:15:16.257Z",
+          "marker": "OPENROUTER_DEEPSEEK_V4_1_FLASH_TOGETHER_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:14:57.682Z",
+        "2026-10-07T17:15:16.278Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:15:01.708Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:15:05.771Z",
+        "secondCleanupAt": "2026-10-07T17:15:20.240Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:14:55.799Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "status": 200,
+          "totalMs": 4226
+        },
+        {
+          "at": "2026-10-07T17:14:57.589Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "status": 200,
+          "totalMs": 421
+        },
+        {
+          "at": "2026-10-07T17:15:16.250Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "status": 200,
+          "totalMs": 10405
+        }
+      ],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/deepseek-v4.1-flash-deepinfra",
+      "role": "router_openrouter_deepseek_v4_1_flash_deepinfra",
+      "effort": "high",
+      "startedAt": "2026-10-07T17:15:26.204Z",
+      "endedAt": "2026-10-07T17:16:02.644Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:15:26.951Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:15:52.305Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:15:37.004Z",
+        "outputAt": "2026-10-07T17:15:38.278Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": false
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:15:43.616Z",
+          "marker": "OPENROUTER_DEEPSEEK_V4_1_FLASH_DEEPINFRA_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:15:59.118Z",
+          "marker": "OPENROUTER_DEEPSEEK_V4_1_FLASH_DEEPINFRA_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:15:43.696Z",
+        "2026-10-07T17:15:59.141Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:15:47.948Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:15:52.258Z",
+        "secondCleanupAt": "2026-10-07T17:16:02.644Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:15:37.014Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "status": 200,
+          "totalMs": 10041
+        },
+        {
+          "at": "2026-10-07T17:15:43.593Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "status": 200,
+          "totalMs": 5234
+        },
+        {
+          "at": "2026-10-07T17:15:59.110Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "status": 200,
+          "totalMs": 6784
+        }
+      ],
+      "accepted": true
+    },
+    {
+      "slug": "openrouter/pareto",
+      "role": "router_openrouter_pareto",
+      "effort": "none",
+      "startedAt": "2026-10-07T17:16:15.572Z",
+      "endedAt": "2026-10-07T17:16:39.308Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:16:16.363Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:16:31.336Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:16:21.254Z",
+        "outputAt": "2026-10-07T17:16:22.501Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": false
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:16:23.703Z",
+          "marker": "OPENROUTER_PARETO_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:16:35.191Z",
+          "marker": "OPENROUTER_PARETO_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:16:23.778Z",
+        "2026-10-07T17:16:35.219Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:16:26.120Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:16:31.288Z",
+        "secondCleanupAt": "2026-10-07T17:16:39.308Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:16:21.274Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 4887
+        },
+        {
+          "at": "2026-10-07T17:16:23.679Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 1089
+        },
+        {
+          "at": "2026-10-07T17:16:35.185Z",
+          "model": "openrouter/pareto",
+          "status": 200,
+          "totalMs": 3817
+        }
+      ],
+      "accepted": true
+    },
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "effort": "medium",
+      "startedAt": "2026-10-07T17:16:46.088Z",
+      "endedAt": "2026-10-07T17:17:11.227Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "encryptedHandoffs": [
+        {
+          "at": "2026-10-07T17:16:46.932Z",
+          "contentType": "encrypted_content"
+        },
+        {
+          "at": "2026-10-07T17:17:04.767Z",
+          "contentType": "encrypted_content"
+        }
+      ],
+      "tool": {
+        "at": "2026-10-07T17:16:52.754Z",
+        "outputAt": "2026-10-07T17:16:54.069Z",
+        "name": "exec_command",
+        "command": "Write-Output (19+23)",
+        "output": "42",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true,
+        "wrappedByFunctionsExec": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-07T17:16:55.737Z",
+          "marker": "SWITCHYARD_AUTO_DEDD_MXC_FIRST_OK"
+        },
+        {
+          "at": "2026-10-07T17:17:08.542Z",
+          "marker": "SWITCHYARD_AUTO_DEDD_MXC_SECOND_OK"
+        }
+      ],
+      "taskCompletions": [
+        "2026-10-07T17:16:55.816Z",
+        "2026-10-07T17:17:08.583Z"
+      ],
+      "lifecycle": {
+        "firstCleanupAt": "2026-10-07T17:16:59.962Z",
+        "firstCleanupPreviousStatus": "completed",
+        "followupAt": "2026-10-07T17:17:04.712Z",
+        "secondCleanupAt": "2026-10-07T17:17:11.227Z",
+        "secondCleanupPreviousStatus": "completed",
+        "activeTurnCancelled": false
+      },
+      "timings": [
+        {
+          "at": "2026-10-07T17:16:52.791Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 5836
+        },
+        {
+          "at": "2026-10-07T17:16:55.741Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 1588
+        },
+        {
+          "at": "2026-10-07T17:17:08.564Z",
+          "model": "switchyard/auto",
+          "status": 200,
+          "totalMs": 3771
+        }
+      ],
+      "accepted": true
+    }
+  ],
+  "switchyardRouting": {
+    "sameSessionObserved": true,
+    "selectedModels": [
+      "switchyard/sol-medium",
+      "switchyard/luna-max"
+    ],
+    "records": [
+      {
+        "at": "2026-10-07T17:16:52.786Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 24980,
+        "cachedTokens": 6912,
+        "completionTokens": 80
+      },
+      {
+        "at": "2026-10-07T17:16:55.738Z",
+        "model": "switchyard/sol-medium",
+        "promptTokens": 25119,
+        "cachedTokens": 24832,
+        "completionTokens": 15
+      },
+      {
+        "at": "2026-10-07T17:17:08.561Z",
+        "model": "switchyard/luna-max",
+        "promptTokens": 25192,
+        "cachedTokens": 6912,
+        "completionTokens": 29
+      }
+    ],
+    "classifierDecisions": [
+      {
+        "at": "2026-10-07T17:16:49.741700Z",
+        "source": "type_safe_classifier",
+        "providerModel": "typesafe/jev-1.13-20260917",
+        "finalTarget": "sol_medium",
+        "confidence": 0.5866666666666666,
+        "threshold": 0.35,
+        "decisionLatencyMs": 307,
+        "probabilities": {
+          "luna_max": 0.29,
+          "sol_medium": 0.69,
+          "astra_medium": 0,
+          "astra_xhigh": 0.02
+        }
+      },
+      {
+        "at": "2026-10-07T17:17:06.906803Z",
+        "source": "type_safe_classifier",
+        "providerModel": "typesafe/jev-1.13-20260917",
+        "finalTarget": "luna_max",
+        "confidence": 0.9644444444444445,
+        "threshold": 0.35,
+        "decisionLatencyMs": 189,
+        "probabilities": {
+          "luna_max": 0.9733333333333334,
+          "sol_medium": 0.026666666666666672,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        }
+      }
+    ],
+    "failures": {
+      "http": 0,
+      "nonEmptyServerErrors": 0,
+      "judgeUnavailable": 0,
+      "parseErrors": 0,
+      "fallback": 0
+    }
+  },
+  "limits": [
+    "Synthetic native CLI collaboration under a session-only MXC backend; desktop elevated sandbox is not certified by this run.",
+    "The elevated helper still has a loaded-Node ACL conflict; no local helper replacement is installed.",
+    "No MCP server tool was called; startup warnings do not certify MCP server health.",
+    "Raw SSE and ciphertext are not published; HTTP 200 timings and native tool/text completions establish streamed completion.",
+    "This does not establish exhaustive provider schema support or long-running workload reliability."
+  ],
+  "validation": {
+    "tests": {
+      "passed": 377,
+      "failed": 0
+    },
+    "sourceCheck": {
+      "passed": true,
+      "applications": 9
+    },
+    "catalog": {
+      "codexVersion": "codex-cli 0.162.0-alpha.2",
+      "passed": true,
+      "publishedRoutedV2Agents": 6
+    },
+    "persistentConfiguration": {
+      "windowsSandbox": "elevated",
+      "sandboxPolicy": "workspace-write",
+      "approvalPolicy": "on-request",
+      "verified": true
+    },
+    "sourceCi": {
+      "headSha": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
+      "conclusion": "success",
+      "url": "https://github.com/stevennitesh/codex-router-lite/actions/runs/37656632951",
+      "jobs": [
+        "windows (22.19.0)",
+        "windows (24.x)",
+        "python-audit"
+      ]
+    },
+    "deployment": {
+      "independentWorker": true,
+      "completed": true,
+      "succeeded": true,
+      "retainedRecovery": true
+    },
+    "doctor": {
+      "allChecksOk": true
+    }
+  }
+}

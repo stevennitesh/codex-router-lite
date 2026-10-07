@@ -3,26 +3,50 @@
   "provider": "openrouter",
   "model": "z-ai/glm-5.3-flash",
   "slug": "openrouter/glm-5.3-flash-together",
-  "status": "draft",
-  "officialSources": [],
-  "testedAt": "",
-  "routerVersion": "",
+  "status": "accepted",
+  "officialSources": [
+    "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
+    "https://openrouter.ai/docs/guides/routing/provider-selection"
+  ],
+  "testedAt": "2026-10-07T17:14:43.173Z",
+  "routerVersion": "0.7.0",
   "endpointProvider": "together",
   "checks": {
     "streaming": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-07T17:14:26.645Z"
     },
     "toolCall": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-07T17:14:25.528Z",
+      "mode": "auto"
     },
     "encryptedRelay": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-07T17:14:36.417Z"
     },
     "markerReturn": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-07T17:14:26.675Z"
     },
     "sameThreadFollowUp": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-07T17:14:40.870Z"
     }
-  }
+  },
+  "routerCommit": "dedd5cf9baa112f7eabd8aeacdb0ae95ea48905d",
+  "codexVersion": "codex-cli 0.162.0-alpha.2",
+  "windowsAppVersion": "26.1002.7124.0",
+  "executionSurface": "codex-cli",
+  "windowsSandbox": "mxc",
+  "sandboxPolicy": "workspace-write",
+  "approvalPolicy": "on-request",
+  "persistentWindowsSandbox": "elevated",
+  "persistentConfigurationChanged": false,
+  "evidence": "docs/history/2026-10-07-mxc-native-v2-certification.json"
 }

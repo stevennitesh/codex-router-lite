@@ -77,6 +77,14 @@ an empty disposable fixture, recreate it from the normal user context; preserve
 nonempty workspaces and diagnose their permissions separately. Do not reset ACLs
 or weaken sandbox policy as part of certification.
 
+When the installed Windows release supports MXC, a CLI proof can select it for
+that session with `--config 'windows.sandbox="mxc"'`, keeping workspace-write
+and the approval mechanism enabled. Verify real command execution and workspace
+write boundaries before relying on a different backend. Record the selected
+backend in the proof; a scoped CLI result does not certify the desktop's
+elevated backend. Do not change the user's persistent sandbox setting merely
+to run certification.
+
 
 Use a native Codex parent task whose current collaboration schema offers the
 candidate's generated `router_<provider>_<model>` agent type. Refresh the

@@ -44,8 +44,8 @@ function assertGlmContract(slug, endpoint, multiAgentVersion) {
 }
 
 test("OpenRouter GLM routes own their exact endpoint contracts", () => {
-  assertGlmContract("openrouter/glm-5.3-flash-streamlake", "streamlake/fp8", "v1");
-  assertGlmContract("openrouter/glm-5.3-flash-together", "together", "v1");
+  assertGlmContract("openrouter/glm-5.3-flash-streamlake", "streamlake/fp8", "v2");
+  assertGlmContract("openrouter/glm-5.3-flash-together", "together", "v2");
 });
 
 test("OpenRouter GLM accepts any one explicitly selected endpoint", () => {
