@@ -33,6 +33,34 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readScript = (name) => readFileSync(path.join(root, name), "utf8");
 
+test("checkout deployment preserves a real drain CLI failure in Windows PowerShell", { skip: process.platform !== "win32" }, () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-drain-error-"));
+  const script = path.join(directory, "diagnose.ps1");
+  writeFileSync(script, `
+$ErrorActionPreference = "Stop"
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $env:DRAIN_TEST_ROOT "maintenance/deploy-switchyard-candidate.ps1"), [ref]$tokens, [ref]$errors)
+$function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-NodeJson" }, $true)
+Invoke-Expression $function.Extent.Text
+try {
+  Invoke-NodeJson $env:DRAIN_TEST_ROOT @((Join-Path $env:DRAIN_TEST_ROOT "src/service-drain.mjs"), "prepare", "--wait-for-idle-ms", "invalid", "--json-errors") "Router admission drain"
+  exit 0
+} catch {
+  Write-Output $_.Exception.Message
+  exit 17
+}
+`);
+  try {
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {
+      encoding: "utf8", env: { ...process.env, DRAIN_TEST_ROOT: root },
+    });
+    assert.equal(result.status, 17, result.stderr);
+    assert.match(result.stdout, /Router admission drain failed.*Idle wait must be an integer/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("the Windows operational scripts parse in Windows PowerShell", { skip: process.platform !== "win32" }, () => {
   const targets = [
     "install.ps1",

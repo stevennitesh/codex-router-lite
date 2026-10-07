@@ -195,7 +195,14 @@ function Ensure-RollbackRouterCheckout {
 
 function Invoke-NodeJson([string]$Root, [string[]]$Arguments, [string]$Label) {
   $output = (& node @Arguments | Out-String)
-  if ($LASTEXITCODE -ne 0) { throw "$Label failed from $Root." }
+  if ($LASTEXITCODE -ne 0) {
+    $failure = $null
+    try { $failure = $output | ConvertFrom-Json } catch { }
+    if ($failure -and $failure.error -and $failure.error.message) {
+      throw "$Label failed from ${Root}: $($failure.error.code) $($failure.error.message)"
+    }
+    throw "$Label failed from $Root."
+  }
   try { return $output | ConvertFrom-Json } catch { throw "$Label returned invalid JSON." }
 }
 
