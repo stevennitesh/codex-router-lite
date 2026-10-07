@@ -183,12 +183,12 @@ its metadata, files, rollback checkout, ancestry, and singular ownership before
 activation; a repair deployment failure restores the original pre-candidate
 generation. Do not delete the retained rollback to make a second deployment pass.
 
-Before the guarded drain, the worker waits up to 60 seconds for authenticated
-idle status while inference admission stays open. It then drains once; new work
-arriving after the idle observation remains subject to that drain. Persistent
-activity or an unverified status aborts with the specific refusal reason before
-activation, without another stop or rollback. After activation begins, recovery
-stops the verified live checkout
+The worker starts one authenticated drain with a 90-second limit. New inference
+is paused while already-admitted requests settle. An outstanding Switchyard
+workflow still defers replacement. A timeout restores admission; drain refusals
+report the reason and active request/workflow counts and abort before activation
+without another stop or rollback. After activation begins, recovery stops the
+verified live checkout
 and refuses to overwrite runtime files if that stop fails. The retained backup
 is preserved on incomplete recovery, and the result reports both failures.
 Installation also refuses to transfer ownership away from a live process in

@@ -2,10 +2,10 @@ $admissionPrepared = $false
 try {
   Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
   # A refused drain has no activation effects and must never enter rollback.
-  Write-Host "Waiting up to 60 seconds for idle Router activity before the guarded drain."
+  Write-Host "Draining admitted Router requests with a 90-second limit."
   $drain = Invoke-NodeJson $repoRoot @(
     (Join-Path $repoRoot "src\service-drain.mjs"), "prepare",
-    "--wait-for-idle-ms", "60000", "--json-errors"
+    "--timeout-ms", "90000", "--json-errors"
   ) "Router admission drain"
   $admissionPrepared = $drain.status -eq "drained"
   # Canonicalize the managed block while the known-good service is still up.

@@ -43,7 +43,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $env:DRAIN_
 $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-NodeJson" }, $true)
 Invoke-Expression $function.Extent.Text
 try {
-  Invoke-NodeJson $env:DRAIN_TEST_ROOT @((Join-Path $env:DRAIN_TEST_ROOT "src/service-drain.mjs"), "prepare", "--wait-for-idle-ms", "invalid", "--json-errors") "Router admission drain"
+  Invoke-NodeJson $env:DRAIN_TEST_ROOT @((Join-Path $env:DRAIN_TEST_ROOT "src/service-drain.mjs"), "prepare", "--timeout-ms", "invalid", "--json-errors") "Router admission drain"
   exit 0
 } catch {
   Write-Output $_.Exception.Message
@@ -52,10 +52,14 @@ try {
 `);
   try {
     const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {
-      encoding: "utf8", env: { ...process.env, DRAIN_TEST_ROOT: root },
+      encoding: "utf8", env: {
+        ...process.env, DRAIN_TEST_ROOT: root,
+        CODEX_ROUTER_STATE_DIR: directory, MODEL_ROUTER_STATE_DIR: directory,
+        CODEX_ROUTER_PORT: "9", MODEL_ROUTER_PORT: "9",
+      },
     });
     assert.equal(result.status, 17, result.stderr);
-    assert.match(result.stdout, /Router admission drain failed.*Idle wait must be an integer/u);
+    assert.match(result.stdout, /Router admission drain failed.*Drain timeout must be an integer/u);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
