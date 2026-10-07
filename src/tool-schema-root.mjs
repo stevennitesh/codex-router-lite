@@ -1,13 +1,6 @@
-// The OpenRouter GLM route receives Codex tools through LiteLLM's Chat
-// Completions adapter, which requires an object parameter root. Codex's
-// `codex_app__automation_update` instead uses a root `oneOf` across its modes.
-//
-// Flattening keeps the tool callable: the branches are merged into one object
-// so the model still sees every field it may send, with `required` narrowed to
-// the fields every branch demands (usually none, because the branches are
-// alternatives). Validation of which combination is legal stays where it
-// already was -- the Codex app executes these calls and checks its own
-// arguments.
+// Provider-facing tool parameters use an object root when the declaration
+// supplies object evidence. Keep union constraints intact: merging branches
+// would lose legal modes, branch requirements, and differing property shapes.
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19,7 +12,7 @@ const MAX_DEPTH = 8;
 // fragment decoding happens before `~1` / `~0` token decoding. Object own keys
 // and canonical in-range array indexes are traversable; malformed fragments,
 // anchors such as `#node`, and unsupported targets remain unresolved. The
-// cycle repair deliberately does not infer semantics for `$dynamicRef` or
+// eligibility check deliberately does not infer semantics for `$dynamicRef` or
 // `$recursiveRef` -- only an actual `$ref` crosses this boundary.
 function resolveRef(ref, root) {
   if (typeof ref !== "string" || !ref.startsWith("#")) return undefined;
@@ -51,10 +44,15 @@ function resolveRef(ref, root) {
   return isPlainObject(node) ? node : undefined;
 }
 
-// Collect object branches from a bounded root union. Local references are
-// resolved only far enough to preserve the fields exposed by that union.
+// Collect object evidence from a bounded root union. References are inspected
+// only for eligibility; the provider schema retains their original spelling.
 function objectBranches(schema, root, seen, depth = 0) {
   if (!isPlainObject(schema) || depth > MAX_DEPTH) return [];
+  const types = declaredTypes(schema);
+  if (schema.type !== undefined && !types.includes("object")) return [];
+  if (types.includes("object") || (schema.type === undefined && isPlainObject(schema.properties))) {
+    return [schema];
+  }
   if (typeof schema.$ref === "string") {
     if (seen.has(schema.$ref)) return [];
     seen.add(schema.$ref);
@@ -67,7 +65,6 @@ function objectBranches(schema, root, seen, depth = 0) {
       branches.push(...objectBranches(branch, root, seen, depth + 1));
     }
   }
-  if (schema.type === "object" || isPlainObject(schema.properties)) branches.push(schema);
   return branches;
 }
 
@@ -77,62 +74,12 @@ function hasRootUnion(schema) {
   return UNION_KEYWORDS.some((keyword) => Array.isArray(schema[keyword]));
 }
 
-// A union keyword or nullable type is not the plain object root required by
-// the GLM tool bridge. The properties fallback covers schemas with no type.
+// An explicit object type can coexist with union constraints. The properties
+// fallback covers object schemas that omit type.
 export function hasObjectRoot(schema) {
   if (!isPlainObject(schema)) return false;
-  if (hasRootUnion(schema)) return false;
   if (schema.type !== undefined) return schema.type === "object";
   return isPlainObject(schema.properties);
-}
-
-// Returns `schema` unchanged when its root is already a plain object, so the
-// common case costs one type check and no copy.
-function objectRootToolSchema(schema) {
-  if (!isPlainObject(schema)) return { type: "object", properties: {} };
-  if (hasObjectRoot(schema)) return schema;
-
-  const branches = objectBranches(schema, schema, new Set());
-  const properties = {};
-  // Root-level properties apply to every branch, so they win over branch
-  // definitions of the same name.
-  if (isPlainObject(schema.properties)) Object.assign(properties, schema.properties);
-  for (const branch of branches) {
-    if (!isPlainObject(branch.properties)) continue;
-    for (const [name, property] of Object.entries(branch.properties)) {
-      if (!(name in properties)) properties[name] = property;
-    }
-  }
-  // Required only where every branch requires it: a field the view branch
-  // demands is optional for the delete branch, and marking it required would
-  // reject calls the app accepts. Root-level requirements are separate -- they
-  // bind every branch, so they survive whatever the branches disagree about.
-  const rootRequired = Array.isArray(schema.required) ? schema.required : [];
-  const unionBranches = branches.filter((branch) => branch !== schema);
-  const shared = unionBranches.length
-    ? unionBranches
-        .map((branch) => (Array.isArray(branch.required) ? branch.required : []))
-        .reduce((left, right) => left.filter((name) => right.includes(name)))
-    : [];
-  const required = [...new Set([...rootRequired, ...shared])];
-
-  return {
-    ...(schema.$schema ? { $schema: schema.$schema } : {}),
-    ...(schema.$defs ? { $defs: schema.$defs } : {}),
-    ...(schema.definitions ? { definitions: schema.definitions } : {}),
-    ...(typeof schema.description === "string" ? { description: schema.description } : {}),
-    type: "object",
-    properties,
-    ...(required.length ? { required } : {}),
-    // The merged object cannot describe which branch a call belongs to, so it
-    // must not reject fields that only one branch declares. A root that was
-    // rewritten without merging anything -- a nullable `type: ["object","null"]`
-    // becoming plain `"object"` -- has no such ambiguity, so it keeps whatever
-    // it declared rather than being quietly opened up.
-    ...(unionBranches.length || schema.additionalProperties === undefined
-      ? { additionalProperties: true }
-      : { additionalProperties: schema.additionalProperties }),
-  };
 }
 
 // Drop enum and const values that contradict their declared type. Coercing a
@@ -232,12 +179,9 @@ function normalizeSchemaLiterals(schema, depth = 0) {
 }
 
 // The one provider-facing normalization: literals aligned with the type their
-// own node declares, and a union root merged into a plain object. Returns
-// `schema` unchanged when neither applies.
-//
-// Keep this narrower than objectRootToolSchema alone. An unusual server schema
-// must not be replaced with an unconstrained object unless its root is the
-// known union or nullable-object shape.
+// own node declares, and object evidence made explicit at a union root. Returns
+// `schema` unchanged when neither applies. Unresolved or primitive-only unions
+// remain unchanged; this does not claim provider support for nonobject arguments.
 // A root `type` array that offers "object" among others -- the nullable object
 // root. Narrow on purpose: an array that cannot be an object at all is left
 // alone, because collapsing it would replace a real schema with one accepting
@@ -249,9 +193,12 @@ function hasNullableObjectRoot(schema) {
 export function providerToolSchema(schema) {
   const normalized = normalizeSchemaLiterals(schema);
   if (!isPlainObject(normalized)) return normalized;
-  // The repair preserves properties, required fields, and
-  // additionalProperties. Only the unusable root-level null alternative is
-  // dropped.
-  if (!hasRootUnion(normalized) && !hasNullableObjectRoot(normalized)) return normalized;
-  return objectRootToolSchema(normalized);
+  if (normalized.type === "object") return normalized;
+  // Narrowing the root type can make previously compatible root literals
+  // contradictory. Apply the same literal policy to the resulting schema.
+  if (hasNullableObjectRoot(normalized)) return normalizeSchemaLiterals({ ...normalized, type: "object" });
+  if (normalized.type !== undefined || !hasRootUnion(normalized)) return normalized;
+  return objectBranches(normalized, normalized, new Set()).length
+    ? normalizeSchemaLiterals({ ...normalized, type: "object" })
+    : normalized;
 }

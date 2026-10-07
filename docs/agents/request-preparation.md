@@ -31,6 +31,29 @@ surface, resolves discovery history, translates names and choices, applies the
 selected route's custom-history and parameter rules, and chooses the transport.
 Response restoration uses the returned namespace context, not a rebuilt map.
 
+`src/tool-schema-root.mjs` owns provider-facing schema normalization for current
+and discovered function declarations, including client tool search. It aligns
+contradictory enum/const literals with their own declared type and makes eligible
+object union roots explicit with `type: "object"`. Root `anyOf`, `oneOf`, and
+`allOf` constraints, local references, definitions, branch discriminators,
+required fields, and property shapes remain intact. It does not merge branches
+or reconstruct arguments. The caller's original declaration remains unchanged.
+
+Object eligibility comes from an object type, a type array containing object,
+or properties on an untyped schema, including through bounded local `$ref`
+inspection. Explicit root types excluding object, primitive-only unions, and
+unresolved unions remain unchanged. Existing nullable-object root narrowing
+retains other constraints and aligns root enum/const literals with the resulting
+object type after promotion or narrowing. Ordinary object schemas retain identity
+when no literal normalization is needed. This shared external preparation applies to
+both GLM chat routes, Pareto, and ordinary functions alongside GLM hosted search;
+native and Switchyard-selected native requests bypass it.
+
+The pinned LiteLLM adapter preserves these unions beneath an object root on
+the configured custom OpenAI-compatible loopback hop. Offline adapter and schema
+checks prove preservation through local preparation; they do not establish live
+endpoint acceptance or model argument reliability.
+
 For example, one call returns a single request-local bundle:
 
 ```js

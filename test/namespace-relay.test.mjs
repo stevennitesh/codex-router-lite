@@ -484,22 +484,23 @@ test("response transform drops a spawn-agent model override not offered by the t
   });
 });
 
-test("every flattened app tool reaches the provider with an object root", async () => {
+test("flattened app tools retain native union constraints under an object root", async () => {
   const { hasObjectRoot } = await import("../src/tool-schema-root.mjs");
 
   const { tools } = flattenNamespaceTools(CODEX_APP_TOOL_FIXTURE);
 
-  const unionRooted = tools
+  const nonObjectRooted = tools
     .filter((tool) => tool.parameters && !hasObjectRoot(tool.parameters))
     .map((tool) => tool.name);
-  assert.deepEqual(unionRooted, [], "a union root fails the whole request, not the one tool");
+  assert.deepEqual(nonObjectRooted, []);
 
   const automationUpdate = tools.find((tool) => tool.name === "mcp__codex_app__automation_update");
   assert.ok(automationUpdate, "automation_update is still relayed");
   assert.equal(automationUpdate.parameters.type, "object");
+  assert.deepEqual(automationUpdate.parameters.oneOf, automationUpdate.inputSchema.oneOf);
   assert.ok(
     Array.isArray(automationUpdate.inputSchema.oneOf),
-    "inputSchema keeps the client's native union for responses-native routes",
+    "inputSchema keeps the client's native declaration",
   );
 });
 

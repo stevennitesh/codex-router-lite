@@ -909,12 +909,10 @@ export function flattenNamespaceTools(
         // client's native representation and responses-native routes retain
         // it untouched.
         //
-        // The GLM bridge rejects the whole request over a union-rooted
-        // parameter schema or an enum literal that contradicts its type. Codex's
-        // `codex_app__automation_update` ships a `oneOf` root, so a session that
-        // never touches automations still dies on its first message. Normalize
-        // only the provider-facing copy; `inputSchema` stays exactly as the
-        // client sent it.
+        // Make eligible object roots explicit while retaining union branches
+        // and normalize literals that contradict their declared type. Only
+        // the provider-facing copy changes; `inputSchema` stays exactly as
+        // the client sent it.
         flattened.push(
           flattenNamespaceChild(
             tool.name,
