@@ -14,6 +14,7 @@ response. These values belong to one request and must travel together.
 | Preparation order, ordinary/compaction differences | `src/routed-request.mjs` |
 | Tool identity, discovery, custom call conversion, streaming restoration | `src/namespace-relay.mjs` |
 | Pareto parameter restrictions | `src/pareto-compat.mjs` |
+| Endpoint tool-choice restrictions, sampling and output defaults | `src/openrouter-endpoint-compat.mjs` |
 | Hosted-search conversion and bounds | `src/openrouter-hosted-search.mjs` and `src/search-capability.mjs` |
 | Native authentication, encrypted handoff resolution, HTTP lifecycle, retries | `src/router.mjs` and its existing transport helpers |
 | Final outbound payload and endpoint policy | `src/openrouter-request.mjs` |
@@ -46,7 +47,7 @@ unresolved unions remain unchanged. Existing nullable-object root narrowing
 retains other constraints and aligns root enum/const literals with the resulting
 object type after promotion or narrowing. Ordinary object schemas retain identity
 when no literal normalization is needed. This shared external preparation applies to
-both GLM chat routes, Pareto, and ordinary functions alongside GLM hosted search;
+both GLM chat routes, DeepSeek, Pareto, and ordinary functions alongside GLM hosted search;
 native and Switchyard-selected native requests bypass it.
 
 The pinned LiteLLM adapter preserves these unions beneath an object root on
@@ -70,11 +71,11 @@ no tools or tool choice, removes previous-response references, appends the sourc
 catalog and summary instructions, and uses non-streaming Responses. GLM reasoning
 replay belongs to the pinned LiteLLM bridge described in the
 [GLM guide](openrouter-glm.md); the preparer has no separate reasoning-carry shim.
-Pareto's custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
+Pareto and DeepSeek's custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
 search uses the direct Responses hop; ordinary GLM requests still use LiteLLM.
 
 The forwarder calls `prepareOpenRouterRequest` for final payload validation and
-Pareto parameter filtering at the external send boundary. This is intentional:
+Pareto and endpoint parameter filtering at the external send boundary. This is intentional:
 internal callers can reach the
 forwarder directly, so validation only in the front Router would be bypassable.
 

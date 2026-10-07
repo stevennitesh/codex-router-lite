@@ -12,6 +12,7 @@ const GLM_53_FLASH_CODEX = `You are Codex running on GLM-5.3-Flash through OpenR
 
 const PROFILES = Object.freeze({
   "glm-5.3-flash-codex": GLM_53_FLASH_CODEX,
+  "deepseek-v4.1-flash-codex": GLM_53_FLASH_CODEX.replace("GLM-5.3-Flash", "DeepSeek V4.1 Flash"),
 });
 
 export function instructionProfile(name) {

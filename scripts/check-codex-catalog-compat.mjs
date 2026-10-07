@@ -54,8 +54,10 @@ function runCodex(binary, args, options = {}) {
 }
 
 const routed = [
-  "openrouter/glm-5.3-flash",
-  "openrouter/glm-5.3-flash-gmicloud",
+  "openrouter/glm-5.3-flash-streamlake",
+  "openrouter/glm-5.3-flash-together",
+  "openrouter/deepseek-v4.1-flash-together",
+  "openrouter/deepseek-v4.1-flash-deepinfra",
   "openrouter/pareto",
   "switchyard/auto",
 ].map((slug) => {
@@ -275,7 +277,7 @@ try {
     `${source.version} did not preserve Switchyard native compaction`);
   process.stdout.write(
     `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
-      "GLM, Pareto, and Switchyard compatibility passed\n",
+      "GLM, DeepSeek, Pareto, and Switchyard compatibility passed\n",
   );
 } finally {
   rmSync(temporaryHome, { recursive: true, force: true });

@@ -65,9 +65,9 @@ The service wrapper uses `/live` during launch. Verify full `/health` and Doctor
 for deployment acceptance; frontend liveness alone does not establish that the
 selected providers are ready.
 
-The model picker lists Novita and GMICloud as separate GLM routes. Selecting
-one changes only that request. Router never falls back from one endpoint to the
-other.
+The model picker labels StreamLake and Together as separate GLM routes, and
+Together and DeepInfra as separate DeepSeek routes. Selecting one changes only
+that request. Router never falls back to another endpoint.
 
 Pareto is pinned to the exact Unbiased endpoint. It has automatic tool selection
 and provider-controlled reasoning. See its [endpoint contract](agents/pareto.md)

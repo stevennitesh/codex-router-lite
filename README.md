@@ -52,13 +52,18 @@ adding another API model requires compatibility work and testing.
 
 | Model ID | Model and provider | Details |
 | --- | --- | --- |
-| `openrouter/glm-5.3-flash` | GLM-5.3-Flash through OpenRouter / Novita | [Compatibility](docs/agents/openrouter-glm.md) |
-| `openrouter/glm-5.3-flash-gmicloud` | GLM-5.3-Flash through OpenRouter / GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
+| `openrouter/glm-5.3-flash-streamlake` | GLM-5.3-Flash through OpenRouter / StreamLake FP8 | [Compatibility](docs/agents/openrouter-glm.md) |
+| `openrouter/glm-5.3-flash-together` | GLM-5.3-Flash through OpenRouter / Together | [Compatibility](docs/agents/openrouter-glm.md) |
+| `openrouter/deepseek-v4.1-flash-together` | DeepSeek V4.1 Flash through OpenRouter / Together | [Compatibility](docs/agents/openrouter-deepseek.md) |
+| `openrouter/deepseek-v4.1-flash-deepinfra` | DeepSeek V4.1 Flash through OpenRouter / DeepInfra FP8 | [Compatibility](docs/agents/openrouter-deepseek.md) |
 | `openrouter/pareto` | Pareto through OpenRouter / Unbiased | [Compatibility](docs/agents/pareto.md) |
 | `switchyard/auto` | Automatically chooses a native GPT model and reasoning effort for the task | [Routing policy](config/switchyard/README.md#routing-policy); separate local build required |
 
 GLM supports web search through its provider and lets you choose a reasoning
-effort level. Pareto decides when to call available tools; its provider controls
+effort level. StreamLake supports automatic tool selection; Together also supports
+forced tool calls. DeepSeek uses direct Responses with low/high/max reasoning and
+function and custom tools; these routes do not provide hosted web search.
+Pareto decides when to call available tools; its provider controls
 reasoning, and this route has no provider web search. Connected app tools depend
 on what Codex makes available to the chat.
 

@@ -28,6 +28,8 @@ const PRE_WORKFLOW_V2_ROUTES = new Set();
 // without making it an active registry certification or grandfathering a new
 // model that replaced it.
 const RETIRED_ACCEPTED_ROUTES = new Map([
+  [JSON.stringify(["openrouter/glm-5.3-flash", "openrouter", "z-ai/glm-5.3-flash"]), "novita"],
+  [JSON.stringify(["openrouter/glm-5.3-flash-gmicloud", "openrouter", "z-ai/glm-5.3-flash"]), "gmicloud"],
   [JSON.stringify(["openrouter/union-alpha", "openrouter", "stealth/union-alpha"]), "stealth"],
 ]);
 

@@ -7,8 +7,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // One explicit registration per retained model. Catalog data stays in JSON;
 // the independent product-boundary check still controls the allowed file set.
 const MODEL_REGISTRATIONS = [
-  ["openrouter/glm-5.3-flash", "glm-5.3-flash"],
-  ["openrouter/glm-5.3-flash-gmicloud", "glm-5.3-flash"],
+  ["openrouter/glm-5.3-flash-streamlake", "glm-5.3-flash"],
+  ["openrouter/glm-5.3-flash-together", "glm-5.3-flash"],
+  ["openrouter/deepseek-v4.1-flash-together", "deepseek-v4.1-flash"],
+  ["openrouter/deepseek-v4.1-flash-deepinfra", "deepseek-v4.1-flash"],
   ["openrouter/pareto", "pareto"],
   ["switchyard/auto", "switchyard-native"],
 ];
@@ -19,6 +21,7 @@ const EXPECTED_MODELS = new Set(MODEL_REGISTRATIONS.map(([slug]) => slug));
 const EXPECTED_REQUEST_PROFILES = new Map(MODEL_REGISTRATIONS.map(([slug, profile]) => [slug, profile]));
 const REQUEST_PROFILES = new Map([
   ["glm-5.3-flash", { transport: "chat", validate: validateGlmRoute }],
+  ["deepseek-v4.1-flash", { transport: "responses", validate: validateDeepSeekRoute }],
   ["pareto", { transport: "responses", validate: validateParetoRoute }],
   ["switchyard-native", { transport: "native" }],
 ]);
@@ -27,7 +30,7 @@ export function routedTransport(route) {
   if (!transport) throw new Error(`Unknown routed request profile: ${route?.requestProfile}`);
   return transport;
 }
-const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*$/u;
+const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/u;
 
 function load(relativePath) {
   return JSON.parse(readFileSync(path.join(ROOT, relativePath), "utf8"));
@@ -141,11 +144,26 @@ function validateGlmRoute(model) {
   if (
     !endpointCompatibility ||
     typeof endpointCompatibility.dropParallelToolCalls !== "boolean" ||
-    Object.keys(endpointCompatibility).some((key) => key !== "dropParallelToolCalls")
+    (endpointCompatibility.autoToolChoiceOnly !== undefined && typeof endpointCompatibility.autoToolChoiceOnly !== "boolean") ||
+    Object.keys(endpointCompatibility).some((key) => !["dropParallelToolCalls", "autoToolChoiceOnly"].includes(key))
   ) {
     throw new Error(
       "OpenRouter GLM-5.3-Flash must declare its selected endpoint compatibility flags.",
     );
+  }
+  return model;
+}
+
+function validateDeepSeekRoute(model) {
+  const policy = model.openRouterProviderPolicy;
+  if (model.upstreamModel !== "deepseek/deepseek-v4.1-flash" ||
+      policy?.only?.length !== 1 || policy?.order?.length !== 1 ||
+      policy.only[0] !== policy.order[0] || !OPENROUTER_PROVIDER_ID.test(String(policy.only[0])) ||
+      policy.allow_fallbacks !== false || policy.require_parameters !== true ||
+      model.openRouterEndpointCompatibility?.dropParallelToolCalls !== true ||
+      Object.keys(model.openRouterEndpointCompatibility).some(key => key !== "dropParallelToolCalls") ||
+      model.searchTool !== undefined || model.supportsSearchHistory === true) {
+    throw new Error("DeepSeek V4.1 Flash must select one exact endpoint with fallback disabled, parameter support required, and no hosted-search claim.");
   }
   return model;
 }
@@ -155,7 +173,17 @@ export function validateOpenRouterRoute(model) {
   if (model?.provider !== "openrouter" || !validate) {
     throw new Error(`Unsupported OpenRouter request profile: ${model?.requestProfile}`);
   }
-  return validate(model);
+  validate(model);
+  if (model.requestProfile !== "pareto") {
+    if (!Number.isInteger(model.defaultMaxOutputTokens) || model.defaultMaxOutputTokens <= 0 ||
+        !Number.isInteger(model.maxOutputTokens) || model.defaultMaxOutputTokens > model.maxOutputTokens ||
+        !Number.isInteger(model.contextWindow) || !Number.isInteger(model.autoCompact) ||
+        model.autoCompact <= 0 || model.contextWindow - model.autoCompact < model.defaultMaxOutputTokens ||
+        model.defaultSampling?.temperature !== 1 || model.defaultSampling?.top_p !== 0.95) {
+      throw new Error("OpenRouter reasoning routes need output limits, compaction headroom, and documented sampling defaults.");
+    }
+  }
+  return model;
 }
 
 validateRoutedRegistry(providerRecords, modelRecords);
@@ -168,7 +196,7 @@ export const MODEL_BY_SLUG = new Map(MODELS.map((model) => [model.slug, model]))
 export const MODEL_BY_GATEWAY_ID = new Map(MODELS.map((model) => [model.gatewayModel, model]));
 export const OPENROUTER_MODELS = Object.freeze(MODELS.filter((model) => model.provider === "openrouter"));
 // Canonical identity for health and the legacy upstream-model alias, never a fallback.
-export const CANONICAL_OPENROUTER_ROUTE = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+export const CANONICAL_OPENROUTER_ROUTE = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 
 export function providerForModel(model) {
   const provider = PROVIDERS.get(model?.provider);

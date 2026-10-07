@@ -59,7 +59,7 @@ test("Router withholds data-only empty success after reasoning and recovers repl
       attempts = 0;
       const response = await fetch(`${routerBase(port)}/responses`, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "Synthetic data-only completion test", stream: true }) });
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input: "Synthetic data-only completion test", stream: true }) });
       const wire = await response.text();
       assert.equal(response.status, 200, wire);
       if (mode === "reasoning") {
@@ -116,7 +116,7 @@ test("large routed prompts get a scaled pre-content budget before the first SSE 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         input: "x".repeat(40_000),
         stream: true,
       }),
@@ -131,7 +131,7 @@ test("large routed prompts get a scaled pre-content budget before the first SSE 
   }
 });
 
-for (const model of ["switchyard/auto", "openrouter/glm-5.3-flash"]) {
+for (const model of ["switchyard/auto", "openrouter/glm-5.3-flash-streamlake"]) {
   test(`${model} empty-completion recovery preserves its no-redirect boundary`, async () => {
     const stateDir = mkdtempSync(path.join(os.tmpdir(), "retry-boundary-"));
     const switchyardRoot = path.join(stateDir, "switchyard");
@@ -222,7 +222,7 @@ test("GLM keeps colliding tool identities distinct in declarations, forced choic
       let history = [{ role: "user", content: "Synthetic tool identity test" }];
       for (const tool_choice of [choice, { type: "allowed_tools", mode: "required", tools: [choice] }]) {
         const response = await fetch(`${routerBase(port)}/responses`, { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "openrouter/glm-5.3-flash", tools, tool_choice, input: history, stream: false }) });
+          body: JSON.stringify({ model: "openrouter/glm-5.3-flash-together", tools, tool_choice, input: history, stream: false }) });
         assert.equal(response.status, 200);
         const [call] = (await response.json()).output;
         assert.equal(call.name, choice.name); assert.equal(call.namespace, choice.namespace);
@@ -450,7 +450,7 @@ test("GLM restores preflattened harness tools after a fragmented prelude and lab
     await waitFor(`${routerBase(port)}/models`, router);
     const response = await fetch(`${routerBase(port)}/responses`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", stream: true, input: "lookup",
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", stream: true, input: "lookup",
         tools: [{ type: "function", name: "harness__lookup", parameters: { type: "object" } }],
         client_metadata: { "x-codex-turn-metadata": JSON.stringify({ tool_namespaces_info: {
           harness: { name: "harness", functions: { lookup: { name: "lookup", direct: true, source: { kind: "harness" } } } },
@@ -688,8 +688,8 @@ test("router preserves native auth and isolates every external route", async () 
     assert.equal(nativeRequests.at(-1).body.prompt, "native image test");
 
     for (const [model, gatewayModel] of [
-      ["openrouter/glm-5.3-flash", "openrouter-glm-5-3-flash"],
-      ["openrouter/glm-5.3-flash-gmicloud", "openrouter-glm-5-3-flash-gmicloud"],
+      ["openrouter/glm-5.3-flash-streamlake", "openrouter-glm-5-3-flash-streamlake"],
+      ["openrouter/glm-5.3-flash-together", "openrouter-glm-5-3-flash-together"],
     ]) {
       const response = await fetch(`${routerBase(routerPort)}/responses`, {
         method: "POST",
@@ -829,7 +829,7 @@ test("oversized Router requests retain safe 413 diagnostics without provider tra
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         input: `${marker}:${"x".repeat(512)}`,
       }),
     });
@@ -873,7 +873,7 @@ test("native agent relay selection is deterministic and fails before unavailable
     json(response, 200, { output: [] });
   });
   const requestBody = (token) => JSON.stringify({
-    model: "openrouter/glm-5.3-flash",
+    model: "openrouter/glm-5.3-flash-streamlake",
     input: [{
       type: "agent_message",
       content: [
@@ -1097,7 +1097,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         stream: false,
         input: [
           {
@@ -1138,7 +1138,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         stream: false,
         input: [
           {
@@ -1165,7 +1165,7 @@ test("router relays encrypted Codex subagent payloads before external routing", 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         stream: false,
         input: [
           {
@@ -1381,7 +1381,7 @@ test("relay extraction requires one completed final call and caches only success
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openrouter/glm-5.3-flash",
+      model: "openrouter/glm-5.3-flash-streamlake",
       input: [{
         type: "agent_message",
         content: [
@@ -1483,7 +1483,7 @@ test("encrypted payload relay coalesces concurrent waiters when one caller cance
     CODEX_ROUTER_QUIET: "1",
   });
   const body = JSON.stringify({
-    model: "openrouter/glm-5.3-flash",
+    model: "openrouter/glm-5.3-flash-streamlake",
     input: [{
       type: "agent_message",
       content: [
@@ -1562,7 +1562,7 @@ test("router fails closed when an encrypted subagent payload cannot be relayed",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-streamlake",
         input: [
           {
             type: "agent_message",
@@ -1601,7 +1601,7 @@ test("routed 429 errors ignore impossible retry delays and preserve valid guidan
       const response = await fetch(`${routerBase(port)}/responses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "Synthetic rate-limit check", stream: true }),
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input: "Synthetic rate-limit check", stream: true }),
       });
       assert.equal(response.status, 429);
       assert.equal(response.headers.get("retry-after"), retryAfter);
@@ -1645,7 +1645,7 @@ test("rate-limited child handoffs cool down per account without reaching the gat
       const response = await fetch(`${routerBase(routerPort)}/responses`, {
         method: "POST",
         headers: { Authorization: "Bearer test-session", "chatgpt-account-id": account, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: [{
+        body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input: [{
           type: "agent_message", content: [
             { type: "input_text", text: "Message Type: MESSAGE\nPayload:\n" },
             { type: "encrypted_content", encrypted_content: "gAAAAA-rate-limited=" },
@@ -2364,7 +2364,7 @@ test("OpenRouter GLM sends fresh hosted search through the direct Responses hop"
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter/glm-5.3-flash",
+        model: "openrouter/glm-5.3-flash-together",
         stream: false,
         input: [
           {
@@ -2469,7 +2469,7 @@ test("OpenRouter GLM replays completed search history through the ordinary route
     const response = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input }),
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input }),
     });
     assert.equal(response.status, 200);
     assert.equal(requests.length, 1);
@@ -2499,12 +2499,12 @@ test("router repairs malformed OpenRouter GLM-5.3-Flash message envelopes after 
     await bodyJson(request);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const events = [
-      { type: "response.output_item.added", output_index: 0, model: "openrouter-glm-5-3-flash", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "openrouter-glm-5-3-flash", item: { id: "rs_1", type: "reasoning", summary: [] } },
-      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", delta: "ROUTER_OK" },
-      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", text: "ROUTER_OK" },
-      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash", part: { type: "reasoning_text", reasoning: "private reasoning" } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "openrouter-glm-5-3-flash", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
+      { type: "response.output_item.added", output_index: 0, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", summary: [] } },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", delta: "ROUTER_OK" },
+      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", text: "ROUTER_OK" },
+      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", part: { type: "reasoning_text", reasoning: "private reasoning" } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
       { type: "response.completed", response: { id: "resp_1", status: "completed", output: [], usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
     ];
     response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
@@ -2525,7 +2525,7 @@ test("router repairs malformed OpenRouter GLM-5.3-Flash message envelopes after 
     const response = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openrouter/glm-5.3-flash", input: "test", stream: true }),
+      body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input: "test", stream: true }),
     });
     assert.equal(response.status, 200);
     const text = await response.text();

@@ -128,8 +128,10 @@ test("real catalog refresh retries publication and converges optional routes wit
     assert.equal(statSync(mergedPath).mtimeMs, mergedMtime, "unchanged publication is not rewritten");
 
     const routedSlugs = [
-      "openrouter/glm-5.3-flash",
-      "openrouter/glm-5.3-flash-gmicloud",
+      "openrouter/glm-5.3-flash-streamlake",
+      "openrouter/glm-5.3-flash-together",
+      "openrouter/deepseek-v4.1-flash-together",
+      "openrouter/deepseek-v4.1-flash-deepinfra",
       "openrouter/pareto",
     ];
     writeFileSync(

@@ -3,14 +3,15 @@ import {
   flattenNamespacedHistory, flattenNamespacedToolChoice, flattenToolSearchHistory,
   restorePreflattenedToolNamespaces,
 } from "./namespace-relay.mjs";
-import { isParetoRoute, prepareParetoRequest } from "./pareto-compat.mjs";
+import { prepareParetoRequest } from "./pareto-compat.mjs";
 import { routedModelSearchMode, stripUnsupportedHostedSearch } from "./search-capability.mjs";
 import { prepareOpenRouterHostedSearchRequest } from "./openrouter-hosted-search.mjs";
 import { routedTransport } from "./routed-models.mjs";
+import { prepareOpenRouterEndpointRequest } from "./openrouter-endpoint-compat.mjs";
 
 export function routedSearchCompatibility(payload, route) {
   const searchMode = routedModelSearchMode(route);
-  const stripsUnsupportedSearch = route.requestProfile === "glm-5.3-flash" || isParetoRoute(route);
+  const stripsUnsupportedSearch = route.provider === "openrouter";
   return {
     payload: stripsUnsupportedSearch && searchMode === undefined
       ? stripUnsupportedHostedSearch(payload, { model: route.slug }) : payload,
@@ -56,7 +57,7 @@ export function prepareRoutedRequest(payload, route, {
     ? flattenNamespacedHistory(history.input, flat.namespaces) : history.input;
   let tools = history.tools;
   let toolChoice = compaction ? undefined : flattenNamespacedToolChoice(payload.tool_choice, flat.namespaces);
-  if (isParetoRoute(route)) {
+  if (route.provider === "openrouter") {
     const bridged = bridgeCustomTools(tools, input, flat.namespaces, toolChoice, [], { bridgeAll: true });
     tools = bridged.tools;
     input = aliasHistoricalFunctionNames(bridged.input, flat.namespaces);
@@ -73,6 +74,7 @@ export function prepareRoutedRequest(payload, route, {
     prepared.reasoning = { ...(prepared.reasoning || {}), effort: childEffort };
   }
   prepared = prepareParetoRequest(prepared, route);
+  prepared = prepareOpenRouterEndpointRequest(prepared, route);
   if (hostedSearch) prepared = prepareOpenRouterHostedSearchRequest(prepared, route);
   return {
     payload: prepared, namespaces: flat.namespaces,

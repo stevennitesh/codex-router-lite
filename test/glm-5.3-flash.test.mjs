@@ -39,16 +39,17 @@ function assertGlmContract(slug, endpoint, multiAgentVersion) {
   });
   assert.deepEqual(model.openRouterEndpointCompatibility, {
     dropParallelToolCalls: true,
+    ...(endpoint === "streamlake/fp8" ? { autoToolChoiceOnly: true } : {}),
   });
 }
 
 test("OpenRouter GLM routes own their exact endpoint contracts", () => {
-  assertGlmContract("openrouter/glm-5.3-flash", "novita", "v2");
-  assertGlmContract("openrouter/glm-5.3-flash-gmicloud", "gmicloud", "v2");
+  assertGlmContract("openrouter/glm-5.3-flash-streamlake", "streamlake/fp8", "v1");
+  assertGlmContract("openrouter/glm-5.3-flash-together", "together", "v1");
 });
 
 test("OpenRouter GLM accepts any one explicitly selected endpoint", () => {
-  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
   assert.doesNotThrow(() => validateOpenRouterRoute({
     ...model,
     openRouterProviderPolicy: {
@@ -61,7 +62,7 @@ test("OpenRouter GLM accepts any one explicitly selected endpoint", () => {
 });
 
 test("OpenRouter GLM refuses unbounded or ambiguous endpoint routing", () => {
-  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+  const model = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
   for (const openRouterProviderPolicy of [
     { ...model.openRouterProviderPolicy, allow_fallbacks: true },
     { ...model.openRouterProviderPolicy, only: ["novita", "another-provider"] },

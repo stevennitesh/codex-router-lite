@@ -18,8 +18,10 @@ const requiredEntrypoints = [
   "src/doctor.mjs",
 ];
 const retainedConfig = [
-  "config/openrouter/glm-5.3-flash-gmicloud.json",
-  "config/openrouter/glm-5.3-flash.json",
+  "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
+  "config/openrouter/deepseek-v4.1-flash-together.json",
+  "config/openrouter/glm-5.3-flash-streamlake.json",
+  "config/openrouter/glm-5.3-flash-together.json",
   "config/openrouter/openrouter.json",
   "config/openrouter/pareto.json",
   "config/switchyard/auto.json",
@@ -70,7 +72,7 @@ for (const provider of ["openrouter", "switchyard"]) {
     if (name.endsWith(".json")) actualConfig.push(`config/${provider}/${name}`);
   }
 }
-assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must contain only GLM, Pareto, and Switchyard");
+assert.deepEqual(actualConfig.sort(), retainedConfig, "routed JSON config must contain only GLM, DeepSeek, Pareto, and Switchyard");
 
 const packageManifest = JSON.parse(
   readFileSync(path.join(root, "maintenance", "windows-package.json"), "utf8"),

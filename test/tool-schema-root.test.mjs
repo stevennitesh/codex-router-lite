@@ -15,7 +15,7 @@ function modeSchema(keyword = "oneOf") {
   ] };
 }
 
-const routes = ["openrouter/glm-5.3-flash", "openrouter/glm-5.3-flash-gmicloud", "openrouter/pareto"];
+const routes = ["openrouter/glm-5.3-flash-streamlake", "openrouter/glm-5.3-flash-together", "openrouter/deepseek-v4.1-flash-together", "openrouter/deepseek-v4.1-flash-deepinfra", "openrouter/pareto"];
 const legalCalls = [
   { mode: "create", name: "new", payload: "text" },
   { mode: "update", id: "x", payload: { enabled: true } },
@@ -34,11 +34,11 @@ test("object union branches retain every mode, required field, and duplicate pro
     const original = structuredClone(tools);
     for (const slug of routes) {
       const route = MODEL_BY_SLUG.get(slug);
-      for (const hosted of route.requestProfile === "pareto" ? [false] : [false, true]) {
+      for (const hosted of route.searchTool ? [false, true] : [false]) {
         const payload = { input: [], tools: hosted ? [...tools, { type: "web_search" }] : tools };
         const prepared = prepareRoutedRequest(payload, route);
         const final = prepareOpenRouterRequest(prepared.payload);
-        assert.equal(prepared.transport, hosted || route.requestProfile === "pareto" ? "responses" : "chat");
+        assert.equal(prepared.transport, hosted || route.requestProfile !== "glm-5.3-flash" ? "responses" : "chat");
         assert.deepEqual(final.tools[0].parameters, { ...original[0].tools[0].inputSchema, type: "object" });
         assert.equal(final.tools[0].inputSchema, schema);
         assert.equal(final.tools[1].parameters, ordinary);

@@ -48,7 +48,7 @@ async function stop(child) {
   await new Promise((resolve) => child.once("exit", resolve));
 }
 
-test("checked-in routed config contains only GLM, Pareto, and Switchyard", () => {
+test("checked-in routed config contains only GLM, DeepSeek, Pareto, and Switchyard", () => {
   const jsonFiles = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -59,8 +59,10 @@ test("checked-in routed config contains only GLM, Pareto, and Switchyard", () =>
   };
   walk(path.join(root, "config"));
   assert.deepEqual(jsonFiles.sort(), [
-    "config/openrouter/glm-5.3-flash-gmicloud.json",
-    "config/openrouter/glm-5.3-flash.json",
+    "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
+    "config/openrouter/deepseek-v4.1-flash-together.json",
+    "config/openrouter/glm-5.3-flash-streamlake.json",
+    "config/openrouter/glm-5.3-flash-together.json",
     "config/openrouter/openrouter.json",
     "config/openrouter/pareto.json",
     "config/switchyard/auto.json",
@@ -70,10 +72,10 @@ test("checked-in routed config contains only GLM, Pareto, and Switchyard", () =>
 
 test("LiteLLM config owns only the ordinary OpenRouter GLM hop", () => {
   const config = renderLiteLlmConfig();
-  assert.match(config, /openrouter-glm-5-3-flash/u);
-  assert.match(config, /openrouter-glm-5-3-flash-gmicloud/u);
+  assert.match(config, /openrouter-glm-5-3-flash-streamlake/u);
+  assert.match(config, /openrouter-glm-5-3-flash-together/u);
   assert.match(config, /^general_settings:\r?\n  allow_client_side_credentials: false$/mu);
-  assert.doesNotMatch(config, /pareto|union-alpha|switchyard|fallback|failover/u);
+  assert.doesNotMatch(config, /deepseek|pareto|union-alpha|switchyard|fallback|failover/u);
 });
 
 test("OpenRouter hop applies the selected endpoint contract and accepts only translated search", async () => {
@@ -123,7 +125,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash",
+        model: "openrouter-glm-5-3-flash-streamlake",
         input,
         client_metadata: { account: "must-not-leave" },
         parallel_tool_calls: true,
@@ -151,8 +153,8 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
     ]);
     assert.equal(seen[0].body.tool_choice, "auto");
     assert.deepEqual(seen[0].body.provider, {
-      order: ["novita"],
-      only: ["novita"],
+      order: ["streamlake/fp8"],
+      only: ["streamlake/fp8"],
       allow_fallbacks: false,
       require_parameters: true,
     });
@@ -161,7 +163,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash",
+        model: "openrouter-glm-5-3-flash-streamlake",
         tools: [],
         tool_choice: "none",
       }),
@@ -176,7 +178,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       const forced = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openrouter-glm-5-3-flash", tools: [], tool_choice }),
+        body: JSON.stringify({ model: "openrouter-glm-5-3-flash-streamlake", tools: [], tool_choice }),
       });
       assert.equal(forced.status, 400);
       assert.equal((await forced.json()).error.code, "unsupported_tool_choice");
@@ -187,7 +189,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash-gmicloud",
+        model: "openrouter-glm-5-3-flash-together",
         parallel_tool_calls: true,
         tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
         tool_choice: "auto",
@@ -197,8 +199,8 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
     assert.equal(seen.length, 3);
     assert.equal(seen[2].body.parallel_tool_calls, undefined);
     assert.deepEqual(seen[2].body.provider, {
-      order: ["gmicloud"],
-      only: ["gmicloud"],
+      order: ["together"],
+      only: ["together"],
       allow_fallbacks: false,
       require_parameters: true,
     });
@@ -207,7 +209,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash",
+        model: "openrouter-glm-5-3-flash-streamlake",
         tools: [{ type: "web_search" }],
       }),
     });
@@ -218,7 +220,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash",
+        model: "openrouter-glm-5-3-flash-streamlake",
         input: "Current documentation",
         tools: [{
           type: "openrouter:web_search",
@@ -238,8 +240,8 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
     assert.equal(seen[3].url, "/v1/responses");
     assert.equal(seen[3].body.tools[0].type, "openrouter:web_search");
     assert.deepEqual(seen[3].body.provider, {
-      order: ["novita"],
-      only: ["novita"],
+      order: ["streamlake/fp8"],
+      only: ["streamlake/fp8"],
       allow_fallbacks: false,
       require_parameters: true,
     });
@@ -248,7 +250,7 @@ test("OpenRouter hop applies the selected endpoint contract and accepts only tra
       method: "POST",
       headers: { Authorization: `Bearer ${internalKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter-glm-5-3-flash",
+        model: "openrouter-glm-5-3-flash-streamlake",
         tools: [{
           type: "openrouter:web_search",
           parameters: {

@@ -2,8 +2,8 @@
   "version": 1,
   "description": "Files installed by the Windows Codex Router deployment transaction.",
   "files": [
-    "config/openrouter/glm-5.3-flash.json",
-    "config/openrouter/glm-5.3-flash-gmicloud.json",
+    "config/openrouter/glm-5.3-flash-streamlake.json",
+    "config/openrouter/glm-5.3-flash-together.json",
     "config/openrouter/openrouter.json",
     "config/openrouter/pareto.json",
     "config/switchyard/auto.json",
@@ -126,6 +126,9 @@
     "src/windows-launch-diagnosis.mjs",
     "src/windows-process-tree.ps1",
     "src/windows-task-state.mjs",
-    "src/zai-responses-compat.mjs"
+    "src/zai-responses-compat.mjs",
+    "config/openrouter/deepseek-v4.1-flash-together.json",
+    "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
+    "src/openrouter-endpoint-compat.mjs"
   ]
 }

@@ -32,9 +32,9 @@ test("final OpenRouter preparation pins each endpoint and preserves caller input
       assert.deepEqual(output.input, input.input);
     }
   }
-  // This gateway alias deliberately retains its existing canonical Novita binding.
+  // The upstream alias uses the canonical StreamLake route.
   const alias = prepareOpenRouterRequest({ model: "z-ai/glm-5.3-flash", input: "marker" });
-  assert.deepEqual(alias.provider.only, ["novita"]);
+  assert.deepEqual(alias.provider.only, ["streamlake/fp8"]);
   for (const model of ["unknown/model", "switchyard/auto", "gpt-5.6-luna"]) {
     assert.throws(() => prepareOpenRouterRequest({ model }), /Only /);
   }
@@ -82,6 +82,7 @@ test("empty tools preserve non-forcing semantics and reject impossible forced ch
       assert.throws(() => prepareOpenRouterRequest({ model: route.slug, tools: [], tool_choice }),
         error => error.status === 400 && error.code === "unsupported_tool_choice");
     }
+    if (route.openRouterEndpointCompatibility.autoToolChoiceOnly) continue;
     const result = prepareOpenRouterRequest({ model: route.slug,
       tools: [{ type: "function", name: "must_run", parameters: { type: "object" } }], tool_choice: "required" });
     assert.equal(result.tool_choice, "required");

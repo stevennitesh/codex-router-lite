@@ -8,19 +8,30 @@ Python dependency changes. For app-tool or encrypted handoff failures, also read
 ## OpenRouter GLM-5.3-Flash
 
 Both OpenRouter routes use upstream `z-ai/glm-5.3-flash`. The canonical
-`openrouter/glm-5.3-flash` route is pinned to Novita. The explicit
-`openrouter/glm-5.3-flash-gmicloud` route is pinned to GMICloud. Each route
+`openrouter/glm-5.3-flash-streamlake` route is pinned to StreamLake FP8 (`streamlake/fp8`). The explicit
+`openrouter/glm-5.3-flash-together` route is pinned to Together. Each route
 selects one endpoint with fallback disabled and owns its endpoint compatibility
 flags and v2 proof. Do not turn the two records into an ordered fallback list.
 To add or replace an endpoint, create or update one exact route, then refresh
 that route's proof before publishing v2.
 
-LiteLLM 1.104.0 owns the GLM chat bridge's custom-tool conversion and reasoning
-history replay. It converts native custom tools to JSON-schema functions, retains
-their grammar in the description, restores completed calls to
-`custom_tool_call`, and replays Responses reasoning as assistant
-`reasoning_content`. Router Lite still owns namespace/collision restoration,
-Pareto's direct-Responses custom-tool bridge, and exact provider policy.
+StreamLake has a 1,024,000-token context and compacts at 880,000; Together has
+1,048,575 tokens and compacts at 900,000. Both default to maximum reasoning,
+temperature 1, top-p 0.95 and 128,000 output tokens. Explicit caller settings
+take precedence; output above 128,000 tokens is rejected locally.
+
+StreamLake supports automatic tool selection only. Removing available tools
+implements `none`; required, named and forced hosted-search choices fail locally.
+Together supports required and named function choices. Both omit the unsupported
+parallel scheduling hint. Endpoint observations and sources are recorded in the
+[2026-10-06 research](../history/2026-10-06-openrouter-route-refresh.md).
+
+Router's request-local custom-tool bridge converts native custom tools to
+JSON-schema functions, states that input must parse against the supplied grammar,
+and restores completed calls to `custom_tool_call`. This avoids the ambiguous
+grammar-as-format description from the gateway. LiteLLM 1.104.0 owns GLM reasoning
+history replay, converting Responses reasoning to assistant `reasoning_content`.
+Router also owns namespace/collision restoration and exact provider policy.
 
 The pinned gateway also preserves explicit zero token usage in streamed provider
 reports and lets later usage reports clear stale cached-token counts. Missing

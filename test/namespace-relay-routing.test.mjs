@@ -127,7 +127,7 @@ async function closeServer(server) {
 // (legacy namespace with explicit schemas): plain tools, collaboration, codex_app, and MCP
 // namespaces -- including mcp__node_repl, the in-app browser / computer-use
 // runtime, and a server whose namespace name contains the delimiter.
-function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash") {
+function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash-streamlake") {
   return {
     model,
     stream,
@@ -213,7 +213,7 @@ function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash")
 // still carries the native identity Codex will use for dispatch.
 function routedToolSearchHistoryPayload(
   stream = true,
-  model = "openrouter/glm-5.3-flash",
+  model = "openrouter/glm-5.3-flash-streamlake",
 ) {
   const payload = routedRequestPayload(stream, model);
   payload.tools.push({
@@ -470,7 +470,7 @@ async function scenario(
   stream = true,
   {
     endpoint = "/responses",
-    model = "openrouter/glm-5.3-flash",
+    model = "openrouter/glm-5.3-flash-streamlake",
     sseBody = gatewaySseBody,
     jsonBody = gatewayJsonBody,
     requestPayload = routedRequestPayload,
@@ -544,7 +544,7 @@ async function scenario(
 test("routed request flattens every namespace to the gateway and restores calls to the client", async () => {
   const first = await scenario();
   const outgoing = first.gatewayBodies[0];
-  assert.equal(outgoing.model, "openrouter-glm-5-3-flash");
+  assert.equal(outgoing.model, "openrouter-glm-5-3-flash-streamlake");
   const names = outgoing.tools.map((tool) => tool.name);
 
   // The full native toolset reaches the provider in the flattened form,
@@ -610,7 +610,7 @@ test("routed request flattens every namespace to the gateway and restores calls 
     { name: "create_thread", namespace: "codex_app" },
   );
   assert.deepEqual(JSON.parse(calls.get("call_thread").arguments), {
-    model: "openrouter/glm-5.3-flash",
+    model: "openrouter/glm-5.3-flash-streamlake",
   });
   assert.deepEqual(JSON.parse(calls.get("call_explicit_thread").arguments), {
     model: "gpt-5.6-terra",
@@ -659,7 +659,7 @@ test("non-streaming routed responses restore namespace calls before client dispa
     { name: "create_thread", namespace: "codex_app" },
   );
   assert.deepEqual(JSON.parse(client.output[1].arguments), {
-    model: "openrouter/glm-5.3-flash",
+    model: "openrouter/glm-5.3-flash-streamlake",
   });
   assert.deepEqual(JSON.parse(client.output[2].arguments), {
     model: "gpt-5.6-terra",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { certificationPreflight } from "../maintenance/certification-preflight.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
-const checkedInRoute = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+const checkedInRoute = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 const route = { ...checkedInRoute, multiAgentVersion: "v2" };
 test("certification preflight distinguishes source claims from native role readiness", () => {
   const state = {catalogEntry:{visibility:"list",multi_agent_version:"v2"},roleContents:routedAgentDefinition(route).contents,deployedCommit:"a".repeat(40)};

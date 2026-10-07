@@ -61,11 +61,15 @@ connects are bounded.
 
 ## GLM fails
 
-Confirm the selected slug is `openrouter/glm-5.3-flash` for Novita or
-`openrouter/glm-5.3-flash-gmicloud` for GMICloud. Check that the OpenRouter key
+Confirm the selected slug is `openrouter/glm-5.3-flash-streamlake` for StreamLake or
+`openrouter/glm-5.3-flash-together` for Together. Check that the OpenRouter key
 is present and Doctor names both exact endpoint policies. Preserve a sanitized
 response event order. Separate Router, LiteLLM, OpenRouter, the selected
 endpoint, and model failures before editing.
+
+StreamLake rejects forced tool choices; select automatic tool use or the Together
+route when a caller needs required or named calls. DeepSeek's exact route names
+and limits are listed in its [endpoint guide](agents/openrouter-deepseek.md).
 
 Do not turn on fallback or select an unproved provider to hide an endpoint failure.
 

@@ -104,14 +104,14 @@ test("compatibility factory is scoped to proven malformed Responses routes", () 
     zaiResponsesCompatTransform(
       "openrouter",
       "text/event-stream",
-      "openrouter/glm-5.3-flash",
+      "openrouter/glm-5.3-flash-streamlake",
     ),
   );
   assert.ok(
     zaiResponsesCompatTransform(
       "openrouter",
       "text/event-stream",
-      "openrouter/glm-5.3-flash-gmicloud",
+      "openrouter/glm-5.3-flash-together",
     ),
   );
   assert.equal(zaiResponsesCompatTransform("openrouter", "text/event-stream"), undefined);
@@ -124,7 +124,7 @@ test("compatibility factory is scoped to proven malformed Responses routes", () 
     zaiResponsesCompatTransform(
       "openrouter",
       "application/json",
-      "openrouter/glm-5.3-flash",
+      "openrouter/glm-5.3-flash-streamlake",
     ),
     undefined,
   );

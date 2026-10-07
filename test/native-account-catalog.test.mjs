@@ -204,7 +204,7 @@ test("network, schema, and routed-catalog failures preserve the last native cach
       async () => { throw new Error(`network failure ${ACCESS}`); },
       async () => new Response('{"models":[]}', { status: 200 }),
       async () => new Response(JSON.stringify({
-        models: [{ slug: "openrouter/glm-5.3-flash" }],
+        models: [{ slug: "openrouter/glm-5.3-flash-streamlake" }],
       }), { status: 200 }),
       async () => new Response("denied", { status: 401 }),
     ]) {
@@ -283,7 +283,7 @@ test("a malformed Router snapshot remains an explicit source failure", () =>
 test("snapshot reader rejects a merged Router catalog as native authority", () =>
   withCache((cachePath) => {
     writeFileSync(cachePath, JSON.stringify({
-      models: [{ slug: "openrouter/glm-5.3-flash" }],
+      models: [{ slug: "openrouter/glm-5.3-flash-streamlake" }],
     }));
     assert.deepEqual(readNativeAccountCatalog(cachePath), {
       catalog: undefined,

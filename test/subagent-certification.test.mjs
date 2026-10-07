@@ -8,7 +8,7 @@ import {
 } from "../src/multi-agent-state.mjs";
 
 const certified = {
-  slug: "openrouter/glm-5.3-flash",
+  slug: "openrouter/glm-5.3-flash-streamlake",
   multiAgentVersion: "v2",
 };
 const uncertified = {
@@ -61,7 +61,7 @@ test("broad subagent modes discard stale positive allowlists", () => {
     version: 2,
     mode: "selected",
     enabled: ["gpt-5.6-sol"],
-    disabled: ["openrouter/glm-5.3-flash"],
+    disabled: ["openrouter/glm-5.3-flash-streamlake"],
     efforts: { "switchyard/auto": "high" },
   };
   assert.deepEqual(settingsForMode(stale, "proven"), {

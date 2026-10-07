@@ -3,6 +3,7 @@
 import { OPENROUTER_MODELS as routes, CANONICAL_OPENROUTER_ROUTE as defaultRoute, MODEL_BY_GATEWAY_ID, MODEL_BY_SLUG } from "./routed-models.mjs";
 import { prepareParetoRequest } from "./pareto-compat.mjs";
 import { safeLocalHttpError } from "./http-utils.mjs";
+import { prepareOpenRouterEndpointRequest } from "./openrouter-endpoint-compat.mjs";
 
 function hasNativeSearch(payload) {
   return payload?.web_search_options !== undefined ||
@@ -53,6 +54,7 @@ export function prepareOpenRouterRequest(payload) {
     throw new Error(`Only ${routes.map((route) => route.slug).join(" and ")} are supported.`);
   }
   payload = prepareParetoRequest(payload, selected);
+  payload = prepareOpenRouterEndpointRequest(payload, selected);
   if (hasNativeSearch(payload)) {
     throw safeLocalHttpError(
       "Codex hosted-search fields must be translated before the OpenRouter hop.",
@@ -98,7 +100,7 @@ export function prepareOpenRouterRequest(payload) {
   }
   // Endpoint quirks belong to the selected and certified endpoint record. A
   // provider change must update this flag and refresh exact-route proof rather
-  // than inheriting Novita's measured behavior by accident.
+  // than inheriting another endpoint's measured behavior by accident.
   if (selected.openRouterEndpointCompatibility.dropParallelToolCalls) {
     delete clean.parallel_tool_calls;
   }

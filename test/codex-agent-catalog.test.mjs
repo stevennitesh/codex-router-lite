@@ -15,8 +15,8 @@ test("routed child pins its supported default effort instead of inheriting the p
   try {
     const [written] = syncRoutedCodexAgents([
       {
-        slug: "openrouter/glm-5.3-flash-gmicloud",
-        displayName: "GLM-5.3-Flash (OpenRouter, GMICloud)",
+        slug: "openrouter/glm-5.3-flash-together",
+        displayName: "GLM-5.3-Flash (OpenRouter, Together)",
         defaultEffort: "max",
         reasoningLevels: [
           { effort: "low" },
@@ -26,7 +26,7 @@ test("routed child pins its supported default effort instead of inheriting the p
       },
     ], root).written;
     const contents = readFileSync(written.path, "utf8");
-    assert.match(contents, /^model = "openrouter\/glm-5\.3-flash-gmicloud"$/mu);
+    assert.match(contents, /^model = "openrouter\/glm-5\.3-flash-together"$/mu);
     assert.match(contents, /^model_reasoning_effort = "max"$/mu);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -39,8 +39,8 @@ test("routed child rejects a default effort outside its advertised ladder", () =
     assert.throws(
       () => syncRoutedCodexAgents([
         {
-          slug: "openrouter/glm-5.3-flash-gmicloud",
-          displayName: "GLM-5.3-Flash (OpenRouter, GMICloud)",
+          slug: "openrouter/glm-5.3-flash-together",
+          displayName: "GLM-5.3-Flash (OpenRouter, Together)",
           defaultEffort: "medium",
           reasoningLevels: [{ effort: "low" }, { effort: "high" }, { effort: "max" }],
         },

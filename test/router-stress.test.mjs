@@ -12,8 +12,8 @@ import { openPort } from "./port-pool.mjs";
 import { launch, ready, responseJson, stop } from "./router-fixture.mjs";
 
 const PARETO = "openrouter/pareto";
-const GLM = "openrouter/glm-5.3-flash";
-const GLM_GMICLOUD = "openrouter/glm-5.3-flash-gmicloud";
+const GLM = "openrouter/glm-5.3-flash-streamlake";
+const GLM_TOGETHER = "openrouter/glm-5.3-flash-together";
 const SWITCHYARD = "switchyard/auto";
 const SWITCHYARD_DISPATCH = readSwitchyardConfigContract().dispatchId;
 const CALLER = "stress-fixture-caller-capability-long-enough";
@@ -134,8 +134,8 @@ test("stress: representative routes preserve their distinct boundaries", { timeo
   for (const [model, extra] of [
     ["gpt-5.6-sol", { input: "native control" }],
     [GLM, { input: "gateway control" }],
-    [GLM, { tools: [{ type: "web_search" }], tool_choice: { type: "web_search" }, input: "hosted search control" }],
-    [GLM_GMICLOUD, { tools: [{ type: "web_search" }], tool_choice: { type: "web_search" }, input: "hosted search control" }],
+    [GLM, { tools: [{ type: "web_search" }], tool_choice: "auto", input: "hosted search control" }],
+    [GLM_TOGETHER, { tools: [{ type: "web_search" }], tool_choice: { type: "web_search" }, input: "hosted search control" }],
     [PARETO, { input: "direct responses control" }],
     [SWITCHYARD, { input: "switchyard control" }],
   ]) {
@@ -143,17 +143,17 @@ test("stress: representative routes preserve their distinct boundaries", { timeo
     const responseBody = await response.arrayBuffer();
     assert.equal(response.status, 200, Buffer.from(responseBody).toString());
   }
-  const [nativeSeen, gatewaySeen, novitaSeen, gmiSeen, paretoSeen, switchyardSeen] = f.seen;
+  const [nativeSeen, gatewaySeen, streamlakeSeen, togetherSeen, paretoSeen, switchyardSeen] = f.seen;
   assert.equal(nativeSeen.path, "/backend-api/codex/responses");
   assert.equal(nativeSeen.body.model, "gpt-5.6-sol");
   assert.equal(nativeSeen.headers.authorization, "Bearer SYNTHETIC_NATIVE_PRIVATE");
-  assert.equal(gatewaySeen.body.model, "openrouter-glm-5-3-flash");
-  assert.equal(novitaSeen.body.model, "z-ai/glm-5.3-flash");
-  assert.deepEqual(novitaSeen.body.provider.only, ["novita"]);
-  assert.deepEqual(gmiSeen.body.provider.only, ["gmicloud"]);
+  assert.equal(gatewaySeen.body.model, "openrouter-glm-5-3-flash-streamlake");
+  assert.equal(streamlakeSeen.body.model, "z-ai/glm-5.3-flash");
+  assert.deepEqual(streamlakeSeen.body.provider.only, ["streamlake/fp8"]);
+  assert.deepEqual(togetherSeen.body.provider.only, ["together"]);
   assert.equal(paretoSeen.body.model, "unbiased/pareto");
   assert.deepEqual(paretoSeen.body.provider.only, ["unbiased"]);
-  for (const external of [gatewaySeen, novitaSeen, gmiSeen, paretoSeen])
+  for (const external of [gatewaySeen, streamlakeSeen, togetherSeen, paretoSeen])
     assert.equal(external.headers["chatgpt-account-id"], undefined);
   assert.equal(switchyardSeen.body.model, SWITCHYARD_DISPATCH);
   assert.equal(switchyardSeen.headers["x-codex-router-switchyard-capability"], SWITCHYARD_CAPABILITY);

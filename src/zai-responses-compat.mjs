@@ -2,8 +2,8 @@ import { Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
 const COMPATIBLE_ROUTES = new Set([
-  "openrouter/glm-5.3-flash",
-  "openrouter/glm-5.3-flash-gmicloud",
+  "openrouter/glm-5.3-flash-streamlake",
+  "openrouter/glm-5.3-flash-together",
 ]);
 
 function eventBlock(block) {

@@ -9,7 +9,7 @@ import {
 } from "../src/openrouter-hosted-search.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 
-const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash");
+const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 
 async function transformBody(chunks, contentType, options) {
   const transform = new OpenRouterHostedSearchTransform(contentType, options);

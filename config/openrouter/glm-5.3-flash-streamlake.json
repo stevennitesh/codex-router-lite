@@ -2,13 +2,13 @@
   "version": 1,
   "models": [
     {
-      "slug": "openrouter/glm-5.3-flash",
-      "gatewayModel": "openrouter-glm-5-3-flash",
+      "slug": "openrouter/glm-5.3-flash-streamlake",
+      "gatewayModel": "openrouter-glm-5-3-flash-streamlake",
       "upstreamModel": "z-ai/glm-5.3-flash",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "GLM-5.3-Flash (OpenRouter)",
-      "description": "GLM-5.3-Flash through the selected certified OpenRouter endpoint with Codex tool calling and the model's low/high/max reasoning ladder.",
+      "displayName": "GLM-5.3-Flash (OpenRouter, StreamLake)",
+      "description": "GLM-5.3-Flash through the StreamLake FP8 endpoint, with automatic tool selection and low/high/max reasoning.",
       "priority": 102,
       "defaultEffort": "max",
       "reasoningLevels": [
@@ -25,8 +25,8 @@
           "description": "Maximum reasoning depth"
         }
       ],
-      "contextWindow": 1048576,
-      "autoCompact": 900000,
+      "contextWindow": 1024000,
+      "autoCompact": 880000,
       "inputModalities": [
         "text",
         "image"
@@ -48,21 +48,28 @@
       "requestProfile": "glm-5.3-flash",
       "behaviorTemplate": "gpt-5.6-sol",
       "instructionProfile": "glm-5.3-flash-codex",
-      "multiAgentVersion": "v2",
+      "multiAgentVersion": "v1",
       "openRouterProviderPolicy": {
         "order": [
-          "novita"
+          "streamlake/fp8"
         ],
         "only": [
-          "novita"
+          "streamlake/fp8"
         ],
         "allow_fallbacks": false,
         "require_parameters": true
       },
       "openRouterEndpointCompatibility": {
-        "dropParallelToolCalls": true
+        "dropParallelToolCalls": true,
+        "autoToolChoiceOnly": true
       },
-      "compHash": "openrouter-glm-5-3-flash-v10"
+      "compHash": "openrouter-glm-5-3-flash-streamlake-v1",
+      "defaultSampling": {
+        "temperature": 1,
+        "top_p": 0.95
+      },
+      "defaultMaxOutputTokens": 128000,
+      "maxOutputTokens": 128000
     }
   ]
 }

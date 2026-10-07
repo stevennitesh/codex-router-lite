@@ -61,7 +61,7 @@ test("Pareto strips unsupported controls and implements none without weakening f
   for (const tool_choice of ["required", { type: "function", name: "lookup" }, { type: "allowed_tools", mode: "required", tools: [fn] }]) {
     assert.throws(() => prepareParetoRequest({ ...original, tool_choice }, route), { code: "unsupported_tool_choice", status: 400 });
   }
-  assert.equal(prepareParetoRequest(original, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash")), original);
+  assert.equal(prepareParetoRequest(original, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake")), original);
 });
 
 test("only explicitly safe local errors may expose their message", () => {
@@ -579,7 +579,7 @@ test("OpenRouter forwarder cancels Pareto and GLM work before headers and during
   try {
     const url = `http://127.0.0.1:${apiPort}/v1/responses`;
     await ready(url, forwarder, { Authorization: `Bearer ${internal}` });
-    for (const model of [route.slug, "openrouter/glm-5.3-flash"]) for (const headers of [false, true]) {
+    for (const model of [route.slug, "openrouter/glm-5.3-flash-streamlake"]) for (const headers of [false, true]) {
       sendHeaders = headers;
       const received = new Promise(resolve => { receivedResolve = resolve; });
       const closed = new Promise(resolve => { closedResolve = resolve; });

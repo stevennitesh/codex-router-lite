@@ -47,7 +47,7 @@ const template = {
 };
 
 const routeFixture = {
-  slug: "openrouter/glm-5.3-flash",
+  slug: "openrouter/glm-5.3-flash-streamlake",
   displayName: "GLM-5.3-Flash",
   description: "GLM through OpenRouter",
   priority: 1,
@@ -80,11 +80,11 @@ test("external routes do not inherit legacy native summary or parallel-tool flag
 });
 
 test("signed-in picker overlay cannot hide Codex native base entries", () => {
-  const hidden = new Set(["gpt-5.6-luna", "gpt-5.6-sol-1m", "openrouter/glm-5.3-flash"]);
+  const hidden = new Set(["gpt-5.6-luna", "gpt-5.6-sol-1m", "openrouter/glm-5.3-flash-streamlake"]);
   const native = new Set(["gpt-5.6-luna", "gpt-5.6-sol"]);
   assert.deepEqual(
     [...effectivePickerHiddenModels(hidden, native)].sort(),
-    ["gpt-5.6-sol-1m", "openrouter/glm-5.3-flash"],
+    ["gpt-5.6-sol-1m", "openrouter/glm-5.3-flash-streamlake"],
   );
 });
 
@@ -92,19 +92,19 @@ test("picker visibility projection hides only unselected routed entries", () => 
   const projected = applyPickerVisibility(
     [
       { slug: "gpt-5.6-sol", visibility: "list" },
-      { slug: "openrouter/glm-5.3-flash", visibility: "list" },
+      { slug: "openrouter/glm-5.3-flash-streamlake", visibility: "list" },
       { slug: "switchyard/auto", visibility: "list" },
     ],
     {
       nativeBaseSlugs: new Set(["gpt-5.6-sol"]),
       hiddenModels: new Set(["gpt-5.6-sol", "switchyard/auto"]),
-      visibleModels: new Set(["openrouter/glm-5.3-flash"]),
+      visibleModels: new Set(["openrouter/glm-5.3-flash-streamlake"]),
       hasExplicitVisibility: true,
     },
   );
   assert.deepEqual(projected.map(({ slug, visibility }) => [slug, visibility]), [
     ["gpt-5.6-sol", "list"],
-    ["openrouter/glm-5.3-flash", "list"],
+    ["openrouter/glm-5.3-flash-streamlake", "list"],
     ["switchyard/auto", "hide"],
   ]);
 });
