@@ -197,6 +197,38 @@ function clientToolSearchControl() {
   };
 }
 
+test("unqualified tool search calls accept an omitted or null namespace", async () => {
+  const flat = flattenNamespaceTools([clientToolSearchControl()]);
+  const lookups = buildNamespaceLookups(flat.namespaces);
+  for (const namespace of [undefined, null]) {
+    const call = { type: "function_call", id: "search-item", call_id: "search-call",
+      name: "tool_search", arguments: '{"query":"synthetic tool","limit":1}',
+      ...(namespace === undefined ? {} : { namespace }) };
+    const expected = { type: "tool_search_call", id: call.id, call_id: call.call_id,
+      execution: "client", arguments: { query: "synthetic tool", limit: 1 } };
+    const jsonResult = rewriteNamespaceResponsePayload({ output: [call] }, lookups);
+    assert.deepEqual((jsonResult?.output ?? [call])[0], expected);
+    const events = [
+      { type: "response.output_item.added", item: { ...call, arguments: "" } },
+      { type: "response.function_call_arguments.delta", item_id: call.id, delta: call.arguments },
+      { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+      { type: "response.output_item.done", item: call },
+      { type: "response.completed", response: { output: [call] } },
+    ];
+    const wire = events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+    const output = await collect(Readable.from([wire]).pipe(
+      new NamespaceToolCallTransform(flat.namespaces, "text/event-stream")));
+    const restored = output.trim().split("\n\n").map(frame =>
+      JSON.parse(frame.split("\n").find(line => line.startsWith("data:")).slice(5)));
+    assert.deepEqual(restored.find(event => event.type === "response.output_item.done").item, expected);
+    assert.deepEqual(restored.at(-1).response.output[0], expected);
+  }
+  const namespaced = { type: "function_call", namespace: "another_owner", name: "tool_search",
+    call_id: "other-search", arguments: '{"query":"synthetic tool"}' };
+  const namespacedResult = rewriteNamespaceResponsePayload({ output: [namespaced] }, lookups);
+  assert.deepEqual((namespacedResult?.output ?? [namespaced])[0], namespaced);
+});
+
 test("flattenNamespaceTools flattens every namespace, including MCP ones", () => {
   const { tools, flattened, namespaces } = flattenNamespaceTools(clientRoutedTools());
   assert.equal(flattened, true);

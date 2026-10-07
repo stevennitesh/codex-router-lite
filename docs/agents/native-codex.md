@@ -70,6 +70,10 @@ spelling as a namespace child. Use the request-local alias map consistently for
 declarations, forced/allowed tool choices, returned calls, and replay. Native
 requests do not pass through this external-provider name translation.
 
+An unqualified provider call can omit `namespace` or set it to `null`. Restore
+both forms of the declared client tool-search relay to `tool_search_call` before
+Codex dispatch. A nonempty namespace still identifies a different tool owner.
+
 Ordinary external turns and compaction share `src/routed-request.mjs`, which
 returns the prepared payload and its matching namespace context. For changes
 to this ownership or the preparation order, read

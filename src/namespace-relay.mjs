@@ -1717,11 +1717,12 @@ function toolSearchArguments(value, allowPlaceholder) {
 
 function rewriteToolSearchFunctionCallItem(item, lookups, allowPlaceholder) {
   const relay = lookups.toolSearch;
+  // Responses uses both an omitted namespace and null for an unqualified call.
   if (
     !relay ||
     item?.type !== "function_call" ||
     item.name !== relay.providerName ||
-    item.namespace !== undefined ||
+    item.namespace != null ||
     typeof item.call_id !== "string" ||
     !item.call_id
   ) {

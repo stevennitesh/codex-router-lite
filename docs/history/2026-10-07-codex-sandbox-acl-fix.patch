@@ -1,0 +1,71 @@
+diff --git a/codex-rs/windows-sandbox-rs/src/acl.rs b/codex-rs/windows-sandbox-rs/src/acl.rs
+index 0ef5e44f..3989190b 100644
+--- a/codex-rs/windows-sandbox-rs/src/acl.rs
++++ b/codex-rs/windows-sandbox-rs/src/acl.rs
+@@ -546,7 +546,11 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+     access_mode: ACCESS_MODE,
+     inheritance: u32,
+ ) -> Result<bool> {
+-    let directory = if inheritance == 0 {
++    // MAXIMUM_ALLOWED is needed on a directory to suppress propagation of
++    // existing inheritable ACEs. On a file it also requests data-write access,
++    // which conflicts with a running executable even when its ACL is readable.
++    let root_only = inheritance == 0;
++    let directory = if root_only && std::fs::metadata(path)?.is_dir() {
+         Some(
+             OpenOptions::new()
+                 .access_mode(MAXIMUM_ALLOWED)
+@@ -559,7 +563,7 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+         None
+     };
+     // A root-only grant must preserve existing permissions and deny ACEs.
+-    let access_mode = if directory.is_some() {
++    let access_mode = if root_only {
+         GRANT_ACCESS
+     } else {
+         access_mode
+@@ -610,7 +614,7 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+             continue;
+         }
+         if !dacl_allow_mask_needs_refresh(p_dacl, *sid, allow_mask, disallow_mask)
+-            || directory.is_some() && p_dacl.is_null()
++            || root_only && p_dacl.is_null()
+         {
+             continue;
+         }
+diff --git a/codex-rs/windows-sandbox-rs/src/acl_tests.rs b/codex-rs/windows-sandbox-rs/src/acl_tests.rs
+index 44a1cd90..5ee35907 100644
+--- a/codex-rs/windows-sandbox-rs/src/acl_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/acl_tests.rs
+@@ -27,6 +27,31 @@ use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+ use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
+ use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
+ 
++#[test]
++fn root_only_read_execute_grant_allows_a_file_without_write_sharing() {
++    let fixture = tempfile::tempdir().expect("fixture directory");
++    let path = fixture.path().join("loaded-runtime.exe");
++    std::fs::write(&path, b"synthetic executable image").expect("fixture file");
++    // A running image denies data-write sharing. ACL access should still work.
++    let _loaded_image = OpenOptions::new()
++        .read(true)
++        .share_mode(super::FILE_SHARE_READ)
++        .open(&path)
++        .expect("hold the runtime image open without write sharing");
++    let sid = LocalSid::from_string("S-1-5-21-10-20-30-40").expect("test SID");
++    let changed = unsafe { super::grant_read_execute_aces(&path, &[sid.as_ptr()], 0) }
++        .expect("ACL-only access must not request executable data-write access");
++    assert!(changed);
++    assert!(super::path_mask_allows(
++        &path,
++        &[sid.as_ptr()],
++        super::FILE_GENERIC_READ | super::FILE_GENERIC_EXECUTE,
++        true,
++    ).expect("read the resulting ACL"));
++    assert!(!unsafe { super::grant_read_execute_aces(&path, &[sid.as_ptr()], 0) }
++        .expect("the grant should be idempotent"));
++}
++
+ #[test]
+ fn deny_ace_update_failure_is_an_error() {
+     let path = std::path::Path::new(r"C:\world-writable");

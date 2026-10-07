@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Codex sandbox failure, test side effect, and original-helper recovery attempt, 2026-10-07](2026-10-07-codex-sandbox-investigation.md)
+
 - [GLM StreamLake/Together and DeepSeek Together/DeepInfra endpoint refresh, 2026-10-06](2026-10-06-openrouter-route-refresh.md)
 
 - [Tool union deployment and four-route native certification, 2026-10-06](2026-10-06-tool-union-native-v2-certification.json)
