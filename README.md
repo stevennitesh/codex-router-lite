@@ -1,46 +1,86 @@
 # Codex Router Lite
 
-**More model choices. The Codex workflow I already enjoy.**
+![Codex workspace connected through the local Router to external model APIs](docs/assets/readme-banner.png)
 
-**Windows-only · unofficial personal project · pre-1.0**
+Codex Router Lite connects supported external model APIs to the Windows Codex
+desktop app and command-line client (CLI). It runs as a local service and
+translates requests, tool calls, and conversation history between Codex and the
+selected provider.
+Native GPT models remain available through your Codex login.
 
-[Quick start](#quick-start) · [Models](#models) · [Make it yours](#make-it-yours) · [Feedback](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+This is an unofficial personal project for Windows, currently before version 1.0.
 
-I built Router Lite to use other models inside the Windows Codex app while keeping
-its tools, conversations, and native GPT models. The exciting part is having those
-choices in the same workspace, without moving my work into another client.
+[How it works](#how-it-works) · [Supported models](#supported-models) · [Setup](#setup) · [Add a model](#adding-a-model-or-endpoint) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
-It runs locally between Codex and the selected model provider, handling the API
-and tool differences. The project stays focused on Windows Codex desktop and the
-native CLI, with a small, explicit set of routes.
+## What this enables
 
-## What you get
+A supported API model can work in a Codex workspace using the tools available
+to that chat. For example, it can:
 
-- **Choose your endpoint.** Separate model-picker entries for each OpenRouter route, with no silent provider fallback.
-- **Keep using Codex tools.** Router translates tool calls and conversation history so supported models can work through the native interface.
-- **Keep native GPT access.** Native models and account visibility remain owned by your installed Codex build.
-- **Let Switchyard choose.** OpenRouter's Jev classifier helps the local router select a native Luna, Sol or Astra model and reasoning effort.
+- Read repository files, edit code, and run commands through Codex's file and terminal tools.
+- Write documents and use connected app or MCP tools when those tools are enabled in Codex.
+- Follow repository instructions and use skills supplied to the task.
+- Continue work after a tool returns its result, with conversation history translated for the provider.
+- Handle a delegated part of a task as a Codex subagent, when its model and endpoint are eligible and enabled. See [external subagents](#external-subagents).
 
-## Models
+You can select an external model for one chat and a native GPT model for another.
+Codex still owns tool execution, sandbox permissions, approvals, and connected app
+access. The external model receives the tool definitions and returns requests to
+use them; Router translates those requests back into the form Codex expects.
 
-| Model | Route | Details |
+## How it works
+
+```text
+Codex app or CLI  <-->  Router Lite on your PC  <-->  Selected model API
+```
+
+1. You select a configured model in Codex and send a task.
+2. Codex sends the conversation and available tool definitions to the local Router.
+3. Router prepares the request for the selected provider and sends it to that API.
+4. The model returns text or a tool call. Router translates the response for Codex.
+5. Codex runs the requested tool under its permissions, then sends the result back so the model can continue.
+
+Each configured model and provider endpoint has its own picker entry. This README
+calls that pairing a **route**. The OpenRouter routes below use one fixed endpoint
+each, with provider fallback disabled.
+
+Each integration must handle tool calls, streamed responses, and conversation
+history in the form Codex expects. Router supports the models listed below;
+adding another API model requires compatibility work and testing.
+
+## Supported models
+
+| Model ID | Model and provider | Details |
 | --- | --- | --- |
-| GLM-5.3-Flash | OpenRouter → Novita | [Compatibility](docs/agents/openrouter-glm.md) |
-| GLM-5.3-Flash | OpenRouter → GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
-| Pareto | OpenRouter → Unbiased | [Compatibility](docs/agents/pareto.md) |
-| Switchyard Auto | OpenRouter/Jev decision → native Luna / Sol / Astra answer | [Routing policy](config/switchyard/README.md#routing-policy); local Switchyard build required |
+| `openrouter/glm-5.3-flash` | GLM-5.3-Flash through OpenRouter / Novita | [Compatibility](docs/agents/openrouter-glm.md) |
+| `openrouter/glm-5.3-flash-gmicloud` | GLM-5.3-Flash through OpenRouter / GMICloud | [Compatibility](docs/agents/openrouter-glm.md) |
+| `openrouter/pareto` | Pareto through OpenRouter / Unbiased | [Compatibility](docs/agents/pareto.md) |
+| `switchyard/auto` | Automatically chooses a native GPT model and reasoning effort for the task | [Routing policy](config/switchyard/README.md#routing-policy); separate local build required |
 
-Pareto supports automatic tool selection and has no hosted-search capability.
-Current route configuration is authoritative; matching accepted or draft
-applications are listed in the [v2 route application index](v2_agent/README.md).
+GLM supports web search through its provider and lets you choose a reasoning
+effort level. Pareto decides when to call available tools; its provider controls
+reasoning, and this route has no provider web search. Connected app tools depend
+on what Codex makes available to the chat.
 
-## Quick start
+Switchyard uses OpenRouter's Jev model to choose a native GPT model for the task.
+The selected GPT model produces the answer through your Codex account. Switchyard
+requires the separate build described below and an OpenRouter key for its decisions.
 
-You’ll need **Windows 10/11**, **PowerShell 5.1+**, **Git**, **Node.js 22.19+**,
-**Python 3.10+ or uv**, and **Codex desktop or CLI**. OpenRouter routes also need
-your own OpenRouter API key.
+Model settings live in [the route configuration](config/openrouter/) and
+[Switchyard configuration](config/switchyard/). Subagent test records in
+[v2_agent](v2_agent/README.md) apply to the specific versions and endpoints they name.
 
-**1. Clone, review, and install**
+## Setup
+
+Requirements:
+
+- Windows 10 or 11 and PowerShell 5.1 or newer.
+- Git and Node.js 22.19 or newer.
+- Python 3.10 or newer, or uv.
+- An installed Codex desktop app or native CLI.
+- Your own OpenRouter API key for the external models or Switchyard.
+
+### 1. Clone and install
 
 ```powershell
 git clone https://github.com/stevennitesh/codex-router-lite.git
@@ -51,44 +91,105 @@ Set-Location codex-router-lite
 The installer preserves your Codex login and user-owned settings, adds the managed
 Codex routing configuration, and installs a local Windows scheduled background task.
 
-**2. Add your OpenRouter key if using an external route or Switchyard**
+### 2. Set your OpenRouter key
 
 ```powershell
 .\model-router.ps1 codex provider-key openrouter set
 ```
 
-Enter it through the protected prompt. Keep keys out of chat, command arguments,
-and repository files. Native GPT access uses your existing Codex login.
+Enter the key through the protected prompt. Native GPT access uses your existing
+Codex login and can run without an OpenRouter key.
 
-**3. Check your setup**
+### 3. Check the installation
 
 ```powershell
 .\model-router.ps1 codex status
 .\model-router.ps1 codex doctor
 ```
 
-Fully quit and reopen Codex to reload the model picker, then select your route.
+### 4. Select a model and use its tools
+
+Fully quit and reopen the desktop app to reload the model picker. Select one of
+the configured entries and start a chat in your workspace. In the native CLI,
+select the configured model through its model picker.
+
+For an initial check, ask the model to inspect a small file, explain it, and run
+an existing check command. Codex should show the tool calls and their results.
+The same permissions and approval settings apply as in your other Codex chats.
 
 Switchyard needs a separate [build and deployment](config/switchyard/maintenance.md).
 Rust is only needed to build Switchyard. For setup details and recovery, see
 [installation](docs/INSTALL.md) and [troubleshooting](docs/TROUBLESHOOTING.md).
 
-## Make it yours
+### External subagents
 
-Most work here starts with a new model or endpoint. The
-[model onboarding guide](docs/agents/model-onboarding.md) walks through choosing a
-compatible API, adding route metadata, translating tools, and testing the real
-Codex path. Start with the [Router Lite system specification](docs/agents/architecture.md)
-if you want to understand how the pieces fit together.
+By default, Router makes certified external models available as subagents.
+Local settings can restrict which of those models Codex may choose. To inspect
+eligible models and your local settings:
 
-Route settings live under [config/openrouter](config/openrouter/) and
-[config/switchyard](config/switchyard/). Model registration lives in
-[src/routed-models.mjs](src/routed-models.mjs). A new endpoint needs compatibility
-checks as well as a configuration entry.
+```powershell
+.\model-router.ps1 codex subagents status
+```
 
-This is a maintainer-led personal project, so external pull requests are not
-accepted. Use the privacy-safe issue forms for bugs or route and behavior ideas,
-or fork the repository for your own changes.
+See the [certification requirements](docs/SUBAGENT-CERTIFICATION.md) for the
+checks a new model or endpoint must pass, and the [test records](v2_agent/README.md)
+for the versions and endpoints tested.
+
+## Updates
+
+To check for and install a published Router Lite update:
+
+```powershell
+.\model-router.ps1 codex update check
+.\model-router.ps1 codex update
+```
+
+The updater uses `origin/main`, installs published changes, and refuses to merge
+diverged local history. See [installation and updates](docs/INSTALL.md#update).
+
+When Codex itself updates, the [compatibility workflow](docs/agents/compatibility-maintenance.md)
+checks the installed app and reviews relevant changes in the original Router and
+Switchyard projects.
+
+For unexpected responses or tool failures, start with the
+[debugging guide](docs/agents/debugging.md). Agents working in this repo can use
+[AGENTS.md](AGENTS.md) to load only the guidance their task needs.
+
+## Data sent to providers
+
+Router listens on your PC. For an external model, the conversation, supplied
+workspace context, and tool results in the model request go to the selected
+provider through OpenRouter. Requests use your protected OpenRouter key; Codex
+credentials and account headers are excluded from that external request.
+
+Switchyard sends a limited amount of current task text to OpenRouter/Jev for
+model selection, even though a native GPT model answers the task. This can include
+the current user message, a recovered assignment to a child agent, or a recognized
+task delivery. Ordinary tool results, assistant answers, and reasoning are
+excluded from the classifier input. See [security](SECURITY.md) and the
+[routing policy](config/switchyard/README.md#routing-policy) for the exact rules.
+
+Enter keys only through the protected prompt. Keep credentials, private prompts,
+and unredacted logs out of commits and public issues. Use
+[private vulnerability reporting](SECURITY.md) for security problems.
+
+## Adding a model or endpoint
+
+The [model integration guide](docs/agents/model-onboarding.md) covers adding a
+model API to the Codex workflow: define the model and endpoint, adapt requests and
+tool calls, and test the result through Codex. An OpenAI-compatible API may still
+need changes for Codex's tools, history, and streaming responses.
+
+The model registry is [src/routed-models.mjs](src/routed-models.mjs).
+[Request preparation](docs/agents/request-preparation.md) describes tool and
+history translation. The [system overview](docs/agents/architecture.md) maps the
+remaining components and their responsibilities.
+
+## Development and feedback
+
+External pull requests are not accepted. Use the [issue forms](CONTRIBUTING.md)
+to report bugs or propose a model, endpoint, or behavior change. You can fork
+the repository for your own changes.
 
 Install JavaScript dependencies with `npm ci` for a fresh checkout or a changed
 lockfile. For code changes, run the local verification:
@@ -102,50 +203,13 @@ specific to documentation, catalog, and shared behavior changes. Before release,
 run `npm run audit:ci` and audit the hashed Python production lock with the
 command in the [GLM dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
 
-When installing edited source, follow the [deployment guide](docs/INSTALL.md#update).
-It owns admission draining, rollback, and the distinction between file-only
-updates and runtime replacement. Restarting alone does not deploy changes.
+To install edited source, follow the [deployment guide](docs/INSTALL.md#update).
+It explains how to finish or defer active requests, install the changed files,
+and restore the previous version if installation fails.
 
-## Keeping up with Codex
+## Attribution
 
-To check for and install a published Router Lite update:
-
-```powershell
-.\model-router.ps1 codex update check
-.\model-router.ps1 codex update
-```
-
-`main` is the rolling tested update channel. The updater fetches `origin/main`,
-fast-forwards only, and reinstalls the managed generation; it does not merge
-local divergence.
-
-When Codex itself updates, the [compatibility workflow](docs/agents/compatibility-maintenance.md)
-checks the installed app and reviews upstream Router and Switchyard changes worth
-integrating. Updates are reviewed deliberately, not merged automatically.
-
-For unexpected responses or tool failures, start with the
-[debugging guide](docs/agents/debugging.md). Agents working in this repo can use
-[AGENTS.md](AGENTS.md) to load only the guidance their task needs.
-
-## Privacy and attribution
-
-Router listens locally. OpenRouter requests use your protected provider key;
-your Codex credentials and account headers are not forwarded to OpenRouter.
-Model requests still go to the selected provider. See [security](SECURITY.md)
-for the trust boundaries and private vulnerability reporting.
-
-**Switchyard Auto also sends bounded task text to OpenRouter/Jev for model
-selection, even though its answer comes from a native GPT model.** Text can come
-from three sources: the latest genuine ordinary user turn, a recovered current
-encrypted child assignment, or the delegated input of a recognized current
-`codex_app` task delivery. Ordinary tool outputs, assistant answers and reasoning
-are excluded. Failed or unsafe recognized assignments fall back to Sol without a
-Jev call, while ordinary and known historical tool outputs retain the current
-route. Task and conversation content remains intact for the native answer model;
-Router still applies the request-field changes owned by the selected route. See
-[security](SECURITY.md) and the [routing policy](config/switchyard/README.md#routing-policy)
-for the exact admission, currentness and egress boundaries.
-
-Built on [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),
-with a narrower focus on my Windows Codex workflow. Independent project;
-not affiliated with OpenAI or OpenRouter. [MIT license](LICENSE) · [Attribution](NOTICE.md)
+Derived from [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router).
+The Lite project maintains the Windows integration and the explicit routes above.
+This project is not affiliated with OpenAI or OpenRouter.
+[MIT license](LICENSE) · [Attribution](NOTICE.md)
