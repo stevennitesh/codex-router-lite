@@ -225,3 +225,65 @@ test("preserves CRLF framing while repairing the malformed message envelope", as
   assert.ok(output.includes("\r\n\r\n"));
   assert.equal(output.replace(/\r\n\r\n/g, "").includes("\n\n"), false);
 });
+
+test("preserves unparsed SSE blocks and flushes an overlapping item before DONE", async () => {
+  const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } });
+  const held = block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", name: "lookup", arguments: "" } });
+  const malformed = ": keepalive\r\ndata: {broken\r\n\r\n";
+  const noData = "event: keepalive\n\n";
+  const nullData = "data: null\n\n";
+  const done = "data: [DONE]";
+  const input = `${open}${held}${malformed}${noData}${nullData}${done}`;
+  assert.equal(await transformed([input.slice(0, 83), input.slice(83)]), `${open}${malformed}${noData}${nullData}${held}${done}`);
+});
+
+test("retains a secondary DONE line when a rewritten event is terminal", async () => {
+  const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } });
+  const held = block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", name: "lookup", arguments: "" } });
+  const close = { type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "reasoning_text", reasoning: "private" }] } };
+  const terminal = `event: response.output_item.done\r\ndata: ${JSON.stringify(close)}\r\ndata: [DONE]\r\n\r\n`;
+  const repaired = { ...close, item: { ...close.item, content: [{ type: "output_text", text: "", annotations: [] }] } };
+  assert.equal(await transformed([`${open}${held}${terminal}`]), `${open}${held}event: response.output_item.done\r\ndata: ${JSON.stringify(repaired)}\r\ndata: [DONE]\r\n\r\n`);
+});
+
+test("repairs split UTF-8 text and an unterminated final message close", async () => {
+  const event = { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg", delta: "Hello 🌍" };
+  const done = { type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "output_text", text: event.delta, annotations: [] }] } };
+  const input = Buffer.from(`${block(event)}data: ${JSON.stringify(done)}`);
+  const split = input.indexOf(Buffer.from("🌍")) + 2;
+  const output = await transformed([input.subarray(0, split), input.subarray(split)]);
+  const events = dataEvents(output);
+  assert.equal(events.find((entry) => entry.type === "response.output_text.delta").delta, "Hello 🌍");
+  assert.deepEqual(events.at(-1), done);
+  assert.equal(output.endsWith("\n\n"), false);
+});
+
+test("preserves mixed SSE delimiters across every short chunk boundary", async () => {
+  const input = Buffer.from([
+    "\n\n: heartbeat\r\n\r\n",
+    block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } }).replaceAll("\n", "\r\n"),
+    block({ type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "🌍 42" }),
+    "data: {malformed\r\n\r\n",
+    block({ type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "output_text", text: "🌍 42" }] } }),
+    "data: [DONE]\r\n\r\nevent: keepalive",
+  ].join(""));
+  for (let size = 1; size <= 11; size += 1) {
+    const chunks = [];
+    for (let offset = 0; offset < input.length; offset += size) {
+      chunks.push(input.subarray(offset, offset + size));
+    }
+    assert.equal(await transformed(chunks), input.toString("utf8"), `chunk size ${size}`);
+  }
+});
+
+test("preserves a long fragmented terminal event and the following block", async () => {
+  const input = Buffer.from(block({
+    type: "response.completed",
+    response: { id: "resp", status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "x".repeat(256 * 1024) }] }] },
+  }).replaceAll("\n", "\r\n") + ": done\n\n");
+  const chunks = [];
+  for (let offset = 0; offset < input.length; offset += 64) {
+    chunks.push(input.subarray(offset, offset + 64));
+  }
+  assert.equal(await transformed(chunks), input.toString("utf8"));
+});

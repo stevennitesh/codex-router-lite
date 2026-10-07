@@ -11,6 +11,8 @@ const STATES = new Set(["accepted", "rejected"]);
 const DESKTOP_CACHE_MS = 5 * 60_000;
 let cachedDesktop;
 let cachedDesktopAt = 0;
+let desktopCaptureVersion = 0;
+let desktopCaptureInFlight;
 let observationTail = Promise.resolve();
 
 function processIdentities(listing) {
@@ -97,10 +99,11 @@ export function codexDesktopState(options = {}) {
     cachedDesktop &&
     now - cachedDesktopAt < DESKTOP_CACHE_MS
   ) return cachedDesktop;
+  const captureVersion = cacheable ? ++desktopCaptureVersion : undefined;
   try {
     const listing = processList === undefined ? processListReader() : processList;
     const desktop = desktopFromListing(listing);
-    if (cacheable) {
+    if (cacheable && captureVersion === desktopCaptureVersion) {
       cachedDesktop = desktop;
       cachedDesktopAt = now;
     }
@@ -109,7 +112,7 @@ export function codexDesktopState(options = {}) {
     // Failure to inspect processes is unknown, never evidence that desktop is
     // closed or that a stale observation belongs to this launch.
     const desktop = { running: true, generation: undefined };
-    if (cacheable) {
+    if (cacheable && captureVersion === desktopCaptureVersion) {
       cachedDesktop = desktop;
       cachedDesktopAt = now;
     }
@@ -132,23 +135,34 @@ export async function codexDesktopStateAsync(options = {}) {
     cachedDesktop &&
     now - cachedDesktopAt < DESKTOP_CACHE_MS
   ) return cachedDesktop;
+  if (cacheable && !forceRefresh && desktopCaptureInFlight?.version === desktopCaptureVersion) {
+    return desktopCaptureInFlight.promise;
+  }
+  const captureVersion = cacheable ? ++desktopCaptureVersion : undefined;
+  const capture = (async () => {
+    let desktop;
+    try {
+      const listing = processList === undefined
+        ? await processListReaderAsync()
+        : processList;
+      desktop = desktopFromListing(listing);
+    } catch {
+      desktop = { running: true, generation: undefined };
+    }
+    // A newer forced or synchronous capture owns the cache even if this scan
+    // finishes later. Each caller still receives its own captured generation.
+    if (cacheable && captureVersion === desktopCaptureVersion) {
+      cachedDesktop = desktop;
+      cachedDesktopAt = now;
+    }
+    return desktop;
+  })();
+  if (!cacheable) return capture;
+  desktopCaptureInFlight = { version: captureVersion, promise: capture };
   try {
-    const listing = processList === undefined
-      ? await processListReaderAsync()
-      : processList;
-    const desktop = desktopFromListing(listing);
-    if (cacheable) {
-      cachedDesktop = desktop;
-      cachedDesktopAt = now;
-    }
-    return desktop;
-  } catch {
-    const desktop = { running: true, generation: undefined };
-    if (cacheable) {
-      cachedDesktop = desktop;
-      cachedDesktopAt = now;
-    }
-    return desktop;
+    return await capture;
+  } finally {
+    if (desktopCaptureInFlight?.version === captureVersion) desktopCaptureInFlight = undefined;
   }
 }
 
@@ -195,11 +209,11 @@ async function observeNativeAuthOutcomeNow(state, {
   desktopOptions,
   now = Date.now(),
 } = {}) {
-  const currentDesktop = desktop || await codexDesktopStateAsync({
+  const currentDesktop = await (desktop || codexDesktopStateAsync({
     ...desktopOptions,
     forceRefresh: state === "rejected",
     now,
-  });
+  }));
   if (!currentDesktop.running || !currentDesktop.generation) {
     return { state: "unknown", desktop: currentDesktop };
   }

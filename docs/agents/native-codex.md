@@ -49,6 +49,24 @@ that proof. The current version-specific capability decision is retained in the
 
 Native HTTP and WebSocket requests preserve Codex authorization, account, residency, and FedRAMP headers. External OpenRouter requests must not receive them. Switchyard receives native authorization only through its authenticated loopback hop.
 
+For caller-owned native sessions, `src/native-responses-websocket.mjs` keeps one
+upstream connection per client connection, forwards real `generate: false`
+prewarm requests, and preserves produced `previous_response_id` continuations.
+Credential, session, thread or model changes require a fresh connection and a
+full normalized baseline. Bounded retained history supports this transition and
+idle reconnects; missing history fails explicitly. Requests already sent upstream
+are not replayed after transport failure. Admission, execution deadlines,
+backpressure and service drain apply to native WebSocket turns as well as HTTP.
+External routes, substituted native credentials and compaction triggers retain
+the HTTP preparation path.
+
+Native HTTP inspection reuses original JSON bytes or zstd frames when compatibility
+normalization makes no changes. Effort metadata is cached by catalog file identity;
+replacement, rewrite or invalid state invalidates it. Desktop-generation capture
+runs alongside dispatch and resolves inside the ordered authentication-observation
+queue. Consented credential refresh and binary discovery use asynchronous
+subprocesses, retaining their timeouts and refresh throttle.
+
 Desktop app tools are never sourced from a checked-in snapshot. Runtime relay
 uses only the caller's request-local definitions and native tool-search
 discoveries, so a Desktop-only plugin can add, remove, or change schemas without

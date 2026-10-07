@@ -10,27 +10,33 @@ function eventBlock(block) {
   const newline = block.includes("\r\n") ? "\r\n" : "\n";
   const lines = block.split(/\r?\n/);
   const dataLineIndex = lines.findIndex((line) => line.startsWith("data:"));
-  if (dataLineIndex === -1) return undefined;
+  const parsed = {
+    lines, dataLineIndex, newline,
+    done: lines.some((line) => line.trim() === "data: [DONE]"),
+  };
+  if (dataLineIndex === -1) return parsed;
   const dataText = lines[dataLineIndex].slice(5).trimStart();
-  if (!dataText || dataText === "[DONE]") return undefined;
+  if (!dataText || dataText === "[DONE]") return parsed;
   try {
-    return { lines, dataLineIndex, newline, event: JSON.parse(dataText) };
+    parsed.event = JSON.parse(dataText);
   } catch {
-    return undefined;
+    // Retain malformed blocks and their terminal framing byte-for-byte.
   }
+  return parsed;
 }
 
 function rewrittenBlock(parsed, event) {
   const lines = [...parsed.lines];
   lines[parsed.dataLineIndex] = `data: ${JSON.stringify(event)}`;
-  return lines.join(parsed.newline);
+  return { block: lines.join(parsed.newline), parsed: { ...parsed, event } };
 }
 
 function syntheticBlock(type, event, parsed) {
   const hasEventLine = parsed.lines.some((line) => line.startsWith("event:"));
   const lines = hasEventLine ? [`event: ${type}`] : [];
-  lines.push(`data: ${JSON.stringify({ type, ...event })}`);
-  return lines.join(parsed.newline);
+  const next = { type, ...event };
+  lines.push(`data: ${JSON.stringify(next)}`);
+  return { block: lines.join(parsed.newline), parsed: { event: next, done: false } };
 }
 
 function messageText(item) {
@@ -75,28 +81,32 @@ function sanitizeMessageItem(item, fallbackText = "") {
 
 export class ZaiResponsesCompatTransform extends Transform {
   #decoder = new StringDecoder("utf8");
-  #buffer = "";
+  #buffer = [];
+  #delimiterTail = "";
   #heldOutputItems = [];
   #maxOutputIndex = -1;
   #message;
   #openOutputIndex;
   _transform(chunk, _encoding, callback) {
-    this.#buffer += this.#decoder.write(chunk);
-    this.#emitCompleteBlocks();
+    this.#emitCompleteBlocks(this.#decoder.write(chunk));
     callback();
   }
 
   _flush(callback) {
-    this.#buffer += this.#decoder.end();
-    this.#emitCompleteBlocks(true);
+    this.#emitCompleteBlocks(this.#decoder.end(), true);
     this.#flushHeldOutputItems();
     callback();
   }
 
-  #emitCompleteBlocks(flush = false) {
-    while (this.#buffer.length) {
-      const crlf = this.#buffer.indexOf("\r\n\r\n");
-      const lf = this.#buffer.indexOf("\n\n");
+  #emitCompleteBlocks(chunk, flush = false) {
+    while (chunk.length) {
+      // Only the last three characters can begin a delimiter spanning chunks.
+      // Keep incomplete event fragments separate, avoiding a join and full
+      // rescan after every chunk of a large terminal event.
+      const carried = this.#delimiterTail.length;
+      const scanned = this.#delimiterTail + chunk;
+      const crlf = scanned.indexOf("\r\n\r\n");
+      const lf = scanned.indexOf("\n\n");
       let index = -1;
       let separator = "";
       if (crlf !== -1 && (lf === -1 || crlf <= lf)) {
@@ -107,18 +117,27 @@ export class ZaiResponsesCompatTransform extends Transform {
         separator = "\n\n";
       }
       if (index === -1) {
-        if (!flush) return;
-        const block = this.#buffer;
-        this.#buffer = "";
-        for (const piece of this.#rewriteBlock(block)) {
-          this.#emitLifecycleBlock(piece, "");
-        }
-        return;
+        this.#buffer.push(chunk);
+        this.#delimiterTail = scanned.slice(-3);
+        break;
       }
-      const block = this.#buffer.slice(0, index);
-      this.#buffer = this.#buffer.slice(index + separator.length);
+      const buffered = this.#buffer.join("");
+      const block = index < carried
+        ? buffered.slice(0, buffered.length - (carried - index))
+        : buffered + chunk.slice(0, index - carried);
+      this.#buffer = [];
+      this.#delimiterTail = "";
+      chunk = chunk.slice(index + separator.length - carried);
       const pieces = this.#rewriteBlock(block);
       for (const piece of pieces) this.#emitLifecycleBlock(piece, separator);
+    }
+    if (flush && this.#buffer.length) {
+      const block = this.#buffer.join("");
+      this.#buffer = [];
+      this.#delimiterTail = "";
+      for (const piece of this.#rewriteBlock(block)) {
+        this.#emitLifecycleBlock(piece, "");
+      }
     }
   }
 
@@ -127,12 +146,11 @@ export class ZaiResponsesCompatTransform extends Transform {
   }
 
   #emitLifecycleBlock(piece, separator) {
-    const block = `${piece}${separator}`;
-    const parsed = eventBlock(piece);
-    const event = parsed?.event;
+    const block = `${piece.block}${separator}`;
+    const event = piece.parsed.event;
     const type = event?.type;
     const terminal = ["response.completed", "response.done"].includes(type) ||
-      piece.split(/\r?\n/u).some((line) => line.trim() === "data: [DONE]");
+      piece.parsed.done;
     if (terminal) {
       this.#flushHeldOutputItems();
       this.#pushBlock(block);
@@ -250,7 +268,10 @@ export class ZaiResponsesCompatTransform extends Transform {
 
   #rewriteBlock(block) {
     const parsed = eventBlock(block);
-    if (!parsed) return [block];
+    // Keep the parsed event alongside its bytes through envelope repair and
+    // lifecycle ordering, instead of parsing original and synthetic JSON twice.
+    const original = { block, parsed };
+    if (parsed.event === undefined) return [original];
     const event = parsed.event;
     const type = event?.type;
     if (type === "response.output_item.added") {
@@ -270,7 +291,7 @@ export class ZaiResponsesCompatTransform extends Transform {
           return [rewrittenBlock(parsed, { ...event, item })];
         }
       }
-      return [block];
+      return [original];
     }
 
     if (type === "response.content_part.added" && event?.item_id) {
@@ -287,13 +308,13 @@ export class ZaiResponsesCompatTransform extends Transform {
         const next = this.#rewriteMessageEvent(event);
         return [
           injected[0],
-          next === event ? block : rewrittenBlock(parsed, next),
+          next === event ? original : rewrittenBlock(parsed, next),
         ];
       }
       this.#message.contentStarted = true;
       const next = this.#rewriteMessageEvent(event);
       return [
-        next === event ? block : rewrittenBlock(parsed, next),
+        next === event ? original : rewrittenBlock(parsed, next),
       ];
     }
 
@@ -301,7 +322,7 @@ export class ZaiResponsesCompatTransform extends Transform {
       if (Number.isInteger(event.output_index)) {
         this.#maxOutputIndex = Math.max(this.#maxOutputIndex, event.output_index);
       }
-      return [block];
+      return [original];
     }
 
     if (type === "response.output_text.delta" || type === "response.output_text.done") {
@@ -315,7 +336,7 @@ export class ZaiResponsesCompatTransform extends Transform {
       if (type === "response.output_text.done" && typeof event.text === "string") {
         this.#message.text = event.text;
       }
-      return [...injected, next === event ? block : rewrittenBlock(parsed, next)];
+      return [...injected, next === event ? original : rewrittenBlock(parsed, next)];
     }
 
     if (type === "response.content_part.done" && event?.item_id) {
@@ -340,7 +361,7 @@ export class ZaiResponsesCompatTransform extends Transform {
       }
       return [
         ...injected,
-        next === event ? block : rewrittenBlock(parsed, next),
+        next === event ? original : rewrittenBlock(parsed, next),
       ];
     }
 
@@ -358,11 +379,11 @@ export class ZaiResponsesCompatTransform extends Transform {
       );
       return [
         ...injected,
-        next === event ? block : rewrittenBlock(parsed, next),
+        next === event ? original : rewrittenBlock(parsed, next),
       ];
     }
 
-    return [block];
+    return [original];
   }
 }
 

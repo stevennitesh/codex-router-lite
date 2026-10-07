@@ -75,6 +75,7 @@ test("LiteLLM config owns only the ordinary OpenRouter GLM hop", () => {
   assert.match(config, /openrouter-glm-5-3-flash-streamlake/u);
   assert.match(config, /openrouter-glm-5-3-flash-together/u);
   assert.match(config, /^general_settings:\r?\n  allow_client_side_credentials: false$/mu);
+  assert.match(config, /^router_settings:\r?\n  num_retries: 0\r?\n  disable_cooldowns: true$/mu);
   assert.doesNotMatch(config, /deepseek|pareto|union-alpha|switchyard|fallback|failover/u);
 });
 

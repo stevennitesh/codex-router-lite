@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { commandOnPath, spawnableCommand } from "./spawnable-command.mjs";
+import { commandOnPath, preferSpawnablePath, spawnableCommand } from "./spawnable-command.mjs";
 
 // The ChatGPT/Codex desktop app bundles its CLI under a version-hashed
 // directory, e.g. %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe. That hash
@@ -109,40 +109,42 @@ function modifiedMs(candidate) {
   }
 }
 
+function newestIdentifiedCodexBinary(identities) {
+  return identities.reduce((selected, candidate) => {
+    if (!selected) return candidate;
+    const versionOrder = compareCodexVersions(candidate.version, selected.version);
+    return versionOrder > 0 ||
+      (versionOrder === 0 && candidate.modifiedMs > selected.modifiedMs)
+      ? candidate : selected;
+  }, undefined)?.binary;
+}
+
+function existingCodexCandidates(candidatePaths) {
+  return [...new Set(candidatePaths)]
+    .filter((candidate) => candidate && existsSync(candidate));
+}
+
 export function newestCodexBinary(
   candidatePaths,
   versionFor = codexBinaryVersion,
   modifiedFor = modifiedMs,
 ) {
-  const existing = [...new Set(candidatePaths)]
-    .filter((candidate) => candidate && existsSync(candidate));
-  if (existing.length === 0) return undefined;
-  let selected = existing[0];
-  let selectedVersion = versionFor(selected);
-  let selectedModifiedMs = modifiedFor(selected);
-  for (const candidate of existing.slice(1)) {
-    const candidateVersion = versionFor(candidate);
-    const versionOrder = compareCodexVersions(candidateVersion, selectedVersion);
-    const candidateModifiedMs = modifiedFor(candidate);
-    if (
-      versionOrder > 0 ||
-      (versionOrder === 0 && candidateModifiedMs > selectedModifiedMs)
-    ) {
-      selected = candidate;
-      selectedVersion = candidateVersion;
-      selectedModifiedMs = candidateModifiedMs;
-    }
-  }
-  return selected;
+  return newestIdentifiedCodexBinary(existingCodexCandidates(candidatePaths).map((binary) => ({
+    binary, version: versionFor(binary), modifiedMs: modifiedFor(binary),
+  })));
 }
 
-export function findCodexBinary() {
+function configuredCodexBinary() {
   // Explicit operator choices outrank discovery, even when another installed
   // build is newer. They are configuration, not candidates.
-  const explicit = [
+  return [
     process.env.CODEX_BIN,
     process.env.CODEX_INSTALL_DIR && path.join(process.env.CODEX_INSTALL_DIR, "codex.exe"),
   ].find((candidate) => candidate && existsSync(candidate));
+}
+
+export function findCodexBinary() {
+  const explicit = configuredCodexBinary();
   if (explicit) return explicit;
 
   // Never use installation-path order as a version signal. The Windows
@@ -150,6 +152,49 @@ export function findCodexBinary() {
   // path used to win even while the app was running a newer harness.
   const found = commandOnPath("codex");
   return newestCodexBinary([...candidates(), found]);
+}
+
+function executeReadOnlyProbe(command, args, timeout = 10_000, options = {}) {
+  return new Promise((resolve) => {
+    execFile(command, args, {
+      ...options,
+      encoding: "utf8",
+      timeout,
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }, (error, stdout) => resolve(error ? undefined : stdout.trim() || undefined));
+  });
+}
+
+async function codexBinaryVersionAsync(binary) {
+  try {
+    const target = spawnableCommand(binary, ["--version"]);
+    return await executeReadOnlyProbe(target.command, target.args, 10_000, target.options);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function newestCodexBinaryAsync(
+  candidatePaths,
+  versionFor = codexBinaryVersionAsync,
+  modifiedFor = modifiedMs,
+) {
+  const identities = await Promise.all(existingCodexCandidates(candidatePaths).map(async (binary) => ({
+    binary, version: await versionFor(binary), modifiedMs: modifiedFor(binary),
+  })));
+  return newestIdentifiedCodexBinary(identities);
+}
+
+// Request-triggered credential refresh must not block the Router while PATH
+// discovery or an installed executable answers a version probe. Catalog and
+// setup callers keep their existing synchronous API and selection policy.
+export async function findCodexBinaryAsync() {
+  const explicit = configuredCodexBinary();
+  if (explicit) return explicit;
+  const output = await executeReadOnlyProbe("where.exe", ["codex"]);
+  const found = output ? preferSpawnablePath(output.split(/\r?\n/)) : undefined;
+  return newestCodexBinaryAsync([...candidates(), found]);
 }
 
 // Catalog reuse needs a build identity as well as `codex --version`. Desktop

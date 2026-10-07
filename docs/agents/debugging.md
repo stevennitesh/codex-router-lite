@@ -63,6 +63,14 @@ an explicit zero remains observed zero. When an empty-completion retry has only
 partial usage or cache-counter coverage, the timing record marks the affected
 aggregate as incomplete rather than treating the missing attempt as zero.
 
+HTTP timing separates `preparation_ms` (arrival to upstream dispatch) from
+`upstream_headers_ms` (dispatch through any retries/gateway to response headers).
+The existing `upstream_ms` remains arrival to headers. `first_token_ms` measures
+the first observed content, reasoning or tool delta; absent progress is unknown.
+Native WebSocket records identify `transport=websocket` and retain preparation,
+first-token and total durations. Compare equivalent workloads before attributing
+a timing difference to a provider or Router change.
+
 `src/response-usage.mjs` shares bounded capture and an incremental line scanner
 between observation and substitution. Observation forwards original chunks
 immediately; substitution holds only the current line or JSON body. JSON uses a

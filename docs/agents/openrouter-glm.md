@@ -38,6 +38,9 @@ reports and lets later usage reports clear stale cached-token counts. Missing
 usage can still require gateway estimation; a reported zero is authoritative.
 
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
+`src/litellm-config.mjs` sets gateway retries to zero; the Node forwarder owns
+the bounded provider retry. This avoids multiplying attempts across both layers
+while retaining original refusal statuses and exact endpoint selection.
 `src/zai-responses-compat.mjs` repairs malformed GLM envelopes: visible text
 after reasoning without message/content opening events, a visible-text close
 with a `reasoning_text` part, and overlapping assistant-message and

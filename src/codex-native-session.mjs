@@ -220,20 +220,21 @@ async function refreshViaCodex({ now = Date.now() } = {}) {
   lastRefreshAttemptMs = now;
   refreshInFlight = (async () => {
     try {
-      const { findCodexBinary } = await import("./codex-binary.mjs");
-      const binary = findCodexBinary();
+      const { findCodexBinaryAsync } = await import("./codex-binary.mjs");
+      const binary = await findCodexBinaryAsync();
       if (!binary) return false;
       const { spawnableCommand } = await import("./spawnable-command.mjs");
-      const { execFileSync } = await import("node:child_process");
+      const { execFile } = await import("node:child_process");
       const command = spawnableCommand(binary, ["login", "status"]);
-      execFileSync(command.command, command.args, {
-        ...command.options,
-        encoding: "utf8",
-        timeout: REFRESH_TIMEOUT_MS,
-        stdio: ["ignore", "ignore", "ignore"],
-        windowsHide: true,
+      return await new Promise((resolve) => {
+        execFile(command.command, command.args, {
+          ...command.options,
+          encoding: "utf8",
+          timeout: REFRESH_TIMEOUT_MS,
+          stdio: ["ignore", "ignore", "ignore"],
+          windowsHide: true,
+        }, (error) => resolve(!error));
       });
-      return true;
     } catch {
       return false;
     } finally {

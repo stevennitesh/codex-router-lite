@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import {
   existsSync,
   mkdtempSync,
@@ -255,11 +257,11 @@ test("the expiry claim is read without the token leaving the module", () => {
   assert.equal(tokenExpiryMs("a.notbase64!.c"), undefined);
 });
 
-test("an expired session is withheld rather than spent on a certain 401", () => {
+test("an expired session is withheld rather than spent on a certain 401", async () => {
   const seconds = Math.floor(Date.now() / 1000);
-  // No Codex to run, so the refresh nudge is a no-op and the behaviour under
-  // test is the withholding itself.
-  process.env.CODEX_BIN = "/nonexistent/codex";
+  // An existing non-Codex executable prevents discovery from selecting a real
+  // installed login. Its `login status` invocation fails without credentials.
+  process.env.CODEX_BIN = process.execPath;
   try {
     process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK = "1";
     writeAuth({ access_token: jwtWithExp(seconds - 3600), account_id: ACCOUNT });
@@ -271,6 +273,7 @@ test("an expired session is withheld rather than spent on a certain 401", () => 
     // costs the whole turn.
     writeAuth({ access_token: jwtWithExp(seconds + 30), account_id: ACCOUNT });
     assert.equal(nativeSessionHeaders(), undefined);
+    assert.equal(await nativeAccountCatalogHeaders(), undefined);
 
     writeAuth({ access_token: jwtWithExp(seconds + 172800), account_id: ACCOUNT });
     assert.notEqual(nativeSessionHeaders(), undefined, "a live token must still be sent");
@@ -279,6 +282,93 @@ test("an expired session is withheld rather than spent on a certain 401", () => 
   } finally {
     delete process.env.CODEX_BIN;
     delete process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK;
+  }
+});
+
+test("credential refresh runs asynchronously, coalesces callers, and keeps its retry throttle", async (t) => {
+  const seconds = Math.floor(Date.now() / 1000);
+  const syntheticRenewedToken = jwtWithExp(seconds + 3600);
+  const syntheticAccount = "synthetic-renewed-account";
+  const renewedDocument = JSON.stringify({ auth_mode: "chatgpt", tokens: {
+    access_token: syntheticRenewedToken, account_id: syntheticAccount,
+  } });
+  const savedBinary = process.env.CODEX_BIN;
+  process.env.CODEX_BIN = process.execPath;
+  process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK = "1";
+  const execute = childProcess.execFile;
+  let refreshCalls = 0;
+  t.mock.method(childProcess, "execFile", (command, args, options, callback) => {
+    assert.equal(command, process.execPath);
+    assert.deepEqual(args, ["login", "status"]);
+    assert.equal(options.timeout, 30_000);
+    assert.equal(options.windowsHide, true);
+    assert.deepEqual(options.stdio, ["ignore", "ignore", "ignore"]);
+    refreshCalls++;
+    // Use an actual slow synthetic process rather than a resolved Promise:
+    // execFileSync would suppress every timer tick while this child sleeps.
+    return execute(process.execPath, ["-e",
+      "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], process.argv[2]), 300)",
+      authPath, renewedDocument,
+    ], options, callback);
+  });
+  syncBuiltinESMExports();
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 10);
+  try {
+    const session = await import(`../src/codex-native-session.mjs?synthetic-async-refresh`);
+    writeAuth({ access_token: jwtWithExp(seconds - 3600), account_id: ACCOUNT });
+    assert.equal(session.nativeSessionHeaders(), undefined, "spending does not wait on expired credentials");
+    const waiting = [session.nativeAccountCatalogHeaders(), session.nativeAccountCatalogHeaders()];
+    let refreshComplete = false;
+    void waiting[0].then(() => { refreshComplete = true; });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(refreshComplete, false, "timer fires before the slow child completes");
+    assert.ok(ticks >= 1, "unrelated work proceeds while refresh child is still running");
+    const results = await Promise.all(waiting);
+    assert.equal(refreshCalls, 1);
+    for (const headers of results) assert.deepEqual(headers, {
+      authorization: `Bearer ${syntheticRenewedToken}`, "chatgpt-account-id": syntheticAccount,
+    });
+    assert.ok(ticks >= 10, "event loop remains active over the actual child lifetime");
+    writeAuth({ access_token: jwtWithExp(seconds - 3600), account_id: ACCOUNT });
+    assert.equal(await session.nativeAccountCatalogHeaders(), undefined);
+    assert.equal(refreshCalls, 1, "recent completed refresh is throttled instead of spawning again");
+  } finally {
+    clearInterval(timer);
+    if (savedBinary === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = savedBinary;
+    delete process.env.CODEX_ROUTER_NATIVE_SESSION_FALLBACK;
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test("failed asynchronous refresh leaves expired credentials withheld and does not expose child output", async (t) => {
+  const savedBinary = process.env.CODEX_BIN;
+  process.env.CODEX_BIN = process.execPath;
+  const execute = childProcess.execFile;
+  let attempts = 0;
+  t.mock.method(childProcess, "execFile", (_command, _args, options, callback) => {
+    attempts++;
+    return execute(process.execPath, ["-e", "process.stderr.write('synthetic-private-status'); process.exit(27)"], options, callback);
+  });
+  syncBuiltinESMExports();
+  try {
+    const session = await import("../src/codex-native-session.mjs?synthetic-async-refresh-failure");
+    const seconds = Math.floor(Date.now() / 1000);
+    writeAuth({ access_token: jwtWithExp(seconds - 3600), account_id: ACCOUNT });
+    const originalAuth = readFileSync(authPath, "utf8");
+    const results = await Promise.all([session.nativeAccountCatalogHeaders(), session.nativeAccountCatalogHeaders()]);
+    assert.deepEqual(results, [undefined, undefined]);
+    assert.equal(attempts, 1);
+    assert.equal(readFileSync(authPath, "utf8"), originalAuth, "Router never rewrites Codex credentials");
+    assert.equal(await session.nativeAccountCatalogHeaders(), undefined);
+    assert.equal(attempts, 1, "failure keeps the existing bounded retry throttle");
+  } finally {
+    if (savedBinary === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = savedBinary;
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
   }
 });
 

@@ -36,6 +36,9 @@ export function renderLiteLlmConfig() {
     // rate-limiting, wait a bit and retry": the one piece of advice that cannot
     // fix a rejected credential. Relay the provider's real status instead.
     "router_settings:",
+    // The forwarder owns upstream retries. Repeating that completed policy in
+    // LiteLLM multiplies attempts and delays before Codex sees a failure.
+    "  num_retries: 0",
     "  disable_cooldowns: true",
     "general_settings:",
     // Never let request parameters replace the configured provider endpoint or

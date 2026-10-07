@@ -8,6 +8,7 @@ import {
   readResponseBody,
 } from "./http-utils.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
+import { NativeResponsesWebSocket } from "./native-responses-websocket.mjs";
 
 const RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
 
@@ -19,7 +20,9 @@ const FORWARDED_REQUEST_HEADERS = new Set([
   "originator",
   "session_id",
   "session-id",
+  "x-session-id",
   "thread-id",
+  "x-codex-routing-hint",
   "traceparent",
   "tracestate",
   "user-agent",
@@ -768,6 +771,7 @@ class ResponsesWebSocketPeer {
     if (this.closed) return;
     this.closed = true;
     this.abortController.abort(new Error("Responses WebSocket closed."));
+    this.nativeTransport?.close();
     this.continuations.clear();
     this.options.unregisterPeer?.();
   }
@@ -961,6 +965,154 @@ class ResponsesWebSocketPeer {
       });
   }
 
+  async processNative(request, fullRequest, clientMetadata, previous) {
+    if (!this.options.prepareNativeRequest) return false;
+    const controller = new AbortController();
+    const onClose = () => controller.abort(this.abortController.signal.reason);
+    this.abortController.signal.addEventListener("abort", onClose, { once: true });
+    const startedAt = Date.now();
+    let prepared;
+    let terminal;
+    let firstTokenMs;
+    let status = 502;
+    let outcome = "transport_error";
+    try {
+      const payload = { ...request };
+      delete payload.type;
+      const headers = loopbackHeaders(
+        this.request, this.options.callerKey, clientMetadata, this.turnState,
+        this.options.internalAuthorization,
+      );
+      // This hop is a real WebSocket. Its native beta and frame metadata must
+      // survive, while HTTP re-entry below keeps its existing projections.
+      headers["openai-beta"] = String(this.request.headers["openai-beta"]);
+      prepared = await this.options.prepareNativeRequest({
+        request: { headers, url: this.request.url, method: "POST" },
+        payload, controller, signal: controller.signal,
+      });
+      if (!prepared) {
+        this.nativeTransport?.close();
+        return false;
+      }
+      this.nativeTransport ??= new NativeResponsesWebSocket({
+        maxEventBytes: this.options.maxEventBytes,
+        maxErrorBytes: this.options.maxErrorBytes,
+        maxFragmentFrames: this.options.maxFragmentFrames,
+      });
+      if (request.previous_response_id && !this.nativeTransport.canContinue(prepared, request.previous_response_id)) {
+        if (!previous) {
+          status = 409;
+          outcome = "failed";
+          this.sendError(status, {
+            type: "invalid_request_error", code: "previous_response_not_found",
+            message: "Previous response was not found. Retrying the full request.",
+          });
+          return true;
+        }
+        prepared.payload = prepared.rebuildPayload(fullRequest.input);
+        delete prepared.payload.previous_response_id;
+      }
+      prepared.encoded = JSON.stringify({ ...prepared.payload, type: "response.create" });
+      const requestBytes = Buffer.byteLength(prepared.encoded, "utf8");
+      if (requestBytes > this.options.maxMessageBytes) {
+        status = 413;
+        outcome = "failed";
+        this.sendError(status, { type: "request_too_large", message: "Native Responses request exceeds its byte bound." });
+        return true;
+      }
+      const normalizedInput = prepared.payload.input;
+      const continuing = Boolean(prepared.payload.previous_response_id && previous);
+      const knownBaseline = !prepared.payload.previous_response_id || Boolean(previous);
+      const input = continuing
+        ? [...previous.input, ...previous.output, ...normalizedInput]
+        : normalizedInput;
+      // Account for each incremental suffix once. Native turns need not
+      // repeatedly serialize all previous input to bound their fallback state.
+      const inputBytes = (continuing ? previous.inputBytes + previous.outputBytes : 0) +
+        Buffer.byteLength(JSON.stringify(normalizedInput), "utf8");
+      let outputItems = [];
+      let outputItemsBytes = 0;
+      let continuationOverflow = false;
+      terminal = await this.nativeTransport.run(prepared, {
+        signal: controller.signal,
+        onHeaders: (upstreamHeaders) => {
+          const value = safeHeaderValue(upstreamHeaders.get("x-codex-turn-state"));
+          if (value) this.turnState = { value, turnId: metadataTurnId(clientMetadata) };
+          return sendSuccessfulResponseHeaders(this, { headers: upstreamHeaders });
+        },
+        onEvent: async (event) => {
+          if (event.type === "response.completed" && !validCompletedResponse(event.response)) {
+            const error = new Error("Native Responses emitted an invalid completed response.");
+            error.code = "local_router_protocol_error";
+            throw error;
+          }
+          if (event.type === "response.metadata") {
+            const value = safeHeaderValue(event.headers?.["x-codex-turn-state"]);
+            if (value) this.turnState = { value, turnId: metadataTurnId(clientMetadata) };
+          }
+          if (event.type === "response.output_item.done" && event.item && !continuationOverflow) {
+            outputItemsBytes += Buffer.byteLength(JSON.stringify(event.item), "utf8");
+            if (outputItemsBytes <= this.options.maxContinuationBytes) outputItems.push(event.item);
+            else { continuationOverflow = true; outputItems = []; }
+          }
+          if (firstTokenMs === undefined && (
+            event.type === "response.output_text.delta" ||
+            event.type === "response.function_call_arguments.delta" ||
+            event.type === "response.custom_tool_call_input.delta" ||
+            event.type === "response.reasoning_summary_text.delta"
+          )) firstTokenMs = Date.now() - startedAt;
+          return this.sendJsonWithBackpressure(event);
+        },
+      });
+      status = terminal?.type === "response.completed" ? 200 : Number(terminal?.status) || 502;
+      outcome = terminal?.type === "response.completed" ? "completed" : "failed";
+      this.continuations.clear();
+      if (terminal?.type === "response.completed") {
+        outputItems = reconciledContinuationOutput(terminal.response.output, outputItems);
+        const outputBytes = Buffer.byteLength(JSON.stringify(outputItems), "utf8");
+        if (knownBaseline && !continuationOverflow && inputBytes + outputBytes + 32 <= this.options.maxContinuationBytes) {
+          this.continuations.set(terminal.response.id, { input, output: outputItems, inputBytes, outputBytes });
+        }
+      }
+      return true;
+    } catch (error) {
+      if (!prepared && error?.status) status = error.status;
+      else if (error?.status) status = error.status;
+      if (prepared && !error?.sent && [404, 405, 426].includes(error?.status)) {
+        // A rejected handshake has sent no response.create and cannot have
+        // generated a response. Preserve compatibility with HTTP-only backends.
+        return false;
+      }
+      if (!this.closed && controller.signal.aborted) {
+        status = Number(controller.signal.reason?.status) || 499;
+        outcome = status === 504 ? "failed" : "canceled";
+        this.sendError(status, {
+          type: controller.signal.reason?.code || "local_router_stream_failed",
+          message: status === 504
+            ? "Router request exceeded its execution deadline."
+            : "The native Responses request was canceled.",
+        });
+      } else if (!this.closed) {
+        const body = error?.body ? Buffer.from(error.body, "utf8") : Buffer.alloc(0);
+        this.sendError(status, errorShape(body, {
+          type: error?.code || "local_router_stream_failed",
+          message: "The local router lost the native Responses WebSocket.",
+        }), error?.headers ? responseHeaders({ headers: error.headers }, { includeRateLimits: true }) : undefined);
+      }
+      this.continuations.clear();
+      return true;
+    } finally {
+      if (controller.signal.aborted) {
+        status = Number(controller.signal.reason?.status) || 499;
+        outcome = status === 504 ? "failed" : "canceled";
+      }
+      prepared?.finish?.({ status, outcome, response: terminal?.response,
+        usage: terminal?.response?.usage, firstTokenMs, latencyMs: Date.now() - startedAt });
+      this.abortController.signal.removeEventListener("abort", onClose);
+      controller.abort();
+    }
+  }
+
   async process(text) {
     if (this.closed) return;
     try {
@@ -1013,21 +1165,18 @@ class ResponsesWebSocketPeer {
     const previousId = typeof request.previous_response_id === "string"
       ? request.previous_response_id
       : undefined;
-    if (previousId) {
-      const previous = this.continuations.get(previousId);
-      if (!previous) {
+    const previous = previousId ? this.continuations.get(previousId) : undefined;
+    if (previousId && previous) {
+      fullRequest.input = [...previous.input, ...previous.output, ...request.input];
+    }
+    if (await this.processNative(request, fullRequest, clientMetadata, previous)) return;
+    if (previousId && !previous) {
         this.sendError(409, {
           type: "invalid_request_error",
           code: "previous_response_not_found",
           message: "Previous response was not found. Retrying the full request.",
         });
         return;
-      }
-      fullRequest.input = [
-        ...previous.input,
-        ...previous.output,
-        ...request.input,
-      ];
     }
     // Codex's ResponseCreateWsRequest serializes every stable non-input field
     // on incremental frames; only `input` becomes the suffix and
@@ -1273,6 +1422,7 @@ export function handleResponsesWebSocketUpgrade(
     maxFragmentFrames = MAX_FRAGMENT_FRAMES,
     admitUpgrade,
     admitRequest,
+    prepareNativeRequest,
     onPeer,
   },
 ) {
@@ -1366,6 +1516,7 @@ export function handleResponsesWebSocketUpgrade(
     maxContinuationBytes,
     maxFragmentFrames,
     admitRequest,
+    prepareNativeRequest,
   });
   peer.options.unregisterPeer = onPeer?.(peer);
   peer.start(head);

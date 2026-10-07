@@ -1,5 +1,6 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
 import { readFileSync } from "node:fs";
+import { createCatalogReader } from "./catalog-reader.mjs";
 import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -877,14 +878,7 @@ function logUpstreamRetry({ attempt, retries, status, error, delayMs }, model, r
   );
 }
 
-function catalogModels() {
-  try {
-    const parsed = JSON.parse(readFileSync(CATALOG_PATH, "utf8"));
-    return Array.isArray(parsed.models) ? parsed.models : [];
-  } catch {
-    return [];
-  }
-}
+const catalogModels = createCatalogReader(CATALOG_PATH);
 
 // Shared across every /health request so concurrent status and readiness calls
 // collapse into one probe per service per window.
@@ -1843,7 +1837,7 @@ function normalizeNativeInput(
   { statelessReasoning = false, dropUnstoredReasoningReferences = false } = {},
 ) {
   if (!Array.isArray(input)) return input;
-  return input.flatMap((item) => {
+  const normalized = input.flatMap((item) => {
     if (item?.type === "reasoning") {
       const reasoning = sanitizeReasoningForNative(item, {
         stateless: statelessReasoning,
@@ -1871,6 +1865,35 @@ function normalizeNativeInput(
       ? messageItem(renderCompactionValue(item.encrypted_content))
       : item];
   });
+  return normalized.length === input.length && normalized.every((item, index) => item === input[index])
+    ? input : normalized;
+}
+
+function prepareNativePayload(payload, {
+  substitutedCaller = false, compactV1 = false, preservePreviousResponseId = false,
+  normalizeEffort = true,
+} = {}) {
+  const native = { ...payload };
+  let changed = normalizeEffort && normalizeNativeReasoningEffort(native, catalogModels()).length > 0;
+  const legacyCache = Object.hasOwn(native, "prompt_cache_retention");
+  normalizeNativePromptCacheCompatibility(native);
+  changed ||= legacyCache && !Object.hasOwn(native, "prompt_cache_retention");
+  if (Array.isArray(payload.input)) {
+    native.input = normalizeNativeInput(payload.input, {
+      statelessReasoning: substitutedCaller,
+      dropUnstoredReasoningReferences: substitutedCaller && !compactV1,
+    });
+    changed ||= native.input !== payload.input;
+  }
+  if (!compactV1 && !preservePreviousResponseId && Object.hasOwn(native, "previous_response_id")) {
+    delete native.previous_response_id;
+    changed = true;
+  }
+  if (substitutedCaller) {
+    normalizeNativeForSubstitutedCaller(native, { compact: compactV1 });
+    changed = true;
+  }
+  return { payload: native, changed };
 }
 
 function extractUserMessages(input) {
@@ -2297,6 +2320,8 @@ async function handleResponses(request, response, requestUrl) {
   let observesNativeAuth = false;
   let nativeAuthDesktop;
   let upstreamLatencyMs;
+  let preparationMs;
+  let upstreamHeadersMs;
   let firstTokenMs;
   let usageTransform;
   let emptyCompletionGuard;
@@ -2333,6 +2358,7 @@ async function handleResponses(request, response, requestUrl) {
     // The projection is trusted only when this process derived it. Strip any
     // caller value before route selection so spoofed state cannot reach either
     // Switchyard or another upstream.
+    const callerProjection = Object.hasOwn(payload, SWITCHYARD_TASK_PROJECTION_FIELD);
     delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
@@ -2448,15 +2474,20 @@ async function handleResponses(request, response, requestUrl) {
       builtSearchMode = built.searchMode;
       openRouterHostedSearch = built.hostedSearch;
     } else {
-      const native = { ...payload };
       const substitutedCaller = callerBroughtNoUpstreamCredential(request.headers, {
         callerKey: CALLER_KEY,
         internalKey: INTERNAL_KEY,
       });
+      const selectedNative = switchyard
+        ? { ...payload, model: compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel }
+        : payload;
+      const prepared = prepareNativePayload(selectedNative, {
+        substitutedCaller, compactV1, normalizeEffort: !switchyard,
+      });
+      const native = prepared.payload;
       // Switchyard's public route maps to the native model selected by its
       // local runtime. Native GPT requests keep their original model.
       if (switchyard) {
-        native.model = compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel;
         if (switchyardHop) {
           const projection = await switchyardTaskProjection(
             request,
@@ -2469,23 +2500,6 @@ async function handleResponses(request, response, requestUrl) {
           }
         }
       }
-      if (!switchyard) {
-        normalizeNativeReasoningEffort(native, catalogModels());
-      }
-      normalizeNativePromptCacheCompatibility(native);
-      if (Array.isArray(payload.input)) {
-        native.input = normalizeNativeInput(payload.input, {
-          // Every substituted caller needs provenance-safe full reasoning.
-          // V1 compaction alone has a stored-reference contract, so it keeps
-          // bare rs_ references while ordinary/V2 stateless replay drops them.
-          statelessReasoning: substitutedCaller,
-          dropUnstoredReasoningReferences: substitutedCaller && !compactV1,
-        });
-      }
-      if (!compactV1) delete native.previous_response_id;
-      if (substitutedCaller) {
-        normalizeNativeForSubstitutedCaller(native, { compact: compactV1 });
-      }
       target = switchyardHop
         ? switchyardTarget(route, requestUrl.pathname)
         : nativeTarget(requestUrl.pathname);
@@ -2494,14 +2508,20 @@ async function handleResponses(request, response, requestUrl) {
       observesNativeAuth = !switchyard && nativeSessionTokenMatches(
         bearerToken(request.headers.authorization),
       );
-      if (observesNativeAuth) nativeAuthDesktop = await codexDesktopStateAsync();
+      if (observesNativeAuth) nativeAuthDesktop = codexDesktopStateAsync();
       headers = switchyardHop
         ? switchyardHeaders(request, execution.issueSwitchyardCallbackLease())
         : nativeHeaders(request);
-      const nativeBody = Buffer.from(JSON.stringify(native), "utf8");
-      routedBody = switchyardHop
-        ? nativeBody
-        : await compressedNativeBody(nativeBody, headers);
+      // Inspection need not rebuild an unchanged native request. Keep Codex's
+      // existing zstd frame; other encodings use the validated decoded bytes.
+      const unchanged = !switchyard && !prepared.changed && !callerProjection;
+      if (unchanged && String(request.headers["content-encoding"] || "").trim().toLowerCase() === "zstd") {
+        routedBody = encoded;
+        headers["Content-Encoding"] = "zstd";
+      } else {
+        const nativeBody = unchanged ? body : Buffer.from(JSON.stringify(native), "utf8");
+        routedBody = switchyardHop ? nativeBody : await compressedNativeBody(nativeBody, headers);
+      }
     }
 
     // `routedBody` is a fully materialized Buffer -- plain JSON, or the zstd
@@ -2548,6 +2568,8 @@ async function handleResponses(request, response, requestUrl) {
         });
       }
     };
+    const dispatchedAt = Date.now();
+    preparationMs = dispatchedAt - startedAt;
     let { response: upstream, retries } = await fetchWithRetry(
       target,
       upstreamInit,
@@ -2571,12 +2593,10 @@ async function handleResponses(request, response, requestUrl) {
         desktop: nativeAuthDesktop,
       }).catch(() => {});
     }
-    // Time until the upstream chain answered the request. Everything before
-    // this is router-side work (body read, normalization, flattening, vision
-    // bridge) plus the upstream's own time to produce response headers. For a
-    // routed turn that means the full router -> litellm -> api-forwarder ->
-    // provider path, so a stall here is the provider's, not the router's.
+    // Retain upstream_ms as arrival-to-headers for existing readers. Separate
+    // preparation from the dispatched chain (including retries and gateways).
     upstreamLatencyMs = Date.now() - startedAt;
+    upstreamHeadersMs = Date.now() - dispatchedAt;
     // Read a failed routed body once for error translation; response bodies are
     // single-consumer streams.
     let failedBodyText;
@@ -3101,7 +3121,7 @@ async function handleResponses(request, response, requestUrl) {
     // remains zero so a real cache miss is distinguishable from absent data.
     // `model` and `provider` always name the pair that served the turn.
     console.error(
-      `[codex-router] timing at=${new Date().toISOString()} model=${route?.slug || requestedModel || "unknown"} provider=${route?.provider || "openai"} status=${status} total_ms=${Date.now() - startedAt} upstream_ms=${timingMetric(upstreamLatencyMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}${
+      `[codex-router] timing at=${new Date().toISOString()} model=${route?.slug || requestedModel || "unknown"} provider=${route?.provider || "openai"} status=${status} total_ms=${Date.now() - startedAt} upstream_ms=${timingMetric(upstreamLatencyMs)} preparation_ms=${timingMetric(preparationMs)} upstream_headers_ms=${timingMetric(upstreamHeadersMs)} first_token_ms=${timingMetric(firstTokenMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}${
         usage?.cacheWriteTokens !== undefined
           ? ` cache_write_tokens=${usage.cacheWriteTokens}`
           : ""
@@ -3119,6 +3139,54 @@ async function handleResponses(request, response, requestUrl) {
         estimatedInputTokens ? ` est_input=${estimatedInputTokens}` : ""
       }`,
     );
+  }
+}
+
+function prepareNativeWebSocketRequest({ request, payload, controller, signal }) {
+  const model = payload.model;
+  // External routes and consented session substitution keep HTTP's existing
+  // preparation contract. Switchyard callbacks retain their HTTP attribution.
+  if (typeof model !== "string" || !model || MODEL_BY_SLUG.has(model) ||
+      RETIRED_ROUTED_MODELS.has(model) || model.includes("/") ||
+      callerBroughtNoUpstreamCredential(request.headers, { callerKey: CALLER_KEY, internalKey: INTERNAL_KEY }) ||
+      request.headers[SWITCHYARD_CAPABILITY_HEADER] || request.headers[SWITCHYARD_CALLBACK_LEASE_HEADER] ||
+      (Array.isArray(payload.input) && payload.input.at(-1)?.type === "compaction_trigger")) return undefined;
+  const startedAt = Date.now();
+  const execution = beginRequestExecution({ request, controller });
+  let finished = false;
+  try {
+    signal.throwIfAborted();
+    const clean = { ...payload };
+    delete clean[SWITCHYARD_TASK_PROJECTION_FIELD];
+    const prepared = prepareNativePayload(clean, { preservePreviousResponseId: true });
+    const headers = nativeHeaders(request);
+    const observesNativeAuth = nativeSessionTokenMatches(bearerToken(request.headers.authorization));
+    const desktop = observesNativeAuth ? codexDesktopStateAsync() : undefined;
+    const preparationMs = Date.now() - startedAt;
+    return {
+      target: nativeTarget("/responses"), headers, payload: prepared.payload,
+      rebuildPayload(input) {
+        const full = { ...clean, input };
+        delete full.previous_response_id;
+        return prepareNativePayload(full).payload;
+      },
+      finish({ status, usage: reportedUsage, firstTokenMs, latencyMs }) {
+        if (finished) return;
+        finished = true;
+        execution.finish();
+        const servedStatus = execution.deadlineExceeded() ? 504 : status;
+        if (observesNativeAuth) {
+          void observeNativeAuthOutcome(servedStatus, { desktop }).catch(() => {});
+        }
+        const usage = tokenUsageFromPayload({ usage: reportedUsage });
+        console.error(
+          `[codex-router] timing at=${new Date().toISOString()} model=${model} provider=openai status=${servedStatus} transport=websocket total_ms=${timingMetric(latencyMs)} preparation_ms=${timingMetric(preparationMs)} first_token_ms=${timingMetric(firstTokenMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}`,
+        );
+      },
+    };
+  } catch (error) {
+    execution.finish();
+    throw error;
   }
 }
 
@@ -3151,7 +3219,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
       bearerToken(request.headers.authorization),
     );
     const nativeAuthDesktop = observesNativeAuth
-      ? await codexDesktopStateAsync()
+      ? codexDesktopStateAsync()
       : undefined;
     const headers = nativeHeaders(request);
     if (!hasNativeSession(headers)) {
@@ -3491,11 +3559,10 @@ server.on("upgrade", (request, socket, head) => {
   handleResponsesWebSocketUpgrade(request, socket, head, {
     callerKey: CALLER_KEY,
     authenticateUpgrade: authenticatedCallerRoute,
-    // The WebSocket is an edge translation only. Every complete request
-    // re-enters this caller-authenticated HTTP route, so routing, provider
-    // credentials, retries, transforms, usage, and cancellation all
-    // continue to have one implementation.
+    // Native caller-owned sessions use one persistent upstream WebSocket.
+    // External routes re-enter the shared authenticated HTTP preparation path.
     responsesUrl: `${callerBaseUrl(LISTEN_PORT, CALLER_KEY)}/responses`,
+    prepareNativeRequest: prepareNativeWebSocketRequest,
     admitUpgrade: () => routerAdmission.admitWebSocketMessage(),
     admitRequest: () => routerAdmission.admitWebSocketMessage(),
     onPeer: (peer) => routerAdmission.registerPeer(peer),

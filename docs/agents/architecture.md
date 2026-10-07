@@ -36,8 +36,9 @@ Update explicit allowlists for an authorized addition; never disable their check
 ## Request flow
 
 1. Codex reaches the capability-protected loopback Router. `src/router.mjs` owns
-   dispatch and the Responses lifecycle. `src/responses-websocket.mjs` adapts the
-   WebSocket edge into the same HTTP handling path.
+   dispatch and the Responses lifecycle. `src/responses-websocket.mjs` uses a
+   persistent native upstream WebSocket for caller-owned native sessions;
+   external and substituted-session requests re-enter the HTTP handling path.
 2. Router dispatches by the selected model's registered capability and the
    endpoint's native-session requirements. Native endpoints preserve native
    authorization and reach the native backend. Registered external routes use
@@ -61,7 +62,7 @@ Update explicit allowlists for an authorized addition; never disable their check
 | Boundary | Supported surface | Authentication and identity | Failure behavior |
 | --- | --- | --- | --- |
 | Public Router HTTP | `GET /v1/health`, `GET /v1/models`; `POST /v1/responses`, `/v1/responses/compact`, `/v1/embeddings`, `/v1/images/edits`, `/v1/images/generations`, `/v1/alpha/search` | Loopback caller capability in the managed path, or an accepted bearer on direct `/v1/*`; native session identity is retained only for native hops | Known local validation errors use HTTP status plus stable `error.code`; `error.type` retains its boundary-specific compatibility value. Upstream error passthrough and post-header terminal stream errors keep their existing semantics. |
-| Public Responses WebSocket | Upgrade on `/v1/responses` | Same caller capability or accepted bearer as HTTP | Each complete WebSocket request re-enters the authenticated HTTP Responses path; the adapter serializes HTTP/SSE results and terminal failures. |
+| Public Responses WebSocket | Upgrade on `/v1/responses` | Same caller capability or accepted bearer as HTTP | Caller-owned native sessions retain incremental upstream continuations; external and substituted-session requests use the HTTP adapter. A rejected 404/405/426 native handshake can use HTTP before sending a generation request; a sent request is never replayed after a disconnect. |
 | Private Switchyard hop | Router to the configured loopback `/v1/responses` target | Dedicated Switchyard capability; `gatewayModel` selects the Switchyard classifier route | A rejected encrypted-task extraction supplies a null projection, which invokes Switchyard's local zero-Jev fallback. |
 | Private external-provider hops | Router to LiteLLM and/or `api-forwarder`; `/chat/completions` is internal-only, while direct hosted-search Responses uses the forwarder | Dedicated internal capability between local services; the forwarder alone owns the provider credential | The forwarder repeats Router-owned validation and preserves provider responses; it never receives native account headers. |
 
