@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -148,7 +148,10 @@ test("rollback preparation reaches both current and retained installer contracts
         assert.equal(call.modelState, outcome.originalModel);
         assert.equal(call.codexState, outcome.originalCodex);
       } else {
-        assert.equal(path.dirname(call.modelState), path.join(directory, "previous/generated"));
+        // PowerShell expands Windows 8.3 temp aliases (RUNNER~1) to their long
+        // names. Prove the actual destination, rather than its path spelling.
+        assert.equal(realpathSync.native(path.dirname(call.modelState)),
+          realpathSync.native(path.join(directory, "previous/generated")));
         assert.equal(call.modelState, call.codexState);
       }
       if (scenario === "failure") assert.match(outcome.error, /fixture preparation failure/u);

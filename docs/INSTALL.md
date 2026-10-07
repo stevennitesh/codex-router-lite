@@ -20,6 +20,10 @@ Set-Location codex-router-lite
 
 The installer preserves the current Codex login and user-owned settings. It refuses to replace an unmarked base URL, foreign scheduled task, or unrecognized source root.
 
+An absent multi-agent block end marker can be repaired when its single feature
+line exactly matches Router's emitted setting. Modified or ambiguous blocks
+still fail preflight; following user settings are preserved.
+
 Managed skill publication skips an already owned tree only when bounded content
 comparison and source provenance both match. Ownership still requires its
 protected token record. Changed skills use the existing recovery transaction;

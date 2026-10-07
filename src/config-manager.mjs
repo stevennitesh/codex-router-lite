@@ -164,6 +164,22 @@ function recoverUnterminatedRouterRootBlock(input) {
   return lines.join("\n");
 }
 
+function recoverUnterminatedMultiAgentBlock(input) {
+  const lines = String(input).split("\n");
+  const starts = lines
+    .map((line, index) => line.trim() === multiAgentStartMarker ? index : -1)
+    .filter((index) => index >= 0);
+  const ends = lines.filter((line) => line.trim() === multiAgentEndMarker);
+  if (starts.length !== 1 || ends.length !== 0) return String(input);
+  const start = starts[0];
+  // Only the exact single-line feature emitted by this owner establishes the
+  // missing boundary. A modified feature or following user content is never
+  // inferred to be Router-owned.
+  if (lines[start + 1]?.trim() !== managedMultiAgentV2FeatureLine()) return String(input);
+  lines.splice(start + 2, 0, multiAgentEndMarker);
+  return lines.join("\n");
+}
+
 function removeMarkerPair(input, start, end, managedHeader) {
   const lines = String(input).split("\n");
   const output = [];
@@ -185,7 +201,7 @@ function removeMarkerPair(input, start, end, managedHeader) {
 }
 
 function removeManagedBlocks(input) {
-  const recovered = recoverUnterminatedRouterRootBlock(input);
+  const recovered = recoverUnterminatedMultiAgentBlock(recoverUnterminatedRouterRootBlock(input));
   return markerPairs.reduce(
     (contents, [start, end, managedHeader]) =>
       removeMarkerPair(contents, start, end, managedHeader),

@@ -8,6 +8,41 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+test("missing multi-agent end marker is repaired only for the exact owned feature", t => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-agent-marker-"));
+  t.after(() => rmSync(testRoot, { recursive: true, force: true }));
+  const codexHome = path.join(testRoot, "codex"), state = path.join(testRoot, "state");
+  mkdirSync(codexHome, { recursive: true });
+  mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(state, "caller-secret"), `${"a".repeat(48)}\n`);
+  const configPath = path.join(codexHome, "config.toml");
+  writeFileSync(configPath, '[features]\napps = true\n\n[desktop]\nnotifications = true\n');
+  const env = { CODEX_HOME: codexHome, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath };
+  run("enable", env);
+  const end = "# END codex-router-multi-agent-v2-managed";
+  const damaged = readFileSync(configPath, "utf8").replace(end, 'user_feature = true\n# user-owned note');
+  writeFileSync(configPath, damaged);
+  assert.equal(run("validate-enable", env).mode, "router");
+  assert.equal(readFileSync(configPath, "utf8"), damaged, "preflight remains read-only");
+  run("enable", env);
+  const repaired = readFileSync(configPath, "utf8");
+  assert.equal(repaired.split(end).length - 1, 1);
+  assert.match(repaired, /user_feature = true\n# user-owned note/u);
+  assert.match(repaired, /apps = true/u);
+  assert.match(repaired, /\[desktop\]\nnotifications = true/u);
+
+  const modified = repaired.replace(end, "").replace(
+    "max_concurrent_threads_per_session = 6", "max_concurrent_threads_per_session = 7",
+  );
+  writeFileSync(configPath, modified);
+  const rejected = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "enable"], {
+    cwd: root, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true,
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /Refusing to edit an unterminated managed block/u);
+  assert.equal(readFileSync(configPath, "utf8"), modified, "a changed feature cannot authorize removal");
+});
+
 function run(command, env) {
   const result = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), command], {
     cwd: root,
