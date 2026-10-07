@@ -1,6 +1,6 @@
 # A WMI-created process is parented by the Windows provider, independently of
 # the desktop tool's process tree. Closing the app/tool cannot kill recovery.
-function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters, [string]$RepoRoot) {
+function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters, [string]$RepoRoot, [switch]$RequireAcceptance) {
   . (Join-Path $PSScriptRoot "deployment-json.ps1")
   $deploymentHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $operationRoot = Join-Path $deploymentHome "codex-router\deployments\$([Guid]::NewGuid().ToString('N'))"
@@ -18,12 +18,18 @@ function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters
   foreach ($name in @("MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "CODEX_ROUTER_SWITCHYARD_ROOT", "CODEX_ROUTER_SWITCHYARD_BIN", "CODEX_ROUTER_SWITCHYARD_CONFIG", "CODEX_ROUTER_SWITCHYARD_BASE_URL", "CODEX_ROUTER_OPERATION_DEADLINE_MS", "NODE_USE_ENV_PROXY")) {
     if (Test-Path -LiteralPath "Env:\$name") { $environment[$name] = [Environment]::GetEnvironmentVariable($name) }
   }
-  Write-DeploymentJson $requestPath @{ script = $ScriptPath; parameters = $Parameters; environment = $environment }
+  Write-DeploymentJson $requestPath @{ script = $ScriptPath; parameters = $Parameters; environment = $environment; requireAcceptance = [bool]$RequireAcceptance }
   Write-DeploymentJson $resultPath @{ state = "starting" }
   New-Item -ItemType File -Path $logPath | Out-Null
+  $privatePaths = @($requestPath, $resultPath, $logPath)
+  if ($RequireAcceptance) {
+    $acceptancePath = Join-Path $operationRoot "acceptance.json"
+    New-Item -ItemType File -Path $acceptancePath | Out-Null
+    $privatePaths += $acceptancePath
+  }
   $securityModule = ([Uri](Join-Path $RepoRoot "src\file-security.mjs")).AbsoluteUri
   $protect = "const {protectPrivateFile}=await import(process.argv[1]); for(const p of process.argv.slice(2))protectPrivateFile(p);"
-  & node --input-type=module -e $protect $securityModule $requestPath $resultPath $logPath
+  & node --input-type=module -e $protect $securityModule @privatePaths
   if ($LASTEXITCODE -ne 0) { throw "Could not protect the independent deployment request and logs." }
   $worker = Join-Path $PSScriptRoot "deployment-worker.ps1"
   $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"

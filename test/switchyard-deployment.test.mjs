@@ -87,7 +87,7 @@ test("manual installation cannot transfer state away from a live previous checko
   assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { sourceRoot: state.sourceRoot, owns: () => true }));
   assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { owns: () => false }));
 });
-for (const failure of ["none", "drain", "install", "health", "stop", "rollback-stop", "rollback-install"]) {
+for (const failure of ["none", "drain", "install", "health", "acceptance", "stop", "rollback-stop", "rollback-install"]) {
   test(`checkout deployment handles ${failure} with exact generation ownership`, { skip: process.platform !== "win32" }, () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "switchyard-transaction-"));
     try {
@@ -104,13 +104,13 @@ for (const failure of ["none", "drain", "install", "health", "stop", "rollback-s
       } else {
         assert.equal(outcome.keepRollback, true);
       }
-      if (["drain", "install", "health", "stop", "rollback-install"].includes(failure)) {
+      if (["drain", "install", "health", "acceptance", "stop", "rollback-install"].includes(failure)) {
         for (const name of ["switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json"]) {
           assert.equal(read(`runtime/${name}`), `previous-${name}`);
           assert.equal(read(`rollback/${name}`), `previous-${name}`);
         }
       }
-      if (["install", "health"].includes(failure)) {
+      if (["install", "health", "acceptance"].includes(failure)) {
         assert.deepEqual(trace, ["drain", "stop-previous", "install-candidate", "healthy-candidate", "stop-candidate", "install-previous", "healthy-previous"].filter((entry) => failure !== "install" || entry !== "healthy-candidate"));
         assert.match(read("error.txt"), /exact previous Router and Switchyard generation was restored/u);
         assert.equal(outcome.liveRoot, path.join(directory, "previous"));
@@ -126,6 +126,14 @@ for (const failure of ["none", "drain", "install", "health", "stop", "rollback-s
         assert.deepEqual(trace, ["drain", "stop-previous", "install-candidate", "healthy-candidate"]);
         // Consume the actual PowerShell-produced file through the Node handoff.
         assert.equal(JSON.parse(readFileSync(path.join(directory, "runtime/provenance.json"), "utf8")).routerCommit, "a".repeat(40));
+        const acceptance = JSON.parse(read("acceptance.json"));
+        assert.equal(acceptance.accepted, true);
+        assert.equal(acceptance.routerCommit, "a".repeat(40));
+        assert.equal(acceptance.rollbackRouterRoot, path.join(directory, "previous"));
+        assert.equal(Object.keys(acceptance.checks).length, 11);
+        assert.ok(Object.values(acceptance.checks).every(value => value === true));
+      } else {
+        assert.equal(existsSync(path.join(directory, "acceptance.json")), false);
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });

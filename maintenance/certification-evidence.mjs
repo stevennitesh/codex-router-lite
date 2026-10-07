@@ -239,6 +239,17 @@ function boundedSwitchyardSummary(run, routerLog) {
   return summarizeSwitchyardCertificationEvidence({routerLog:lines.join("\n"),routingLog,limit:100});
 }
 
+export function collectCertificationEvidence({run, parentPath, childrenDirs, routerLogPath}) {
+  validateRun(run);
+  const manifest = json(INSTALL_MANIFEST_PATH), runtimeBinding = verifiedRuntime(run, manifest);
+  const children = childrenDirs.flatMap(childrenDir => readdirSync(childrenDir).filter(name => name.endsWith(".jsonl")).flatMap(name => {
+    const file = path.join(childrenDir,name), header = firstRow(file);
+    return header.type === "session_meta" && payload(header).parent_thread_id === run.parentSessionId ? [rows(file)] : [];
+  }));
+  const routerLog = readFileSync(routerLogPath, "utf8");
+  return extractCertificationEvidence({run,parent:rows(parentPath),children,routerLog,installManifest:manifest,runtimeBinding,switchyardSummary:runtimeBinding ? boundedSwitchyardSummary(run,routerLog) : undefined});
+}
+
 function main(argv) {
   requireEvidence(argv[0] === "extract", "Usage: certification-evidence.mjs extract --run FILE --parent FILE --children DIR --router-log FILE --output FILE");
   const options = new Map();
@@ -249,14 +260,7 @@ function main(argv) {
   requireEvidence(options.size === 5, "Five unique extraction paths are required.");
   const outputPath = options.get("--output"), childrenDir = options.get("--children");
   requireEvidence(![...options].some(([key, value]) => key !== "--output" && (value === outputPath || key === "--children" && path.dirname(outputPath) === childrenDir)), "The output must not replace a private input artifact.");
-  const run = json(options.get("--run")); validateRun(run);
-  const manifest = json(INSTALL_MANIFEST_PATH), runtimeBinding = verifiedRuntime(run, manifest);
-  const children = readdirSync(childrenDir).filter(name => name.endsWith(".jsonl")).flatMap(name => {
-    const file = path.join(childrenDir,name), header = firstRow(file);
-    return header.type === "session_meta" && payload(header).parent_thread_id === run.parentSessionId ? [rows(file)] : [];
-  });
-  const routerLog = readFileSync(options.get("--router-log"), "utf8");
-  const summary = extractCertificationEvidence({run,parent:rows(options.get("--parent")),children,routerLog,installManifest:manifest,runtimeBinding,switchyardSummary:runtimeBinding ? boundedSwitchyardSummary(run,routerLog) : undefined});
+  const summary = collectCertificationEvidence({run:json(options.get("--run")),parentPath:options.get("--parent"),childrenDirs:[childrenDir],routerLogPath:options.get("--router-log")});
   // Exclusive creation leaves previous results intact.
   writeFileSync(outputPath, `${JSON.stringify(summary,null,2)}\n`, {flag:"wx"});
   console.log(JSON.stringify({status:"draft",routes:summary.reports.map(report => report.slug)}));

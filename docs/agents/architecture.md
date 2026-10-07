@@ -113,14 +113,32 @@ Runtime replacement follows the installation transaction, never a standalone sto
 
 ## Verification
 
+Choose the scope once for the candidate, then reuse completed checks at commit,
+push, deployment and evidence publication while their inputs remain unchanged:
+
+| Change | Local checks | Live work |
+| --- | --- | --- |
+| Documentation or accepted evidence only | Affected links and `npm run check` | None |
+| Maintenance runner or deployment script | `npm run check` and affected maintenance tests | Exercise isolated fixtures; a live replacement is a separate effect |
+| Route metadata or profile | Source checks, affected route tests, current Codex catalog | Actual Router path; native proof only for affected subagent contracts |
+| Shared serving or relay behavior | `npm run verify:codex` once, including the defect regression | Guarded deployment and affected exact-route proofs |
+
+After a correction, rerun the check that covers it; broaden only if its impact
+changes. Evidence-only publication does not invalidate unchanged runtime tests.
+CI's supported Node versions provide separate environment coverage and remain
+required. Source correctness, installed readiness and native collaboration are
+different claims; each has one owner and an appropriate observation.
+
 For documentation and instruction edits, check affected links, commands, ownership,
 and reading paths against their current sources, then run `npm run check`. Shipped
 skills are runtime instructions; exercise affected existing checks and keep source
 verification distinct from installed behavior. Editorial checks alone do not prove
 that new wording improves agent performance.
 
-For behavior changes, add or update a narrow regression and run `npm run check`,
-the affected tests, and `node scripts/check-codex-catalog-compat.mjs --current`.
+For behavior changes, add or update a narrow regression and run `npm run check`
+and the affected tests. Run `node scripts/check-codex-catalog-compat.mjs --current`
+when serving, routing, catalog or Codex compatibility inputs change; maintenance-only
+scripts do not require an unrelated catalog capture.
 For shared impact, `npm run verify:codex` runs the source checks, full suite, and
 current installed-Codex catalog check once. CI uses `npm run verify` because it
 does not have an installed Codex. An explicit executable and `--catalog <path>`

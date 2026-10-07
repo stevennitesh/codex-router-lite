@@ -51,10 +51,12 @@ Switchyard installation is maintainer work. Read its
 ## Verify
 
 ```powershell
-.\model-router.ps1 codex status
 .\model-router.ps1 codex doctor
 ```
 
+`status` is a compatibility alias for `doctor`; run either once. Doctor is a
+diagnostic, not deployment acceptance: warnings can leave its exit status zero.
+The deployment transaction separately enforces full health and installed identity.
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
 For foreground debugging, run `model-router.ps1 codex start --foreground` after
@@ -158,9 +160,12 @@ It retains an unchanged Switchyard binary when supplied as the candidate and
 restores Router through an exact previous checkout on failure. The separate-directory
 deployer above rejects overlapping source and destination paths.
 The checkout transaction runs in an independent hidden Windows worker and returns
-private result and log paths. Verify its completed result and installed identities
-before reporting deployment success. Its rollback continues if the calling app
-or tool exits.
+private result and log paths. A completed successful result includes the worker's
+`acceptance`: checked identities, installed hashes, full health, catalog and
+protected endpoints. Use that result to report deployment acceptance; do not
+repeat its entire diagnostic stack. Before releasing a rollback retained through
+later live certification, recheck current process ownership and full health.
+Its rollback continues if the calling app or tool exits.
 
 Rollback preparation uses `install.ps1 -CheckoutInstall -DependenciesOnly` for
 installers that support it. This phase prepares Node and Python dependencies

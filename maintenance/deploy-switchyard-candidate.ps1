@@ -13,6 +13,7 @@ param(
   [string]$ExpectedRollbackRouterCommit,
   [switch]$RecoverInterruptedDeployment,
   [switch]$InProcess,
+  [string]$AcceptancePath,
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -24,7 +25,8 @@ if (-not $InProcess -and -not $WhatIfPreference) {
   $deploymentParameters = @{} + $PSBoundParameters
   $deploymentParameters.Remove("InProcess")
   $deploymentParameters["RepoDir"] = $repoRoot
-  Start-IndependentDeployment -ScriptPath $PSCommandPath -Parameters $deploymentParameters -RepoRoot $repoRoot
+  $deploymentParameters.Remove("AcceptancePath")
+  Start-IndependentDeployment -ScriptPath $PSCommandPath -Parameters $deploymentParameters -RepoRoot $repoRoot -RequireAcceptance
   return
 }
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }

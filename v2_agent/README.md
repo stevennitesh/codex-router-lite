@@ -6,13 +6,10 @@ not current instructions or proof of a later candidate. Keep these paths because
 the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
-The six current applications record accepted native CLI certification for
-Router `4ca8bfa6012b6ba3a2057df23361761ce48bbdba` with Codex
-`0.162.0-alpha.2` on Windows app `26.1002.7124.0`, on 2026-10-07.
-The CLI used a session-only MXC sandbox override with workspace-write and
-on-request approval. The persistent app setting remained elevated and the
-signed Codex helper was unchanged. Each application records its exact runtime
-and passing collaboration window:
+Each application's `proof.json` records its exact runtime and execution scope.
+Routes can be renewed independently; this index does not assign one shared
+commit or test window to every application. The dated run records below retain
+the observations for each accepted batch:
 
 - accepted: [`openrouter/glm-5.3-flash-streamlake`](openrouter/glm-5.3-flash-streamlake/proof.md)
 - retired historical acceptance: [`openrouter/glm-5.3-flash`](openrouter/glm-5.3-flash/proof.md), which does not certify StreamLake.

@@ -9,6 +9,7 @@ $rollbackRoot = Join-Path $FixtureRoot "rollback"
 $runningRouterRoot = $rollbackRouterRoot
 $script:liveRoot = $runningRouterRoot
 $trace = Join-Path $FixtureRoot "trace.txt"
+$AcceptancePath = if ($Failure -eq "acceptance") { Join-Path $FixtureRoot "missing\acceptance.json" } else { Join-Path $FixtureRoot "acceptance.json" }
 $activationStarted = $false
 $keepRollback = $false
 $expectedRouterCommit = $routerCommit = "a" * 40

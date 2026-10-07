@@ -157,7 +157,12 @@ $routerCommit = (& git rev-parse HEAD).Trim()
 
 This command launches a hidden Windows worker outside the caller's process
 tree and returns its process ID, `resultPath`, and `logPath`. Read `resultPath`
-until `state` is `completed`; only `succeeded: true` confirms deployment. Closing
+until `state` is `completed`; `succeeded: true` and its `acceptance.accepted: true`
+confirm deployment. Acceptance records the exact candidate, hashes, rollback
+paths and checks already enforced by the worker. Reuse that result for deployment
+reporting instead of rerunning Doctor, status, catalog and hash checks. A later
+process-ownership and full-health check remains necessary before releasing a
+rollback retained through quota-consuming certification. Closing
 Codex or terminating the calling tool does not terminate the worker or its
 rollback. The worker owns an exclusive deployment lock and writes private logs.
 `-InProcess` is the worker's internal entrypoint; use the independent default

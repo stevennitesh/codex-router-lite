@@ -60,7 +60,10 @@ try {
     throw "Installed Switchyard provenance does not match the candidate."
   }
   $keepRollback = $true
-  [pscustomobject]@{
+  $accepted = [pscustomobject]@{
+    version = 1
+    accepted = $true
+    acceptedAt = (Get-Date).ToUniversalTime().ToString("o")
     deployed = $true
     routerCommit = $routerCommit
     switchyardCommit = $lock.commit
@@ -68,7 +71,22 @@ try {
     switchyardRoutesSha256 = $expectedRoutesHash
     rollbackRoot = $rollbackRoot
     rollbackRouterRoot = $rollbackRouterRoot
-  } | ConvertTo-Json -Depth 3
+    checks = @{
+      routerFullHealth = $true
+      doctor = $true
+      taskIdentity = $true
+      processIdentity = $true
+      installManifest = $true
+      switchyardHealth = $true
+      protectedEndpoints = $true
+      installedCatalog = $true
+      installedHashes = $true
+      provenance = $true
+      cleanCandidate = $true
+    }
+  }
+  if ($AcceptancePath) { Write-DeploymentJson $AcceptancePath $accepted }
+  $accepted | ConvertTo-Json -Depth 3
 } catch {
   $deploymentError = $_
   if (-not $activationStarted) {

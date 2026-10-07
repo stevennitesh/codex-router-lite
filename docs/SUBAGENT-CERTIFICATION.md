@@ -41,6 +41,40 @@ are diagnostics; they do not create or revoke certification.
 
 ## Certifying a new exact route
 
+### Maintained CLI runner
+
+For published roles that pass preflight, use one fresh run directory and name
+only the affected exact routes. Run from the normal Windows user context:
+
+```powershell
+node maintenance/certification-runner.mjs run --output generated/certification-NEW --windows-sandbox mxc --allow-live openrouter/pareto
+```
+
+`--allow-live` records operator authorization for quota-consuming synthetic
+requests. Choose `mxc` or `elevated` explicitly; the runner keeps workspace-write
+and on-request approval, and does not edit persistent Codex settings. Preflight
+must already pass; new v1 candidates still need the temporary proof window below.
+Use `--all` only when the affected contract reaches every route. Add
+`--switchyard-smoke` when the Switchyard change needs its additional tool,
+image fallback and compaction checks; include `switchyard/auto` in that scope.
+
+The runner performs batch preflight once, observes separate bounded SSE requests,
+runs one native parent sequence, and uses the maintained extractor. It creates
+complete redacted `drafts.json` and readable applications under `review/v2_agent`
+in the private run directory. A failed or partial run produces no accepted proof.
+It does not retry a failed route. Raw journals, manifests and session identifiers
+stay local. Review the drafts and official sources, then publish with:
+
+```powershell
+node maintenance/certification-runner.mjs publish --draft generated/certification-NEW/drafts.json --evidence docs/history/YYYY-MM-DD-certification.json --reviewed
+```
+
+Publication validates the proposed applications before replacing proof files,
+generates both proof formats and one redacted run record, and restores previous
+files if publication fails. Add the new record to the history/application indexes.
+It does not commit, deploy, change route eligibility, or run more models. The
+manual path below remains available for desktop runs and diagnosis.
+
 Start with one read-only readiness check for the exact route, a subset, or all
 registered routes:
 
@@ -155,6 +189,21 @@ paths out of tracked files. Only reviewed, redacted applications belong in
 `v2_agent/`.
 
 ## When to refresh proof
+
+Select routes by the changed contract:
+
+| Change | Certification scope |
+| --- | --- |
+| One endpoint, provider binding, effort or route-specific profile | That exact route and any other callers of the changed profile |
+| Shared namespace, encrypted handoff, continuation or compatibility transform | Every route using the changed behavior |
+| Switchyard binary, patch, routes, targets or bound runtime identity | Switchyard; other routes only if their shared behavior changed |
+| Documentation, test or proof formatting | No new model run |
+
+Deployment alone is not a reason to buy all route proofs. Switchyard retains its
+strict deployed Router-commit binding; changing that identity still renews its
+proof. Keep unaffected accepted records, and use the refresh conditions below
+rather than an automatic `--all` run. One native sequence can provide the tool,
+handoff and both marker observations; do not repeat equivalent live probes.
 
 Refresh the exact route after any change to:
 

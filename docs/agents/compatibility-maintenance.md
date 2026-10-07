@@ -20,7 +20,8 @@ It fetches repository heads, resolves and signature-checks the current Windows
 Codex build, records the bundled app-tools plugin identity when available,
 checks the current native catalog, reads Router health, runs the retained suite,
 and reports Switchyard upstream drift. It does not edit product source, consume provider
-quota, or restart the service. Use `-SkipFetch` only when offline. Use
+quota, or restart the service. Use `-SkipFetch` when offline or when an immediate
+detail pass should inspect the same heads fetched by the complete refresh. Use
 `-SkipTests` for a quick diagnostic or an upstream-detail pass whose unchanged
 source tests are already covered by a complete refresh. A skipped suite alone
 does not support a compatibility claim.
@@ -30,13 +31,15 @@ since `maintenance/upstream-router.json`. When either upstream moved, request
 the conditional detail only then:
 
 ```powershell
-.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream
+.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream -SkipFetch -SkipTests
 ```
 
 This groups relevant original-Router changes and, for a changed Switchyard
 head, uses a disposable checkout to list commits and test whether the canonical
 patch still applies. It does not merge, rebuild, deploy, or advance the review
-baseline.
+baseline. This second pass reuses the first complete refresh's source tests and
+fetched Router heads. Omit these skip flags when no complete unchanged refresh
+has passed yet or newly refreshed heads are requested.
 
 Before editing, confirm the report accounts for:
 
@@ -125,7 +128,8 @@ npm run verify:codex
 
 Reuse the diagnostic refresh's passing source tests and catalog check until a
 relevant input changes. If upstream detail is needed after a complete refresh,
-use `-AnalyzeUpstream -SkipTests` to avoid rerunning the unchanged suite; retain
+use `-AnalyzeUpstream -SkipFetch -SkipTests` to inspect the same fetched Router
+heads without rerunning the unchanged suite; retain
 the initial report as evidence. Use the narrowest additional test that
 distinguishes the defect. After an authorized deployment, follow
 [installation verification](../INSTALL.md#verify) and prove one ordinary routed

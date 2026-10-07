@@ -22,9 +22,23 @@ try {
   Write-DeploymentJson $resultPath @{ state = "running"; processId = $PID }
   $parameters = @{}
   foreach ($property in $request.parameters.PSObject.Properties) { $parameters[$property.Name] = $property.Value }
+  $acceptancePath = Join-Path $operationRoot "acceptance.json"
+  if ($request.requireAcceptance) { $parameters["AcceptancePath"] = $acceptancePath }
   & $request.script @parameters
+  $acceptance = $null
+  if ($request.requireAcceptance) {
+    $acceptance = Get-Content -Raw -LiteralPath $acceptancePath | ConvertFrom-Json
+    if ($acceptance.version -ne 1 -or $acceptance.accepted -ne $true -or
+        $acceptance.routerCommit -ne $parameters["ExpectedRouterCommit"].ToLowerInvariant() -or
+        $acceptance.switchyardBinarySha256 -ne $parameters["ExpectedBinarySha256"].ToLowerInvariant() -or
+        -not $acceptance.checks -or -not @($acceptance.checks.PSObject.Properties).Count -or
+        @($acceptance.checks.PSObject.Properties | Where-Object { $_.Value -ne $true }).Count) {
+      throw "Deployment did not publish a complete acceptance result for the requested candidate."
+    }
+  }
   $exitCode = 0
   $completion = @{ state = "completed"; succeeded = $true }
+  if ($acceptance) { $completion["acceptance"] = $acceptance }
 } catch {
   $failure = $_.Exception.Message
   Write-Host $failure

@@ -108,7 +108,6 @@ Codex login and can run without an OpenRouter key.
 ### 3. Check the installation
 
 ```powershell
-.\model-router.ps1 codex status
 .\model-router.ps1 codex doctor
 ```
 

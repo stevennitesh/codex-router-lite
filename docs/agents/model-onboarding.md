@@ -12,7 +12,7 @@ parameter support. A second endpoint is a separate explicit route, not a fallbac
 Check current official metadata and synthetic requests; model self-identification,
 tokenizer clues and another provider's success do not establish compatibility.
 
-Measure the capabilities the native caller needs: text/images, reasoning controls,
+Measure the capabilities being advertised to the native caller: text/images, reasoning controls,
 streamed events, tool declarations and choices, tool-result replay, deferred discovery,
 custom tools, compaction and continuation. Hosted web search and native deferred
 tool search are separate capabilities. Start with no unsupported catalog claim.
@@ -65,3 +65,8 @@ external payload transmission. Record observations and unresolved limitations in
 Source acceptance, deployment and certification are distinct. For authorized live
 replacement follow [installation](../INSTALL.md), then verify installed hashes and
 ordinary routed behavior. Refresh exact-route proofs when their bound behavior changes.
+Reuse an observed streaming or tool/continuation check from that same candidate
+and exact route rather than buying a second identical check at the next handoff.
+One provider's result cannot cover another endpoint. Existing deterministic
+regressions cover unchanged error cases; add live probes for an actual unresolved
+wire behavior, not every possible catalog capability.
