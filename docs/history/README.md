@@ -6,6 +6,10 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Latency and route-settings deployment, five-route renewal and StreamLake refusal, 2026-10-07](2026-10-07-latency-settings-release.md)
+
+- [Five-route native certification for the latency and settings update, 2026-10-07](2026-10-07-latency-settings-certification.json)
+
 - [Route limits, settings and enforcement audit, 2026-10-07](2026-10-07-route-settings-audit.md)
 
 - [StreamLake upstream shared-capacity 429 diagnosis, 2026-10-07](2026-10-07-streamlake-shared-capacity.md)

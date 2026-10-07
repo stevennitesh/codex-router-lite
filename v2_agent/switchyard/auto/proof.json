@@ -8,16 +8,16 @@
     "https://github.com/NVIDIA-NeMo/Switchyard",
     "https://developers.openai.com/codex"
   ],
-  "testedAt": "2026-10-07T20:42:48.942Z",
+  "testedAt": "2026-10-07T23:49:46.953Z",
   "routerVersion": "0.7.0",
-  "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
+  "routerCommit": "c95a10b926de218971c85727efa31eae407eb8af",
   "codexVersion": "codex-cli 0.162.0-alpha.2",
   "executionSurface": "codex-cli",
   "runtimeBinding": {
     "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
-    "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
+    "routerCommit": "c95a10b926de218971c85727efa31eae407eb8af",
     "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
     "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
     "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
@@ -28,35 +28,33 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:39:23.578Z"
+      "observedAt": "2026-10-07T23:47:54.098Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:42:30.225Z",
+      "observedAt": "2026-10-07T23:49:36.991Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:42:44.881Z"
+      "observedAt": "2026-10-07T23:49:43.178Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:42:34.172Z"
+      "observedAt": "2026-10-07T23:49:39.689Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:42:48.897Z"
+      "observedAt": "2026-10-07T23:49:46.897Z"
     }
   },
   "windowsAppVersion": "26.1002.7124.0",
   "windowsSandbox": "mxc",
   "sandboxPolicy": "workspace-write",
   "approvalPolicy": "on-request",
-  "persistentWindowsSandbox": "elevated",
-  "persistentConfigurationChanged": false,
-  "evidence": "docs/history/2026-10-07-maintenance-overhaul-certification.json"
+  "evidence": "docs/history/2026-10-07-latency-settings-certification.json"
 }

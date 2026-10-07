@@ -21,7 +21,17 @@ the observations for each accepted batch:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [maintenance overhaul renewal](../docs/history/2026-10-07-maintenance-overhaul-certification.json)
+The [latency and settings renewal](../docs/history/2026-10-07-latency-settings-certification.json)
+passed all five checks for GLM Together, both DeepSeek routes, Pareto and
+Switchyard on deployed commit `c95a10b926de218971c85727efa31eae407eb8af`.
+All 15 native child requests and five separate streaming requests returned
+HTTP 200. A separate StreamLake attempt returned HTTP 429 before its native
+sequence; its earlier accepted application was not renewed. The
+[deployment record](../docs/history/2026-10-07-latency-settings-release.md)
+records the scope and retained recovery set. These CLI proofs used session-only
+MXC and do not certify the desktop's elevated sandbox or arbitrary MCP tools.
+
+The earlier [maintenance overhaul renewal](../docs/history/2026-10-07-maintenance-overhaul-certification.json)
 passed all five checks for all six routes. Six separate synthetic requests
 established streamed text and completion on the same deployed generation.
 All 18 native child requests completed with HTTP 200, with output 42, two
