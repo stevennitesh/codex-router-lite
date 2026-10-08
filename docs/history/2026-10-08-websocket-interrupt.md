@@ -76,5 +76,42 @@ ran in the normal Windows user context after sandbox restrictions prevented its
 temporary Git and configuration fixtures from running correctly. The focused
 socket regressions also passed inside the active sandbox.
 
-This record describes a local source repair and synthetic compatibility proof.
-It does not claim live deployment or renewed provider/subagent certification.
+## Deployment and live verification
+
+The operator approved commit, push, guarded deployment and a bounded native GPT
+steering check. Candidate `66cae2f5a0ff15c7e709aebd845582088fb94cff` was
+committed and pushed. The independent deployment worker accepted that candidate
+at `2026-10-08T21:34:40.6863019Z`, with all eleven checks passing: full Router and
+Switchyard health, Doctor, task/process identity, manifest, installed hashes,
+catalog, provenance, protected endpoints and clean candidate identity. It reused
+the original retained recovery set. The Switchyard binary and routes were
+unchanged; normal drain completed without forced replacement.
+
+The candidate's Windows Node 22.19.0, Windows Node 24.x and Python audit jobs
+passed in [CI run 37847553338](https://github.com/stevennitesh/codex-router-lite/actions/runs/37847553338).
+
+The first live WebSocket probe omitted Codex's per-request Responses Lite hint
+and completed normally after its interrupt. A corrected hint then exposed a
+request-format refusal before generation: the generic API shape did not match
+Responses Lite. The final probe used the installed client's request contract:
+per-request Lite metadata, tools and instructions in input items,
+`parallel_tool_calls = false`, and reasoning context `all_turns`. No runtime
+change or provider fallback was needed to correct those probe inputs.
+
+At `2026-10-08T21:40:15.522Z`, the final live check selected GPT 6.1 Sol Medium
+through the deployed Router. On one connection it sent two generation requests,
+interrupted the first after `response.created`, received `response.incomplete`
+with reason `interrupted`, and continued using that response ID. The continuation
+completed with exactly `ROUTER_STEER_OK` by `2026-10-08T21:40:19.334Z`.
+The installed manifest identified the candidate before and after the check.
+The live probe used a WebSocket test client; the separate offline proof above
+used the real installed signed Codex app-server client. Credentials, raw frames
+and session identities were not exported into this record.
+
+After the live check, current process ownership matched the expected checkout
+and full Router health had no degraded dependencies.
+
+This verifies the native steering repair. It does not renew the six exact-route
+subagent applications. The original recovery set remains retained while those
+separate acceptance requirements remain outstanding, including the earlier
+GLM Together provider refusal and Switchyard's changed Router-commit binding.
