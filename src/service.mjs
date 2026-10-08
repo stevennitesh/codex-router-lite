@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,7 +53,7 @@ export async function runServiceCommandUnlocked(
     ...process.env,
     ...(environmentProxyOptedIn() ? { NODE_USE_ENV_PROXY: "1" } : {}),
   };
-  // Synchronous service renderers can own grandchildren. Do not apply a
+  // Service renderers can own grandchildren. Do not apply a
   // direct-child timeout here: it could orphan those descendants and let them
   // mutate the service after the UI reports failure. The outer desktop runner
   // owns process-tree termination; this preflight and the readiness wait keep
@@ -61,7 +61,7 @@ export async function runServiceCommandUnlocked(
   const platformBudgetMs = remainingOperationMs();
   if (
     platformBudgetMs !== undefined
-    && platformBudgetMs < PLATFORM_COMMAND_RESERVE_MS + READINESS_TIMEOUT_MS
+    && platformBudgetMs < PLATFORM_COMMAND_RESERVE_MS + (readinessCommands.has(command) ? READINESS_TIMEOUT_MS : 0)
   ) {
     throw new Error(
       "The service operation deadline cannot preserve its platform and 300-second readiness allowances.",
@@ -71,12 +71,22 @@ export async function runServiceCommandUnlocked(
   if (drainingCommands.has(command)) {
     drain = await prepareRouterServiceMutation({ force: forceReplacement });
   }
-  const result = spawnSync(
-    process.execPath,
-    [path.join(SOURCE_ROOT, "src", script), ...platformArgs],
-    { stdio: "inherit", env: childEnvironment },
-  );
-  if (result.error) throw result.error;
+  let result;
+  try {
+    // Await completion under the same lock without blocking its heartbeat.
+    // No timeout/signal abandons the renderer or its native descendants.
+    result = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath,
+        [path.join(SOURCE_ROOT, "src", script), ...platformArgs],
+        { stdio: "inherit", env: childEnvironment, windowsHide: true });
+      let failure;
+      child.once("error", error => { failure = error; });
+      child.once("close", status => failure ? reject(failure) : resolve({ status }));
+    });
+  } catch (error) {
+    if (["drained", "forced"].includes(drain?.status)) await resumeRouterAdmission().catch(() => {});
+    throw error;
+  }
   if (result.status !== 0) {
     if (["drained", "forced"].includes(drain?.status)) {
       await resumeRouterAdmission().catch(() => {});

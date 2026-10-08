@@ -20,7 +20,7 @@ import {
   assertServiceProcessStopped,
   assertServiceReplacementOwnership,
   readServiceProcessState,
-  serviceProcessOwns,
+  serviceProcessStatus,
 } from "./service-process.mjs";
 import {
   ensureProgramTreeReadable,
@@ -202,11 +202,24 @@ function legacyTaskAction() {
 }
 
 function taskSnapshot() {
-  if (!taskExists()) return { exists: false };
   const canonical = taskAction();
   const previous = previousTaskAction();
   const legacy = legacyTaskAction();
   const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$scheduler = New-Object -ComObject Schedule.Service",
+    "$scheduler.Connect()",
+    "$folder = $scheduler.GetFolder('\\')",
+    "try { $registered = $folder.GetTask($env:CODEX_ROUTER_TASK) } catch {",
+    "  $errorObject = $_.Exception",
+    "  while ($null -ne $errorObject) {",
+    // Exact COM task-not-found / Win32 file-not-found results only. Scheduler
+    // unavailability, access denial and malformed output are not absence.
+    "    if ($errorObject.HResult -eq -2147024894 -or $errorObject.HResult -eq -2147216625) { [Console]::Out.Write('{\"exists\":false}'); exit 0 }",
+    "    $errorObject = $errorObject.InnerException",
+    "  }",
+    "  throw",
+    "}",
     "$task = Get-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -ErrorAction Stop",
     "$actions = @($task.Actions)",
     "$principal = [string]$task.Principal.UserId",
@@ -219,9 +232,6 @@ function taskSnapshot() {
     "  $arguments = [string]$actions[0].Arguments",
     "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_PREVIOUS_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_PREVIOUS_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
     "}",
-    "$scheduler = New-Object -ComObject Schedule.Service",
-    "$scheduler.Connect()",
-    "$registered = $scheduler.GetFolder('\\').GetTask($env:CODEX_ROUTER_TASK)",
     "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); xml = (Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK); sddl = $registered.GetSecurityDescriptor(7); running = ($task.State.ToString() -ieq 'Running') }",
     "[Console]::Out.Write(($snapshot | ConvertTo-Json -Compress))",
   ].join("\n");
@@ -237,7 +247,7 @@ function taskSnapshot() {
   };
   for (const executable of ["powershell.exe", "pwsh.exe"]) {
     try {
-      return JSON.parse(execFileSync(
+      const snapshot = JSON.parse(execFileSync(
         executable,
         ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
         {
@@ -248,8 +258,13 @@ function taskSnapshot() {
           windowsHide: true,
         },
       ));
+      if (snapshot?.exists === false) return { exists: false };
+      if (snapshot?.exists !== true || typeof snapshot.owned !== "boolean"
+        || typeof snapshot.running !== "boolean" || typeof snapshot.xml !== "string" || !snapshot.xml
+        || typeof snapshot.sddl !== "string" || !snapshot.sddl) throw new Error("Invalid task snapshot.");
+      return snapshot;
     } catch {
-      // Try the other PowerShell host before using schtasks as an absence check.
+      // A second host may work; neither host's failure proves absence.
     }
   }
   throw new Error(`Unable to verify ownership of the existing ${taskName} scheduled task.`);
@@ -282,15 +297,12 @@ function restoreInstallState(snapshot, launchers) {
   const current = taskSnapshot();
   assertOwnedTask(current);
   if (current.exists) endTask();
-  restoreLaunchers(launchers);
   if (!snapshot.exists) {
-    try {
-      schtasks(["/Delete", "/TN", taskName, "/F"], { quiet: true, mutating: true });
-    } catch {
-      // The failed install may not have registered anything.
-    }
+    removeTask(current);
+    restoreLaunchers(launchers);
     return;
   }
+  restoreLaunchers(launchers);
   const script = [
     "$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json",
     "Register-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -Xml ([string]$payload.xml) -Force | Out-Null",
@@ -434,11 +446,8 @@ function managedPortStillListening(state) {
         const suffix = colon >= 0 ? local.slice(colon) : local;
         return fields[0] === "TCP" && fields[3] === "LISTENING" && ports.has(suffix);
       });
-  } catch {
-    // A missing/blocked netstat cannot prove a listener is present. The
-    // identity-checked process tree is still terminated below, and the normal
-    // health probe remains the final readiness check.
-    return false;
+  } catch (cause) {
+    throw new Error("Managed listener absence could not be verified; refusing to report the Router stopped.", { cause });
   }
 }
 
@@ -448,13 +457,14 @@ function stopOwnedServiceTree() {
   // owned tree to stop and no reason to touch the host or wait on it.
   if (skipServiceManagerCall()) return;
   const state = readServiceProcessState();
-  if (!state || state.pid === process.pid || !serviceProcessOwns(state, { platform: effectivePlatform })) {
+  if (!state || state.pid === process.pid || serviceProcessStatus(state) !== "owned") {
     // In particular, an orphan from another checkout must not be reported as
     // stopped or masked by a healthy HTTP response from that old generation.
     assertServiceProcessStopped(state, {
-      owns: (value) => serviceProcessOwns(value, { sourceRoot: value.sourceRoot }),
+      status: (value) => serviceProcessStatus(value, { sourceRoot: value?.sourceRoot }),
       listening: managedPortStillListening,
     });
+    if (state) clearServiceProcessState();
     return;
   }
   try {
@@ -471,22 +481,16 @@ function stopOwnedServiceTree() {
   }
   const deadline = Date.now() + SERVICE_TREE_STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const alive = serviceProcessOwns(state, { platform: effectivePlatform });
-    const listening = managedPortStillListening(state);
-    if (!alive && !listening) {
+    const processState = serviceProcessStatus(state);
+    if (processState !== "owned") {
+      assertServiceProcessStopped(state, { status: () => processState, listening: managedPortStillListening });
       clearServiceProcessState();
       return;
     }
     sleep(SERVICE_TREE_STOP_POLL_MS);
   }
-  if (
-    !serviceProcessOwns(state, { platform: effectivePlatform }) &&
-    !managedPortStillListening(state)
-  ) {
-    clearServiceProcessState();
-    return;
-  }
   assertServiceProcessStopped(state, { listening: managedPortStillListening });
+  clearServiceProcessState();
 }
 
 function endTask() {
@@ -506,17 +510,16 @@ function endTask() {
   stopOwnedServiceTree();
 }
 
-// Only a task that still exists can be started. `Register-ScheduledTask -Force`
-// unregisters before it registers, so a failed registration leaves either the
-// previous definition or nothing at all, and `/Run` against a name that is gone
-// recovers nothing while reporting an error of its own.
-function taskExists() {
-  try {
-    schtasks(["/Query", "/TN", taskName], { quiet: true });
-    return true;
-  } catch {
-    return false;
-  }
+// Remove only the observed owned definition. Recovery and uninstall share this
+// verified removal so neither can delete launchers after an uncertain result.
+function removeTask(snapshot) {
+  if (!snapshot.exists) return;
+  let deletionError;
+  try { schtasks(["/Delete", "/TN", taskName, "/F"], { quiet: true, mutating: true }); }
+  catch (error) { deletionError = error; }
+  // Idempotent concurrent deletion is harmless. A refused or unverified
+  // deletion preserves launchers instead of leaving a registered broken task.
+  if (taskSnapshot().exists) throw deletionError ?? new Error(`${taskName} remains registered after removal.`);
 }
 
 function taskState() {
@@ -626,23 +629,20 @@ if (command === "render") {
   }
   // Launchers alone are not an installed service. A restricted scheduler (or
   // a test-mode mutation guard) must not claim success when the task is absent.
-  process.stdout.write(`${JSON.stringify({ installed: taskExists(), path: wrapperPath })}\n`);
+  process.stdout.write(`${JSON.stringify({ installed: true, path: wrapperPath })}\n`);
 } else if (command === "uninstall") {
   // Refuse before `/End`, `/Delete`, or any filesystem removal when a test has
   // not redirected its service state directory.
   guardLauncherWrite();
-  assertOwnedTask(taskSnapshot());
+  const previousTask = taskSnapshot();
+  assertOwnedTask(previousTask);
   endTask();
-  try {
-    schtasks(["/Delete", "/TN", taskName, "/F"], { quiet: true, mutating: true });
-  } catch {
-    // The task may not exist.
-  }
+  removeTask(previousTask);
   for (const target of [launcherPath, wrapperPath]) {
     try {
       if (existsSync(target)) unlinkSync(target);
-    } catch {
-      // The launcher may already be gone, or a concurrent uninstall removed it.
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
     }
   }
   process.stdout.write(`${JSON.stringify({ installed: false })}\n`);
@@ -650,15 +650,13 @@ if (command === "render") {
   let installed = false;
   let state = "stopped";
   let loaded = false;
-  try {
-    const snapshot = taskSnapshot();
-    if (!snapshot.exists || !snapshot.owned) throw new Error("missing or foreign task");
+  const snapshot = taskSnapshot();
+  if (snapshot.exists) {
+    assertOwnedTask(snapshot);
     installed = true;
     state = taskState() || "ready";
     loaded = await taskRunning();
     if (loaded) state = "running";
-  } catch {
-    // Missing task.
   }
   process.stdout.write(
     `${JSON.stringify({ installed, loaded, state })}\n`,

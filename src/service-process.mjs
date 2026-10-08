@@ -9,7 +9,7 @@ import {
   SOURCE_ROOT,
   STATE_DIR,
 } from "./paths.mjs";
-import { processCommandLine, processStartIdentity, SERVICE_START_PROBE_BUDGET } from "./process-identity.mjs";
+import { isProcessStartIdentity, processCommandLine, processStartIdentity, processStartIdentityProbe, SERVICE_START_PROBE_BUDGET } from "./process-identity.mjs";
 
 const STATE_VERSION = 1;
 
@@ -50,7 +50,7 @@ export function buildServiceProcessState({
   if (!safe) return undefined;
   const processIdentity = identity(safe, { budget: probeBudget });
   const liveCommandLine = commandLine(safe, { budget: probeBudget });
-  if (!processIdentity || !liveCommandLine) return undefined;
+  if (!isProcessStartIdentity(processIdentity) || !liveCommandLine) return undefined;
   const entrypoint = entrypointFor(sourceRoot);
   if (!normalized(liveCommandLine).includes(entrypoint)) return undefined;
   return {
@@ -84,9 +84,11 @@ export function writeServiceProcessState(options = {}) {
 export function readServiceProcessState(statePath = SERVICE_PROCESS_STATE_PATH) {
   try {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
-    return state?.version === STATE_VERSION && state?.managed === true ? state : undefined;
-  } catch {
-    return undefined;
+    if (!validRecord(state)) throw new Error("invalid process record");
+    return state;
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return undefined;
+    throw new Error("The Router process record could not be verified; refusing to infer that the runtime is absent.", { cause });
   }
 }
 
@@ -98,32 +100,43 @@ export function clearServiceProcessState(statePath = SERVICE_PROCESS_STATE_PATH)
   }
 }
 
-export function serviceProcessOwns(
+function validRecord(state) {
+  return state?.version === STATE_VERSION && state?.managed === true && Boolean(safePid(state.pid))
+    && isProcessStartIdentity(state.processIdentity)
+    && ["processIdentity", "commandLine", "sourceRoot", "stateDir"].every(name => typeof state[name] === "string" && state[name])
+    && path.isAbsolute(state.sourceRoot) && path.isAbsolute(state.stateDir);
+}
+
+// Ownership is a positive verdict; a failed observation is never an absence
+// verdict. Stop and replacement need this distinction; diagnostics can use
+// the boolean convenience below without gaining mutation authority.
+export function serviceProcessStatus(
   state,
   {
-    identity = processStartIdentity,
+    probe = processStartIdentityProbe,
+    identity,
     commandLine = processCommandLine,
     sourceRoot = SOURCE_ROOT,
     stateDir = STATE_DIR,
   } = {},
 ) {
-  const pid = safePid(state?.pid);
-  if (
-    !state ||
-    state.version !== STATE_VERSION ||
-    state.managed !== true ||
-    !pid ||
-    typeof state.processIdentity !== "string" ||
-    !state.processIdentity ||
-    typeof state.commandLine !== "string" ||
-    !state.commandLine ||
-    typeof state.sourceRoot !== "string" ||
-    !state.sourceRoot ||
-    typeof state.stateDir !== "string" ||
-    !state.stateDir
-  ) {
-    return false;
-  }
+  if (state === undefined) return "absent";
+  if (!validRecord(state)) return "unknown";
+  const pid = state.pid;
+  let observed;
+  try {
+    if (identity) {
+      const value = identity(pid);
+      observed = value ? { state: "alive", identity: value } : { state: "unknown" };
+    } else {
+      observed = probe(pid);
+    }
+  } catch { return "unknown"; }
+  if (observed?.state === "absent") return "absent";
+  if (observed?.state !== "alive" || !isProcessStartIdentity(observed.identity)) return "unknown";
+  // A reused PID proves the recorded generation exited, but never permits
+  // signaling the process that inherited that number.
+  if (observed.identity !== state.processIdentity) return "absent";
   // The record lives in a user-writable state directory. Require both path
   // anchors to still be this installation before a PID can be terminated; a
   // hand-edited record for another checkout must never become a kill switch.
@@ -131,30 +144,44 @@ export function serviceProcessOwns(
     normalized(state.sourceRoot) !== normalized(path.resolve(sourceRoot)) ||
     normalized(state.stateDir) !== normalized(path.resolve(stateDir))
   ) {
-    return false;
+    return "foreign";
   }
   const entrypoint = entrypointFor(state.sourceRoot);
-  if (!normalized(state.commandLine).includes(entrypoint)) return false;
-  if (identity(pid) !== state.processIdentity) return false;
-  const liveCommandLine = commandLine(pid);
-  return Boolean(liveCommandLine && normalized(liveCommandLine).includes(entrypoint));
+  if (!normalized(state.commandLine).includes(entrypoint)) return "unknown";
+  let liveCommandLine;
+  try { liveCommandLine = commandLine(pid); } catch { return "unknown"; }
+  if (!liveCommandLine) return "unknown";
+  return normalized(liveCommandLine).includes(entrypoint) ? "owned" : "foreign";
+}
+
+export function serviceProcessOwns(state, options) {
+  return serviceProcessStatus(state, options) === "owned";
 }
 
 // Stopping a task is insufficient: its detached process tree can survive.
 export function assertServiceProcessStopped(state, {
-  owns = serviceProcessOwns,
+  status = serviceProcessStatus,
   listening = () => false,
 } = {}) {
-  if ((state && owns(state)) || listening(state)) {
+  const processState = status(state);
+  const listener = listening(state);
+  if (["owned", "foreign"].includes(processState) || listener === true) {
     throw new Error("The previous Router process or managed listener is still running; refusing to replace it.");
+  }
+  if (processState !== "absent" || listener !== false) {
+    throw new Error("Router stoppage is unknown; refusing to replace it without verified process and listener absence.");
   }
 }
 
 export function assertServiceReplacementOwnership(state, {
   sourceRoot = SOURCE_ROOT,
-  owns = (value) => serviceProcessOwns(value, { sourceRoot: value.sourceRoot }),
+  status = (value) => serviceProcessStatus(value, { sourceRoot: value?.sourceRoot }),
 } = {}) {
-  if (state && owns(state) && normalized(state.sourceRoot) !== normalized(path.resolve(sourceRoot))) {
+  const processState = status(state);
+  if (["unknown", "foreign"].includes(processState)) {
+    throw new Error("The recorded Router process ownership is unknown or foreign; refusing installation replacement.");
+  }
+  if (state && processState === "owned" && normalized(state.sourceRoot) !== normalized(path.resolve(sourceRoot))) {
     throw new Error("A live Router from another checkout still owns the state. Use the guarded deployment transaction before transferring installation ownership.");
   }
 }

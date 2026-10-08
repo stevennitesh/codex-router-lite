@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
 
 import {
   interpretWindowsTaskState,
@@ -116,4 +117,19 @@ test("query failures and malformed output stay inconclusive", async () => {
     }),
     undefined,
   );
+});
+
+test("query cancellation retains helper custody until close", async () => {
+  const controller = new AbortController(), child = new EventEmitter();
+  let options, callback, settled = false;
+  const query = windowsScheduledTaskState({ platform: "win32", timeoutMs: 12, signal: controller.signal,
+    execFile: (_exe, _args, opts, cb) => { options = opts; callback = cb; return child; },
+  }).then(result => { settled = true; return result; });
+  assert.equal(options.signal, controller.signal);
+  assert.equal(options.timeout, 12);
+  controller.abort(); callback(new Error("aborted"));
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(settled, false);
+  child.emit("close", 1);
+  assert.equal(await query, undefined);
 });

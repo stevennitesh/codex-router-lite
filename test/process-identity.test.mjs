@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { processCommandLine, processStartIdentity, SERVICE_START_PROBE_BUDGET } from "../src/process-identity.mjs";
-import { buildServiceProcessState, serviceProcessOwns, writeServiceProcessState } from "../src/service-process.mjs";
+import { processCommandLine, processStartIdentity, processStartIdentityProbe, SERVICE_START_PROBE_BUDGET } from "../src/process-identity.mjs";
+import { buildServiceProcessState, serviceProcessOwns, serviceProcessStatus, readServiceProcessState, writeServiceProcessState } from "../src/service-process.mjs";
 
 test("cold startup retries only timed-out process probes", () => {
   for (const probe of [processStartIdentity, processCommandLine]) {
@@ -15,10 +15,10 @@ test("cold startup retries only timed-out process probes", () => {
         calls.push({ executable, options });
         return calls.length === 1
           ? { error: { code: "ETIMEDOUT" }, stdout: "" }
-          : { status: 0, stdout: "verified-process" };
+          : { status: 0, stdout: "42|node.exe" };
       },
     });
-    assert.equal(value, "verified-process");
+    assert.equal(value, "42|node.exe");
     assert.equal(calls.length, 2);
     assert.ok(calls.every(({ options }) => options.timeout === 45_000 && options.windowsHide));
     if (process.platform === "win32") assert.ok(path.isAbsolute(calls[0].executable));
@@ -78,4 +78,45 @@ test("managed process records refuse foreground and unknown entrypoints", () => 
     assert.equal(buildServiceProcessState(options), undefined);
     assert.throws(() => writeServiceProcessState(options), /refusing to run without a stoppable process record/);
   }
+});
+
+test("process observations preserve confirmed absence versus failed probes", () => {
+  for (const [result, state] of [
+    [{ status: 3 }, "absent"], [{ status: 0, stdout: "42|node.exe" }, "alive"],
+    [{ status: 1 }, "unknown"], [{ status: 0, stdout: "" }, "unknown"],
+    [{ status: 0, stdout: "42|" }, "unknown"], [{ status: 0, stdout: "42|  " }, "unknown"],
+    [{ status: 0, stdout: "|node.exe" }, "unknown"], [{ status: 0, stdout: "malformed" }, "unknown"],
+    [{ status: 3, error: { code: "ETIMEDOUT" } }, "unknown"],
+  ]) assert.equal(processStartIdentityProbe(42, { spawn: () => result }).state, state);
+  assert.equal(processStartIdentityProbe(42, { spawn: () => { throw new Error("denied"); } }).state, "unknown");
+});
+
+test("service verdicts reject unknown or foreign evidence without confusing PID reuse", () => {
+  const sourceRoot = path.resolve("fixture-router"), stateDir = path.resolve("fixture-state");
+  const commandLine = () => `node "${path.join(sourceRoot, "src/start.mjs")}"`;
+  const record = buildServiceProcessState({ pid: 42, sourceRoot, stateDir, identity: () => "42|node.exe", commandLine });
+  for (const [probe, expected] of [
+    [{ state: "unknown" }, "unknown"], [{ state: "absent" }, "absent"],
+    [{ state: "alive", identity: "43|node.exe" }, "absent"], [{ state: "alive", identity: "42|node.exe" }, "owned"],
+    [{ state: "alive", identity: "42|" }, "unknown"],
+  ]) assert.equal(serviceProcessStatus(record, { sourceRoot, stateDir, commandLine, probe: () => probe }), expected);
+  assert.equal(serviceProcessStatus(record, { sourceRoot, stateDir, probe: () => ({ state: "alive", identity: "42|node.exe" }), commandLine: () => undefined }), "unknown");
+  assert.equal(serviceProcessStatus(record, { sourceRoot: path.resolve("foreign"), stateDir, probe: () => ({ state: "alive", identity: "42|node.exe" }), commandLine }), "foreign");
+  assert.equal(serviceProcessStatus({ ...record, processIdentity: "42|" }), "unknown");
+  assert.equal(buildServiceProcessState({ pid: 42, sourceRoot, stateDir, identity: () => "42|", commandLine }), undefined);
+  assert.equal(serviceProcessStatus({}), "unknown");
+  assert.equal(serviceProcessStatus(undefined), "absent");
+});
+
+test("a missing process record is absent but malformed records refuse replacement", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-record-read-"));
+  const target = path.join(directory, "record.json");
+  try {
+    assert.equal(readServiceProcessState(target), undefined);
+    for (const text of ["broken JSON", '{"version":1,"managed":true}', '{"version":2,"managed":true}']) {
+      writeFileSync(target, text);
+      assert.throws(() => readServiceProcessState(target), /could not be verified/u);
+    }
+    assert.throws(() => readServiceProcessState(directory), /could not be verified/u);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -51,26 +51,36 @@ export async function waitForServiceReadiness({
     outcome.error ??
     new Error(outcome.health?.error || "service did not become healthy");
 
-  let deadSince;
+  let deadlineTimer;
+  const deadlineWinner = new Promise(resolve => {
+    if (overallTimeoutMs > 0) deadlineTimer = setTimeout(() => resolve({ kind: "deadline" }), overallTimeoutMs);
+  });
+  let deadSince, pendingTask;
   try {
     while (Date.now() < deadline) {
       const winner = await Promise.race([
         healthWinner,
+        deadlineWinner,
         sleep(Math.max(0, Math.min(pollMs, deadline - Date.now())), undefined, { signal: operation.signal }).then(() => null),
       ]);
       if (winner) {
+        if (winner.kind === "deadline") throw new Error("service did not become healthy before the readiness deadline");
         // The health attempt settles only after its full budget, which matches
         // this guard's own deadline, so an early settlement is a real verdict.
         if (winner.outcome.healthy) return winner.outcome.health;
         throw failureOf(winner.outcome);
       }
 
-      let taskState;
-      try {
-        taskState = await getWindowsTaskState();
-      } catch {
-        taskState = undefined;
+      pendingTask = Promise.resolve().then(() => getWindowsTaskState({
+        timeoutMs: Math.max(1, deadline - Date.now()), signal: operation.signal,
+      })).then(taskState => ({ kind: "task", taskState }), () => ({ kind: "task" }));
+      const observed = await Promise.race([healthWinner, deadlineWinner, pendingTask]);
+      if (observed.kind === "deadline") throw new Error("service did not become healthy before the readiness deadline");
+      if (observed.kind === "health") {
+        if (observed.outcome.healthy) return observed.outcome.health;
+        throw failureOf(observed.outcome);
       }
+      const { taskState } = observed;
       const launcherAlive =
         taskState?.launcherAlive === true ||
         (taskState?.launcherAlive === undefined && taskState?.instanceCount > 0);
@@ -107,6 +117,7 @@ export async function waitForServiceReadiness({
     // Task death or a completed health verdict ends the whole operation. The
     // losing fetch, interval and poll timer must finish before readiness exits.
     operation.abort();
-    await healthWinner;
+    clearTimeout(deadlineTimer);
+    await Promise.all([healthWinner, pendingTask]);
   }
 }

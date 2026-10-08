@@ -131,7 +131,8 @@ const commonEnv = {
   ...(environmentProxyOptedIn() ? { NODE_USE_ENV_PROXY: "1" } : {}),
 };
 
-const children = [];
+const children = new Set();
+const childLifecycles = new WeakMap();
 let shuttingDown = false;
 
 // Every child goes through `spawnableCommand` for the one case that needs it:
@@ -149,31 +150,56 @@ function run(command, args, extraEnv = {}) {
     stdio: "inherit",
     ...spawnable.options,
   });
-  children.push(child);
+  const lifecycle = { windowsBatch: /\.(cmd|bat)$/iu.test(command) };
+  lifecycle.closed = new Promise(resolve => {
+    child.once("error", error => { lifecycle.error = error; });
+    child.once("close", (code, signal) => {
+      children.delete(child);
+      resolve({ code, signal });
+    });
+  });
+  childLifecycles.set(child, lifecycle);
+  children.add(child);
   return child;
 }
 
 function waitForExit(child, label) {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve({ label, code: child.exitCode, signal: child.signalCode });
+  return childLifecycles.get(child).closed.then(result => ({ label, ...result }));
+}
+
+async function stopChild(child, signal = "SIGTERM") {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const lifecycle = childLifecycles.get(child);
+  if (process.platform === "win32" && lifecycle?.windowsBatch) {
+    // Killing cmd.exe alone strands its gateway descendant. Terminate the
+    // still-owned tree before its root disappears; a failed cleanup must not
+    // authorize another startup attempt.
+    lifecycle.stopping ??= new Promise((resolve, reject) => {
+      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore", windowsHide: true, timeout: 5_000,
+      });
+      let failure;
+      killer.once("error", error => { failure = error; });
+      killer.once("close", code => code === 0 && !failure
+        ? resolve() : reject(failure ?? new Error("Optional Windows child tree cleanup failed.")));
+    }).finally(() => { lifecycle.stopping = undefined; });
+    await lifecycle.stopping;
+  } else if (!child.kill(signal)) {
+    throw new Error("Optional child termination could not be requested.");
   }
-  return new Promise((resolve) => {
-    child.once("exit", (code, signal) => resolve({ label, code, signal }));
-  });
 }
 
 // The probe loop lives in src/health-probe.mjs so it can be tested directly;
 // importing this file starts the whole service pipeline.
-function waitForHealth(label, url, headers = {}, timeoutMs = 30_000, expectedService, child) {
-  return pollHealth({
-    label,
-    url,
-    headers,
-    timeoutMs,
-    expectedService,
-    child,
-    isShuttingDown: () => shuttingDown,
-  });
+async function waitForHealth(label, url, headers = {}, timeoutMs = 30_000, expectedService, child) {
+  try {
+    return await pollHealth({
+      label, url, headers, timeoutMs, expectedService, child,
+      isShuttingDown: () => shuttingDown,
+    });
+  } catch (error) {
+    throw childLifecycles.get(child)?.error ?? error;
+  }
 }
 
 // Each child answers SIGTERM by draining what is in flight for up to
@@ -189,11 +215,11 @@ function stopChildren() {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const child of children) {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    void stopChild(child).catch(error => console.error(`[model-router] child cleanup failed: ${error.message}`));
   }
   setTimeout(() => {
     for (const child of children) {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      void stopChild(child, "SIGKILL").catch(error => console.error(`[model-router] child cleanup failed: ${error.message}`));
     }
   }, SIGKILL_AFTER_MS).unref();
 }
@@ -243,6 +269,7 @@ async function main() {
       start,
       waitForExit,
       waitForHealth: healthy,
+      stop: stopChild,
       isShuttingDown: () => shuttingDown,
       log: (message) => console.error(`[${frontendService}] ${message}`),
       ...limits,
@@ -360,7 +387,7 @@ try {
   }
 } finally {
   stopChildren();
-  await Promise.all(children.map((child) => waitForExit(child, "child")));
+  await Promise.all([...children].map((child) => waitForExit(child, "child")));
   if (serviceProcessRecorded) {
     try {
       clearServiceProcessState();

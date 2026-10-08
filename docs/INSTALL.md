@@ -38,6 +38,11 @@ available during an optional-child failure. The installer still prepares Python
 dependencies; a missing or unhealthy gateway prevents GLM service, not frontend
 liveness.
 
+Asynchronous launch failures are handled by the child supervisor;
+startup retries wait for child closure. A configured Windows batch gateway is
+terminated as a tree before retry, so its descendants cannot overlap the next
+attempt. A failed cleanup stops retries and is reported in the service log.
+
 To use OpenRouter routes, set the credential with the protected prompt:
 
 ```powershell
@@ -59,6 +64,12 @@ diagnostic, not deployment acceptance: warnings can leave its exit status zero.
 The deployment transaction separately enforces full health and installed identity.
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
+Service operations keep their lock heartbeat active while Windows helpers run.
+An unreadable task or process record cannot establish absence. Failed stop
+verification retains the process record and refuses replacement; task removal
+must be verified before its launchers are removed. Resolve the reported
+observation error and retry the operation.
+
 For foreground debugging, run `model-router.ps1 codex start --foreground` after
 the managed service has released the listeners. The foreground supervisor holds
 the service-operation lock for its lifetime and leaves the managed process record
@@ -78,7 +89,9 @@ selected providers are ready.
 
 Readiness owns cancellation of its health fetches and waits when health succeeds,
 the task is definitively dead, or the deadline expires. Inconclusive task queries
-keep waiting. Health and drain share the same bounded refusal check; unknown or
+keep waiting. A health result or deadline can cancel a pending task query;
+readiness waits for that helper to close before returning. Health and drain
+share the same bounded refusal check; unknown or
 mixed transport failures cannot establish that Router is offline.
 
 The model picker labels StreamLake and Together as separate GLM routes, and

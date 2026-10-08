@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   DEFAULT_STARTUP_BUDGETS,
   superviseGateway,
+  superviseOptionalChild,
 } from "../src/gateway-supervisor.mjs";
 
 function child(exitCode = null) {
@@ -51,6 +52,27 @@ test("an alive replacement keeps its cold import across bounded health budgets",
     DEFAULT_STARTUP_BUDGETS - 1,
   );
   assert.equal(result.restarts, 1);
+});
+
+test("optional startup waits for actual child completion before retry", async () => {
+  const events = [];
+  await superviseOptionalChild({ label: "fixture", maxRestarts: 1, backoffMs: 0,
+    start: () => { events.push("start"); return child(); },
+    waitForHealth: async () => { throw new Error("not ready"); },
+    stop: async () => { events.push("terminate"); },
+    waitForExit: async () => { await Promise.resolve(); events.push("closed"); },
+    sleep: async () => { events.push("backoff"); }, log: () => {},
+  });
+  assert.deepEqual(events, ["start", "terminate", "closed", "backoff", "start", "terminate", "closed"]);
+});
+
+test("failed optional child cleanup forbids another launch", async () => {
+  let starts = 0, waits = 0;
+  const result = await superviseOptionalChild({ label: "fixture", maxRestarts: 2,
+    start: () => { starts++; return child(); }, waitForHealth: async () => { throw new Error("not ready"); },
+    stop: async () => { throw new Error("cleanup refused"); }, waitForExit: async () => { waits++; }, log: () => {},
+  });
+  assert.equal(starts, 1); assert.equal(waits, 0); assert.equal(result.exhausted, true);
 });
 
 test("replacement startup retries remain bounded and eventually stop a wedged child", async () => {

@@ -29,6 +29,12 @@ function probe(script, spawn, budget, environment) {
 // require both to match before acting on it.
 //
 // Service shutdown uses this check before signaling a recorded process.
+export function isProcessStartIdentity(value) {
+  if (typeof value !== "string") return false;
+  const [ticks, executable, extra] = value.split("|");
+  return /^\d+$/u.test(ticks) && Boolean(executable?.trim()) && extra === undefined;
+}
+
 export function processStartIdentity(
   pid,
   { spawn = spawnSync, budget, environment = process.env } = {},
@@ -37,20 +43,23 @@ export function processStartIdentity(
   return result.state === "alive" ? result.identity : undefined;
 }
 
-function processStartIdentityProbe(
+export function processStartIdentityProbe(
   pid,
   { spawn = spawnSync, budget, environment = process.env } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid < 1) return { state: "unknown" };
   try {
     const script =
-      `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
-      "if ($null -eq $p) { exit 3 }; " +
-      `[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path)`;
+      "$ErrorActionPreference = 'Stop'; try { " +
+      `$p = Get-Process -Id ${pid} -ErrorAction Stop; ` +
+      "[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path) " +
+      "} catch { if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*') { exit 3 }; exit 1 }";
     const result = probe(script, spawn, budget, environment);
     const identity = String(result.stdout || "").trim();
-    if (result.status === 0 && identity) return { state: "alive", identity };
-    if (result.status === 3) return { state: "absent" };
+    // An unavailable executable path is incomplete evidence, not a changed
+    // identity that could prove the recorded generation has exited.
+    if (!result.error && result.status === 0 && isProcessStartIdentity(identity)) return { state: "alive", identity };
+    if (!result.error && result.status === 3) return { state: "absent" };
     return { state: "unknown" };
   } catch {
     return { state: "unknown" };

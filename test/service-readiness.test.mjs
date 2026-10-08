@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { waitForRouterHealth } from "../src/router-health.mjs";
 import { waitForServiceReadiness } from "../src/service-readiness.mjs";
 
 const deadTask = async () => ({ launcherAlive: false, instanceCount: 0, lastTaskResult: 42 });
 const fixtureLog = new URL("./fixtures/absent-readiness.log", import.meta.url);
+
+for (const healthy of [true, false]) {
+  test(`a pending task query is canceled by ${healthy ? "successful health" : "the readiness deadline"}`, { timeout: 5_000 }, async () => {
+    let querying, querySettled = false, observedBudget, observedSignal;
+    const started = new Promise(resolve => { querying = resolve; });
+    const operation = waitForServiceReadiness({ timeoutMs: healthy ? 2_000 : 80, pollMs: 1, launchGraceMs: 0,
+      waitForHealth: async ({ signal }) => {
+        await started;
+        if (healthy) { await delay(10); return { ok: true }; }
+        await delay(30_000, undefined, { signal });
+      },
+      getWindowsTaskState: async ({ timeoutMs, signal }) => {
+        observedBudget = timeoutMs; observedSignal = signal; querying();
+        try { await delay(30_000, undefined, { signal }); return { launcherAlive: false, instanceCount: 0, lastTaskResult: 42 }; }
+        finally { querySettled = true; }
+      },
+    });
+    if (healthy) assert.equal((await operation).ok, true);
+    else await assert.rejects(operation, /readiness deadline/u);
+    assert.equal(querySettled, true);
+    assert.equal(observedSignal.aborted, true);
+    assert.ok(observedBudget > 0 && observedBudget <= (healthy ? 2_000 : 80));
+  });
+}
 
 test("task death cancels and settles the actual pending health fetch", { timeout: 5_000 }, async () => {
   let probes = 0, active = false, settled = false;

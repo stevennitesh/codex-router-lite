@@ -77,15 +77,18 @@ test("the independent deployment worker survives termination of the entire calle
   }
 });
 test("a live process or listener prevents false stop success", () => {
-  assert.throws(() => assertServiceProcessStopped({}, { owns: () => true }), /still running/u);
-  assert.throws(() => assertServiceProcessStopped({}, { owns: () => false, listening: () => true }), /still running/u);
-  assert.doesNotThrow(() => assertServiceProcessStopped({}, { owns: () => false }));
+  assert.throws(() => assertServiceProcessStopped({}, { status: () => "owned" }), /still running/u);
+  assert.throws(() => assertServiceProcessStopped({}, { status: () => "absent", listening: () => true }), /still running/u);
+  assert.doesNotThrow(() => assertServiceProcessStopped({}, { status: () => "absent" }));
+  assert.throws(() => assertServiceProcessStopped({}, { status: () => "unknown" }), /stoppage is unknown/u);
+  assert.throws(() => assertServiceProcessStopped({}, { status: () => "absent", listening: () => undefined }), /stoppage is unknown/u);
 });
 test("manual installation cannot transfer state away from a live previous checkout", () => {
   const state = { sourceRoot: path.resolve("previous") };
-  assert.throws(() => assertServiceReplacementOwnership(state, { sourceRoot: path.resolve("candidate"), owns: () => true }), /guarded deployment/u);
-  assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { sourceRoot: state.sourceRoot, owns: () => true }));
-  assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { owns: () => false }));
+  assert.throws(() => assertServiceReplacementOwnership(state, { sourceRoot: path.resolve("candidate"), status: () => "owned" }), /guarded deployment/u);
+  assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { sourceRoot: state.sourceRoot, status: () => "owned" }));
+  assert.doesNotThrow(() => assertServiceReplacementOwnership(state, { status: () => "absent" }));
+  assert.throws(() => assertServiceReplacementOwnership(state, { status: () => "unknown" }), /ownership is unknown/u);
 });
 for (const failure of ["none", "drain", "install", "health", "acceptance", "stop", "rollback-stop", "rollback-install"]) {
   test(`checkout deployment handles ${failure} with exact generation ownership`, { skip: process.platform !== "win32" }, () => {
