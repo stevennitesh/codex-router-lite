@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   utimesSync,
@@ -342,7 +343,7 @@ test("task identity and the test write guard fail closed", () => {
   }), true);
   assert.equal(serviceProcessOwns(state, {
     platform: "win32",
-    identity: () => "new-generation|node.exe",
+    identity: () => "4243|node.exe",
     commandLine,
     sourceRoot,
     stateDir,
@@ -383,7 +384,9 @@ test("Windows status and doctor use the same diagnostic-only path", { skip: proc
 });
 
 function deploymentFixture({ candidateFails, modes = {}, immediateAcceptance = false, requireForce = false }) {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-deploy-test-"));
+  // PowerShell expands Windows 8.3 paths during installation. Record that
+  // same directory identity when CI supplies a short-name temporary root.
+  const directory = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "codex-router-deploy-test-")));
   const source = path.join(directory, "source");
   const install = path.join(directory, "install");
   const log = path.join(directory, "install.log");
@@ -628,7 +631,7 @@ catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`);
     } finally {
       if (retainedBackup) {
         const target = path.resolve(path.dirname(retainedBackup));
-        assert.ok(target.startsWith(path.resolve(os.tmpdir()) + path.sep));
+        assert.ok(target.startsWith(realpathSync.native(os.tmpdir()) + path.sep));
         assert.match(path.basename(target), /^codex-router-deploy-[0-9a-f]{32}$/u);
         rmSync(target, { recursive: true, force: true });
       }
