@@ -1,0 +1,625 @@
+{
+  "version": 1,
+  "historical": true,
+  "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+  "routerVersion": "0.7.0",
+  "codexVersion": "codex-cli 0.162.0-alpha.2",
+  "windowsAppVersion": "26.1002.7124.0",
+  "executionSurface": "codex-cli",
+  "windowsSandbox": "mxc",
+  "sandboxPolicy": "workspace-write",
+  "approvalPolicy": "on-request",
+  "limits": [
+    "Synthetic native CLI collaboration for the named backend only; desktop and arbitrary MCP tools are outside this proof.",
+    "Streaming was observed separately on the same deployed generation.",
+    "Completed drafts require review before acceptance. Raw transcripts and private identities remain local."
+  ],
+  "status": "accepted",
+  "reports": [
+    {
+      "slug": "openrouter/glm-5.3-flash-streamlake",
+      "role": "router_openrouter_glm_5_3_flash_streamlake",
+      "effort": "max",
+      "startedAt": "2026-10-08T20:24:55.337Z",
+      "endedAt": "2026-10-08T20:25:19.517Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-08T20:25:06.670Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-08T20:25:08.856Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-08T20:25:19.491Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-08T20:25:05.420Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 9209
+        },
+        {
+          "at": "2026-10-08T20:25:08.834Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 2085
+        },
+        {
+          "at": "2026-10-08T20:25:19.485Z",
+          "model": "openrouter/glm-5.3-flash-streamlake",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 4357
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "openrouter/glm-5.3-flash-streamlake",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "startedAt": "2026-10-08T20:24:21.752Z",
+        "endedAt": "2026-10-08T20:24:33.072Z",
+        "status": 200,
+        "events": 54,
+        "textDeltas": 1,
+        "terminalType": "response.completed",
+        "returnedModel": "openrouter-glm-5-3-flash-streamlake",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.3-flash",
+        "slug": "openrouter/glm-5.3-flash-streamlake",
+        "status": "accepted",
+        "officialSources": [
+          "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
+          "https://openrouter.ai/docs/guides/routing/provider-selection"
+        ],
+        "testedAt": "2026-10-08T20:25:19.517Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "codexVersion": "codex-cli 0.162.0-alpha.2",
+        "executionSurface": "codex-cli",
+        "endpointProvider": "streamlake/fp8",
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:24:33.072Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:06.670Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:15.107Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:08.856Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:19.491Z"
+          }
+        },
+        "windowsAppVersion": "26.1002.7124.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-08-workflow-repair-certification.json"
+      }
+    },
+    {
+      "slug": "openrouter/deepseek-v4.1-flash-together",
+      "role": "router_openrouter_deepseek_v4_1_flash_together",
+      "effort": "high",
+      "startedAt": "2026-10-08T20:25:26.659Z",
+      "endedAt": "2026-10-08T20:25:40.095Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-08T20:25:32.680Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-08T20:25:33.173Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-08T20:25:40.070Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-08T20:25:31.374Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 3986
+        },
+        {
+          "at": "2026-10-08T20:25:33.117Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 349
+        },
+        {
+          "at": "2026-10-08T20:25:40.062Z",
+          "model": "openrouter/deepseek-v4.1-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 2213
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "openrouter/deepseek-v4.1-flash-together",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "startedAt": "2026-10-08T20:24:33.810Z",
+        "endedAt": "2026-10-08T20:24:34.092Z",
+        "status": 200,
+        "events": 22,
+        "textDeltas": 2,
+        "terminalType": "response.completed",
+        "returnedModel": "deepseek/deepseek-v4.1-flash",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4.1-flash",
+        "slug": "openrouter/deepseek-v4.1-flash-together",
+        "status": "accepted",
+        "officialSources": [
+          "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+          "https://openrouter.ai/docs/guides/routing/provider-selection"
+        ],
+        "testedAt": "2026-10-08T20:25:40.095Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "codexVersion": "codex-cli 0.162.0-alpha.2",
+        "executionSurface": "codex-cli",
+        "endpointProvider": "together",
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:24:34.092Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:32.680Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:37.827Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:33.173Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:40.070Z"
+          }
+        },
+        "windowsAppVersion": "26.1002.7124.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-08-workflow-repair-certification.json"
+      }
+    },
+    {
+      "slug": "openrouter/deepseek-v4.1-flash-deepinfra",
+      "role": "router_openrouter_deepseek_v4_1_flash_deepinfra",
+      "effort": "high",
+      "startedAt": "2026-10-08T20:25:47.427Z",
+      "endedAt": "2026-10-08T20:26:04.220Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-08T20:25:54.547Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-08T20:25:55.745Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-08T20:26:04.193Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-08T20:25:53.345Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 5169
+        },
+        {
+          "at": "2026-10-08T20:25:55.721Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 1095
+        },
+        {
+          "at": "2026-10-08T20:26:04.185Z",
+          "model": "openrouter/deepseek-v4.1-flash-deepinfra",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 2626
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "openrouter/deepseek-v4.1-flash-deepinfra",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "startedAt": "2026-10-08T20:24:34.276Z",
+        "endedAt": "2026-10-08T20:24:36.320Z",
+        "status": 200,
+        "events": 18,
+        "textDeltas": 1,
+        "terminalType": "response.completed",
+        "returnedModel": "deepseek/deepseek-v4.1-flash",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4.1-flash",
+        "slug": "openrouter/deepseek-v4.1-flash-deepinfra",
+        "status": "accepted",
+        "officialSources": [
+          "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+          "https://openrouter.ai/docs/guides/routing/provider-selection"
+        ],
+        "testedAt": "2026-10-08T20:26:04.220Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "codexVersion": "codex-cli 0.162.0-alpha.2",
+        "executionSurface": "codex-cli",
+        "endpointProvider": "deepinfra/fp8",
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:24:36.320Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:54.547Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:01.539Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:25:55.745Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:04.193Z"
+          }
+        },
+        "windowsAppVersion": "26.1002.7124.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-08-workflow-repair-certification.json"
+      }
+    },
+    {
+      "slug": "openrouter/pareto",
+      "role": "router_openrouter_pareto",
+      "effort": "none",
+      "startedAt": "2026-10-08T20:26:11.386Z",
+      "endedAt": "2026-10-08T20:26:29.884Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-08T20:26:19.385Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-08T20:26:20.878Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-08T20:26:29.860Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-08T20:26:18.193Z",
+          "model": "openrouter/pareto",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 5876
+        },
+        {
+          "at": "2026-10-08T20:26:20.855Z",
+          "model": "openrouter/pareto",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 1387
+        },
+        {
+          "at": "2026-10-08T20:26:29.853Z",
+          "model": "openrouter/pareto",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 3938
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "openrouter/pareto",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "startedAt": "2026-10-08T20:24:36.512Z",
+        "endedAt": "2026-10-08T20:24:38.469Z",
+        "status": 200,
+        "events": 9,
+        "textDeltas": 1,
+        "terminalType": "response.completed",
+        "returnedModel": "unbiased/pareto",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "openrouter",
+        "model": "unbiased/pareto",
+        "slug": "openrouter/pareto",
+        "status": "accepted",
+        "officialSources": [
+          "https://openrouter.ai/api/v1/models/unbiased/pareto/endpoints",
+          "https://openrouter.ai/unbiased/pareto"
+        ],
+        "testedAt": "2026-10-08T20:26:29.884Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "codexVersion": "codex-cli 0.162.0-alpha.2",
+        "executionSurface": "codex-cli",
+        "endpointProvider": "unbiased",
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:24:38.469Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:19.385Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:25.894Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:20.878Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:29.860Z"
+          }
+        },
+        "windowsAppVersion": "26.1002.7124.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-08-workflow-repair-certification.json"
+      }
+    },
+    {
+      "slug": "switchyard/auto",
+      "role": "router_switchyard_auto",
+      "effort": "medium",
+      "startedAt": "2026-10-08T20:26:36.987Z",
+      "endedAt": "2026-10-08T20:26:55.196Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-08T20:26:44.071Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-08T20:26:46.628Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-08T20:26:55.154Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-08T20:26:42.889Z",
+          "model": "switchyard/auto",
+          "provider": "switchyard",
+          "status": 200,
+          "totalMs": 5154
+        },
+        {
+          "at": "2026-10-08T20:26:46.641Z",
+          "model": "switchyard/auto",
+          "provider": "switchyard",
+          "status": 200,
+          "totalMs": 2500
+        },
+        {
+          "at": "2026-10-08T20:26:55.174Z",
+          "model": "switchyard/auto",
+          "provider": "switchyard",
+          "status": 200,
+          "totalMs": 3596
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "switchyard/auto",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "startedAt": "2026-10-08T20:24:38.654Z",
+        "endedAt": "2026-10-08T20:24:45.119Z",
+        "status": 200,
+        "events": 13,
+        "textDeltas": 3,
+        "terminalType": "response.completed",
+        "returnedModel": "switchyard/auto",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "switchyard",
+        "model": "gpt-5.6-sol",
+        "slug": "switchyard/auto",
+        "status": "accepted",
+        "officialSources": [
+          "https://github.com/NVIDIA-NeMo/Switchyard",
+          "https://developers.openai.com/codex"
+        ],
+        "testedAt": "2026-10-08T20:26:55.196Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+        "codexVersion": "codex-cli 0.162.0-alpha.2",
+        "executionSurface": "codex-cli",
+        "runtimeBinding": {
+          "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+          "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+          "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+          "routerCommit": "5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a",
+          "patchSha256": "62ea2770a66572779084504dbf8c784c774e38b0f933f01f9a11ad3860fde46c",
+          "binarySha256": "03d87c25e635f3b88d716af996ed7fb4d0c11db527bfb57b32796ac08578a968",
+          "routesSha256": "502ee051a66562c858dbc277d482f5f1265d7ce323f976a2dd8646164a7b68e2",
+          "templateSha256": "fb15cc65a9aa4956103b493e2406d05b4b7ec547e7a6d058f0dbba939acd3ecd",
+          "templateSourceSha256": "310bd84b86151168bbfeab680df89f961300a170b7f900235e79482da3b01c2b"
+        },
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:24:45.119Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:44.071Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:51.552Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:46.628Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-08T20:26:55.154Z"
+          }
+        },
+        "windowsAppVersion": "26.1002.7124.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-08-workflow-repair-certification.json"
+      }
+    }
+  ]
+}

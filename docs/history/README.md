@@ -8,6 +8,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 - [Audit-fix deployment, native renewal and completion/drain repairs, 2026-10-08](2026-10-08-audit-release.md)
 
+- [Completion/drain repair renewal: five passing routes, GLM Together rate-limited, 2026-10-08](2026-10-08-workflow-repair-certification.json)
+
 - [Five-route OpenRouter renewal after the codebase audit fixes, 2026-10-08](2026-10-08-audit-openrouter-certification.json)
 
 - [Latency and route-settings deployment, five-route renewal and StreamLake refusal, 2026-10-07](2026-10-07-latency-settings-release.md)

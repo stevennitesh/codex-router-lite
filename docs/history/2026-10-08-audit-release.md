@@ -94,12 +94,45 @@ The diagnostic candidate passed `npm run verify:codex`: 582 tests, no failures
 or skips, and installed-Codex parsing of all 17 models. The preceding repair's
 Windows Node 22.19.0, Windows Node 24.x and Python audit CI jobs also passed.
 
-## Remaining acceptance
+## Repair deployment and native renewal
 
-At this record's preparation, the healthy installed generation remains
-`475b3a79ae52fd219499f17e2925ba7527f7d009`. The old in-memory unknown-workflow
-flag cannot be safely cleared by normal replacement. Explicit operator approval
-for one controlled forced replacement was obtained, as required by
-[installation](../INSTALL.md#replacement-and-drain). The original recovery set
-remains retained. The repaired generation and its fresh native proofs are not
-yet accepted.
+The operator explicitly approved one controlled forced replacement. The
+independent transaction deployed
+`5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a`, including the completion/drain
+repair and bounded WebSocket diagnostics. Acceptance completed at
+`2026-10-08T20:23:45.9656619Z`; all eleven deployment checks passed. The original
+recovery set was retained. The source candidate's Windows Node 22.19.0,
+Windows Node 24.x and Python audit CI jobs passed in
+[run 37839020319](https://github.com/stevennitesh/codex-router-lite/actions/runs/37839020319).
+
+The [reviewed repair renewal](2026-10-08-workflow-repair-certification.json)
+passed all five checks for StreamLake, both DeepSeek routes, Pareto and
+Switchyard against that deployed commit. Each child returned actual command
+output `42`, completed two encrypted handoffs and returned both markers. All
+15 native requests and five separate streaming requests returned HTTP 200.
+Both child turns completed, with no active-turn cancellation. Switchyard's
+trace attribution and locked runtime binding passed on the fresh observations.
+
+GLM Together returned HTTP 429 before its native sequence. Two bounded
+diagnostic requests also returned 429, including a paired request that reduced
+only the output budget to 2,048 tokens. The response identified Together and a
+provider rate-limit refusal. No `Retry-After` was supplied. OpenRouter's
+read-only key metadata returned HTTP 200, indicated a paid key and showed that
+its credit limit was not exhausted. These observations do not establish the
+provider's reset time or exact limiting dimension. No endpoint fallback,
+automatic retry or settings change was applied. GLM Together's preceding
+accepted application remains historical evidence against `475b3a79`; it was
+not renewed by this batch.
+
+After certification, the active process was verified as owned by this checkout,
+and full Router health returned HTTP 200 with no degraded dependencies.
+Lifecycle inspection showed admission open, zero tracked workflows, zero
+workflow calls and `indeterminateWorkflow: false`. The persistent elevated
+sandbox and signed Codex binaries remain unchanged; the native CLI proofs used
+session-only MXC with workspace-write and on-request approval.
+
+Five routes are renewed. GLM Together's renewal remains blocked by the observed
+upstream refusal. The original recovery set remains retained until the remaining
+authorized acceptance check can complete. The reported WebSocket rejection did
+not recur during this proof window; its original malformed message remains
+unidentified, so this record does not claim that incident's cause was repaired.

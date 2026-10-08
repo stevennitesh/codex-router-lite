@@ -1,12 +1,12 @@
 # switchyard/auto v2 certification
 
-Accepted observations against Router `c95a10b926de218971c85727efa31eae407eb8af`
+Accepted observations against Router `5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a`
 (version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-07T23:49:46.953Z. Switchyard runtime identities are recorded in proof.json.
+Tested at 2026-10-08T20:26:55.196Z. Switchyard runtime identities are recorded in proof.json.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-07-latency-settings-certification.json) records role `router_switchyard_auto`, effort
+[Redacted run evidence](../../../docs/history/2026-10-08-workflow-repair-certification.json) records role `router_switchyard_auto`, effort
 `medium`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed
@@ -19,6 +19,11 @@ already-completed turns; no active turn was cancelled.
 | Encrypted parent-to-child relay | pass |
 | First marker | pass |
 | Same-child follow-up | pass |
+
+## Official sources
+
+- https://github.com/NVIDIA-NeMo/Switchyard
+- https://developers.openai.com/codex
 
 ## Scope and reproduction
 
