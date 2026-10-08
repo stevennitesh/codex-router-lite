@@ -31,11 +31,34 @@ foreach ($name in $runtimeFiles) {
 # Windows/service and authentication boundaries are replaced, never file effects.
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $CodeRoot "maintenance\deploy-switchyard-candidate.ps1"), [ref]$tokens, [ref]$errors)
-foreach ($name in @("Copy-RuntimeFile", "Restore-Switchyard")) {
+foreach ($name in @("Copy-RuntimeFile", "Restore-Switchyard", "Invoke-RouterService", "Invoke-RouterInstall")) {
   $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
-  Invoke-Expression $function.Extent.Text
+  $definition = $function.Extent.Text
+  if ($name -eq "Invoke-RouterInstall") {
+    $definition = $definition.Replace('function Invoke-RouterInstall(', 'function Invoke-RouterInstallBoundary(')
+  }
+  Invoke-Expression $definition
 }
-function node { $global:LASTEXITCODE = if ($Failure -eq "configuration") { 1 } else { 0 } }
+$env:ROUTER_TRANSACTION_EXPECT_FORCE = if ($ForceServiceReplacement) { "1" } else { "0" }
+foreach ($root in @($repoRoot, $rollbackRouterRoot)) {
+  [IO.File]::WriteAllText((Join-Path $root "install.ps1"), @'
+param([switch]$CheckoutInstall, [string]$Target, [switch]$ForceServiceReplacement)
+if ([bool]$ForceServiceReplacement -ne ($env:ROUTER_TRANSACTION_EXPECT_FORCE -eq "1")) {
+  throw "Installer force did not match the explicit operator choice"
+}
+$global:LASTEXITCODE = 0
+'@)
+}
+function node {
+  if ([string]$args[0] -like '*service.mjs') {
+    if (($args -contains '--force-service-replacement') -ne [bool]$ForceServiceReplacement) {
+      throw "Service force did not match the explicit operator choice"
+    }
+    $global:LASTEXITCODE = 0
+  } else {
+    $global:LASTEXITCODE = if ($Failure -eq "configuration") { 1 } else { 0 }
+  }
+}
 function Protect-PrivateFile([string]$Path) {}
 function Assert-CheckoutIdentity([string]$Root, [string]$Commit, [string]$Label) {}
 function Assert-FileHash([string]$Path, [string]$Hash, [string]$Label) { if (-not (Test-Path -LiteralPath $Path)) { throw "Missing $Label" } }
@@ -51,12 +74,14 @@ function Stop-RouterGeneration([string]$Root) {
   $label = if ($Root -eq $repoRoot) { "candidate" } else { "previous" }
   Add-Content -LiteralPath $trace -Value "stop-$label"
   if ($Root -ne $script:liveRoot) { throw "Attempted to stop the wrong generation" }
+  Invoke-RouterService $Root "stop"
   if ($Failure -eq "stop") { throw "Verified process did not stop" }
   if ($Failure -eq "rollback-stop" -and $Root -eq $repoRoot) { throw "Candidate process did not stop" }
   $script:liveRoot = $null
 }
 function Resolve-LiveRouterRoot([string[]]$AllowedRoots) { return $script:liveRoot }
 function Invoke-RouterInstall([string]$Root) {
+  Invoke-RouterInstallBoundary $Root
   $label = if ($Root -eq $repoRoot) { "candidate" } else { "previous" }
   Add-Content -LiteralPath $trace -Value "install-$label"
   $script:liveRoot = $Root

@@ -210,12 +210,14 @@ function Invoke-NodeJson([string]$Root, [string[]]$Arguments, [string]$Label) {
 }
 
 function Invoke-RouterService([string]$Root, [string]$Command) {
-  & node (Join-Path $Root "src\service.mjs") $Command
+  $serviceArguments = @((Join-Path $Root "src\service.mjs"), $Command)
+  if ($ForceServiceReplacement) { $serviceArguments += "--force-service-replacement" }
+  & node @serviceArguments
   if ($LASTEXITCODE -ne 0) { throw "Router service $Command failed from $Root." }
 }
 
 function Invoke-RouterInstall([string]$Root) {
-  & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex
+  & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex -ForceServiceReplacement:$ForceServiceReplacement
   if ($LASTEXITCODE -ne 0) { throw "Router install failed from $Root." }
 }
 

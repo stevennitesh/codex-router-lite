@@ -209,8 +209,9 @@ the live process, scheduled task, manifest, and runtime provenance to agree.
 
 When the operator explicitly authorizes interruption of pending or indeterminate
 work, the checkout transaction accepts `-ForceServiceReplacement`. It forwards
-that choice to the authenticated drain and retains the same identity, acceptance
-and rollback checks. Normal deployment never forces automatically. An abort
+that choice to the authenticated drain, service stop and installer calls during
+activation and recovery, retaining the same identity, acceptance and rollback
+checks. Normal deployment never forces automatically. An abort
 before activation restores admission even after a forced drain.
 
 ## Switchyard v2 promotion

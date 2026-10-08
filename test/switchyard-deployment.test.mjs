@@ -143,7 +143,7 @@ for (const failure of ["none", "drain", "install", "health", "acceptance", "stop
 }
 
 test("explicit forced checkout deployment keeps transaction recovery and restores admission before activation failures", {skip:process.platform!=="win32"}, () => {
-  for (const failure of ["none","configuration"]) {
+  for (const failure of ["none","configuration","health"]) {
     const directory = mkdtempSync(path.join(os.tmpdir(),"switchyard-forced-transaction-"));
     try {
       const result = spawnSync("powershell.exe",["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File",path.join(root,"test/fixtures/switchyard-transaction.ps1"),"-CodeRoot",root,"-FixtureRoot",directory,"-Failure",failure,"-ForceServiceReplacement"],{encoding:"utf8",timeout:20000});
@@ -154,12 +154,17 @@ test("explicit forced checkout deployment keeps transaction recovery and restore
       if (failure === "none") {
         assert.deepEqual(trace,["drain","stop-previous","install-candidate","healthy-candidate"]);
         assert.equal(JSON.parse(read("acceptance.json")).accepted,true);
-      } else {
+      } else if (failure === "configuration") {
         assert.deepEqual(trace,["drain","resume"]);
         assert.equal(outcome.activationStarted,false);
         assert.equal(outcome.liveRoot,path.join(directory,"previous"));
         assert.equal(read("runtime/switchyard-server.exe"),"previous-switchyard-server.exe");
         assert.match(read("error.txt"),/aborted before the running service changed/u);
+      } else {
+        assert.deepEqual(trace,["drain","stop-previous","install-candidate","healthy-candidate","stop-candidate","install-previous","healthy-previous"]);
+        assert.equal(outcome.liveRoot,path.join(directory,"previous"));
+        assert.equal(read("runtime/switchyard-server.exe"),"previous-switchyard-server.exe");
+        assert.match(read("error.txt"),/exact previous Router and Switchyard generation was restored/u);
       }
     } finally { rmSync(directory,{recursive:true,force:true}); }
   }
