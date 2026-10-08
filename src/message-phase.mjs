@@ -1,6 +1,7 @@
 import { Transform } from "node:stream";
 import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
-import { SseFrameBuffer } from "./sse-framing.mjs";
+import { SseFrameBuffer, sseFrameFields, rewriteSseFrameData } from "./sse-framing.mjs";
+import { responseTerminalOutcome } from "./response-usage.mjs";
 
 // Native Codex models label every assistant message with a `phase`:
 // `commentary` for a progress note written before more tool calls, and
@@ -48,37 +49,15 @@ const DEFAULT_MAX_HELD_BYTES = 1024 * 1024;
 const MAX_PARSE_CHARS = 8 * 1024 * 1024;
 const MAX_FRAME_BYTES = 10 * 1024 * 1024;
 
-function fatalUtf8(buffer) {
-  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
-}
-
-function dataTextOf(text) {
-  const dataLines = [];
-  for (const line of text.split(/\r\n|\r|\n/)) {
-    if (line.startsWith("data:")) {
-      const value = line.slice(5);
-      dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
-    }
-  }
-  return dataLines.length ? dataLines.join("\n") : undefined;
-}
-
-// Returns { done: true } for `[DONE]`, { type, event? } for a JSON event, or
-// undefined for comments and frames that are not Responses events.
-function parseFrame(text) {
-  const dataText = dataTextOf(text);
-  if (dataText === undefined) return undefined;
-  if (dataText === "[DONE]") return { done: true };
-  if (dataText.length > MAX_PARSE_CHARS || !jsonIsUnambiguousForRewrite(dataText)) return { invalid: true };
-  try {
-    const event = JSON.parse(dataText);
-    const names = text.split(/\r\n|\r|\n/).filter((line) => line.startsWith("event:"))
-      .map((line) => line.slice(6).trim());
-    if (names.length > 1 || (names.length && names[0] !== event?.type)) return { invalid: true };
-    return typeof event?.type === "string" ? { type: event.type, event } : undefined;
-  } catch {
-    return { invalid: true };
-  }
+function parseFrame(fields) {
+  const data = fields.data;
+  if (!fields.hasData) return undefined;
+  const generic = !fields.eventName || fields.eventName === "message";
+  if (data === "[DONE]") return generic ? { done: true } : { invalid: true };
+  if (data.length > MAX_PARSE_CHARS || !jsonIsUnambiguousForRewrite(data)) return { invalid: true };
+  const event = JSON.parse(data);
+  if (!generic && fields.eventName !== event?.type) return { invalid: true };
+  return typeof event?.type === "string" ? { type: event.type, event } : undefined;
 }
 
 function unlabelledAssistantMessage(item) {
@@ -92,22 +71,8 @@ function unlabelledAssistantMessage(item) {
   );
 }
 
-// Replaces the frame's data lines with one line carrying `event`, keeping every
-// other field line (event:, id:, comments) and the original separator.
-function rewrittenFrame(text, atStreamStart, event) {
-  const bom = atStreamStart && text.startsWith("\uFEFF") ? "\uFEFF" : "";
-  const lines = [];
-  let wroteData = false;
-  for (const line of text.slice(bom.length).match(/[^\r\n]*(?:\r\n|\r|\n|$)/g)) {
-    if (!line.startsWith("data:")) {
-      lines.push(line);
-    } else if (!wroteData) {
-      const ending = /(?:\r\n|\r|\n)$/.exec(line)?.[0] || "";
-      lines.push(`data: ${JSON.stringify(event)}${ending}`);
-      wroteData = true;
-    }
-  }
-  return Buffer.from(bom + lines.join(""), "utf8");
+function rewrittenFrame(fields, event) {
+  return Buffer.from(rewriteSseFrameData(fields, JSON.stringify(event)), "utf8");
 }
 
 // Labels the terminal snapshot's messages by the same rule the stream used: a
@@ -160,10 +125,6 @@ export class MessagePhaseTransform extends Transform {
   }
 
   _flush(callback) {
-    if (!this.#passthrough && this.#frames.pendingBytes) {
-      const atStreamStart = this.#frames.atStreamStart;
-      this.#frame(this.#frames.take(), atStreamStart);
-    }
     // A stream that ended without a terminal has no answer to label.
     this.#release(undefined);
     if (this.#frames.pendingBytes) this.push(this.#frames.take());
@@ -175,9 +136,9 @@ export class MessagePhaseTransform extends Transform {
       this.#disable(original);
       return;
     }
-    let text;
+    let fields;
     try {
-      text = fatalUtf8(original);
+      fields = sseFrameFields(original, atStreamStart);
     } catch {
       // Invalid UTF-8 disables labelling for the rest of the stream.
       this.#release(undefined);
@@ -186,12 +147,15 @@ export class MessagePhaseTransform extends Transform {
       this.#passthrough = true;
       return;
     }
-    const parsed = parseFrame(atStreamStart && text.startsWith("\uFEFF") ? text.slice(1) : text);
+    const parsed = parseFrame(fields);
     if (parsed?.invalid) {
       this.#disable(original);
       return;
     }
     const type = parsed?.type;
+    const outcome = responseTerminalOutcome(parsed?.event);
+    const answerTerminal = ANSWER_TERMINALS.has(type) && outcome === "completed";
+    const failureTerminal = FAILURE_TERMINALS.has(type) || outcome === "incomplete" || outcome === "stream_error";
 
     if (this.#pending) {
       const itemFrame = type === "response.output_item.added" || type === "response.output_item.done";
@@ -199,9 +163,9 @@ export class MessagePhaseTransform extends Transform {
         // A tool call or another message follows the held message, so it was
         // commentary. An item this stage could not parse counts as one.
         this.#release(COMMENTARY);
-      } else if (ANSWER_TERMINALS.has(type)) {
+      } else if (answerTerminal) {
         this.#release(FINAL_ANSWER);
-      } else if (FAILURE_TERMINALS.has(type) || parsed?.done) {
+      } else if (failureTerminal || parsed?.done) {
         this.#release(undefined);
       } else {
         this.#held.push(original);
@@ -212,15 +176,15 @@ export class MessagePhaseTransform extends Transform {
     }
 
     if (type === "response.output_item.done" && unlabelledAssistantMessage(parsed.event?.item)) {
-      this.#pending = { text, atStreamStart, original, event: parsed.event };
+      this.#pending = { fields, original, event: parsed.event };
       this.#heldBytes = original.length;
       if (this.#heldBytes > this.#maxHeldBytes) this.#release(undefined);
       return;
     }
-    if (ANSWER_TERMINALS.has(type) && parsed.event) {
+    if (answerTerminal && parsed.event) {
       const output = labelResponseOutput(parsed.event.response?.output);
       if (output) {
-        this.push(rewrittenFrame(text, atStreamStart, {
+        this.push(rewrittenFrame(fields, {
           ...parsed.event,
           response: { ...parsed.event.response, output },
         }));
@@ -229,7 +193,7 @@ export class MessagePhaseTransform extends Transform {
       }
     }
     this.push(original);
-    if (ANSWER_TERMINALS.has(type) || FAILURE_TERMINALS.has(type) || parsed?.done) this.#disable();
+    if (ANSWER_TERMINALS.has(type) || failureTerminal || parsed?.done) this.#disable();
   }
 
   #disable(original) {
@@ -247,7 +211,7 @@ export class MessagePhaseTransform extends Transform {
     this.#pending = undefined;
     this.push(
       phase
-        ? rewrittenFrame(pending.text, pending.atStreamStart, {
+        ? rewrittenFrame(pending.fields, {
             ...pending.event,
             item: { ...pending.event.item, phase },
           })

@@ -2331,6 +2331,7 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput, la
   signal.throwIfAborted();
   return {
     body: Buffer.from(JSON.stringify(prepared.payload), "utf8"),
+    payload: prepared.payload,
     target: (prepared.transport === "responses" ? API_BASE : GATEWAY_BASE) + "/responses",
     headers: routedHeaders(),
     searchMode: prepared.searchMode,
@@ -2477,6 +2478,7 @@ async function handleResponses(request, response, requestUrl) {
     let target;
     let headers;
     let routedBody;
+    let routedPayload;
     let builtSearchMode;
     let openRouterHostedSearch = false;
     let flattenedNamespaces = new Map();
@@ -2506,6 +2508,7 @@ async function handleResponses(request, response, requestUrl) {
       target = built.target;
       headers = built.headers;
       routedBody = built.body;
+      routedPayload = built.payload;
       builtSearchMode = built.searchMode;
       openRouterHostedSearch = built.hostedSearch;
     } else {
@@ -2702,7 +2705,7 @@ async function handleResponses(request, response, requestUrl) {
       const usageObserver = new ResponseUsageTransform(contentType, {
         estimatedInputTokens:
           ZERO_INPUT_ESTIMATE && route
-            ? estimateInputTokens(routedBody, { contextWindow: route.contextWindow })
+            ? estimateInputTokens(routedBody, { contextWindow: route.contextWindow, payload: routedPayload })
             : undefined,
       });
       const transforms = [usageObserver];

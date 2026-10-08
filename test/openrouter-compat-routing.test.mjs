@@ -6,6 +6,97 @@ import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
 
+test("actual Router guards zero-usage edits and preserves produced history evidence", async () => {
+  const tools=[{type:"namespace",name:"mcp__fixture",tools:[{type:"function",name:"inspect",parameters:{type:"object"}}]}];
+  const call={type:"function_call",id:"fc",call_id:"c",name:"mcp__fixture__inspect",arguments:'{"value":18446744073709551615}'};
+  const msg={type:"message",role:"assistant",id:"msg",content:[{type:"output_text",text:"OK"}]};
+  const payload={status:"completed",output:[call,msg],usage:{input_tokens:0,output_tokens:3,total_tokens:3}};
+  const encode=e=>`data: ${JSON.stringify(e)}\n\n`;
+  let mode="safe";
+  const captured=[],sockets=new Set();
+  const hop=http.createServer(async(req,res)=>{
+    const chunks=[]; for await (const chunk of req) chunks.push(chunk);
+    captured.push(JSON.parse(Buffer.concat(chunks)));
+    if (mode==="compact") {
+      const summary={objective:"Continue",requirement_refs:["U001"],attempt_refs:["C001"],observation_refs:["R001"],unverified:[],unknowns:[],blockers:[],next_step:"Continue"};
+      res.writeHead(200,{"Content-Type":"application/json"});
+      res.end(JSON.stringify({status:"completed",output:[{...msg,content:[{type:"output_text",text:JSON.stringify(summary)}]}]})); return;
+    }
+    if (mode.startsWith("phase-") || mode==="multiline" || mode==="unsafe-after-edit") {
+      res.writeHead(200,{"Content-Type":"text/event-stream"});
+      const terminal={type:"response.completed",response:{...payload,status:mode==="phase-status"?"incomplete":"completed"}};
+      if (mode==="multiline") res.end('data: '+JSON.stringify(terminal,null,2).split('\n').join('\ndata: ')+'\n\n');
+      else if (mode==="unsafe-after-edit") res.end(encode({type:"response.in_progress",response:{usage:{input_tokens:0,output_tokens:1}}})+'data: {"type":"response.completed","type":"response.completed"}\n\n');
+      else res.end(encode({type:"response.output_text.delta",item_id:"msg",delta:"OK"})+encode({type:"response.output_item.done",item:msg})
+        +(mode==="phase-eof"?'data: '+JSON.stringify(terminal):encode(terminal)));
+      return;
+    }
+    let raw=JSON.stringify(mode==="partial"?{...payload,usage:{input_tokens:12}}:payload);
+    if (mode==="duplicate") raw=raw.replace('"name":"mcp__fixture__inspect"','"name":"other","na\\u006de":"mcp__fixture__inspect"');
+    if (mode==="precision") raw=raw.replace('"status":"completed"','"status":"completed","marker":0.123456789012345678901');
+    res.writeHead(200,{"Content-Type":"application/json"});res.end(raw);
+  });
+  hop.on("connection",s=>{sockets.add(s);s.once("close",()=>sockets.delete(s));});
+  await new Promise(resolve=>hop.listen(0,"127.0.0.1",resolve));
+  const port=await openPort(),caller="history-regression-synthetic-caller";
+  const target=`http://127.0.0.1:${hop.address().port}/v1`;
+  const router=launch("router.mjs",{CODEX_ROUTER_PORT:String(port),CODEX_ROUTER_CALLER_KEY:caller,
+    CODEX_ROUTER_INTERNAL_KEY:"history-regression-synthetic-internal",CODEX_ROUTER_SHOW_ALL_MODELS:"1",
+    CODEX_ROUTER_GATEWAY_BASE_URL:target,CODEX_ROUTER_API_BASE_URL:target,CODEX_NATIVE_BASE_URL:target,
+    CODEX_ROUTER_ZERO_INPUT_ESTIMATE:"1",CODEX_ROUTER_QUIET:"1"},{stateDirPrefix:"history-regression-"});
+  const base=callerBaseUrl(port,caller);
+  const post=async(extra={},suffix="responses")=>{
+    const before=captured.length;
+    const res=await fetch(`${base}/${suffix}`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer history-regression-synthetic-native-session"},
+      body:JSON.stringify({model:"openrouter/glm-5.3-flash-streamlake",input:"x".repeat(5000),tools,stream:false,...extra}),
+      signal:AbortSignal.timeout(10000)});
+    const wire=await res.text();
+    assert.equal(captured.length,before+1,"one inference, including error paths");
+    if (mode!=="unsafe-after-edit") assert.equal(res.status,200,wire);
+    return wire;
+  };
+  try {
+    await ready(`${base}/models`,router);
+    const produced=JSON.parse(await post());
+    assert.ok(produced.usage.input_tokens>1000);
+    assert.equal(produced.output[0].name,"inspect");
+    assert.equal(produced.output[0].namespace,"mcp__fixture");
+    assert.equal(produced.output[0].arguments,call.arguments);
+    await post({input:[...produced.output,{type:"function_call_output",call_id:"c",output:"OBSERVED"},{role:"user",content:"Continue"}]});
+    const replay=captured.at(-1).input;
+    assert.equal(replay.find(i=>i.type==="function_call").name,call.name);
+    assert.equal(replay.find(i=>i.type==="function_call").arguments,call.arguments);
+    assert.equal(replay.find(i=>i.type==="function_call_output").output,"OBSERVED");
+    for (mode of ["duplicate","precision"]) {
+      const wire=await post();
+      assert.equal(JSON.parse(wire).output[0].name,call.name);
+      if (mode==="duplicate") assert.match(wire,/"name":"other","na\\u006de":"mcp__fixture__inspect"/u);
+      else assert.match(wire,/0\.123456789012345678901/u);
+      assert.equal(JSON.parse(wire).usage.input_tokens,0);
+    }
+    mode="safe";
+    const native=JSON.parse(await post({model:"gpt-6.1-sol"}));
+    assert.equal(native.usage.input_tokens,0,"native routes retain provider counts");
+    assert.equal(native.output[0].name,call.name,"native identity is not externally restored");
+    mode="multiline";
+    const wire=await post({stream:true});
+    assert.match(wire,/"input_tokens":\d{4,}/u);
+    mode="partial";await post();
+    for (let n=0;n<50&&!router.errors().includes("out_tokens=unknown");n++) await new Promise(resolve=>setTimeout(resolve,10));
+    assert.match(router.errors(),/out_tokens=unknown/u);
+    for (mode of ["phase-eof","phase-status"]) assert.ok(!(await post({stream:true})).includes('"phase":"final_answer"'));
+    mode="unsafe-after-edit";
+    assert.match(await post({stream:true}),/local_router_(?:stream_failed|error)/u);
+    mode="compact";
+    const compact=JSON.parse(await post({input:[{role:"user",content:"Keep outcome"},{type:"function_call",call_id:"command",name:"inspect",arguments:"{}"},
+      {type:"function_call_output",call_id:"command",output:'{"exit_code":7,"exit_code":0}'}]},"responses/compact"));
+    assert.match(compact.output.at(-1).content[0].text,/"outcome": "returned"/u);
+    assert.ok(!compact.output.at(-1).content[0].text.includes('"outcome": "exit_0"'));
+  } finally {
+    await stop(router);for (const s of sockets) s.destroy();await new Promise(resolve=>hop.close(resolve));
+  }
+});
+
 test("actual Router preserves provider evidence, repairs framing and replays produced calls", async () => {
   const search = { type: "openrouter:web_search", id: "ws", status: "completed",
     action: { type: "search", sources: [{ url: "https://example.invalid/source" }] } };

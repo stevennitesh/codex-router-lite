@@ -392,3 +392,23 @@ test("failure prevents a later success from assigning a phase", async () => {
     block({ type: "response.completed", response: { output: [message("m1", "Late")] } });
   assert.equal((await label(input)).toString(), input);
 });
+
+test("unfinished or contradictory terminal evidence cannot infer a final phase", async () => {
+  const head=block({type:"response.output_item.done",item:message("pending","Partial")});
+  const terminal={type:"response.completed",response:{status:"completed",output:[message("pending","Partial")]}};
+  for (const tail of [
+    `data: ${JSON.stringify(terminal)}`,
+    `data: ${JSON.stringify(terminal)}\n`,
+    block({...terminal,response:{...terminal.response,status:"incomplete"}}),
+    block({...terminal,response:{...terminal.response,status:"in_progress"}}),
+    block({...terminal,response:{...terminal.response,error:{message:"failed"}}}),
+  ]) {
+    const wire=head+tail;
+    assert.equal((await label(wire,{chunkSize:1})).toString(),wire);
+  }
+  for (const sep of ["\n","\r","\r\n"]) {
+    const data=JSON.stringify(terminal,null,2).split("\n").map(line=>`data: ${line}`).join(sep);
+    const wire=head+`event: wrong${sep}event: message${sep}${data}${sep}${sep}`;
+    assert.match((await label(wire,{chunkSize:1})).toString(), /"phase":"final_answer"/);
+  }
+});

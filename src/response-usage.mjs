@@ -1,8 +1,9 @@
 import { Transform } from "node:stream";
-import { StringDecoder } from "node:string_decoder";
+import { isUtf8 } from "node:buffer";
 
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
-import { SseLineScanner } from "./sse-framing.mjs";
+import { SseFrameBuffer, SseLineScanner, sseFrameFields, rewriteSseFrameData } from "./sse-framing.mjs";
+import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
 
 const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
@@ -28,8 +29,7 @@ const MAX_OBSERVED_OUTPUT_ITEMS = 256;
 // compaction fires somewhere between 690,000 and 900,000 real tokens.
 //
 // That band only holds if the bytes handed to it are bytes the model reads.
-// See NON_VISIBLE_KEY below for the one class that is not and the measured
-// overcount that results when it is included.
+// Known opaque reasoning input is discounted structurally below.
 const ESTIMATE_BYTES_PER_TOKEN = 3.3;
 
 // Below this the substitution could not affect compaction anyway, and leaving
@@ -39,99 +39,25 @@ const ESTIMATE_BYTES_PER_TOKEN = 3.3;
 // tokenizer returns zero for a prompt that serializes to kilobytes.
 const MIN_ESTIMATED_INPUT_TOKENS = 1_000;
 
-// The one field of a routed body that is provably not prompt content.
-//
-// `encrypted_content` carries a reasoning item's opaque provider payload.
-// LiteLLM 1.102.1 now replays plaintext Responses reasoning as assistant
-// `reasoning_content` and can decode only the signed thinking-block encoding
-// it created itself. A Codex/OpenAI encrypted blob that reaches a GLM route is
-// neither visible prompt text nor usable by that provider, and a Responses-native
-// routed provider cannot decrypt another vendor's token. The router's own uses
-// are already gone by the time a body is built -- `normalizeRoutedInput` turns
-// compaction items into visible text, and `normalizeRoutedAgentInput` inlines
-// every collaboration payload as `input_text` -- so this key remains the one
-// provably non-visible field.
-//
-// It is also the largest thing left in the body when it survives at all.
-// Measured through the router itself on a twelve-turn tool loop, opaque
-// encrypted reasoning can dominate the serialized request. Charging those bytes
-// at the ordinary text rate materially overcounts the provider-visible prompt,
-// so the estimator excludes only this proven opaque field.
-//
-// Everything else stays counted. JSON escaping (0.2%-3%) and structural
-// scaffolding (1%-5%) are small and keep the estimate erring high, which is the
-// direction that matters. Base64 image data is far larger than the tokens an
-// image really costs, but what it really costs is a per-provider tiling formula
-// the router has no business inventing, so it too stays counted at the byte
-// rate -- wrong, but wrong upward.
-//
-// Subtracting what is provably invisible rather than summing what is visible is
-// the point. An unrecognized field is counted by default, so a body shape
-// nobody anticipated errs high instead of estimating near zero.
+// Only reasoning items in the prepared input carry known opaque provider data.
+// Schema keys, tool results and unknown fields remain model-visible by default.
 const NON_VISIBLE_KEY = Buffer.from('"encrypted_content"', "utf8");
-const QUOTE = 0x22;
-const BACKSLASH = 0x5c;
-const COLON = 0x3a;
-
-function isJsonSpace(byte) {
-  return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
-}
-
-// Bytes occupied by `encrypted_content` string values in a serialized body.
-//
-// A scan rather than a parse: these bodies reach a megabyte and a half, and the
-// estimate runs on every routed turn, so building a second object graph to
-// throw away is a cost with no answer attached. The scan is exact, not
-// heuristic. Inside a JSON string every quote is escaped, so the unescaped byte
-// sequence `"encrypted_content"` followed by a colon can only be a key -- a
-// tool result that happens to quote this very JSON appears escaped and cannot
-// match. The colon check is what separates the key from the identically named
-// content-part `type` value that sits beside it.
-function nonVisibleBytes(buffer) {
+function nonVisibleBytes(buffer, payload) {
+  if (!buffer.includes(NON_VISIBLE_KEY) && payload === undefined) return 0;
+  if (payload === undefined) {
+    if (!isUtf8(buffer)) return 0;
+    const text = buffer.toString("utf8");
+    if (!jsonIsUnambiguousForRewrite(text, { allowLossyNumbers: true })) return 0;
+    payload = JSON.parse(text);
+  }
+  if (!Array.isArray(payload?.input)) return 0;
   let total = 0;
-  let index = 0;
-  while (index < buffer.length) {
-    const key = buffer.indexOf(NON_VISIBLE_KEY, index);
-    if (key === -1) break;
-    let cursor = key + NON_VISIBLE_KEY.length;
-    index = cursor;
-    while (cursor < buffer.length && isJsonSpace(buffer[cursor])) cursor += 1;
-    if (buffer[cursor] !== COLON) continue;
-    cursor += 1;
-    while (cursor < buffer.length && isJsonSpace(buffer[cursor])) cursor += 1;
-    // `null`, or any non-string value, carries no bytes worth discounting.
-    if (buffer[cursor] !== QUOTE) continue;
-    const start = cursor;
-    const end = endOfJsonString(buffer, start);
-    // A body with no closing quote is truncated or not JSON at all. Discount
-    // nothing rather than guess where the value stopped: over-counting is the
-    // safe error, and this one would be unbounded.
-    if (end === -1) break;
-    total += end - start;
-    index = end;
+  for (const item of payload.input) {
+    if (item?.type === "reasoning" && typeof item.encrypted_content === "string") {
+      total += Buffer.byteLength(JSON.stringify(item.encrypted_content), "utf8");
+    }
   }
   return total;
-}
-
-// The byte after the closing quote of the JSON string opening at `start`, or -1
-// if it never closes. Hops quote to quote natively -- a ciphertext blob is tens
-// of kilobytes with nothing to escape in it, and walking that a byte at a time
-// in JS costs more than parsing the whole document.
-function endOfJsonString(buffer, start) {
-  let cursor = start + 1;
-  while (cursor < buffer.length) {
-    const quote = buffer.indexOf(QUOTE, cursor);
-    if (quote === -1) return -1;
-    // A quote is part of the value when an odd number of backslashes precede
-    // it, and closes the value otherwise.
-    let slashes = 0;
-    while (quote - slashes - 1 > start && buffer[quote - slashes - 1] === BACKSLASH) {
-      slashes += 1;
-    }
-    if (slashes % 2 === 0) return quote + 1;
-    cursor = quote + 1;
-  }
-  return -1;
 }
 
 function tokenCount(value) {
@@ -140,7 +66,7 @@ function tokenCount(value) {
     !(typeof value === "string" && value.trim().length > 0)
   ) return undefined;
   const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? Math.round(number) : undefined;
+  return Number.isSafeInteger(number) && number >= 0 ? number : undefined;
 }
 
 function normalizeTokenUsage(value) {
@@ -149,10 +75,10 @@ function normalizeTokenUsage(value) {
   const outputTokens = tokenCount(value.output_tokens ?? value.completion_tokens);
   const explicitTotal = tokenCount(value.total_tokens);
   const totalTokens = explicitTotal ??
-    (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens || 0) + (outputTokens || 0)
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
       : undefined);
-  if (totalTokens === undefined) return undefined;
+  if (totalTokens === undefined && inputTokens === undefined && outputTokens === undefined) return undefined;
   // Providers that do prefix caching report the shared prefix they did not
   // have to re-process. Compatible shapes use prompt_cache_hit_tokens or
   // input_tokens_details /
@@ -178,9 +104,9 @@ function normalizeTokenUsage(value) {
     value.billed_output_tokens ?? value.billed_completion_tokens ?? value.billedOutputTokens,
   );
   return {
-    inputTokens: inputTokens || 0,
-    outputTokens: outputTokens || 0,
-    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     ...(retries !== undefined && retries > 0 ? { retries } : {}),
@@ -197,14 +123,16 @@ export function mergeTokenUsage(first, second) {
   if (!first && !second) return undefined;
   const attempts = [first, second];
   const usageComplete = attempts.every(Boolean) &&
-    attempts.every((usage) => usage.usageComplete !== false);
-  const aggregateOptionalCounter = (field, completenessField) => {
+    attempts.every((usage) => usage.usageComplete !== false &&
+      usage.inputTokens !== undefined && usage.outputTokens !== undefined && usage.totalTokens !== undefined);
+  const aggregateOptionalCounter = (field, completenessField, onlyIncomplete = false) => {
     const reported = attempts.filter((usage) => usage?.[field] !== undefined);
     if (!reported.length) return {};
+    const complete = attempts.every(Boolean) && reported.length === attempts.length &&
+      reported.every((usage) => usage[completenessField] !== false);
     return {
       [field]: reported.reduce((sum, usage) => sum + usage[field], 0),
-      [completenessField]: usageComplete && reported.length === attempts.length &&
-        reported.every((usage) => usage[completenessField] !== false),
+      ...(!onlyIncomplete || !complete ? { [completenessField]: complete } : {}),
     };
   };
   const cached = aggregateOptionalCounter(
@@ -220,9 +148,9 @@ export function mergeTokenUsage(first, second) {
       ? undefined
       : (first?.retries || 0) + (second?.retries || 0);
   return {
-    inputTokens: (first?.inputTokens || 0) + (second?.inputTokens || 0),
-    outputTokens: (first?.outputTokens || 0) + (second?.outputTokens || 0),
-    totalTokens: (first?.totalTokens || 0) + (second?.totalTokens || 0),
+    ...aggregateOptionalCounter("inputTokens", "inputTokensComplete", true),
+    ...aggregateOptionalCounter("outputTokens", "outputTokensComplete", true),
+    ...aggregateOptionalCounter("totalTokens", "totalTokensComplete", true),
     usageComplete,
     ...cached,
     ...written,
@@ -281,13 +209,12 @@ export function reportedTokenUsageFromPayload(payload) {
 // Returns undefined when the request is too small for the estimate to matter,
 // which is also what keeps it away from genuinely small turns.
 //
-// The bytes counted are the body minus its `encrypted_content` ciphertext.
-// Anything that is not JSON -- a compressed frame, an opaque buffer, a plain
-// string -- simply finds no key to discount and is counted whole, exactly as
-// before.
-export function estimateInputTokens(body, { contextWindow } = {}) {
+// Pass the prepared payload together with its serialized body to avoid parsing
+// it again. Raw callers discount only validated JSON. Unknown fields and data
+// outside known reasoning input remain counted, including tool schemas.
+export function estimateInputTokens(body, { contextWindow, payload } = {}) {
   const buffer = Buffer.isBuffer(body) ? body : Buffer.from(String(body ?? ""), "utf8");
-  const bytes = buffer.byteLength - nonVisibleBytes(buffer);
+  const bytes = buffer.byteLength - nonVisibleBytes(buffer, payload);
   const estimate = Math.ceil(bytes / ESTIMATE_BYTES_PER_TOKEN);
   if (estimate < MIN_ESTIMATED_INPUT_TOKENS) return undefined;
   // A request the provider answered cannot have exceeded the window, so the
@@ -360,220 +287,217 @@ function substituteZeroInputUsage(payload, estimate) {
 }
 
 
+// Terminal type and nested status must agree. Missing status is compatible
+// with Responses bridges; a contradictory status or error cannot prove success.
+// Phase inference and raw response observation use the same terminal meaning.
+export function responseTerminalOutcome(payload) {
+  const response = payload?.response && typeof payload.response === "object" ? payload.response : payload;
+  const type = payload?.type;
+  const status = response?.status;
+  if (type === "error" || type === "response.failed" || status === "failed" || response?.error) return "stream_error";
+  if (type === "response.incomplete" || status === "incomplete") return "incomplete";
+  const completed = type === "response.completed" || type === "response.done";
+  if (completed && status !== undefined && status !== "completed") return "stream_error";
+  if (completed || (type === undefined && status === "completed")) return "completed";
+  return undefined;
+}
+
 export class ResponseUsageTransform extends Transform {
   #eventStream;
-  #decoder = new StringDecoder("utf8");
-  #decodedLineBytes = 0;
-  #lines = new SseLineScanner();
-  #atStreamStart = true;
+  #frames;
+  #progressLines = new SseLineScanner();
   #usage;
   #reportedUsage;
   #providerResponse = {};
   #estimate;
   #substituted;
-  // Both modes capture bounded raw bytes for parsing. Observation forwards
-  // incoming chunks immediately; rewriting holds them until a line/body is
-  // whole, preserving every byte of anything it does not change.
+  #committed = false;
   #pendingParts = [];
   #pendingBytes = 0;
   #pendingTailBytes = 0;
   #nextPartBytes = 1_024;
   #released = false;
   #headerlessDetector;
-  // When the first token of visible output arrived, relative to whenever the
-  // caller says the request started. Headers are not this: a reasoning model
-  // answers with headers and then thinks in silence for seconds before the
-  // first token appears. Counting that silence as generation makes a fast
-  // model read as slow.
   #firstTokenAt;
   #completedResponseObserved = false;
+  #terminalFailure = false;
   #completedOutput;
   #doneOutputItems = [];
   #outputObservationOverflow = false;
 
-  // `estimatedInputTokens` arrives only on routed requests large enough that a
-  // reported zero cannot be true. Without it this transform observes and
-  // forwards the response byte for byte, exactly as it always did.
   constructor(contentType = "", { estimatedInputTokens, maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
     super();
     const declared = String(contentType).toLowerCase();
     this.#eventStream = declared.includes("text/event-stream");
-    // The ChatGPT backend answers /responses with an SSE body and no
-    // content-type header at all, so deciding on the header alone reads every
-    // native turn as a JSON document, fails to parse it, and meters the turn
-    // as zero tokens. When the header says nothing, the first bytes decide.
-    this.#headerlessDetector =
-      !this.#eventStream && !declared.includes("json")
-        ? new HeaderlessSseDetector()
-        : undefined;
-    this.#estimate =
-      Number.isInteger(estimatedInputTokens) && estimatedInputTokens > 0
-        ? estimatedInputTokens
-        : undefined;
+    this.#headerlessDetector = !this.#eventStream && !declared.includes("json") ? new HeaderlessSseDetector() : undefined;
+    this.#estimate = Number.isSafeInteger(estimatedInputTokens) && estimatedInputTokens > 0 ? estimatedInputTokens : undefined;
     this.maxPendingBytes = maxPendingBytes;
+    this.#frames = new SseFrameBuffer({ maxLineBytes: maxPendingBytes, maxFrameBytes: MAX_SSE_PENDING_BYTES + 4 });
   }
 
   _transform(chunk, _encoding, callback) {
-    if (this.#headerlessDetector) {
-      const detected = this.#headerlessDetector.write(chunk);
-      if (detected.decision === "pending") {
-        callback();
-        return;
-      }
-      this.#headerlessDetector = undefined;
-      this.#eventStream = detected.decision === "event-stream";
-      for (const buffered of detected.chunks) this.#transformChunk(buffered);
+    try {
+      if (this.#headerlessDetector) {
+        const detected = this.#headerlessDetector.write(chunk);
+        if (detected.decision === "pending") { callback(); return; }
+        this.#headerlessDetector = undefined;
+        this.#eventStream = detected.decision === "event-stream";
+        for (const buffered of detected.chunks) this.#transformChunk(buffered);
+      } else this.#transformChunk(chunk);
       callback();
-      return;
-    }
-    this.#transformChunk(chunk);
-    callback();
+    } catch (error) { callback(error); }
   }
 
   #transformChunk(chunk) {
     const observeOnly = this.#estimate === undefined;
-    if (observeOnly) this.push(chunk);
-    if (this.#released) {
-      if (!observeOnly) this.push(chunk);
-      return;
-    }
-    if (this.#eventStream) {
-      this.#consumeEventChunk(chunk);
-      return;
-    }
-    // A non-streaming body has to be held to be rewritten. Oversized ones are
-    // released and forwarded from then on, the way the observer stops
-    // capturing past the same limit.
+    if (observeOnly) this.push(chunk); // Observation never holds client bytes.
+    if (this.#released) { if (!observeOnly) this.push(chunk); return; }
+    if (this.#eventStream) { this.#consumeEventChunk(chunk); return; }
     if (this.#pendingBytes + chunk.length > MAX_JSON_CAPTURE_BYTES) {
       this.#release();
       if (!observeOnly) this.push(chunk);
-    } else {
-      this.#appendPending(chunk);
-    }
+    } else this.#appendPending(chunk);
   }
 
   _flush(callback) {
-    if (this.#headerlessDetector) {
-      const detected = this.#headerlessDetector.end();
-      this.#headerlessDetector = undefined;
-      this.#eventStream = detected.decision === "event-stream";
-      for (const buffered of detected.chunks) this.#transformChunk(buffered);
-    }
-    const observeOnly = this.#estimate === undefined;
-    if (this.#eventStream) {
-      const contentBytes = observeOnly
-        ? this.#decodedLineBytes + Buffer.byteLength(this.#decoder.end(), "utf8")
-        : this.#pendingBytes;
-      if (contentBytes > this.maxPendingBytes) this.#release();
-      else if (this.#pendingBytes) {
-        const line = this.#takePending();
-        if (observeOnly) this.#observeEventLine(line.toString("utf8"));
-        else this.push(this.#rewriteEventLine(line) || line);
+    try {
+      if (this.#headerlessDetector) {
+        const detected = this.#headerlessDetector.end();
+        this.#headerlessDetector = undefined;
+        this.#eventStream = detected.decision === "event-stream";
+        for (const buffered of detected.chunks) this.#transformChunk(buffered);
+      }
+      const observeOnly = this.#estimate === undefined;
+      if (this.#eventStream) {
+        // EOF does not dispatch an unfinished event or grant terminal evidence.
+        if (this.#estimate !== undefined && this.#frames.pendingBytes) this.push(this.#frames.take());
+        this.#clearPending();
+        callback(); return;
+      }
+      const body = this.#takePending();
+      if (this.#released || !body.length) { callback(); return; }
+      const text = isUtf8(body) ? body.toString("utf8") : undefined;
+      if (text === undefined || !jsonIsUnambiguousForRewrite(text)) {
+        if (!observeOnly) this.push(body);
+        callback(); return;
+      }
+      const payload = JSON.parse(text);
+      this.#observe(payload);
+      if (!observeOnly) {
+        const substituted = substituteZeroInputUsage(payload, this.#estimate);
+        this.#substituted = substituted ? this.#estimate : undefined;
+        this.push(substituted ? Buffer.from(JSON.stringify(substituted), "utf8") : body);
       }
       callback();
-      return;
-    }
-    const body = this.#takePending();
-    if (this.#released || !body.length) {
-      if (!observeOnly && body.length) this.push(body);
-      callback();
-      return;
-    }
-    let payload;
-    try {
-      payload = JSON.parse(body.toString("utf8"));
-    } catch {
-      if (!observeOnly) this.push(body);
-      callback();
-      return;
-    }
-    this.#observe(payload);
-    if (observeOnly) {
-      callback();
-      return;
-    }
-    const substituted = substituteZeroInputUsage(payload, this.#estimate);
-    this.#substituted = substituted ? this.#estimate : undefined;
-    this.push(substituted ? Buffer.from(JSON.stringify(substituted), "utf8") : body);
-    callback();
+    } catch (error) { callback(error); }
   }
 
-  tokenUsage() {
-    return this.#usage;
-  }
-
-  reportedTokenUsage() {
-    return this.#reportedUsage;
-  }
-
-  providerResponseObservation() {
-    return { ...this.#providerResponse };
-  }
-
-  // The estimate written into the response, or undefined when the upstream
-  // reported its own prompt count. Never folded into `tokenUsage()`: what the
-  // provider said and what the router substituted stay separate all the way
-  // into the usage event.
-  substitutedInputTokens() {
-    return this.#substituted;
-  }
+  tokenUsage() { return this.#usage; }
+  reportedTokenUsage() { return this.#reportedUsage; }
+  providerResponseObservation() { return { ...this.#providerResponse }; }
+  substitutedInputTokens() { return this.#substituted; }
+  firstTokenAt() { return this.#firstTokenAt; }
+  completedResponseObserved() { return this.#completedResponseObserved; }
 
   #release() {
     this.#released = true;
-    if (this.#estimate !== undefined) {
-      for (const part of this.#pendingBuffers()) this.push(part);
-    }
+    this.#completedResponseObserved = false;
+    this.#completedOutput = undefined;
+    this.#doneOutputItems = [];
+    delete this.#providerResponse.outcome;
+    if (!this.#eventStream && this.#estimate !== undefined) for (const part of this.#pendingBuffers()) this.push(part);
     this.#clearPending();
   }
 
-  // Inspect complete lines by scanning only incoming bytes. Rewrite mode
-  // forwards each whole line with its terminator; observation has already
-  // forwarded the original chunk. Both retain only the current line.
   #consumeEventChunk(chunk) {
-    const observeOnly = this.#estimate === undefined;
-    for (const piece of this.#lines.scan(chunk)) {
-      if (this.#released) {
-        if (!observeOnly) {
-          this.push(piece.content);
-          this.push(piece.ending);
+    this.#observeProgressLines(chunk);
+    const priorBytes = this.#frames.pendingBytes;
+    let consumed = 0;
+    try {
+      for (const frame of this.#frames.write(chunk)) {
+        consumed += frame.bytes.length;
+        if (frame.continuation || this.#released) {
+          if (this.#estimate !== undefined) this.push(frame.bytes);
+          continue;
         }
-        continue;
+        const rewritten = this.#observeFrame(frame);
+        if (this.#estimate !== undefined) this.push(rewritten ?? frame.bytes);
       }
-      if (!piece.endLine && !piece.content.length && piece.ending.length) {
-        if (!observeOnly) this.push(piece.ending);
-        continue; // The LF continuation of a line already ended by CR.
+      if (this.#released && this.#estimate !== undefined && this.#frames.pendingBytes) this.push(this.#frames.take());
+    } catch (error) {
+      if (this.#committed || !["SSE_LINE_LIMIT", "SSE_FRAME_LIMIT"].includes(error.code)) {
+        this.#completedResponseObserved = false;
+        this.#providerResponse.outcome = "stream_error";
+        throw error;
       }
-      // Keep the observer's decoded UTF-8 budget, including replacement
-      // characters and incomplete code points, without revisiting the prefix.
-      if (observeOnly) {
-        const decoded = this.#decoder.write(piece.content) + this.#decoder.write(piece.ending);
-        this.#decodedLineBytes += Buffer.byteLength(decoded, "utf8");
+      // Before any edit, stop capturing oversized data and forward it exactly.
+      if (this.#estimate !== undefined) {
+        if (this.#frames.pendingBytes) this.push(this.#frames.take());
+        this.push(chunk.subarray(Math.max(0, consumed - priorBytes)));
       }
-      const contentBytes = (observeOnly ? this.#decodedLineBytes
-        : this.#pendingBytes + piece.content.length + piece.ending.length) - piece.ending.length;
-      if (contentBytes > this.maxPendingBytes) {
-        this.#release();
-        if (!observeOnly) {
-          this.push(piece.content);
-          this.push(piece.ending);
-        }
-        continue;
-      }
-      this.#appendPending(piece.content);
-      this.#appendPending(piece.ending);
-      if (!piece.endLine) continue;
-      const line = this.#takePending();
-      if (observeOnly) {
-        const text = line.toString("utf8");
-        this.#observeEventLine(text.slice(0, -piece.ending.length));
-        this.#decodedLineBytes = 0;
-      } else this.push(this.#rewriteEventLine(line) || line);
+      this.#clearPending();
+      this.#released = true;
+      this.#completedResponseObserved = false;
+      delete this.#providerResponse.outcome;
     }
   }
 
-  // Fragment storage grows geometrically to 64 KiB parts. Each captured byte
-  // is copied once, then at most once more when its complete line/body parses.
-  // Line scanning only visits the incoming chunk, not the accumulated prefix.
+  #observeFrame(frame) {
+    let fields;
+    try { fields = sseFrameFields(frame.bytes, frame.atStreamStart); }
+    catch { return this.#unsafe(frame, "invalid UTF-8"); }
+    if (!fields.hasData) return undefined;
+    const generic = !fields.eventName || fields.eventName === "message";
+    if (!fields.data || fields.data === "[DONE]") {
+      if (!generic) return this.#unsafe(frame, "conflicting event label");
+      return undefined;
+    }
+    if (!jsonIsUnambiguousForRewrite(fields.data)) return this.#unsafe(frame, "ambiguous or malformed JSON");
+    const payload = JSON.parse(fields.data);
+    if (!generic && fields.eventName !== payload?.type) return this.#unsafe(frame, "conflicting event label");
+    this.#observe(payload);
+    const substituted = substituteZeroInputUsage(payload, this.#estimate);
+    if (substituted) {
+      this.#committed = true;
+      this.#substituted = this.#estimate;
+      return Buffer.from(rewriteSseFrameData(fields, JSON.stringify(substituted)), "utf8");
+    }
+    if (tokenUsageFromPayload(payload)) this.#substituted = undefined;
+    return undefined;
+  }
+
+  #unsafe(frame, reason) {
+    if (this.#committed) {
+      this.#completedResponseObserved = false;
+      this.#providerResponse.outcome = "stream_error";
+      throw new Error(`Response usage became unsafe after substitution (${reason}).`);
+    }
+    this.#release();
+    return frame.bytes;
+  }
+
+  // Progress timing may observe a complete data line before event dispatch.
+  // It never records usage, terminal state or tool output from that line.
+  #observeProgressLines(chunk) {
+    if (this.#firstTokenAt !== undefined) return;
+    for (const piece of this.#progressLines.scan(chunk)) {
+      if (!piece.endLine && !piece.content.length && piece.ending.length) continue;
+      if (this.#pendingBytes + piece.content.length > this.maxPendingBytes) { this.#clearPending(); return; }
+      this.#appendPending(piece.content);
+      if (!piece.endLine) continue;
+      const line = this.#takePending();
+      if (!isUtf8(line)) continue;
+      const text = line.toString("utf8").replace(/^\uFEFF/u, "");
+      if (!text.startsWith("data:")) continue;
+      const data = text.slice(5).trim();
+      // Timing is best effort: avoid a second full parse of large terminal
+      // snapshots. Unusually ordered progress is still observed at dispatch.
+      if (!/"type"\s*:\s*"response\.(?:output_text|reasoning_summary_text|function_call_arguments|audio_transcript)\.delta"|"choices"\s*:/u.test(data.slice(0, 512))) continue;
+      if (jsonIsUnambiguousForRewrite(data)) this.#noteFirstToken(JSON.parse(data));
+      if (this.#firstTokenAt !== undefined) return;
+    }
+  }
+
   #appendPending(bytes) {
     let offset = 0;
     while (offset < bytes.length) {
@@ -581,159 +505,77 @@ export class ResponseUsageTransform extends Transform {
       if (!tail || this.#pendingTailBytes === tail.length) {
         tail = Buffer.allocUnsafe(this.#nextPartBytes);
         this.#nextPartBytes = Math.min(64 * 1024, this.#nextPartBytes * 2);
-        this.#pendingParts.push(tail);
-        this.#pendingTailBytes = 0;
+        this.#pendingParts.push(tail); this.#pendingTailBytes = 0;
       }
       const count = Math.min(tail.length - this.#pendingTailBytes, bytes.length - offset);
       bytes.copy(tail, this.#pendingTailBytes, offset, offset + count);
-      this.#pendingTailBytes += count;
-      this.#pendingBytes += count;
-      offset += count;
+      this.#pendingTailBytes += count; this.#pendingBytes += count; offset += count;
     }
   }
-
   #pendingBuffers() {
-    return this.#pendingParts.map((part, index) => index === this.#pendingParts.length - 1
-      ? part.subarray(0, this.#pendingTailBytes) : part);
+    return this.#pendingParts.map((part, index) => index === this.#pendingParts.length - 1 ? part.subarray(0, this.#pendingTailBytes) : part);
   }
-
   #takePending() {
     const parts = this.#pendingBuffers();
     const body = parts.length === 1 ? parts[0] : Buffer.concat(parts, this.#pendingBytes);
-    this.#clearPending();
-    return body;
+    this.#clearPending(); return body;
   }
-
   #clearPending() {
-    this.#pendingParts = [];
-    this.#pendingBytes = 0;
-    this.#pendingTailBytes = 0;
-    this.#nextPartBytes = 1_024;
+    this.#pendingParts = []; this.#pendingBytes = 0; this.#pendingTailBytes = 0; this.#nextPartBytes = 1_024;
   }
-
   _destroy(error, callback) {
     this.#clearPending();
+    this.#frames.take();
     callback(error);
-  }
-
-  // Returns the replacement line, or undefined to forward the original bytes.
-  #rewriteEventLine(line) {
-    const text = line.toString("utf8");
-    const bom = this.#atStreamStart && text.startsWith("\uFEFF") ? "\uFEFF" : "";
-    const terminator = /(?:\r\n|\r|\n)$/.exec(text)?.[0] || "";
-    const content = terminator ? text.slice(0, -terminator.length) : text;
-    const payload = this.#observeEventLine(content);
-    if (payload === undefined) return undefined;
-    const substituted = substituteZeroInputUsage(payload, this.#estimate);
-    if (substituted) {
-      this.#substituted = this.#estimate;
-      return Buffer.from(`${bom}data: ${JSON.stringify(substituted)}${terminator}`, "utf8");
-    }
-    // Codex reads the last usage it is given, so a later event that reports its
-    // own prompt count supersedes an earlier substituted one -- in telemetry as
-    // well as in the stream.
-    if (tokenUsageFromPayload(payload)) this.#substituted = undefined;
-    return undefined;
-  }
-
-  #observeEventLine(line) {
-    if (this.#atStreamStart) {
-      this.#atStreamStart = false;
-      if (line.startsWith("\uFEFF")) line = line.slice(1);
-    }
-    if (!line.startsWith("data:")) return undefined;
-    const data = line.slice(5).trim();
-    if (!data || data === "[DONE]") return undefined;
-    try {
-      const payload = JSON.parse(data);
-      this.#observe(payload);
-      return payload;
-    } catch {
-      // Ignore non-JSON SSE fields while preserving the original stream.
-      return undefined;
-    }
   }
 
   #observe(payload) {
     this.#noteFirstToken(payload);
     if (payload?.type === "response.output_item.done" && payload.item) {
-      if (this.#doneOutputItems.length < MAX_OBSERVED_OUTPUT_ITEMS) {
-        this.#doneOutputItems.push(payload.item);
-      } else {
-        this.#outputObservationOverflow = true;
-      }
+      if (this.#doneOutputItems.length < MAX_OBSERVED_OUTPUT_ITEMS) this.#doneOutputItems.push(payload.item);
+      else this.#outputObservationOverflow = true;
     }
-    const response = payload?.response && typeof payload.response === "object"
-      ? payload.response
-      : payload;
-    const status = typeof response?.status === "string" ? response.status : undefined;
-    if (payload?.type === "response.completed" || status === "completed") {
+    const response = payload?.response && typeof payload.response === "object" ? payload.response : payload;
+    const outcome = responseTerminalOutcome(payload);
+    if (outcome === "incomplete" || outcome === "stream_error") {
+      this.#terminalFailure = true;
+      this.#completedResponseObserved = false;
+      this.#providerResponse.outcome = outcome;
+    } else if (outcome === "completed" && !this.#terminalFailure) {
       this.#completedResponseObserved = true;
+      this.#providerResponse.outcome = outcome;
       if (Array.isArray(response?.output)) {
         if (response.output.length <= MAX_OBSERVED_OUTPUT_ITEMS) this.#completedOutput = response.output;
         else this.#outputObservationOverflow = true;
       }
-      this.#providerResponse.outcome = "completed";
-    } else if (payload?.type === "response.incomplete" || status === "incomplete") {
-      this.#providerResponse.outcome = "incomplete";
-    } else if (payload?.type === "response.failed" || status === "failed") {
-      this.#providerResponse.outcome = "stream_error";
     }
     if (typeof response?.model === "string") this.#providerResponse.returnedModel = response.model;
-    if (typeof response?.service_tier === "string") {
-      this.#providerResponse.returnedTier = response.service_tier;
-    }
-    const reportedUsage = reportedTokenUsageFromPayload(payload);
-    if (reportedUsage) this.#reportedUsage = reportedUsage;
+    if (typeof response?.service_tier === "string") this.#providerResponse.returnedTier = response.service_tier;
+    const reported = reportedTokenUsageFromPayload(payload);
+    if (reported) this.#reportedUsage = reported;
     const usage = tokenUsageFromPayload(payload);
     if (usage) this.#usage = usage;
   }
 
-  // The first event that carries visible generated text. Reasoning summaries
-  // and tool-call argument deltas are output the model is producing, so they
-  // count too -- what must not count is the wait before any of it starts.
   #noteFirstToken(payload) {
     if (this.#firstTokenAt !== undefined) return;
     const type = payload?.type;
-    if (typeof type !== "string") return;
-    const producesOutput =
-      type === "response.output_text.delta" ||
-      type === "response.reasoning_summary_text.delta" ||
-      type === "response.function_call_arguments.delta" ||
-      type === "response.audio_transcript.delta";
-    // Chat-completions bridges stream choices[].delta instead of typed events.
+    const producesOutput = ["response.output_text.delta", "response.reasoning_summary_text.delta",
+      "response.function_call_arguments.delta", "response.audio_transcript.delta"].includes(type) &&
+      typeof payload.delta === "string" && payload.delta.length > 0;
     const chatDelta = payload?.choices?.[0]?.delta;
-    const chatProducesOutput =
-      typeof chatDelta?.content === "string" && chatDelta.content.length > 0;
-    if (producesOutput || chatProducesOutput) this.#firstTokenAt = Date.now();
-  }
-
-  // Epoch milliseconds of the first generated token, or undefined when the
-  // response never streamed one (a non-streaming reply, or an error).
-  firstTokenAt() {
-    return this.#firstTokenAt;
-  }
-
-  completedResponseObserved() {
-    return this.#completedResponseObserved;
+    if (producesOutput || (typeof chatDelta?.content === "string" && chatDelta.content.length > 0)) this.#firstTokenAt = Date.now();
   }
 
   responseOutputObservation() {
-    if (!this.#completedResponseObserved || this.#outputObservationOverflow) {
-      return { complete: false, output: [] };
-    }
-    const output = Array.isArray(this.#completedOutput)
-      ? [...this.#completedOutput]
-      : [];
-    const known = new Set(output.map((item) => item?.call_id || item?.id).filter(Boolean));
+    if (!this.#completedResponseObserved || this.#outputObservationOverflow) return { complete: false, output: [] };
+    const output = Array.isArray(this.#completedOutput) ? [...this.#completedOutput] : [];
+    const known = new Set(output.map(item => item?.call_id || item?.id).filter(Boolean));
     for (const item of this.#doneOutputItems) {
       const key = item?.call_id || item?.id;
       if (!key || !known.has(key)) output.push(item);
       if (key) known.add(key);
     }
-    return {
-      complete: Array.isArray(this.#completedOutput) || this.#doneOutputItems.length > 0,
-      output,
-    };
+    return { complete: Array.isArray(this.#completedOutput) || this.#doneOutputItems.length > 0, output };
   }
 }

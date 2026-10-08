@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prepareCompaction, finalizeCheckpoint, renderCheckpoint } from "../src/compaction-checkpoint.mjs";
+import { prepareCompaction, finalizeCheckpoint, renderCheckpoint, encodeCheckpoint, decodeCompaction } from "../src/compaction-checkpoint.mjs";
+
+test("ambiguous serialized outcomes remain returned evidence through checkpoint replay", () => {
+  for (const output of [
+    '{"exit_code":7,"exit_code":0}', '{"exit_code":7,"exit\\u005fcode":0}',
+    '{"structuredContent":{"exit_code":7,"exit_code":0}}',
+    '{"exit_code":9007199254740993}', '{"exit_code":1e-999}', '{broken}',
+  ]) {
+    const input=[{role:"user",content:"Preserve outcomes"},{type:"function_call",name:"inspect",call_id:"c",arguments:"{}"},
+      {type:"function_call_output",call_id:"c",output}];
+    const prepared=prepareCompaction(input);
+    assert.equal(prepared.sources.get("R001").outcome,"returned",output);
+    assert.equal(prepared.sources.get("R001").exit_code,undefined);
+    const summary={objective:"Continue",requirement_refs:["U001"],attempt_refs:["C001"],observation_refs:["R001"],unverified:[],unknowns:[],blockers:[],next_step:"Continue"};
+    const checkpoint=finalizeCheckpoint(JSON.stringify(summary),prepared);
+    const decoded=decodeCompaction(encodeCheckpoint(checkpoint)).checkpoint;
+    assert.equal(decoded.sources.R001.outcome,"returned");
+    const again=prepareCompaction([{role:"user",content:renderCheckpoint(decoded)}]);
+    assert.equal(again.sources.get("R001").outcome,"returned");
+    assert.equal(again.sources.get("R001").excerpt,output);
+  }
+  for (const [output,outcome] of [['{"exit_code":0}',"exit_0"],['{"data":{"exitCode":7}}',"exit_nonzero"]]) {
+    assert.equal(prepareCompaction([{type:"function_call_output",call_id:"c",output}]).sources.get("R001").outcome,outcome);
+  }
+  assert.equal(prepareCompaction([{type:"function_call_output",call_id:"c",isError:true,output:'{"exit_code":7,"exit_code":0}'}]).sources.get("R001").outcome,"tool_error");
+});
 
 test("valid successive summaries replace resolved orientation; malformed summaries retain prior state", () => {
   const base = { objective: "Synthetic task", requirement_refs: ["U001"], attempt_refs: [], observation_refs: [],

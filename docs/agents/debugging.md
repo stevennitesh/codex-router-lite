@@ -71,10 +71,20 @@ Native WebSocket records identify `transport=websocket` and retain preparation,
 first-token and total durations. Compare equivalent workloads before attributing
 a timing difference to a provider or Router change.
 
-`src/response-usage.mjs` shares bounded capture and an incremental line scanner
-between observation and substitution. Observation forwards original chunks
-immediately; substitution holds only the current line or JSON body. JSON uses a
-raw-byte capture limit, while SSE observation retains its decoded UTF-8 limit.
+`src/response-usage.mjs` uses bounded shared SSE frames and complete field
+assembly for usage, terminal state and tool-output observations. Observation
+forwards original chunks immediately; substitution holds the current event or
+JSON body. Both require valid UTF-8 and unambiguous JSON before interpreting
+trusted metadata or rewriting. An unfinished EOF event cannot prove completion.
+First-token timing can inspect a complete progress line before event dispatch;
+it does not grant terminal or usage evidence. Phase inference uses the same
+terminal type/status meaning and preserves explicit provider phases.
+
+Input estimation excludes only known opaque reasoning fields in prepared input;
+schema values and arbitrary data named `encrypted_content` remain counted.
+Compaction retains ambiguous serialized tool returns as excerpts without
+assigning definite exit/status outcomes. Existing stored checkpoints remain
+readable; the fix cannot retrospectively recover erased source evidence.
 
 Routed 429 guidance uses `src/rate-limit-headers.mjs` to interpret `Retry-After`.
 Resets outside JavaScript's Date range, including overflow during unit conversion
