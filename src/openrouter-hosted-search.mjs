@@ -1,5 +1,7 @@
 import { Transform } from "node:stream";
-import { StringDecoder } from "node:string_decoder";
+import { isUtf8 } from "node:buffer";
+import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
+import { SseFrameBuffer, sseFrameFields, rewriteSseFrameData } from "./sse-framing.mjs";
 
 const NATIVE_SEARCH_TYPES = new Set(["web_search", "web_search_preview"]);
 const OPENROUTER_SEARCH_TYPE = "openrouter:web_search";
@@ -123,15 +125,18 @@ export function restoreOpenRouterHostedSearchPayload(payload) {
 
 export class OpenRouterHostedSearchTransform extends Transform {
   #eventStream;
-  #decoder = new StringDecoder("utf8");
-  #buffer = "";
+  #frames;
+  #committed = false;
+  #disabled = false;
   #jsonChunks = [];
   #jsonBytes = 0;
 
-  constructor(contentType = "", { maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
+  constructor(contentType = "", { maxPendingBytes = MAX_SSE_PENDING_BYTES,
+    maxFrameBytes = MAX_SSE_PENDING_BYTES } = {}) {
     super();
     this.#eventStream = String(contentType).toLowerCase().includes("text/event-stream");
     this.maxPendingBytes = maxPendingBytes;
+    this.#frames = new SseFrameBuffer({ maxLineBytes: maxPendingBytes, maxFrameBytes });
   }
 
   _transform(chunk, _encoding, callback) {
@@ -146,88 +151,80 @@ export class OpenRouterHostedSearchTransform extends Transform {
       return;
     }
     try {
-      this.#buffer += this.#decoder.write(chunk);
-      this.#consumeLines();
-      this.#assertPendingBound();
+      for (const frame of this.#frames.write(chunk)) {
+        this.push(frame.continuation ? frame.bytes : this.#restoreFrame(frame));
+      }
       callback();
     } catch (error) {
-      callback(error);
+      callback(this.#limitError(error));
     }
   }
 
   _flush(callback) {
     if (!this.#eventStream) {
       const body = Buffer.concat(this.#jsonChunks);
-      let payload;
-      try {
-        payload = JSON.parse(body.toString("utf8"));
-      } catch {
+      const text = isUtf8(body) ? body.toString("utf8") : "";
+      if (!text || !jsonIsUnambiguousForRewrite(text)) {
         this.push(body);
         callback();
         return;
       }
+      const payload = JSON.parse(text);
       const restored = restoreOpenRouterHostedSearchPayload(payload);
       this.push(restored === payload ? body : Buffer.from(JSON.stringify(restored), "utf8"));
       callback();
       return;
     }
     try {
-      this.#buffer += this.#decoder.end();
-      this.#assertPendingBound({ eof: true });
-      this.#consumeLines(true);
+      // EOF does not dispatch an unfinished SSE event. Preserve its bytes;
+      // completion guards own whether the response actually completed.
+      if (this.#frames.pendingBytes) this.push(this.#frames.take());
       callback();
     } catch (error) {
       callback(error);
     }
   }
 
-  #consumeLines(flush = false) {
-    while (true) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline === -1) break;
-      const line = this.#buffer.slice(0, newline + 1);
-      this.#assertLineBound(line);
-      this.#buffer = this.#buffer.slice(newline + 1);
-      this.push(this.#restoreLine(line));
+  #limitError(error) {
+    if (error.code === "SSE_LINE_LIMIT" || error.code === "SSE_FRAME_LIMIT") {
+      error.message = `OpenRouter hosted-search ${error.message}`;
     }
-    if (flush && this.#buffer) {
-      this.#assertLineBound(this.#buffer, { terminated: false });
-      this.push(this.#restoreLine(this.#buffer));
-      this.#buffer = "";
+    return error;
+  }
+
+  #unsafe(frame, reason) {
+    if (this.#committed) {
+      throw new Error(`OpenRouter hosted-search response became unsafe after restoration (${reason}).`);
     }
+    this.#disabled = true;
+    return frame.bytes;
   }
 
-  #assertPendingBound({ eof = false } = {}) {
-    const bytes = Buffer.byteLength(this.#buffer, "utf8");
-    const splitCr = !eof && this.#buffer.endsWith("\r");
-    if (bytes <= this.maxPendingBytes + (splitCr ? 1 : 0)) return;
-    throw new Error(
-      `OpenRouter hosted-search SSE line exceeds ${this.maxPendingBytes} bytes.`,
-    );
-  }
-
-  #assertLineBound(line, { terminated = true } = {}) {
-    let content = terminated && line.endsWith("\n") ? line.slice(0, -1) : line;
-    if (terminated && content.endsWith("\r")) content = content.slice(0, -1);
-    if (Buffer.byteLength(content, "utf8") <= this.maxPendingBytes) return;
-    throw new Error(
-      `OpenRouter hosted-search SSE line exceeds ${this.maxPendingBytes} bytes.`,
-    );
-  }
-
-  #restoreLine(line) {
-    const ending = line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "";
-    const content = ending ? line.slice(0, -ending.length) : line;
-    if (!content.startsWith("data:")) return line;
-    const data = content.slice(5).trim();
-    if (!data || data === "[DONE]") return line;
-    let payload;
+  #restoreFrame(frame) {
+    if (this.#disabled) return frame.bytes;
+    let fields;
     try {
-      payload = JSON.parse(data);
+      fields = sseFrameFields(frame.bytes, frame.atStreamStart);
     } catch {
-      return line;
+      return this.#unsafe(frame, "invalid UTF-8");
+    }
+    if (!fields.hasData) return frame.bytes;
+    const generic = !fields.eventName || fields.eventName === "message";
+    if (!fields.data || fields.data === "[DONE]") {
+      return generic ? frame.bytes : this.#unsafe(frame, "conflicting SSE event");
+    }
+    if (!jsonIsUnambiguousForRewrite(fields.data)) {
+      return this.#unsafe(frame, "ambiguous or malformed JSON");
+    }
+    const payload = JSON.parse(fields.data);
+    if (!generic && fields.eventName !== payload?.type) {
+      return this.#unsafe(frame, "conflicting SSE event and JSON type");
     }
     const restored = restoreOpenRouterHostedSearchPayload(payload);
-    return restored === payload ? line : `data: ${JSON.stringify(restored)}${ending}`;
+    if (restored === payload && fields.dataCount <= 1 && fields.eventCount <= 1) return frame.bytes;
+    this.#committed = true;
+    // Canonical fields give downstream namespace/phase guards the same safe
+    // event we inspected, including ordinary calls beside hosted search.
+    return rewriteSseFrameData(fields, JSON.stringify(restored));
   }
 }

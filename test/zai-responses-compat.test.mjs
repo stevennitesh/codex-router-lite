@@ -1,14 +1,15 @@
 ﻿import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
+import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 
 import {
   ZaiResponsesCompatTransform,
   zaiResponsesCompatTransform,
 } from "../src/zai-responses-compat.mjs";
 
-async function transformed(chunks) {
-  const stream = new ZaiResponsesCompatTransform();
+async function transformed(chunks, options) {
+  const stream = new ZaiResponsesCompatTransform(options);
   let output = "";
   stream.setEncoding("utf8");
   stream.on("data", (chunk) => { output += chunk; });
@@ -63,6 +64,66 @@ test("repairs the live LiteLLM reasoning-to-message Responses envelope", async (
   assert.deepEqual(partDone.part, { type: "output_text", text: "HELLO", annotations: [] });
   assert.equal(messageDone.output_index, 1);
   assert.ok(!output.includes("private reasoning"));
+});
+
+test("GLM uses identical repairs for CR, multiline and BOM frames across byte boundaries", async () => {
+  const events = [
+    { type: "response.output_item.done", output_index: 0, item: { id: "rs", type: "reasoning" } },
+    { type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "漢🙂 42" },
+    { type: "response.content_part.done", output_index: 0, item_id: "msg", part: { type: "reasoning_text", reasoning: "PRIVATE" } },
+  ];
+  for (const ending of ["\n", "\r", "\r\n"]) {
+    const raw = '\uFEFF' + events.map(event => 'event: ignored' + ending + 'event: ' + event.type + ending
+      + JSON.stringify(event, null, 2).split('\n').map(line => 'data: ' + line).join(ending) + ending + ending).join('');
+    const output = await transformed([...Buffer.from(raw)].map(b => Buffer.from([b])));
+    const restored = [...new SseFrameBuffer().write(Buffer.from(output))].filter(f => !f.continuation)
+      .map(f => JSON.parse(sseFrameFields(f.bytes, f.atStreamStart).data));
+    assert.equal(restored[1].item.type, "message");
+    assert.equal(restored[3].output_index, 1);
+    assert.equal(restored[3].delta, "漢🙂 42");
+    assert.equal(output.includes("PRIVATE"), false);
+  }
+  const first = block(events[1]);
+  const output = await transformed(['\uFEFF' + first]);
+  assert.equal(output.startsWith('\uFEFF'), true);
+  assert.equal(output.split('\uFEFF').length, 2, "BOM belongs to first injected frame only");
+});
+
+test("GLM preserves unsafe source before repair and fails it after repair commits", async () => {
+  const safe = block({ type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "ok" });
+  for (const raw of ['{"type":"response.output_text.delta","delta":"A","delt\\u0061":"B"}',
+    '{"type":"response.output_text.delta","marker":0.123456789012345678901}',
+    '{"type":"response.output_text.delta","marker":9007199254740993}']) {
+    const wire = `data: ${raw}\n\n`;
+    assert.equal(await transformed([wire]), wire);
+    await assert.rejects(transformed([safe, wire]), /unsafe after compatibility repair/u);
+  }
+  const conflict = 'event: response.failed\ndata: {"type":"response.output_text.delta","item_id":"msg","delta":"bad"}\n\n';
+  assert.equal(await transformed([conflict]), conflict);
+  await assert.rejects(transformed([safe, conflict]), /conflicting SSE event/u);
+  await assert.rejects(transformed([safe, Buffer.from([0xff, 10, 10])]), /invalid UTF-8/u);
+});
+
+test("GLM bounds unfinished frames, held bytes, held item groups and message text", async () => {
+  await assert.rejects(transformed(['x'.repeat(33)], { maxFrameBytes: 32 }), /frame exceeds 32/u);
+  const open = block({ type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs" } });
+  const held = index => block({ type: "response.output_item.done", output_index: index, item: { type: "function_call", id: `fc_${index}`, arguments: "{}" } });
+  await assert.rejects(transformed([open, held(1), held(2)], { maxHeldBytes: 160 }), /held output exceeds 160 bytes/u);
+  await assert.rejects(transformed([open, held(1), held(2)], { maxHeldItems: 1 }), /held output exceeds 1 items/u);
+  const delta = block({ type: "response.output_text.delta", item_id: "msg", delta: "漢🙂" });
+  await assert.rejects(transformed([delta, delta], { maxMessageBytes: 10 }), /message text exceeds 10 bytes/u);
+});
+
+test("GLM attaches split CRLF continuation to held output without reordering it", async () => {
+  const events = [
+    { type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } },
+    { type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", arguments: "{}" } },
+    { type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [] } },
+    { type: "response.output_item.done", output_index: 1, item: { id: "call", type: "function_call", arguments: "{}" } },
+  ];
+  const wires = events.map(event => block(event).replaceAll('\n', '\r\n'));
+  const chunks = wires.flatMap(wire => [wire.slice(0, -1), "", wire.slice(-1)]);
+  assert.equal(await transformed(chunks), [wires[0], wires[2], wires[1], wires[3]].join(''));
 });
 
 test("leaves an already valid message stream byte-identical", async () => {
@@ -226,7 +287,7 @@ test("preserves CRLF framing while repairing the malformed message envelope", as
   assert.equal(output.replace(/\r\n\r\n/g, "").includes("\n\n"), false);
 });
 
-test("preserves unparsed SSE blocks and flushes an overlapping item before DONE", async () => {
+test("preserves malformed SSE and retires held state before disabling repair", async () => {
   const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } });
   const held = block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", name: "lookup", arguments: "" } });
   const malformed = ": keepalive\r\ndata: {broken\r\n\r\n";
@@ -234,19 +295,20 @@ test("preserves unparsed SSE blocks and flushes an overlapping item before DONE"
   const nullData = "data: null\n\n";
   const done = "data: [DONE]";
   const input = `${open}${held}${malformed}${noData}${nullData}${done}`;
-  assert.equal(await transformed([input.slice(0, 83), input.slice(83)]), `${open}${malformed}${noData}${nullData}${held}${done}`);
+  assert.equal(await transformed([input.slice(0, 83), input.slice(83)]), input);
 });
 
-test("retains a secondary DONE line when a rewritten event is terminal", async () => {
+test("does not mistake a secondary DONE data field for a separate terminal", async () => {
   const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } });
   const held = block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", name: "lookup", arguments: "" } });
   const close = { type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "reasoning_text", reasoning: "private" }] } };
   const terminal = `event: response.output_item.done\r\ndata: ${JSON.stringify(close)}\r\ndata: [DONE]\r\n\r\n`;
-  const repaired = { ...close, item: { ...close.item, content: [{ type: "output_text", text: "", annotations: [] }] } };
-  assert.equal(await transformed([`${open}${held}${terminal}`]), `${open}${held}event: response.output_item.done\r\ndata: ${JSON.stringify(repaired)}\r\ndata: [DONE]\r\n\r\n`);
+  // EventSource joins these fields into JSON + newline + [DONE], which is
+  // malformed JSON. Inspecting only its first line would invent a close.
+  assert.equal(await transformed([`${open}${held}${terminal}`]), `${open}${held}${terminal}`);
 });
 
-test("repairs split UTF-8 text and an unterminated final message close", async () => {
+test("repairs split UTF-8 text and preserves an unterminated close without dispatching it", async () => {
   const event = { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg", delta: "Hello 🌍" };
   const done = { type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "output_text", text: event.delta, annotations: [] }] } };
   const input = Buffer.from(`${block(event)}data: ${JSON.stringify(done)}`);

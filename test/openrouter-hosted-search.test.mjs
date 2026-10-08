@@ -8,6 +8,7 @@ import {
   restoreOpenRouterHostedSearchPayload,
 } from "../src/openrouter-hosted-search.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
+import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 
 const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 
@@ -64,6 +65,54 @@ test("hosted-search request maps only native search surfaces to the bounded Open
   assert.deepEqual(payload.include, ["reasoning.encrypted_content"]);
   assert.equal(payload.web_search_options, undefined);
   assert.equal(payload.max_tool_calls, 3);
+});
+
+test("hosted search restores CR, BOM and multiline data across byte boundaries and replays produced history", async () => {
+  const item = { type: "openrouter:web_search", id: "ws_exact", status: "completed",
+    action: { type: "search", sources: [{ url: "https://example.invalid" }] } };
+  const event = { type: "response.output_item.done", output_index: 0, item };
+  for (const ending of ["\n", "\r", "\r\n"]) {
+    const raw = '\uFEFFevent: ignored' + ending + 'event: response.output_item.done' + ending
+      + JSON.stringify(event, null, 2).split('\n').map(line => 'data: ' + line).join(ending) + ending + ending;
+    const output = await transformBody([...Buffer.from(raw)].map(b => Buffer.from([b])), "text/event-stream");
+    const frame = [...new SseFrameBuffer().write(Buffer.from(output))].find(f => !f.continuation);
+    const produced = JSON.parse(sseFrameFields(frame.bytes, true).data).item;
+    assert.equal(produced.type, "web_search_call");
+    assert.deepEqual(produced.action, item.action);
+    const replay = prepareOpenRouterHostedSearchRequest({ input: [produced], tools: [{ type: "web_search" }] }, route);
+    assert.deepEqual(replay.input[0], item);
+  }
+});
+
+test("hosted search never normalizes duplicate decoded keys, precise numbers or invalid UTF-8", async () => {
+  const item = '"output":[{"type":"openrouter:web_search","id":"ws"}]';
+  for (const body of [`{${item},"marker":0.123456789012345678901}`, `{${item},"name":"a","na\\u006de":"b"}`]) {
+    assert.equal(await transformBody([body], "application/json"), body);
+    const wire = `data: ${body}\n\n`;
+    assert.equal(await transformBody([wire], "text/event-stream"), wire);
+  }
+  const invalid = Buffer.concat([Buffer.from(`{${item},"marker":"`), Buffer.from([0xff]), Buffer.from('"}')]);
+  const transform = new OpenRouterHostedSearchTransform("application/json");
+  const result = [];
+  transform.on("data", chunk => result.push(chunk));
+  const ended = new Promise((resolve, reject) => { transform.once("end", resolve); transform.once("error", reject); });
+  transform.end(invalid); await ended;
+  assert.deepEqual(Buffer.concat(result), invalid);
+});
+
+test("hosted-search errors on unsafe or conflicting frames after restoring output", async () => {
+  const safe = 'data: {"type":"response.output_item.added","item":{"type":"openrouter:web_search","id":"ws"}}\n\n';
+  for (const unsafe of ['data: {"marker":0.123456789012345678901}\n\n', 'data: {"name":"a","name":"b"}\n\n',
+    'event: response.failed\ndata: {"type":"response.completed"}\n\n', Buffer.from([0xff, 10, 10])]) {
+    await assert.rejects(transformBody([safe, unsafe], "text/event-stream"), /unsafe after restoration/u);
+  }
+});
+
+test("hosted-search bounds multiline frames and preserves incomplete EOF without restoration", async () => {
+  await assert.rejects(transformBody([': a\n'.repeat(9) + '\n'], "text/event-stream", {
+    maxPendingBytes: 10, maxFrameBytes: 32 }), /SSE frame exceeds 32/u);
+  const raw = 'data: {"item":{"type":"openrouter:web_search"}}';
+  assert.equal(await transformBody([raw], "text/event-stream"), raw);
 });
 
 test("hosted-search response restores non-streaming calls without changing citations", async () => {

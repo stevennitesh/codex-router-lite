@@ -1,38 +1,23 @@
 import { Transform } from "node:stream";
-import { StringDecoder } from "node:string_decoder";
+import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
+import { SseFrameBuffer, sseFrameFields, rewriteSseFrameData } from "./sse-framing.mjs";
+
+const MAX_RETAINED_BYTES = 8 * 1024 * 1024;
+const MAX_HELD_ITEMS = 4096;
 
 const COMPATIBLE_ROUTES = new Set([
   "openrouter/glm-5.3-flash-streamlake",
   "openrouter/glm-5.3-flash-together",
 ]);
 
-function eventBlock(block) {
-  const newline = block.includes("\r\n") ? "\r\n" : "\n";
-  const lines = block.split(/\r?\n/);
-  const dataLineIndex = lines.findIndex((line) => line.startsWith("data:"));
-  const parsed = {
-    lines, dataLineIndex, newline,
-    done: lines.some((line) => line.trim() === "data: [DONE]"),
-  };
-  if (dataLineIndex === -1) return parsed;
-  const dataText = lines[dataLineIndex].slice(5).trimStart();
-  if (!dataText || dataText === "[DONE]") return parsed;
-  try {
-    parsed.event = JSON.parse(dataText);
-  } catch {
-    // Retain malformed blocks and their terminal framing byte-for-byte.
-  }
-  return parsed;
-}
-
 function rewrittenBlock(parsed, event) {
-  const lines = [...parsed.lines];
-  lines[parsed.dataLineIndex] = `data: ${JSON.stringify(event)}`;
-  return { block: lines.join(parsed.newline), parsed: { ...parsed, event } };
+  const wire = rewriteSseFrameData(parsed, JSON.stringify(event));
+  return { block: parsed.separator ? wire.slice(0, -parsed.separator.length) : wire,
+    parsed: { ...parsed, event } };
 }
 
 function syntheticBlock(type, event, parsed) {
-  const hasEventLine = parsed.lines.some((line) => line.startsWith("event:"));
+  const hasEventLine = parsed.eventName !== undefined;
   const lines = hasEventLine ? [`event: ${type}`] : [];
   const next = { type, ...event };
   lines.push(`data: ${JSON.stringify(next)}`);
@@ -80,73 +65,92 @@ function sanitizeMessageItem(item, fallbackText = "") {
 }
 
 export class ZaiResponsesCompatTransform extends Transform {
-  #decoder = new StringDecoder("utf8");
-  #buffer = [];
-  #delimiterTail = "";
-  #heldOutputItems = [];
+  #frames;
+  #heldOutputItems = new Map();
+  #heldBytes = 0;
+  #lastHeldBlock;
+  #maxHeldBytes;
+  #maxHeldItems;
+  #maxMessageBytes;
+  #committed = false;
+  #disabled = false;
   #maxOutputIndex = -1;
   #message;
   #openOutputIndex;
+  #pendingDrain = false;
+
+  constructor({ maxFrameBytes = MAX_RETAINED_BYTES, maxHeldBytes = MAX_RETAINED_BYTES,
+    maxHeldItems = MAX_HELD_ITEMS, maxMessageBytes = MAX_RETAINED_BYTES } = {}) {
+    super();
+    this.#frames = new SseFrameBuffer({ maxFrameBytes });
+    this.#maxHeldBytes = maxHeldBytes;
+    this.#maxHeldItems = maxHeldItems;
+    this.#maxMessageBytes = maxMessageBytes;
+  }
+
   _transform(chunk, _encoding, callback) {
-    this.#emitCompleteBlocks(this.#decoder.write(chunk));
-    callback();
+    try {
+      for (const frame of this.#frames.write(chunk)) this.#emitFrame(frame);
+      // A split CRLF's LF belongs before any held item drained by this close.
+      // Bare CR still emits the completed close immediately.
+      if (chunk.length && chunk.at(-1) !== 13) this.#drainPending();
+      callback();
+    } catch (error) { callback(error); }
   }
 
   _flush(callback) {
-    this.#emitCompleteBlocks(this.#decoder.end(), true);
+    // An unterminated tail is preserved, without dispatching it or inferring
+    // a close. Downstream completion guards decide whether EOF is success.
     this.#flushHeldOutputItems();
+    if (this.#frames.pendingBytes) this.push(this.#frames.take());
     callback();
   }
 
-  #emitCompleteBlocks(chunk, flush = false) {
-    while (chunk.length) {
-      // Only the last three characters can begin a delimiter spanning chunks.
-      // Keep incomplete event fragments separate, avoiding a join and full
-      // rescan after every chunk of a large terminal event.
-      const carried = this.#delimiterTail.length;
-      const scanned = this.#delimiterTail + chunk;
-      const crlf = scanned.indexOf("\r\n\r\n");
-      const lf = scanned.indexOf("\n\n");
-      let index = -1;
-      let separator = "";
-      if (crlf !== -1 && (lf === -1 || crlf <= lf)) {
-        index = crlf;
-        separator = "\r\n\r\n";
-      } else if (lf !== -1) {
-        index = lf;
-        separator = "\n\n";
-      }
-      if (index === -1) {
-        this.#buffer.push(chunk);
-        this.#delimiterTail = scanned.slice(-3);
-        break;
-      }
-      const buffered = this.#buffer.join("");
-      const block = index < carried
-        ? buffered.slice(0, buffered.length - (carried - index))
-        : buffered + chunk.slice(0, index - carried);
-      this.#buffer = [];
-      this.#delimiterTail = "";
-      chunk = chunk.slice(index + separator.length - carried);
-      const pieces = this.#rewriteBlock(block);
-      for (const piece of pieces) this.#emitLifecycleBlock(piece, separator);
+  #emitFrame(frame) {
+    if (frame.continuation) {
+      if (this.#lastHeldBlock) {
+        this.#assertHeldBytes(frame.bytes.length);
+        this.#lastHeldBlock.block = Buffer.concat([this.#lastHeldBlock.block, frame.bytes]);
+        this.#heldBytes += frame.bytes.length;
+      } else this.push(frame.bytes);
+      return;
     }
-    if (flush && this.#buffer.length) {
-      const block = this.#buffer.join("");
-      this.#buffer = [];
-      this.#delimiterTail = "";
-      for (const piece of this.#rewriteBlock(block)) {
-        this.#emitLifecycleBlock(piece, "");
-      }
+    this.#drainPending();
+    if (this.#disabled) { this.#pushBlock(frame.bytes); return; }
+    let parsed;
+    try { parsed = sseFrameFields(frame.bytes, frame.atStreamStart); }
+    catch { this.#unsafe(frame.bytes, "invalid UTF-8"); return; }
+    const text = parsed.text;
+    const separator = text.match(/(\r\n|\r|\n)(\r\n|\r|\n)$/u)?.[0] ?? "";
+    const block = separator ? text.slice(0, -separator.length) : text;
+    parsed.separator = separator;
+    const pieces = this.#rewriteBlock(block, parsed);
+    if (this.#disabled) { this.#pushBlock(frame.bytes); return; }
+    if (pieces.length !== 1 || pieces[0].block !== block) this.#committed = true;
+    if (pieces.length > 1 && frame.atStreamStart && text.startsWith("\uFEFF")) {
+      for (const piece of pieces) piece.block = piece.block.replace(/^\uFEFF/u, "");
+      pieces[0].block = "\uFEFF" + pieces[0].block;
     }
+    for (const piece of pieces) this.#emitLifecycleBlock(piece, separator);
+  }
+
+  #unsafe(bytes, reason) {
+    if (this.#committed) {
+      throw new Error(`GLM response became unsafe after compatibility repair (${reason}).`);
+    }
+    this.#disabled = true;
+    this.#flushHeldOutputItems();
+    this.#message = undefined;
+    if (bytes) this.#pushBlock(bytes);
   }
 
   #pushBlock(block) {
-    this.push(Buffer.from(block));
+    this.#lastHeldBlock = undefined;
+    this.push(typeof block === "string" ? Buffer.from(block) : block);
   }
 
   #emitLifecycleBlock(piece, separator) {
-    const block = `${piece.block}${separator}`;
+    const block = Buffer.from(`${piece.block}${separator}`);
     const event = piece.parsed.event;
     const type = event?.type;
     const terminal = ["response.completed", "response.done"].includes(type) ||
@@ -173,23 +177,43 @@ export class ZaiResponsesCompatTransform extends Transform {
       this.#pushBlock(block);
       if (type === "response.output_item.done") {
         this.#openOutputIndex = undefined;
-        this.#drainHeldOutputItems();
+        this.#pendingDrain = true;
       }
       return;
     }
 
-    let group = this.#heldOutputItems.find((entry) => entry.outputIndex === outputIndex);
+    this.#assertHeldBytes(block.length);
+    let group = this.#heldOutputItems.get(outputIndex);
     if (!group) {
+      if (this.#heldOutputItems.size >= this.#maxHeldItems) {
+        throw new Error(`GLM held output exceeds ${this.#maxHeldItems} items.`);
+      }
       group = { outputIndex, blocks: [] };
-      this.#heldOutputItems.push(group);
+      this.#heldOutputItems.set(outputIndex, group);
     }
-    group.blocks.push({ block, type });
+    this.#lastHeldBlock = { block, type };
+    group.blocks.push(this.#lastHeldBlock);
+    this.#heldBytes += block.length;
+  }
+
+  #assertHeldBytes(bytes) {
+    if (this.#heldBytes + bytes > this.#maxHeldBytes) {
+      throw new Error(`GLM held output exceeds ${this.#maxHeldBytes} bytes.`);
+    }
+  }
+
+  #drainPending() {
+    if (!this.#pendingDrain) return;
+    this.#pendingDrain = false;
+    this.#drainHeldOutputItems();
   }
 
   #drainHeldOutputItems() {
-    while (this.#openOutputIndex === undefined && this.#heldOutputItems.length) {
-      const group = this.#heldOutputItems.shift();
+    while (this.#openOutputIndex === undefined && this.#heldOutputItems.size) {
+      const [index, group] = this.#heldOutputItems.entries().next().value;
+      this.#heldOutputItems.delete(index);
       for (const { block, type } of group.blocks) {
+        this.#heldBytes -= block.length;
         this.#pushBlock(block);
         if (type === "response.output_item.added") {
           this.#openOutputIndex = group.outputIndex;
@@ -201,10 +225,12 @@ export class ZaiResponsesCompatTransform extends Transform {
   }
 
   #flushHeldOutputItems() {
-    for (const group of this.#heldOutputItems) {
+    for (const group of this.#heldOutputItems.values()) {
       for (const { block } of group.blocks) this.#pushBlock(block);
     }
-    this.#heldOutputItems = [];
+    this.#heldOutputItems.clear();
+    this.#heldBytes = 0;
+    this.#pendingDrain = false;
     this.#openOutputIndex = undefined;
   }
 
@@ -266,12 +292,22 @@ export class ZaiResponsesCompatTransform extends Transform {
     return { ...event, output_index: this.#message.outputIndex };
   }
 
-  #rewriteBlock(block) {
-    const parsed = eventBlock(block);
+  #rewriteBlock(block, parsed) {
+    const generic = !parsed.eventName || parsed.eventName === "message";
+    parsed.done = parsed.hasData && parsed.data === "[DONE]";
+    if (parsed.hasData && parsed.data && !parsed.done) {
+      if (!jsonIsUnambiguousForRewrite(parsed.data)) {
+        this.#unsafe(undefined, "ambiguous or malformed JSON");
+      } else parsed.event = JSON.parse(parsed.data);
+    }
+    if (parsed.hasData && !generic && parsed.event?.type !== parsed.eventName) {
+      this.#unsafe(undefined, "conflicting SSE event and JSON type");
+    }
     // Keep the parsed event alongside its bytes through envelope repair and
     // lifecycle ordering, instead of parsing original and synthetic JSON twice.
-    const original = { block, parsed };
-    if (parsed.event === undefined) return [original];
+    const original = parsed.event !== undefined && (parsed.dataCount > 1 || parsed.eventCount > 1)
+      ? rewrittenBlock(parsed, parsed.event) : { block, parsed };
+    if (this.#disabled || parsed.event === undefined) return [original];
     const event = parsed.event;
     const type = event?.type;
     if (type === "response.output_item.added") {
@@ -287,6 +323,7 @@ export class ZaiResponsesCompatTransform extends Transform {
           text: messageText(item),
           contentStarted: false,
         };
+        this.#setMessageText(this.#message.text);
         if (item !== event.item) {
           return [rewrittenBlock(parsed, { ...event, item })];
         }
@@ -303,7 +340,7 @@ export class ZaiResponsesCompatTransform extends Transform {
         // part in the stream.
         const injected = this.#startMessage(event, parsed);
         if (event.part?.type === "output_text" && typeof event.part.text === "string") {
-          this.#message.text = event.part.text;
+          this.#setMessageText(event.part.text);
         }
         const next = this.#rewriteMessageEvent(event);
         return [
@@ -331,10 +368,10 @@ export class ZaiResponsesCompatTransform extends Transform {
       const injected = this.#message ? [] : this.#startMessage(event, parsed);
       let next = this.#rewriteMessageEvent(event);
       if (type === "response.output_text.delta" && typeof event.delta === "string") {
-        this.#message.text += event.delta;
+        this.#setMessageText(event.delta, true);
       }
       if (type === "response.output_text.done" && typeof event.text === "string") {
-        this.#message.text = event.text;
+        this.#setMessageText(event.text);
       }
       return [...injected, next === event ? original : rewrittenBlock(parsed, next)];
     }
@@ -357,7 +394,7 @@ export class ZaiResponsesCompatTransform extends Transform {
         };
       }
       if (part?.type === "output_text" && typeof part.text === "string") {
-        this.#message.text = part.text;
+        this.#setMessageText(part.text);
       }
       return [
         ...injected,
@@ -373,7 +410,7 @@ export class ZaiResponsesCompatTransform extends Transform {
         injected.push(...this.#startMessage({ ...event, item_id: itemId }, parsed));
       }
       const item = sanitizeMessageItem(event.item, this.#message.text);
-      this.#message.text = messageText(item) || this.#message.text;
+      this.#setMessageText(messageText(item) || this.#message.text);
       const next = this.#rewriteMessageEvent(
         item === event.item ? event : { ...event, item },
       );
@@ -384,6 +421,16 @@ export class ZaiResponsesCompatTransform extends Transform {
     }
 
     return [original];
+  }
+
+  #setMessageText(text, append = false) {
+    const bytes = (append ? this.#message.textBytes ?? Buffer.byteLength(this.#message.text) : 0)
+      + Buffer.byteLength(text);
+    if (bytes > this.#maxMessageBytes) {
+      throw new Error(`GLM message text exceeds ${this.#maxMessageBytes} bytes.`);
+    }
+    this.#message.textBytes = bytes;
+    this.#message.text = append ? this.#message.text + text : text;
   }
 }
 

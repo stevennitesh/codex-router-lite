@@ -51,6 +51,14 @@ export class SseFrameBuffer {
   #pendingBytes = 0;
   #lineHasContent = false;
   #atStreamStart = true;
+  #lineBytes = 0;
+  #maxFrameBytes;
+  #maxLineBytes;
+
+  constructor({ maxFrameBytes = Infinity, maxLineBytes = Infinity } = {}) {
+    this.#maxFrameBytes = maxFrameBytes;
+    this.#maxLineBytes = maxLineBytes;
+  }
 
   get pendingBytes() { return this.#pendingBytes; }
   get atStreamStart() { return this.#atStreamStart; }
@@ -68,8 +76,16 @@ export class SseFrameBuffer {
         yield { bytes: ending, atStreamStart: false, continuation: true };
         continue;
       }
+      this.#lineBytes += content.length;
+      if (this.#lineBytes > this.#maxLineBytes) {
+        throw Object.assign(new Error(`SSE line exceeds ${this.#maxLineBytes} bytes.`), { code: "SSE_LINE_LIMIT" });
+      }
+      if (this.#pendingBytes + end - capturedUntil > this.#maxFrameBytes) {
+        throw Object.assign(new Error(`SSE frame exceeds ${this.#maxFrameBytes} bytes.`), { code: "SSE_FRAME_LIMIT" });
+      }
       if (content.length) this.#lineHasContent = true;
       if (!endLine) continue;
+      this.#lineBytes = 0;
       const blank = !this.#lineHasContent;
       this.#lineHasContent = false;
       if (blank) {
@@ -124,4 +140,43 @@ export class SseFrameBuffer {
 export function sseFrameText(bytes, atStreamStart) {
   const text = bytes.toString("utf8");
   return atStreamStart && text.startsWith("\uFEFF") ? text.slice(1) : text;
+}
+
+// Provider repairs need EventSource meaning, not just the first data line.
+// Decode only a complete bounded frame. Keep each original ending so an
+// unaffected frame and non-data fields survive byte-for-byte.
+export function sseFrameFields(bytes, atStreamStart) {
+  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  const bom = atStreamStart && text.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const tokens = text.slice(bom.length).split(/(\r\n|\r|\n)/u);
+  const lines = [];
+  const data = [];
+  let eventName;
+  let eventCount = 0;
+  for (let i = 0; i < tokens.length; i += 2) {
+    const content = tokens[i], ending = tokens[i + 1] ?? "";
+    lines.push({ content, ending });
+    const colon = content.indexOf(":");
+    const field = colon === -1 ? content : content.slice(0, colon);
+    let value = colon === -1 ? "" : content.slice(colon + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "data") data.push(value);
+    if (field === "event") { eventName = value; eventCount += 1; }
+  }
+  return { text, bom, lines, data: data.join("\n"), dataCount: data.length,
+    hasData: data.length > 0, eventName, eventCount,
+    newline: lines.find(line => line.ending)?.ending ?? "\n" };
+}
+
+export function rewriteSseFrameData(fields, data) {
+  const lastData = fields.lines.findLastIndex(({ content }) => content === "data" || content.startsWith("data:"));
+  const lastEvent = fields.lines.findLastIndex(({ content }) => content === "event" || content.startsWith("event:"));
+  return fields.bom + fields.lines.map(({ content, ending }, index) => {
+    if ((content === "event" || content.startsWith("event:")) && index !== lastEvent) return "";
+    if (content === "data" || content.startsWith("data:")) {
+      if (index !== lastData) return "";
+      content = `data: ${data}`;
+    }
+    return content + ending;
+  }).join("");
 }

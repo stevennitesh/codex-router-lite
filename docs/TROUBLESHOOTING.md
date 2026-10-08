@@ -195,6 +195,22 @@ Routed SSE accepts LF, CRLF, mixed endings and bare CR without waiting for the
 next event to expose completed reasoning. Shared framing mechanics live in
 `src/sse-framing.mjs`; namespace restoration keeps its own bounded rewrite policy.
 
+OpenRouter search restoration and GLM envelope repair use these same framing
+mechanics. They join multiline data and honor the last SSE event field, checking
+it against the JSON type. Safe repeated fields are collapsed before downstream
+namespace and message-phase restoration. Unaffected single-field frames retain
+their original bytes. An unfinished EOF event is preserved without inferring a
+close or successful completion.
+
+Provider repairs check raw UTF-8, duplicate decoded JSON keys and numeric
+precision before changing data. Unsafe input remains raw and disables further
+repair when no repair has committed; after a repair commits it causes an explicit
+failure. Numeric tokens inside ordinary function argument strings stay exact.
+GLM compatibility limits an event, held output and retained message text to
+8 MiB each, with at most 4,096 held output groups. Hosted search retains its
+32 MiB JSON limit and 8 MiB line limit, plus an 8 MiB event limit. Exceeding a
+limit fails the response; it does not trigger another inference attempt.
+
 A `precontent_limit` time or byte failure has an unknown inference outcome.
 Router cancels that attempt and returns an explicit failure without another
 POST. Only a known completed-empty turn whose prologue stayed suppressed gets
