@@ -55,8 +55,16 @@ An invalid Responses WebSocket message type produces
 retains only JSON message/type shape categories and a timestamp, without the
 payload, arbitrary type value or conversation identity. A missing type and an
 unsupported string are distinct observations; neither justifies treating the
-message as `response.create`. Use the caller's serializer and a synthetic probe
-to establish the rejected protocol before adding compatibility handling.
+message as `response.create`. Inspect both the caller's ordinary serializer and
+manual control sends, then use a synthetic probe to establish the protocol.
+Codex's instant-interrupt path sends `response.interrupt` during generation when
+new user input arrives. Router forwards this control immediately to the matching
+native response, including while admission is draining. Malformed controls return
+`invalid_response_interrupt`; an ID outside the connection's native response
+returns `response_not_in_progress`. External routes do not advertise Responses
+Lite and keep their HTTP adapter path. See the
+[2026-10-08 steering investigation](../history/2026-10-08-websocket-interrupt.md)
+for the original missing-control defect and its installed-client reproduction.
 
 For empty ordinary function calls, `tool-protocol` warnings record only source,
 restored, streamed-delta and arguments-done character counts. Zero source and

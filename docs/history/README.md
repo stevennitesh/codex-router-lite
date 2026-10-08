@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Responses WebSocket interrupt diagnosis and installed-client repair proof, 2026-10-08](2026-10-08-websocket-interrupt.md)
+
 - [Audit-fix deployment, native renewal and completion/drain repairs, 2026-10-08](2026-10-08-audit-release.md)
 
 - [Completion/drain repair renewal: five passing routes, GLM Together rate-limited, 2026-10-08](2026-10-08-workflow-repair-certification.json)

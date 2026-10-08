@@ -48,7 +48,7 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
     const output = switchyardTools && payload.model === "switchyard-auto"
       ? [{ type: "function_call", id: "fc_switchyard", call_id: "call_switchyard", name: "fixture_tool", arguments: "{}" }]
       : [{ id: "msg_http_real", type: "message", role: "assistant", content: [{ type: "output_text", text: "42" }] }];
-    response.end(JSON.stringify({ id: "resp_http_real", status: "completed", output, usage: { input_tokens: 7, output_tokens: 2 } }));
+    response.end(JSON.stringify({ id: "resp_http_real", status: "completed", output, usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } }));
   });
   upstream.on("upgrade", (request, socket) => {
     sockets.add(socket);
@@ -85,7 +85,7 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
         const complete = output => {
           prior.set(id, { input: payload.input, output });
           for (const [index, item] of output.entries()) send({ type: "response.output_item.done", output_index: index, item });
-          send({ type: "response.completed", response: { id, status: "completed", output, usage: { input_tokens: 7, output_tokens: 2 } } });
+          send({ type: "response.completed", response: { id, status: "completed", output, usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } } });
         };
         if (handle) handle({ payload, send, sendRaw: rawJson => socket.write(frame(undefined, rawJson)), complete, socket, id, prior });
         else complete([]);
@@ -220,6 +220,159 @@ test("native WebSocket passes real prewarming and tool continuation over one cre
   assert.ok(prewarm.some(event => event.type === "codex.rate_limits"));
 });
 
+test("native steering interrupts the active response and continues from its retained output", async t => {
+  for (const actualRouter of [false, true]) await t.test(actualRouter ? "actual Router" : "transport edge", async t => {
+    const input = [{ role: "user", content: "start a synthetic task" }];
+    const retained = { type: "message", id: "msg_retained", role: "assistant", status: "completed",
+      content: [{ type: "output_text", text: "retained prefix" }] };
+    let active;
+    const state = await fixture(t, { actualRouter, handle: ({ payload, send, complete, id }) => {
+      if (payload.type === "response.interrupt") {
+        assert.equal(payload.response_id, active.id);
+        assert.equal(payload.mode, "discard_partial_items");
+        send({ type: "response.incomplete", response: { id: active.id, status: "incomplete",
+          incomplete_details: { reason: "interrupted" }, output: [retained],
+          usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } } });
+      } else if (active) complete([]);
+      else {
+        active = { id };
+        send({ type: "response.created", response: { id, status: "in_progress", output: [] } });
+        send({ type: "response.output_item.done", output_index: 0, item: retained });
+        send({ type: "response.output_item.added", output_index: 1,
+          item: { id: "msg_discarded", type: "message", status: "in_progress" } });
+      }
+    } });
+    const steer = ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.type !== "response.created") return;
+      // An interrupt belongs to admitted work and must remain usable while draining.
+      state.setAdmission(false);
+      state.client.send(JSON.stringify({ type: "response.interrupt", response_id: event.response.id,
+        mode: "discard_partial_items" }));
+      state.client.send(JSON.stringify({ type: "response.interrupt", response_id: event.response.id,
+        mode: "discard_partial_items" }));
+    };
+    state.client.addEventListener("message", steer);
+    const first = await state.exchange({ input });
+    state.client.removeEventListener("message", steer);
+    assert.equal(first.at(-1).type, "response.incomplete");
+    assert.equal(first.at(-1).response.incomplete_details.reason, "interrupted");
+    assert.deepEqual(state.requests[1], { type: "response.interrupt", response_id: active.id,
+      mode: "discard_partial_items" });
+    state.setAdmission(true);
+    const suffix = { role: "user", content: "here is new steering input" };
+    const next = await state.exchange({ previous_response_id: active.id, input: [suffix] });
+    assert.equal(next.at(-1).type, "response.completed");
+    assert.equal(state.requests[2].previous_response_id, active.id);
+    assert.deepEqual(state.requests[2].input, [suffix]);
+    assert.equal(state.handshakes.length, 1);
+    assert.equal(state.httpRequests, 0);
+    if (!actualRouter) {
+      assert.equal(state.results[0].status, 200);
+      assert.equal(state.results[0].outcome, "interrupted");
+      // A model switch must reconstruct the same retained history, without partial items.
+      const followUp = { role: "user", content: "switch models" };
+      const switched = await state.exchange({ model: "gpt-6-astra", previous_response_id: next.at(-1).response.id, input: [followUp] });
+      assert.equal(switched.at(-1).type, "response.completed");
+      assert.deepEqual(state.requests[3].input, [...input, retained, suffix, followUp]);
+      assert.equal(state.requests[3].previous_response_id, undefined);
+    }
+  });
+});
+
+test("native interrupt validation leaves active work intact and never targets a different response", async t => {
+  let active;
+  const state = await fixture(t, { handle: ({ payload, send, id }) => {
+    if (payload.type === "response.interrupt") {
+      assert.equal(payload.response_id, active.id);
+      send({ type: "response.incomplete", response: { id: active.id, status: "incomplete",
+        incomplete_details: { reason: "interrupted" }, output: [] } });
+    } else {
+      active = { id };
+      send({ type: "response.created", response: { id, status: "in_progress", output: [] } });
+    }
+  } });
+  const receive = type => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { state.client.removeEventListener("message", onMessage); reject(new Error(`Missing ${type}`)); }, 3000);
+    const onMessage = ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.type !== type) return;
+      clearTimeout(timer);
+      state.client.removeEventListener("message", onMessage);
+      resolve(event);
+    };
+    state.client.addEventListener("message", onMessage);
+  });
+  const start = async () => {
+    const created = receive("response.created");
+    state.client.send(JSON.stringify({ type: "response.create", model: "gpt-6.1-sol", stream: true, input: [] }));
+    return (await created).response.id;
+  };
+  const id = await start();
+  for (const [response_id, mode, code] of [
+    [undefined, "discard_partial_items", "invalid_response_interrupt"],
+    [id, undefined, "invalid_response_interrupt"],
+    [id, "unknown", "invalid_response_interrupt"],
+    [[], "discard_partial_items", "invalid_response_interrupt"],
+    ["different-response-private-canary", "discard_partial_items", "response_not_in_progress"],
+  ]) {
+    const error = receive("error");
+    state.client.send(JSON.stringify({ type: "response.interrupt", response_id, mode }));
+    const event = await error;
+    assert.equal(event.status, 400);
+    assert.equal(event.error.code, code);
+    assert.equal(JSON.stringify(event).includes("private-canary"), false);
+    assert.equal(state.requests.length, 1);
+  }
+  const finish = receive("response.incomplete");
+  state.client.send(JSON.stringify({ type: "response.interrupt", response_id: id, mode: "discard_partial_items" }));
+  await finish;
+  const nextId = await start();
+  // The previous terminal may race client interruption; its ID is a no-op,
+  // never an instruction to interrupt the new active response.
+  state.client.send(JSON.stringify({ type: "response.interrupt", response_id: id, mode: "discard_partial_items" }));
+  const nextFinish = receive("response.incomplete");
+  state.client.send(JSON.stringify({ type: "response.interrupt", response_id: nextId, mode: "discard_partial_items" }));
+  assert.equal((await nextFinish).response.id, nextId);
+  assert.deepEqual(state.requests.filter(request => request.type === "response.interrupt").map(request => request.response_id), [id, nextId]);
+});
+
+test("a native completion racing interruption remains a completed continuation", async t => {
+  const state = await fixture(t, { handle: ({ complete }) => complete([]) });
+  const errors = [];
+  state.client.addEventListener("message", ({ data }) => {
+    const event = JSON.parse(data);
+    if (event.type === "error") errors.push(event);
+    if (event.type === "response.completed") state.client.send(JSON.stringify({
+      type: "response.interrupt", response_id: event.response.id, mode: "discard_partial_items",
+    }));
+  });
+  const first = await state.exchange({});
+  const next = await state.exchange({ previous_response_id: first.at(-1).response.id });
+  assert.equal(next.at(-1).type, "response.completed");
+  assert.equal(state.handshakes.length, 1);
+  assert.equal(state.requests.length, 2);
+  assert.deepEqual(errors, []);
+  assert.ok(state.results.every(result => result.outcome === "completed"));
+});
+
+test("invalid interrupted native terminals cannot create a continuation", async t => {
+  for (const response of [
+    { status: "incomplete", output: [] },
+    { id: "resp_invalid", status: "completed", output: [] },
+    { id: "resp_invalid", status: "incomplete" },
+  ]) await t.test(JSON.stringify(response), async t => {
+    const state = await fixture(t, { handle: ({ send }) => send({ type: "response.incomplete",
+      response: { ...response, incomplete_details: { reason: "interrupted" } } }) });
+    const first = await state.exchange({});
+    assert.equal(first.at(-1).type, "error");
+    assert.equal(first.at(-1).error.type, "local_router_protocol_error");
+    const next = await state.exchange({ previous_response_id: "resp_invalid" });
+    assert.equal(next.at(-1).status, 409);
+    assert.equal(state.requests.length, 1);
+  });
+});
+
 test("actual Router retires switched Switchyard workflows through native WebSocket completion", async t => {
   let mode = "answer";
   const nextTool = { type: "function_call", id: "fc_native_next", call_id: "call_native_next", name: "fixture_tool", arguments: "{}" };
@@ -227,8 +380,11 @@ test("actual Router retires switched Switchyard workflows through native WebSock
     actualRouter: true, switchyardTools: true,
     headers: { "session-id": "old-cache", "thread-id": "old-thread" },
     handle: ({ send, complete, id }) => {
-      if (mode === "failed" || mode === "incomplete") {
-        send({ type: `response.${mode}`, response: { id, status: mode, output: [] } });
+      if (mode === "failed" || mode === "incomplete" || mode === "interrupted") {
+        send({ type: `response.${mode === "interrupted" ? "incomplete" : mode}`, response: {
+          id, status: mode === "interrupted" ? "incomplete" : mode, output: [],
+          ...(mode === "interrupted" ? { incomplete_details: { reason: "interrupted" } } : {}),
+        } });
       } else {
         if (mode === "next-tool") send({ type: "response.output_item.done", output_index: 0, item: nextTool });
         // The done event is authoritative even when the completed array omits it.
@@ -256,10 +412,12 @@ test("actual Router retires switched Switchyard workflows through native WebSock
     [[{ ...result, call_id: "wrong-call" }], metadata, "answer"],
     [[produced, result], metadata, "failed"],
     [[produced, result], metadata, "incomplete"],
+    [[produced, result], metadata, "interrupted"],
   ]) {
     mode = nextMode;
     const events = await state.exchange({ input, client_metadata });
-    assert.equal(events.at(-1).type, nextMode === "answer" ? "response.completed" : `response.${nextMode}`);
+    assert.equal(events.at(-1).type, nextMode === "answer" ? "response.completed"
+      : nextMode === "interrupted" ? "response.incomplete" : `response.${nextMode}`);
     assert.equal((await lifecycle()).workflowCalls, 1);
     assert.equal((await lifecycle("drain")).status, "deferred");
   }

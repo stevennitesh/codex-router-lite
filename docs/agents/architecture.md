@@ -39,6 +39,11 @@ Update explicit allowlists for an authorized addition; never disable their check
    dispatch and the Responses lifecycle. `src/responses-websocket.mjs` uses a
    persistent native upstream WebSocket for caller-owned native sessions;
    external and substituted-session requests re-enter the HTTP handling path.
+   Native `response.interrupt` controls bypass the generation queue and new-request
+   admission, and target only the response identified on that connection. The
+   supported mode is `discard_partial_items`. A valid `response.incomplete` with
+   reason `interrupted` preserves the upstream continuation and its retained
+   output; it remains an interrupted outcome and does not complete a tool workflow.
 2. Router dispatches by the selected model's registered capability and the
    endpoint's native-session requirements. Native endpoints preserve native
    authorization and reach the native backend. Registered external routes use

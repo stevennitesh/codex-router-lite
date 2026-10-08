@@ -22,6 +22,15 @@ function connectionKey(prepared) {
   return JSON.stringify([prepared.target, prepared.payload.model, headers]);
 }
 
+export function isInterruptedResponse(event) {
+  const response = event?.response;
+  return event?.type === "response.incomplete" && response &&
+    typeof response === "object" && !Array.isArray(response) &&
+    typeof response.id === "string" && response.id.length > 0 &&
+    response.status === "incomplete" && response.incomplete_details?.reason === "interrupted" &&
+    Array.isArray(response.output);
+}
+
 // Each client connection owns its upstream connection and its most recent
 // produced response. No credentials, prompt cache or response IDs are shared.
 export class NativeResponsesWebSocket {
@@ -34,6 +43,23 @@ export class NativeResponsesWebSocket {
     return this.connection?.websocket.readyState === WebSocket.OPEN &&
       this.connection.key === connectionKey(prepared) &&
       this.connection.responseId === previousId;
+  }
+
+  interrupt(responseId) {
+    const connection = this.connection;
+    if (!connection || connection.error || connection.websocket.readyState !== WebSocket.OPEN) return false;
+    if (connection.activeResponseId !== responseId) {
+      // A completion can race the client's interrupt. Never apply an old ID to
+      // the next response, but allow an interrupt of the just-finished response.
+      return connection.responseId === responseId;
+    }
+    if (!connection.interruptSent) {
+      connection.websocket.send(JSON.stringify({
+        type: "response.interrupt", response_id: responseId, mode: "discard_partial_items",
+      }));
+      connection.interruptSent = true;
+    }
+    return true;
   }
 
   close() {
@@ -178,6 +204,8 @@ export class NativeResponsesWebSocket {
     const abort = () => this.close();
     signal.addEventListener("abort", abort, { once: true });
     connection.active = true;
+    connection.activeResponseId = undefined;
+    connection.interruptSent = false;
     connection.sent = true;
     try {
       for (const event of connection.idle.splice(0)) {
@@ -191,12 +219,21 @@ export class NativeResponsesWebSocket {
           connection.waiting = { resolve, reject };
         });
         connection.socket?.pause();
+        if (next.event.type === "response.created" && typeof next.event.response?.id === "string") {
+          connection.activeResponseId = next.event.response.id;
+        }
+        if (TERMINALS.has(next.event.type)) {
+          // Update identity before forwarding: a client can interrupt as soon
+          // as it receives an event, including while forwarding awaits drain.
+          connection.activeResponseId = undefined;
+          connection.responseId = next.event.type === "response.completed" || isInterruptedResponse(next.event)
+            ? next.event.response?.id : undefined;
+        }
         // Keep the parsed event for protocol/state decisions, while the edge
         // can forward unchanged native JSON without serializing it again.
         const forwarded = await onEvent(next.event, next.rawJson);
         connection.queuedBytes -= next.bytes;
         if (TERMINALS.has(next.event.type)) {
-          connection.responseId = next.event.type === "response.completed" ? next.event.response?.id : undefined;
           // Rate-limit/transport metadata may share the terminal's network
           // packet. Retain the same bounded idle metadata accepted between
           // requests; response output after a terminal remains a violation.
@@ -215,6 +252,7 @@ export class NativeResponsesWebSocket {
       throw error;
     } finally {
       connection.active = false;
+      connection.activeResponseId = undefined;
       connection.socket?.resume();
       signal.removeEventListener("abort", abort);
     }

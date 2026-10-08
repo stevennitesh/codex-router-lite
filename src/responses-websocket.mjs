@@ -9,7 +9,7 @@ import {
 } from "./http-utils.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
 import { SseLineScanner } from "./sse-framing.mjs";
-import { NativeResponsesWebSocket } from "./native-responses-websocket.mjs";
+import { isInterruptedResponse, NativeResponsesWebSocket } from "./native-responses-websocket.mjs";
 
 const RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
 
@@ -977,13 +977,41 @@ class ResponsesWebSocketPeer {
   }
 
   enqueue(text) {
+    let request;
+    try {
+      request = JSON.parse(text);
+    } catch {
+      this.sendError(400, {
+        type: "invalid_request_error",
+        message: "Responses WebSocket messages must contain valid JSON.",
+      });
+      return;
+    }
+    if (request?.type === "response.interrupt") {
+      // Codex sends this control while response.create is still running. It
+      // belongs to that response, not to the serialized generation queue or
+      // new-request admission (which may already be draining).
+      if (typeof request.response_id !== "string" || !request.response_id ||
+          request.mode !== "discard_partial_items") {
+        this.sendError(400, {
+          type: "invalid_request_error", code: "invalid_response_interrupt",
+          message: "response.interrupt requires a response_id and mode=discard_partial_items.",
+        });
+      } else if (!this.nativeTransport?.interrupt(request.response_id)) {
+        this.sendError(400, {
+          type: "invalid_request_error", code: "response_not_in_progress",
+          message: "response.interrupt must identify this connection's native response.",
+        });
+      }
+      return;
+    }
     this.pendingRequests += 1;
     if (this.pendingRequests > MAX_QUEUED_REQUESTS) {
       this.fail(1008, "Too many queued Responses requests.");
       return;
     }
     this.queue = this.queue
-      .then(() => this.process(text))
+      .then(() => this.process(request))
       .catch(() => {
         if (!this.closed) {
           this.sendError(500, {
@@ -1085,6 +1113,12 @@ class ResponsesWebSocketPeer {
             error.code = "local_router_protocol_error";
             throw error;
           }
+          if (event.type === "response.incomplete" && event.response?.incomplete_details?.reason === "interrupted" &&
+              !isInterruptedResponse(event)) {
+            const error = new Error("Native Responses emitted an invalid interrupted response.");
+            error.code = "local_router_protocol_error";
+            throw error;
+          }
           if (event.type === "response.metadata") {
             const value = safeHeaderValue(event.headers?.["x-codex-turn-state"]);
             if (value) this.turnState = { value, turnId: metadataTurnId(clientMetadata) };
@@ -1103,11 +1137,16 @@ class ResponsesWebSocketPeer {
           return this.sendJsonWithBackpressure(event, rawJson);
         },
       });
-      status = terminal?.type === "response.completed" ? 200 : Number(terminal?.status) || 502;
-      outcome = terminal?.type === "response.completed" ? "completed" : "failed";
+      const interrupted = isInterruptedResponse(terminal);
+      const completed = terminal?.type === "response.completed";
+      status = completed || interrupted ? 200 : Number(terminal?.status) || 502;
+      outcome = completed ? "completed" : interrupted ? "interrupted" : "failed";
       this.continuations.clear();
-      if (terminal?.type === "response.completed") {
-        outputItems = reconciledContinuationOutput(terminal.response.output, outputItems);
+      if (completed || interrupted) {
+        // discard_partial_items makes the interrupted terminal's output the
+        // retained history. Do not restore discarded items from the stream.
+        outputItems = interrupted ? terminal.response.output
+          : reconciledContinuationOutput(terminal.response.output, outputItems);
         outputObservation = { output: outputItems, complete: !continuationOverflow };
         const outputBytes = Buffer.byteLength(JSON.stringify(outputItems), "utf8");
         if (knownBaseline && !continuationOverflow && inputBytes + outputBytes + 32 <= this.options.maxContinuationBytes) {
@@ -1153,7 +1192,7 @@ class ResponsesWebSocketPeer {
     }
   }
 
-  async process(text) {
+  async process(request) {
     if (this.closed) return;
     try {
       this.options.admitRequest?.();
@@ -1161,16 +1200,6 @@ class ResponsesWebSocketPeer {
       this.sendError(503, {
         type: "local_router_draining",
         message: "The local router is draining for a service operation.",
-      });
-      return;
-    }
-    let request;
-    try {
-      request = JSON.parse(text);
-    } catch {
-      this.sendError(400, {
-        type: "invalid_request_error",
-        message: "Responses WebSocket messages must contain valid JSON.",
       });
       return;
     }
@@ -1187,7 +1216,7 @@ class ResponsesWebSocketPeer {
         type: "invalid_request_error",
         code: "invalid_websocket_message_type",
         param: "type",
-        message: "Responses WebSocket messages must have type response.create.",
+        message: "Responses WebSocket messages must have type response.create or response.interrupt.",
       });
       return;
     }
