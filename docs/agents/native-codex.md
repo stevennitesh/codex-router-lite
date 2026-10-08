@@ -60,6 +60,16 @@ backpressure and service drain apply to native WebSocket turns as well as HTTP.
 External routes, substituted native credentials and compaction triggers retain
 the HTTP preparation path.
 
+Native HTTP inference POSTs recover only from conclusive connection failures,
+within the bounded retry budget. A socket reset, header timeout or gateway 5xx
+does not establish that the upstream never accepted the request, so Router
+returns that failure without automatic replay. Caller output and cancellation
+also prohibit replay. The explicit routed empty-completion repair keeps its
+separate completed-response and usage-accounting policy: it requires a parsed
+completed-empty result with every prologue byte still suppressed. A pre-content
+time or byte failure has an unknown inference outcome and returns
+`precontent_limit` without another POST. Prompt-scaled prefill allowance remains.
+
 The WebSocket edge captures masked frames and external SSE lines incrementally,
 with allocation growing only as bytes arrive. Native request input is serialized
 once for both the outgoing JSON and exact continuation byte accounting. Validated
@@ -102,8 +112,11 @@ declarations, forced/allowed tool choices, returned calls, and replay. Native
 requests do not pass through this external-provider name translation.
 
 An unqualified provider call can omit `namespace` or set it to `null`. Restore
-both forms of the declared client tool-search relay to `tool_search_call` before
-Codex dispatch. A nonempty namespace still identifies a different tool owner.
+both forms consistently for ordinary functions, custom tools, and the declared
+client tool-search relay before Codex dispatch. History and tool choices use the
+same identity rules. Exact plain declarations take precedence over app-like
+spellings and receive no inferred app arguments. An explicit namespace belongs
+to its stated owner; ambiguous bare names remain unresolved.
 
 Ordinary external turns and compaction share `src/routed-request.mjs`, which
 returns the prepared payload and its matching namespace context. For changes
@@ -135,7 +148,11 @@ ambiguous, oversized, or unsuccessful streams receive no inferred final answer.
 
 Encrypted child handoffs preserve native 401 and 429 failures. A 429 suppresses
 repeat handoffs for the same account-scoped payload for 60 seconds, with at most
-128 failure entries. Native compaction metadata may be absent, null, or numeric;
+128 failure entries. SSE extraction uses the shared CR/LF framing scanner,
+joins multiline data, and checks the final `event` field against the JSON type
+unless it is empty or `message`. Conflicting labels, failed terminals and
+unfinished events cannot populate the success cache or reach an external route.
+Native compaction metadata may be absent, null, or numeric;
 compatibility checks must compare against the current native model contract.
 
 The scheduled-task launcher, arguments, source root, ACL, generation, and running process form one service identity. A same-named foreign task is a conflict.

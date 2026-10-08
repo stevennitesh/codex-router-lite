@@ -79,7 +79,7 @@ test("direct and opted-in proxy dispatchers share the bounded connect policy", (
 test("default retry budget can afford both bounded connect retries", async () => {
   let calls = 0;
   let clock = 0;
-  const result = await fetchWithRetry("https://upstream.invalid/responses", {}, {
+  const result = await fetchWithRetry("https://upstream.invalid/responses", { method: "POST" }, {
     now: () => clock,
     sleepImpl: async (delayMs) => {
       clock += delayMs;
@@ -101,7 +101,7 @@ test("a connect timeout that already outlived the budget is not multiplied", asy
   let calls = 0;
   let clock = 0;
   await assert.rejects(
-    fetchWithRetry("https://upstream.invalid/responses", {}, {
+    fetchWithRetry("https://upstream.invalid/responses", { method: "POST" }, {
       backoffMs: 0,
       now: () => clock,
       fetchImpl: async () => {

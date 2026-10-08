@@ -132,10 +132,54 @@ test("force cancels active work and peers while tool parsing excludes hosted pro
   assert.equal(closed, true);
 });
 
-test("workflow identity uses consistent session headers or bounded turn metadata", () => {
+test("workflow identity uses current conversation metadata before compatibility headers", () => {
   assert.equal(switchyardWorkflowIdentity({ "x-session-id": "abc" }), "session:abc");
   assert.equal(switchyardWorkflowIdentity({
     "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-1" }),
-  }), "turn:thread-1");
+  }), "thread:thread-1");
+  for (const cache of ["cache-a", "cache-b"]) {
+    assert.equal(switchyardWorkflowIdentity({ "session-id": cache, "thread-id": "old-thread" }, {
+      thread_id: "thread-1", session_id: "current-session",
+    }), "thread:thread-1");
+    assert.equal(switchyardWorkflowIdentity({ "session-id": cache }, {
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-1", session_id: "current-session" }),
+    }), "thread:thread-1");
+  }
+  assert.equal(switchyardWorkflowIdentity({}, { thread_id: "thread-1" }), "thread:thread-1");
+  assert.equal(switchyardWorkflowIdentity({ "session-id": "cache" }, { session_id: "session-1" }), "session:session-1");
+  assert.equal(switchyardWorkflowIdentity({ "thread-id": "thread-1", "session-id": "cache" }), "thread:thread-1");
+  assert.equal(switchyardWorkflowIdentity({ "x-codex-turn-metadata": '{"session_id":"session-1"}' }), "session:session-1");
   assert.equal(switchyardWorkflowIdentity({ "session-id": "a", "x-session-id": "b" }), undefined);
+  for (const metadata of [{ thread_id: null, session_id: "valid" }, { thread_id: "" }, { session_id: 42 }]) {
+    assert.equal(switchyardWorkflowIdentity({ "session-id": "fallback" }, metadata), undefined);
+  }
+  for (const encoded of ['{"thread_id":"a","thread_id":"b"}', '[]', '{', JSON.stringify({ thread_id: "x".repeat(8192) })]) {
+    assert.equal(switchyardWorkflowIdentity({ "session-id": "fallback", "x-codex-turn-metadata": encoded }), undefined);
+  }
+  assert.equal(switchyardWorkflowIdentity({ "session-id": "fallback", "x-session-id": [] }), undefined);
+});
+
+test("completed model switches only reconcile matching existing workflows and retain next tools", async () => {
+  const admission = new RouterAdmission();
+  admission.recordSwitchyardWorkflow({ identity: "thread:other", produced: ["independent-native-tool"], existingOnly: true });
+  admission.recordSwitchyardWorkflow({ consumed: ["unknown"], complete: false, existingOnly: true });
+  assert.equal(admission.status().workflows, 0);
+  assert.equal(admission.status().indeterminateWorkflow, false);
+  admission.recordSwitchyardWorkflow({ identity: "thread:one", produced: ["call-1"] });
+  for (const update of [
+    { identity: "thread:other", consumed: ["call-1"] },
+    { consumed: ["call-1"] },
+    { identity: "thread:one", consumed: ["wrong-call"] },
+    { identity: "thread:one", consumed: ["call-1"], complete: false },
+  ]) {
+    admission.recordSwitchyardWorkflow({ ...update, existingOnly: true });
+    assert.equal(admission.status().workflowCalls, 1);
+    assert.equal((await admission.drain()).status, "deferred");
+  }
+  admission.recordSwitchyardWorkflow({ identity: "thread:one", consumed: ["call-1"], produced: ["call-2"], existingOnly: true });
+  assert.equal(admission.status().workflowCalls, 1);
+  assert.equal((await admission.drain()).status, "deferred");
+  admission.recordSwitchyardWorkflow({ identity: "thread:one", consumed: ["call-2"], existingOnly: true });
+  assert.equal(admission.status().workflowCalls, 0);
+  assert.equal((await admission.drain()).status, "drained");
 });

@@ -58,6 +58,12 @@ the managed Router caller capability; follow its
 The separate per-generation Switchyard hop capability must not be written there.
 Treat the full managed loopback URL as sensitive.
 
+Private request timing logs may carry domain-separated SHA-256 digests of native
+thread and routing-session UUIDs for certification attribution. These values are
+local correlation metadata, not authentication. Raw UUIDs and digest fields are
+omitted from published certification evidence; the projection adds no upstream
+headers or payload fields.
+
 Do not expose a listener on `0.0.0.0`, tunnel it, or place it on a shared network. Loopback capabilities do not protect against malicious code already running as the same Windows user.
 
 Report vulnerabilities through [GitHub Private Vulnerability Reporting](https://github.com/stevennitesh/codex-router-lite/security/advisories/new). Do not include secrets, full prompts, response bodies, or unredacted logs in a public issue.

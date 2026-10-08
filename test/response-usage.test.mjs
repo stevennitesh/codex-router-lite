@@ -25,6 +25,28 @@ function* fragmented(bytes, size = 64) {
   for (let offset = 0; offset < bytes.length; offset += size) yield bytes.subarray(offset, offset + size);
 }
 
+test("usage and produced tool output survive BOM and every SSE line ending", async () => {
+  const tool = { type: "function_call", id: "fc_framing", call_id: "call_framing", name: "inspect", arguments: "{}" };
+  const completed = { type: "response.completed", response: { id: "resp_framing", status: "completed", output: [],
+    usage: { input_tokens: 0, output_tokens: 3, total_tokens: 3 } } };
+  for (const [line, blank] of [["\n", "\n"], ["\r\n", "\r\n"], ["\n", "\r\n"], ["\r", "\r"]]) {
+    const encode = event => `data: ${JSON.stringify(event)}${line}${blank}`;
+    for (const bom of ["", "\uFEFF"]) for (const rewrite of [false, true]) {
+      const prefix = bom + encode({ type: "response.output_item.done", item: tool });
+      const wire = Buffer.from(prefix + encode(completed));
+      for (const chunks of [[wire], fragmented(wire, 1)]) {
+        const { body, transform } = await run(chunks, rewrite ? { estimatedInputTokens: 42 } : {});
+        const expected = rewrite ? Buffer.from(prefix + encode({ ...completed, response: { ...completed.response,
+          usage: { input_tokens: 42, output_tokens: 3, total_tokens: 45 } } })) : wire;
+        assert.deepEqual(body, expected);
+        assert.deepEqual(transform.reportedTokenUsage(), { inputTokens: 0, outputTokens: 3 });
+        assert.equal(transform.completedResponseObserved(), true);
+        assert.deepEqual(transform.responseOutputObservation(), { complete: true, output: [tool] });
+      }
+    }
+  }
+});
+
 for (const mode of ["observe", "rewrite"]) {
 test(`fragmented large usage ${mode} retains observations with linear capture work`, async () => {
   const payload = {

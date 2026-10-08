@@ -197,6 +197,13 @@ settle, including nested Switchyard callbacks. An outstanding Switchyard tool
 workflow also defers normal replacement between requests; zero active sockets
 does not prove that the workflow finished.
 
+Completed tool results retire the matching workflow even when the caller switches
+to a native GPT or another external model, through HTTP or native WebSocket.
+New tool calls keep that workflow pending. Current per-request thread/session
+metadata identifies the conversation before compatibility headers; a changing
+cache-affinity header does not create a different workflow. Failed, partial,
+unidentified or unrelated continuations cannot clear outstanding work.
+
 A timeout or workflow conflict restores admission and leaves the running generation
 unchanged. A live older generation without drain support also defers normal
 replacement. Settle the active work before retrying. Only an explicit operator

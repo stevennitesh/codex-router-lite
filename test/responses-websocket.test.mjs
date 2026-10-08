@@ -297,8 +297,8 @@ test("WebSocket turns an unterminated internal stream into one stated failure", 
   assert.equal(events[1].error.type, "local_router_stream_failed");
 });
 
-for (const ending of ["\n", ""]) {
-  test(`WebSocket discards a completion at EOF with ${ending ? "one newline" : "no delimiter"}`, async () => {
+for (const ending of ["\n", "\r", "\r\n", ""]) {
+  test(`WebSocket discards a completion at EOF with ${ending ? JSON.stringify(ending) : "no delimiter"}`, async () => {
     let fetches = 0;
     const socket = openPeer(async () => {
       fetches += 1;
@@ -317,7 +317,7 @@ for (const ending of ["\n", ""]) {
   });
 }
 
-for (const delimiter of ["\n\n", "\r\n\r\n"]) {
+for (const delimiter of ["\n\n", "\r\n\r\n", "\n\r\n", "\r\r"]) {
   test(`WebSocket accepts a completion with ${JSON.stringify(delimiter)} framing`, async () => {
     const { events } = await exchange(async () => new Response(
       `data: {"type":"response.completed","response":{"id":"resp_complete","status":"completed","output":[]}}${delimiter}`,
@@ -326,6 +326,20 @@ for (const delimiter of ["\n\n", "\r\n\r\n"]) {
     assert.deepEqual(events.map(event => event.type), ["response.completed"]);
   });
 }
+
+test("WebSocket parses BOM, comments and multiline data across alternate line endings", async () => {
+  for (const [line, blank] of [["\n", "\r\n"], ["\r\n", "\r\n"], ["\r", "\r"]]) {
+    const raw = '{"type":"response.completed",\n"response":{"id":"resp_multiline","status":"completed","output":[]}}';
+    const wire = Buffer.from(`\uFEFF: keepalive${line}${blank}${raw.split("\n").map(part => `data: ${part}`).join(line)}${line}${blank}`);
+    const { events } = await exchange(async () => new Response(new ReadableStream({
+      start(controller) {
+        for (const byte of wire) controller.enqueue(Buffer.from([byte]));
+        controller.close();
+      },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    assert.deepEqual(events, [JSON.parse(raw)]);
+  }
+});
 
 test("WebSocket SSE limits are independent of network chunk partitioning", async () => {
   const body = [

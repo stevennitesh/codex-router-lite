@@ -52,9 +52,21 @@ of discovering them only after its budget has expired.
 
 Do not raise the timeout merely to hide a persistently unreachable network
 path. Check DNS, proxy selection, local interface/routing, and whether the same
-origin is reachable outside Router. Slow HTTP failures such as an upstream 504
-remain subject to the retry budget and are not multiplied simply because TCP
-connects are bounded.
+origin is reachable outside Router. Inference POSTs retry only conclusive
+connection failures. Socket resets, header timeouts and HTTP 5xx are returned
+without automatic replay: the upstream may already have accepted the request.
+The retry budget and caller permission are checked again after backoff and
+cleanup, before an extra dispatch. Images retain their no-retry policy.
+
+## Provider errors wait without completing
+
+Router collects routed error diagnostics for at most one second by default,
+independently of the long generation deadline. A timeout, oversized body or
+broken stream discards the diagnostics and preserves the known HTTP status and
+Retry-After guidance. `CODEX_ROUTER_ERROR_BODY_TIMEOUT_MS` may adjust this
+collection limit from 50 ms through 10 seconds. Successful reasoning and SSE
+requests keep their existing execution budget. Caller cancellation or a shorter
+execution deadline still ends the request first.
 
 ## GLM fails
 
@@ -176,6 +188,17 @@ While Router is running, a duplicate heartbeat launch may set Task Scheduler's
 last result to `0x800710E0`. This means Windows rejected the duplicate task
 instance. Confirm Router health, task state, launcher identity, and the next
 heartbeat time before treating it as a failure.
+
+## Stream progress or pre-content failure
+
+Routed SSE accepts LF, CRLF, mixed endings and bare CR without waiting for the
+next event to expose completed reasoning. Shared framing mechanics live in
+`src/sse-framing.mjs`; namespace restoration keeps its own bounded rewrite policy.
+
+A `precontent_limit` time or byte failure has an unknown inference outcome.
+Router cancels that attempt and returns an explicit failure without another
+POST. Only a known completed-empty turn whose prologue stayed suppressed gets
+one quiet repair. Large prompts retain their scaled prefill allowance.
 
 ## Conversation cuts after restarting Codex
 

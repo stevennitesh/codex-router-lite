@@ -42,6 +42,22 @@ function events(body) {
     .map((data) => JSON.parse(data));
 }
 
+test("phase inference preserves BOM and mixed/CR framing across byte partitions", async () => {
+  const item = { type: "message", role: "assistant", id: "msg_framing", content: [{ type: "output_text", text: "漢🙂" }] };
+  const done = { type: "response.output_item.done", item };
+  const progress = { type: "response.reasoning_summary_text.delta", delta: "thinking" };
+  const completed = { type: "response.completed", response: { status: "completed", output: [item] } };
+  for (const [line, blank] of [["\n", "\r\n"], ["\r\n", "\r\n"], ["\r", "\r"]]) {
+    const encode = event => `event: ${event.type}${line}data: ${JSON.stringify(event)}${line}${blank}`;
+    const wire = `\uFEFF${encode(done)}${encode(progress)}${encode(completed)}`;
+    const labelled = { ...item, phase: "final_answer" };
+    const expected = `\uFEFF${encode({ ...done, item: labelled })}${encode(progress)}${encode({ ...completed, response: { ...completed.response, output: [labelled] } })}`;
+    for (const chunkSize of [0, 1, 7]) {
+      assert.equal((await label(wire, { chunkSize })).toString("utf8"), expected);
+    }
+  }
+});
+
 const message = (id, text, extra = {}) => ({
   id,
   type: "message",

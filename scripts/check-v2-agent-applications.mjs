@@ -121,6 +121,7 @@ function checkRouteBinding(proof, location, route) {
     !binding ||
     !GIT_COMMIT.test(binding.upstreamCommit) ||
     !GIT_COMMIT.test(binding.upstreamContributionCommit) ||
+    typeof binding.routerCommit !== "string" ||
     !GIT_COMMIT.test(binding.routerCommit) ||
     !SHA256.test(binding.upstreamContributionSha256) ||
     !SHA256.test(binding.patchSha256) ||
@@ -132,6 +133,9 @@ function checkRouteBinding(proof, location, route) {
     fail(
       `${location}: accepted Switchyard proof must bind upstream, its reviewed contribution, the compatibility patch, binary, Router, template, and generated routes`,
     );
+  }
+  if (binding.routerCommit.toLowerCase() !== proof.routerCommit.toLowerCase()) {
+    fail(`${location}: runtimeBinding.routerCommit must match routerCommit`);
   }
   if (
     binding.upstreamCommit.toLowerCase() !== String(sourceLock.commit).toLowerCase() ||
@@ -181,6 +185,9 @@ function checkAcceptedProof(proof, location, models) {
   }
   if (typeof proof.routerVersion !== "string" || !proof.routerVersion.trim()) {
     fail(`${location}: accepted applications need routerVersion`);
+  }
+  if (typeof proof.routerCommit !== "string" || !GIT_COMMIT.test(proof.routerCommit)) {
+    fail(`${location}: accepted applications need routerCommit as a 40-character hexadecimal string`);
   }
   if (typeof proof.codexVersion !== "string" || !proof.codexVersion.trim()) {
     fail(`${location}: accepted applications need codexVersion`);

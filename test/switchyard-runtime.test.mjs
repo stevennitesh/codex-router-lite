@@ -225,6 +225,7 @@ test("Switchyard accepted proof rejects changed patch and canonical template sou
   proof.runtimeBinding.patchSha256 = lock.patchSha256;
   proof.runtimeBinding.binarySha256 = "a".repeat(64);
   proof.runtimeBinding.routerCommit = "a".repeat(40);
+  proof.routerCommit = proof.runtimeBinding.routerCommit;
   proof.runtimeBinding.routesSha256 = "a".repeat(64);
   proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
     path.join(configRoot, "routes.template.toml"),

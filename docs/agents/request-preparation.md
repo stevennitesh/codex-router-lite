@@ -39,6 +39,14 @@ surface, resolves discovery history, translates names and choices, applies the
 selected route's custom-history and parameter rules, and chooses the transport.
 Response restoration uses the returned namespace context, not a rebuilt map.
 
+Ordinary function arguments remain raw JSON strings during identity restoration.
+Validation checks syntax and duplicate keys without requiring numeric tokens to
+fit JavaScript `Number`. Integer spelling repair also operates on raw tokens,
+so a u64 value or a high-precision fraction is not rounded. Parsing arguments for
+app-model injection, spawn-model sanitation, custom-tool conversion or tool
+search keeps the stricter numeric precision check; a lossy object edit stays
+unapplied. The outer response envelope still requires safe parse/serialization.
+
 `src/tool-schema-root.mjs` owns provider-facing schema normalization for current
 and discovered function declarations, including client tool search. It aligns
 contradictory enum/const literals with their own declared type and makes eligible

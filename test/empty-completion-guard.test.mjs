@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { Readable } from "node:stream";
 import {
   EmptyCompletionGuard,
@@ -28,24 +29,82 @@ test("pre-content budget grows with prompt size without shrinking the configured
 
 test("paired guards classify named and data-only completions identically across chunk layouts", async () => {
   for (const named of [true, false]) for (const mode of ["empty", "reasoning", "answer"])
-    for (const done of [true, false]) for (const layout of ["whole", "events", "bytes"]) {
-      const encode = data => `${named ? `event: ${data.type}\n` : ""}data: ${JSON.stringify(data)}\n\n`;
+    for (const done of [true, false]) for (const layout of ["whole", "events", "bytes"])
+      for (const [lineEnding, blankEnding] of [["\n", "\n"], ["\r\n", "\r\n"], ["\n", "\r\n"], ["\r", "\r"]]) {
+      const encode = data => `${named ? `event: ${data.type}${lineEnding}` : ""}data: ${JSON.stringify(data)}${lineEnding}${blankEnding}`;
       const events = [];
       if (mode === "reasoning") events.push(encode({ type: "response.reasoning_summary_text.delta", delta: "thinking" }));
       events.push(encode({ type: "response.completed", response: { status: "completed", output: mode === "answer" ? [
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] },
       ] : [] } }));
-      if (done) events.push("data: [DONE]\n\n");
+      if (done) events.push(`data: [DONE]${lineEnding}${blankEnding}`);
       const wire = events.join("");
       const chunks = layout === "whole" ? [wire] : layout === "events" ? events : [...Buffer.from(wire)].map(b => Buffer.from([b]));
       const guard = new EmptyCompletionGuard("text/event-stream");
       let output = "";
       for await (const chunk of Readable.from(chunks).pipe(guard)
         .pipe(new EmptyCompletionTerminalGuard(guard, "text/event-stream"))) output += chunk;
-      const label = JSON.stringify({ named, mode, done, layout });
+      const label = JSON.stringify({ named, mode, done, layout, lineEnding, blankEnding });
       assert.equal(guard.isEmpty(), mode !== "answer", label);
       assert.equal(output, mode === "answer" ? wire : mode === "reasoning" ? events[0] : "", label);
     }
+});
+
+test("paired guards release BOM/comment/multiline reasoning before a later empty terminal", async () => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    const guard = new EmptyCompletionGuard("text/event-stream");
+    const terminal = new EmptyCompletionTerminalGuard(guard, "text/event-stream");
+    const chunks = [];
+    terminal.on("data", chunk => chunks.push(chunk));
+    guard.pipe(terminal);
+    const prologue = `\uFEFF: keepalive${ending}${ending}`;
+    const reasoning = `data: {"type":"response.reasoning_summary_text.delta",${ending}data: "delta":"漢🙂"}${ending}${ending}`;
+    const wire = prologue + reasoning;
+    for (const byte of Buffer.from(wire)) guard.write(Buffer.from([byte]));
+    assert.equal(Buffer.concat(chunks).toString("utf8"), wire, "progress must be visible before terminal/EOF");
+    assert.equal(guard.releasedForLiveness(), true);
+    assert.equal(guard.hasContent(), false);
+    const finished = once(terminal, "end");
+    for (const byte of Buffer.from(`data: {"type":"response.completed","response":{"status":"completed","output":[]}}${ending}${ending}`)) {
+      guard.write(Buffer.from([byte]));
+    }
+    guard.end();
+    await finished;
+    assert.equal(guard.isEmpty(), true);
+    assert.equal(guard.suppressedPrologue(), false);
+    assert.equal(Buffer.concat(chunks).toString("utf8"), wire, "held success and split CRLF tail must not escape");
+  }
+});
+
+test("large fragmented guard preludes retain exact output with bounded copy and measurement work", async () => {
+  const prefix = Buffer.from(`data: ${JSON.stringify({ type: "response.created", response: { metadata: { padding: "x".repeat(1_100_000) } } })}\n\n`);
+  const completed = Buffer.from('data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","name":"inspect","arguments":"{}"}]}}\n\n');
+  const guard = new EmptyCompletionGuard("text/event-stream");
+  const terminal = new EmptyCompletionTerminalGuard(guard, "text/event-stream");
+  const output = [];
+  terminal.on("data", chunk => output.push(chunk));
+  guard.pipe(terminal);
+  const finished = once(terminal, "end");
+  const concat = Buffer.concat, byteLength = Buffer.byteLength;
+  let copied = 0, measured = 0;
+  Buffer.concat = (parts, size) => {
+    copied += size ?? parts.reduce((sum, part) => sum + part.length, 0);
+    return concat(parts, size);
+  };
+  Buffer.byteLength = (value, ...args) => {
+    if (typeof value === "string") measured += value.length;
+    return byteLength(value, ...args);
+  };
+  try {
+    for (let offset = 0; offset < prefix.length; offset += 1024) guard.write(prefix.subarray(offset, offset + 1024));
+    guard.end(completed);
+    await finished;
+  } finally { Buffer.concat = concat; Buffer.byteLength = byteLength; }
+  assert.ok(copied < prefix.length * 5, "must not concatenate the entire unfinished prefix on every fragment");
+  assert.ok(measured < prefix.length * 5, "must not recount the entire unfinished prefix on every fragment");
+  assert.deepEqual(Buffer.concat(output), Buffer.concat([prefix, completed]));
+  assert.equal(guard.hasContent(), true);
+  assert.equal(guard.isEmpty(), false);
 });
 
 test("generic provider SSE errors retain diagnostics instead of triggering empty-success retry", async () => {

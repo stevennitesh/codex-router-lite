@@ -1222,6 +1222,25 @@ test("relay extraction requires one completed final call and caches only success
       };
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.end(`: heartbeat\r\n\r\nevent: ping\r\n\r\ndata:\r\n\r\ndata: ${JSON.stringify(completed)}\r\n\r\ndata: [DONE]\r\n\r\n`);
+    } else if (token.startsWith("gAAAAA-framing-")) {
+      const mode = token.slice("gAAAAA-framing-".length, -1);
+      const ending = mode.includes("cr") ? "\r" : "\n";
+      const completed = { type: "response.completed", response: { status: "completed", output: [call] } };
+      const eventFields = mode === "conflict" ? ["response.failed"]
+        : mode === "repeat-conflict" ? ["response.completed", "response.failed"]
+        : mode === "repeat-valid" ? ["response.failed", "response.completed"]
+        : mode === "message" ? ["message"] : [completed.type];
+      const eventHeader = eventFields.map(name => `event: ${name}${ending}`).join("");
+      const data = mode === "multiline-cr" ? JSON.stringify(completed, null, 2)
+        .split("\n").map(line => `data: ${line}`).join(ending) : `data: ${JSON.stringify(completed)}`;
+      let wire = `${eventHeader}${data}${ending}${ending}`;
+      if (mode === "mixed-cr") wire = `: heartbeat\r\n\r\n${wire}data: [DONE]\n\n`;
+      if (mode === "bom") wire = `\uFEFF${wire}`;
+      if (mode === "unterminated-cr") wire = wire.slice(0, -1);
+      if (mode === "failed-done") wire += "event: response.failed\ndata: [DONE]\n\n";
+      if (mode === "trailing-error-cr") wire += 'event: error\rdata: {"type":"error"}\r\r';
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      response.end(wire);
     } else if (token === "gAAAAA-invalid-utf8-json=") {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(Buffer.concat([
@@ -1379,6 +1398,11 @@ test("relay extraction requires one completed final call and caches only success
       "gAAAAA-lite-failed=",
       "gAAAAA-lite-incomplete=",
       "gAAAAA-lite-duplicate=",
+      "gAAAAA-framing-conflict=",
+      "gAAAAA-framing-repeat-conflict=",
+      "gAAAAA-framing-unterminated-cr=",
+      "gAAAAA-framing-failed-done=",
+      "gAAAAA-framing-trailing-error-cr=",
     ]) {
       const before = gatewayRequests.length;
       const response = await send(token);
@@ -1386,21 +1410,30 @@ test("relay extraction requires one completed final call and caches only success
       assert.equal(gatewayRequests.length, before, `${token} reached the external provider`);
     }
 
+    const conflict = "gAAAAA-framing-conflict=";
+    const rejectedAgain = await send(conflict);
+    assert.equal(rejectedAgain.status, 502);
+    assert.equal(attempts.get(conflict), 2, "a conflicting event must not populate the success cache");
+    assert.equal(gatewayRequests.length, 0);
+
     for (const [token, expected] of [
       ["gAAAAA-unicode-json=", 'Unicode: café 🌍\n"quoted"'],
       ["gAAAAA-comment-crlf-sse=", "CRLF_KEEPALIVE_OK"],
       ["gAAAAA-lite-completed=", "payload:gAAAAA-lite-completed="],
+      ...["cr", "mixed-cr", "multiline-cr", "bom", "message", "repeat-valid"]
+        .map(mode => [`gAAAAA-framing-${mode}=`, `payload:gAAAAA-framing-${mode}=`]),
     ]) {
       const response = await send(token);
       assert.equal(response.status, 200, await response.text());
       assert.equal(gatewayRequests.at(-1).input[0].content.at(-1).text, expected);
     }
 
+    const forwarded = gatewayRequests.length;
     const token = "gAAAAA-failure-then-success=";
     const failed = await send(token);
     assert.equal(failed.status, 502);
     assert.equal(attempts.get(token), 1);
-    assert.equal(gatewayRequests.length, 3);
+    assert.equal(gatewayRequests.length, forwarded);
     const succeeded = await send(token);
     assert.equal(succeeded.status, 200, await succeeded.text());
     assert.equal(attempts.get(token), 2, "failed extraction must not populate the cache");
@@ -1408,7 +1441,7 @@ test("relay extraction requires one completed final call and caches only success
     const cached = await send(token);
     assert.equal(cached.status, 200, await cached.text());
     assert.equal(attempts.get(token), 2, "completed extraction should be reused");
-    assert.equal(gatewayRequests.length, 5);
+    assert.equal(gatewayRequests.length, forwarded + 2);
   } finally {
     await stopChild(router);
     await Promise.all([closeServer(native.server), closeServer(gateway.server)]);

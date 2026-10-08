@@ -73,6 +73,10 @@ function nativeToolKey(namespace, name) {
   return JSON.stringify([namespace ?? null, name]);
 }
 
+function isUnqualifiedNamespace(namespace) {
+  return namespace == null;
+}
+
 function boundedNameCandidate(wireName, identity, maxNameLength, attempt) {
   const digest = createHash("sha256")
     .update(`${identity}\0${attempt}`)
@@ -498,6 +502,9 @@ const APP_NAMESPACES = ["mcp__codex_app", "codex_app"];
 
 function isSpawnModelCall(item) {
   if (!item || typeof item.name !== "string") return false;
+  if (!isUnqualifiedNamespace(item.namespace)) {
+    return APP_NAMESPACES.includes(item.namespace) && SPAWN_MODEL_TOOLS.has(item.name);
+  }
   // Flattened form the router sends to chat-completions bridges:
   // `codex_app__create_thread`.
   for (const namespace of APP_NAMESPACES) {
@@ -506,9 +513,6 @@ function isSpawnModelCall(item) {
       return SPAWN_MODEL_TOOLS.has(item.name.slice(prefix.length));
     }
   }
-  // Native namespace form openai-responses providers keep:
-  // `{ name: "create_thread", namespace: "codex_app" }`.
-  if (APP_NAMESPACES.includes(item.namespace)) return SPAWN_MODEL_TOOLS.has(item.name);
   return false;
 }
 
@@ -818,10 +822,14 @@ export function jsonIsUnambiguousForRewrite(text, { allowLossyNumbers = false } 
   }
 }
 
-function jsonArgumentsAreUnambiguous(value, { allowEmpty = false } = {}) {
+function jsonArgumentsAreUnambiguous(value, {
+  allowEmpty = false, preserveNumberTokens = false,
+} = {}) {
   if (typeof value !== "string") return true;
   if (allowEmpty && value.trim() === "") return true;
-  return jsonIsUnambiguousForRewrite(value);
+  // Raw argument strings and exact token-spelling edits do not serialize
+  // parsed Number values. Object-based edits retain the stricter default.
+  return jsonIsUnambiguousForRewrite(value, { allowLossyNumbers: preserveNumberTokens });
 }
 
 // Repair the parameter roots needed by the GLM bridge. An ordinary root keeps
@@ -1544,17 +1552,16 @@ export function flattenNamespacedHistory(input, namespaces) {
     // native name but a different provider alias; object identity keeps the two
     // histories distinct after both have become ordinary function calls.
     if (SPECIAL_FUNCTION_REFERENCES.has(item)) return item;
+    if (!isUnqualifiedNamespace(namespace)) return item;
     // A plain native function may have the exact spelling a namespace child
     // would normally flatten to (for example plain `a__b` beside namespace
     // `a` / child `b`). Both definitions receive collision aliases. Resolve
     // the exact plain identity before treating that spelling as a raw
     // namespace wire name, or stored plain history would cite neither alias.
-    const plainProviderName =
-      namespace === undefined
-        ? nameRelay?.nativeToProvider.get(nativeToolKey(undefined, name))
-        : undefined;
+    const plainProviderName = nameRelay?.nativeToProvider.get(nativeToolKey(undefined, name));
     if (plainProviderName && plainProviderName !== name) {
-      return { ...item, name: plainProviderName };
+      const { namespace: _namespace, ...rest } = item;
+      return { ...rest, name: plainProviderName };
     }
     // Provider-visible plain and special-relay names take precedence only when
     // history carries no valid native namespace or exact aliased plain identity.
@@ -1566,15 +1573,12 @@ export function flattenNamespacedHistory(input, namespaces) {
       const providerName = providerNameForWire(namespaces, name);
       return providerName && providerName !== name ? { ...item, name: providerName } : item;
     }
-    // Calls stored without a namespace field whose bare name belongs to
-    // exactly one flattened namespace.
-    if (namespace === undefined) {
-      const owners = bareOwners.get(name);
-      if (owners && owners.size === 1) {
-        const [owner] = [...owners];
-        const { namespace: _namespace, ...rest } = item;
-        return { ...rest, name: providerNameForNative(namespaces, owner, name) };
-      }
+    // Unqualified calls whose bare name belongs to exactly one namespace.
+    const owners = bareOwners.get(name);
+    if (owners && owners.size === 1) {
+      const [owner] = [...owners];
+      const { namespace: _namespace, ...rest } = item;
+      return { ...rest, name: providerNameForNative(namespaces, owner, name) };
     }
     return item;
   });
@@ -1698,7 +1702,7 @@ function sanitizeSpawnAgentModel(item, lookups) {
 // rather than guessing which runtime owns it.
 function rewriteFunctionCallArguments(item) {
   if (!item || typeof item !== "object") return item;
-  if (!jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true })) return item;
+  if (!jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true, preserveNumberTokens: true })) return item;
   const argumentsText = coerceFunctionCallArguments(item.arguments);
   if (argumentsText === item.arguments) return item;
   return { ...item, arguments: argumentsText };
@@ -1723,7 +1727,7 @@ function rewriteToolSearchFunctionCallItem(item, lookups, allowPlaceholder) {
     !relay ||
     item?.type !== "function_call" ||
     item.name !== relay.providerName ||
-    item.namespace != null ||
+    !isUnqualifiedNamespace(item.namespace) ||
     typeof item.call_id !== "string" ||
     !item.call_id
   ) {
@@ -1789,7 +1793,7 @@ function litellmCustomToolInput(argumentsText) {
 function rewriteCustomToolFunctionCallItem(item, lookups, allowPlaceholder) {
   if (
     item?.type !== "function_call" ||
-    item.namespace != null ||
+    !isUnqualifiedNamespace(item.namespace) ||
     !(lookups.customTools instanceof Map)
   ) {
     return undefined;
@@ -1821,10 +1825,10 @@ function rewriteNamespaceFunctionCallItem(
   { allowIncompleteToolSearch = false } = {},
 ) {
   if (!item || item.type !== "function_call") return undefined;
-  if (!jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true })) return undefined;
+  if (!jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true, preserveNumberTokens: true })) return undefined;
   const exactPlainProviderIdentity =
     lookups.identityAliases &&
-    item.namespace === undefined &&
+    isUnqualifiedNamespace(item.namespace) &&
     lookups.plainToolNames?.has(item.name);
   const customTool = rewriteCustomToolFunctionCallItem(
     item,
@@ -1839,7 +1843,8 @@ function rewriteNamespaceFunctionCallItem(
   );
   if (toolSearch) return toolSearch;
   let rewritten = item;
-  const resolved = lookups.flatToNative.get(item.name);
+  const resolved = isUnqualifiedNamespace(item.namespace)
+    ? lookups.flatToNative.get(item.name) : undefined;
   if (resolved) {
     const { namespace: _providerNamespace, ...rest } = item;
     rewritten = resolved.namespace === undefined
@@ -1848,7 +1853,7 @@ function rewriteNamespaceFunctionCallItem(
   } else {
     const owners = lookups.bareToNamespaces.get(item.name);
     if (
-      item.namespace === undefined &&
+      isUnqualifiedNamespace(item.namespace) &&
       !lookups.plainToolNames?.has(item.name) &&
       owners &&
       owners.size === 1
@@ -1894,12 +1899,12 @@ function rewriteOutputItems(output, lookups, sessionModel) {
 function embeddedFunctionArgumentsAreUnambiguous(payload, rawCustomArguments = false) {
   const safeItem = (item) =>
     item?.type !== "function_call" ||
-    jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true });
+    jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true, preserveNumberTokens: true });
   if (!safeItem(payload?.item)) return false;
   if (
     payload?.type === "response.function_call_arguments.done" &&
     !rawCustomArguments &&
-    !jsonArgumentsAreUnambiguous(payload.arguments, { allowEmpty: true })
+    !jsonArgumentsAreUnambiguous(payload.arguments, { allowEmpty: true, preserveNumberTokens: true })
   ) {
     return false;
   }
@@ -1955,7 +1960,7 @@ export function rewriteNamespaceResponsePayload(
 
   if (payload.type === "response.function_call_arguments.done") {
     const argumentsText = jsonArgumentsAreUnambiguous(rewritten.arguments, {
-      allowEmpty: true,
+      allowEmpty: true, preserveNumberTokens: true,
     })
       ? coerceFunctionCallArguments(rewritten.arguments)
       : rewritten.arguments;
@@ -2108,6 +2113,7 @@ export class NamespaceToolCallTransform extends Transform {
   #sseLineBytes = 0;
   #ssePendingCr = false;
   #ssePendingLineWasBlank = false;
+  #sseSkipLfAfterFrame = false;
   #sseAtStreamStart = true;
   #sseLineEnding = "\n";
   #sseLineEndingObserved = false;
@@ -2338,6 +2344,15 @@ export class NamespaceToolCallTransform extends Transform {
 
   #consumeSseChunk(chunk) {
     let offset = 0;
+    if (this.#sseSkipLfAfterFrame && chunk.length) {
+      this.#sseSkipLfAfterFrame = false;
+      if (chunk[0] === LINE_FEED) {
+        // The preceding blank CR already dispatched its frame. Preserve the
+        // second half of a split CRLF without inventing another blank line.
+        this.push(chunk.subarray(0, 1));
+        offset = 1;
+      }
+    }
     if (this.#ssePendingCr) {
       const followedByLf = chunk[0] === LINE_FEED;
       if (followedByLf) {
@@ -2389,6 +2404,13 @@ export class NamespaceToolCallTransform extends Transform {
           return;
         }
         if (lineEnd + 1 === chunk.length) {
+          if (blankLine) {
+            // Bare CR completes a blank line now. Waiting for another chunk
+            // would hide a complete reasoning event until later output/EOF.
+            this.#completeSseLine(true);
+            this.#sseSkipLfAfterFrame = true;
+            return;
+          }
           this.#ssePendingCr = true;
           this.#ssePendingLineWasBlank = blankLine;
           this.#sseLineBytes = 0;

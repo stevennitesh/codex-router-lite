@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { summarizeSwitchyardCertificationEvidence } from "../src/switchyard-certification-evidence.mjs";
@@ -39,4 +40,32 @@ test("certification evidence is bounded and fails closed without a generation", 
     () => summarizeSwitchyardCertificationEvidence({ routerLog: "", limit: 101 }),
     /integer from 1 to 100/u,
   );
+});
+
+test("child selection excludes foreign Switchyard failures without hiding its own failures", () => {
+  const thread = "019a0780-0000-7000-8000-000000000001", session = "019a0780-0000-7000-8000-000000000003";
+  const foreign = "019a0780-0000-7000-8000-000000000002";
+  const hash = (kind,value) => createHash("sha256").update(`codex-router/${kind}/v1\0${value}`).digest("hex");
+  const at = second => `2026-10-07T12:00:${String(second).padStart(2,"0")}.000Z`;
+  const timing = (second,id,sessionId,status=200) => `[codex-router] timing at=${at(second)} model=switchyard/auto provider=switchyard status=${status} total_ms=10 thread_sha256=${hash("thread",id)} session_sha256=${hash("session",sessionId)}`;
+  const input = {child:{threadId:thread,startedAt:at(1),endedAt:at(12)},
+    routerLog:["Switchyard libsy server",`${at(2)} INFO selected_model="switchyard/sol-medium" agent_id="${thread}"`,
+      ...[3,4,10].map(second => timing(second,thread,session)),
+      ...[0,3,8,16].map(second => timing(second,foreign,foreign,429)),
+      `${at(5)} WARN judge verdict unavailable; falling back; parse error agent_id="${foreign}"`].join("\n"),
+    routingLog:[...[3,4,10].map(second => JSON.stringify({ts:at(second).replace(".000Z",".000001Z"),session_id:session,model:"switchyard/sol-medium"})),
+      JSON.stringify({ts:at(8),session_id:foreign,model:"switchyard/astra-xhigh"})].join("\n")};
+  const summary = summarizeSwitchyardCertificationEvidence(input);
+  assert.equal(summary.attributed,true); assert.equal(summary.router.total,3); assert.equal(summary.routing.total,3);
+  assert.equal(summary.routing.uniqueSessions,1);
+  assert.ok(Object.values(summary.failures).every(value => value === 0));
+  for (const value of [thread,session,foreign,hash("thread",thread),hash("session",session)]) assert.ok(!JSON.stringify(summary).includes(value));
+  const failed = structuredClone(input); failed.routerLog += `\n${at(7)} WARN falling back agent_id="${thread}"`;
+  assert.equal(summarizeSwitchyardCertificationEvidence(failed).failures.fallback,1);
+  for (const mutate of [
+    value => { value.routerLog += "\n" + timing(7,foreign,session); },
+    value => { value.routerLog = value.routerLog.replace(`session_sha256=${hash("session",session)}`,""); },
+    value => { value.routerLog = value.routerLog.replace(`agent_id="${thread}"`,`agent_id="${foreign}"`); },
+  ]) { const invalid = structuredClone(input); mutate(invalid); assert.equal(summarizeSwitchyardCertificationEvidence(invalid).attributed,false); }
+  assert.equal(summarizeSwitchyardCertificationEvidence({...input,routingLog:""}).routing.total,0);
 });

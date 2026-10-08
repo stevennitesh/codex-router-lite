@@ -36,6 +36,11 @@ authority. The Markdown file records reviewer-facing evidence and limitations.
 `scripts/check-v2-agent-applications.mjs` validates both files and rejects a v2
 declaration without an accepted exact-route application.
 
+Accepted proofs require a 40-character hexadecimal `routerCommit`. Switchyard's
+`runtimeBinding.routerCommit` must identify the same commit. Historical proofs
+retain their tested revision; it need not equal current HEAD or the current
+installation. Draft templates may leave this field blank.
+
 Catalog publication exposes only exact eligible routes. Runtime observations
 are diagnostics; they do not create or revoke certification.
 
@@ -58,12 +63,35 @@ Use `--all` only when the affected contract reaches every route. Add
 `--switchyard-smoke` when the Switchyard change needs its additional tool,
 image fallback and compaction checks; include `switchyard/auto` in that scope.
 
-The runner performs batch preflight once, observes separate bounded SSE requests,
-runs one native parent sequence, and uses the maintained extractor. It creates
-complete redacted `drafts.json` and readable applications under `review/v2_agent`
-in the private run directory. A failed or partial run produces no accepted proof.
-It does not retry a failed route. Raw journals, manifests and session identifiers
-stay local. Review the drafts and official sources, then publish with:
+The runner reads shared preflight state once and records each route's blockers.
+It makes one bounded SSE request per ready route, then runs one native parent
+sequence for routes whose streaming passed. A route refusal does not discard
+other complete observations. Authentication refusals and known Router
+unavailability stop further attempts. Shared parent or runtime invalidity rejects
+the run. The runner does not retry a failed route or substitute an endpoint.
+
+`result.json` records each route's status, phase, safe failure code and observed
+HTTP status where available. Running snapshots also retain successful streaming
+metadata; raw provider bodies and arbitrary exception messages are excluded.
+Native request timings must carry the child's hashed thread identity. Unrelated
+same-route requests do not contribute to its count or invalidate its proof.
+Missing attribution, missing child requests and failed child requests remain
+rejected. The hashes stay in private logs and are omitted from draft/public evidence.
+The runner writes complete redacted `drafts.json` and readable applications under
+`review/v2_agent` only for routes that pass all five checks. Optional Switchyard
+smoke failure excludes its route; changed runtime identity rejects the run.
+
+Review artifacts merge the generated sources with previously reviewed sources
+only when the prior accepted application's slug, provider, upstream model and
+endpoint match. Duplicate URLs are removed. These references do not reuse old
+observations or runtime bindings; confirm their applicability during review.
+New or changed routes start with their generated sources. Edit `drafts.json` to
+add or remove references before publication; publication preserves that choice.
+
+The command exits zero for a complete draft. `partial` exits nonzero while
+retaining drafts for the complete subset; `failed` has no publishable draft.
+Inspect `result.json` before rerunning. Review only the emitted complete drafts
+and their official sources, then publish with:
 
 ```powershell
 node maintenance/certification-runner.mjs publish --draft generated/certification-NEW/drafts.json --evidence docs/history/YYYY-MM-DD-certification.json --reviewed
@@ -74,6 +102,17 @@ generates both proof formats and one redacted run record, and restores previous
 files if publication fails. Add the new record to the history/application indexes.
 It does not commit, deploy, change route eligibility, or run more models. The
 manual path below remains available for desktop runs and diagnosis.
+Publishing a complete subset does not certify the omitted routes. After fixing
+an incomplete route, name only that route in a fresh authorized run. Raw journals,
+manifests and session identifiers stay local.
+
+New extraction requires timing logs from the correlated Router writer. Existing
+accepted applications keep their historical meaning; old uncorrelated logs remain
+diagnostic records and cannot produce a fresh draft by model/time matching alone.
+Switchyard extraction selects the child's agent traces and the routing session
+observed on its requests. Missing trace/routing coverage or an ambiguous session
+shared with another observed thread is rejected. The standalone Switchyard evidence
+command remains a whole-generation diagnostic summary.
 
 Start with one read-only readiness check for the exact route, a subset, or all
 registered routes:
@@ -166,6 +205,9 @@ timings, and the installed route binding. Switchyard also requires its locked
 runtime provenance and bounded routing evidence. It reads the supplied records
 and creates a new output file; it does not run models, overwrite evidence, accept
 proof, or change route eligibility.
+This manual extraction command remains strict: any failed named route rejects
+the batch. The maintained runner collects individual outcomes after checking
+the full shared parent and runtime envelope.
 
 The native CLI's empty follow-up acknowledgement is verified through the exact
 target and the observed second encrypted handoff and completed child marker.

@@ -13,6 +13,8 @@ import {
   restorePreflattenedToolNamespaces,
 } from "../src/namespace-relay.mjs";
 import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
+import { prepareRoutedRequest } from "../src/routed-request.mjs";
+import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 
 test("ordinary empty-call diagnostics locate the boundary without inventing arguments or logging content", async () => {
   const flat = flattenNamespaceTools([{ type: "namespace", name: "collaboration", tools: [
@@ -124,6 +126,176 @@ async function collectUntilPipelineError(chunks, transform) {
   assert.ok(error, "the transform should fail after committing semantic output");
   return { output: Buffer.concat(output), error };
 }
+
+async function restoreCompletedCall(prepared, call, stream, model) {
+  const events = [
+    { type: "response.output_item.added", item: { ...call, arguments: "" } },
+    { type: "response.function_call_arguments.delta", item_id: call.id, delta: call.arguments },
+    { type: "response.function_call_arguments.done", item_id: call.id, arguments: call.arguments },
+    { type: "response.output_item.done", item: call },
+    { type: "response.completed", response: { status: "completed", output: [call] } },
+  ];
+  const wire = stream ? events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")
+    : JSON.stringify({ status: "completed", output: [call] });
+  const bytes = Buffer.from(wire);
+  const chunks = stream ? [...bytes].map(byte => Buffer.from([byte])) : [bytes];
+  const output = await collect(Readable.from(chunks).pipe(new NamespaceToolCallTransform(
+    prepared.namespaces, stream ? "text/event-stream" : "application/json", model)));
+  if (!stream) return { call: JSON.parse(output).output[0], wire: output };
+  const restoredEvents = output.split("\n\n").flatMap(frame => {
+    const data = frame.split("\n").find(line => line.startsWith("data:"))?.slice(5).trim();
+    return data && data !== "[DONE]" ? [JSON.parse(data)] : [];
+  });
+  assert.equal(restoredEvents.at(-1).type, "response.completed");
+  const restored = restoredEvents.at(-1).response.output[0];
+  assert.deepEqual(restoredEvents.find(event => event.type === "response.output_item.done").item, restored);
+  return { call: restored, wire: output, events: restoredEvents };
+}
+
+test("null and omitted ordinary namespaces restore the same identity through collisions and replay", async () => {
+  const tools = [
+    { type: "namespace", name: "mcp__fixture", tools: [{ type: "function", name: "inspect", parameters: { type: "object" } }] },
+    { type: "function", name: "mcp__codex_app__create_thread", parameters: { type: "object" } },
+    { type: "namespace", name: "mcp__codex_app", tools: [{ type: "function", name: "create_thread", parameters: { type: "object" } }] },
+  ];
+  const route = MODEL_BY_SLUG.get("openrouter/deepseek-v4.1-flash-deepinfra");
+  const prepared = prepareRoutedRequest({ tools, input: [] }, route);
+  for (const stream of [false, true]) {
+    for (const namespace of [undefined, null]) {
+      for (const index of [0, 1, 2]) {
+        const source = { type: "function_call", id: `fc_${index}`, call_id: `call_${index}`,
+          name: index === 0 ? "inspect" : prepared.payload.tools[index].name,
+          arguments: '{"prompt":"synthetic","target":{"type":"projectless"}}',
+          ...(namespace === undefined ? {} : { namespace }) };
+        const { call } = await restoreCompletedCall(prepared, source, stream, route.slug);
+        assert.equal(call.name, index === 0 ? "inspect" : index === 1 ? tools[1].name : "create_thread");
+        assert.equal(call.namespace, index === 0 ? "mcp__fixture" : index === 1 ? undefined : "mcp__codex_app");
+        assert.equal(JSON.parse(call.arguments).model, index === 2 ? route.slug : undefined);
+        assert.equal(call.call_id, source.call_id);
+        const result = { type: "function_call_output", call_id: call.call_id, output: "synthetic result" };
+        for (const slug of [route.slug, "openrouter/deepseek-v4.1-flash-together", "openrouter/glm-5.3-flash-streamlake"]) {
+          const selected = MODEL_BY_SLUG.get(slug);
+          const replay = prepareRoutedRequest({ tools, input: [call, result] }, selected);
+          assert.equal(replay.payload.input[0].name, replay.payload.tools[index].name);
+          assert.equal(replay.payload.input[0].call_id, call.call_id);
+          assert.equal(replay.payload.input[0].arguments, call.arguments);
+          assert.deepEqual(replay.payload.input[1], result);
+          const compact = prepareRoutedRequest({ tools, input: [call, result] }, selected, { compaction: true });
+          assert.deepEqual(compact.payload.tools, []);
+          assert.equal(compact.payload.tool_choice, undefined);
+          assert.deepEqual(compact.payload.input.slice(0, 2), [call, result]);
+        }
+        // Both unqualified representations also resolve current declarations in
+        // forced and allowed choices, before endpoint-specific restrictions.
+        const reference = { type: "function", name: call.name,
+          namespace: index === 2 ? call.namespace : namespace };
+        const nativeHistory = { ...call, namespace: reference.namespace };
+        const history = prepareRoutedRequest({ tools, input: [nativeHistory, result] }, route);
+        assert.equal(history.payload.input[0].name, history.payload.tools[index].name);
+        assert.equal(history.payload.input[0].namespace, undefined);
+        assert.deepEqual(history.payload.input[1], result);
+        for (const choice of [reference, { type: "allowed_tools", mode: "auto", tools: [reference] }]) {
+          const chosen = prepareRoutedRequest({ tools, input: [], tool_choice: choice }, route);
+          const flattened = chosen.payload.tool_choice.tools?.[0] ?? chosen.payload.tool_choice;
+          assert.equal(flattened.name, chosen.payload.tools[index].name);
+        }
+      }
+    }
+  }
+});
+
+test("explicit foreign namespaces and ambiguous bare names retain their owner and arguments", async () => {
+  const prepared = prepareRoutedRequest({ input: [], tools: [
+    { type: "namespace", name: "one", tools: [{ type: "function", name: "inspect" }] },
+    { type: "namespace", name: "two", tools: [{ type: "function", name: "inspect" }] },
+    { type: "namespace", name: "mcp__codex_app", tools: [{ type: "function", name: "create_thread" }] },
+  ] }, MODEL_BY_SLUG.get("openrouter/deepseek-v4.1-flash-deepinfra"));
+  for (const stream of [false, true]) {
+    for (const identity of [
+      { name: "inspect" }, { name: "inspect", namespace: null },
+      { name: "inspect", namespace: "foreign" },
+      { name: "mcp__codex_app__create_thread", namespace: "foreign" },
+    ]) {
+      const source = { type: "function_call", id: "fc_foreign", call_id: "call_foreign", arguments: "{}", ...identity };
+      const { call } = await restoreCompletedCall(prepared, source, stream, "openrouter/deepseek-v4.1-flash-deepinfra");
+      assert.deepEqual(call, source);
+      const replay = prepareRoutedRequest({ tools: prepared.payload.tools, input: [call] },
+        MODEL_BY_SLUG.get("openrouter/deepseek-v4.1-flash-deepinfra"));
+      assert.deepEqual(replay.payload.input[0], source);
+    }
+  }
+});
+
+test("raw ordinary argument numbers remain exact in JSON and byte-fragmented SSE", async () => {
+  const prepared = prepareRoutedRequest({ input: [], tools: [
+    { type: "namespace", name: "mcp__fixture", tools: [{ type: "function", name: "inspect" }] },
+  ] }, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake"));
+  const u64 = "18446744073709551615";
+  assert.equal(BigInt(u64), (1n << 64n) - 1n);
+  for (const [token, expected] of [
+    ["42", "42"], ["9007199254740993", "9007199254740993"], [u64, u64],
+    [`${u64}.0`, u64], [`${u64}e0`, u64],
+    ["0.123456789012345678901", "0.123456789012345678901"],
+    ["1e-324", "1e-324"], ["1e400", "1e400"],
+  ]) {
+    for (const stream of [false, true]) {
+      const source = { type: "function_call", id: "fc_number", call_id: "call_number", namespace: null,
+        name: prepared.payload.tools[0].name, arguments: `{"value":${token},"literal":"${token}"}` };
+      const restored = await restoreCompletedCall(prepared, source, stream);
+      assert.equal(restored.call.name, "inspect");
+      assert.equal(restored.call.namespace, "mcp__fixture");
+      assert.equal(restored.call.arguments, `{"value":${expected},"literal":"${token}"}`);
+      if (stream) assert.equal(restored.events.find(event => event.type === "response.function_call_arguments.done").arguments,
+        restored.call.arguments);
+    }
+  }
+});
+
+test("argument parsing for model edits and special calls keeps strict numeric precision", async () => {
+  const route = MODEL_BY_SLUG.get("openrouter/deepseek-v4.1-flash-deepinfra");
+  const prepared = prepareRoutedRequest({ input: [], tools: [
+    { type: "namespace", name: "mcp__codex_app", tools: [{ type: "function", name: "create_thread" }] },
+    { type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent",
+      parameters: { type: "object", properties: { model: { type: "string", enum: ["gpt-6.1-sol"] } } } }] },
+    clientToolSearchControl(), { type: "custom", name: "apply_patch" },
+  ] }, route);
+  for (const index of [0, 1]) {
+    const source = { type: "function_call", id: `fc_${index}`, call_id: `call_${index}`,
+      name: prepared.payload.tools[index].name, arguments: index === 0
+        ? '{"prompt":"synthetic","value":18446744073709551615}'
+        : '{"message":"synthetic","model":"unsupported-model","value":18446744073709551615}' };
+    for (const stream of [false, true]) {
+      const restored = await restoreCompletedCall(prepared, source, stream, route.slug);
+      assert.equal(restored.call.name, index === 0 ? "create_thread" : "spawn_agent");
+      assert.equal(restored.call.arguments, source.arguments, "an object edit must not round an unrelated number");
+    }
+  }
+  for (const [name, args] of [
+    ["tool_search", '{"query":"synthetic","limit":18446744073709551615}'],
+    ["apply_patch", '{"input":"synthetic","value":18446744073709551615}'],
+  ]) {
+    const source = { type: "function_call", id: "fc_special", call_id: "call_special", name, arguments: args };
+    const restored = await restoreCompletedCall(prepared, source, false);
+    assert.deepEqual(restored.call, source, "special decoding must not use lossy parsed arguments");
+    await assert.rejects(restoreCompletedCall(prepared, source, true), { code: "ERR_NAMESPACE_RELAY_COMMITTED_STREAM" });
+  }
+});
+
+test("raw numeric permission does not admit duplicate arguments or lossy outer response numbers", async () => {
+  const prepared = prepareRoutedRequest({ input: [], tools: [
+    { type: "namespace", name: "mcp__fixture", tools: [{ type: "function", name: "inspect" }] },
+  ] }, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake"));
+  const source = { type: "function_call", id: "fc_invalid", call_id: "call_invalid",
+    name: prepared.payload.tools[0].name, arguments: "{}" };
+  for (const args of ['{"value":1,"v\\u0061lue":2}', "not JSON"]) {
+    const invalid = { ...source, arguments: args };
+    assert.deepEqual((await restoreCompletedCall(prepared, invalid, false)).call, invalid);
+    await assert.rejects(restoreCompletedCall(prepared, invalid, true), { code: "ERR_NAMESPACE_RELAY_COMMITTED_STREAM" });
+  }
+  const wire = `{"status":"completed","unsafe":18446744073709551615,"output":[${JSON.stringify(source)}]}`;
+  assert.equal(await collect(Readable.from([wire]).pipe(new NamespaceToolCallTransform(
+    prepared.namespaces, "application/json"))), wire);
+});
 
 // The reduced codex_app namespace the client actually sends on routed requests
 // (captured live: load_workspace_dependencies, navigate_to_codex_page,

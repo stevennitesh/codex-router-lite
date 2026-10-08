@@ -11,25 +11,16 @@ import { INSTALL_MANIFEST_PATH } from "../src/paths.mjs";
 import { installedSourceRoot } from "../src/install-manifest.mjs";
 import { switchyardRuntimeStatus } from "../src/switchyard-runtime.mjs";
 import { summarizeSwitchyardCertificationEvidence } from "../src/switchyard-certification-evidence.mjs";
-import { latestSwitchyardGeneration } from "../src/switchyard-trace.mjs";
+import { observationIdentity } from "../src/request-observation.mjs";
 import { certificationPreflight } from "./certification-preflight.mjs";
 
-class EvidenceError extends Error {}
+export class EvidenceError extends Error {}
 function requireEvidence(condition, message) { if (!condition) throw new EvidenceError(message); }
 function instant(value) {
   requireEvidence(typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value, "An observation timestamp must be an exact UTC ISO millisecond instant.");
   return Date.parse(value);
 }
 function within(row, run) { const at = instant(row.timestamp); return at >= instant(run.startedAt) && at <= instant(run.endedAt); }
-// Switchyard's Rust traces can use microseconds. These timestamps are filtered
-// precisely, not rewritten into the millisecond proof-observation contract.
-function traceInstant(value) {
-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/u.exec(value || "");
-  requireEvidence(match, "A Switchyard trace timestamp is invalid.");
-  const base = `${match[1]}.000Z`;
-  return BigInt(instant(base)) * 1000000n + BigInt((match[2] || "").padEnd(9,"0"));
-}
-function traceWithin(at, run) { const value = traceInstant(at); return value >= traceInstant(run.startedAt) && value <= traceInstant(run.endedAt); }
 const payload = row => row.payload || {};
 const items = rows => rows.filter(row => row.type === "response_item");
 const args = row => JSON.parse(payload(row).arguments);
@@ -84,14 +75,14 @@ function successfulTool(call, output) {
   requireEvidence(command.cmd === "Write-Output (19+23)" && [undefined, "use_default"].includes(command.sandbox_permissions), "The command must use the default sandbox and the synthetic arithmetic fixture.");
 }
 
-function routeTimings(routerLog, run) {
-  return String(routerLog).split(/\r?\n/u).filter(line => line.includes(" timing ")).map(line => {
+function routeTimings(routerLog) {
+  return String(routerLog).split(/\r?\n/u).filter(line => line.startsWith("[codex-router] timing ")).map(line => {
     const field = key => new RegExp(`\\b${key}=([^ ]+)`, "u").exec(line)?.[1];
-    return { at:field("at"), model:field("model"), provider:field("provider"), status:Number(field("status")), totalMs:Number(field("total_ms")) };
-  }).filter(row => row.at && instant(row.at) >= instant(run.startedAt) && instant(row.at) <= instant(run.endedAt));
+    return { at:field("at"), model:field("model"), provider:field("provider"), status:Number(field("status")), totalMs:Number(field("total_ms")), thread:field("thread_sha256") };
+  });
 }
 
-export function extractCertificationEvidence({ run, parent, children, routerLog, installManifest, runtimeBinding, switchyardSummary } = {}) {
+export function extractCertificationOutcomes({ run, parent, children, routerLog, installManifest, runtimeBinding, switchyardRoutingLog } = {}) {
   validateRun(run);
   requireEvidence(installManifest?.current?.commit === run.routerCommit && path.resolve(installedSourceRoot(installManifest)).toLowerCase() === path.resolve(run.sourceRoot).toLowerCase(), "The run must match the current protected installation identity.");
   requireEvidence(meta(parent).id === run.parentSessionId && meta(parent).cli_version === run.codexVersion.slice("codex-cli ".length), "The parent rollout must match the declared identity and CLI build.");
@@ -104,9 +95,28 @@ export function extractCertificationEvidence({ run, parent, children, routerLog,
   const parentItems = items(parentWindow);
   const spawns = parentItems.filter(row => payload(row).type === "function_call" && payload(row).name === "spawn_agent");
   requireEvidence(spawns.length === run.routes.length, "The window must contain exactly the requested child spawns.");
-  const timings = routeTimings(routerLog, run);
-  const childIdentities = new Set();
-  const reports = run.routes.map(spec => {
+  const timings = routeTimings(routerLog);
+  // Check cross-route identity before retaining any individual report.
+  const roles = new Set(run.routes.map(spec => routedAgentDefinition(MODEL_BY_SLUG.get(spec.slug)).agentName));
+  const spawnedRoles = spawns.map(row => args(row).agent_type);
+  requireEvidence(new Set(spawnedRoles).size === roles.size && spawnedRoles.every(role => roles.has(role)), "The window must contain exactly the requested generated roles.");
+  const childIdentities = new Map();
+  for (const child of children) {
+    const childMeta = meta(child);
+    if (childMeta.parent_thread_id !== run.parentSessionId || !roles.has(childMeta.agent_role) || typeof childMeta.id !== "string" || !childMeta.id) continue;
+    const identity = observationIdentity("thread", childMeta.id) || childMeta.id;
+    requireEvidence(!childIdentities.has(identity) || childIdentities.get(identity) === childMeta.agent_role, "Different exact routes must use different child identities.");
+    childIdentities.set(identity, childMeta.agent_role);
+  }
+  const failures = [];
+  const reports = run.routes.flatMap(spec => {
+    try { return [verifyRoute(spec)]; }
+    catch (error) {
+      failures.push({slug:spec.slug,code:"native_evidence_invalid",reason:error instanceof EvidenceError ? error.message : "Native observations could not be decoded."});
+      return [];
+    }
+  });
+  function verifyRoute(spec) {
     const route = MODEL_BY_SLUG.get(spec.slug), role = routedAgentDefinition(route).agentName;
     const matching = spawns.filter(row => args(row).agent_type === role);
     requireEvidence(matching.length === 1, "Each exact route must have one matching native spawn.");
@@ -116,8 +126,6 @@ export function extractCertificationEvidence({ run, parent, children, routerLog,
     requireEvidence(matchingChildren.length === 1, "Both turns must belong to one exact child rollout.");
     const child = matchingChildren[0], childMeta = meta(child);
     requireEvidence(child.filter(row => row.type === "session_meta").length === 1 && typeof childMeta.id === "string" && childMeta.id.length > 0, "A child rollout must preserve one session identity.");
-    requireEvidence(!childIdentities.has(childMeta.id), "Different exact routes must use different child identities.");
-    childIdentities.add(childMeta.id);
     const spawnResult = JSON.parse(payload(outputFor(spawn, parentWindow)).output);
     requireEvidence(childMeta.agent_path === `/root/${spawnArgs.task_name}` && spawnResult.task_name === childMeta.agent_path, "The parent spawn result must identify the observed child.");
     const observed = child.filter(row => row.type !== "session_meta" && within(row, run));
@@ -160,7 +168,11 @@ export function extractCertificationEvidence({ run, parent, children, routerLog,
       requireEvidence(index >= 0 && instant(cleanup.timestamp) >= instant(completions[index].timestamp), "Cleanup must observe an already-completed child, never active cancellation.");
     }
     const end = completions[1].timestamp;
-    const routeRows = timings.filter(row => row.model === spec.slug);
+    const thread = observationIdentity("thread", childMeta.id);
+    requireEvidence(thread, "The child needs a native thread UUID for request attribution.");
+    const routeRows = timings.filter(row => row.model === spec.slug && row.thread === thread)
+      .filter(row => instant(row.at) >= instant(run.startedAt) && instant(row.at) <= instant(run.endedAt))
+      .map(({thread:_thread,...row}) => row);
     requireEvidence(routeRows.length >= 3 && routeRows.every(row => row.provider === route.provider && row.status >= 200 && row.status < 300 && Number.isFinite(row.totalMs) && row.totalMs >= 0 && instant(row.at) >= instant(spawn.timestamp) && instant(row.at) <= instant(end)), "The exact route window must contain only successful matching-provider Router timings for this completed child.");
     const pass = at => ({outcome:"pass",status:routeRows.at(-1).status,observedAt:at});
     const proof = certificationPreflight(route, {deployedCommit:run.routerCommit}).draftProof;
@@ -168,14 +180,23 @@ export function extractCertificationEvidence({ run, parent, children, routerLog,
     // Preserve the template's pending streaming check for separate observation.
     Object.assign(proof, {testedAt:end,routerVersion:installManifest.current.packageVersion,codexVersion:run.codexVersion,windowsAppVersion:run.windowsAppVersion,executionSurface:run.executionSurface,windowsSandbox:run.windowsSandbox,sandboxPolicy:run.sandboxPolicy,approvalPolicy:run.approvalPolicy,checks:{...proof.checks,toolCall:{...pass(output.timestamp),mode:"auto"},encryptedRelay:pass(handoffs[1].timestamp),markerReturn:pass(finals[0].timestamp),sameThreadFollowUp:pass(finals[1].timestamp)}});
     if (route.provider === "switchyard") {
-      requireEvidence(runtimeBinding?.routerCommit === run.routerCommit && ["upstreamCommit","upstreamContributionCommit"].every(key => /^[a-f0-9]{40}$/iu.test(runtimeBinding[key])) && ["upstreamContributionSha256","patchSha256","binarySha256","routesSha256","templateSha256","templateSourceSha256"].every(key => /^[a-f0-9]{64}$/iu.test(runtimeBinding[key])) && switchyardSummary?.routing?.uniqueSessions === 1 && switchyardSummary.routing.total === routeRows.length && switchyardSummary.failures && Object.values(switchyardSummary.failures).every(value => value === 0), "Switchyard needs verified runtime binding and one successful routing session for this window.");
+      const switchyardSummary = summarizeSwitchyardCertificationEvidence({routerLog,routingLog:switchyardRoutingLog,
+        child:{threadId:childMeta.id,startedAt:spawn.timestamp,endedAt:end},limit:100});
+      requireEvidence(runtimeBinding?.routerCommit === run.routerCommit && ["upstreamCommit","upstreamContributionCommit"].every(key => /^[a-f0-9]{40}$/iu.test(runtimeBinding[key])) && ["upstreamContributionSha256","patchSha256","binarySha256","routesSha256","templateSha256","templateSourceSha256"].every(key => /^[a-f0-9]{64}$/iu.test(runtimeBinding[key])) && switchyardSummary.scope === "child" && switchyardSummary.attributed && switchyardSummary?.routing?.uniqueSessions === 1 && switchyardSummary.routing.total === routeRows.length && switchyardSummary.failures && Object.values(switchyardSummary.failures).every(value => value === 0), "Switchyard needs verified runtime binding and one successful attributed routing session for this child.");
       proof.runtimeBinding = runtimeBinding;
     }
     return {slug:spec.slug,role,effort:route.defaultEffort,startedAt:spawn.timestamp,endedAt:end,nativeParentSpawnObserved:true,sameChildRollout:true,encryptedHandoffCount:2,tool:{name:"exec_command",output:"42",outputAt:output.timestamp,success:true,defaultSandbox:true,callOutputIdentityMatched:true},finals:finals.map(row => ({at:row.timestamp,marker:text(row)})),timings:routeRows,lifecycle:{completedTurns:2,completedCleanupCalls:cleanups.length,activeTurnCancelled:false},draftProof:proof};
-  });
+  }
   requireEvidence(reports.every(report => instant(parentCompletions[0].timestamp) >= instant(report.endedAt)), "The native parent must finish after every verified child completes.");
   requireEvidence(typeof installManifest.current.packageVersion === "string" && /^\d+\.\d+\.\d+$/u.test(installManifest.current.packageVersion), "The protected installation must record its Router version.");
-  return {version:1,historical:true,status:"draft",routerCommit:run.routerCommit,routerVersion:installManifest.current.packageVersion,codexVersion:run.codexVersion,windowsAppVersion:run.windowsAppVersion,executionSurface:run.executionSurface,windowsSandbox:run.windowsSandbox,sandboxPolicy:run.sandboxPolicy,approvalPolicy:run.approvalPolicy,reports,limits:["Synthetic native collaboration for the named execution surface and declared backend only.","Streaming remains pending until separately observed; timings and rollout snapshots do not prove SSE transport.","Draft observations do not accept proof or promote route eligibility.","Raw transcript payloads, ciphertext, private identities and paths are omitted."]};
+  return {version:1,historical:true,status:failures.length ? "partial" : "draft",routerCommit:run.routerCommit,routerVersion:installManifest.current.packageVersion,codexVersion:run.codexVersion,windowsAppVersion:run.windowsAppVersion,executionSurface:run.executionSurface,windowsSandbox:run.windowsSandbox,sandboxPolicy:run.sandboxPolicy,approvalPolicy:run.approvalPolicy,reports,failures,limits:["Synthetic native collaboration for the named execution surface and declared backend only.","Streaming remains pending until separately observed; timings and rollout snapshots do not prove SSE transport.","Draft observations do not accept proof or promote route eligibility.","Raw transcript payloads, ciphertext, private identities and paths are omitted."]};
+}
+
+// The supported manual interface stays strict and keeps its version-1 shape.
+export function extractCertificationEvidence(input) {
+  const {failures,...summary} = extractCertificationOutcomes(input);
+  requireEvidence(failures.length === 0, failures[0]?.reason);
+  return summary;
 }
 
 function json(file) { return JSON.parse(readFileSync(file, "utf8")); }
@@ -225,21 +246,7 @@ function verifiedRuntime(run, manifest) {
   return Object.fromEntries(["upstreamCommit","upstreamContributionCommit","upstreamContributionSha256","routerCommit","patchSha256","binarySha256","routesSha256","templateSha256","templateSourceSha256"].map(key => [key,binding[key]]));
 }
 
-function boundedSwitchyardSummary(run, routerLog) {
-  const generation = latestSwitchyardGeneration(routerLog);
-  requireEvidence(generation, "The Switchyard server generation was not observed.");
-  let at;
-  const lines = generation.split(/\r?\n/u).filter((line, index) => {
-    if (index === 0) return true;
-    at = /\bat=([^ ]+)/u.exec(line)?.[1] || /^(\d{4}-\d{2}-\d{2}T[^ ]+Z)/u.exec(line)?.[1] || at;
-    return at && traceWithin(at,run);
-  });
-  const runtime = switchyardRuntimeStatus();
-  const routingLog = readFileSync(path.join(runtime.runtimeRoot, "routing.jsonl"), "utf8").split(/\r?\n/u).filter(Boolean).map(JSON.parse).filter(row => traceWithin(row.ts,run)).map(row => JSON.stringify(row)).join("\n");
-  return summarizeSwitchyardCertificationEvidence({routerLog:lines.join("\n"),routingLog,limit:100});
-}
-
-export function collectCertificationEvidence({run, parentPath, childrenDirs, routerLogPath}) {
+function collectObservations({run, parentPath, childrenDirs, routerLogPath}) {
   validateRun(run);
   const manifest = json(INSTALL_MANIFEST_PATH), runtimeBinding = verifiedRuntime(run, manifest);
   const children = childrenDirs.flatMap(childrenDir => readdirSync(childrenDir).filter(name => name.endsWith(".jsonl")).flatMap(name => {
@@ -247,8 +254,12 @@ export function collectCertificationEvidence({run, parentPath, childrenDirs, rou
     return header.type === "session_meta" && payload(header).parent_thread_id === run.parentSessionId ? [rows(file)] : [];
   }));
   const routerLog = readFileSync(routerLogPath, "utf8");
-  return extractCertificationEvidence({run,parent:rows(parentPath),children,routerLog,installManifest:manifest,runtimeBinding,switchyardSummary:runtimeBinding ? boundedSwitchyardSummary(run,routerLog) : undefined});
+  return {run,parent:rows(parentPath),children,routerLog,installManifest:manifest,runtimeBinding,
+    switchyardRoutingLog:runtimeBinding ? readFileSync(path.join(switchyardRuntimeStatus().runtimeRoot,"routing.jsonl"),"utf8") : undefined};
 }
+
+export function collectCertificationEvidence(input) { return extractCertificationEvidence(collectObservations(input)); }
+export function collectCertificationOutcomes(input) { return extractCertificationOutcomes(collectObservations(input)); }
 
 function main(argv) {
   requireEvidence(argv[0] === "extract", "Usage: certification-evidence.mjs extract --run FILE --parent FILE --children DIR --router-log FILE --output FILE");

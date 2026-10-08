@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { secretEqual } from "./caller-auth.mjs";
+import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
 
 export const SWITCHYARD_CALLBACK_LEASE_HEADER =
   "x-codex-router-switchyard-callback-lease";
@@ -74,7 +75,17 @@ export class RouterAdmission {
     if (this.#state !== "open") throw drainError();
   }
 
-  recordSwitchyardWorkflow({ identity, consumed = [], produced = [], complete = true } = {}) {
+  prepareSwitchyardWorkflow({ headers, clientMetadata, input, startsWorkflow = false } = {}) {
+    if (!startsWorkflow && this.#workflows.size === 0) return undefined;
+    const identity = switchyardWorkflowIdentity(headers, clientMetadata);
+    if (!startsWorkflow && !this.#workflows.has(identity)) return undefined;
+    return { identity, consumed: clientToolOutputs(input), existingOnly: !startsWorkflow };
+  }
+
+  recordSwitchyardWorkflow({ identity, consumed = [], produced = [], complete = true, existingOnly = false } = {}) {
+    // A model switch may finish or extend an existing workflow, but cannot
+    // create Switchyard state. A failed/partial continuation leaves it pending.
+    if (existingOnly && (!complete || !this.#workflows.has(identity))) return;
     const validConsumed = consumed.filter((value) => typeof value === "string" && value);
     const validProduced = produced.filter((value) => typeof value === "string" && value);
     if (!complete || ((validConsumed.length || validProduced.length) && !identity)) {
@@ -191,21 +202,32 @@ export class RouterAdmission {
 }
 
 export function switchyardWorkflowIdentity(headers = {}, clientMetadata) {
-  const direct = [headers["session-id"], headers.session_id, headers["x-session-id"]]
-    .filter((value) => typeof value === "string" && value);
-  if (direct.length && new Set(direct).size === 1) return `session:${direct[0]}`;
-  const values = [headers["x-codex-turn-metadata"], clientMetadata?.["x-codex-turn-metadata"]];
-  for (const value of values) {
-    if (typeof value !== "string" || value.length > 8 * 1024) continue;
+  const identity = (kind, value) => typeof value === "string" && value && value.length <= 8 * 1024
+    ? `${kind}:${value}` : undefined;
+  // Current per-response metadata outranks handshake headers. In particular,
+  // Responses session-id can be cache affinity, not the conversation identity.
+  if (clientMetadata && typeof clientMetadata === "object" && !Array.isArray(clientMetadata)) {
+    if (Object.hasOwn(clientMetadata, "thread_id")) return identity("thread", clientMetadata.thread_id);
+    if (Object.hasOwn(clientMetadata, "session_id")) return identity("session", clientMetadata.session_id);
+  }
+  const value = clientMetadata?.["x-codex-turn-metadata"] ?? headers["x-codex-turn-metadata"];
+  if (value !== undefined) {
+    if (typeof value !== "string" || value.length > 8 * 1024 ||
+        !jsonIsUnambiguousForRewrite(value, { allowLossyNumbers: true })) return undefined;
     try {
       const parsed = JSON.parse(value);
-      const identity = parsed?.session_id || parsed?.thread_id;
-      if (typeof identity === "string" && identity) return `turn:${identity}`;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+      if (Object.hasOwn(parsed, "thread_id")) return identity("thread", parsed.thread_id);
+      if (Object.hasOwn(parsed, "session_id")) return identity("session", parsed.session_id);
     } catch {
       // Invalid optional metadata cannot become workflow authority.
+      return undefined;
     }
   }
-  return undefined;
+  if (Object.hasOwn(headers, "thread-id")) return identity("thread", headers["thread-id"]);
+  const direct = [headers["session-id"], headers.session_id, headers["x-session-id"]]
+    .filter((value) => value !== undefined);
+  return direct.length && new Set(direct).size === 1 ? identity("session", direct[0]) : undefined;
 }
 
 const CLIENT_CALL_TYPES = new Set([

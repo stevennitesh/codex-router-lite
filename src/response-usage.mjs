@@ -2,6 +2,7 @@ import { Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
+import { SseLineScanner } from "./sse-framing.mjs";
 
 const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
@@ -358,13 +359,13 @@ function substituteZeroInputUsage(payload, estimate) {
   return undefined;
 }
 
-const LINE_FEED = 0x0a;
 
 export class ResponseUsageTransform extends Transform {
   #eventStream;
   #decoder = new StringDecoder("utf8");
   #decodedLineBytes = 0;
-  #decodedLineEndsCr = false;
+  #lines = new SseLineScanner();
+  #atStreamStart = true;
   #usage;
   #reportedUsage;
   #providerResponse = {};
@@ -530,46 +531,43 @@ export class ResponseUsageTransform extends Transform {
   // forwarded the original chunk. Both retain only the current line.
   #consumeEventChunk(chunk) {
     const observeOnly = this.#estimate === undefined;
-    let offset = 0;
-    while (offset < chunk.length) {
-      const index = chunk.indexOf(LINE_FEED, offset);
-      const piece = chunk.subarray(offset, index === -1 ? chunk.length : index + 1);
+    for (const piece of this.#lines.scan(chunk)) {
+      if (this.#released) {
+        if (!observeOnly) {
+          this.push(piece.content);
+          this.push(piece.ending);
+        }
+        continue;
+      }
+      if (!piece.endLine && !piece.content.length && piece.ending.length) {
+        if (!observeOnly) this.push(piece.ending);
+        continue; // The LF continuation of a line already ended by CR.
+      }
       // Keep the observer's decoded UTF-8 budget, including replacement
       // characters and incomplete code points, without revisiting the prefix.
       if (observeOnly) {
-        const decoded = this.#decoder.write(piece);
+        const decoded = this.#decoder.write(piece.content) + this.#decoder.write(piece.ending);
         this.#decodedLineBytes += Buffer.byteLength(decoded, "utf8");
-        if (decoded) this.#decodedLineEndsCr = decoded.endsWith("\r");
       }
-      if (index === -1) {
-        const splitCr = observeOnly ? this.#decodedLineEndsCr : piece.at(-1) === 0x0d;
-        const pendingBytes = observeOnly ? this.#decodedLineBytes : this.#pendingBytes + piece.length;
-        if (pendingBytes > this.maxPendingBytes + (splitCr ? 1 : 0)) {
-          this.#release();
-          if (!observeOnly) this.push(piece);
-        } else this.#appendPending(piece);
-        return;
-      }
-      const preceding = piece.length > 1 ? piece[piece.length - 2] : this.#pendingLastByte();
-      const contentBytes = (observeOnly ? this.#decodedLineBytes : this.#pendingBytes + piece.length)
-        - 1 - (preceding === 0x0d ? 1 : 0);
+      const contentBytes = (observeOnly ? this.#decodedLineBytes
+        : this.#pendingBytes + piece.content.length + piece.ending.length) - piece.ending.length;
       if (contentBytes > this.maxPendingBytes) {
         this.#release();
-        if (!observeOnly) this.push(chunk.subarray(offset));
-        return;
+        if (!observeOnly) {
+          this.push(piece.content);
+          this.push(piece.ending);
+        }
+        continue;
       }
-      let line = piece;
-      if (this.#pendingBytes) {
-        this.#appendPending(piece);
-        line = this.#takePending();
-      }
+      this.#appendPending(piece.content);
+      this.#appendPending(piece.ending);
+      if (!piece.endLine) continue;
+      const line = this.#takePending();
       if (observeOnly) {
         const text = line.toString("utf8");
-        this.#observeEventLine(text.slice(0, preceding === 0x0d ? -2 : -1));
+        this.#observeEventLine(text.slice(0, -piece.ending.length));
         this.#decodedLineBytes = 0;
-        this.#decodedLineEndsCr = false;
       } else this.push(this.#rewriteEventLine(line) || line);
-      offset = index + 1;
     }
   }
 
@@ -592,10 +590,6 @@ export class ResponseUsageTransform extends Transform {
       this.#pendingBytes += count;
       offset += count;
     }
-  }
-
-  #pendingLastByte() {
-    return this.#pendingParts.at(-1)?.[this.#pendingTailBytes - 1];
   }
 
   #pendingBuffers() {
@@ -625,14 +619,15 @@ export class ResponseUsageTransform extends Transform {
   // Returns the replacement line, or undefined to forward the original bytes.
   #rewriteEventLine(line) {
     const text = line.toString("utf8");
-    const terminator = text.endsWith("\r\n") ? "\r\n" : text.endsWith("\n") ? "\n" : "";
+    const bom = this.#atStreamStart && text.startsWith("\uFEFF") ? "\uFEFF" : "";
+    const terminator = /(?:\r\n|\r|\n)$/.exec(text)?.[0] || "";
     const content = terminator ? text.slice(0, -terminator.length) : text;
     const payload = this.#observeEventLine(content);
     if (payload === undefined) return undefined;
     const substituted = substituteZeroInputUsage(payload, this.#estimate);
     if (substituted) {
       this.#substituted = this.#estimate;
-      return Buffer.from(`data: ${JSON.stringify(substituted)}${terminator}`, "utf8");
+      return Buffer.from(`${bom}data: ${JSON.stringify(substituted)}${terminator}`, "utf8");
     }
     // Codex reads the last usage it is given, so a later event that reports its
     // own prompt count supersedes an earlier substituted one -- in telemetry as
@@ -642,6 +637,10 @@ export class ResponseUsageTransform extends Transform {
   }
 
   #observeEventLine(line) {
+    if (this.#atStreamStart) {
+      this.#atStreamStart = false;
+      if (line.startsWith("\uFEFF")) line = line.slice(1);
+    }
     if (!line.startsWith("data:")) return undefined;
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") return undefined;

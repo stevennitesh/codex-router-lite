@@ -1,4 +1,5 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
+import { observationFields, requestObservation } from "./request-observation.mjs";
 import { readFileSync } from "node:fs";
 import { createCatalogReader } from "./catalog-reader.mjs";
 import http from "node:http";
@@ -109,6 +110,7 @@ import {
 } from "./response-usage.mjs";
 import { fetchWithRetry } from "./upstream-retry.mjs";
 import { jsonIsUnambiguousForRewrite, NamespaceToolCallTransform } from "./namespace-relay.mjs";
+import { SseLineScanner } from "./sse-framing.mjs";
 import { prepareRoutedRequest, routedSearchCompatibility, payloadHasHostedSearchIntent } from "./routed-request.mjs";
 import { retryAfterSeconds } from "./rate-limit-headers.mjs";
 import { subagentEffort } from "./multi-agent-state.mjs";
@@ -142,7 +144,6 @@ import {
   clientToolOutputs,
   RouterAdmission,
   SWITCHYARD_CALLBACK_LEASE_HEADER,
-  switchyardWorkflowIdentity,
 } from "./router-admission.mjs";
 
 installStableFetchTransport();
@@ -265,6 +266,10 @@ const REQUEST_EXECUTION_TIMEOUT_MS =
   configuredRequestExecutionTimeoutMs > 0
     ? Math.floor(configuredRequestExecutionTimeoutMs)
     : 24 * 60 * 60_000;
+// Diagnostics for a known refusal do not use the long generation budget.
+const configuredErrorBodyTimeoutMs = Number(process.env.CODEX_ROUTER_ERROR_BODY_TIMEOUT_MS);
+const ERROR_BODY_TIMEOUT_MS = Number.isFinite(configuredErrorBodyTimeoutMs)
+  ? Math.min(10_000, Math.max(50, Math.floor(configuredErrorBodyTimeoutMs))) : 1_000;
 const NATIVE_IMAGE_PATHS = new Set([
   "/images/edits",
   "/images/generations",
@@ -334,9 +339,10 @@ function beginRequestExecution({ request, controller } = {}) {
     error.code = "ERR_ROUTER_ACTIVE_REQUEST_LIMIT";
     throw error;
   }
+  const nestedCallbackLease = routerAdmission.consumeSwitchyardCallbackLease(request?.headers);
   const admission = routerAdmission.begin({
     controller,
-    nestedCallbackLease: routerAdmission.consumeSwitchyardCallbackLease(request?.headers),
+    nestedCallbackLease,
   });
   const requestToken = {};
   let finished = false;
@@ -369,6 +375,7 @@ function beginRequestExecution({ request, controller } = {}) {
   inFlightRequests.add(requestToken);
   return {
     finish,
+    nestedSwitchyardCallback: Boolean(nestedCallbackLease),
     deadlineExceeded: () => deadlineExceeded,
     issueSwitchyardCallbackLease: admission.issueSwitchyardCallbackLease,
   };
@@ -723,7 +730,7 @@ async function boundedResponseText(
   signal,
 ) {
   try {
-    return (await readResponseBody(upstream, { maxBytes, signal })).toString("utf8");
+    return (await readResponseBody(upstream, { maxBytes, signal, timeoutMs: ERROR_BODY_TIMEOUT_MS })).toString("utf8");
   } catch (error) {
     if (signal?.aborted) throw error;
     return "";
@@ -1346,33 +1353,52 @@ function decodeRelayResponse(bytes) {
 }
 
 function parseRelayedAgentPayloadSse(text) {
-  const events = text.split(/\r?\n\r?\n/);
-  const trailing = events.pop() || "";
+  const events = [];
+  let dataLines = [];
+  let eventName;
+  let pendingFields = false;
+  for (const { content: line, endLine } of new SseLineScanner().scan(text)) {
+    if (line.trim() && !line.startsWith(":")) pendingFields = true;
+    if (!endLine) continue;
+    if (line === "") {
+      events.push({ data: dataLines.join("\n").trim(), eventName });
+      dataLines = [];
+      eventName = undefined;
+      pendingFields = false;
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon === -1 ? line : line.slice(0, colon);
+    let value = colon === -1 ? "" : line.slice(colon + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "data") dataLines.push(value);
+    if (field === "event") eventName = value;
+  }
   // An event is authoritative only after its blank-line terminator. Ignore a
   // trailing comment/whitespace keepalive, but fail closed on unfinished data
   // or event fields that could otherwise hide a terminal error.
-  if (trailing.split(/\r?\n/).some((line) => line.trim() && !line.startsWith(":"))) {
-    return undefined;
-  }
+  if (pendingFields) return undefined;
   const observedRelayIdentities = {};
   const completedRelayItems = [];
   let completedResponse;
   let terminalCount = 0;
   let rejected = false;
-  for (const rawEvent of events) {
-    const data = rawEvent
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n")
-      .trim();
-    if (!data || data === "[DONE]") continue;
+  for (const { data, eventName } of events) {
+    if (!data || data === "[DONE]") {
+      if (data === "[DONE]" && eventName && eventName !== "message") rejected = true;
+      continue;
+    }
     if (!jsonIsUnambiguousForRewrite(data, { allowLossyNumbers: true })) {
       rejected = true;
       continue;
     }
     try {
       const event = JSON.parse(data);
+      if (eventName && eventName !== "message" && eventName !== event?.type) {
+        rejected = true;
+        continue;
+      }
       if (["response.failed", "response.incomplete", "error"].includes(event?.type)) {
         rejected = true;
       }
@@ -2315,6 +2341,7 @@ async function buildRoutedRequest({ request, payload, route, normalizedInput, la
 
 async function handleResponses(request, response, requestUrl) {
   const startedAt = Date.now();
+  let timingObservation = requestObservation(request.headers);
   const controller = new AbortController();
   const execution = beginRequestExecution({ request, controller });
   let clientGone = false;
@@ -2343,7 +2370,7 @@ async function handleResponses(request, response, requestUrl) {
   // client, and only the second is visible to the user.
   let emptyCompletionUnrepairable = false;
   let emptyCompletionPreludeLimit;
-  let preludeLimitRetryable = false;
+  let suppressedPreludeFailureKind;
   let finalStatus;
   let observedNativeRequest;
   let observedUpstreamStatus;
@@ -2359,6 +2386,7 @@ async function handleResponses(request, response, requestUrl) {
     const encoded = await readRequestBody(request, { signal: controller.signal });
     const body = await decodeBody(encoded, request.headers["content-encoding"]);
     let payload = await parseBodyAsync(body);
+    timingObservation = requestObservation(request.headers, payload.client_metadata);
     controller.signal.throwIfAborted();
     // The projection is trusted only when this process derived it. Strip any
     // caller value before route selection so spoofed state cannot reach either
@@ -2405,11 +2433,11 @@ async function handleResponses(request, response, requestUrl) {
       payload.input.at(-1)?.type === "compaction_trigger";
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
-    if (switchyardHop) {
-      switchyardWorkflow = {
-        identity: switchyardWorkflowIdentity(request.headers, payload.client_metadata),
-        consumed: clientToolOutputs(payload.input),
-      };
+    if (!compactV1 && !compactV2 && !execution.nestedSwitchyardCallback) {
+      switchyardWorkflow = routerAdmission.prepareSwitchyardWorkflow({
+        headers: request.headers, clientMetadata: payload.client_metadata,
+        input: payload.input, startsWorkflow: switchyardHop,
+      });
     }
 
     if (switchyardNativeCallback && !route && !compactV1 && !compactV2) {
@@ -2735,7 +2763,7 @@ async function handleResponses(request, response, requestUrl) {
       if (isEmptyCompletionPreludeLimitError(error) && !clientGone) {
         emptyCompletionPreludeLimit = error.kind;
         if (nothingRelayed(response)) {
-          preludeLimitRetryable = true;
+          suppressedPreludeFailureKind = error.kind;
         } else {
           streamedPreludeFailureKind = error.kind;
           emptyCompletionUnrepairable = true;
@@ -2772,12 +2800,10 @@ async function handleResponses(request, response, requestUrl) {
     emptyCompletion = emptyCompletionGuard?.isEmpty() === true && !clientWalkedAway;
     emptyCompletionPreludeLimit ||=
       emptyCompletionGuard?.preludeLimitKind?.();
-    // A pre-content limit used to release the staged bytes and stop parsing,
-    // which could turn an unknown stream into a successful-looking empty
-    // response. The byte limit now fails while every byte is replaceable so
-    // the retry below can recover it. The time limit still releases for
-    // latency, but keeps parsing so a terminal empty turn becomes a stated SSE
-    // error instead of a blank success.
+    // A pre-content failure leaves the first inference's outcome unknown.
+    // Suppressed caller bytes permit replacing its response head, but do not
+    // establish that another POST is safe. Only a proven completed-empty turn
+    // is eligible for the quiet repair below.
     // The turn produced nothing, but the guard had already released it: the
     // upstream proved it was generating (reasoning), so the head, response id,
     // and prologue are on the wire. A second attempt would graft a second
@@ -2785,7 +2811,14 @@ async function handleResponses(request, response, requestUrl) {
     // instead. This is the case the hold used to cover, priced honestly — the
     // hold cost every reasoning turn up to its full budget of dead air, and
     // bought a silent rescue on roughly one routed turn in a thousand.
-    if (emptyCompletion && emptyCompletionGuard?.suppressedPrologue() !== true) {
+    if (suppressedPreludeFailureKind && !clientWalkedAway) {
+      emptyCompletionUnrepairable = true;
+      writeEmptyCompletionError(response, "precontent_limit",
+        suppressedPreludeFailureKind === "time"
+          ? "The model produced no output before the router's pre-content deadline. The first inference outcome is unknown, so the router did not retry it."
+          : "The model exceeded the router's bounded stream parser before producing output. The first inference outcome is unknown, so the router did not retry it.");
+      finalStatus = 502;
+    } else if (emptyCompletion && emptyCompletionGuard?.suppressedPrologue() !== true) {
       emptyCompletionUnrepairable = true;
       writeStreamErrorEvent(response, {
         code: emptyCompletionPreludeLimit
@@ -2796,7 +2829,7 @@ async function handleResponses(request, response, requestUrl) {
           : "The model streamed reasoning but produced no output. The router could not retry because the response had already started.",
       });
       finalStatus = 502;
-    } else if (emptyCompletion || preludeLimitRetryable) {
+    } else if (emptyCompletion) {
       // The upstream answered 200 with nothing and never proved otherwise, so
       // the guard still holds every byte. Retry the identical request once:
       // same bytes, same headers, same signal. The discarded first stream means
@@ -2841,12 +2874,8 @@ async function handleResponses(request, response, requestUrl) {
         );
         writeEmptyCompletionError(
           response,
-          emptyCompletionPreludeLimit
-            ? "precontent_limit_retry_failed"
-            : "empty_completion_retry_failed",
-          emptyCompletionPreludeLimit
-            ? "The model produced no output before the router's safety limit and the retry failed upstream."
-            : "The model returned an empty completion and the router's retry failed upstream.",
+          "empty_completion_retry_failed",
+          "The model returned an empty completion and the router's retry failed upstream.",
         );
         finalStatus = 502;
       }
@@ -2872,20 +2901,10 @@ async function handleResponses(request, response, requestUrl) {
           await rejectedResponse.body?.cancel().catch(() => {});
           writeEmptyCompletionError(
             response,
-            emptyCompletionPreludeLimit
-              ? upstream2.ok
-                ? "precontent_limit_retry_protocol_error"
-                : "precontent_limit_retry_failed"
-              : upstream2.ok
-                ? "empty_completion_retry_protocol_error"
-                : "empty_completion_retry_failed",
-            emptyCompletionPreludeLimit
-              ? upstream2.ok
-                ? "The model produced no output before the router's safety limit and the retry returned an incompatible response."
-                : "The model produced no output before the router's safety limit and the retry failed upstream."
-              : upstream2.ok
-                ? "The model returned an empty completion and the router's retry returned an incompatible response."
-                : "The model returned an empty completion and the router's retry failed upstream.",
+            upstream2.ok ? "empty_completion_retry_protocol_error" : "empty_completion_retry_failed",
+            upstream2.ok
+              ? "The model returned an empty completion and the router's retry returned an incompatible response."
+              : "The model returned an empty completion and the router's retry failed upstream.",
           );
           finalStatus = 502;
         } else {
@@ -2952,7 +2971,7 @@ async function handleResponses(request, response, requestUrl) {
             writeEmptyCompletionError(
               response,
               "precontent_limit",
-              "The model produced no output before the router's safety limit. The router retried once and the retry reached a safety limit again.",
+              "The model returned an empty completion. Its repair attempt reached the router's safety limit before producing output.",
             );
             finalStatus = 502;
           } else if (secondPipeline.guard.isEmpty()) {
@@ -2969,7 +2988,7 @@ async function handleResponses(request, response, requestUrl) {
           retryUsage = retryUsageTransform?.tokenUsage();
         }
       }
-      // Both attempts were billed, so the meter reports both. A retry that
+      // Preserve known usage from both attempts. A retry that
       // fails before returning a body still preserves the known first-attempt
       // usage instead of dropping it with the transport error.
       usage = mergeTokenUsage(usage, retryUsage ?? retryUsageTransform?.tokenUsage());
@@ -3082,14 +3101,14 @@ async function handleResponses(request, response, requestUrl) {
   } finally {
     const status = finalStatus ?? response.statusCode;
     if (switchyardWorkflow) {
-      const outputObservation = retryUsageTransform?.completedResponseObserved()
-        ? retryUsageTransform.responseOutputObservation()
-        : usageTransform?.responseOutputObservation();
+      const observer = emptyCompletionRetried ? retryUsageTransform : usageTransform;
+      const outputObservation = observer?.responseOutputObservation();
       if (outputObservation) {
         routerAdmission.recordSwitchyardWorkflow({
           ...switchyardWorkflow,
           produced: clientToolCalls(outputObservation.output),
-          complete: outputObservation.complete,
+          complete: outputObservation.complete && status >= 200 && status < 300 &&
+            !controller.signal.aborted && observer.providerResponseObservation().outcome === "completed",
         });
       }
     }
@@ -3144,7 +3163,7 @@ async function handleResponses(request, response, requestUrl) {
           : ""
       }${
         estimatedInputTokens ? ` est_input=${estimatedInputTokens}` : ""
-      }`,
+      }${observationFields(timingObservation)}`,
     );
   }
 }
@@ -3159,7 +3178,11 @@ function prepareNativeWebSocketRequest({ request, payload, controller, signal })
       request.headers[SWITCHYARD_CAPABILITY_HEADER] || request.headers[SWITCHYARD_CALLBACK_LEASE_HEADER] ||
       (Array.isArray(payload.input) && payload.input.at(-1)?.type === "compaction_trigger")) return undefined;
   const startedAt = Date.now();
+  const timingObservation = requestObservation(request.headers, payload.client_metadata);
   const execution = beginRequestExecution({ request, controller });
+  const workflow = routerAdmission.prepareSwitchyardWorkflow({
+    headers: request.headers, clientMetadata: payload.client_metadata, input: payload.input,
+  });
   let finished = false;
   try {
     signal.throwIfAborted();
@@ -3175,19 +3198,26 @@ function prepareNativeWebSocketRequest({ request, payload, controller, signal })
       rebuildPayload(input) {
         const full = { ...clean, input };
         delete full.previous_response_id;
+        if (workflow) workflow.consumed = clientToolOutputs(input);
         return prepareNativePayload(full).payload;
       },
-      finish({ status, usage: reportedUsage, firstTokenMs, latencyMs }) {
+      finish({ status, outcome, outputObservation, usage: reportedUsage, firstTokenMs, latencyMs }) {
         if (finished) return;
         finished = true;
-        execution.finish();
         const servedStatus = execution.deadlineExceeded() ? 504 : status;
+        if (workflow && servedStatus === 200 && outcome === "completed" && !signal.aborted && outputObservation) {
+          routerAdmission.recordSwitchyardWorkflow({
+            ...workflow, produced: clientToolCalls(outputObservation.output),
+            complete: outputObservation.complete,
+          });
+        }
+        execution.finish();
         if (observesNativeAuth) {
           void observeNativeAuthOutcome(servedStatus, { desktop }).catch(() => {});
         }
         const usage = tokenUsageFromPayload({ usage: reportedUsage });
         console.error(
-          `[codex-router] timing at=${new Date().toISOString()} model=${model} provider=openai status=${servedStatus} transport=websocket total_ms=${timingMetric(latencyMs)} preparation_ms=${timingMetric(preparationMs)} first_token_ms=${timingMetric(firstTokenMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}`,
+          `[codex-router] timing at=${new Date().toISOString()} model=${model} provider=openai status=${servedStatus} transport=websocket total_ms=${timingMetric(latencyMs)} preparation_ms=${timingMetric(preparationMs)} first_token_ms=${timingMetric(firstTokenMs)} out_tokens=${timingMetric(usage?.outputTokens)} cached_tokens=${timingMetric(usage?.cachedInputTokens)}${observationFields(timingObservation)}`,
         );
       },
     };
@@ -3262,14 +3292,8 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
         signal: controller.signal,
       },
       {
-        // Images do not retry. The retryable statuses were chosen to mean "no
-        // response was obtained", but that is reasoning rather than something
-        // observable from here, and Cloudflare can emit 520 after reaching the
-        // origin. On a turn a wrong guess costs a duplicated request; on an
-        // image generation it costs the operator a second billed image. The
-        // failure this exists to absorb was reported on /v1/responses, so the
-        // turn path keeps the benefit and the billed path keeps the old
-        // behaviour until a captured 5xx proves it is safe.
+        // Images do not retry, including connection failures. A rejected or
+        // disconnected image request can have an uncertain billing outcome.
         retries: 0,
         canRetry: () => nothingRelayed(response),
         onRetry: (event) => logUpstreamRetry(event, requestedModel, requestUrl.pathname),

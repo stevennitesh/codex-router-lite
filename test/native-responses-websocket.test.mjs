@@ -20,7 +20,7 @@ function frame(value, rawJson = JSON.stringify(value)) {
   return Buffer.concat([header, body]);
 }
 
-async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, fetchImpl, actualRouter = false, routerEnvironment = {} } = {}) {
+async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, fetchImpl, actualRouter = false, routerEnvironment = {}, switchyardTools = false } = {}) {
   const sockets = new Set();
   const requests = [];
   const handshakes = [];
@@ -44,7 +44,10 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     requests.push({ ...payload, fixtureTransport: "http" });
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ id: "resp_http_real", status: "completed", output: [{ id: "msg_http_real", type: "message", role: "assistant", content: [{ type: "output_text", text: "42" }] }], usage: { input_tokens: 7, output_tokens: 2 } }));
+    const output = switchyardTools && payload.model === "switchyard-auto"
+      ? [{ type: "function_call", id: "fc_switchyard", call_id: "call_switchyard", name: "fixture_tool", arguments: "{}" }]
+      : [{ id: "msg_http_real", type: "message", role: "assistant", content: [{ type: "output_text", text: "42" }] }];
+    response.end(JSON.stringify({ id: "resp_http_real", status: "completed", output, usage: { input_tokens: 7, output_tokens: 2 } }));
   });
   upstream.on("upgrade", (request, socket) => {
     sockets.add(socket);
@@ -104,6 +107,13 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
     mkdirSync(codexHome);
     catalogPath = path.join(stateDirectory, "native-models.json");
     writeFileSync(catalogPath, JSON.stringify({ models: [{ slug: "gpt-6.1-sol", supported_reasoning_levels: ["medium", "high"] }] }));
+    if (switchyardTools) {
+      const runtime = path.join(stateDirectory, "switchyard");
+      mkdirSync(runtime);
+      writeFileSync(path.join(runtime, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
+      writeFileSync(path.join(runtime, "routes.toml"), "# fixture\n");
+      writeFileSync(path.join(stateDirectory, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["switchyard"] }));
+    }
     routerPort = await openPort();
     routerChild = launch("router.mjs", {
       CODEX_HOME: codexHome, MODEL_ROUTER_STATE_DIR: stateDirectory,
@@ -113,6 +123,11 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
       CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.address().port}`,
       CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${upstream.address().port}`,
       CODEX_ROUTER_CATALOG: catalogPath, CODEX_ROUTER_QUIET: "1",
+      ...(switchyardTools ? {
+        CODEX_ROUTER_SWITCHYARD_ROOT: path.join(stateDirectory, "switchyard"),
+        CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1`,
+        CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
+      } : {}),
       ...routerEnvironment,
     });
     await ready(`http://127.0.0.1:${routerPort}/live`, routerChild);
@@ -202,6 +217,85 @@ test("native WebSocket passes real prewarming and tool continuation over one cre
   assert.equal(state.results.length, 3);
   assert.ok(state.results.every(result => result.status === 200));
   assert.ok(prewarm.some(event => event.type === "codex.rate_limits"));
+});
+
+test("actual Router retires switched Switchyard workflows through native WebSocket completion", async t => {
+  let mode = "answer";
+  const nextTool = { type: "function_call", id: "fc_native_next", call_id: "call_native_next", name: "fixture_tool", arguments: "{}" };
+  const state = await fixture(t, {
+    actualRouter: true, switchyardTools: true,
+    headers: { "session-id": "old-cache", "thread-id": "old-thread" },
+    handle: ({ send, complete, id }) => {
+      if (mode === "failed" || mode === "incomplete") {
+        send({ type: `response.${mode}`, response: { id, status: mode, output: [] } });
+      } else {
+        if (mode === "next-tool") send({ type: "response.output_item.done", output_index: 0, item: nextTool });
+        // The done event is authoritative even when the completed array omits it.
+        complete([]);
+      }
+    },
+  });
+  const lifecycle = async (action, body) => {
+    const response = await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle${action ? `/${action}` : ""}`, {
+      method: action ? "POST" : "GET", headers: { authorization: "Bearer fixture-internal-capability-long-enough", "content-type": "application/json" },
+      ...(action ? { body: JSON.stringify(body || {}) } : {}),
+    });
+    return { status: response.status, ...await response.json() };
+  };
+  const metadata = { thread_id: "workflow-thread", session_id: "workflow-session" };
+  const first = await state.exchange({ model: "switchyard/auto", input: [{ role: "user", content: "use a tool" }], client_metadata: metadata });
+  assert.equal(first.at(-1).type, "response.completed");
+  const produced = first.at(-1).response.output.find(item => item.type === "function_call");
+  assert.ok(produced);
+  const result = { type: "function_call_output", call_id: produced.call_id, output: "done" };
+  assert.equal((await lifecycle()).workflowCalls, 1);
+  assert.equal((await lifecycle("drain")).status, "deferred");
+  for (const [input, client_metadata, nextMode] of [
+    [[produced, result], { thread_id: "unrelated-thread" }, "answer"],
+    [[{ ...result, call_id: "wrong-call" }], metadata, "answer"],
+    [[produced, result], metadata, "failed"],
+    [[produced, result], metadata, "incomplete"],
+  ]) {
+    mode = nextMode;
+    const events = await state.exchange({ input, client_metadata });
+    assert.equal(events.at(-1).type, nextMode === "answer" ? "response.completed" : `response.${nextMode}`);
+    assert.equal((await lifecycle()).workflowCalls, 1);
+    assert.equal((await lifecycle("drain")).status, "deferred");
+  }
+  mode = "next-tool";
+  const next = await state.exchange({ input: [produced, result], client_metadata: metadata });
+  assert.deepEqual(next.find(event => event.type === "response.output_item.done").item, nextTool);
+  assert.equal((await lifecycle()).workflowCalls, 1);
+  assert.equal((await lifecycle("drain")).status, "deferred");
+  mode = "answer";
+  await state.exchange({ previous_response_id: next.at(-1).response.id, input: [{ type: "function_call_output", call_id: nextTool.call_id, output: "done" }], client_metadata: metadata });
+  assert.equal((await lifecycle()).workflowCalls, 0);
+  assert.equal((await lifecycle()).indeterminateWorkflow, false);
+  assert.equal((await lifecycle("drain")).status, "drained");
+});
+
+test("canceled native WebSocket consumption leaves the Switchyard workflow pending", async t => {
+  const state = await fixture(t, { actualRouter: true, switchyardTools: true, handle: () => {} });
+  const metadata = { thread_id: "canceled-workflow" };
+  const first = await state.exchange({ model: "switchyard/auto", input: [{ role: "user", content: "use tool" }], client_metadata: metadata });
+  const produced = first.at(-1).response.output.find(item => item.type === "function_call");
+  assert.ok(produced);
+  const status = async () => (await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle`, {
+    headers: { authorization: "Bearer fixture-internal-capability-long-enough" },
+  })).json();
+  state.client.send(JSON.stringify({ type: "response.create", model: "gpt-6.1-sol", stream: true,
+    input: [produced, { type: "function_call_output", call_id: produced.call_id, output: "done" }], client_metadata: metadata }));
+  for (let attempt = 0; state.requests.length < 2 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.requests.length, 2);
+  assert.equal((await status()).activeRequests, 1);
+  state.client.close();
+  for (let attempt = 0; (await status()).activeRequests && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal((await status()).activeRequests, 0);
+  assert.equal((await status()).workflowCalls, 1);
+  const drain = await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle/drain`, {
+    method: "POST", headers: { authorization: "Bearer fixture-internal-capability-long-enough", "content-type": "application/json" }, body: "{}",
+  });
+  assert.equal(drain.status, 409);
 });
 
 test("native validated events preserve raw Unicode, escapes and unknown fields over the actual socket", async t => {
@@ -454,6 +548,25 @@ test("actual Router preserves local caller substitution and external routing on 
   assert.equal(external.httpHeaders[0]["x-session-id"], undefined);
   assert.equal(external.httpHeaders[0]["x-codex-routing-hint"], undefined);
   assert.equal(external.httpHeaders[0]["x-openai-internal-codex-residency"], undefined);
+});
+
+test("actual native and external WebSocket timing logs follow current per-response thread metadata", async t => {
+  const first = "019a0780-0000-7000-8000-000000000001", second = "019a0780-0000-7000-8000-000000000002";
+  const digest = value => createHash("sha256").update(`codex-router/thread/v1\0${value}`).digest("hex");
+  for (const model of ["gpt-6.1-sol","openrouter/pareto"]) {
+    const state = await fixture(t,{actualRouter:true,headers:{"thread-id":first},handle:({complete}) => complete([])});
+    for (const thread of [first,second]) {
+      const events = await state.exchange({model,client_metadata:{thread_id:thread,session_id:thread}});
+      assert.equal(events.at(-1).type,"response.completed");
+    }
+    await stop(state.routerChild);
+    const timings = state.routerChild.errors().split("\n").filter(line => line.startsWith("[codex-router] timing "));
+    assert.equal(timings.length,2);
+    assert.ok(timings[0].includes(`thread_sha256=${digest(first)}`));
+    assert.ok(timings[1].includes(`thread_sha256=${digest(second)}`));
+    assert.ok(timings.every(line => !line.includes(first) && !line.includes(second)));
+    assert.equal(state.handshakes.length,model.startsWith("gpt-") ? 2 : 0);
+  }
 });
 
 test("actual Router deadline aborts a held native WebSocket and releases admission", async t => {

@@ -73,23 +73,6 @@ function rewriteWholeNumberTokens(raw) {
   return out;
 }
 
-function coerceWholeNumberJson(value) {
-  if (Array.isArray(value)) {
-    return value.map((entry) => coerceWholeNumberJson(entry));
-  }
-  if (!value || typeof value !== "object") {
-    if (typeof value === "number" && Number.isSafeInteger(value)) {
-      return Object.is(value, -0) ? 0 : value;
-    }
-    return value;
-  }
-  const next = {};
-  for (const [key, entry] of Object.entries(value)) {
-    next[key] = coerceWholeNumberJson(entry);
-  }
-  return next;
-}
-
 export function coerceFunctionCallArguments(raw) {
   if (typeof raw !== "string") return raw;
   try {

@@ -127,6 +127,84 @@ async function fragmented(response, events, seed) {
   response.end();
 }
 
+test("stress: complete reasoning frames reach callers before a gated terminal across SSE endings", { timeout: 20000 }, async t => {
+  const gates = new Map();
+  t.after(() => { for (const gate of gates.values()) gate.resolve(); });
+  const delimiters = { lf: "\n\n", crlf: "\r\n\r\n", mixed: "\n\r\n", cr: "\r\r" };
+  const f = await fixture(t, async ({ body }, response) => {
+    const label = /FRAMING_TEST:([a-z-]+)/.exec(JSON.stringify(body.input))[1];
+    const delimiter = delimiters[label.split("-").at(-1)];
+    const encode = event => `data: ${JSON.stringify(event)}${delimiter}`;
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write(encode({ type: "response.reasoning_summary_text.delta", delta: "visible progress" }));
+    await gates.get(label).promise;
+    response.end(encode({ type: "response.completed", response: { id: `resp_${label}`, status: "completed", output: [message("answer")] } }));
+  }, { CODEX_ROUTER_EMPTY_COMPLETION_PRELUDE_MS: "1000", CODEX_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS: "3000" });
+  for (const [transport, model] of [["native", "gpt-5.6-sol"], ["routed", PARETO]]) {
+    for (const ending of Object.keys(delimiters)) {
+      const label = `${transport}-${ending}`;
+      const gate = deferred(); gates.set(label, gate);
+      const response = await f.post({ model, stream: true, input: `FRAMING_TEST:${label}` });
+      let wire = "", progressDelivered = false;
+      try {
+        for await (const bytes of response.body) {
+          wire += Buffer.from(bytes).toString("utf8");
+          if (!progressDelivered && wire.includes("visible progress")) {
+            assert.ok(!wire.includes('"type":"response.completed"'), "the origin is still gated");
+            progressDelivered = true;
+            gate.resolve();
+          }
+        }
+      } finally { gate.resolve(); }
+      assert.equal(response.status, 200, `${label}: ${wire}`);
+      assert.equal(progressDelivered, true, `${label}: framing must not hide progress`);
+      assert.match(wire, /answer/);
+    }
+  }
+  assert.equal(f.seen.length, 8, "all framing variants use one accepted request");
+});
+
+test("stress: unknown pre-content failures are not replayed while completed-empty repair remains", { timeout: 20000 }, async t => {
+  const attempts = new Map(), closures = new Map();
+  const f = await fixture(t, ({ body }, response) => {
+    const scenario = /REPLAY_TEST:([a-z-]+)/.exec(JSON.stringify(body.input))[1];
+    const count = (attempts.get(scenario) || 0) + 1;
+    attempts.set(scenario, count);
+    if (!closures.has(scenario)) closures.set(scenario, deferred());
+    response.once("close", closures.get(scenario).resolve);
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.flushHeaders();
+    if (scenario === "stall") return;
+    if (scenario === "byte-limit") return response.end(`:${"x".repeat(1024)}\n\n`);
+    if (scenario === "visible-stall") {
+      response.write(frame({ type: "response.reasoning_summary_text.delta", delta: "visible reasoning" }));
+      return;
+    }
+    response.end(frame({ type: "response.completed", response: { status: "completed", output:
+      scenario === "empty" && count === 1 ? [] : [message("repaired answer")] } }));
+  }, { CODEX_ROUTER_EMPTY_COMPLETION_PRELUDE_MS: "50", CODEX_ROUTER_EMPTY_COMPLETION_PRELUDE_BYTES: "512",
+    CODEX_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS: "1000", CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1" });
+  for (const scenario of ["stall", "byte-limit", "visible-stall", "empty", "ordinary"]) {
+    const response = await f.post({ model: GLM, stream: true, input: `REPLAY_TEST:${scenario}` });
+    const wire = await response.text();
+    await bounded(closures.get(scenario).promise, "original upstream closes");
+    assert.equal(attempts.get(scenario), scenario === "empty" ? 2 : 1, scenario);
+    if (scenario === "stall" || scenario === "byte-limit") {
+      assert.equal(response.status, 502);
+      assert.equal(JSON.parse(wire).error.code, "precontent_limit");
+      assert.match(wire, /outcome is unknown/);
+    } else if (scenario === "visible-stall") {
+      assert.match(wire, /visible reasoning/);
+      assert.match(wire, /precontent_limit/);
+      assert.doesNotMatch(wire, /response.completed/);
+    } else {
+      assert.equal(response.status, 200);
+      assert.match(wire, /repaired answer/);
+    }
+    for (const sentinel of PRIVATE_SENTINELS) assert.ok(!wire.includes(sentinel));
+  }
+});
+
 test("stress: representative routes preserve their distinct boundaries", { timeout: 20000 }, async t => {
   const f = await fixture(t, ({ body }, response) => responseJson(response, {
     id: `resp_${body.model}`, status: "completed", output: [message(`control:${body.model}`)],
@@ -331,52 +409,93 @@ test("stress: seeded function arguments preserve identity and never invent conte
   assert.equal(f.seen.length, 4);
 });
 
-test("stress: retryable status attempts are bounded and preserve request identity", { timeout: 20000 }, async t => {
+test("stress: native and provider POST refusals never trigger automatic status replay", { timeout: 20000 }, async t => {
   const f = await fixture(t, ({ body }, response) => {
     const status = body.metadata.status;
     response.writeHead(status, { "Content-Type": "application/json", "Retry-After": "7" });
     response.end(JSON.stringify({ error: { message: `Synthetic provider HTTP ${status}` } }));
   });
-  for (const [status, attempts] of [[429, 1], [504, 2]]) {
-    const before = f.seen.length;
-    const response = await f.post({ metadata: { status } });
-    assert.equal(response.status, status); assert.equal(response.headers.get("retry-after"), "7");
-    assert.ok((await response.json()).error); assert.equal(f.seen.length - before, attempts);
-    for (const attempt of f.seen.slice(before)) assert.deepEqual(attempt.body, f.seen[before].body);
+  for (const model of ["gpt-6.1-sol", "openrouter/deepseek-v4.1-flash-together"]) {
+    for (const status of [429, 502, 503, 504, 520]) {
+      const before = f.seen.length;
+      const response = await f.post({ model, metadata: { status } });
+      assert.equal(response.status, status); assert.equal(response.headers.get("retry-after"), "7");
+      assert.ok((await response.json()).error); assert.equal(f.seen.length - before, 1);
+    }
   }
 });
 
-test("stress: caller cancellation during provider backoff prevents a duplicate attempt", { timeout: 20000 }, async t => {
-  const answered = deferred();
-  const attempts = new Map();
-  const f = await fixture(t, ({ body }, response) => {
-    const scenario = body.metadata?.scenario;
-    const attempt = (attempts.get(scenario) || 0) + 1;
-    attempts.set(scenario, attempt);
-    if (scenario === "positive-control" && attempt === 2) {
+test("stress: accepted POST disconnects are returned once through native and provider callers", { timeout: 20000 }, async t => {
+  const f = await fixture(t, ({ body }, response, request) => {
+    if (body.metadata?.scenario === "positive-control") {
       return responseJson(response, {
-        id: "resp_retry_control", status: "completed", output: [message("retried")],
+        id: "resp_control", status: "completed", output: [message("completed")],
       });
     }
-    response.writeHead(504, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ error: { message: "synthetic retryable response" } }));
-    if (scenario === "cancel-during-backoff") answered.resolve();
+    request.socket.destroy();
   }, { CODEX_ROUTER_NATIVE_RETRY_BACKOFF_MS: "40" });
+  for (const model of ["gpt-6.1-sol", "openrouter/deepseek-v4.1-flash-together"]) {
+    const before = f.seen.length;
+    const failed = await f.post({ model, metadata: { scenario: "disconnect-after-acceptance" } });
+    assert.equal(failed.status, 502); await failed.arrayBuffer();
+    assert.equal(f.seen.length - before, 1);
+    const control = await f.post({ model, metadata: { scenario: "positive-control" } });
+    assert.equal(control.status, 200); await control.arrayBuffer();
+    assert.equal(f.seen.length - before, 2);
+  }
+});
+
+test("stress: routed error bodies have a separate total budget and release upstream work", { timeout: 20000 }, async t => {
+  let closed = 0;
+  const entered = deferred();
+  const f = await fixture(t, ({ body }, response) => {
+    const { mode, status = 429 } = body.metadata;
+    if (mode === "success") {
+      return new Promise(resolve => setTimeout(() => {
+        responseJson(response, { id: "slow_success", status: "completed", output: [message("done")] }); resolve();
+      }, 160));
+    }
+    response.writeHead(status, { "content-type": "application/json", "retry-after": "7" });
+    if (mode === "absent") { response.end(); return; }
+    if (mode === "oversized") { response.end(JSON.stringify({ error: { message: "x".repeat(2048) } })); return; }
+    if (mode === "truncated") { response.write('{"error":{"message":"insufficient quota'); setImmediate().then(() => response.destroy()); return; }
+    if (mode === "complete") { response.end('{"error":{"message":"synthetic useful refusal"}}'); return; }
+    if (mode === "context") { response.end('{"error":{"message":"context_length_exceeded"}}'); return; }
+    if (mode === "quota") { response.end('{"error":{"message":"insufficient quota","type":"insufficient_quota"}}'); return; }
+    response.once("close", () => closed++);
+    response.write('{"error":{"message":"insufficient quota"}}');
+    if (mode === "trickle") {
+      const timer = setInterval(() => response.write(" "), 10);
+      response.once("close", () => clearInterval(timer));
+    }
+    if (mode === "cancel") entered.resolve();
+  }, { CODEX_ROUTER_ERROR_BODY_TIMEOUT_MS: "80", MODEL_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS: "1000", MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES: "1024" });
+  const model = "openrouter/deepseek-v4.1-flash-together";
+  for (const mode of ["stall", "trickle", "truncated", "oversized", "absent"]) {
+    const response = await f.post({ model, metadata: { mode } });
+    assert.equal(response.status, 429); assert.equal(response.headers.get("retry-after"), "7");
+    const { error } = await response.json();
+    assert.equal(error.type, "rate_limit_error", `${mode}: incomplete diagnostics cannot classify a quota rejection`);
+    assert.match(error.message, /Retry in about 7s/);
+    assert.doesNotMatch(error.message, /insufficient quota|execution deadline/);
+  }
+  for (const status of [400, 401, 429, 503]) {
+    const response = await f.post({ model, metadata: { mode: "complete", status } });
+    assert.equal(response.status, status);
+    assert.match((await response.json()).error.message, /synthetic useful refusal/);
+  }
+  const quota = await f.post({ model, metadata: { mode: "quota" } });
+  assert.equal(quota.status, 429); assert.equal((await quota.json()).error.type, "billing_error");
+  const context = await f.post({ model, metadata: { mode: "context", status: 500 } });
+  assert.equal(context.status, 400); assert.equal((await context.json()).error.code, "context_length_exceeded");
+  const slow = await f.post({ model, metadata: { mode: "success" } });
+  assert.equal(slow.status, 200); assert.equal((await slow.json()).status, "completed");
   const controller = f.controller();
-  const request = f.post({ metadata: { scenario: "cancel-during-backoff" } }, "responses", controller.signal);
-  const rejected = assert.rejects(request, { name: "AbortError" });
-  await bounded(answered.promise, "first retryable response returned");
-  await setImmediate();
-  controller.abort();
-  await rejected;
-  // Observe beyond the configured retry window. A broken cancellation path
-  // would have reached the provider again by now.
-  await new Promise(resolve => setTimeout(resolve, 120));
-  assert.equal(attempts.get("cancel-during-backoff"), 1);
-  const control = await f.post({ metadata: { scenario: "positive-control" } });
-  assert.equal(control.status, 200);
-  await control.arrayBuffer();
-  assert.equal(attempts.get("positive-control"), 2);
+  const pending = f.post({ model, metadata: { mode: "cancel" } }, "responses", controller.signal);
+  const rejected = assert.rejects(pending, { name: "AbortError" });
+  await bounded(entered.promise, "provider received the canceled request"); controller.abort(); await rejected;
+  for (let attempt = 0; closed < 3 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(closed, 3, "stall, trickle and caller cancellation release actual provider responses");
 });
 
 function checkpointText(body) { return body.output.at(-1).content.at(-1).text; }

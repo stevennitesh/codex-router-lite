@@ -27,7 +27,7 @@ and HTTP status in sanitized evidence. Locate the earliest violated contract:
 | Missing model, effort or deferred tools | `src/catalog.mjs`, route JSON; [native Codex](native-codex.md) |
 | HTTP 400, tool choice or replay rejected | `src/routed-request.mjs`, `src/openrouter-request.mjs`; [preparation](request-preparation.md), then the endpoint guide |
 | Wrong/missing tool or custom arguments | `src/namespace-relay.mjs`; compare declaration, produced call and replay identity together |
-| Missing/duplicate stream events | `src/zai-responses-compat.mjs` for GLM; generic relay, `src/message-phase.mjs`, `src/empty-completion-guard.mjs` for shared behavior |
+| Missing/duplicate stream events | `src/zai-responses-compat.mjs` for GLM; `src/sse-framing.mjs` for shared CR/LF boundaries; generic relay, `src/message-phase.mjs`, `src/empty-completion-guard.mjs` for consumer policy |
 | Lost context or false compaction success | `src/compaction-checkpoint.mjs` and compaction callers in `src/router.mjs` |
 | Native handoff/auth failure | `src/router.mjs` owns encrypted handoff extraction/relay; `src/codex-native-session.mjs` owns session credentials; [native Codex](native-codex.md) |
 | Disconnect, retry or proxy anomaly | `src/api-forwarder.mjs`, `src/upstream-retry.mjs`, `src/fetch-transport.mjs`, `src/proxy-environment.mjs` |

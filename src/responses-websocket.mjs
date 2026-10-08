@@ -8,6 +8,7 @@ import {
   readResponseBody,
 } from "./http-utils.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
+import { SseLineScanner } from "./sse-framing.mjs";
 import { NativeResponsesWebSocket } from "./native-responses-websocket.mjs";
 
 const RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
@@ -674,9 +675,9 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
   if (!body) throw new Error("The internal Responses endpoint returned no stream.");
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
+  const lines = new SseLineScanner();
   let lineParts = [];
   let lineBytes = 0;
-  let lineEndsWithCr = false;
   let dataLines = [];
   let dataChars = 0;
   const dispatch = async () => {
@@ -687,8 +688,8 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
     if (data === "[DONE]") return true;
     return onEvent(data);
   };
-  const assertLineBound = (allowCr = true) => {
-    if (lineBytes <= maxEventBytes + (allowCr && lineEndsWithCr ? 1 : 0)) return;
+  const assertLineBound = () => {
+    if (lineBytes <= maxEventBytes) return;
     const error = new Error(`Responses SSE line exceeds ${maxEventBytes} bytes.`);
     error.code = "ERR_RESPONSES_WS_EVENT_TOO_LARGE";
     throw error;
@@ -697,11 +698,9 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
     if (!part) return;
     lineParts.push(part);
     lineBytes += Buffer.byteLength(part, "utf8");
-    lineEndsWithCr = part.endsWith("\r");
     assertLineBound();
   };
   const consumeLine = async (line) => {
-    if (line.endsWith("\r")) line = line.slice(0, -1);
     if (line === "") return dispatch();
     if (line.startsWith(":")) return true;
     if (!line.startsWith("data:")) return true;
@@ -725,23 +724,17 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
       const { done, value } = await reader.read();
       if (done) break;
       const text = decoder.decode(value, { stream: true });
-      let offset = 0;
-      let newline;
-      // Scan and count only each new decoded segment. A long provider data
-      // line must not rescan or recount its entire prefix on every TCP chunk.
-      while ((newline = text.indexOf("\n", offset)) !== -1) {
-        appendLinePart(text.slice(offset, newline));
+      for (const piece of lines.scan(text)) {
+        appendLinePart(piece.content);
+        if (!piece.endLine) continue;
         const line = lineParts.join("");
         lineParts = [];
         lineBytes = 0;
-        lineEndsWithCr = false;
-        offset = newline + 1;
         if ((await consumeLine(line)) === false) return;
       }
-      appendLinePart(text.slice(offset));
     }
     appendLinePart(decoder.decode());
-    assertLineBound(false);
+    assertLineBound();
     // EOF does not terminate an SSE event. Discard any unfinished line/event;
     // the caller's existing missing-completion path reports the failed stream.
   } finally {
@@ -1012,6 +1005,7 @@ class ResponsesWebSocketPeer {
     const startedAt = Date.now();
     let prepared;
     let terminal;
+    let outputObservation;
     let firstTokenMs;
     let status = 502;
     let outcome = "transport_error";
@@ -1114,6 +1108,7 @@ class ResponsesWebSocketPeer {
       this.continuations.clear();
       if (terminal?.type === "response.completed") {
         outputItems = reconciledContinuationOutput(terminal.response.output, outputItems);
+        outputObservation = { output: outputItems, complete: !continuationOverflow };
         const outputBytes = Buffer.byteLength(JSON.stringify(outputItems), "utf8");
         if (knownBaseline && !continuationOverflow && inputBytes + outputBytes + 32 <= this.options.maxContinuationBytes) {
           this.continuations.set(terminal.response.id, { input, output: outputItems, inputBytes, outputBytes });
@@ -1151,7 +1146,7 @@ class ResponsesWebSocketPeer {
         status = Number(controller.signal.reason?.status) || 499;
         outcome = status === 504 ? "failed" : "canceled";
       }
-      prepared?.finish?.({ status, outcome, response: terminal?.response,
+      prepared?.finish?.({ status, outcome, response: terminal?.response, outputObservation,
         usage: terminal?.response?.usage, firstTokenMs, latencyMs: Date.now() - startedAt });
       this.abortController.signal.removeEventListener("abort", onClose);
       controller.abort();

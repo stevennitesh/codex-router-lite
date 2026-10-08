@@ -1,5 +1,6 @@
 import { Transform } from "node:stream";
 import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
+import { SseFrameBuffer } from "./sse-framing.mjs";
 
 // Native Codex models label every assistant message with a `phase`:
 // `commentary` for a progress note written before more tool calls, and
@@ -29,8 +30,6 @@ import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
 // a destroyed stream cannot push, and the held frames are lost with the stream
 // -- as they are in every other holding stage -- before the router ends the
 // body with a stream error. GLM message-envelope repair runs before this stage.
-const CRLF_SEP = Buffer.from("\r\n\r\n");
-const LF_SEP = Buffer.from("\n\n");
 const COMMENTARY = "commentary";
 const FINAL_ANSWER = "final_answer";
 // Terminals that settle a delivered response: its last message is the answer.
@@ -53,19 +52,9 @@ function fatalUtf8(buffer) {
   return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
 }
 
-function findFrameEnd(buffer) {
-  const crlf = buffer.indexOf(CRLF_SEP);
-  const lf = buffer.indexOf(LF_SEP);
-  if (crlf !== -1 && (lf === -1 || crlf <= lf)) {
-    return { index: crlf, separator: CRLF_SEP };
-  }
-  if (lf !== -1) return { index: lf, separator: LF_SEP };
-  return undefined;
-}
-
 function dataTextOf(text) {
   const dataLines = [];
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text.split(/\r\n|\r|\n/)) {
     if (line.startsWith("data:")) {
       const value = line.slice(5);
       dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
@@ -83,7 +72,7 @@ function parseFrame(text) {
   if (dataText.length > MAX_PARSE_CHARS || !jsonIsUnambiguousForRewrite(dataText)) return { invalid: true };
   try {
     const event = JSON.parse(dataText);
-    const names = text.split(/\r?\n/).filter((line) => line.startsWith("event:"))
+    const names = text.split(/\r\n|\r|\n/).filter((line) => line.startsWith("event:"))
       .map((line) => line.slice(6).trim());
     if (names.length > 1 || (names.length && names[0] !== event?.type)) return { invalid: true };
     return typeof event?.type === "string" ? { type: event.type, event } : undefined;
@@ -105,19 +94,20 @@ function unlabelledAssistantMessage(item) {
 
 // Replaces the frame's data lines with one line carrying `event`, keeping every
 // other field line (event:, id:, comments) and the original separator.
-function rewrittenFrame(text, separator, event) {
-  const lineEnding = text.includes("\r\n") ? "\r\n" : "\n";
+function rewrittenFrame(text, atStreamStart, event) {
+  const bom = atStreamStart && text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const lines = [];
   let wroteData = false;
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text.slice(bom.length).match(/[^\r\n]*(?:\r\n|\r|\n|$)/g)) {
     if (!line.startsWith("data:")) {
       lines.push(line);
     } else if (!wroteData) {
-      lines.push(`data: ${JSON.stringify(event)}`);
+      const ending = /(?:\r\n|\r|\n)$/.exec(line)?.[0] || "";
+      lines.push(`data: ${JSON.stringify(event)}${ending}`);
       wroteData = true;
     }
   }
-  return Buffer.concat([Buffer.from(lines.join(lineEnding), "utf8"), separator]);
+  return Buffer.from(bom + lines.join(""), "utf8");
 }
 
 // Labels the terminal snapshot's messages by the same rule the stream used: a
@@ -135,7 +125,7 @@ export function labelResponseOutput(output) {
 }
 
 export class MessagePhaseTransform extends Transform {
-  #buffer = Buffer.alloc(0);
+  #frames = new SseFrameBuffer();
   #passthrough = false;
   #maxHeldBytes;
   // The unlabelled message done frame awaiting its label, and the frames that
@@ -156,59 +146,47 @@ export class MessagePhaseTransform extends Transform {
       callback();
       return;
     }
-    this.#buffer = this.#buffer.length ? Buffer.concat([this.#buffer, piece]) : piece;
-    this.#drain(false);
-    callback();
-  }
-
-  _flush(callback) {
-    if (!this.#passthrough) this.#drain(true);
-    // A stream that ended without a terminal has no answer to label.
-    this.#release(undefined);
-    if (this.#buffer.length) this.push(this.#buffer);
-    this.#buffer = Buffer.alloc(0);
-    callback();
-  }
-
-  #drain(flush) {
-    while (this.#buffer.length && !this.#passthrough) {
-      const found = findFrameEnd(this.#buffer);
-      if (!found) {
-        if (this.#buffer.length > MAX_FRAME_BYTES) {
-          this.#disable();
-          return;
-        }
-        if (!flush) return;
-        const original = this.#buffer;
-        this.#buffer = Buffer.alloc(0);
-        this.#frame(original, original, Buffer.alloc(0));
-        return;
+    try {
+      for (const frame of this.#frames.write(piece)) {
+        if (this.#passthrough) this.push(frame.bytes);
+        else this.#frame(frame.bytes, frame.atStreamStart);
       }
-      const block = this.#buffer.subarray(0, found.index);
-      const original = this.#buffer.subarray(0, found.index + found.separator.length);
-      this.#buffer = this.#buffer.subarray(found.index + found.separator.length);
-      this.#frame(Buffer.from(original), block, found.separator);
+      if (this.#frames.pendingBytes > MAX_FRAME_BYTES) this.#disable();
+      else if (this.#passthrough && this.#frames.pendingBytes) this.push(this.#frames.take());
+      callback();
+    } catch (error) {
+      callback(error);
     }
   }
 
-  #frame(original, block, separator) {
-    if (block.length > MAX_FRAME_BYTES) {
+  _flush(callback) {
+    if (!this.#passthrough && this.#frames.pendingBytes) {
+      const atStreamStart = this.#frames.atStreamStart;
+      this.#frame(this.#frames.take(), atStreamStart);
+    }
+    // A stream that ended without a terminal has no answer to label.
+    this.#release(undefined);
+    if (this.#frames.pendingBytes) this.push(this.#frames.take());
+    callback();
+  }
+
+  #frame(original, atStreamStart) {
+    if (original.length > MAX_FRAME_BYTES) {
       this.#disable(original);
       return;
     }
     let text;
     try {
-      text = fatalUtf8(block);
+      text = fatalUtf8(original);
     } catch {
       // Invalid UTF-8 disables labelling for the rest of the stream.
       this.#release(undefined);
       this.push(original);
-      if (this.#buffer.length) this.push(this.#buffer);
-      this.#buffer = Buffer.alloc(0);
+      if (this.#frames.pendingBytes) this.push(this.#frames.take());
       this.#passthrough = true;
       return;
     }
-    const parsed = parseFrame(text);
+    const parsed = parseFrame(atStreamStart && text.startsWith("\uFEFF") ? text.slice(1) : text);
     if (parsed?.invalid) {
       this.#disable(original);
       return;
@@ -234,7 +212,7 @@ export class MessagePhaseTransform extends Transform {
     }
 
     if (type === "response.output_item.done" && unlabelledAssistantMessage(parsed.event?.item)) {
-      this.#pending = { text, separator, original, event: parsed.event };
+      this.#pending = { text, atStreamStart, original, event: parsed.event };
       this.#heldBytes = original.length;
       if (this.#heldBytes > this.#maxHeldBytes) this.#release(undefined);
       return;
@@ -242,7 +220,7 @@ export class MessagePhaseTransform extends Transform {
     if (ANSWER_TERMINALS.has(type) && parsed.event) {
       const output = labelResponseOutput(parsed.event.response?.output);
       if (output) {
-        this.push(rewrittenFrame(text, separator, {
+        this.push(rewrittenFrame(text, atStreamStart, {
           ...parsed.event,
           response: { ...parsed.event.response, output },
         }));
@@ -257,8 +235,7 @@ export class MessagePhaseTransform extends Transform {
   #disable(original) {
     this.#release(undefined);
     if (original) this.push(original);
-    if (this.#buffer.length) this.push(this.#buffer);
-    this.#buffer = Buffer.alloc(0);
+    if (this.#frames.pendingBytes) this.push(this.#frames.take());
     this.#passthrough = true;
   }
 
@@ -270,7 +247,7 @@ export class MessagePhaseTransform extends Transform {
     this.#pending = undefined;
     this.push(
       phase
-        ? rewrittenFrame(pending.text, pending.separator, {
+        ? rewrittenFrame(pending.text, pending.atStreamStart, {
             ...pending.event,
             item: { ...pending.event.item, phase },
           })

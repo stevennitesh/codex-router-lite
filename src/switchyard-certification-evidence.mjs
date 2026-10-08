@@ -5,6 +5,50 @@ import { fileURLToPath } from "node:url";
 import { LOG_PATH } from "./paths.mjs";
 import { latestSwitchyardGeneration, summarizeSwitchyardTrace } from "./switchyard-trace.mjs";
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
+import { observationIdentity } from "./request-observation.mjs";
+
+function field(line, name) { return new RegExp(`\\b${name}=([^ \\t]+)`, "u").exec(line)?.[1]; }
+
+// Rust traces retain sub-millisecond precision at the bounded proof window.
+function traceInstant(value) {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/u.exec(value || "");
+  if (!match) return undefined;
+  const base = `${match[1]}.000Z`, milliseconds = Date.parse(base);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== base) return undefined;
+  return BigInt(milliseconds) * 1000000n + BigInt((match[2] || "").padEnd(9, "0"));
+}
+
+function selectChildObservations(generation, routingLog, child) {
+  const thread = observationIdentity("thread", child.threadId);
+  const start = traceInstant(child.startedAt), end = traceInstant(child.endedAt);
+  if (!thread || start === undefined || end === undefined || start >= end) throw new Error("A bounded child observation identity is required.");
+  const within = value => { const at = traceInstant(value); return at !== undefined && at >= start && at <= end; };
+  const lines = generation.split(/\r?\n/u);
+  const timings = lines.filter(line => line.includes(" timing ") && field(line, "thread_sha256") === thread &&
+    field(line, "model") === "switchyard/auto" && within(field(line, "at")));
+  const sessions = new Set(timings.map(line => field(line, "session_sha256")));
+  const session = sessions.size === 1 ? [...sessions][0] : undefined;
+  const validSession = typeof session === "string" && /^[a-f0-9]{64}$/u.test(session);
+  // The upstream routing log has session IDs but no agent IDs. Do not attribute
+  // a shared session to a child when another observed thread uses it too.
+  const ambiguous = validSession && lines.some(line => line.includes(" timing ") &&
+    field(line, "session_sha256") === session && field(line, "thread_sha256") !== thread &&
+    field(line, "model") === "switchyard/auto" && within(field(line, "at")));
+  const selected = lines.filter((line, index) => {
+    if (index === 0) return true;
+    const agent = /\bagent_id="([^"]+)"/u.exec(line)?.[1];
+    const matches = field(line, "thread_sha256") === thread || observationIdentity("thread", agent) === thread;
+    const at = field(line, "at") || /^(\d{4}-\d{2}-\d{2}T[^ ]+Z)/u.exec(line)?.[1];
+    return matches && within(at);
+  });
+  const routing = String(routingLog || "").split(/\r?\n/u).flatMap(line => {
+    try {
+      const record = JSON.parse(line);
+      return validSession && observationIdentity("session", record?.session_id) === session && within(record.ts) ? [line] : [];
+    } catch { return []; }
+  });
+  return {routerLog:selected.join("\n"),routingLog:routing.join("\n"),attributed:Boolean(validSession && !ambiguous)};
+}
 
 function numericField(line, name) {
   const match = new RegExp(`\\b${name}=(\\d+)\\b`, "u").exec(line);
@@ -60,9 +104,17 @@ export function summarizeSwitchyardCertificationEvidence({
   routerLog,
   routingLog,
   limit = 20,
+  child,
 } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new Error("Certification evidence limit must be an integer from 1 to 100.");
+  }
+  let attribution;
+  if (child) {
+    const generation = latestSwitchyardGeneration(routerLog);
+    if (generation === undefined) return { version: 1, generationFound: false };
+    attribution = selectChildObservations(generation, routingLog, child);
+    ({routerLog,routingLog} = attribution);
   }
   const trace = summarizeSwitchyardTrace(routerLog);
   if (!trace.generationFound) return { version: 1, generationFound: false };
@@ -74,15 +126,16 @@ export function summarizeSwitchyardCertificationEvidence({
     .split(/\r?\n/u)
     .map(routingRecord)
     .filter(Boolean)
-    .filter((record) => !Number.isFinite(sinceMs) || Date.parse(record.at) >= sinceMs);
+    .filter((record) => child || !Number.isFinite(sinceMs) || Date.parse(record.at) >= sinceMs);
   const sessionCount = new Set(parsedRouting.map(({ sessionId }) => sessionId).filter(Boolean)).size;
   const routing = parsedRouting.map(({ sessionId: _sessionId, ...record }) => record);
 
   return {
     version: 1,
     generationFound: true,
-    since: trace.since,
-    until: trace.until,
+    ...(child ? {scope:"child",attributed:attribution.attributed && trace.continuity.uniqueAgentIds === 1 && Object.keys(trace.selectedTargets).length > 0} : {}),
+    since: child?.startedAt || trace.since,
+    until: child?.endedAt || trace.until,
     router: {
       total: timings.length,
       successful: timings.filter(({ status }) => status >= 200 && status < 300).length,

@@ -1,18 +1,7 @@
-// Bounded retry for an upstream request that failed before any byte of the
-// response reached the caller.
-//
-// ChatGPT's edge intermittently answers a native turn with
-// "upstream connect error or disconnect/reset before headers", and the router
-// relayed that 503 straight through. "Before headers" is the whole point: no
-// response bytes ever existed, so the request can be sent again and the caller
-// never learns it happened. Codex reacts to the relayed 5xx by spending one of
-// its own five reconnects on a failure that one short retry absorbs.
-//
-// The safety rule this module exists to enforce: a retry is only ever legal
-// while nothing has been relayed. That is guaranteed structurally -- the loop
-// runs entirely before the caller touches its own `ServerResponse` -- and the
-// `canRetry` predicate is the second line of defence, re-checked before every
-// single retry. Retrying after partial output would duplicate the stream.
+// Bounded recovery before caller output. Non-idempotent requests such as
+// inference POSTs only retry conclusive connection failures: missing response
+// headers, socket resets and edge statuses do not prove the request was unapplied.
+// Caller permission and the elapsed budget are checked after every retry wait.
 
 import { connectTimeoutMs } from "./connect-timeout.mjs";
 import { transportErrorGraph } from "./transport-error-graph.mjs";
@@ -62,35 +51,14 @@ const NATIVE_RETRY_BUDGET_MS = clampedInteger(
   MAX_BUDGET_MS,
 );
 
-// Statuses that mean an intermediary never obtained a usable response from the
-// origin, so the request itself was not served and sending it again is not a
-// second execution:
-//
-//   502/503/504  gateway/edge failure, the reported case
-//   520-524      Cloudflare-only edge failures; a live usage log recorded 520
-//                alongside the 503s, which is what proves the failure is
-//                happening at chatgpt.com's edge
-//
-// Deliberately absent:
-//
-//   429  quota and rate limiting. Retrying it blindly makes the condition
-//        worse, and honouring `Retry-After` would mean sleeping for as long as
-//        the upstream asks -- exactly the multi-second hang this bound exists
-//        to avoid. It is relayed so the caller and the user see it.
-//   4xx  deterministic. The same request produces the same answer.
-//   500  the origin ran and failed. Unlike the edge statuses above, a repeat
-//        risks a second execution of work that already happened.
+// Status recovery is limited to idempotent methods. Neither a 5xx nor a
+// Retry-After establishes safe POST replay. Rate limits and origin 500s pass
+// through even for idempotent requests.
 const RETRYABLE_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524]);
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE"]);
 
-// Transport failures where no response ever started. `fetch` reports these as
-// a generic TypeError whose cause carries the socket-level code.
-//
-// ENOTFOUND, EADDRNOTAVAIL, and ENOBUFS are included because a Windows machine
-// under loopback churn can fail native connects repeatedly while the same
-// origin answered other requests in the same window, which is the transient
-// shape this bound exists to absorb. All three fail before a connection
-// exists — a name that did not resolve, no ephemeral port to bind, no kernel
-// buffer for the socket — so a retry can never be a second execution.
+// Fetch wraps socket codes in error causes/aggregates. Some of these errors
+// also occur after a POST was accepted; those require idempotent semantics.
 const RETRYABLE_ERROR_CODES = new Set([
   "EADDRNOTAVAIL",
   "ECONNABORTED",
@@ -108,12 +76,21 @@ const RETRYABLE_ERROR_CODES = new Set([
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET",
 ]);
+const PRECONNECT_ERROR_CODES = new Set([
+  "EADDRNOTAVAIL", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function conclusiveConnectError(node) {
+  return PRECONNECT_ERROR_CODES.has(node.code) ||
+    (node.syscall === "connect" && typeof node.code === "string" &&
+      node.code.startsWith("E") && RETRYABLE_ERROR_CODES.has(node.code));
+}
 
 function isRetryableStatus(status) {
   return RETRYABLE_STATUSES.has(Number(status));
 }
 
-function isRetryableTransportError(error) {
+function isRetryableTransportError(error, idempotent) {
   if (!error) return false;
   // An abort is the caller leaving, and a router-side error (a body that is too
   // large, an unsupported encoding) carries its own HTTP status and would fail
@@ -121,8 +98,10 @@ function isRetryableTransportError(error) {
   const graph = transportErrorGraph(error);
   if (!graph.complete || !graph.leaves.length || graph.nodes.some(node =>
     node.name === "AbortError" || node.name === "TimeoutError" || node.status ||
-    (typeof node.code === "string" && !RETRYABLE_ERROR_CODES.has(node.code)))) return false;
-  return graph.leaves.every(node => RETRYABLE_ERROR_CODES.has(node.code));
+    (typeof node.code === "string" && !(idempotent
+      ? RETRYABLE_ERROR_CODES.has(node.code) : conclusiveConnectError(node))))) return false;
+  return graph.leaves.every(node => idempotent
+    ? RETRYABLE_ERROR_CODES.has(node.code) : conclusiveConnectError(node));
 }
 
 // A backoff that a departing caller does not have to sit through: an abort
@@ -148,9 +127,9 @@ function abortError(signal) {
 }
 
 // A failed attempt still owns a socket until its body is drained or cancelled.
-async function discardBody(response) {
+function discardBody(response) {
   try {
-    await response?.body?.cancel();
+    void response?.body?.cancel().catch(() => {});
   } catch {
     // The connection is already gone, which is the state we wanted anyway.
   }
@@ -177,8 +156,11 @@ export async function fetchWithRetry(target, init = {}, options = {}) {
     now = Date.now,
   } = options;
   const startedAt = now();
+  const idempotent = IDEMPOTENT_METHODS.has(String(init.method ?? target?.method ?? "GET").toUpperCase());
+  const eligible = () => canRetry?.() !== false && now() - startedAt < budgetMs;
   let attempt = 0;
   for (;;) {
+    if (signal?.aborted) throw abortError(signal);
     let response;
     let failure;
     try {
@@ -188,20 +170,39 @@ export async function fetchWithRetry(target, init = {}, options = {}) {
     }
     if (attempt >= retries) return settle(response, failure, attempt);
     const retryable = failure
-      ? isRetryableTransportError(failure)
-      : isRetryableStatus(response?.status);
+      ? isRetryableTransportError(failure, idempotent)
+      : idempotent && isRetryableStatus(response?.status);
     if (!retryable) return settle(response, failure, attempt);
     // The caller is gone, or has already relayed something. Either way this
     // request is over: a retry would be work for nobody, or a duplicated
     // stream.
-    if (signal?.aborted || canRetry?.() === false) {
-      return settle(response, failure, attempt);
+    if (signal?.aborted) {
+      discardBody(response);
+      throw abortError(signal);
     }
     // This attempt was not cheap, so the failure was not the fast one a retry
     // absorbs. Relay it rather than spending the same time again.
-    if (now() - startedAt >= budgetMs) return settle(response, failure, attempt);
-    await discardBody(response);
+    if (!eligible()) return settle(response, failure, attempt);
     const delayMs = backoffMs * BACKOFF_FACTOR ** attempt;
+    if (delayMs >= budgetMs - (now() - startedAt)) return settle(response, failure, attempt);
+    // Keep the refusal readable until a retry actually qualifies after waiting.
+    await sleepImpl(delayMs, signal);
+    if (signal?.aborted) {
+      discardBody(response);
+      throw abortError(signal);
+    }
+    if (!eligible()) return settle(response, failure, attempt);
+    discardBody(response);
+    if (signal?.aborted) throw abortError(signal);
+    if (!eligible()) {
+      // Cancellation has consumed the body; its status/headers remain known.
+      const headers = response && new Headers(response.headers);
+      for (const name of ["content-length", "content-encoding", "transfer-encoding"]) headers?.delete(name);
+      const refusal = response ? new Response(null, {
+        status: response.status, statusText: response.statusText, headers,
+      }) : undefined;
+      return settle(refusal, failure, attempt);
+    }
     attempt += 1;
     onRetry?.({
       attempt,
@@ -210,7 +211,5 @@ export async function fetchWithRetry(target, init = {}, options = {}) {
       error: failure,
       delayMs,
     });
-    await sleepImpl(delayMs, signal);
-    if (signal?.aborted) throw abortError(signal);
   }
 }

@@ -157,7 +157,14 @@ const server = http.createServer((request, response) => {
         error: { type: "provider_error", message: error instanceof Error ? error.message : String(error) },
       });
     } else {
-      endStreamedResponse(response, { message: "The OpenRouter provider response stream disconnected before completion." });
+      if (String(response.getHeader("content-type") || "").includes("text/event-stream")) {
+        endStreamedResponse(response, { message: "The OpenRouter provider response stream disconnected before completion." });
+      } else {
+        // A clean EOF would make a truncated JSON error look like complete
+        // diagnostics. Propagate the broken body so Router keeps only the
+        // known status; SSE has its own explicit terminal error above.
+        response.destroy();
+      }
     }
   });
 });

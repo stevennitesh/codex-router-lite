@@ -489,6 +489,45 @@ async function scenario(
   }
 }
 
+test("real Router restores null ordinary calls and exact u64 strings, then replays the produced call", async () => {
+  const tools = [{ type: "namespace", name: "mcp__fixture", tools: [
+    { type: "function", name: "inspect", parameters: { type: "object", properties: { value: { type: "integer" } } } },
+  ] }];
+  const args = '{"value":18446744073709551615}';
+  assert.equal(BigInt("18446744073709551615"), (1n << 64n) - 1n);
+  const providerCall = { type: "function_call", id: "fc_u64", call_id: "call_u64", name: "inspect", namespace: null, arguments: args };
+  for (const stream of [false, true]) {
+    const result = await scenario(stream, {
+      requestPayload: (stream, model) => ({ model, stream, tools, input: [] }),
+      jsonBody: () => ({ status: "completed", output: [providerCall] }),
+      sseBody: () => [
+        { type: "response.output_item.added", item: { ...providerCall, arguments: "" } },
+        { type: "response.function_call_arguments.delta", item_id: providerCall.id, delta: args },
+        { type: "response.function_call_arguments.done", item_id: providerCall.id, arguments: args },
+        { type: "response.output_item.done", item: providerCall },
+        { type: "response.completed", response: { status: "completed", output: [providerCall] } },
+      ].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+      followupPayload: (stream, model, wire) => {
+        const produced = stream ? functionCallsFromSse(wire).get(providerCall.call_id) : JSON.parse(wire).output[0];
+        assert.equal(produced.namespace, "mcp__fixture");
+        assert.equal(produced.name, "inspect");
+        assert.equal(produced.arguments, args);
+        return { model, stream, tools, input: [produced,
+          { type: "function_call_output", call_id: produced.call_id, output: "synthetic result" }] };
+      },
+    });
+    assert.equal(result.followup.status, 200);
+    assert.doesNotMatch(result.clientBody, /local_router_stream_failed/);
+    if (stream) assert.match(result.clientBody, /response.completed/);
+    const [initial, replay] = result.gatewayBodies;
+    assert.equal(replay.input[0].name, initial.tools[0].name);
+    assert.equal(replay.input[0].namespace, undefined);
+    assert.equal(replay.input[0].arguments, args);
+    assert.equal(replay.input[0].call_id, providerCall.call_id);
+    assert.equal(replay.input[1].call_id, providerCall.call_id);
+  }
+});
+
 test("routed request flattens every namespace to the gateway and restores calls to the client", async () => {
   const first = await scenario();
   const outgoing = first.gatewayBodies[0];

@@ -7,7 +7,7 @@ import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, re
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { certificationBatchPreflight, certificationRoutes } from "./certification-preflight.mjs";
-import { collectCertificationEvidence } from "./certification-evidence.mjs";
+import { collectCertificationOutcomes, EvidenceError } from "./certification-evidence.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { codexExecutableIdentity, assertCodexExecutableIdentity } from "../src/codex-binary.mjs";
@@ -15,11 +15,17 @@ import { nativeAccountCatalogHeaders } from "../src/codex-native-session.mjs";
 import { protectPrivateFile, writePrivateFile, writePrivateJson } from "../src/file-security.mjs";
 import { CALLER_SECRET_PATH, CODEX_HOME, LOG_PATH, PORTS, SOURCE_ROOT } from "../src/paths.mjs";
 import { spawnableCommand } from "../src/spawnable-command.mjs";
+import { conclusivelyRefused } from "../src/transport-error-graph.mjs";
 
 const json = file => JSON.parse(readFileSync(file, "utf8"));
 const iso = value => typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-class CertificationRunnerError extends Error {}
-const requireCondition = (condition, message) => { if (!condition) throw new CertificationRunnerError(message); };
+class CertificationRunnerError extends Error {
+  constructor(message, {code = "verification_failed", httpStatus} = {}) {
+    super(message); this.code = code;
+    if (httpStatus !== undefined) this.httpStatus = httpStatus;
+  }
+}
+const requireCondition = (condition, message, details) => { if (!condition) throw new CertificationRunnerError(message,details); };
 const USAGE = "certification-runner.mjs run --output generated/NEW --windows-sandbox mxc|elevated --allow-live [--switchyard-smoke] <route ...>|--all; publish --draft FILE --evidence docs/history/NEW.json --reviewed";
 
 export function parseCertificationRunnerArguments(argv) {
@@ -61,8 +67,8 @@ ${reports.map(report => `- ${report.role}; exact route ${report.slug}; pinned ef
 // Incremental SSE observation: snapshots or HTTP 200 alone cannot satisfy it.
 export async function observeCertificationStream(response) {
   if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    await response.body?.cancel();
-    throw new CertificationRunnerError("The synthetic response is not an HTTP 200 event stream.");
+    try { await response.body?.cancel(); } catch { /* Preserve the observed HTTP refusal. */ }
+    throw new CertificationRunnerError("The synthetic response is not an HTTP 200 event stream.", {code:response.status === 200 ? "not_event_stream" : "http_refusal",httpStatus:response.status});
   }
   let pending = "", visible = "", bytes = 0, events = 0, textDeltas = 0, terminal;
   const decoder = new TextDecoder();
@@ -70,21 +76,25 @@ export async function observeCertificationStream(response) {
     if (!value.startsWith("data:")) return;
     const data = value.slice(5).trim();
     if (!data || data === "[DONE]") return;
-    const event = JSON.parse(data); events++;
-    requireCondition(!terminal, "The synthetic stream emitted an event after its terminal response.");
+    let event;
+    try { event = JSON.parse(data); }
+    catch { throw new CertificationRunnerError("The synthetic stream contained invalid JSON.", {code:"malformed_sse",httpStatus:response.status}); }
+    requireCondition(event && typeof event === "object" && !Array.isArray(event), "The synthetic stream contained an invalid event.", {code:"malformed_sse",httpStatus:response.status});
+    events++;
+    requireCondition(!terminal, "The synthetic stream emitted an event after its terminal response.", {code:"invalid_stream",httpStatus:response.status});
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") { textDeltas++; visible += event.delta; }
     if (["response.completed", "response.failed", "response.incomplete", "error"].includes(event.type)) terminal = event;
   }
   for await (const chunk of response.body) {
     bytes += chunk.byteLength;
-    requireCondition(bytes <= 8 * 1024 * 1024, "The synthetic stream exceeded its byte limit.");
+    requireCondition(bytes <= 8 * 1024 * 1024, "The synthetic stream exceeded its byte limit.", {code:"stream_limit",httpStatus:response.status});
     pending += decoder.decode(chunk, {stream:true});
     let newline;
     while ((newline = pending.indexOf("\n")) !== -1) { line(pending.slice(0,newline).replace(/\r$/u,"")); pending = pending.slice(newline + 1); }
   }
   pending += decoder.decode(); if (pending) line(pending.replace(/\r$/u,""));
   const markerObserved = visible.trim() === "CERT_STREAM_OK";
-  requireCondition(textDeltas > 0 && terminal?.type === "response.completed" && terminal.response?.status === "completed" && markerObserved, "The synthetic stream lacks text deltas, a completed response, or the requested marker.");
+  requireCondition(textDeltas > 0 && terminal?.type === "response.completed" && terminal.response?.status === "completed" && markerObserved, "The synthetic stream lacks text deltas, a completed response, or the requested marker.", {code:"incomplete_stream",httpStatus:response.status});
   return {status:response.status,events,textDeltas,terminalType:terminal.type,returnedModel:terminal.response.model,markerObserved,pass:true};
 }
 
@@ -101,6 +111,89 @@ export function completeCertificationDraft(summary, streaming) {
   });
   return {...summary,reports,limits:["Synthetic native CLI collaboration for the named backend only; desktop and arbitrary MCP tools are outside this proof.","Streaming was observed separately on the same deployed generation.","Completed drafts require review before acceptance. Raw transcripts and private identities remain local."]};
 }
+
+function safeFailure(error) {
+  if (error instanceof CertificationRunnerError) return {code:error.code,reason:error.message,...(error.httpStatus === undefined ? {} : {httpStatus:error.httpStatus})};
+  if (error instanceof EvidenceError) return {code:"shared_evidence_invalid",reason:error.message};
+  if (["AbortError","TimeoutError"].includes(error?.name)) return {code:"timeout"};
+  if (conclusivelyRefused(error)) return {code:"router_unavailable"};
+  // Unknown messages can contain provider bodies, paths or private identities.
+  return {code:"verification_failed"};
+}
+
+// Own the route-level transitions here; actual HTTP, native process and private
+// artifact I/O stay with their existing boundaries. No retries are scheduled.
+export async function executeCertificationPlan(batch, {streaming,request,native,smoke,record = () => {},now = () => new Date().toISOString()}) {
+  const outcomes = new Map(batch.reports.map(report => [report.slug, {slug:report.slug,status:report.readyForFreshParent ? "pending" : "blocked",phase:"preflight",...(report.readyForFreshParent ? {} : {code:"preflight_blocked",blockers:report.blockers})}]));
+  const snapshot = (status, failure) => ({version:1,status,routes:batch.reports.map(report => report.slug),outcomes:[...outcomes.values()],...(failure ? {failure} : {})});
+  const finish = (summary, failure) => {
+    const status = failure || !summary?.reports.length ? "failed" : summary.reports.length === batch.reports.length ? "draft" : "partial";
+    const result = snapshot(status,failure);
+    record(result,streaming);
+    return {...result,summary};
+  };
+  let phase = "streaming";
+  try {
+    record(snapshot("running"),streaming);
+    let stop;
+    for (const report of batch.reports) {
+      if (!report.readyForFreshParent) continue;
+      if (stop) {
+        outcomes.set(report.slug,{slug:report.slug,status:"not-run",phase,code:"shared_failure"});
+        continue;
+      }
+      const startedAt = now();
+      try {
+        const observed = await observeCertificationStream(await request(report));
+        const endedAt = now();
+        streaming.reports.push({slug:report.slug,routerCommit:streaming.routerCommit,startedAt,endedAt,...observed});
+        outcomes.set(report.slug,{slug:report.slug,status:"passed",phase,startedAt,endedAt,httpStatus:observed.status});
+      } catch (error) {
+        const failure = safeFailure(error);
+        outcomes.set(report.slug,{slug:report.slug,status:"failed",phase,startedAt,endedAt:now(),...failure});
+        if ([401,403].includes(failure.httpStatus) || failure.code === "router_unavailable") stop = {phase,...failure};
+      }
+      record(snapshot("running"),streaming);
+    }
+    if (stop) return finish(null,stop);
+    const streamed = new Set(streaming.reports.map(report => report.slug));
+    const reports = batch.reports.filter(report => streamed.has(report.slug));
+    if (!reports.length) return finish(null);
+    phase = "native";
+    for (const report of reports) outcomes.set(report.slug,{slug:report.slug,status:"pending",phase});
+    record(snapshot("running"),streaming);
+    const selected = {...batch,reports,readyForFreshParent:true,runManifestTemplate:{...batch.runManifestTemplate,routes:batch.runManifestTemplate.routes.filter(spec => streamed.has(spec.slug))}};
+    const observations = await native(selected);
+    const nativeFailures = observations.failures || [];
+    assert.deepEqual([...observations.reports,...nativeFailures].map(report => report.slug).sort(), reports.map(report => report.slug).sort(), "Native outcomes must cover exactly the streamed routes.");
+    for (const failure of nativeFailures) outcomes.set(failure.slug,{slug:failure.slug,status:"failed",phase,code:failure.code,reason:failure.reason});
+    const valid = new Set(observations.reports.map(report => report.slug));
+    const {failures:_failures,...summaryFields} = observations;
+    let summary = observations.reports.length ? completeCertificationDraft({...summaryFields,status:"draft"}, {...streaming,reports:streaming.reports.filter(report => valid.has(report.slug))}) : null;
+    const switchyard = summary?.reports.find(report => report.draftProof.provider === "switchyard");
+    if (smoke && switchyard) {
+      phase = "switchyard-smoke";
+      try {
+        const {evidence,passed} = await smoke();
+        requireCondition(typeof evidence?.binding?.routerCommit === "string" && /^[a-f0-9]{40}$/iu.test(evidence.binding.routerCommit), "Switchyard smoke needs a valid runtime binding.");
+        requireCondition(evidence.binding?.routerCommit === summary.routerCommit, "Switchyard smoke must use the same deployed generation.", {code:"runtime_identity_changed"});
+        requireCondition(passed && Array.isArray(evidence.requiredFailures) && evidence.requiredFailures.length === 0, "The additional Switchyard smoke checks failed.");
+        summary.switchyardLive = evidence;
+      } catch (error) {
+        const failure = safeFailure(error);
+        if (failure.code === "runtime_identity_changed") return finish(null,{phase,...failure});
+        outcomes.set(switchyard.slug,{slug:switchyard.slug,status:"failed",phase,...failure});
+        summary.reports = summary.reports.filter(report => report.slug !== switchyard.slug);
+      }
+    }
+    for (const report of summary?.reports || []) outcomes.set(report.slug,{slug:report.slug,status:"draft",phase:"complete"});
+    return finish(summary?.reports.length ? summary : null);
+  } catch (error) {
+    return finish(null,{phase,...safeFailure(error)});
+  }
+}
+
+export function certificationResultExitCode(result) { return ["draft","accepted"].includes(result.status) ? 0 : 1; }
 
 export function renderCertificationProof(report, {evidenceLink, guideLink}) {
   const proof = report.draftProof || report.proof;
@@ -125,6 +218,10 @@ already-completed turns; no active turn was cancelled.
 | Encrypted parent-to-child relay | ${proof.checks.encryptedRelay.outcome} |
 | First marker | ${proof.checks.markerReturn.outcome} |
 | Same-child follow-up | ${proof.checks.sameThreadFollowUp.outcome} |
+
+## Official sources
+
+${proof.officialSources.map(source => `- ${source}`).join("\n")}
 
 ## Scope and reproduction
 
@@ -166,7 +263,7 @@ export async function executeCertificationParent(identity, batch, directory, san
     },timeoutMs);
     const outcome = {...await completion,deadlineExpired};
     writePrivateJson(path.join(directory,"parent-exit.json"),outcome);
-    requireCondition(outcome.exitCode === 0 && !deadlineExpired, "The native certification parent failed or exceeded its deadline; no proof was produced.");
+    requireCondition(outcome.exitCode === 0 && !deadlineExpired, "The native certification parent failed or exceeded its deadline; no proof was produced.", {code:deadlineExpired ? "parent_timeout" : "parent_failed"});
     requireCondition(statSync(eventsPath).size <= 64 * 1024 * 1024, "The parent event journal exceeded its read limit.");
     const rows = readFileSync(eventsPath,"utf8").split(/\r?\n/u).filter(Boolean).map(JSON.parse);
     const sessions = rows.filter(row => row.type === "thread.started");
@@ -197,60 +294,94 @@ function writeProofs(summary, applicationsRoot, evidencePath, {linkApplicationsR
   }
 }
 
+export function writeCertificationReview(summary, directory, {sourceRoot = SOURCE_ROOT} = {}) {
+  const review = structuredClone(summary);
+  for (const report of review.reports) {
+    const proof = report.draftProof;
+    let previous;
+    try { previous = json(path.join(sourceRoot,"v2_agent",report.slug,"proof.json")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    let sources = [];
+    // Reuse documentation for the exact route, never its old observations or
+    // runtime binding. Publication must preserve the reviewer's later edits.
+    if (previous?.status === "accepted" && ["slug","provider","model","endpointProvider"].every(key => previous[key] === proof[key])) {
+      requireCondition(Array.isArray(previous.officialSources) && previous.officialSources.every(source => typeof source === "string"), "The matching accepted application has an invalid source list.");
+      sources = previous.officialSources;
+    }
+    proof.officialSources = [...new Set([...proof.officialSources,...sources])];
+  }
+  const draftPath = path.join(directory,"drafts.json");
+  writePrivateJson(draftPath,review);
+  writeProofs(review,path.join(directory,"review/v2_agent"),draftPath,{sourceRoot});
+  return draftPath;
+}
+
 export async function runCertification(options) {
   requireCondition(process.platform === "win32", "The maintained runner requires the Windows native CLI.");
   const generated = path.join(SOURCE_ROOT,"generated");
   requireCondition(path.dirname(options.directory) === generated && !existsSync(options.directory), "Use a new direct child directory under generated/ for each run.");
   requireCondition(!existsSync(generated) || !lstatSync(generated).isSymbolicLink(), "The generated directory must not be a link.");
-  const batch = certificationBatchPreflight(options.routes);
-  requireCondition(batch.readyForFreshParent, "Route preflight is blocked; run certification-preflight.mjs for the selected routes.");
-  const identity = codexExecutableIdentity(); assertCodexExecutableIdentity(identity);
-  const windowsAppVersion = powershell("(Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()");
-  requireCondition(/^\d+\.\d+\.\d+\.\d+$/u.test(windowsAppVersion), "The Windows app version was not observed.");
   mkdirSync(options.directory,{recursive:true});
   powershell("$ErrorActionPreference='Stop'; $user=[Security.Principal.WindowsIdentity]::GetCurrent(); $owner=[IO.Directory]::GetAccessControl($env:CODEX_ROUTER_CERTIFICATION_DIRECTORY).GetOwner([Security.Principal.SecurityIdentifier]); if ($user.Name -match 'CodexSandbox' -or $owner.Value -ne $user.User.Value) { throw 'Use a fresh workspace created by the normal Windows user' }",{CODEX_ROUTER_CERTIFICATION_DIRECTORY:options.directory});
   const save = (name,value) => writePrivateJson(path.join(options.directory,name),value);
-  save("result.json",{status:"running",routes:options.routes.map(route => route.slug)});
+  let phase = "preflight", latestResult;
   try {
-    const headers = await nativeAccountCatalogHeaders(); requireCondition(headers, "Native authentication is unavailable.");
+    const batch = certificationBatchPreflight(options.routes);
+    if (!batch.reports.some(report => report.readyForFreshParent)) {
+      const {summary:_summary,...result} = await executeCertificationPlan(batch, {streaming:{version:1,routerCommit:batch.runManifestTemplate.routerCommit,reports:[]},record:result => save("result.json",result)});
+      return result;
+    }
+    requireCondition(path.isAbsolute(batch.runManifestTemplate.sourceRoot || ""), "The deployed Router source root was not observed.");
+    const identity = codexExecutableIdentity(); assertCodexExecutableIdentity(identity);
+    const windowsAppVersion = powershell("(Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()");
+    requireCondition(/^\d+\.\d+\.\d+\.\d+$/u.test(windowsAppVersion), "The Windows app version was not observed.");
+    phase = "authentication";
+    const headers = await nativeAccountCatalogHeaders(); requireCondition(headers, "Native authentication is unavailable.", {code:"authentication_unavailable"});
     const base = callerBaseUrl(PORTS.router,readFileSync(CALLER_SECRET_PATH,"utf8").trim());
     const streaming = {version:1,routerCommit:batch.runManifestTemplate.routerCommit,codexVersion:identity.version,windowsAppVersion,reports:[]};
-    for (const report of batch.reports) {
-      const startedAt = new Date().toISOString();
-      const response = await fetch(`${base}/responses`,{method:"POST",headers:{"Content-Type":"application/json",...headers,"session-id":`synthetic-cert-${randomUUID()}`},body:JSON.stringify({model:report.slug,input:[{role:"user",content:"Reply with exactly CERT_STREAM_OK."}],instructions:"Synthetic transport verification. Return only the requested marker.",store:false,stream:true}),signal:AbortSignal.timeout(120000)});
-      const observed = await observeCertificationStream(response);
-      streaming.reports.push({slug:report.slug,routerCommit:streaming.routerCommit,startedAt,endedAt:new Date().toISOString(),...observed});
-      save("streaming.json",streaming);
-    }
-    const run = {...batch.runManifestTemplate,startedAt:new Date().toISOString(),codexVersion:identity.version,windowsAppVersion,executionSurface:"codex-cli",windowsSandbox:options.sandbox,persistentConfigurationChanged:false};
-    save("run.json",run);
-    run.parentSessionId = await executeCertificationParent(identity,batch,options.directory,options.sandbox);
-    run.endedAt = new Date().toISOString(); save("run.json",run);
-    assertCodexExecutableIdentity(identity);
-    const dirs = certificationSessionDirectories(run);
-    const parents = dirs.flatMap(dir => readdirSync(dir).filter(name => name.endsWith(`${run.parentSessionId}.jsonl`)).map(name => path.join(dir,name)));
-    requireCondition(parents.length === 1, "The private parent rollout could not be identified uniquely.");
-    const summary = completeCertificationDraft(collectCertificationEvidence({run,parentPath:parents[0],childrenDirs:dirs,routerLogPath:LOG_PATH}),streaming);
-    for (const report of summary.reports) {
-      const existing = path.join(SOURCE_ROOT,"v2_agent",report.slug,"proof.json");
-      if (!report.draftProof.officialSources.length && existsSync(existing)) report.draftProof.officialSources = json(existing).officialSources;
-    }
-    if (options.smoke) {
-      const output = path.join(options.directory,"switchyard-live.json");
-      const smoke = spawnSync(process.execPath,[path.join(SOURCE_ROOT,"scripts/verify-switchyard-live.mjs"),output],{windowsHide:true,stdio:"ignore",timeout:180000});
-      requireCondition(!smoke.error && smoke.status === 0, "The additional Switchyard smoke checks failed.");
-      protectPrivateFile(output);
-      const evidence = json(output);
-      requireCondition(evidence.binding.routerCommit === summary.routerCommit && evidence.requiredFailures.length === 0, "Switchyard smoke must pass on the same deployed generation.");
-      const {priorInvalidFixture:_historicalFixture,...current} = evidence;
-      summary.switchyardLive = current;
-    }
-    const draftPath = path.join(options.directory,"drafts.json"); save("drafts.json",summary);
-    writeProofs(summary,path.join(options.directory,"review/v2_agent"),draftPath);
-    save("result.json",{status:"draft",routes:summary.reports.map(report => report.slug)});
-    return {status:"draft",routes:summary.reports.map(report => report.slug),draft:draftPath};
+    phase = "streaming";
+    const planned = await executeCertificationPlan(batch, {
+      streaming,
+      request:report => fetch(`${base}/responses`,{method:"POST",headers:{"Content-Type":"application/json",...headers,"session-id":`synthetic-cert-${randomUUID()}`},body:JSON.stringify({model:report.slug,input:[{role:"user",content:"Reply with exactly CERT_STREAM_OK."}],instructions:"Synthetic transport verification. Return only the requested marker.",store:false,stream:true}),signal:AbortSignal.timeout(120000)}),
+      native:async selected => {
+        phase = "native";
+        save("streaming.json",streaming);
+        const run = {...selected.runManifestTemplate,startedAt:new Date().toISOString(),codexVersion:identity.version,windowsAppVersion,executionSurface:"codex-cli",windowsSandbox:options.sandbox,persistentConfigurationChanged:false};
+        save("run.json",run);
+        run.parentSessionId = await executeCertificationParent(identity,selected,options.directory,options.sandbox);
+        run.endedAt = new Date().toISOString(); save("run.json",run);
+        assertCodexExecutableIdentity(identity);
+        const dirs = certificationSessionDirectories(run);
+        const parents = dirs.flatMap(dir => readdirSync(dir).filter(name => name.endsWith(`${run.parentSessionId}.jsonl`)).map(name => path.join(dir,name)));
+        requireCondition(parents.length === 1, "The private parent rollout could not be identified uniquely.");
+        return collectCertificationOutcomes({run,parentPath:parents[0],childrenDirs:dirs,routerLogPath:LOG_PATH});
+      },
+      smoke:options.smoke ? () => {
+        phase = "switchyard-smoke";
+        const output = path.join(options.directory,"switchyard-live.json");
+        const child = spawnSync(process.execPath,[path.join(SOURCE_ROOT,"scripts/verify-switchyard-live.mjs"),output],{windowsHide:true,stdio:"ignore",timeout:180000});
+        requireCondition(existsSync(output), "The additional Switchyard smoke checks produced no observations.");
+        protectPrivateFile(output);
+        const {priorInvalidFixture:_historicalFixture,...current} = json(output);
+        return {passed:!child.error && child.status === 0,evidence:current};
+      } : undefined,
+      record:(result,streams) => {
+        latestResult = result;
+        // One progress snapshot retains observations on interruption. Avoid
+        // rewriting the same separate SSE file at every native/result phase.
+        if (["running","failed"].includes(result.status)) save("result.json",{...result,streaming:streams});
+      },
+    });
+    phase = "artifacts";
+    if (!existsSync(path.join(options.directory,"streaming.json"))) save("streaming.json",streaming);
+    const {summary,...result} = planned;
+    if (!summary) return result;
+    const draftPath = writeCertificationReview(summary,options.directory);
+    const complete = {...result,draftRoutes:summary.reports.map(report => report.slug),draft:draftPath};
+    save("result.json",complete);
+    return complete;
   } catch (error) {
-    save("result.json",{status:"failed",routes:options.routes.map(route => route.slug)}); throw error;
+    save("result.json",{...latestResult,version:1,status:"failed",routes:options.routes.map(route => route.slug),failure:{phase,...safeFailure(error)}}); throw error;
   }
 }
 
@@ -309,6 +440,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const options = parseCertificationRunnerArguments(process.argv.slice(2));
     const result = options.command === "run" ? await runCertification(options) : publishCertificationDraft(json(options.draft),options.evidence);
     console.log(JSON.stringify(result));
+    process.exitCode = certificationResultExitCode(result);
   } catch (error) {
     console.error(error instanceof CertificationRunnerError ? error.message : `Certification could not be verified${error.code ? ` (${error.code})` : ""}; inspect the local artifacts.`); process.exitCode = 1;
   }

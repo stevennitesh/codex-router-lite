@@ -311,10 +311,17 @@ export async function readRequestBody(
 // is crossed.
 export async function readResponseBody(
   upstream,
-  { maxBytes = MAX_BUFFERED_RESPONSE_BYTES, signal } = {},
+  { maxBytes = MAX_BUFFERED_RESPONSE_BYTES, signal, timeoutMs } = {},
 ) {
   if (!upstream?.body) return Buffer.alloc(0);
   const reader = upstream.body.getReader();
+  const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? new AbortController() : undefined;
+  const readSignal = deadline ? (signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal) : signal;
+  const timer = deadline && setTimeout(() => {
+    const error = new Error("Upstream response body exceeded its read deadline.");
+    error.code = "ERR_UPSTREAM_RESPONSE_TIMEOUT";
+    deadline.abort(error);
+  }, timeoutMs);
   const chunks = [];
   let total = 0;
   const limit = Number.isFinite(maxBytes) && maxBytes > 0
@@ -322,14 +329,13 @@ export async function readResponseBody(
     : MAX_BUFFERED_RESPONSE_BYTES;
   try {
     while (true) {
-      const result = await readWithAbort(reader, signal);
+      const result = await readWithAbort(reader, readSignal);
       if (result.done) break;
       const chunk = result.value instanceof Uint8Array
         ? result.value
         : new Uint8Array(result.value || []);
       total += chunk.byteLength;
       if (total > limit) {
-        await reader.cancel().catch(() => {});
         const error = new Error(`Upstream response exceeds ${limit} bytes.`);
         error.status = 502;
         error.code = "ERR_UPSTREAM_RESPONSE_TOO_LARGE";
@@ -338,9 +344,12 @@ export async function readResponseBody(
       chunks.push(Buffer.from(chunk));
     }
   } catch (error) {
-    await reader.cancel().catch(() => {});
+    // A producer's cancel promise can stall too. Initiate owned cancellation
+    // without making its acknowledgement extend the read/caller deadline.
+    void reader.cancel().catch(() => {});
     throw error;
   } finally {
+    clearTimeout(timer);
     reader.releaseLock?.();
   }
   return Buffer.concat(chunks, total);
