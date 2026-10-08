@@ -17,7 +17,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $env:MODEL_ROUTER_TARGET = $Target
-$ServiceMutationArguments = if ($ForceServiceReplacement) { @("--force-service-replacement") } else { @() }
+# Keep a one-element array: splatting a scalar string passes its characters.
+[string[]]$ServiceMutationArguments = @()
+if ($ForceServiceReplacement) { $ServiceMutationArguments += "--force-service-replacement" }
 if ($NoProvider -and $Providers) {
   throw "-NoProvider cannot be combined with -Providers."
 }
@@ -170,7 +172,7 @@ if (-not $CheckoutInstall) {
   }
 
   if ($PrepareOnly -or $DependenciesOnly) {
-    & (Join-Path $Repository "install.ps1") -CheckoutInstall -PrepareOnly:$PrepareOnly -DependenciesOnly:$DependenciesOnly -ForceDeps:$ForceDeps -Target codex
+    & (Join-Path $Repository "install.ps1") -CheckoutInstall -PrepareOnly:$PrepareOnly -DependenciesOnly:$DependenciesOnly -ForceDeps:$ForceDeps -ForceServiceReplacement:$ForceServiceReplacement -Target codex
     exit $LASTEXITCODE
   }
 
@@ -184,7 +186,7 @@ if (-not $CheckoutInstall) {
     & node (Join-Path $Repository "src\provider-selection.mjs") set | Out-Null
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
-  & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target codex -ForceDeps:$ForceDeps
+  & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target codex -ForceDeps:$ForceDeps -ForceServiceReplacement:$ForceServiceReplacement
   exit $LASTEXITCODE
 }
 
@@ -215,6 +217,7 @@ $PythonCandidate = $null
 $PythonBackup = $null
 $PythonSwapStarted = $false
 $PythonVenvActivated = $false
+$FailedPythonVenv = $null
 $AdmissionPrepared = $false
 
 function Assert-TransientPythonVenvPath([string]$Path) {
@@ -447,9 +450,9 @@ try {
     $PythonBackup = Assert-TransientPythonVenvPath (
       Join-Path $ScriptDirectory ".venv-previous-$([Guid]::NewGuid().ToString('N'))"
     )
-    $PythonSwapStarted = $true
     & node src/service.mjs stop @ServiceMutationArguments
     if ($LASTEXITCODE -ne 0) { throw "The running Router could not enter the dependency activation transaction." }
+    $PythonSwapStarted = $true
     if (Test-Path -LiteralPath $PythonVenv -PathType Container) {
       Move-Item -LiteralPath $PythonVenv -Destination $PythonBackup
     }
@@ -491,6 +494,9 @@ try {
   if ($PythonSwapStarted) {
     try {
       & node src/service.mjs stop @ServiceMutationArguments 2>$null | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        throw "The candidate Router could not be verified stopped; Python environments were left in place."
+      }
       $FailedPythonVenv = Assert-TransientPythonVenvPath (
         Join-Path $ScriptDirectory ".venv-failed-$([Guid]::NewGuid().ToString('N'))"
       )
@@ -501,13 +507,13 @@ try {
         Move-Item -LiteralPath $PythonBackup -Destination $PythonVenv
         $PythonBackup = $null
       }
+      & node src/service.mjs install @ServiceMutationArguments
+      if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
       if (Test-Path -LiteralPath $FailedPythonVenv -PathType Container) {
         Remove-Item -LiteralPath $FailedPythonVenv -Recurse -Force
       }
-      & node src/service.mjs install @ServiceMutationArguments
-      if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
     } catch {
-      throw "Install failed ($($InstallFailure.Exception.Message)) and Python environment rollback failed ($($_.Exception.Message))."
+      throw "Install failed ($($InstallFailure.Exception.Message)) and Python environment rollback failed ($($_.Exception.Message)). Recovery environments: active=$PythonVenv; previous=$PythonBackup; failed=$FailedPythonVenv."
     }
   }
   # Undo only what this run created. The router health wait can time out on a

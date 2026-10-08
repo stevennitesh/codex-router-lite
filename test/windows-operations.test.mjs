@@ -382,7 +382,7 @@ test("Windows status and doctor use the same diagnostic-only path", { skip: proc
   }
 });
 
-function deploymentFixture({ candidateFails }) {
+function deploymentFixture({ candidateFails, modes = {}, immediateAcceptance = false, requireForce = false }) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-deploy-test-"));
   const source = path.join(directory, "source");
   const install = path.join(directory, "install");
@@ -408,25 +408,59 @@ function deploymentFixture({ candidateFails }) {
     "src/deployment-classification.mjs",
     "src/service-drain.mjs",
   ];
+  // The shipped acceptance and Doctor execute; only their external Windows,
+  // credential and service boundaries are replaced. No live state is queried.
+  writeFileSync(path.join(source, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+  writeFileSync(path.join(install, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+  copyFileSync(path.join(root, "src/deployment-acceptance.mjs"), path.join(source, "src/deployment-acceptance.mjs"));
+  if (immediateAcceptance) {
+    copyFileSync(path.join(root, "src/deployment-acceptance.mjs"), path.join(source, "src/deployment-acceptance-impl.mjs"));
+    writeFileSync(path.join(source, "src/deployment-acceptance.mjs"), `import {assertDeploymentRuntime} from './deployment-acceptance-impl.mjs';
+try { console.log(JSON.stringify(await assertDeploymentRuntime(process.argv[2], {timeoutMs:0}))); }
+catch(error) { console.error(error.message); process.exitCode=1; }`);
+    files.push("src/deployment-acceptance-impl.mjs");
+  }
+  const boundary = `import {readFileSync} from 'node:fs';
+export const root=${JSON.stringify(install)};
+const modes=${JSON.stringify(modes)};
+export const mode=()=>modes[readFileSync(${JSON.stringify(path.join(install, "marker.txt"))},'utf8').trim()]||'healthy';`;
+  const stubs = {
+    "fixture-deployment-state": boundary,
+    "control-health": `import {mode} from './fixture-deployment-state.mjs'; export const readControlHealth=async()=>({ok:mode()!=='offline',status:mode()==='offline'?0:200,service:mode()==='wrong-service'?'foreign':'codex-router',degraded:mode()==='degraded'?['gateway']:[]});`,
+    "service-process": `import {mode,root} from './fixture-deployment-state.mjs'; export const readServiceProcessState=()=>({sourceRoot:mode()==='wrong-process'?root+'-foreign':root}); export const serviceProcessOwns=()=>mode()!=='dead-process';`,
+    "install-manifest": `import {mode,root} from './fixture-deployment-state.mjs'; export const readInstallManifest=()=>({version:1,current:{target:'codex',sourceRoot:mode()==='wrong-manifest'?root+'-foreign':root,commit:null}});`,
+    "service": `import {mode} from './fixture-deployment-state.mjs'; if(process.argv[2]==='status')console.log(JSON.stringify({installed:mode()!=='wrong-task',loaded:mode()!=='stopped-task',state:'running'})); else throw new Error('unexpected live service mutation');`,
+    "codex-binary": `import {mode} from './fixture-deployment-state.mjs'; export const codexExecutableIdentity=()=>({binary:mode()==='doctor-fail'?null:'fixture-codex',version:'fixture'}); export const codexAuthStatus=()=>({authenticated:true});`,
+    "file-security": "export const privateFileIsProtected=()=>true;",
+    "catalog": "export const routedCatalogConfigured=()=>true;",
+    "provider-selection": "export const providerSelectionStatus=()=>({providers:[]}); export const selectedConfiguredListedModels=()=>[];",
+    "routed-models": "export const MODEL_BY_SLUG=new Map(); export const PROVIDERS=new Map([['openrouter',{}]]);",
+    "provider-credentials": `import {mode} from './fixture-deployment-state.mjs'; export const credentialStatus=()=>({configured:mode()!=='warnings'}); export const primaryCredentialPath=()=> 'fixture-key';`,
+    "switchyard-runtime": "export const switchyardRuntimeStatus=()=>({ready:false,binary:'fixture',inaccessible:[],missing:['binary'],invalid:[]});",
+    "windows-task-state": "export const windowsScheduledTaskState=async()=>({}); export const interpretWindowsTaskState=()=>({healthy:true,detail:'fixture task'});",
+  };
+  for (const target of [source, install]) {
+    for (const [name, code] of Object.entries(stubs)) writeFileSync(path.join(target, "src", `${name}.mjs`), code);
+    copyFileSync(path.join(root, "src/doctor.mjs"), path.join(target, "src/doctor.mjs"));
+  }
+  files.push("package.json", "src/deployment-acceptance.mjs", ...Object.keys(stubs).map((name) => `src/${name}.mjs`));
   writeFileSync(
     path.join(source, "maintenance", "windows-package.json"),
     JSON.stringify({ version: 1, files }),
   );
   writeFileSync(path.join(source, "marker.txt"), "candidate\n");
   writeFileSync(path.join(source, "src", "start.mjs"), "// candidate\n");
-  writeFileSync(path.join(source, "src", "doctor.mjs"), "process.exit(0);\n");
   writeFileSync(
     path.join(source, "install.ps1"),
-    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target)\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value candidate\n${candidateFails ? "throw 'forced candidate failure'" : "exit 0"}\n`,
+    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target, [switch]$ForceServiceReplacement)\n${requireForce ? "if (-not $ForceServiceReplacement) { throw 'explicit force missing' }" : ""}\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value candidate\n${candidateFails ? "throw 'forced candidate failure'" : "exit 0"}\n`,
   );
 
   writeFileSync(path.join(install, "marker.txt"), "previous\n");
   writeFileSync(path.join(install, "retired.txt"), "restore me\n");
   writeFileSync(path.join(install, "src", "start.mjs"), "// previous\n");
-  writeFileSync(path.join(install, "src", "doctor.mjs"), "process.exit(0);\n");
   writeFileSync(
     path.join(install, "install.ps1"),
-    "[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target)\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value previous\nexit 0\n",
+    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target, [switch]$ForceServiceReplacement)\n${requireForce ? "if (-not $ForceServiceReplacement) { throw 'explicit force missing' }" : ""}\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value previous\nexit 0\n`,
   );
   writeFileSync(
     path.join(install, ".codex-router-deploy-manifest.json"),
@@ -475,6 +509,25 @@ test("no-op detection rejects unsafe stored paths before changing installed file
   } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
 });
 
+test("documentation-only deployment publishes files without runtime acceptance or installation", { skip: process.platform !== "win32" }, () => {
+  const f = deploymentFixture({ candidateFails: true, modes: { candidate: "offline" } });
+  try {
+    alignDeploymentFixture(f);
+    writeFileSync(path.join(f.source, "LICENSE"), "new documentation");
+    writeFileSync(path.join(f.install, "LICENSE"), "previous documentation");
+    const files = [...f.files, "LICENSE"];
+    writeFileSync(path.join(f.source, "maintenance/windows-package.json"), JSON.stringify({ version: 1, files }));
+    writeFileSync(path.join(f.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files }));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(f.source, "deploy-codex-router.ps1"), "-InstallDir", f.install], {
+      windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /published \(documentation-only\)/u);
+    assert.equal(readFileSync(path.join(f.install, "LICENSE"), "utf8"), "new documentation");
+    assert.throws(() => readFileSync(f.log), { code: "ENOENT" });
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
 test("retired package membership remains a change even when source and installed bytes match", { skip: process.platform !== "win32" }, () => {
   const fixture = deploymentFixture({ candidateFails: false });
   try {
@@ -502,7 +555,7 @@ test("a staged Windows deployment prunes only the previous managed generation", 
     assert.equal(readFileSync(path.join(fixture.install, "marker.txt"), "utf8"), "candidate\n");
     assert.throws(() => readFileSync(path.join(fixture.install, "retired.txt")), { code: "ENOENT" });
     assert.deepEqual(
-      JSON.parse(readFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), "utf8").replace(/^\uFEFF/u, "")).files,
+      JSON.parse(readFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), "utf8").replace(/^\uFEFF/u, "")).files.sort(),
       fixture.files.slice().sort(),
     );
   } finally {
@@ -532,4 +585,71 @@ test("a forced deployment failure restores and verifies the previous generation"
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test("packaged deployment rejects incomplete acceptance and retains failed recovery", { skip: process.platform !== "win32" }, () => {
+  for (const mode of ["warnings", "offline", "degraded", "wrong-service", "wrong-task", "stopped-task", "wrong-process", "dead-process", "wrong-manifest", "doctor-fail", "rollback-offline"]) {
+    const f = deploymentFixture({
+      candidateFails: mode === "rollback-offline",
+      modes: mode === "rollback-offline" ? { previous: "offline" } : { candidate: mode },
+      immediateAcceptance: true,
+    });
+    let retainedBackup;
+    try {
+      const wrapper = path.join(f.directory, "run-deploy.ps1");
+      const quote = (text) => `'${text.replaceAll("'", "''")}'`;
+      writeFileSync(wrapper, `try { & ${quote(path.join(f.source, "deploy-codex-router.ps1"))} -InstallDir ${quote(f.install)} }
+catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`);
+      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper], {
+        windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log },
+      });
+      assert.equal(result.error, undefined, result.stderr);
+      assert.equal(result.status, mode === "warnings" ? 0 : 1, result.stderr);
+      const marker = readFileSync(path.join(f.install, "marker.txt"), "utf8").trim();
+      assert.equal(marker, mode === "warnings" ? "candidate" : "previous");
+      if (mode === "warnings") {
+        assert.match(result.stdout, /\[warn\] OpenRouter GLM credential/u);
+        assert.match(result.stdout, /published \(runtime\)/u);
+      } else {
+        assert.doesNotMatch(result.stdout, /published \(runtime\)/u);
+        assert.equal(readFileSync(path.join(f.install, "retired.txt"), "utf8"), "restore me\n");
+        assert.deepEqual(readFileSync(f.log, "utf8").trim().split(/\r?\n/u), ["candidate", "previous"]);
+        if (mode === "rollback-offline") {
+          assert.match(result.stderr, /rollback failed/u);
+          assert.doesNotMatch(result.stderr, /previous healthy generation was restored/u);
+          retainedBackup = /The backup remains at (.+)\./u.exec(result.stderr)?.[1];
+          assert.ok(retainedBackup, result.stderr);
+          // Check the actual recovery snapshot before removing only this fixture's set.
+          assert.equal(readFileSync(path.join(retainedBackup, "marker.txt"), "utf8"), "previous\n");
+        } else {
+          assert.match(result.stderr, /previous healthy generation was restored/u);
+        }
+      }
+    } finally {
+      if (retainedBackup) {
+        const target = path.resolve(path.dirname(retainedBackup));
+        assert.ok(target.startsWith(path.resolve(os.tmpdir()) + path.sep));
+        assert.match(path.basename(target), /^codex-router-deploy-[0-9a-f]{32}$/u);
+        rmSync(target, { recursive: true, force: true });
+      }
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("packaged handoff preserves explicit force for installation and recovery", { skip: process.platform !== "win32" }, () => {
+  const f = deploymentFixture({ candidateFails: true, requireForce: true });
+  try {
+    writeFileSync(path.join(f.source, "src/service-drain.mjs"), "if(process.argv[2]==='prepare'&&!process.argv.includes('--force-service-replacement'))process.exitCode=7;");
+    const command = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(f.source, "deploy-codex-router.ps1"), "-InstallDir", f.install];
+    const options = { windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log } };
+    const denied = spawnSync("powershell.exe", command, options);
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /replacement was deferred/u);
+    assert.equal(readFileSync(path.join(f.install, "marker.txt"), "utf8"), "previous\n");
+    const forced = spawnSync("powershell.exe", [...command, "-ForceServiceReplacement"], options);
+    assert.notEqual(forced.status, 0);
+    assert.match(forced.stderr, /previous healthy generation was restored/u);
+    assert.deepEqual(readFileSync(f.log, "utf8").trim().split(/\r?\n/u), ["candidate", "previous"]);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });

@@ -134,8 +134,14 @@ runtime helper without packaging it fails before deployment.
 hash-checks the candidate, and removes only files recorded by the prior deployment
 manifest. Identical files and recognized documentation/test/evidence-only changes
 skip runtime installation; source/configuration changes use the guarded replacement
-path. If runtime install or Doctor fails, it restores, reinstalls, and checks the
-previous generation before returning the candidate failure.
+path. Candidate and restored generations must pass Doctor plus a bounded,
+capability-protected full-health check, running owned task and process checks,
+and matching install-manifest source root and target. Packaged installations do
+not require Git metadata. A diagnostic warning alone does not fail acceptance;
+an offline or degraded runtime does. If runtime installation or acceptance fails,
+the deployer restores, reinstalls, and accepts the previous generation before
+returning the candidate failure. Failed recovery retains its backup and reports
+the recovery path without claiming a healthy restoration.
 
 An identical managed file set returns before staging, backup, copying, or
 manifest writes. The deployer still validates managed paths and package
@@ -176,6 +182,11 @@ generations retire from recovery use.
 
 Python environment creation and locked installation share one installer phase;
 candidate relocation and activation remain inside the recovery transaction.
+Activation begins only after the service stop owner verifies stoppage. Recovery
+also requires a successful stop before moving either environment. A refused
+recovery stop leaves the active candidate and previous environment in place;
+the error reports both failures and the retained paths. A failed restoration or
+previous-service install retains remaining recovery environments for repair.
 Service installation owns frontend readiness, so the installer does not repeat
 its liveness poll. Full provider health and Doctor remain deployment checks.
 

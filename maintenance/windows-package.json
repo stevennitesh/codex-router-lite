@@ -53,6 +53,7 @@
     "src/control-health.mjs",
     "src/control.mjs",
     "src/doctor.mjs",
+    "src/deployment-acceptance.mjs",
     "src/deployment-classification.mjs",
     "src/empty-completion-guard.mjs",
     "src/error-translation.mjs",

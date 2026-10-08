@@ -106,6 +106,7 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
 | Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
+| Packaged deployment acceptance | `src/deployment-acceptance.mjs`; full health and installed task/process/manifest identity for activation and rollback, without Git or Switchyard-only proof |
 | Async directory-lock lifecycle | `src/directory-lock.mjs`; named catalog, overlay, caller-key, and service wrappers retain their paths and policies |
 | Nested transport errors | `src/transport-error-graph.mjs`; health, diagnostics, and retry retain their own eligibility rules |
 | Switchyard observation vocabulary | `src/switchyard-observation-contract.mjs`; sanitized writer and historical reader share the schema, independently of serving-policy validation |

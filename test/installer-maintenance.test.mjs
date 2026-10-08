@@ -122,11 +122,164 @@ test("PrepareOnly retains catalog generation and full install delegates readines
       } else {
         assert.notEqual(result.status, 0, "candidate service failure must remain failure after recovery");
         assert.equal(calls.filter((line) => /service\.mjs\tinstall$/u.test(line)).length, 2, `${result.stderr}\n${calls.join("\n")}`);
+        for (const line of calls.filter((value) => /service\.mjs\t(?:stop|install)(?:\t|$)/u.test(value))) {
+          assert.deepEqual(line.split("\t").slice(3), [], "ordinary installation never adds force");
+        }
         assert.equal(readFileSync(path.join(f.source, ".venv/previous.txt"), "utf8"), "retained environment");
       }
       assert.ok(!calls.some((line) => line.includes("wait-health.mjs")), "service install owns liveness readiness");
     } finally { rmSync(f.directory, { recursive: true, force: true }); }
   }
+});
+
+function serviceFailures(f, { failedStop = 0, failRecoveryInstall = false } = {}) {
+  const countsPath = path.join(f.directory, "service-counts.json");
+  writeFileSync(path.join(f.source, "src/service.mjs"), `
+import {existsSync, readFileSync, writeFileSync, readdirSync} from 'node:fs';
+import path from 'node:path';
+const file = ${JSON.stringify(countsPath)};
+const counts = existsSync(file) ? JSON.parse(readFileSync(file,'utf8')) : {stop:0,install:0};
+const command = process.argv[2];
+if(command==='status') console.log(JSON.stringify({installed:true}));
+if(command==='stop'||command==='install') {
+  counts[command]++;
+  if(command==='install'&&counts.install===1) counts.previous = readdirSync(${JSON.stringify(f.source)}).find(n=>n.startsWith('.venv-previous-'));
+  writeFileSync(file,JSON.stringify(counts));
+  if(command==='stop'&&counts.stop===${failedStop}) process.exitCode=7;
+  if(command==='install'&&(counts.install===1||${failRecoveryInstall})) process.exitCode=8;
+}
+`);
+  return () => JSON.parse(readFileSync(countsPath, "utf8"));
+}
+
+test("Python activation and recovery retain environments when stop refuses", { skip: !windows }, () => {
+  for (const failedStop of [1, 2]) {
+    const f = fixture("uv", { mode: "full" });
+    try {
+      assert.equal(f.run(["-DependenciesOnly"]).status, 0);
+      writeFileSync(path.join(f.source, ".venv/previous.txt"), "previous environment");
+      const counts = serviceFailures(f, { failedStop });
+      const result = f.run(["-ForceDeps"]);
+      assert.notEqual(result.status, 0);
+      const state = counts();
+      assert.equal(state.stop, failedStop);
+      assert.equal(state.install, failedStop === 1 ? 0 : 1);
+      const previousRoot = failedStop === 1 ? path.join(f.source, ".venv") : path.join(f.source, state.previous);
+      assert.equal(readFileSync(path.join(previousRoot, "previous.txt"), "utf8"), "previous environment");
+      if (failedStop === 2) {
+        assert.equal(existsSync(path.join(f.source, ".venv/previous.txt")), false);
+        assert.equal(existsSync(path.join(f.source, ".venv/Scripts/python.exe")), true);
+        assert.match(result.stderr, /Install failed.*Python environment rollback failed/u);
+        assert.ok(result.stderr.includes(state.previous), "refusal names the retained recovery path");
+      }
+    } finally { rmSync(f.directory, { recursive: true, force: true }); }
+  }
+});
+
+test("a failed previous-service install retains the failed candidate for recovery", { skip: !windows }, () => {
+  const f = fixture("uv", { mode: "full" });
+  try {
+    assert.equal(f.run(["-DependenciesOnly"]).status, 0);
+    writeFileSync(path.join(f.source, ".venv/previous.txt"), "previous environment");
+    serviceFailures(f, { failRecoveryInstall: true });
+    const result = f.run(["-ForceDeps"]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /previous Router service could not be restored/u);
+    assert.equal(readFileSync(path.join(f.source, ".venv/previous.txt"), "utf8"), "previous environment");
+    const failed = /\.venv-failed-[0-9a-f]{32}/u.exec(result.stderr)?.[0];
+    assert.ok(failed);
+    assert.equal(existsSync(path.join(f.source, failed, "Scripts/python.exe")), true);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("Python restore failure after verified stop retains both recovery inputs", { skip: !windows }, () => {
+  const f = fixture("uv", { mode: "full" });
+  try {
+    assert.equal(f.run(["-DependenciesOnly"]).status, 0);
+    writeFileSync(path.join(f.source, ".venv/previous.txt"), "previous environment");
+    const counts = serviceFailures(f);
+    const wrapper = path.join(f.directory, "restore-failure.ps1");
+    writeFileSync(wrapper, `function Move-Item {
+param([string]$LiteralPath, [string]$Destination)
+if ($LiteralPath -match '\\.venv-previous-') { throw 'fixture restore move failure' }
+Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
+try { & ${quote(path.join(f.source, "install.ps1"))} -CheckoutInstall -ForceDeps }
+catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`);
+    const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper], { env: f.environment, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /fixture restore move failure/u);
+    assert.deepEqual({ stop: counts().stop, install: counts().install }, { stop: 2, install: 1 });
+    assert.equal(readFileSync(path.join(f.source, counts().previous, "previous.txt"), "utf8"), "previous environment");
+    const failed = /\.venv-failed-[0-9a-f]{32}/u.exec(result.stderr)?.[0];
+    assert.ok(failed, result.stderr);
+    assert.equal(existsSync(path.join(f.source, failed, "Scripts/python.exe")), true);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("bootstrap and direct installation preserve explicit replacement as one native argument", { skip: !windows }, () => {
+  for (const checkout of [false, true]) {
+    const f = fixture("uv", { mode: "full", failService: true });
+    try {
+      // Git is discovered by bootstrap but this fixture must never call it.
+      writeFileSync(path.join(f.directory, "bin/git.cmd"), "@echo off\r\nexit /b 9\r\n");
+      assert.equal(f.run(["-DependenciesOnly"]).status, 0);
+      writeFileSync(path.join(f.source, ".venv/previous.txt"), "previous environment");
+      writeFileSync(path.join(f.source, "src/service-drain.mjs"), "if(process.argv[2]==='prepare'&&!process.argv.includes('--force-service-replacement'))process.exitCode=7;");
+      const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(f.source, "install.ps1"), ...(checkout ? ["-CheckoutInstall"] : []), "-ForceDeps"];
+      const denied = spawnSync(powershell, args, { env: f.environment, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+      assert.notEqual(denied.status, 0);
+      assert.match(denied.stderr, /replacement was deferred/u);
+      assert.ok(!f.calls().some((line) => line.includes("service.mjs\tinstall")));
+      writeFileSync(f.trace, "");
+      const result = spawnSync(powershell, [...args, "-ForceServiceReplacement"], { env: f.environment, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+      assert.notEqual(result.status, 0, "original candidate failure is retained after successful recovery");
+      assert.match(result.stderr, /Background-service installation failed/u);
+      const mutations = f.calls().filter((line) => /service\.mjs\t(?:stop|install)\t/u.test(line));
+      assert.equal(mutations.length, 4, result.stderr);
+      for (const line of mutations) assert.deepEqual(line.split("\t").slice(3), ["--force-service-replacement"]);
+      assert.equal(readFileSync(path.join(f.source, ".venv/previous.txt"), "utf8"), "previous environment");
+    } finally { rmSync(f.directory, { recursive: true, force: true }); }
+  }
+});
+
+test("the updater reinstall reaches the installer with explicit replacement intact", { skip: !windows }, () => {
+  const f = fixture("uv", { mode: "full" });
+  try {
+    assert.equal(f.run(["-DependenciesOnly"]).status, 0);
+    mkdirSync(path.join(f.source, ".git"));
+    copyFileSync(path.join(root, "src/update.mjs"), path.join(f.source, "src/update.mjs"));
+    writeFileSync(path.join(f.source, "src/paths.mjs"), `export const SOURCE_ROOT=${JSON.stringify(f.source)};`);
+    writeFileSync(path.join(f.source, "src/install-manifest.mjs"), "export const readInstallManifest=()=>({current:{commit:null}});");
+    writeFileSync(path.join(f.source, "src/service-drain.mjs"), "if(process.argv[2]==='prepare'&&!process.argv.includes('--force-service-replacement'))process.exitCode=7;");
+    const fakeGit = path.join(f.directory, "bin/git.exe");
+    const code = 'using System; public static class FixtureGit { public static int Main(string[] args) { if(Array.IndexOf(args,"remote")>=0) Console.WriteLine("https://github.com/stevennitesh/codex-router-lite.git"); else if(Array.IndexOf(args,"rev-parse")>=0) Console.WriteLine(new string(\'a\',40)); else if(Array.IndexOf(args,"fetch")<0) return 9; return 0; } }';
+    execFileSync(powershell, ["-NoLogo", "-NoProfile", "-Command", `Add-Type -TypeDefinition ${quote(code)} -OutputAssembly ${quote(fakeGit)} -OutputType ConsoleApplication`], { encoding: "utf8", windowsHide: true });
+    const args = [path.join(f.source, "src/update.mjs")];
+    const options = { env: { ...f.environment, PATH: f.environment.PATH + path.delimiter + path.dirname(powershell) }, encoding: "utf8", windowsHide: true, timeout: 30_000 };
+    const denied = spawnSync(process.execPath, args, options);
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /replacement was deferred/u);
+    writeFileSync(f.trace, "");
+    const result = spawnSync(process.execPath, [...args, "--force-service-replacement"], options);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /"reinstalled": true/u);
+    const installed = f.calls().filter((line) => line.includes("service.mjs\tinstall"));
+    assert.equal(installed.length, 1);
+    assert.deepEqual(installed[0].split("\t").slice(3), ["--force-service-replacement"]);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("failed first installation preserves explicit force through service cleanup", { skip: !windows }, () => {
+  const f = fixture("uv", { mode: "prepare", failService: true });
+  try {
+    const result = f.run(["-ForceServiceReplacement"]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Background-service installation failed/u);
+    const commands = f.calls().filter((line) => /service\.mjs\t(?:install|uninstall)(?:\t|$)/u.test(line));
+    assert.equal(commands.length, 2);
+    for (const line of commands) assert.deepEqual(line.split("\t").slice(3), ["--force-service-replacement"]);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
 test("rollback preparation reaches both current and retained installer contracts without editing prior code", { skip: !windows }, () => {
