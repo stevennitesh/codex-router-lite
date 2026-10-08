@@ -134,8 +134,10 @@ test("renewal carries reviewed sources through review artifacts and respects lat
   try {
     const application = path.join(root,"v2_agent",slug), directory = path.join(root,"generated/review");
     mkdirSync(application,{recursive:true}); mkdirSync(directory,{recursive:true});
-    copyFileSync(path.join("v2_agent",slug,"proof.json"),path.join(application,"proof.json"));
-    const prior = JSON.parse(readFileSync(path.join(application,"proof.json"),"utf8"));
+    // Exercise Windows checkout bytes on every host, including LF workspaces.
+    const priorContent = readFileSync(path.join("v2_agent",slug,"proof.json"),"utf8").replace(/\r?\n/gu,"\r\n");
+    writeFileSync(path.join(application,"proof.json"),priorContent);
+    const prior = JSON.parse(priorContent);
     const draft = renewalDraft(), before = structuredClone(draft);
     const canonical = "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints";
     const reviewed = "https://openrouter.ai/docs/guides/routing/provider-selection";
@@ -151,7 +153,7 @@ test("renewal carries reviewed sources through review artifacts and respects lat
     const observation = structuredClone(saved);
     observation.reports[0].draftProof.officialSources = before.reports[0].draftProof.officialSources;
     assert.deepEqual(observation,before); assert.deepEqual(draft,before);
-    assert.equal(readFileSync(path.join(application,"proof.json"),"utf8"),JSON.stringify(prior,null,2) + "\n");
+    assert.equal(readFileSync(path.join(application,"proof.json"),"utf8"),priorContent);
     // The source gate accepts the actual enriched output, including its fresh commit.
     const firstEvidence = path.join(root,"docs/history/retained.json");
     publishCertificationDraft(saved,firstEvidence,{sourceRoot:root});
