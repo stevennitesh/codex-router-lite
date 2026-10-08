@@ -3,4 +3,4 @@
 # This file owns the direct pins. Regenerate the hashed Windows lock with
 # the command in docs/agents/openrouter-glm.md after changing them.
 litellm[proxy]==1.104.0
-fastapi==0.141.1
+fastapi==0.142.2
