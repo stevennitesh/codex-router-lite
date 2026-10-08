@@ -149,7 +149,7 @@ export class RouterAdmission {
     }
     if (this.#pendingDrain) return this.#pendingDrain.promise;
     if (this.#indeterminateWorkflow || this.#workflows.size) {
-      return { status: "deferred", reason: "switchyard-workflow-active", ...this.status() };
+      return { status: "deferred", reason: this.#indeterminateWorkflow ? "switchyard-workflow-indeterminate" : "switchyard-workflow-active", ...this.status() };
     }
     this.#state = "draining";
     if (this.#active.size === 0) {

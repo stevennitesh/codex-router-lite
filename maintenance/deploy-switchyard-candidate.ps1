@@ -12,6 +12,7 @@ param(
   [string]$RollbackRouterRoot,
   [string]$ExpectedRollbackRouterCommit,
   [switch]$RecoverInterruptedDeployment,
+  [switch]$ForceServiceReplacement,
   [switch]$InProcess,
   [string]$AcceptancePath,
   [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)

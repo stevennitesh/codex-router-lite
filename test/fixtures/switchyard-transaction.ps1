@@ -1,4 +1,4 @@
-param([string]$CodeRoot, [string]$FixtureRoot, [string]$Failure)
+param([string]$CodeRoot, [string]$FixtureRoot, [string]$Failure, [switch]$ForceServiceReplacement)
 $ErrorActionPreference = "Stop"
 . (Join-Path $CodeRoot "maintenance\deployment-json.ps1")
 $repoRoot = Join-Path $FixtureRoot "candidate"
@@ -35,14 +35,17 @@ foreach ($name in @("Copy-RuntimeFile", "Restore-Switchyard")) {
   $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
   Invoke-Expression $function.Extent.Text
 }
-function node { $global:LASTEXITCODE = 0 }
+function node { $global:LASTEXITCODE = if ($Failure -eq "configuration") { 1 } else { 0 } }
 function Protect-PrivateFile([string]$Path) {}
 function Assert-CheckoutIdentity([string]$Root, [string]$Commit, [string]$Label) {}
 function Assert-FileHash([string]$Path, [string]$Hash, [string]$Label) { if (-not (Test-Path -LiteralPath $Path)) { throw "Missing $Label" } }
 function Invoke-NodeJson([string]$Root, [string[]]$Arguments, [string]$Label) {
+  if ($Arguments[1] -eq "resume") { Add-Content -LiteralPath $trace -Value "resume"; return @{ status = "resumed" } }
   Add-Content -LiteralPath $trace -Value "drain"
   if ($Failure -eq "drain") { throw "ERR_ROUTER_DRAIN_DEFERRED" }
-  return @{ status = "drained" }
+  $requestedForce = $Arguments -contains "--force-service-replacement"
+  if ($requestedForce -ne [bool]$ForceServiceReplacement) { throw "Force did not match the explicit operator choice" }
+  return @{ status = $(if ($requestedForce) { "forced" } else { "drained" }) }
 }
 function Stop-RouterGeneration([string]$Root) {
   $label = if ($Root -eq $repoRoot) { "candidate" } else { "previous" }

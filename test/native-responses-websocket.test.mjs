@@ -20,7 +20,7 @@ function frame(value, rawJson = JSON.stringify(value)) {
   return Buffer.concat([header, body]);
 }
 
-async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, fetchImpl, actualRouter = false, routerEnvironment = {}, switchyardTools = false } = {}) {
+async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}, prepare, fetchImpl, actualRouter = false, routerEnvironment = {}, switchyardTools = false } = {}) {
   const sockets = new Set();
   const requests = [];
   const handshakes = [];
@@ -43,6 +43,7 @@ async function fixture(t, { handle, headers = {}, nativeOptions = {}, prepare, f
     for await (const chunk of request) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     requests.push({ ...payload, fixtureTransport: "http" });
+    if (httpHandle) { await httpHandle({ request, response, payload }); return; }
     response.writeHead(200, { "content-type": "application/json" });
     const output = switchyardTools && payload.model === "switchyard-auto"
       ? [{ type: "function_call", id: "fc_switchyard", call_id: "call_switchyard", name: "fixture_tool", arguments: "{}" }]
@@ -296,6 +297,77 @@ test("canceled native WebSocket consumption leaves the Switchyard workflow pendi
     method: "POST", headers: { authorization: "Bearer fixture-internal-capability-long-enough", "content-type": "application/json" }, body: "{}",
   });
   assert.equal(drain.status, 409);
+});
+
+test("completed Switchyard SSE turns retire tools after the WebSocket adapter closes the HTTP body", async t => {
+  const tool = { type:"function_call", id:"fc_switchyard", call_id:"call_switchyard", name:"fixture_tool", arguments:"{}" };
+  const state = await fixture(t, { actualRouter:true, switchyardTools:true, httpHandle:({response,payload}) => {
+    const output = payload.input.some(item => item.type === "function_call_output")
+      ? [{type:"message",role:"assistant",content:[{type:"output_text",text:"done"}]}] : [tool];
+    response.writeHead(200,{"content-type":"text/event-stream"});
+    for (const item of output) response.write(`data: ${JSON.stringify({type:"response.output_item.done",item})}\n\n`);
+    response.write(`data: ${JSON.stringify({type:"response.completed",response:{id:"resp_switchyard",status:"completed",output}})}\n\n`);
+    // Keep the upstream body open: the adapter must close it at the terminal.
+  }});
+  const lifecycle = async () => (await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle`,{
+    headers:{authorization:"Bearer fixture-internal-capability-long-enough"},
+  })).json();
+  const settled = async () => {
+    let observed;
+    const deadline = Date.now()+3000;
+    do {
+      observed = await lifecycle();
+      if (observed.activeRequests === 0) return observed;
+      await new Promise(resolve => setTimeout(resolve,10));
+    } while (Date.now()<deadline);
+    assert.equal(observed.activeRequests,0);
+  };
+  const client_metadata = {thread_id:"terminal-close-workflow"};
+  const first = await state.exchange({model:"switchyard/auto",client_metadata});
+  assert.equal(first.at(-1).type,"response.completed");
+  const pending = await settled();
+  assert.equal(pending.indeterminateWorkflow,false);
+  assert.equal(pending.workflowCalls,1);
+  const second = await state.exchange({model:"switchyard/auto",client_metadata,
+    input:[tool,{type:"function_call_output",call_id:tool.call_id,output:"done"}]});
+  assert.equal(second.at(-1).type,"response.completed");
+  const completed = await settled();
+  assert.equal(completed.indeterminateWorkflow,false);
+  assert.equal(completed.workflowCalls,0);
+  const drain = await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle/drain`,{
+    method:"POST",headers:{authorization:"Bearer fixture-internal-capability-long-enough","content-type":"application/json"},body:"{}",
+  });
+  assert.equal((await drain.json()).status,"drained");
+});
+
+test("an unfinished Switchyard SSE turn still blocks drain after the client closes", async t => {
+  const state = await fixture(t,{actualRouter:true,switchyardTools:true,httpHandle:({response}) => {
+    response.writeHead(200,{"content-type":"text/event-stream"});
+    response.write(`data: ${JSON.stringify({type:"response.output_item.done",item:{type:"function_call",call_id:"partial-call",name:"fixture_tool",arguments:"{}"}})}\n\n`);
+  }});
+  const seen = new Promise(resolve => state.client.addEventListener("message",({data}) => {
+    if (JSON.parse(data).type === "response.output_item.done") resolve();
+  }));
+  state.client.send(JSON.stringify({type:"response.create",model:"switchyard/auto",stream:true,input:[],client_metadata:{thread_id:"partial-switchyard-workflow"}}));
+  await seen;
+  state.client.close();
+  const lifecycle = async () => (await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle`,{
+    headers:{authorization:"Bearer fixture-internal-capability-long-enough"},
+  })).json();
+  let status;
+  const deadline = Date.now()+3000;
+  do {
+    status = await lifecycle();
+    if (!status.activeRequests) break;
+    await new Promise(resolve => setTimeout(resolve,10));
+  } while(Date.now()<deadline);
+  assert.equal(status.activeRequests,0);
+  assert.equal(status.indeterminateWorkflow,true);
+  const drain = await fetch(`http://127.0.0.1:${state.routerPort}/internal/lifecycle/drain`,{
+    method:"POST",headers:{authorization:"Bearer fixture-internal-capability-long-enough","content-type":"application/json"},body:"{}",
+  });
+  assert.equal(drain.status,409);
+  assert.equal((await drain.json()).reason,"switchyard-workflow-indeterminate");
 });
 
 test("native validated events preserve raw Unicode, escapes and unknown fields over the actual socket", async t => {
@@ -559,8 +631,12 @@ test("actual native and external WebSocket timing logs follow current per-respon
       const events = await state.exchange({model,client_metadata:{thread_id:thread,session_id:thread}});
       assert.equal(events.at(-1).type,"response.completed");
     }
+    const timingLines = () => state.routerChild.errors().split("\n").filter(line => line.startsWith("[codex-router] timing "));
+    // Client completion precedes the server's finally block and stderr delivery.
+    const deadline = Date.now()+3000;
+    while (timingLines().length<2 && Date.now()<deadline) await new Promise(resolve => setTimeout(resolve,10));
     await stop(state.routerChild);
-    const timings = state.routerChild.errors().split("\n").filter(line => line.startsWith("[codex-router] timing "));
+    const timings = timingLines();
     assert.equal(timings.length,2);
     assert.ok(timings[0].includes(`thread_sha256=${digest(first)}`));
     assert.ok(timings[1].includes(`thread_sha256=${digest(second)}`));

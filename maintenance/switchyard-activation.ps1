@@ -3,11 +3,16 @@ try {
   Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
   # A refused drain has no activation effects and must never enter rollback.
   Write-Host "Draining admitted Router requests with a 90-second limit."
-  $drain = Invoke-NodeJson $repoRoot @(
+  $drainArguments = @(
     (Join-Path $repoRoot "src\service-drain.mjs"), "prepare",
     "--timeout-ms", "90000", "--json-errors"
-  ) "Router admission drain"
-  $admissionPrepared = $drain.status -eq "drained"
+  )
+  if ($ForceServiceReplacement) {
+    Write-Warning "Explicit service replacement will interrupt active work and clear indeterminate workflow state."
+    $drainArguments += "--force-service-replacement"
+  }
+  $drain = Invoke-NodeJson $repoRoot $drainArguments "Router admission drain"
+  $admissionPrepared = $drain.status -in @("drained", "forced")
   # Canonicalize the managed block while the known-good service is still up.
   # If this write fails, the transaction aborts before any process stops.
   & node (Join-Path $repoRoot "src\config-manager.mjs") enable | Out-Host

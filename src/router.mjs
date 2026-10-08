@@ -3107,11 +3107,15 @@ async function handleResponses(request, response, requestUrl) {
       const observer = emptyCompletionRetried ? retryUsageTransform : usageTransform;
       const outputObservation = observer?.responseOutputObservation();
       if (outputObservation) {
+        // The WebSocket adapter closes HTTP bodies after a verified terminal.
+        // That successful close is distinct from cancellation before completion.
+        const completedClientClose = clientGone && observer.completedResponseObserved() === true &&
+          !execution.deadlineExceeded();
         routerAdmission.recordSwitchyardWorkflow({
           ...switchyardWorkflow,
           produced: clientToolCalls(outputObservation.output),
           complete: outputObservation.complete && status >= 200 && status < 300 &&
-            !controller.signal.aborted && observer.providerResponseObservation().outcome === "completed",
+            (!controller.signal.aborted || completedClientClose) && observer.providerResponseObservation().outcome === "completed",
         });
       }
     }

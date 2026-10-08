@@ -203,12 +203,15 @@ New tool calls keep that workflow pending. Current per-request thread/session
 metadata identifies the conversation before compatibility headers; a changing
 cache-affinity header does not create a different workflow. Failed, partial,
 unidentified or unrelated continuations cannot clear outstanding work.
+Closing an HTTP body after a verified completed response, as the WebSocket
+adapter does, still records that completed workflow. A close before the terminal
+or an execution deadline remains a failed or indeterminate continuation.
 
 A timeout or workflow conflict restores admission and leaves the running generation
 unchanged. A live older generation without drain support also defers normal
 replacement. Settle the active work before retrying. Only an explicit operator
 choice to interrupt it permits the force option: `-ForceServiceReplacement` on
-the install, separate-directory deploy, or restart PowerShell entrypoint, or
+the install, separate-directory deploy, checkout deployment transaction, or restart PowerShell entrypoint, or
 `--force-service-replacement` on update/service commands. Force never bypasses
 service identity or credential checks. The updater's separate `--force` flag can
 discard tracked checkout edits; it is not the service-interruption option.
