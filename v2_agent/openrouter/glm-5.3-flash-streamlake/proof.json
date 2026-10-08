@@ -8,9 +8,9 @@
     "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
     "https://openrouter.ai/docs/guides/routing/provider-selection"
   ],
-  "testedAt": "2026-10-07T20:40:16.079Z",
+  "testedAt": "2026-10-08T19:48:35.635Z",
   "routerVersion": "0.7.0",
-  "routerCommit": "4ca8bfa6012b6ba3a2057df23361761ce48bbdba",
+  "routerCommit": "475b3a79ae52fd219499f17e2925ba7527f7d009",
   "codexVersion": "codex-cli 0.162.0-alpha.2",
   "executionSurface": "codex-cli",
   "endpointProvider": "streamlake/fp8",
@@ -18,35 +18,33 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:39:18.248Z"
+      "observedAt": "2026-10-08T19:47:55.838Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:40:05.245Z",
+      "observedAt": "2026-10-08T19:48:21.645Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:40:12.609Z"
+      "observedAt": "2026-10-08T19:48:32.040Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:40:07.577Z"
+      "observedAt": "2026-10-08T19:48:25.684Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-07T20:40:16.055Z"
+      "observedAt": "2026-10-08T19:48:35.613Z"
     }
   },
   "windowsAppVersion": "26.1002.7124.0",
   "windowsSandbox": "mxc",
   "sandboxPolicy": "workspace-write",
   "approvalPolicy": "on-request",
-  "persistentWindowsSandbox": "elevated",
-  "persistentConfigurationChanged": false,
-  "evidence": "docs/history/2026-10-07-maintenance-overhaul-certification.json"
+  "evidence": "docs/history/2026-10-08-audit-openrouter-certification.json"
 }

@@ -21,6 +21,13 @@ the observations for each accepted batch:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [audit-fix OpenRouter renewal](../docs/history/2026-10-08-audit-openrouter-certification.json)
+passed all five checks for StreamLake, GLM Together, both DeepSeek routes and
+Pareto on deployed commit `475b3a79ae52fd219499f17e2925ba7527f7d009`.
+All 15 native child requests and five separate streaming requests returned
+HTTP 200. These CLI proofs used session-only MXC with workspace-write and
+on-request approval.
+
 The [latency and settings renewal](../docs/history/2026-10-07-latency-settings-certification.json)
 passed all five checks for GLM Together, both DeepSeek routes, Pareto and
 Switchyard on deployed commit `c95a10b926de218971c85727efa31eae407eb8af`.

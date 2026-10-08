@@ -37,7 +37,13 @@ function selectChildObservations(generation, routingLog, child) {
   const selected = lines.filter((line, index) => {
     if (index === 0) return true;
     const agent = /\bagent_id="([^"]+)"/u.exec(line)?.[1];
-    const matches = field(line, "thread_sha256") === thread || observationIdentity("thread", agent) === thread;
+    const observedThread = field(line, "thread_sha256");
+    // Completed-request traces carry a session, not an agent. Include those
+    // only through the child's observed, unshared session; explicit foreign
+    // thread/agent identities must never gain ownership through that session.
+    const sessionOnly = agent === undefined && observedThread === undefined && validSession && !ambiguous &&
+      observationIdentity("session", /\bsession_id="([^"]+)"/u.exec(line)?.[1]) === session;
+    const matches = observedThread === thread || observationIdentity("thread", agent) === thread || sessionOnly;
     const at = field(line, "at") || /^(\d{4}-\d{2}-\d{2}T[^ ]+Z)/u.exec(line)?.[1];
     return matches && within(at);
   });

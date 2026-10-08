@@ -69,3 +69,44 @@ test("child selection excludes foreign Switchyard failures without hiding its ow
   ]) { const invalid = structuredClone(input); mutate(invalid); assert.equal(summarizeSwitchyardCertificationEvidence(invalid).attributed,false); }
   assert.equal(summarizeSwitchyardCertificationEvidence({...input,routingLog:""}).routing.total,0);
 });
+
+test("child evidence correlates session-only handled traces without accepting foreign or shared sessions", () => {
+  const thread = "019a0780-0000-7000-8000-000000000001";
+  const session = "019a0780-0000-7000-8000-000000000003";
+  const foreign = "019a0780-0000-7000-8000-000000000002";
+  const hash = (kind,value) => createHash("sha256").update(`codex-router/${kind}/v1\0${value}`).digest("hex");
+  const at = second => `2026-10-08T12:00:${String(second).padStart(2,"0")}.000Z`;
+  const timing = (second,id,sessionId) => `[codex-router] timing at=${at(second)} model=switchyard/auto provider=switchyard status=200 total_ms=10 thread_sha256=${hash("thread",id)} session_sha256=${hash("session",sessionId)}`;
+  const handled = (second,sessionId,extra="") => `${at(second)} INFO LLM request handled wire_format=openai_responses status=200 selected_model="switchyard/sol-medium" session_id="${sessionId}" error=""${extra}`;
+  const input = {
+    child:{threadId:thread,startedAt:at(1),endedAt:at(12)},
+    routerLog:["Switchyard libsy server", `${at(2)} INFO consulting llm judge agent_id="${thread}"`,
+      ...[3,4,10].flatMap(second => [handled(second,session),timing(second,thread,session)]),
+      handled(5,foreign),`${at(6)} WARN falling back session_id="${foreign}"`].join("\n"),
+    routingLog:[3,4,10].map(second => JSON.stringify({ts:at(second),session_id:session,model:"switchyard/sol-medium"})).join("\n"),
+  };
+  const summary = summarizeSwitchyardCertificationEvidence(input);
+  assert.equal(summary.attributed,true);
+  assert.equal(summary.router.total,3);
+  assert.equal(summary.routing.total,3);
+  assert.equal(summary.routing.uniqueSessions,1);
+  assert.deepEqual(summary.routing.selectedModels,{"switchyard/sol-medium":3});
+  assert.ok(Object.values(summary.failures).every(value => value === 0));
+  for (const value of [thread,session,foreign,hash("thread",thread),hash("session",session)]) assert.ok(!JSON.stringify(summary).includes(value));
+
+  const failed = structuredClone(input);
+  failed.routerLog += `\n${at(7)} WARN falling back session_id="${session}"`;
+  assert.equal(summarizeSwitchyardCertificationEvidence(failed).failures.fallback,1);
+
+  const shared = structuredClone(input);
+  shared.routerLog += "\n" + timing(7,foreign,session);
+  const ambiguous = summarizeSwitchyardCertificationEvidence(shared);
+  assert.equal(ambiguous.attributed,false);
+  assert.deepEqual(ambiguous.routing.selectedModels,{});
+
+  const conflict = structuredClone(input);
+  conflict.routerLog = conflict.routerLog.replaceAll(`session_id="${session}" error=""`,`session_id="${session}" error="" agent_id="${foreign}"`);
+  const mismatched = summarizeSwitchyardCertificationEvidence(conflict);
+  assert.equal(mismatched.attributed,false);
+  assert.deepEqual(mismatched.routing.selectedModels,{});
+});

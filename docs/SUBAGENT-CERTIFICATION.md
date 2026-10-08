@@ -113,6 +113,9 @@ Switchyard extraction selects the child's agent traces and the routing session
 observed on its requests. Missing trace/routing coverage or an ambiguous session
 shared with another observed thread is rejected. The standalone Switchyard evidence
 command remains a whole-generation diagnostic summary.
+Completed-request traces carry a session ID without an agent ID. The extractor
+includes them only through that observed, unshared session; an explicit foreign
+agent or thread cannot acquire attribution through the session.
 
 Start with one read-only readiness check for the exact route, a subset, or all
 registered routes:
