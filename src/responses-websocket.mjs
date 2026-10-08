@@ -1175,8 +1175,18 @@ class ResponsesWebSocketPeer {
       return;
     }
     if (!request || Array.isArray(request) || request.type !== "response.create") {
+      // Retain only shape categories. The rejected value may contain private
+      // history, so never log its body, keys, arbitrary type value or identity.
+      const messageShape = request === null ? "null"
+        : Array.isArray(request) ? "array" : typeof request;
+      const typeShape = request && typeof request === "object" && !Array.isArray(request)
+        ? Object.hasOwn(request, "type") ? typeof request.type : "missing"
+        : "not_object";
+      console.warn(`[codex-router] websocket-protocol at=${new Date().toISOString()} code=invalid_websocket_message_type message_shape=${messageShape} type_shape=${typeShape}`);
       this.sendError(400, {
         type: "invalid_request_error",
+        code: "invalid_websocket_message_type",
+        param: "type",
         message: "Responses WebSocket messages must have type response.create.",
       });
       return;

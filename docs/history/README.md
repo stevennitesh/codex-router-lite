@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Audit-fix deployment, native renewal and completion/drain repairs, 2026-10-08](2026-10-08-audit-release.md)
+
 - [Five-route OpenRouter renewal after the codebase audit fixes, 2026-10-08](2026-10-08-audit-openrouter-certification.json)
 
 - [Latency and route-settings deployment, five-route renewal and StreamLake refusal, 2026-10-07](2026-10-07-latency-settings-release.md)

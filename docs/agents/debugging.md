@@ -50,6 +50,14 @@ history with its historical status explicit.
 
 ## Repair and close
 
+An invalid Responses WebSocket message type produces
+`invalid_websocket_message_type` and a `websocket-protocol` warning. The warning
+retains only JSON message/type shape categories and a timestamp, without the
+payload, arbitrary type value or conversation identity. A missing type and an
+unsupported string are distinct observations; neither justifies treating the
+message as `response.create`. Use the caller's serializer and a synthetic probe
+to establish the rejected protocol before adding compatibility handling.
+
 For empty ordinary function calls, `tool-protocol` warnings record only source,
 restored, streamed-delta and arguments-done character counts. Zero source and
 restored counts locate an empty provider close; nonzero delta/done counts expose

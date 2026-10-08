@@ -131,6 +131,36 @@ async function exchange(fetchImpl, request = { type: "response.create", input: [
   return { socket, events: await sendRequest(socket, request) };
 }
 
+test("invalid message types are rejected without logging private values and leave the peer usable", async (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", message => warnings.push(message));
+  const forwarded = [];
+  const socket = openPeer(async (_url, init) => {
+    forwarded.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ id: "resp_after_rejection", status: "completed", output: [] }), {
+      headers: { "content-type": "application/json" },
+    });
+  });
+  const privateValue = "private-type-and-history-canary";
+  const invalid = [null, [], privateValue, { input: [privateValue] }, { type: privateValue, input: [privateValue] }];
+  for (const message of invalid) {
+    const events = await sendRequest(socket, message);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].status, 400);
+    assert.equal(events[0].error.code, "invalid_websocket_message_type");
+    assert.equal(events[0].error.param, "type");
+    assert.equal(JSON.stringify(events).includes(privateValue), false);
+  }
+  assert.equal(forwarded.length, 0);
+  assert.equal(warnings.length, invalid.length);
+  assert.equal(warnings.join("\n").includes(privateValue), false);
+  assert.match(warnings[3], /message_shape=object type_shape=missing$/u);
+  assert.match(warnings[4], /message_shape=object type_shape=string$/u);
+  const events = await sendRequest(socket, { type: "response.create", input: [], stream: true });
+  assert.equal(events.at(-1).type, "response.completed");
+  assert.deepEqual(forwarded, [{ input: [], stream: true }]);
+});
+
 test("large masked requests are invariant under split headers and payload chunks", async () => {
   const request = { type: "response.create", stream: true, input: [{ role: "user", content: '漢🙂\\\n"'.repeat(65_536) }] };
   const bytes = clientFrame(request);
