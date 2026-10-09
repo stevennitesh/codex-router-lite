@@ -6,6 +6,10 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Runtime primitives deployment and Switchyard renewal, 2026-10-09](2026-10-09-runtime-primitives-release.md)
+
+- [Switchyard native certification for the runtime primitives release, 2026-10-09](2026-10-09-runtime-primitives-certification.json)
+
 - [Runtime primitives audit repairs and local process-probe measurements, 2026-10-09](2026-10-09-runtime-primitives-audit-fixes.md)
 
 - [GPT-6.1 Sol High deployment and six-route renewal, 2026-10-09](2026-10-09-sol-high-release.md)

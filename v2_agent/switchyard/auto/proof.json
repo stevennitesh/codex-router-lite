@@ -7,16 +7,16 @@
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard/blob/fbabf51c62793ed0f6af042b60e92ce1cfba083b/README.md"
   ],
-  "testedAt": "2026-10-09T05:13:55.749Z",
+  "testedAt": "2026-10-09T06:47:27.406Z",
   "routerVersion": "0.7.0",
-  "routerCommit": "952339029991e9afb063758b083a195e56a61c41",
+  "routerCommit": "3aa818e771b1e644cf891752787f5ea9acbf04b7",
   "codexVersion": "codex-cli 0.162.0-alpha.2",
   "executionSurface": "codex-cli",
   "runtimeBinding": {
     "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
     "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
     "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
-    "routerCommit": "952339029991e9afb063758b083a195e56a61c41",
+    "routerCommit": "3aa818e771b1e644cf891752787f5ea9acbf04b7",
     "patchSha256": "bf4df8b4430032cc67ef138bbbc83aea725e509e41d992ba3a5b1be52a8cc497",
     "binarySha256": "c8f0434a224a84a7db769f1eb0ca392e6f4159fc5e4e87fa330cfff7dca5dca1",
     "routesSha256": "9d69181ce81c689050ddf4c4fb6bc6785aef01e534a87bf665c9e925c80fc97a",
@@ -27,33 +27,33 @@
     "streaming": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-09T05:11:26.030Z"
+      "observedAt": "2026-10-09T06:46:54.190Z"
     },
     "toolCall": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-09T05:13:45.579Z",
+      "observedAt": "2026-10-09T06:47:13.852Z",
       "mode": "auto"
     },
     "encryptedRelay": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-09T05:13:52.804Z"
+      "observedAt": "2026-10-09T06:47:24.014Z"
     },
     "markerReturn": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-09T05:13:48.447Z"
+      "observedAt": "2026-10-09T06:47:17.668Z"
     },
     "sameThreadFollowUp": {
       "outcome": "pass",
       "status": 200,
-      "observedAt": "2026-10-09T05:13:55.718Z"
+      "observedAt": "2026-10-09T06:47:27.381Z"
     }
   },
   "windowsAppVersion": "26.1002.7124.0",
   "windowsSandbox": "mxc",
   "sandboxPolicy": "workspace-write",
   "approvalPolicy": "on-request",
-  "evidence": "docs/history/2026-10-09-sol-high-release-certification.json"
+  "evidence": "docs/history/2026-10-09-runtime-primitives-certification.json"
 }

@@ -23,6 +23,17 @@ the observations for each accepted batch:
   covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [runtime primitives renewal](../docs/history/2026-10-09-runtime-primitives-certification.json)
+passed all five checks for Switchyard on deployed commit
+`3aa818e771b1e644cf891752787f5ea9acbf04b7`. Its three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers in the same
+thread. Cleanup cancelled no active turns. This renews Switchyard's Router-commit
+binding; the other five routes retain the Sol High release proofs below.
+The run used session-only MXC and does not certify the desktop's elevated sandbox
+or arbitrary MCP tools. The [release record](../docs/history/2026-10-09-runtime-primitives-release.md)
+records deployment acceptance and verification scope.
+
 The [Sol High release renewal](../docs/history/2026-10-09-sol-high-release-certification.json)
 passed all five checks for all six routes on deployed commit
 `952339029991e9afb063758b083a195e56a61c41`. All 18 native child requests
