@@ -23,6 +23,17 @@ the observations for each accepted batch:
   covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [verification release renewal](../docs/history/2026-10-09-verification-release-certification.json)
+passed all five checks for Switchyard on deployed commit
+`e39ff44e5fa7972815f7cb30bfd8c2e98e5f90ea`. Its three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers from the
+same thread. Cleanup cancelled no active turns. This renews Switchyard's
+Router-commit binding; other routes retain their previous proofs.
+The run used session-only MXC and does not certify the desktop's elevated sandbox
+or arbitrary MCP tools. The later deployment wording commit is separate from
+this proof's installed runtime identity and did not restart Router.
+
 The [diagnostics and update renewal](../docs/history/2026-10-09-diagnostics-updates-certification.json)
 passed all five checks for Switchyard on deployed commit
 `ec7ae0a9df3ee5ced01ae64b548ba4d2c0e68524`. Its three native child requests

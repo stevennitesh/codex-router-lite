@@ -1,12 +1,12 @@
 # switchyard/auto v2 certification
 
-Accepted observations against Router `ec7ae0a9df3ee5ced01ae64b548ba4d2c0e68524`
+Accepted observations against Router `e39ff44e5fa7972815f7cb30bfd8c2e98e5f90ea`
 (version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-09T08:13:23.620Z. Switchyard runtime identities are recorded in proof.json.
+Tested at 2026-10-09T19:24:19.038Z. Switchyard runtime identities are recorded in proof.json.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-09-diagnostics-updates-certification.json) records role `router_switchyard_auto`, effort
+[Redacted run evidence](../../../docs/history/2026-10-09-verification-release-certification.json) records role `router_switchyard_auto`, effort
 `high`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed
