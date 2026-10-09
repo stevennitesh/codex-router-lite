@@ -18,13 +18,22 @@ jobs:
         node: ["22.19.0", "24.x"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Select verification from the actual changed inputs
+        id: scope
+        run: node scripts/verification-scope.mjs
       - name: Validate the retained Windows runtime
+        if: steps.scope.outputs.scope != 'evidence'
         run: npm run verify
+      - name: Validate documents and proof records
+        if: steps.scope.outputs.scope == 'evidence'
+        run: npm run verify:evidence
       - name: Audit Node production dependencies
         if: matrix.node == '22.19.0'
         timeout-minutes: 5

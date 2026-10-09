@@ -152,6 +152,14 @@ current installed-Codex catalog check once. CI uses `npm run verify` because it
 does not have an installed Codex. An explicit executable and `--catalog <path>`
 remain available when checking a specific build or installed catalog.
 
+CI runs both supported Node versions for runtime candidates. For changes limited
+to known Markdown documents and historical or route proof records,
+`scripts/verification-scope.mjs` selects `npm run verify:evidence`: source checks
+plus the tests consuming those records, on both Node versions. Manual runs,
+unknown paths, dirty checkouts and unavailable event bases use full verification.
+The shallow checkout may lack the base of a multi-commit push; that also uses the
+full suite. Node and Python dependency audits remain unconditional.
+
 `npm run check` syntax-checks root, source, test, script, and maintenance modules
 with four bounded workers, then verifies the Python lock, independent product
 boundary and literal package import dependencies, accepted applications, and

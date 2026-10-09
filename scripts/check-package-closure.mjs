@@ -2,52 +2,79 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 // Read module declarations without treating comments, quoted examples, or
-// regular expressions as imports. Package source uses plain literal specifiers;
+// regular expressions as imports. Template expressions are executable code;
+// their surrounding text is not. Package source uses plain literal specifiers;
 // computed imports remain an explicit entrypoint responsibility.
 function tokens(source) {
   const result = [];
-  let previous;
-  for (let index = 0; index < source.length;) {
-    const start = index, character = source[index];
-    if (/\s/u.test(character)) { index++; continue; }
-    if (source.startsWith("//", index)) {
-      index = source.indexOf("\n", index);
-      if (index < 0) break;
-      continue;
-    }
-    if (source.startsWith("/*", index)) {
-      const end = source.indexOf("*/", index + 2);
-      if (end < 0) throw new Error("Unterminated package source comment");
-      index = end + 2; continue;
-    }
-    if (["'", '"', "`"].includes(character)) {
-      let escaped = false;
-      index++;
-      while (index < source.length && source[index] !== character) {
-        if (source[index] === "\\") { escaped = true; index += 2; } else index++;
+  let index = 0;
+  function code(interpolation = false) {
+    let previous, braces = 0;
+    while (index < source.length) {
+      const start = index, character = source[index];
+      if (interpolation && character === "}" && braces === 0) { index++; return; }
+      if (/\s/u.test(character)) { index++; continue; }
+      if (source.startsWith("//", index)) {
+        index = source.indexOf("\n", index);
+        if (index < 0) break;
+        continue;
       }
-      if (index >= source.length) throw new Error("Unterminated package source string");
-      const value = source.slice(start + 1, index++);
-      result.push({ type: character === "`" ? "template" : "string", value, escaped });
-      previous = "literal"; continue;
-    }
-    if (character === "/" && (!previous || ["(", "[", "{", "=", ":", ",", ";", "!", "?", "return", "=>"].includes(previous))) {
-      let inClass = false;
-      index++;
-      while (index < source.length) {
-        if (source[index] === "\\") { index += 2; continue; }
-        if (source[index] === "[") inClass = true;
-        if (source[index] === "]") inClass = false;
-        if (source[index++] === "/" && !inClass) break;
+      if (source.startsWith("/*", index)) {
+        const end = source.indexOf("*/", index + 2);
+        if (end < 0) throw new Error("Unterminated package source comment");
+        index = end + 2; continue;
       }
-      while (/[a-z]/iu.test(source[index] || "")) index++;
-      previous = "literal"; continue;
+      if (character === "`") {
+        result.push({ type: "template", value: "`" });
+        index++;
+        let closed = false;
+        while (index < source.length) {
+          if (source[index] === "\\") { index += 2; continue; }
+          if (source[index] === "`") { index++; closed = true; break; }
+          if (source.startsWith("${", index)) {
+            index += 2;
+            result.push({ type: "code", value: "(" });
+            code(true);
+            result.push({ type: "code", value: ")" });
+          } else index++;
+        }
+        if (!closed) throw new Error("Unterminated package source template");
+        result.push({ type: "template", value: "`" });
+        previous = "literal"; continue;
+      }
+      if (["'", '"'].includes(character)) {
+        let escaped = false;
+        index++;
+        while (index < source.length && source[index] !== character) {
+          if (source[index] === "\\") { escaped = true; index += 2; } else index++;
+        }
+        if (index >= source.length) throw new Error("Unterminated package source string");
+        const value = source.slice(start + 1, index++);
+        result.push({ type: "string", value, escaped });
+        previous = "literal"; continue;
+      }
+      if (character === "/" && (!previous || ["(", "[", "{", "=", ":", ",", ";", "!", "?", "+", "-", "*", "/", "%", "~", "^", "&", "|", "<", ">", "return", "throw", "=>"].includes(previous))) {
+        let inClass = false;
+        index++;
+        while (index < source.length) {
+          if (source[index] === "\\") { index += 2; continue; }
+          if (source[index] === "[") inClass = true;
+          if (source[index] === "]") inClass = false;
+          if (source[index++] === "/" && !inClass) break;
+        }
+        while (/[a-z]/iu.test(source[index] || "")) index++;
+        previous = "literal"; continue;
+      }
+      const word = /^[A-Za-z_$][A-Za-z0-9_$]*/u.exec(source.slice(index));
+      const value = word ? word[0] : source.startsWith("=>", index) ? "=>" : character;
+      index += value.length;
+      result.push({ type: "code", value }); previous = value;
+      if (character === "{") braces++;
+      if (character === "}") braces--;
     }
-    const word = /^[A-Za-z_$][A-Za-z0-9_$]*/u.exec(source.slice(index));
-    const value = word ? word[0] : source.startsWith("=>", index) ? "=>" : character;
-    index += value.length;
-    result.push({ type: "code", value }); previous = value;
+    if (interpolation) throw new Error("Unterminated package source template expression");
   }
+  code();
   return result;
 }
 

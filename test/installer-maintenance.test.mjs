@@ -4,65 +4,86 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const windows = process.platform === "win32";
 const powershell = windows ? path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe") : "powershell.exe";
 const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+let compiledTool;
+function pythonFixtureTool() {
+  if (compiledTool) return compiledTool.executable;
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-installer-compiler-"));
+  const executable = path.join(directory, "python-fixture.exe");
+  try {
+    execFileSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      `Add-Type -Path ${quote(path.join(root, "test/fixtures/python-environment-tool.cs"))} -OutputAssembly ${quote(executable)} -OutputType ConsoleApplication`], { windowsHide: true, encoding: "utf8" });
+    compiledTool = { directory, executable };
+    return executable;
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+after(() => { if (compiledTool) rmSync(compiledTool.directory, { recursive: true, force: true }); });
 
 function fixture(tool, { mode = "dependencies", broken = false, failService = false } = {}) {
+  const compiled = pythonFixtureTool();
   const directory = mkdtempSync(path.join(os.tmpdir(), "router-installer-maintenance-"));
-  const source = path.join(directory, "source");
-  const bin = path.join(directory, "bin");
-  const home = path.join(directory, "home");
-  const trace = path.join(directory, "trace.txt");
-  for (const target of [path.join(source, "src"), path.join(source, "requirements"), bin]) mkdirSync(target, { recursive: true });
-  writeFileSync(trace, "");
-  writeFileSync(path.join(source, "package.json"), '{"name":"codex-router-lite","type":"module"}');
-  writeFileSync(path.join(source, "package-lock.json"), "fixture lock");
-  for (const file of ["install.ps1", "src/install-plan.mjs", "src/venv-runtime.mjs", "requirements/python.in", "requirements/python.txt"]) {
-    copyFileSync(path.join(root, file), path.join(source, file));
-  }
-  const executable = path.join(bin, "python-fixture.exe");
-  execFileSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `Add-Type -Path ${quote(path.join(root, "test/fixtures/python-environment-tool.cs"))} -OutputAssembly ${quote(executable)} -OutputType ConsoleApplication`], { windowsHide: true, encoding: "utf8" });
-  writeFileSync(path.join(bin, "py.cmd"), `@echo off\r\n"${executable}" %*\r\nexit /b %errorlevel%\r\n`);
-  if (tool === "uv") writeFileSync(path.join(bin, "uv.cmd"), `@echo off\r\n"${executable}" --fixture-uv %*\r\nexit /b %errorlevel%\r\n`);
-  const nodeTrace = path.join(bin, "node-trace.mjs");
-  writeFileSync(nodeTrace, `import {appendFileSync} from 'node:fs'; import {spawnSync} from 'node:child_process'; const args=process.argv.slice(2); appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+args.join('\\t')+'\\n'); const result=spawnSync(${JSON.stringify(process.execPath)},args,{stdio:'inherit'}); process.exit(result.status ?? 1);`);
-  writeFileSync(path.join(bin, "node.cmd"), `@echo off\r\n"${process.execPath}" "${nodeTrace}" %*\r\nexit /b %errorlevel%\r\n`);
-  writeFileSync(path.join(bin, "npm.cmd"), "@echo off\r\nif not exist node_modules mkdir node_modules\r\necho fixture>node_modules\\.package-lock.json\r\nexit /b 0\r\n");
-  const forbidden = ["config-manager", "service", "provider-selection", "service-process", "secret", "catalog", "litellm-config", "install-manifest", "skills-install", "service-drain", "wait-health"];
-  for (const name of forbidden) {
-    let action = "";
-    if (mode === "dependencies" || name === "wait-health") action = `throw new Error('unexpected ${name} invocation');`;
-    else if (name === "config-manager") action = "if(process.argv[2]==='status')console.log(JSON.stringify({mode:'router'}));";
-    else if (name === "service") {
-      action = `if(process.argv[2]==='status')console.log(JSON.stringify({installed:${mode === "full"}}));`;
-      if (failService) action += `if(process.argv[2]==='install'){ const p=${JSON.stringify(path.join(directory, "service-failed"))}; const fs=await import('node:fs'); if(!fs.existsSync(p)){fs.writeFileSync(p,'1');process.exitCode=8;} }`;
+  try {
+    const source = path.join(directory, "source");
+    const bin = path.join(directory, "bin");
+    const home = path.join(directory, "home");
+    const trace = path.join(directory, "trace.txt");
+    for (const target of [path.join(source, "src"), path.join(source, "requirements"), bin]) mkdirSync(target, { recursive: true });
+    writeFileSync(trace, "");
+    writeFileSync(path.join(source, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+    writeFileSync(path.join(source, "package-lock.json"), "fixture lock");
+    for (const file of ["install.ps1", "src/install-plan.mjs", "src/venv-runtime.mjs", "requirements/python.in", "requirements/python.txt"]) {
+      copyFileSync(path.join(root, file), path.join(source, file));
     }
-    writeFileSync(path.join(source, "src", `${name}.mjs`), action);
+    const executable = path.join(bin, "python-fixture.exe");
+    copyFileSync(compiled, executable);
+    writeFileSync(path.join(bin, "py.cmd"), `@echo off\r\n"${executable}" %*\r\nexit /b %errorlevel%\r\n`);
+    if (tool === "uv") writeFileSync(path.join(bin, "uv.cmd"), `@echo off\r\n"${executable}" --fixture-uv %*\r\nexit /b %errorlevel%\r\n`);
+    const nodeTrace = path.join(bin, "node-trace.mjs");
+    writeFileSync(nodeTrace, `import {appendFileSync} from 'node:fs'; import {spawnSync} from 'node:child_process'; const args=process.argv.slice(2); appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+args.join('\\t')+'\\n'); const result=spawnSync(${JSON.stringify(process.execPath)},args,{stdio:'inherit'}); process.exit(result.status ?? 1);`);
+    writeFileSync(path.join(bin, "node.cmd"), `@echo off\r\n"${process.execPath}" "${nodeTrace}" %*\r\nexit /b %errorlevel%\r\n`);
+    writeFileSync(path.join(bin, "npm.cmd"), "@echo off\r\nif not exist node_modules mkdir node_modules\r\necho fixture>node_modules\\.package-lock.json\r\nexit /b 0\r\n");
+    const forbidden = ["config-manager", "service", "provider-selection", "service-process", "secret", "catalog", "litellm-config", "install-manifest", "skills-install", "service-drain", "wait-health"];
+    for (const name of forbidden) {
+      let action = "";
+      if (mode === "dependencies" || name === "wait-health") action = `throw new Error('unexpected ${name} invocation');`;
+      else if (name === "config-manager") action = "if(process.argv[2]==='status')console.log(JSON.stringify({mode:'router'}));";
+      else if (name === "service") {
+        action = `if(process.argv[2]==='status')console.log(JSON.stringify({installed:${mode === "full"}}));`;
+        if (failService) action += `if(process.argv[2]==='install'){ const p=${JSON.stringify(path.join(directory, "service-failed"))}; const fs=await import('node:fs'); if(!fs.existsSync(p)){fs.writeFileSync(p,'1');process.exitCode=8;} }`;
+      }
+      writeFileSync(path.join(source, "src", `${name}.mjs`), action);
+    }
+    if (broken) {
+      const scripts = path.join(source, ".venv/Scripts");
+      mkdirSync(scripts, { recursive: true });
+      copyFileSync(executable, path.join(scripts, "python.exe"));
+      writeFileSync(path.join(scripts, "broken.txt"), "fixture broken stdlib");
+      writeFileSync(path.join(source, ".venv/pyvenv.cfg"), `home = ${directory}\nversion = 3.12.12\n`);
+    }
+    const environment = {
+      ...process.env,
+      PATH: [bin, path.join(process.env.SystemRoot, "System32"), process.env.SystemRoot].join(path.delimiter),
+      CODEX_HOME: home,
+      MODEL_ROUTER_STATE_DIR: path.join(home, "codex-router"),
+      CODEX_ROUTER_STATE_DIR: path.join(home, "codex-router"),
+      ROUTER_INSTALL_TRACE: trace,
+    };
+    delete environment.PYTHONHOME;
+    delete environment.PYTHONPATH;
+    const run = (args) => spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(source, "install.ps1"), "-CheckoutInstall", ...args], { encoding: "utf8", windowsHide: true, env: environment, timeout: 30_000 });
+    return { directory, source, home, trace, environment, run, calls: () => readFileSync(trace, "utf8").trim().split(/\r?\n/u).filter(Boolean) };
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
   }
-  if (broken) {
-    const scripts = path.join(source, ".venv/Scripts");
-    mkdirSync(scripts, { recursive: true });
-    copyFileSync(executable, path.join(scripts, "python.exe"));
-    writeFileSync(path.join(scripts, "broken.txt"), "fixture broken stdlib");
-    writeFileSync(path.join(source, ".venv/pyvenv.cfg"), `home = ${directory}\nversion = 3.12.12\n`);
-  }
-  const environment = {
-    ...process.env,
-    PATH: [bin, path.join(process.env.SystemRoot, "System32"), process.env.SystemRoot].join(path.delimiter),
-    CODEX_HOME: home,
-    MODEL_ROUTER_STATE_DIR: path.join(home, "codex-router"),
-    CODEX_ROUTER_STATE_DIR: path.join(home, "codex-router"),
-    ROUTER_INSTALL_TRACE: trace,
-  };
-  delete environment.PYTHONHOME;
-  delete environment.PYTHONPATH;
-  const run = (args) => spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(source, "install.ps1"), "-CheckoutInstall", ...args], { encoding: "utf8", windowsHide: true, env: environment, timeout: 30_000 });
-  return { directory, source, home, trace, environment, run, calls: () => readFileSync(trace, "utf8").trim().split(/\r?\n/u).filter(Boolean) };
 }
 
 for (const tool of ["uv", "pip"]) {
