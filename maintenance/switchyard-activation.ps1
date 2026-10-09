@@ -2,14 +2,15 @@ $admissionPrepared = $false
 try {
   Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Router candidate checkout"
   # A refused drain has no activation effects and must never enter rollback.
-  Write-Host "Draining admitted Router requests with a 90-second limit."
   $drainArguments = @(
     (Join-Path $repoRoot "src\service-drain.mjs"), "prepare",
     "--timeout-ms", "90000", "--json-errors"
   )
   if ($ForceServiceReplacement) {
-    Write-Warning "Explicit service replacement will interrupt active work and clear indeterminate workflow state."
+    Write-Warning "Restarting Router without waiting for running requests to finish. This interrupts those requests and clears pending Switchyard workflow tracking. The deployment keeps the previous version for recovery if the update fails."
     $drainArguments += "--force-service-replacement"
+  } else {
+    Write-Host "Waiting up to 90 seconds for running Router requests to finish before restarting. New requests are paused during this wait."
   }
   $drain = Invoke-NodeJson $repoRoot $drainArguments "Router admission drain"
   $admissionPrepared = $drain.status -in @("drained", "forced")

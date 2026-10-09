@@ -195,11 +195,13 @@ The installer grants `BUILTIN\Users` read and execute access only to the Router 
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.
 
-If replacement reports `ERR_ROUTER_DRAIN_DEFERRED` or
+If an update or restart reports `ERR_ROUTER_DRAIN_DEFERRED` or
 `ERR_ROUTER_DRAIN_UNSUPPORTED`, follow the
-[replacement and drain policy](INSTALL.md#replacement-and-drain). A deferral
-preserves the running generation; it is not a reason to kill the process or
-automatically force replacement.
+[restart and waiting policy](INSTALL.md#replacement-and-drain). Router was left
+running because work is unfinished or that older version cannot wait for
+requests to finish. Let the work finish before retrying. Restarting without
+waiting interrupts running requests and requires explicit approval; never do it
+automatically.
 
 The service task has a minute heartbeat and `MultipleInstances=IgnoreNew`.
 While Router is running, a duplicate heartbeat launch may set Task Scheduler's

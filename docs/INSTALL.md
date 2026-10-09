@@ -220,6 +220,19 @@ Do not run a standalone stop. The transaction stages one generation, checks read
 
 ### Replacement and drain
 
+An update may need to stop Router and start the new version. Normally, Router
+pauses new requests and waits for requests already running to finish. This wait
+is called **draining**. If the wait times out or unfinished work prevents the
+restart, Router stays running and accepts new requests again; the update is
+postponed.
+
+**Restarting without waiting** interrupts requests still running, so it requires
+explicit approval. This is what the `-ForceServiceReplacement` option does.
+The deployment keeps a recovery copy of the previous version and restores it
+if the update fails. Recovery restores the software; it cannot resume an
+interrupted request. An approval request should say which work may be
+interrupted, rather than calling this only a "controlled replacement."
+
 `src/service.mjs` serializes service mutations and asks the running Router to drain
 before install, stop, restart, or uninstall. The drain endpoint accepts only the
 internal service capability. It rejects new inference while admitted requests

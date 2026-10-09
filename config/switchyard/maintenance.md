@@ -191,11 +191,12 @@ its metadata, files, rollback checkout, ancestry, and singular ownership before
 activation; a repair deployment failure restores the original pre-candidate
 generation. Do not delete the retained rollback to make a second deployment pass.
 
-The worker starts one authenticated drain with a 90-second limit. New inference
-is paused while already-admitted requests settle. An outstanding Switchyard
-workflow still defers replacement. A timeout restores admission; drain refusals
-report the reason and active request/workflow counts and abort before activation
-without another stop or rollback. After activation begins, recovery stops the
+The worker pauses new requests and waits up to 90 seconds for running requests
+to finish. An unfinished Switchyard tool workflow also postpones the update.
+If Router cannot become idle, it stays running and accepts new requests again.
+The worker reports why it could not restart, with the running request and
+unfinished workflow counts; it exits before changing the running service.
+After activation begins, recovery stops the
 verified live checkout
 and refuses to overwrite runtime files if that stop fails. The retained backup
 is preserved on incomplete recovery, and the result reports both failures.
@@ -211,12 +212,16 @@ manifest whose commit is in candidate history. It tolerates the missing schedule
 launcher only during that recovery preflight. Final acceptance still requires
 the live process, scheduled task, manifest, and runtime provenance to agree.
 
-When the operator explicitly authorizes interruption of pending or indeterminate
-work, the checkout transaction accepts `-ForceServiceReplacement`. It forwards
+With explicit approval, `-ForceServiceReplacement` restarts Router without
+waiting for running requests to finish. Those requests are interrupted, and
+pending Switchyard workflow tracking is cleared. The recovery copy can restore
+the previous software but cannot resume an interrupted request. Describe this
+effect directly when asking for approval. The transaction forwards
 that choice to the authenticated drain, service stop and installer calls during
 activation and recovery, retaining the same identity, acceptance and rollback
-checks. Normal deployment never forces automatically. An abort
-before activation restores admission even after a forced drain.
+checks. Normal deployment never interrupts work automatically. An abort
+before activation lets Router accept new requests again, even when running
+requests were already interrupted.
 
 ## Switchyard v2 promotion
 

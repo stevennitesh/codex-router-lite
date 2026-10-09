@@ -80,7 +80,9 @@ test("authenticated lifecycle drain propagates safe deferral and accepts drained
     prepareRouterServiceMutation({ fetchImpl, internalKey: "internal-secret", timeoutMs: 50 }),
     (error) => {
       assert.equal(error.code, "ERR_ROUTER_DRAIN_DEFERRED");
-      assert.match(error.message, /Switchyard workflows: 1.*admission was restored/u);
+      assert.match(error.message, /unfinished Switchyard workflows: 1/u);
+      assert.match(error.message, /not stopped or changed/u);
+      assert.match(error.message, /accepting new requests again/u);
       return true;
     },
   );
