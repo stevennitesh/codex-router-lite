@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,7 +10,9 @@ const root = path.resolve(import.meta.dirname, "..");
 const hash = value => createHash("sha256").update(value).digest("hex");
 
 test("Switchyard build checks ordered native commands and returns only complete candidates", { skip: process.platform !== "win32" }, t => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "router-build-fixture-"));
+  // PowerShell expands Windows 8.3 paths; compare the same directory identity
+  // when the runner supplies a short-name temporary root.
+  const directory = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "router-build-fixture-")));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   mkdirSync(path.join(directory, "maintenance"));
   mkdirSync(path.join(directory, "config/switchyard/patches"), { recursive: true });
@@ -66,7 +68,7 @@ try {
     const buildPathFile = path.join(directory, "build-path.txt");
     const buildPath = existsSync(buildPathFile) ? readFileSync(buildPathFile, "utf8") : undefined;
     if (buildPath) {
-      assert.equal(path.dirname(buildPath), path.resolve(os.tmpdir()));
+      assert.equal(realpathSync.native(path.dirname(buildPath)), realpathSync.native(os.tmpdir()));
       assert.match(path.basename(buildPath), /^switchyard-build-[a-f0-9]{32}$/u);
       t.after(() => rmSync(buildPath, { recursive: true, force: true }));
     }
