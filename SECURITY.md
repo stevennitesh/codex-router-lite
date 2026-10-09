@@ -50,7 +50,9 @@ This repository therefore does not claim endpoint-specific ZDR. A dedicated key
 or guardrail remains an account-side option requiring separate authorization and
 verification.
 
-Protected state uses owner-only ACLs. Do not put provider or native credentials
+Protected state uses owner-only ACLs. Private staging files remain empty until
+their ACL is protected, then receive contents before atomic publication. Key
+prompts discard captured child diagnostics on failure. Do not put provider or native credentials
 in source, config JSON, command arguments, logs, fixtures, support text, or
 generated route files. The private Switchyard route file necessarily contains
 the managed Router caller capability; follow its

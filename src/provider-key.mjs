@@ -26,10 +26,15 @@ if (providerId !== "openrouter" || !new Set(["status", "set", "remove"]).has(com
         : "OpenRouter API key is not configured.\n");
     if (!status.configured) process.exitCode = 1;
   } else if (command === "set") {
-    const value = promptForSecret("OpenRouter API key");
-    const target = writeProviderCredential(provider, value);
-    enableProvider("openrouter");
-    process.stdout.write(`OpenRouter API key saved to protected local storage at ${target}.\n`);
+    try {
+      const value = promptForSecret("OpenRouter API key");
+      const target = writeProviderCredential(provider, value);
+      enableProvider("openrouter");
+      process.stdout.write(`OpenRouter API key saved to protected local storage at ${target}.\n`);
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
   } else {
     const target = primaryCredentialPath(provider);
     let removed = false;

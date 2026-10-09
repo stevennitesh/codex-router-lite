@@ -22,45 +22,37 @@ function windowsHiddenPromptArgs(script = WINDOWS_HIDDEN_PROMPT_SCRIPT) {
 
 const WINDOWS_POWERSHELL_CANDIDATES = ["powershell.exe", "pwsh.exe"];
 
-function powerShellStartupError(failures) {
-  return failures.find((error) => error?.code !== "ENOENT") ||
-    new Error(
-      "PowerShell is required for hidden API-key input, but neither powershell.exe nor pwsh.exe could be started.",
-    );
-}
-
-function hiddenPrompt(label) {
-  const args = windowsHiddenPromptArgs();
-  const failures = [];
+function runPrompt(label, args, purpose) {
+  // Own the visible label here so child diagnostics can be captured and
+  // discarded. They can carry partially captured input on a failed prompt.
+  process.stdout.write(`${label}: `);
   for (const executable of WINDOWS_POWERSHELL_CANDIDATES) {
     try {
       return execFileSync(executable, args, {
         encoding: "utf8",
         env: { ...process.env, CODEX_ROUTER_PROMPT_LABEL: label },
-        stdio: ["inherit", "pipe", "inherit"],
+        stdio: ["inherit", "pipe", "pipe"],
       });
     } catch (error) {
-      failures.push(error);
+      if (error?.code === "ENOENT") continue;
+      // Never retain the original error or cause: execFileSync errors carry
+      // stdout, stderr and output buffers even when message looks harmless.
+      const status = Number.isInteger(error?.status) ? ` (exit ${error.status})` : "";
+      const failure = new Error(`PowerShell ${purpose} failed${status}. Nothing was saved.`);
+      failure.code = "secret_prompt_failed";
+      throw failure;
     }
   }
-  throw powerShellStartupError(failures);
+  throw new Error("PowerShell is required for interactive input, but neither powershell.exe nor pwsh.exe could be started. Nothing was saved.");
+}
+
+function hiddenPrompt(label) {
+  return runPrompt(label, windowsHiddenPromptArgs(), "hidden key input");
 }
 
 function visiblePrompt(label) {
   const script = "[Console]::Out.Write((Read-Host $env:CODEX_ROUTER_PROMPT_LABEL))";
-  let lastError;
-  for (const executable of WINDOWS_POWERSHELL_CANDIDATES) {
-    try {
-      return execFileSync(executable, ["-NoLogo", "-NoProfile", "-Command", script], {
-        encoding: "utf8",
-        env: { ...process.env, CODEX_ROUTER_PROMPT_LABEL: label },
-        stdio: ["inherit", "pipe", "inherit"],
-      });
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError || new Error("PowerShell is required for interactive confirmation.");
+  return runPrompt(label, ["-NoLogo", "-NoProfile", "-Command", script], "confirmation input");
 }
 
 const MAX_KEY_ATTEMPTS = 3;

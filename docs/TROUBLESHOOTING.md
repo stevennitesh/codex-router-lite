@@ -16,6 +16,17 @@ resolves that ambiguity. Administrator elevation is not required merely to read
 the user's state. Do not change ownership, weaken ACLs, or reinstall to bypass
 the sandbox's access restrictions.
 
+Capability setup creates keys only when their files are confirmed absent. An
+unreadable or invalid existing key stops setup before either capability is
+changed. Resolve access under its owning Windows user or restore a known-good
+generation; do not delete protected state to bypass a read error. Capability
+status is read-only. Intentional caller-key changes use the rotation transaction.
+
+Generated-state writes also stop when an existing installation manifest cannot
+establish ownership. Restore a valid manifest before retrying. An intentionally
+ownerless version-1 manifest retains its existing initialization behavior; an
+installer ownership transfer remains explicit.
+
 Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, prompt bodies, or unredacted logs into an issue.
 
 ## Codex native models are wrong

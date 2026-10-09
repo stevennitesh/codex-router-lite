@@ -1529,7 +1529,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   } catch (error) {
     // Ownership conflicts are an operator mistake with a specific remedy, so
     // print the guidance rather than a stack trace.
-    if (error?.code === "foreign_state_owner") {
+    if (error?.code === "foreign_state_owner" || error?.code === "indeterminate_state_owner") {
       console.error(error.message);
       process.exit(1);
     }

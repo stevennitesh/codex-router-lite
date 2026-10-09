@@ -1,10 +1,8 @@
 import { randomBytes } from "node:crypto";
-import {
-  existsSync,
-  readFileSync,
-} from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
+import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
 import {
   CALLER_SECRET_PATH,
   INTERNAL_SECRET_PATH,
@@ -17,39 +15,45 @@ if (!new Set(["ensure", "status"]).has(command)) {
   process.exit(2);
 }
 
-function validSecret(target) {
-  if (!existsSync(target)) return false;
+function secretStatus(target) {
+  const probe = probeRegularFile(target);
+  if (probe.status !== "present") return { present: false, fileStatus: probe.status, ...(probe.code ? { code: probe.code } : {}) };
   try {
-    return generatedSecretPattern.test(readFileSync(target, "utf8").trim());
-  } catch {
-    return false;
+    const present = generatedSecretPattern.test(readFileSync(target, "utf8").trim());
+    return { present, fileStatus: present ? "present" : "invalid" };
+  } catch (error) {
+    const reason = fileProbeErrorReason(error);
+    return { present: false, fileStatus: reason === "missing" ? "probe-failed" : reason, ...(error?.code ? { code: error.code } : {}) };
   }
 }
 
-function ensureSecret(target) {
-  if (!validSecret(target)) {
-    writePrivateFile(target, `${randomBytes(48).toString("base64url")}\n`);
+try {
+  const targets = [INTERNAL_SECRET_PATH, CALLER_SECRET_PATH];
+  if (command === "ensure") {
+    // Establish both generations before any mutation. An unreadable caller key
+    // must not cause even a missing internal key to be initialized first.
+    const statuses = targets.map(secretStatus);
+    for (let index = 0; index < targets.length; index += 1) {
+      const status = statuses[index];
+      if (!["present", "missing"].includes(status.fileStatus)) {
+        throw new Error(
+          `Refusing to initialize router capabilities: ${targets[index]} is ${status.fileStatus}${status.code ? ` (${status.code})` : ""}. ` +
+          "Restore a known-good key or resolve its access problem before retrying. Existing keys are never regenerated implicitly.",
+        );
+      }
+    }
+    for (let index = 0; index < targets.length; index += 1) {
+      if (statuses[index].fileStatus === "missing") {
+        writePrivateFile(targets[index], `${randomBytes(48).toString("base64url")}\n`);
+      } else {
+        protectPrivateFile(targets[index]);
+      }
+    }
   }
+  const [internal, caller] = targets.map(secretStatus);
+  process.stdout.write(`${JSON.stringify({ present: internal.present && caller.present, internal, caller })}\n`);
+  if (!internal.present || !caller.present) process.exitCode = 1;
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
 }
-
-function status(target) {
-  const present = validSecret(target);
-  if (present) protectPrivateFile(target);
-  return { present };
-}
-
-if (command === "ensure") {
-  ensureSecret(INTERNAL_SECRET_PATH);
-  ensureSecret(CALLER_SECRET_PATH);
-}
-
-const internal = status(INTERNAL_SECRET_PATH);
-const caller = status(CALLER_SECRET_PATH);
-process.stdout.write(
-  `${JSON.stringify({
-    present: internal.present && caller.present,
-    internal,
-    caller,
-  })}\n`,
-);
-if (!internal.present || !caller.present) process.exitCode = 1;

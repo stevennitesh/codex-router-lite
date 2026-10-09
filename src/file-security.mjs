@@ -1,9 +1,11 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -255,19 +257,35 @@ export function protectPrivateFile(target) {
   return target;
 }
 
+// The inherited ACL can be permissive until the helper finishes. Keep the file
+// empty during that interval, then write through its original descriptor.
+// Exclusive creation also prevents failure cleanup from deleting an older file.
+export function createPrivateFile(target, contents, { protect = protectPrivateFile } = {}) {
+  let descriptor = openSync(target, "wx", 0o600);
+  try {
+    protect(target);
+    writeFileSync(descriptor, contents, { encoding: "utf8" });
+    closeSync(descriptor);
+    descriptor = undefined;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch {}
+    }
+    try { unlinkSync(target); } catch {}
+    throw error;
+  }
+  return target;
+}
+
 // All private JSON state uses the same temp-file, owner-only, atomic replace.
 // Keeping it here prevents one state writer from drifting away from the rest.
 export function writePrivateFile(target, contents) {
   const directory = path.dirname(target);
   mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
+  createPrivateFile(temporary, contents);
   try {
-    writeFileSync(temporary, contents, { encoding: "utf8", flag: "wx" });
-    // One spawn hardens the temporary; the renameSync below then moves this
-    // exact file over the target, and MoveFile carries the source's DACL with
-    // it. A pre-existing target is discarded with the move, so it cannot leak
-    // permissions.
-    protectPrivateFilesWin32([temporary]);
+    // Moving the protected staging file carries its DACL over the old target.
     renameSync(temporary, target);
   } catch (error) {
     try {
@@ -289,12 +307,18 @@ async function writePrivateFileAsync(target, contents) {
   const directory = path.dirname(target);
   mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
+  let descriptor = openSync(temporary, "wx", 0o600);
   try {
-    writeFileSync(temporary, contents, { encoding: "utf8" });
     await protectPrivateFilesWin32Async([temporary]);
+    writeFileSync(descriptor, contents, { encoding: "utf8" });
+    closeSync(descriptor);
+    descriptor = undefined;
     renameSync(temporary, target);
   } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch {}
+    }
+    try { unlinkSync(temporary); } catch {}
     throw error;
   }
   return target;
@@ -380,7 +404,7 @@ export function privateFileIsProtected(target) {
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
       {
         encoding: "utf8",
-        env: { ...process.env, CODEX_ROUTER_PRIVATE_FILE: target },
+        env: windowsPowerShellRuntimeEnvironment({ CODEX_ROUTER_PRIVATE_FILE: target }),
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 15_000,
         // Verification runs from the same GUI-parented paths as the write
