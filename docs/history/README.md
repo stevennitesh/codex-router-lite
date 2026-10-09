@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Runtime primitives audit repairs and local process-probe measurements, 2026-10-09](2026-10-09-runtime-primitives-audit-fixes.md)
+
 - [GPT-6.1 Sol High deployment and six-route renewal, 2026-10-09](2026-10-09-sol-high-release.md)
 
 - [Six-route native certification for the Sol High release, 2026-10-09](2026-10-09-sol-high-release-certification.json)

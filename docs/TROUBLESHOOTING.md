@@ -71,6 +71,13 @@ cleanup, before an extra dispatch. Images retain their no-retry policy.
 
 ## Provider errors wait without completing
 
+The shared payload caps default to 128 MiB for requests and 8 MiB for buffered
+responses. `MODEL_ROUTER_MAX_BODY_BYTES` and
+`MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES` accept positive safe integer byte
+counts. Their `CODEX_ROUTER_` aliases remain supported when the corresponding
+`MODEL_ROUTER_` setting is unset. An invalid, fractional or infinite setting
+stops startup with its name; use a byte count such as `8388608`, not `8MiB`.
+
 Router collects routed error diagnostics for at most one second by default,
 independently of the long generation deadline. A timeout, oversized body or
 broken stream discards the diagnostics and preserves the known HTTP status and

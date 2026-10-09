@@ -15,7 +15,8 @@ function probe(script, spawn, budget, environment) {
   const attempts = budget?.attempts ?? 1;
   let result;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    result = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+    result = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); " + script], {
       encoding: "utf8", windowsHide: true, timeout,
     });
     if (result.error?.code !== "ETIMEDOUT") break;
@@ -88,6 +89,38 @@ export function processCommandLine(
     return undefined;
   } catch {
     return undefined;
+  }
+}
+
+// Callers authorizing service operations need one current generation and its
+// command line, not two separately launched observations or a cached PID.
+export function processSnapshotProbe(
+  pid,
+  { spawn = spawnSync, budget, environment = process.env } = {},
+) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return { state: "unknown" };
+  try {
+    const identity = "$p.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $p.Path";
+    const script = "$ErrorActionPreference = 'Stop'; try { " +
+      `$p = Get-Process -Id ${pid} -ErrorAction Stop; $identity = ${identity}; ` +
+      `try { $w = Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop } catch { $w = $null }; ` +
+      `if (!$w.CommandLine) { try { $w = Get-WmiObject Win32_Process -Filter \"ProcessId = ${pid}\" -ErrorAction Stop } catch { $w = $null } }; ` +
+      `$p = Get-Process -Id ${pid} -ErrorAction Stop; if ($identity -ne (${identity})) { exit 1 }; ` +
+      "[Console]::Out.Write((@{ identity = $identity; commandLine = $w.CommandLine } | ConvertTo-Json -Compress)) " +
+      "} catch { if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*') { exit 3 }; exit 1 }";
+    const result = probe(script, spawn, budget, environment);
+    if (result.error) return { state: "unknown" };
+    if (result.status === 3) return { state: "absent" };
+    if (result.status !== 0) return { state: "unknown" };
+    const value = JSON.parse(result.stdout);
+    if (!isProcessStartIdentity(value?.identity) || (value.commandLine != null && typeof value.commandLine !== "string")) {
+      return { state: "unknown" };
+    }
+    // A verified generation still proves PID reuse when command-line access
+    // fails. It cannot grant ownership: service callers require both facts.
+    return { state: "alive", identity: value.identity, commandLine: value.commandLine?.trim() || undefined };
+  } catch {
+    return { state: "unknown" };
   }
 }
 

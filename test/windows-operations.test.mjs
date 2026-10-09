@@ -80,7 +80,6 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "maintenance/deployment-worker.ps1",
     "maintenance/deployment-json.ps1",
     "maintenance/refresh-compatibility-state.ps1",
-    "src/windows-process-tree.ps1",
   ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);
   const check = [
     `$targets = @(${targets.join(",")})`,
@@ -324,27 +323,24 @@ test("self-update distinguishes remote updates from local unpublished work", () 
 test("task identity and the test write guard fail closed", () => {
   const sourceRoot = "C:\\fixture\\router";
   const stateDir = "C:\\fixture\\state";
-  const commandLine = () => `node "${sourceRoot}\\src\\start.mjs"`;
-  const identity = () => "4242|node.exe";
+  const commandLine = `node "${sourceRoot}\\src\\start.mjs"`;
+  const probe = () => ({ state: "alive", identity: "4242|node.exe", commandLine });
   const state = buildServiceProcessState({
     pid: 4242,
     platform: "win32",
-    identity,
-    commandLine,
+    probe,
     sourceRoot,
     stateDir,
   });
   assert.equal(serviceProcessOwns(state, {
     platform: "win32",
-    identity,
-    commandLine,
+    probe,
     sourceRoot,
     stateDir,
   }), true);
   assert.equal(serviceProcessOwns(state, {
     platform: "win32",
-    identity: () => "4243|node.exe",
-    commandLine,
+    probe: () => ({ state: "alive", identity: "4243|node.exe", commandLine }),
     sourceRoot,
     stateDir,
   }), false);

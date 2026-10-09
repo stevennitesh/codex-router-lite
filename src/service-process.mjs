@@ -9,7 +9,7 @@ import {
   SOURCE_ROOT,
   STATE_DIR,
 } from "./paths.mjs";
-import { isProcessStartIdentity, processCommandLine, processStartIdentity, processStartIdentityProbe, SERVICE_START_PROBE_BUDGET } from "./process-identity.mjs";
+import { isProcessStartIdentity, processSnapshotProbe, SERVICE_START_PROBE_BUDGET } from "./process-identity.mjs";
 
 const STATE_VERSION = 1;
 
@@ -39,8 +39,7 @@ export function shouldRecordServiceProcess() {
 
 export function buildServiceProcessState({
   pid = process.pid,
-  identity = processStartIdentity,
-  commandLine = processCommandLine,
+  probe = processSnapshotProbe,
   sourceRoot = SOURCE_ROOT,
   stateDir = STATE_DIR,
   ports = PORTS,
@@ -48,9 +47,10 @@ export function buildServiceProcessState({
 } = {}) {
   const safe = safePid(pid);
   if (!safe) return undefined;
-  const processIdentity = identity(safe, { budget: probeBudget });
-  const liveCommandLine = commandLine(safe, { budget: probeBudget });
-  if (!isProcessStartIdentity(processIdentity) || !liveCommandLine) return undefined;
+  const observed = probe(safe, { budget: probeBudget });
+  const processIdentity = observed?.identity;
+  const liveCommandLine = observed?.commandLine;
+  if (observed?.state !== "alive" || !isProcessStartIdentity(processIdentity) || typeof liveCommandLine !== "string" || !liveCommandLine.trim()) return undefined;
   const entrypoint = entrypointFor(sourceRoot);
   if (!normalized(liveCommandLine).includes(entrypoint)) return undefined;
   return {
@@ -113,9 +113,7 @@ function validRecord(state) {
 export function serviceProcessStatus(
   state,
   {
-    probe = processStartIdentityProbe,
-    identity,
-    commandLine = processCommandLine,
+    probe = processSnapshotProbe,
     sourceRoot = SOURCE_ROOT,
     stateDir = STATE_DIR,
   } = {},
@@ -125,12 +123,7 @@ export function serviceProcessStatus(
   const pid = state.pid;
   let observed;
   try {
-    if (identity) {
-      const value = identity(pid);
-      observed = value ? { state: "alive", identity: value } : { state: "unknown" };
-    } else {
-      observed = probe(pid);
-    }
+    observed = probe(pid);
   } catch { return "unknown"; }
   if (observed?.state === "absent") return "absent";
   if (observed?.state !== "alive" || !isProcessStartIdentity(observed.identity)) return "unknown";
@@ -148,9 +141,8 @@ export function serviceProcessStatus(
   }
   const entrypoint = entrypointFor(state.sourceRoot);
   if (!normalized(state.commandLine).includes(entrypoint)) return "unknown";
-  let liveCommandLine;
-  try { liveCommandLine = commandLine(pid); } catch { return "unknown"; }
-  if (!liveCommandLine) return "unknown";
+  const liveCommandLine = observed.commandLine;
+  if (typeof liveCommandLine !== "string" || !liveCommandLine.trim()) return "unknown";
   return normalized(liveCommandLine).includes(entrypoint) ? "owned" : "foreign";
 }
 

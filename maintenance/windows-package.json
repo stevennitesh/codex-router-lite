@@ -132,7 +132,6 @@
     "src/venv-runtime.mjs",
     "src/version.mjs",
     "src/windows-launch-diagnosis.mjs",
-    "src/windows-process-tree.ps1",
     "src/windows-task-state.mjs",
     "src/zai-responses-compat.mjs",
     "config/openrouter/deepseek-v4.1-flash-together.json",

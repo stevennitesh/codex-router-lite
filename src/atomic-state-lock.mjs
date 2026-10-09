@@ -1,10 +1,16 @@
 import {
   lstatSync,
+  mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  renameSync,
+  rmdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 const WAIT_MS = 25;
@@ -29,19 +35,25 @@ function staleLock(pathname) {
   }
 }
 
-function lockOwnerPid(pathname) {
+function lockOwner(pathname) {
   try {
-    const owner = `${pathname}/owner`;
+    const entries = readdirSync(pathname);
+    if (entries.length !== 1) return { empty: entries.length === 0 };
+    const name = entries[0];
+    const generation = /^owner-([1-9][0-9]*)-[0-9a-f-]{36}$/u.exec(name);
+    if (name !== "owner" && !generation) return {};
+    const owner = path.join(pathname, name);
     const stat = lstatSync(owner);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 64) {
-      return undefined;
+      return { name };
     }
     const value = readFileSync(owner, "utf8").trim();
-    if (!/^[1-9][0-9]*$/.test(value)) return undefined;
+    if (!/^[1-9][0-9]*$/.test(value) || (generation && generation[1] !== value)) return { name };
     const pid = Number(value);
-    return Number.isSafeInteger(pid) ? pid : undefined;
-  } catch {
-    return undefined;
+    return { name, pid: Number.isSafeInteger(pid) ? pid : undefined };
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -50,14 +62,37 @@ function processIsAlive(pid) {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return error?.code === "EPERM";
+    // Access/probe failures do not prove that an owner exited.
+    return error?.code !== "ESRCH";
   }
 }
 
-function abandonedLock(pathname) {
-  const pid = lockOwnerPid(pathname);
-  if (pid) return !processIsAlive(pid);
-  return staleLock(pathname);
+function removeEmptyLock(pathname) {
+  try { rmdirSync(pathname); }
+  catch (error) {
+    if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error?.code)) throw error;
+  }
+}
+
+function removeOwner(pathname, name) {
+  try { unlinkSync(path.join(pathname, name)); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  // Never recursively remove the shared path: another generation may have
+  // replaced it since this owner was observed. Its unique file keeps it nonempty.
+  removeEmptyLock(pathname);
+}
+
+function recoverLock(pathname, owner) {
+  if (owner.pid ? !processIsAlive(owner.pid) : owner.name === "owner" && staleLock(pathname)) {
+    removeOwner(pathname, owner.name);
+    return true;
+  }
+  // Older versions could crash between mkdir and writing their owner file.
+  if (owner.empty && staleLock(pathname)) {
+    removeEmptyLock(pathname);
+    return true;
+  }
+  return false;
 }
 
 function acquire(target, { waitMs = MAX_WAIT_MS } = {}) {
@@ -66,45 +101,51 @@ function acquire(target, { waitMs = MAX_WAIT_MS } = {}) {
   }
   const pathname = lockPath(target);
   mkdirSync(path.dirname(pathname), { recursive: true });
+  const name = `owner-${process.pid}-${randomUUID()}`;
+  const prepared = mkdtempSync(`${pathname}.prepare-`);
   const started = Date.now();
-  while (true) {
-    try {
-      mkdirSync(pathname, { recursive: false });
+  try {
+    writeFileSync(path.join(prepared, name), `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
+    while (true) {
       try {
-        writeFileSync(`${pathname}/owner`, `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
-      } catch {
-        rmSync(pathname, { recursive: true, force: true });
-        throw new Error(`Could not initialize state lock: ${pathname}`);
+        // Publish a complete, nonempty generation. No contender can mistake a
+        // partially initialized new directory for an abandoned old lock.
+        renameSync(prepared, pathname);
+        return () => removeOwner(pathname, name);
+      } catch (error) {
+        let stat;
+        try { stat = lstatSync(pathname); }
+        catch (cause) {
+          if (cause?.code === "ENOENT" && ["EEXIST", "ENOTEMPTY", "EPERM", "EACCES"].includes(error?.code)) continue;
+          throw error;
+        }
+        if (stat.isSymbolicLink()) throw new Error(`Refusing to use a symbolic-link state lock: ${pathname}`);
+        if (!stat.isDirectory()) throw error;
       }
-      return () => rmSync(pathname, { recursive: true, force: true });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      let link = false;
-      try {
-        link = lstatSync(pathname).isSymbolicLink();
-      } catch {
-        continue;
-      }
-      if (link) throw new Error(`Refusing to use a symbolic-link state lock: ${pathname}`);
-      if (abandonedLock(pathname)) {
-        rmSync(pathname, { recursive: true, force: true });
-        continue;
-      }
+      const owner = lockOwner(pathname);
+      if (recoverLock(pathname, owner)) continue;
       if (Date.now() - started >= waitMs) {
-        const owner = lockOwnerPid(pathname);
-        throw new Error(`Timed out waiting for state lock${owner ? ` held by ${owner}` : ""}: ${pathname}`);
+        throw new Error(`Timed out waiting for state lock${owner.pid ? ` held by ${owner.pid}` : ""}: ${pathname}`);
       }
       sleep(WAIT_MS);
     }
+  } finally {
+    // Only this invocation's private preparation path may be removed recursively.
+    rmSync(prepared, { recursive: true, force: true });
   }
 }
 
 export function withAtomicStateLock(target, operation, options) {
   if (typeof operation !== "function") throw new TypeError("State lock operation must be a function.");
   const release = acquire(target, options);
+  let failed = false;
   try {
     return operation();
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    release();
+    try { release(); }
+    catch (error) { if (!failed) throw error; }
   }
 }

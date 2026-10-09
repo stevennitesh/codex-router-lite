@@ -57,9 +57,9 @@ export function spawnSync(_exe,args){note('process-probe',args);const script=arg
  if(script.includes('Get-Process')){
   identityCalls++;
   if(scenario==='stop-process-unknown'||(scenario==='stop-kill-unknown'&&identityCalls>1))return{status:null,error:{code:'ETIMEDOUT'}};
-  if(scenario==='stop-process-partial')return{status:0,stdout:'42|'};
-  if(scenario==='stop-reused')return{status:0,stdout:'43|fixture-node.exe'};
-  return killed?{status:3}:{status:0,stdout:'42|fixture-node.exe'};
+  const identity=scenario==='stop-process-partial'?'42|':scenario==='stop-reused'?'43|fixture-node.exe':'42|fixture-node.exe';
+  const commandLine=['stop-command-unknown','stop-reused'].includes(scenario)?null:'node "'+path.join(source,'src/start.mjs')+'"';
+  return killed?{status:3}:{status:0,stdout:JSON.stringify({identity,commandLine})};
  }
  if(scenario==='stop-command-unknown')return{status:1};
  return{status:0,stdout:'node "'+path.join(source,'src/start.mjs')+'"'};

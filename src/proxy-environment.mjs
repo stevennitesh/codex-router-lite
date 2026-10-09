@@ -38,6 +38,10 @@ export function environmentHttpProxyConfigured(
   execArgv = process.execArgv,
 ) {
   if (!environmentProxyOptedIn(environment, execArgv)) return false;
+  return hasHttpProxyAddress(environment);
+}
+
+function hasHttpProxyAddress(environment) {
   const httpProxy = environment.http_proxy ?? environment.HTTP_PROXY;
   const httpsProxy = environment.https_proxy ?? environment.HTTPS_PROXY;
   return Boolean(httpProxy || httpsProxy);
@@ -119,10 +123,10 @@ function recordedProxyEnvironment(manifestPath = INSTALL_MANIFEST_PATH) {
 function redactUserinfo(value) {
   const scheme = value.match(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i);
   const rest = scheme ? scheme[2] : value;
-  const at = rest.indexOf("@");
+  const end = rest.search(/[/?#\\]/u);
+  const authority = end === -1 ? rest : rest.slice(0, end);
+  const at = authority.lastIndexOf("@");
   if (at === -1) return value;
-  const slash = rest.indexOf("/");
-  if (slash !== -1 && slash < at) return value;
   return `${scheme ? scheme[1] : ""}[REDACTED]@${rest.slice(at + 1)}`;
 }
 
@@ -163,7 +167,7 @@ export function serviceProxyEnvironment(
   else if (
     environment.NODE_USE_ENV_PROXY === undefined
     && preserved?.NODE_USE_ENV_PROXY === "1"
-    && (values.http_proxy ?? values.HTTP_PROXY ?? values.https_proxy ?? values.HTTPS_PROXY)
+    && hasHttpProxyAddress(values)
   ) {
     // The address and the permission to use it are separate answers, and an
     // ordinary shell only ever gives the first: exporting HTTP_PROXY says

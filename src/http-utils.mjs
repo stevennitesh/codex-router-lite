@@ -3,20 +3,21 @@ import { pipeline } from "node:stream/promises";
 import { secretEqual } from "./caller-auth.mjs";
 import { TARGET } from "./paths.mjs";
 
-export const MAX_BODY_BYTES = Number(
-  process.env.MODEL_ROUTER_MAX_BODY_BYTES ||
-    (TARGET === "codex"
-      ? process.env.CODEX_ROUTER_MAX_BODY_BYTES
-      : undefined) ||
-    128 * 1024 * 1024,
-);
+function configuredByteLimit(name, alias, fallback) {
+  const selected = process.env[name] ? name : TARGET === "codex" && process.env[alias] ? alias : undefined;
+  if (!selected) return fallback;
+  const value = Number(process.env[selected]);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${selected} must be a positive safe integer byte count.`);
+  }
+  return value;
+}
 
-export const MAX_BUFFERED_RESPONSE_BYTES = Number(
-  process.env.MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES ||
-    (TARGET === "codex"
-      ? process.env.CODEX_ROUTER_MAX_BUFFERED_RESPONSE_BYTES
-      : undefined) ||
-    8 * 1024 * 1024,
+export const MAX_BODY_BYTES = configuredByteLimit(
+  "MODEL_ROUTER_MAX_BODY_BYTES", "CODEX_ROUTER_MAX_BODY_BYTES", 128 * 1024 * 1024,
+);
+export const MAX_BUFFERED_RESPONSE_BYTES = configuredByteLimit(
+  "MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES", "CODEX_ROUTER_MAX_BUFFERED_RESPONSE_BYTES", 8 * 1024 * 1024,
 );
 
 export const HOP_BY_HOP_HEADERS = new Set([
