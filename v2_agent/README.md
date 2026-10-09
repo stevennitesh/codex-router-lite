@@ -21,6 +21,16 @@ the observations for each accepted batch:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [credential-state release renewal](../docs/history/2026-10-08-credentials-state-certification.json)
+passed all five checks for Switchyard on deployed commit
+`a3fe490d6e7cbdc9fb5b27aeb2c4515860680370`. The three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers in the
+same thread. Completed-turn cleanup cancelled no active turns. This renews
+Switchyard's Router-commit binding; the other five routes retain their accepted
+Windows-service release proofs below. The run used session-only MXC and does
+not certify the desktop's elevated sandbox or arbitrary MCP tools.
+
 The [Windows-service release renewal](../docs/history/2026-10-08-windows-service-certification.json)
 passed all five checks for all six routes on deployed commit
 `75172c2c002b2a6485ca6ae9ae7eb448339033bb`. All 18 native child requests
