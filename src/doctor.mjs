@@ -77,14 +77,17 @@ export async function diagnose() {
   }
 
   const selected = providerSelectionStatus();
-  add("ok", "Routed providers", selected.providers.join(", ") || "none selected");
+  add(selected.status === "invalid" ? "fail" : selected.degraded ? "warn" : "ok",
+    "Routed providers", selected.degraded || selected.providers.join(", ") || "none selected");
   add(
     routedCatalogConfigured() ? "ok" : "warn",
     "Codex routed catalog",
     routedCatalogConfigured() ? "configured" : "not configured",
   );
-  const models = selectedConfiguredListedModels().map((model) => model.slug);
-  add("ok", "Published routed models", models.join(", ") || "none");
+  if (selected.status !== "invalid") {
+    const models = selectedConfiguredListedModels().map((model) => model.slug);
+    add("ok", "Published routed models", models.join(", ") || "none");
+  }
 
   try {
     const health = await readControlHealth();

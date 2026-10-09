@@ -87,6 +87,53 @@ test("client-version revalidation records the new version for unchanged models",
     assert.equal(JSON.parse(readFileSync(cachePath, "utf8")).client_version, "0.153.4");
   }));
 
+test("successful unchanged revalidation renews cross-call freshness without changing model identity", () =>
+  withCache(async cachePath => {
+    for (const status of [304, 200]) {
+      const models = [{ slug: "gpt-stable" }];
+      const original = fixture(models);
+      writeFileSync(cachePath, JSON.stringify(original));
+      let requests = 0, writes = 0;
+      const options = { cachePath, now: NOW, version: "0.153.4", headersProvider: async () => headers(),
+        fetchImpl: async () => {
+          requests += 1;
+          return new Response(status === 304 ? null : JSON.stringify({ models }), { status, headers: { etag: original.etag } });
+        },
+        writeCache: async (target, value) => { writes += 1; await writeCache(target, value); },
+      };
+      const validated = await refreshNativeAccountCatalogUnlocked(options);
+      assert.equal(validated.status, status === 304 ? "not-modified" : "unchanged");
+      const saved = JSON.parse(readFileSync(cachePath, "utf8"));
+      assert.equal(saved.fetched_at, original.fetched_at);
+      assert.equal(saved.validated_at, new Date(NOW).toISOString());
+      assert.deepEqual(saved.models, models);
+      for (let n = 1; n <= 2; n++) {
+        const next = await refreshNativeAccountCatalogUnlocked({ ...options, now: NOW + n * 1000 });
+        assert.equal(next.status, "fresh");
+        assert.equal(next.fingerprint, validated.fingerprint);
+      }
+      assert.equal(requests, 1);
+      assert.equal(writes, 1);
+      assert.equal((await refreshNativeAccountCatalogUnlocked({ ...options, force: true })).status, validated.status);
+      assert.equal(requests, 2, "force still validates");
+      const expired = await refreshNativeAccountCatalogUnlocked({ ...options, now: NOW + 300000 });
+      assert.equal(expired.status, validated.status);
+      assert.equal(requests, 3, "TTL still expires");
+    }
+  }));
+
+test("failed persistence of unchanged validation retains previous cache and does not claim freshness", () =>
+  withCache(async cachePath => {
+    const original = JSON.stringify(fixture([{ slug: "gpt-stable" }]));
+    writeFileSync(cachePath, original);
+    const result = await refreshNativeAccountCatalogUnlocked({ cachePath, now: NOW, version: "0.153.4",
+      headersProvider: async () => headers(), fetchImpl: async () => new Response(null, { status: 304 }),
+      writeCache: async () => { throw new Error("synthetic persistence denial"); },
+    });
+    assert.deepEqual(result, { status: "failed" });
+    assert.equal(readFileSync(cachePath, "utf8"), original);
+  }));
+
 test("304 revalidation rejects an account or residency switch", () =>
   withCache(async (cachePath) => {
     const contents = JSON.stringify(fixture([{ slug: "gpt-stable" }]));

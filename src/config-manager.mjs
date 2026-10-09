@@ -24,7 +24,7 @@ import {
   PORTS,
   loopback,
 } from "./paths.mjs";
-import { scanTomlDocument } from "./toml-structure.mjs";
+import { scanTomlDocument, tomlStringValue } from "./toml-structure.mjs";
 
 const command = process.argv[2] || "status";
 const routerProviderId = "codex-router";
@@ -76,17 +76,24 @@ function isManagedRouterBaseUrl(value) {
   return value === loopback(PORTS.router, "/v1") || isManagedCallerBaseUrl(value, PORTS.router);
 }
 
-function assignmentValue(line) {
-  const raw = line.slice(line.indexOf("=") + 1).trim().replace(/\s+#.*$/, "");
-  if (raw.startsWith('"') && raw.endsWith('"')) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return raw.slice(1, -1);
-    }
-  }
-  if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1);
-  return raw.replace(/^(?:["'])|(?:["'])$/g, "");
+function rootAssignments(lines) {
+  return scanTomlDocument(lines.join("\n")).assignments.filter(
+    (assignment) => assignment.tablePath.length === 0 && assignment.key.length === 1,
+  );
+}
+
+function filterRootAssignments(lines, keep) {
+  const remove = new Set(rootAssignments(lines).filter((assignment) => !keep(assignment)).map(({ index }) => index));
+  return lines.filter((_, index) => !remove.has(index));
+}
+
+function markerIndexes(input, marker) {
+  return scanTomlDocument(input).comments.filter(({ text }) => text === marker).map(({ index }) => index);
+}
+
+function hasManagedMarkers(input) {
+  const starts = new Set(markerPairs.map(([start]) => start));
+  return scanTomlDocument(input).comments.some(({ text }) => starts.has(text));
 }
 
 function splitRoot(input) {
@@ -103,10 +110,7 @@ function trimBlankEdges(lines) {
 }
 
 function rootValue(lines, key) {
-  const expression = new RegExp(`^\\s*${key}\\s*=`);
-  const matches = lines.filter((line) => expression.test(line));
-  if (matches.length > 1) throw new Error(`Refusing duplicate root ${key} assignments.`);
-  return matches[0] ? assignmentValue(matches[0]) : undefined;
+  return tomlStringValue(scanTomlDocument(lines.join("\n")), [], key);
 }
 
 function rootHasValue(lines, key) {
@@ -120,21 +124,23 @@ function nativeRealtimeCallBaseUrl(lines) {
 
 function foreignTableSegments(innerLines, managedHeader) {
   const { headers } = scanTomlDocument(innerLines.join("\n"));
+  const managedPath = scanTomlDocument(managedHeader).headers[0].path;
   const output = [];
   for (let position = 0; position < headers.length; position += 1) {
     const start = headers[position].index;
     const end = headers[position + 1]?.index ?? innerLines.length;
-    if (innerLines[start].trim() !== managedHeader) output.push(...innerLines.slice(start, end));
+    if (headers[position].path.length !== managedPath.length ||
+        headers[position].path.some((part, index) => part !== managedPath[index])) {
+      output.push(...innerLines.slice(start, end));
+    }
   }
   return output;
 }
 
 function recoverUnterminatedRouterRootBlock(input) {
   const lines = String(input).split("\n");
-  const starts = lines
-    .map((line, index) => line.trim() === startMarker ? index : -1)
-    .filter((index) => index >= 0);
-  const ends = lines.filter((line) => line.trim() === endMarker);
+  const starts = markerIndexes(input, startMarker);
+  const ends = markerIndexes(input, endMarker);
   if (starts.length !== 1 || ends.length !== 0) return String(input);
 
   const start = starts[0];
@@ -166,10 +172,8 @@ function recoverUnterminatedRouterRootBlock(input) {
 
 function recoverUnterminatedMultiAgentBlock(input) {
   const lines = String(input).split("\n");
-  const starts = lines
-    .map((line, index) => line.trim() === multiAgentStartMarker ? index : -1)
-    .filter((index) => index >= 0);
-  const ends = lines.filter((line) => line.trim() === multiAgentEndMarker);
+  const starts = markerIndexes(input, multiAgentStartMarker);
+  const ends = markerIndexes(input, multiAgentEndMarker);
   if (starts.length !== 1 || ends.length !== 0) return String(input);
   const start = starts[0];
   // Only the exact single-line feature emitted by this owner establishes the
@@ -182,14 +186,16 @@ function recoverUnterminatedMultiAgentBlock(input) {
 
 function removeMarkerPair(input, start, end, managedHeader) {
   const lines = String(input).split("\n");
+  const starts = new Set(markerIndexes(input, start));
+  const ends = markerIndexes(input, end);
   const output = [];
   for (let index = 0; index < lines.length;) {
-    if (lines[index].trim() !== start) {
+    if (!starts.has(index)) {
       output.push(lines[index++]);
       continue;
     }
-    const endIndex = lines.findIndex((line, candidate) => candidate > index && line.trim() === end);
-    if (endIndex === -1) {
+    const endIndex = ends.find((candidate) => candidate > index);
+    if (endIndex === undefined) {
       throw new Error(`Refusing to edit an unterminated managed block: ${start}.`);
     }
     if (managedHeader) {
@@ -226,16 +232,18 @@ function removeEmptyFeaturesTable(input) {
 }
 
 function cleanedConfig(contents) {
-  const managedBefore = markerPairs.some(([start]) => contents.includes(start));
+  const managedBefore = hasManagedMarkers(contents);
   const withoutBlocks = removeEmptyFeaturesTable(removeManagedBlocks(contents));
   const { rootLines, tableLines } = splitRoot(withoutBlocks);
-  const filtered = rootLines.filter((line) => {
-    if (/^\s*openai_base_url\s*=/.test(line)) {
-      const value = assignmentValue(line);
-      return !(managedBefore && isManagedRouterBaseUrl(value));
+  // Validate duplicate/invalid scalar assignments before any removal can hide them.
+  const baseUrl = rootValue(rootLines, "openai_base_url");
+  const catalog = rootValue(rootLines, "model_catalog_json");
+  const filtered = filterRootAssignments(rootLines, ({ key: [key] }) => {
+    if (key === "openai_base_url") {
+      return !(managedBefore && isManagedRouterBaseUrl(baseUrl));
     }
-    if (/^\s*model_catalog_json\s*=/.test(line)) {
-      return assignmentValue(line) !== MERGED_CATALOG_PATH;
+    if (key === "model_catalog_json") {
+      return !catalogPathsEqual(catalog, MERGED_CATALOG_PATH);
     }
     return true;
   });
@@ -243,12 +251,11 @@ function cleanedConfig(contents) {
 }
 
 function hasMultiAgentConfig(contents) {
-  const lines = String(contents).split("\n");
-  return lines.some((line) =>
-    /^\s*(?:features\.)?multi_agent_v2\s*=/.test(line) ||
-    /^\s*\[features\.multi_agent_v2\]\s*(?:#.*)?$/.test(line) ||
-    /^\s*\[agents\.[^\]]+\]\s*(?:#.*)?$/.test(line),
-  );
+  const document = scanTomlDocument(contents);
+  const isFeature = (parts) => parts[0] === "features" && parts[1] === "multi_agent_v2";
+  return document.assignments.some(({ tablePath, key }) =>
+    (key.length === 1 && key[0] === "multi_agent_v2") || isFeature([...tablePath, ...key]),
+  ) || document.headers.some(({ path: parts }) => isFeature(parts) || (parts[0] === "agents" && parts.length > 1));
 }
 
 let multiAgentV2Supported;
@@ -315,7 +322,13 @@ function enabledContents(contents) {
   ) {
     throw new Error(`Refusing to replace user-owned model_catalog_json: ${existingCatalog}`);
   }
-  rootLines = rootLines.filter((line) => !/^\s*model_catalog_json\s*=/.test(line));
+  rootLines = filterRootAssignments(rootLines, ({ key: [key] }) =>
+    key !== "model_catalog_json" && key !== "openai_base_url",
+  );
+  if (scanTomlDocument(cleaned.tableLines.join("\n")).headers.some(({ path: parts }) =>
+    parts.length === 2 && parts[0] === "model_providers" && parts[1] === routerProviderId)) {
+    throw new Error(`Refusing to replace an unmarked model_providers.${routerProviderId} table.`);
+  }
   const managedRealtime = [];
   if (!rootHasValue(rootLines, "experimental_realtime_webrtc_call_base_url")) {
     managedRealtime.push(
@@ -357,8 +370,8 @@ function disabledContents(contents) {
   if (existingCatalog && source && !catalogPathsEqual(existingCatalog, source.path)) {
     throw new Error(`Refusing to replace user-owned model_catalog_json: ${existingCatalog}`);
   }
-  const rootLines = cleaned.rootLines.filter((line) => !/^\s*model_catalog_json\s*=/.test(line));
-  if (source) rootLines.push(`model_catalog_json = ${tomlValue(source.path)}`);
+  const rootLines = [...cleaned.rootLines];
+  if (source && existingCatalog === undefined) rootLines.push(`model_catalog_json = ${tomlValue(source.path)}`);
   return `${[
     ...trimBlankEdges(rootLines),
     "",
@@ -375,7 +388,7 @@ function snapshot(contents) {
     model: rootValue(rootLines, "model") || null,
     model_provider: rootValue(rootLines, "model_provider") || "openai",
     managed_router_artifacts_present:
-      catalog === MERGED_CATALOG_PATH || markerPairs.some(([start]) => contents.includes(start)),
+      catalog === MERGED_CATALOG_PATH || hasManagedMarkers(contents),
     openai_base_url: baseUrl ? redactCallerUrl(baseUrl) : null,
     model_catalog_json: catalog || null,
     config_protected: privateFileIsProtected(CONFIG_PATH),

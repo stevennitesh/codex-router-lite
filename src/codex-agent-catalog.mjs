@@ -63,8 +63,9 @@ function managedAgentFiles(agentsDir) {
         return false;
       }
     });
-  } catch {
-    return [];
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return [];
+    throw new Error("Could not enumerate managed routed agents.", { cause });
   }
 }
 
@@ -142,15 +143,21 @@ export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
       try {
         unlinkSync(path.join(agentsDir, entry));
         removed.push(entry);
-      } catch {
-        // A definition that cannot be removed is reported by the doctor check
-        // rather than failing the catalog write.
+      } catch (cause) {
+        if (cause?.code === "ENOENT") {
+          removed.push(entry);
+          continue;
+        }
+        throw new Error(`Could not remove managed routed agent ${entry}.`, { cause });
       }
     }
     return { written, changed, removed };
   } catch (error) {
     const restoreErrors = [];
-    for (const entry of managedAgentFiles(agentsDir)) {
+    let remaining = [];
+    try { remaining = managedAgentFiles(agentsDir); }
+    catch (restoreError) { restoreErrors.push(restoreError); }
+    for (const entry of remaining) {
       if (previous.has(entry)) continue;
       try {
         unlinkSync(path.join(agentsDir, entry));
@@ -160,16 +167,21 @@ export function syncRoutedCodexAgents(models, agentsDir = CODEX_AGENTS_DIR) {
     }
     for (const [entry, contents] of previous) {
       try {
-        writeManagedAgent(path.join(agentsDir, entry), contents);
+        const target = path.join(agentsDir, entry);
+        let current;
+        try { current = readFileSync(target, "utf8"); } catch {}
+        if (current !== contents) writeManagedAgent(target, contents);
       } catch (restoreError) {
         restoreErrors.push(restoreError);
       }
     }
     if (restoreErrors.length) {
-      throw new AggregateError(
+      const failure = new AggregateError(
         [error, ...restoreErrors],
         "Routed agent catalog update failed and its previous files could not be restored.",
       );
+      failure.routedAgentRollbackFailed = true;
+      throw failure;
     }
     throw error;
   }

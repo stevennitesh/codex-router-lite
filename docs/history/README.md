@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Catalog/config audit fixes and cache cost comparison, 2026-10-08](2026-10-08-catalog-config-audit-fixes.md)
+
 - [Credential-state release: Switchyard proof renewal, 2026-10-08](2026-10-08-credentials-state-certification.json)
 
 - [Windows-service release renewal: all six routes passed, 2026-10-08](2026-10-08-windows-service-certification.json)

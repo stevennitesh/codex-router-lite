@@ -29,7 +29,7 @@ if (providerId !== "openrouter" || !new Set(["status", "set", "remove"]).has(com
     try {
       const value = promptForSecret("OpenRouter API key");
       const target = writeProviderCredential(provider, value);
-      enableProvider("openrouter");
+      await enableProvider("openrouter");
       process.stdout.write(`OpenRouter API key saved to protected local storage at ${target}.\n`);
     } catch (error) {
       console.error(error.message);
@@ -44,7 +44,7 @@ if (providerId !== "openrouter" || !new Set(["status", "set", "remove"]).has(com
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
-    disableProvider("openrouter");
+    await disableProvider("openrouter");
     process.stdout.write(removed ? "Removed the managed OpenRouter API key.\n" : "No managed OpenRouter API key exists.\n");
   }
 }

@@ -203,12 +203,13 @@ function assignmentAtLine(line, lineNumber, decodeBasicString) {
 }
 
 // A small fail-closed structural lexer, not a general TOML value parser. It
-// identifies real table boundaries and active assignments while ignoring
+// identifies real table boundaries, comment lines and active assignments while ignoring
 // table-looking text and assignments inside multiline strings.
 export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } = {}) {
   const lines = String(contents || "").split("\n");
   const headers = [];
   const assignments = [];
+  const comments = [];
   let tablePath = [];
   let multiline;
   let arrayDepth = 0;
@@ -217,6 +218,9 @@ export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } 
     const line = lines[lineIndex];
     const lineNumber = lineIndex + 1;
     if (!multiline && arrayDepth === 0) {
+      if (line.trimStart().startsWith("#")) {
+        comments.push({ index: lineIndex, text: line.trim() });
+      }
       const header = tableHeaderAtLine(line, lineNumber);
       if (header) {
         tablePath = header;
@@ -289,7 +293,7 @@ export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } 
     ambiguousToml(lines.length, `an unterminated multiline ${multiline} string was found`);
   }
   if (arrayDepth !== 0) ambiguousToml(lines.length, "an unterminated array was found");
-  return { lines, headers, assignments };
+  return { lines, headers, assignments, comments };
 }
 
 function samePath(left, right) {

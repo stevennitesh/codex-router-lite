@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -53,6 +53,119 @@ function run(command, env) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
 }
+
+function configFixture(t) {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-boundary-"));
+  t.after(() => rmSync(testRoot, { recursive: true, force: true }));
+  const home = path.join(testRoot, "codex"), state = path.join(testRoot, "state");
+  mkdirSync(home, { recursive: true }); mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(state, "caller-secret"), "a".repeat(48));
+  return { config: path.join(home, "config.toml"), state,
+    env: { CODEX_HOME: home, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath } };
+}
+
+test("quoted foreign keys and mixed-spelling duplicates are refused before config mutation", t => {
+  const f = configFixture(t);
+  for (const original of [
+    '"openai_base_url" = "https://example.invalid/v1"\n',
+    String.raw`"openai_\u0062ase_url" = "https://example.invalid/v1"` + "\n",
+    "'model_catalog_json' = 'C:/user/models.json'\n",
+    `model_catalog_json = ${JSON.stringify(path.join(f.state, "merged-models.json"))}\n"model_catalog_json" = 'C:/user/models.json'\n`,
+    '[model_providers."codex-router"]\nbase_url = "https://example.invalid/v1"\n',
+  ]) {
+    writeFileSync(f.config, original);
+    for (const command of ["validate-enable", "enable"]) {
+      const result = spawnSync(process.execPath, [path.join(root, "src/config-manager.mjs"), command], {
+        env: { ...process.env, ...f.env }, encoding: "utf8", windowsHide: true,
+      });
+      assert.notEqual(result.status, 0, original);
+      assert.equal(readFileSync(f.config, "utf8"), original);
+    }
+  }
+});
+
+test("managed marker and assignment examples in both multiline string types survive enable and disable", t => {
+  const f = configFixture(t);
+  for (const quote of ['"""', "'''"]) {
+    const instructions = [
+      `developer_instructions = ${quote}`,
+      "# BEGIN codex-router-managed", "KEEP_ROOT", "# END codex-router-managed",
+      "# BEGIN codex-router-provider-managed", "KEEP_PROVIDER", "# END codex-router-provider-managed",
+      "# BEGIN codex-router-multi-agent-v2-managed", "KEEP_AGENTS", "# END codex-router-multi-agent-v2-managed",
+      "[features.multi_agent_v2]", 'openai_base_url = "https://example.invalid"',
+      `model_catalog_json = ${JSON.stringify(path.join(f.state, "merged-models.json"))}`,
+      quote, "",
+    ].join("\n");
+    const userRealtime = '"experimental_realtime_ws_base_url" = "wss://example.invalid/ws#fragment"\n';
+    writeFileSync(f.config, instructions + userRealtime + '"model" = "gpt-5.5"\n');
+    assert.equal(run("status", f.env).managed_router_artifacts_present, false);
+    assert.equal(run("enable", f.env).model, "gpt-5.5");
+    const enabled = readFileSync(f.config, "utf8");
+    assert.ok(enabled.includes(instructions));
+    assert.ok(enabled.includes(userRealtime));
+    assert.equal((enabled.match(/^experimental_realtime_ws_base_url\s*=/gmu) || []).length, 0);
+    assert.match(enabled, /^multi_agent_v2 = \{ enabled = true/mu, "string example does not prevent real managed feature");
+    run("enable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), enabled, "second enable does not duplicate owned fields");
+    run("disable", f.env);
+    const disabled = readFileSync(f.config, "utf8");
+    assert.ok(disabled.includes(instructions));
+    assert.ok(disabled.includes(userRealtime));
+    assert.equal(run("status", f.env).openai_base_url, null);
+    assert.equal(run("status", f.env).managed_router_artifacts_present, false);
+  }
+});
+
+test("quoted user feature configuration is preserved without a second multi-agent setting", t => {
+  const f = configFixture(t);
+  const original = '["features"]\n"multi_agent_v2" = { enabled = false }\n';
+  writeFileSync(f.config, original); run("enable", f.env);
+  const enabled = readFileSync(f.config, "utf8");
+  assert.ok(enabled.includes(original));
+  assert.doesNotMatch(enabled, /# BEGIN codex-router-multi-agent-v2-managed/u);
+});
+
+test("disable preserves foreign catalog assignments and restores only a known adopted source", t => {
+  const f = configFixture(t);
+  for (const key of ["model_catalog_json", '"model_catalog_json"']) {
+    const original = `${key} = 'C:/user/models.json' # keep comment\nmodel = "gpt-5.5"\n`;
+    writeFileSync(f.config, original); run("disable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), original);
+  }
+  const sourcePath = path.join(f.state, "native-catalog-source.json");
+  const original = '"model_catalog_json" = "C:/user/models.json" # keep comment\n';
+  writeFileSync(f.config, original);
+  writeFileSync(sourcePath, JSON.stringify({ version: 1, status: "active", path: "C:/user/models.json" }));
+  if (process.platform === "win32") {
+    run("disable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), original);
+  }
+  writeFileSync(sourcePath, "{");
+  const failed = spawnSync(process.execPath, [path.join(root, "src/config-manager.mjs"), "disable"], {
+    env: { ...process.env, ...f.env }, encoding: "utf8", windowsHide: true,
+  });
+  assert.notEqual(failed.status, 0);
+  assert.equal(readFileSync(f.config, "utf8"), original);
+});
+
+test("disable refuses inaccessible adoption state without changing user or managed config", t => {
+  const f = configFixture(t);
+  const source = path.join(f.state, "native-catalog-source.json");
+  writeFileSync(source, JSON.stringify({ version: 1, status: "active", path: path.join(f.state, "native.json") }));
+  writeFileSync(f.config, 'model = "gpt-5.5"\n'); run("enable", f.env);
+  const before = readFileSync(f.config, "utf8");
+  const preload = path.join(f.state, "deny-source.mjs");
+  writeFileSync(preload, `import fs from 'node:fs'; import path from 'node:path'; import {syncBuiltinESMExports} from 'node:module';
+const old=fs[process.env.DENY_METHOD];fs[process.env.DENY_METHOD]=function(p,...a){if(path.resolve(String(p))===path.resolve(process.env.DENY_SOURCE)){throw Object.assign(new Error('synthetic source denial'),{code:'EACCES'});}return old(p,...a);};syncBuiltinESMExports();`);
+  for (const method of ["readFileSync", "lstatSync"]) {
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, path.join(root, "src/config-manager.mjs"), "disable"], {
+      env: { ...process.env, ...f.env, DENY_METHOD: method, DENY_SOURCE: source }, encoding: "utf8", windowsHide: true,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Invalid native catalog source state/u);
+    assert.equal(readFileSync(f.config, "utf8"), before);
+  }
+});
 
 test("Codex config enable and disable preserve user TOML and restore the native catalog", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-lite-"));

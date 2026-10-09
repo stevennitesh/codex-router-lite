@@ -45,16 +45,15 @@ async function main() {
   }
   if (command === "providers") {
     if (action === "status") print(providerSelectionStatus());
-    else if (action === "set") print({ providers: writeProviderSelection(args.slice(2).flatMap((entry) => entry.split(","))) });
+    else if (action === "set") print({ providers: await writeProviderSelection(args.slice(2).flatMap((entry) => entry.split(","))) });
     else throw new Error("Usage: control providers status|set <openrouter,switchyard>");
     return;
   }
   if (command === "picker") {
-    if (action === "status") print(modelPickerSnapshot());
+    if (action === "status") print(modelPickerSnapshot({ diagnostic: true }));
     else if (action === "show" || action === "hide") {
       requireRoute(value);
-      setModelVisible(value, action === "show");
-      print(modelPickerSnapshot());
+      print(await setModelVisible(value, action === "show"));
     } else {
       throw new Error("Usage: control picker status|show|hide <route>");
     }
@@ -62,19 +61,20 @@ async function main() {
   }
   if (command === "subagents") {
     if (action === "status") {
+      const snapshot = subagentSettingsSnapshot({ diagnostic: true });
       print({
-        settings: readMultiAgentSettings(),
-        snapshot: subagentSettingsSnapshot(),
+        ...(snapshot.degraded ? {} : { settings: readMultiAgentSettings() }),
+        snapshot,
         routes: LISTED_MODELS.map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
       });
     } else if (["all", "selected", "proven"].includes(action)) {
-      print(setMultiAgentMode(action));
+      print(await setMultiAgentMode(action));
     } else if (action === "on" || action === "off") {
       requireCertifiedRoute(value);
-      print(setMultiAgentModel(value, action === "on"));
+      print(await setMultiAgentModel(value, action === "on"));
     } else if (action === "effort") {
       requireRoute(value);
-      print(setSubagentEffort(value, extra));
+      print(await setSubagentEffort(value, extra));
     } else {
       throw new Error("Usage: control subagents status|all|selected|proven|on <route>|off <route>|effort <route> <level>");
     }

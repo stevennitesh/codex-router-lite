@@ -24,6 +24,12 @@ An absent multi-agent block end marker can be repaired when its single feature
 line exactly matches Router's emitted setting. Modified or ambiguous blocks
 still fail preflight; following user settings are preserved.
 
+Managed config editing recognizes quoted TOML keys and marker comments outside
+string values. Marker examples inside user instructions are preserved. An
+unmarked `model_providers.codex-router` table is refused rather than duplicated.
+Disable preserves a user-owned catalog assignment and restores only an explicitly
+adopted source; invalid or inaccessible source records stop the edit.
+
 Managed skill publication skips an already owned tree only when bounded content
 comparison and source provenance both match. Ownership still requires its
 protected token record. Changed skills use the existing recovery transaction;
