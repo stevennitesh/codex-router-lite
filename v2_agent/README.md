@@ -21,7 +21,18 @@ the observations for each accepted batch:
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md)
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [completion/drain repair renewal](../docs/history/2026-10-08-workflow-repair-certification.json)
+The [Windows-service release renewal](../docs/history/2026-10-08-windows-service-certification.json)
+passed all five checks for all six routes on deployed commit
+`75172c2c002b2a6485ca6ae9ae7eb448339033bb`. All 18 native child requests
+and six separate streaming requests returned HTTP 200. Each child produced
+sandboxed output 42, received two encrypted handoffs and returned both markers
+in the same thread. Completed-turn cleanup cancelled no active turns.
+Switchyard's proof binds the unchanged binary and routes to the deployed Router
+commit. These CLI proofs used session-only MXC with workspace-write and
+on-request approval; they do not certify the desktop's elevated sandbox or
+arbitrary MCP tools.
+
+The preceding [completion/drain repair renewal](../docs/history/2026-10-08-workflow-repair-certification.json)
 passed all five checks for StreamLake, both DeepSeek routes, Pareto and
 Switchyard on deployed commit `5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a`.
 All 15 native requests and five separate streaming requests returned HTTP 200.
