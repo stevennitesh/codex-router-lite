@@ -11,18 +11,17 @@ import { credentialStatus, primaryCredentialPath } from "./provider-credentials.
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 import { interpretWindowsTaskState, windowsScheduledTaskState } from "./windows-task-state.mjs";
 
-const checks = [];
-const add = (status, name, detail, fix) => checks.push({ status, name, detail, ...(fix ? { fix } : {}) });
-
 export async function diagnose() {
-  checks.length = 0;
+  const checks = [];
+  const add = (status, name, detail, fix) => checks.push({ status, name, detail, ...(fix ? { fix } : {}) });
   let identity;
   try { identity = codexExecutableIdentity(); }
   catch (error) { add("fail", "Codex binary identity", error.message, "Retry after the Windows Codex update has completed."); }
   if (identity) {
     const { binary, version } = identity;
     add(binary ? "ok" : "fail", "Codex binary", binary || "not found", "Install or update the Windows Codex app.");
-    add(binary ? "ok" : "warn", "Codex version", binary ? version : "unavailable");
+    const knownVersion = binary && typeof version === "string" && version.trim();
+    add(knownVersion ? "ok" : "warn", "Codex version", knownVersion || "unavailable");
     const auth = codexAuthStatus({ findBinary: () => binary });
     add(
       auth.authenticated ? "ok" : auth.reason === "access-denied" ? "fail" : "warn",
@@ -79,10 +78,11 @@ export async function diagnose() {
   const selected = providerSelectionStatus();
   add(selected.status === "invalid" ? "fail" : selected.degraded ? "warn" : "ok",
     "Routed providers", selected.degraded || selected.providers.join(", ") || "none selected");
+  const catalogConfigured = routedCatalogConfigured();
   add(
-    routedCatalogConfigured() ? "ok" : "warn",
+    catalogConfigured ? "ok" : "warn",
     "Codex routed catalog",
-    routedCatalogConfigured() ? "configured" : "not configured",
+    catalogConfigured ? "configured" : "not configured",
   );
   if (selected.status !== "invalid") {
     const models = selectedConfiguredListedModels().map((model) => model.slug);
@@ -91,7 +91,16 @@ export async function diagnose() {
 
   try {
     const health = await readControlHealth();
-    add(health?.status === "ok" || health?.ok === true ? "ok" : "warn", "Router runtime", health?.status || (health?.ok ? "ok" : "unavailable"));
+    const healthy = health?.ok === true && health.status === 200
+      && health.service === "codex-router" && Array.isArray(health.degraded) && health.degraded.length === 0;
+    // Only Router's known component vocabulary is safe diagnostic detail.
+    const degraded = health?.service === "codex-router" && Array.isArray(health.degraded)
+      ? ["api", "gateway", "switchyard"].filter(name => health.degraded.includes(name)) : [];
+    const detail = healthy ? "healthy"
+      : degraded.length ? `degraded dependencies: ${degraded.join(", ")}`
+        : health?.status === 0 ? health.error || "unavailable"
+          : "full health is unavailable or has an invalid service identity";
+    add(healthy ? "ok" : "warn", "Router runtime", detail);
   } catch (error) {
     add("warn", "Router runtime", error instanceof Error ? error.message : String(error));
   }

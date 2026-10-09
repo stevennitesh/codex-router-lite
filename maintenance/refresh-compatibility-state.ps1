@@ -194,6 +194,9 @@ if (-not $SkipTests) {
   Write-Step "Retained product checks"
   Invoke-Checked "npm" @("run", "check")
   Invoke-Checked "npm" @("test")
+  Write-Host "Retained product checks: passed in this invocation."
+} else {
+  Write-Host "Retained product checks: skipped; this invocation does not establish source-test compatibility."
 }
 
 Write-Step "Switchyard upstream signal"
@@ -246,9 +249,14 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
 }
 
 Write-Step "Result"
-if ($appToolsVersion -and $healthClean) {
+if ($SkipTests) {
+  Write-Host "Diagnostic checks completed; retained product checks were skipped. Reuse a prior complete refresh only while its source and inputs remain unchanged."
+  if (-not $appToolsVersion -or -not $healthClean) {
+    Write-Host "Warnings above still require confirmation before declaring full compatibility."
+  }
+} elseif ($appToolsVersion -and $healthClean) {
   Write-Host "Current repository, runtime, catalog, and app-tool relay checks passed."
 } else {
-  Write-Host "Source checks passed, but warnings above still require confirmation before declaring full compatibility."
+  Write-Host "Retained product checks passed, but warnings above still require confirmation before declaring full compatibility."
 }
 Write-Host "No files, configuration, provider quota, or service state were changed."

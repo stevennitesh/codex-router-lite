@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Diagnostics and update audit repairs, 2026-10-09](2026-10-09-diagnostics-updates-audit-fixes.md)
+
 - [Runtime primitives deployment and Switchyard renewal, 2026-10-09](2026-10-09-runtime-primitives-release.md)
 
 - [Switchyard native certification for the runtime primitives release, 2026-10-09](2026-10-09-runtime-primitives-certification.json)

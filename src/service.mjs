@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SOURCE_ROOT } from "./paths.mjs";
+import { LOG_PATH, SOURCE_ROOT } from "./paths.mjs";
+import { captureLogPosition } from "./windows-launch-diagnosis.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
@@ -71,6 +72,7 @@ export async function runServiceCommandUnlocked(
   if (drainingCommands.has(command)) {
     drain = await prepareRouterServiceMutation({ force: forceReplacement });
   }
+  const logPosition = readinessCommands.has(command) ? captureLogPosition(LOG_PATH) : undefined;
   let result;
   try {
     // Await completion under the same lock without blocking its heartbeat.
@@ -103,6 +105,7 @@ export async function runServiceCommandUnlocked(
   }
   const health = await waitForServiceReadiness({
     timeoutMs: READINESS_TIMEOUT_MS,
+    logPosition,
   });
   if (health.ok) return 0;
   console.error(

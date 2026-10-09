@@ -147,11 +147,15 @@ test("the ordinary service caller renews its lock while awaiting the renderer", 
   const state = path.join(directory, "state"), source = path.join(directory, "source"), trace = path.join(directory, "trace.jsonl");
   mkdirSync(path.join(source, "src"), { recursive: true }); mkdirSync(state); writeFileSync(trace, "");
   const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs");
+  const log = path.join(state, "router.log"), oldOutput = "previous launch output\n";
+  writeFileSync(log, oldOutput);
   writeFileSync(helpers, `import {withServiceOperationLock as lock} from ${JSON.stringify(fileUrl('src/service-operation-lock.mjs'))};
+import assert from 'node:assert/strict';import {readLogTail} from ${JSON.stringify(fileUrl('src/windows-launch-diagnosis.mjs'))};
 export const withServiceOperationLock=operation=>lock(operation,{stateDir:${JSON.stringify(state)},waitMs:0,staleMs:2000,retryMs:50});
-export const prepareRouterServiceMutation=async()=>({status:'offline'});export const resumeRouterAdmission=async()=>({});export const waitForServiceReadiness=async()=>({ok:true});`);
+export const prepareRouterServiceMutation=async()=>({status:'offline'});export const resumeRouterAdmission=async()=>({});
+export const waitForServiceReadiness=async options=>{assert.equal(options.logPosition.size,${Buffer.byteLength(oldOutput)});const fresh=readLogTail(${JSON.stringify(log)},{after:options.logPosition});assert.equal(fresh,'current renderer output\\n');return {ok:true};};`);
   writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&${JSON.stringify(['service-operation-lock.mjs','service-drain.mjs','service-readiness.mjs'].map(p=>fileUrl('src/'+p)))}.includes(r.url))return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
-  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(trace)},JSON.stringify({command:process.argv[2],at:Date.now()})+'\\n');await new Promise(r=>setTimeout(r,4500));`);
+  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(log)},'current renderer output\\n');appendFileSync(${JSON.stringify(trace)},JSON.stringify({command:process.argv[2],at:Date.now()})+'\\n');await new Promise(r=>setTimeout(r,4500));`);
   const env = { ...process.env, CODEX_HOME: path.join(directory, "codex"), CODEX_ROUTER_SOURCE_ROOT: source,
     MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state, CODEX_ROUTER_SERVICE_PLATFORM: "win32" };
   const run = command => new Promise((resolve, reject) => {

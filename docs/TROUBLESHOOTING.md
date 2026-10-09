@@ -191,7 +191,7 @@ Do not reinstall repeatedly over the live old process or discard its backup.
 
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
 
-The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.
+The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. A module-resolution error naming an existing path does not prove a task-token access failure. Readiness uses output written after the service launch began; check the launch entry, installed dependencies, path type and task account access before changing permissions or reinstalling.
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.
 

@@ -26,6 +26,10 @@ detail pass should inspect the same heads fetched by the complete refresh. Use
 source tests are already covered by a complete refresh. A skipped suite alone
 does not support a compatibility claim.
 
+The result distinguishes retained checks passed in this invocation from checks
+skipped. A quick pass reports diagnostic completion and leaves prior proof reuse
+with the operator; it never reports that an unperformed retained suite passed.
+
 The default run reports how many original Router commits remain unreviewed
 since `maintenance/upstream-router.json`. When either upstream moved, request
 the conditional detail only then:

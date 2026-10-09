@@ -70,14 +70,13 @@ function localModificationsMessage(changes, sourceRoot = SOURCE_ROOT) {
   ].join("\n");
 }
 
-// Called only where the checkout is actually about to be rewritten, so a
-// checkout with edits still answers "is an update available?" and still
-// reinstalls at the same commit.
-function requireReplaceableCheckout(force) {
+// Preflight is read-only. Only a prepared replacement may discard tracked
+// edits; check/no-op/reinstallation do not need to rewrite the checkout.
+function requireReplaceableCheckout(force, { discard = false } = {}) {
   const changes = localModifications();
   if (changes.length === 0) return;
   if (!force) throw new Error(localModificationsMessage(changes));
-  git(["reset", "--hard", "HEAD"], { inherit: true });
+  if (discard) git(["reset", "--hard", "HEAD"], { inherit: true });
 }
 
 export function currentCheckoutInstaller(
@@ -207,18 +206,21 @@ function updateCheckout({ force = false, forceServiceReplacement = false } = {})
     return { ...status, updated: false, reinstalled: true };
   }
   requireReplaceableCheckout(force);
-  let branch = git(["branch", "--show-current"]);
-  if (!branch) {
-    git(["switch", "main"], { inherit: true });
-    branch = "main";
-  }
-  if (branch !== "main") {
+  const branch = git(["branch", "--show-current"]);
+  if (branch && branch !== "main") {
     throw new Error("Updates require the managed checkout to be on its main branch.");
   }
   withPreparedServiceReplacement(() => {
+    if (git(["rev-parse", "HEAD"]) !== status.current || git(["branch", "--show-current"]) !== branch) {
+      throw new Error("The checkout changed while preparing replacement; retry the update.");
+    }
+    // Drain refusal must preserve even explicitly discardable edits. Recheck
+    // after the wait, before the first checkout mutation.
+    requireReplaceableCheckout(force, { discard: true });
     git(["update-ref", "refs/codex-router/rollback", status.current]);
-    git(["merge", "--ff-only", status.available], { inherit: true });
     try {
+      if (!branch) git(["switch", "main"], { inherit: true });
+      git(["merge", "--ff-only", status.available], { inherit: true });
       installCurrentCheckout(forceServiceReplacement);
     } catch (error) {
       try {
@@ -255,6 +257,10 @@ function rollbackCheckout({ force = false, forceServiceReplacement = false } = {
   }
   if (target === current) throw new Error("The rollback revision is already installed.");
   withPreparedServiceReplacement(() => {
+    if (git(["rev-parse", "HEAD"]) !== current) {
+      throw new Error("The checkout changed while preparing replacement; retry the rollback.");
+    }
+    requireReplaceableCheckout(force, { discard: true });
     git(["update-ref", "refs/codex-router/rollback", current]);
     try {
       restoreRevision(target, forceServiceReplacement);

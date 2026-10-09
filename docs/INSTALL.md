@@ -245,6 +245,9 @@ the install, separate-directory deploy, checkout deployment transaction, or rest
 `--force-service-replacement` on update/service commands. Force never bypasses
 service identity or credential checks. The updater's separate `--force` flag can
 discard tracked checkout edits; it is not the service-interruption option.
+Checkout updates and rollbacks delay tracked-edit discard and branch changes
+until replacement preparation succeeds. A deferral preserves those edits even
+when the updater received `--force`.
 
 Catalog publication uses its existing refresh owner and does not hot-install
 route code. The separate-directory deployer classifies file changes through
