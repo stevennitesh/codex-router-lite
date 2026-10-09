@@ -28,8 +28,11 @@ Update explicit allowlists for an authorized addition; never disable their check
   capability contract. A failed endpoint does not silently select another one.
 - Tool identity, produced history, and response restoration remain request-local
   and reversible across ordinary turns, replay, and compaction.
-- One installed generation is active at a time. Deployment is transactional;
-  runtime-bound certification applies only to the exact deployed identities.
+- One installed generation is active at a time. Deployment is transactional.
+- Certification records retain the exact identities of the tested generation.
+  Historical proof remains applicable while the certified behavior is unchanged;
+  use the [proof refresh rules](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof)
+  when its contract changes.
 - Checked-in source and configuration remain authoritative. Generated files,
   installed hashes, and historical evidence describe a runtime but do not redefine it.
 

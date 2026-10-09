@@ -91,8 +91,10 @@ Never copy a versioned Codex app path into source. Never print keys, bearer toke
 | Change | Read next |
 | --- | --- |
 | Native catalog, credential forwarding, app tools, namespace relay, or encrypted handoff | [Native Codex](native-codex.md) |
-| GLM endpoint policy, Responses repair, hosted search, or Python dependency pins | [OpenRouter GLM](openrouter-glm.md) |
-| Pareto endpoint behavior or direct Responses | [Pareto](pareto.md) |
+| GLM endpoint policy, chat translation, hosted search, or Python dependency pins | [OpenRouter GLM](openrouter-glm.md) |
+| DeepSeek endpoint policy or direct Responses compatibility | [OpenRouter DeepSeek](openrouter-deepseek.md) |
+| Pareto endpoint policy or direct Responses compatibility | [Pareto](pareto.md) |
+| Shared request/history preparation or Responses conversion | [Request preparation](request-preparation.md) |
 | Switchyard source, routes, build, health, or deployment | [Switchyard integration](../../config/switchyard/README.md) |
 | Exact-route subagents v2 | [Subagent certification](../SUBAGENT-CERTIFICATION.md) |
 | Windows installation or update | [Installation](../INSTALL.md) |

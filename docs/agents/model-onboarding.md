@@ -35,7 +35,7 @@ response boundary that requires them, not as scattered slug checks.
 | Response event repair | Existing transform owner, only if a reproduced wire defect requires it; keep request-local restoration paired |
 | Catalog behavior | `src/catalog.mjs` and catalog tests if existing metadata cannot express it; inherit native fields rather than copy a catalog |
 | Installed files and product allowlist | `maintenance/windows-package.json`, `scripts/check-product-boundary.mjs`; include new runtime files and config, retain independent checks |
-| Tests and public guidance | Endpoint regression, routing/catalog coverage, README model list and a focused endpoint guide |
+| Tests and public guidance | Endpoint regression, routing/catalog coverage, README model list and a focused endpoint guide; update [compatibility owner links](compatibility-maintenance.md#ownership-map) when needed and keep the [bug form](../../.github/ISSUE_TEMPLATE/bug.yml) model/route field as text input without a second route list |
 | Subagent eligibility | Leave uncertified routes at v1; load [certification](../SUBAGENT-CERTIFICATION.md) only when claiming v2 |
 
 Existing contracts: [GLM](openrouter-glm.md), [DeepSeek](openrouter-deepseek.md), [Pareto](pareto.md), and
