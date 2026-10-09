@@ -1,0 +1,2424 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "switchyard-routing-regression",
+  "status": "routing_gates_passed",
+  "syntheticAuthoredCorpus": true,
+  "independentDataset": false,
+  "privateDataSent": false,
+  "productionChanged": false,
+  "identities": {
+    "binarySha256": "c8f0434a224a84a7db769f1eb0ca392e6f4159fc5e4e87fa330cfff7dca5dca1",
+    "sourceLockSha256": "7f18d34443d26ecd706ab074941c8d27cb79b5ea5db0cdbcb7943fc14a9f2472",
+    "compatibilityPatchSha256": "bf4df8b4430032cc67ef138bbbc83aea725e509e41d992ba3a5b1be52a8cc497",
+    "routesTemplateSha256": "c5d8716c481fec0788a3a839e96dc097e9da1d7783e329d7b68f68b0b6d01b52",
+    "generatedConfigSha256": "17bd91a0b430d9d171c1acfbef164d9690d70803e8bb52a3d1682e31a6577ef7",
+    "corpusSha256": "c15eb4c650ef15f43791aed3f437bc64697f3b1b5be6f7e0ea330d59f8f8cfd5",
+    "evaluatorSha256": "0f79b42f9a62c44083c4e36e9c8bc8907e7b4e4f5d5f461e38f406b0fd1c867d"
+  },
+  "runs": {
+    "development": {
+      "vectors": [
+        {
+          "id": "D01",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.6000000000000001,
+          "probabilities": {
+            "astra_medium": 0.11,
+            "astra_xhigh": 0,
+            "luna_max": 0.19000000000000003,
+            "sol_high": 0.7000000000000001
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 502,
+          "fullBodyLatencyMs": 508
+        },
+        {
+          "id": "D02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.8355555555555555,
+          "probabilities": {
+            "astra_medium": 0.8766666666666666,
+            "astra_xhigh": 0,
+            "luna_max": 0.04666666666666666,
+            "sol_high": 0.07666666666666666
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 186,
+          "fullBodyLatencyMs": 189
+        },
+        {
+          "id": "D03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.8528428093645485,
+          "probabilities": {
+            "astra_medium": 0.09030100334448161,
+            "astra_xhigh": 0,
+            "luna_max": 0.020066889632107024,
+            "sol_high": 0.8896321070234113
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 175,
+          "fullBodyLatencyMs": 177
+        },
+        {
+          "id": "D04",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9244444444444445,
+          "probabilities": {
+            "astra_medium": 0.023333333333333334,
+            "astra_xhigh": 0,
+            "luna_max": 0.03333333333333333,
+            "sol_high": 0.9433333333333334
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 208,
+          "fullBodyLatencyMs": 210
+        },
+        {
+          "id": "D05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.7022222222222223,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.22,
+            "sol_high": 0.7766666666666667
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 236,
+          "fullBodyLatencyMs": 238
+        },
+        {
+          "id": "D06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.7022222222222223,
+          "probabilities": {
+            "astra_medium": 0.19666666666666668,
+            "astra_xhigh": 0.7766666666666667,
+            "luna_max": 0,
+            "sol_high": 0.02666666666666667
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 253,
+          "fullBodyLatencyMs": 255
+        },
+        {
+          "id": "D07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9822222222222222,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.9866666666666667,
+            "sol_high": 0.013333333333333334
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 859,
+          "fullBodyLatencyMs": 861
+        },
+        {
+          "id": "D08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 210,
+          "fullBodyLatencyMs": 212
+        },
+        {
+          "id": "D09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.991111111111111,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.9933333333333333,
+            "sol_high": 0.006666666666666667
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 208,
+          "fullBodyLatencyMs": 210
+        },
+        {
+          "id": "D10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.0033333333333333335,
+            "sol_high": 0.9966666666666667
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 198,
+          "fullBodyLatencyMs": 201
+        },
+        {
+          "id": "D11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0.006666666666666668,
+            "luna_max": 0,
+            "sol_high": 0.99
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 824,
+          "fullBodyLatencyMs": 826
+        },
+        {
+          "id": "D12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 209,
+          "fullBodyLatencyMs": 211
+        },
+        {
+          "id": "D13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.7822222222222224,
+          "probabilities": {
+            "astra_medium": 0.8366666666666668,
+            "astra_xhigh": 0.15666666666666668,
+            "luna_max": 0,
+            "sol_high": 0.006666666666666667
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 861,
+          "fullBodyLatencyMs": 863
+        },
+        {
+          "id": "D14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.9966666666666667,
+            "astra_xhigh": 0.0033333333333333335,
+            "luna_max": 0,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 202
+        },
+        {
+          "id": "D15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.728888888888889,
+          "probabilities": {
+            "astra_medium": 0.7966666666666667,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_high": 0.20333333333333334
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 191,
+          "fullBodyLatencyMs": 193
+        },
+        {
+          "id": "D16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9644444444444445,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0.9733333333333334,
+            "luna_max": 0,
+            "sol_high": 0.023333333333333338
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 214,
+          "fullBodyLatencyMs": 217
+        },
+        {
+          "id": "D17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9911111111111112,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0.9933333333333334,
+            "luna_max": 0,
+            "sol_high": 0.003333333333333334
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 208,
+          "fullBodyLatencyMs": 210
+        },
+        {
+          "id": "D18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 195,
+          "fullBodyLatencyMs": 197
+        },
+        {
+          "id": "D19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 222,
+          "fullBodyLatencyMs": 224
+        },
+        {
+          "id": "D20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.991111111111111,
+          "probabilities": {
+            "astra_medium": 0.9933333333333333,
+            "astra_xhigh": 0,
+            "luna_max": 0.006666666666666667,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 244,
+          "fullBodyLatencyMs": 246
+        }
+      ],
+      "attempts": [
+        {
+          "id": "D01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 508,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 189,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 177,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 210,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 238,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 255,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 861,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 212,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 210,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 201,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 826,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 211,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 863,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 202,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 193,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 217,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 210,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 197,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 224,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "D20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 246,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ],
+      "score": {
+        "count": 20,
+        "acceptable": 20,
+        "severeUnderRoutes": 0,
+        "rows": [
+          {
+            "id": "D01",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.6000000000000001,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D02",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.8355555555555555,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D03",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.8528428093645485,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D04",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9244444444444445,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D05",
+            "expected": "sol_high",
+            "acceptable": [
+              "luna_max",
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.7022222222222223,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D06",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium",
+              "astra_xhigh"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.7022222222222223,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D07",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 0.9822222222222222,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D08",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 1,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D09",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max",
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 0.991111111111111,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D10",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D11",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high",
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9866666666666667,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D12",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 1,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D13",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.7822222222222224,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D14",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D15",
+            "expected": "astra_medium",
+            "acceptable": [
+              "sol_high",
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.728888888888889,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D16",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9644444444444445,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D17",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9911111111111112,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D18",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D19",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 1,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "D20",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.991111111111111,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          }
+        ]
+      },
+      "diagnostics": {
+        "interpretation": {
+          "confidenceCalibratedProbability": false,
+          "thresholdSelection": "development-only descriptive sweep; do not tune from holdout",
+          "candidateOrderStability": {
+            "available": false,
+            "reason": "runtime decision evidence exposes only the averaged probability ensemble, not per-order verdicts"
+          }
+        },
+        "currentPolicy": {
+          "threshold": 0.35,
+          "count": 20,
+          "classifierMeasured": 20,
+          "fallbackCount": 0,
+          "fallbackRate": 0,
+          "exact": 19,
+          "exactRate": 0.95,
+          "acceptable": 20,
+          "acceptableRate": 1,
+          "severeUnderRoutes": 0,
+          "underRouteDistance": 0,
+          "expensiveOverRoutes": 0,
+          "overRouteDistance": 0
+        },
+        "rawConfusion": {
+          "luna_max": {
+            "luna_max": 5,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "sol_high": {
+            "luna_max": 0,
+            "sol_high": 6,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "astra_medium": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 5,
+            "astra_xhigh": 1
+          },
+          "astra_xhigh": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 3
+          }
+        },
+        "finalConfusion": {
+          "luna_max": {
+            "luna_max": 5,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "sol_high": {
+            "luna_max": 0,
+            "sol_high": 6,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "astra_medium": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 5,
+            "astra_xhigh": 1
+          },
+          "astra_xhigh": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 3
+          }
+        },
+        "confidenceReliability": {
+          "calibratedProbabilityClaim": false,
+          "calibrationBasis": "diagnostic only: Jev confidence versus exact raw-label correctness",
+          "eceExact": 0.048914,
+          "buckets": [
+            {
+              "lowerInclusive": 0,
+              "upperExclusive": 0.2,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.2,
+              "upperExclusive": 0.4,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.4,
+              "upperExclusive": 0.6,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.6,
+              "upperExclusive": 0.8,
+              "upperInclusive": null,
+              "count": 5,
+              "meanConfidence": 0.703111,
+              "exactRate": 0.8,
+              "acceptableRate": 1
+            },
+            {
+              "lowerInclusive": 0.8,
+              "upperExclusive": null,
+              "upperInclusive": 1,
+              "count": 15,
+              "meanConfidence": 0.967078,
+              "exactRate": 1,
+              "acceptableRate": 1
+            }
+          ]
+        },
+        "probabilities": {
+          "multiclassBrierExact": 0.083534,
+          "meanTopTwoMargin": 0.863967
+        },
+        "thresholdSweep": [
+          {
+            "threshold": 0,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.1,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.2,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.3,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.35,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.4,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.5,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.6,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 0,
+            "fallbackRate": 0,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.7,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 1,
+            "fallbackRate": 0.05,
+            "exact": 19,
+            "exactRate": 0.95,
+            "acceptable": 20,
+            "acceptableRate": 1,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 0,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.8,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 5,
+            "fallbackRate": 0.25,
+            "exact": 17,
+            "exactRate": 0.85,
+            "acceptable": 18,
+            "acceptableRate": 0.9,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 2,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 0.9,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 7,
+            "fallbackRate": 0.35,
+            "exact": 16,
+            "exactRate": 0.8,
+            "acceptable": 17,
+            "acceptableRate": 0.85,
+            "severeUnderRoutes": 0,
+            "underRouteDistance": 3,
+            "expensiveOverRoutes": 0,
+            "overRouteDistance": 0
+          },
+          {
+            "threshold": 1,
+            "count": 20,
+            "classifierMeasured": 20,
+            "fallbackCount": 17,
+            "fallbackRate": 0.85,
+            "exact": 9,
+            "exactRate": 0.45,
+            "acceptable": 11,
+            "acceptableRate": 0.55,
+            "severeUnderRoutes": 3,
+            "underRouteDistance": 11,
+            "expensiveOverRoutes": 1,
+            "overRouteDistance": 1
+          }
+        ]
+      }
+    },
+    "holdout": {
+      "vectors": [
+        {
+          "id": "H01",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 305,
+          "fullBodyLatencyMs": 309
+        },
+        {
+          "id": "H02",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.9966666666666667,
+            "sol_high": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 221,
+          "fullBodyLatencyMs": 223
+        },
+        {
+          "id": "H03",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 1,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 201,
+          "fullBodyLatencyMs": 202
+        },
+        {
+          "id": "H04",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.6355555555555555,
+          "probabilities": {
+            "astra_medium": 0.10333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.17000000000000004,
+            "sol_high": 0.7266666666666667
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 221,
+          "fullBodyLatencyMs": 223
+        },
+        {
+          "id": "H05",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "luna_max",
+          "confidence": 0.8222222222222223,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.8666666666666667,
+            "sol_high": 0.13333333333333333
+          },
+          "runtimeFinalTarget": "luna_max",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 217,
+          "fullBodyLatencyMs": 219
+        },
+        {
+          "id": "H06",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9822222222222222,
+          "probabilities": {
+            "astra_medium": 0.0033333333333333335,
+            "astra_xhigh": 0,
+            "luna_max": 0.01,
+            "sol_high": 0.9866666666666667
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 200,
+          "fullBodyLatencyMs": 202
+        },
+        {
+          "id": "H07",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.6177777777777779,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0,
+            "luna_max": 0.2866666666666666,
+            "sol_high": 0.7133333333333334
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 218,
+          "fullBodyLatencyMs": 220
+        },
+        {
+          "id": "H08",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.8488888888888889,
+          "probabilities": {
+            "astra_medium": 0.09000000000000001,
+            "astra_xhigh": 0,
+            "luna_max": 0.023333333333333334,
+            "sol_high": 0.8866666666666667
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 794,
+          "fullBodyLatencyMs": 796
+        },
+        {
+          "id": "H09",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9199999999999999,
+          "probabilities": {
+            "astra_medium": 0.023333333333333334,
+            "astra_xhigh": 0,
+            "luna_max": 0.03666666666666667,
+            "sol_high": 0.94
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 228,
+          "fullBodyLatencyMs": 229
+        },
+        {
+          "id": "H10",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "sol_high",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0,
+            "luna_max": 0.006666666666666668,
+            "sol_high": 0.99
+          },
+          "runtimeFinalTarget": "sol_high",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 181,
+          "fullBodyLatencyMs": 183
+        },
+        {
+          "id": "H11",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.6666666666666666,
+          "probabilities": {
+            "astra_medium": 0.75,
+            "astra_xhigh": 0.19666666666666668,
+            "luna_max": 0.036666666666666674,
+            "sol_high": 0.016666666666666666
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 201,
+          "fullBodyLatencyMs": 203
+        },
+        {
+          "id": "H12",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9333333333333332,
+          "probabilities": {
+            "astra_medium": 0.95,
+            "astra_xhigh": 0.04333333333333334,
+            "luna_max": 0,
+            "sol_high": 0.006666666666666668
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 218,
+          "fullBodyLatencyMs": 220
+        },
+        {
+          "id": "H13",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9466666666666667,
+          "probabilities": {
+            "astra_medium": 0.96,
+            "astra_xhigh": 0,
+            "luna_max": 0,
+            "sol_high": 0.04
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 223,
+          "fullBodyLatencyMs": 225
+        },
+        {
+          "id": "H14",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.8355555555555555,
+          "probabilities": {
+            "astra_medium": 0.8766666666666666,
+            "astra_xhigh": 0,
+            "luna_max": 0.049999999999999996,
+            "sol_high": 0.07333333333333332
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 196,
+          "fullBodyLatencyMs": 198
+        },
+        {
+          "id": "H15",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_medium",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0.9966666666666667,
+            "astra_xhigh": 0.0033333333333333335,
+            "luna_max": 0,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_medium",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 879,
+          "fullBodyLatencyMs": 881
+        },
+        {
+          "id": "H16",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9866666666666667,
+          "probabilities": {
+            "astra_medium": 0.003333333333333334,
+            "astra_xhigh": 0.99,
+            "luna_max": 0,
+            "sol_high": 0.006666666666666668
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 227,
+          "fullBodyLatencyMs": 228
+        },
+        {
+          "id": "H17",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9955555555555556,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 0.9966666666666667,
+            "luna_max": 0,
+            "sol_high": 0.0033333333333333335
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 205,
+          "fullBodyLatencyMs": 207
+        },
+        {
+          "id": "H18",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 180,
+          "fullBodyLatencyMs": 182
+        },
+        {
+          "id": "H19",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 0.9466666666666667,
+          "probabilities": {
+            "astra_medium": 0.02,
+            "astra_xhigh": 0.96,
+            "luna_max": 0,
+            "sol_high": 0.02
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 173,
+          "fullBodyLatencyMs": 175
+        },
+        {
+          "id": "H20",
+          "measurementKind": "classifier",
+          "reasonCode": null,
+          "rawSelected": "astra_xhigh",
+          "confidence": 1,
+          "probabilities": {
+            "astra_medium": 0,
+            "astra_xhigh": 1,
+            "luna_max": 0,
+            "sol_high": 0
+          },
+          "runtimeFinalTarget": "astra_xhigh",
+          "providerModel": "typesafe/jev-1.13-20260917",
+          "providerLatencyMs": 206,
+          "fullBodyLatencyMs": 208
+        }
+      ],
+      "attempts": [
+        {
+          "id": "H01",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 309,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H02",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 223,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H03",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 202,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H04",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 223,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H05",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 219,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H06",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 202,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H07",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 220,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H08",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 796,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H09",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 229,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H10",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 183,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H11",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 203,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H12",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 220,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H13",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 225,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H14",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 198,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H15",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 881,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H16",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 228,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H17",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 207,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H18",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 182,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H19",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 175,
+              "source": "type_safe_classifier"
+            }
+          ]
+        },
+        {
+          "id": "H20",
+          "attempts": [
+            {
+              "attempt": 0,
+              "status": 200,
+              "latencyMs": 208,
+              "source": "type_safe_classifier"
+            }
+          ]
+        }
+      ],
+      "score": {
+        "count": 20,
+        "acceptable": 20,
+        "severeUnderRoutes": 0,
+        "rows": [
+          {
+            "id": "H01",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 1,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H02",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H03",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 1,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H04",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.6355555555555555,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H05",
+            "expected": "luna_max",
+            "acceptable": [
+              "luna_max",
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "luna_max",
+            "confidence": 0.8222222222222223,
+            "finalTarget": "luna_max",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H06",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9822222222222222,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H07",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.6177777777777779,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H08",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.8488888888888889,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H09",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9199999999999999,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H10",
+            "expected": "sol_high",
+            "acceptable": [
+              "sol_high",
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "sol_high",
+            "confidence": 0.9866666666666667,
+            "finalTarget": "sol_high",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H11",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.6666666666666666,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H12",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.9333333333333332,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H13",
+            "expected": "astra_medium",
+            "acceptable": [
+              "sol_high",
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.9466666666666667,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H14",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.8355555555555555,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H15",
+            "expected": "astra_medium",
+            "acceptable": [
+              "astra_medium"
+            ],
+            "severity": "normal",
+            "rawSelected": "astra_medium",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "astra_medium",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H16",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9866666666666667,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H17",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9955555555555556,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H18",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 1,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H19",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 0.9466666666666667,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          },
+          {
+            "id": "H20",
+            "expected": "astra_xhigh",
+            "acceptable": [
+              "astra_xhigh"
+            ],
+            "severity": "severe",
+            "rawSelected": "astra_xhigh",
+            "confidence": 1,
+            "finalTarget": "astra_xhigh",
+            "acceptableResult": true,
+            "severeUnderRoute": false,
+            "underRouteDistance": 0,
+            "expensiveOverRoute": false,
+            "overRouteDistance": 0
+          }
+        ]
+      },
+      "diagnostics": {
+        "interpretation": {
+          "confidenceCalibratedProbability": false,
+          "thresholdSelection": "frozen configured threshold only",
+          "candidateOrderStability": {
+            "available": false,
+            "reason": "runtime decision evidence exposes only the averaged probability ensemble, not per-order verdicts"
+          }
+        },
+        "currentPolicy": {
+          "threshold": 0.35,
+          "count": 20,
+          "classifierMeasured": 20,
+          "fallbackCount": 0,
+          "fallbackRate": 0,
+          "exact": 20,
+          "exactRate": 1,
+          "acceptable": 20,
+          "acceptableRate": 1,
+          "severeUnderRoutes": 0,
+          "underRouteDistance": 0,
+          "expensiveOverRoutes": 0,
+          "overRouteDistance": 0
+        },
+        "rawConfusion": {
+          "luna_max": {
+            "luna_max": 4,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "sol_high": {
+            "luna_max": 0,
+            "sol_high": 6,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "astra_medium": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 5,
+            "astra_xhigh": 0
+          },
+          "astra_xhigh": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 5
+          }
+        },
+        "finalConfusion": {
+          "luna_max": {
+            "luna_max": 4,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "sol_high": {
+            "luna_max": 0,
+            "sol_high": 6,
+            "astra_medium": 0,
+            "astra_xhigh": 0
+          },
+          "astra_medium": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 5,
+            "astra_xhigh": 0
+          },
+          "astra_xhigh": {
+            "luna_max": 0,
+            "sol_high": 0,
+            "astra_medium": 0,
+            "astra_xhigh": 5
+          }
+        },
+        "confidenceReliability": {
+          "calibratedProbabilityClaim": false,
+          "calibrationBasis": "diagnostic only: Jev confidence versus exact raw-label correctness",
+          "eceExact": 0.094222,
+          "buckets": [
+            {
+              "lowerInclusive": 0,
+              "upperExclusive": 0.2,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.2,
+              "upperExclusive": 0.4,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.4,
+              "upperExclusive": 0.6,
+              "upperInclusive": null,
+              "count": 0,
+              "meanConfidence": null,
+              "exactRate": null,
+              "acceptableRate": null
+            },
+            {
+              "lowerInclusive": 0.6,
+              "upperExclusive": 0.8,
+              "upperInclusive": null,
+              "count": 3,
+              "meanConfidence": 0.64,
+              "exactRate": 1,
+              "acceptableRate": 1
+            },
+            {
+              "lowerInclusive": 0.8,
+              "upperExclusive": null,
+              "upperInclusive": 1,
+              "count": 17,
+              "meanConfidence": 0.95268,
+              "exactRate": 1,
+              "acceptableRate": 1
+            }
+          ]
+        },
+        "probabilities": {
+          "multiclassBrierExact": 0.023888,
+          "meanTopTwoMargin": 0.873167
+        }
+      }
+    }
+  },
+  "developmentGates": {
+    "complete": true,
+    "acceptable": true,
+    "severeUnderRoutes": true,
+    "providerBuildStable": true,
+    "runtimeParity": true
+  },
+  "providerBuilds": [
+    "typesafe/jev-1.13-20260917"
+  ],
+  "diagnostics": {
+    "calibrationClaim": "Jev confidence is treated as uncalibrated unless this deployment's data demonstrates otherwise",
+    "developmentThresholdSweepOnly": true,
+    "combinedFrozenThreshold": {
+      "interpretation": {
+        "confidenceCalibratedProbability": false,
+        "thresholdSelection": "frozen configured threshold only",
+        "candidateOrderStability": {
+          "available": false,
+          "reason": "runtime decision evidence exposes only the averaged probability ensemble, not per-order verdicts"
+        }
+      },
+      "currentPolicy": {
+        "threshold": 0.35,
+        "count": 40,
+        "classifierMeasured": 40,
+        "fallbackCount": 0,
+        "fallbackRate": 0,
+        "exact": 39,
+        "exactRate": 0.975,
+        "acceptable": 40,
+        "acceptableRate": 1,
+        "severeUnderRoutes": 0,
+        "underRouteDistance": 0,
+        "expensiveOverRoutes": 0,
+        "overRouteDistance": 0
+      },
+      "rawConfusion": {
+        "luna_max": {
+          "luna_max": 9,
+          "sol_high": 0,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        },
+        "sol_high": {
+          "luna_max": 0,
+          "sol_high": 12,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        },
+        "astra_medium": {
+          "luna_max": 0,
+          "sol_high": 0,
+          "astra_medium": 10,
+          "astra_xhigh": 1
+        },
+        "astra_xhigh": {
+          "luna_max": 0,
+          "sol_high": 0,
+          "astra_medium": 0,
+          "astra_xhigh": 8
+        }
+      },
+      "finalConfusion": {
+        "luna_max": {
+          "luna_max": 9,
+          "sol_high": 0,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        },
+        "sol_high": {
+          "luna_max": 0,
+          "sol_high": 12,
+          "astra_medium": 0,
+          "astra_xhigh": 0
+        },
+        "astra_medium": {
+          "luna_max": 0,
+          "sol_high": 0,
+          "astra_medium": 10,
+          "astra_xhigh": 1
+        },
+        "astra_xhigh": {
+          "luna_max": 0,
+          "sol_high": 0,
+          "astra_medium": 0,
+          "astra_xhigh": 8
+        }
+      },
+      "confidenceReliability": {
+        "calibratedProbabilityClaim": false,
+        "calibrationBasis": "diagnostic only: Jev confidence versus exact raw-label correctness",
+        "eceExact": 0.071568,
+        "buckets": [
+          {
+            "lowerInclusive": 0,
+            "upperExclusive": 0.2,
+            "upperInclusive": null,
+            "count": 0,
+            "meanConfidence": null,
+            "exactRate": null,
+            "acceptableRate": null
+          },
+          {
+            "lowerInclusive": 0.2,
+            "upperExclusive": 0.4,
+            "upperInclusive": null,
+            "count": 0,
+            "meanConfidence": null,
+            "exactRate": null,
+            "acceptableRate": null
+          },
+          {
+            "lowerInclusive": 0.4,
+            "upperExclusive": 0.6,
+            "upperInclusive": null,
+            "count": 0,
+            "meanConfidence": null,
+            "exactRate": null,
+            "acceptableRate": null
+          },
+          {
+            "lowerInclusive": 0.6,
+            "upperExclusive": 0.8,
+            "upperInclusive": null,
+            "count": 8,
+            "meanConfidence": 0.679444,
+            "exactRate": 0.875,
+            "acceptableRate": 1
+          },
+          {
+            "lowerInclusive": 0.8,
+            "upperExclusive": null,
+            "upperInclusive": 1,
+            "count": 32,
+            "meanConfidence": 0.959429,
+            "exactRate": 1,
+            "acceptableRate": 1
+          }
+        ]
+      },
+      "probabilities": {
+        "multiclassBrierExact": 0.053711,
+        "meanTopTwoMargin": 0.868567
+      }
+    }
+  },
+  "gateResults": {
+    "complete": true,
+    "acceptable": true,
+    "severeUnderRoutes": true,
+    "providerBuildStable": true,
+    "runtimeParity": true,
+    "completeHoldout": true,
+    "holdoutAcceptable": true,
+    "holdoutSevereUnderRoutes": true,
+    "providerBuildStableAcrossSplits": true,
+    "holdoutRuntimeParity": true
+  },
+  "paidDecisionRequests": 40,
+  "promotionEligible": true,
+  "completedAt": "2026-10-09T05:04:08.532Z"
+}

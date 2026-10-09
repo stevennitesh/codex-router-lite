@@ -211,8 +211,9 @@ public `switchyard/auto` identity while routing diagnostics retain the selected
 target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
-The Sol High candidate is subagents v1 until its new binary, routes and model
-policy pass native certification. The previous Sol Medium acceptance is retained
+The GPT-6.1 Sol High policy is subagents v2 with an
+[accepted native application](../../v2_agent/switchyard/auto/proof.md).
+The previous Sol Medium acceptance is retained
 under [historical evidence](../../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md);
 it does not certify this configuration.
 

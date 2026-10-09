@@ -6,6 +6,12 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [GPT-6.1 Sol High deployment and six-route renewal, 2026-10-09](2026-10-09-sol-high-release.md)
+
+- [Six-route native certification for the Sol High release, 2026-10-09](2026-10-09-sol-high-release-certification.json)
+
+- [Frozen Switchyard Sol High routing-quality evaluation, 2026-10-09](2026-10-09-switchyard-sol-high-routing-quality.json)
+
 - [Switchyard audit repairs and GPT-6.1 Sol High candidate, 2026-10-08](2026-10-08-switchyard-audit-fixes.md)
 
 - [Reasoning alias precedence diagnosis and repair, 2026-10-08](2026-10-08-reasoning-alias-precedence.md)

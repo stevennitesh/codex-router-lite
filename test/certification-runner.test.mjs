@@ -292,6 +292,7 @@ test("native runner bounds its parent and never turns a failed process into a se
     assert.equal(await executeCertificationParent({binary:"codex.exe"},batch,directory,"mxc",{launch,timeoutMs:5000}),"synthetic-parent");
     assert.ok(observed.args.includes('windows.sandbox="mxc"')); assert.ok(observed.args.includes("workspace-write"));
     assert.ok(observed.args.includes('approval_policy="on-request"'));
+    assert.ok(observed.args.includes('model_reasoning_effort="high"'));
     assert.equal(JSON.parse(readFileSync(path.join(directory,"parent-exit.json"),"utf8")).deadlineExpired,false);
     const timed = path.join(directory,"timed"); mkdirSync(timed);
     await assert.rejects(executeCertificationParent({binary:"codex.exe"},batch,timed,"elevated",{timeoutMs:100,launch:(_binary,_args,options) => spawn(process.execPath,["-e","setInterval(()=>{},1000);"],options)}),/deadline/u);

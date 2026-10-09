@@ -1,12 +1,12 @@
 # openrouter/deepseek-v4.1-flash-together v2 certification
 
-Accepted observations against Router `75172c2c002b2a6485ca6ae9ae7eb448339033bb`
+Accepted observations against Router `952339029991e9afb063758b083a195e56a61c41`
 (version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-09T00:08:11.153Z. Exact endpoint: `together`; fallback disabled.
+Tested at 2026-10-09T05:12:49.465Z. Exact endpoint: `together`; fallback disabled.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-08-windows-service-certification.json) records role `router_openrouter_deepseek_v4_1_flash_together`, effort
+[Redacted run evidence](../../../docs/history/2026-10-09-sol-high-release-certification.json) records role `router_openrouter_deepseek_v4_1_flash_together`, effort
 `high`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed

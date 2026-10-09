@@ -18,10 +18,22 @@ the observations for each accepted batch:
 - accepted: [`openrouter/deepseek-v4.1-flash-deepinfra`](openrouter/deepseek-v4.1-flash-deepinfra/proof.md)
 - retired historical acceptance: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md), which does not certify Together.
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- awaiting renewal: `switchyard/auto` now uses GPT-6.1 Sol High. Its unchanged
-  [previous acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
-  covers the retired Sol Medium policy; the candidate remains subagents v1.
+- accepted: [`switchyard/auto`](switchyard/auto/proof.md), using GPT-6.1 Sol High.
+  Its unchanged [previous acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
+  covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
+
+The [Sol High release renewal](../docs/history/2026-10-09-sol-high-release-certification.json)
+passed all five checks for all six routes on deployed commit
+`952339029991e9afb063758b083a195e56a61c41`. All 18 native child requests
+and six separate streaming requests returned HTTP 200. Each child produced
+sandboxed output 42, received two encrypted handoffs and returned both markers
+in the same thread. Completed-turn cleanup cancelled no active turns.
+Switchyard's additional tool continuation, image fallback and native compaction
+checks passed with evidence attributed to their own requests. The run used
+session-only MXC; it does not certify the desktop's elevated sandbox or arbitrary
+MCP tools. The [release record](../docs/history/2026-10-09-sol-high-release.md)
+also records the frozen routing-quality evaluation and deployment acceptance.
 
 The [credential-state release renewal](../docs/history/2026-10-08-credentials-state-certification.json)
 passed all five checks for Switchyard on deployed commit

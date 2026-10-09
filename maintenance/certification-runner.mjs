@@ -248,7 +248,7 @@ export async function executeCertificationParent(identity, batch, directory, san
   const events = openSync(eventsPath,"a"), errors = openSync(errorsPath,"a");
   let child, timer, deadlineExpired = false;
   try {
-    const args = ["exec","--json","--skip-git-repo-check","--sandbox","workspace-write","--model","gpt-6.1-sol","--config",'model_reasoning_effort="medium"',"--config",'approval_policy="on-request"',"--config",`windows.sandbox="${sandbox}"`,"--cd",directory,"--output-last-message",finalPath,"-"];
+    const args = ["exec","--json","--skip-git-repo-check","--sandbox","workspace-write","--model","gpt-6.1-sol","--config",'model_reasoning_effort="high"',"--config",'approval_policy="on-request"',"--config",`windows.sandbox="${sandbox}"`,"--cd",directory,"--output-last-message",finalPath,"-"];
     const target = spawnableCommand(identity.binary,args);
     child = launch(target.command,target.args,{...target.options,windowsHide:true,stdio:["pipe",events,errors]});
     const completion = new Promise((resolve,reject) => { child.once("error",reject); child.once("close",(code,signal) => resolve({exitCode:code,signal})); });

@@ -1,13 +1,13 @@
-# openrouter/glm-5.3-flash-streamlake v2 certification
+# switchyard/auto v2 certification
 
 Accepted observations against Router `952339029991e9afb063758b083a195e56a61c41`
 (version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-09T05:12:02.795Z. Exact endpoint: `streamlake/fp8`; fallback disabled.
+Tested at 2026-10-09T05:13:55.749Z. Switchyard runtime identities are recorded in proof.json.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-09-sol-high-release-certification.json) records role `router_openrouter_glm_5_3_flash_streamlake`, effort
-`max`, output 42 from a real sandboxed command, two encrypted
+[Redacted run evidence](../../../docs/history/2026-10-09-sol-high-release-certification.json) records role `router_switchyard_auto`, effort
+`high`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed
 already-completed turns; no active turn was cancelled.
@@ -22,8 +22,7 @@ already-completed turns; no active turn was cancelled.
 
 ## Official sources
 
-- https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints
-- https://openrouter.ai/docs/guides/routing/provider-selection
+- https://github.com/NVIDIA-NeMo/Switchyard/blob/fbabf51c62793ed0f6af042b60e92ce1cfba083b/README.md
 
 ## Scope and reproduction
 
