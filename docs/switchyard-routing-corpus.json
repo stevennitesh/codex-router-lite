@@ -5,7 +5,7 @@
   "privateData": false,
   "labels": [
     "luna_max",
-    "sol_medium",
+    "sol_high",
     "astra_medium",
     "astra_xhigh"
   ],
@@ -23,9 +23,9 @@
     {
       "id": "D01",
       "boundary": true,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -105,9 +105,9 @@
     {
       "id": "D03",
       "boundary": true,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -146,9 +146,9 @@
     {
       "id": "D04",
       "boundary": true,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -187,10 +187,10 @@
     {
       "id": "D05",
       "boundary": true,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
         "luna_max",
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Extract the two failing field names from this supplied fixture, then implement the documented mapping correction and run its focused test."
@@ -232,7 +232,7 @@
       "expected": "luna_max",
       "acceptable": [
         "luna_max",
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Inspect the five named files and report which two contain the literal timeout setting; make no edits."
@@ -240,9 +240,9 @@
     {
       "id": "D10",
       "boundary": false,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Implement validation for the existing retry option and add focused tests for zero and negative values."
@@ -250,9 +250,9 @@
     {
       "id": "D11",
       "boundary": false,
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium",
+        "sol_high",
         "astra_medium"
       ],
       "severity": "normal",
@@ -324,7 +324,7 @@
       "boundary": false,
       "expected": "astra_medium",
       "acceptable": [
-        "sol_medium",
+        "sol_high",
         "astra_medium"
       ],
       "severity": "normal",
@@ -544,9 +544,9 @@
     },
     {
       "id": "H04",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -587,34 +587,34 @@
       "expected": "luna_max",
       "acceptable": [
         "luna_max",
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Inspect the named directory and report the count of files by extension; do not modify anything."
     },
     {
       "id": "H06",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Implement the documented payment-log schema validation and add focused tests for its required fields."
     },
     {
       "id": "H07",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": "Fix the reproduced logger bug that writes account_id under the wrong field name, then verify the exact fixture."
     },
     {
       "id": "H08",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -652,9 +652,9 @@
     },
     {
       "id": "H09",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium"
+        "sol_high"
       ],
       "severity": "normal",
       "input": [
@@ -692,9 +692,9 @@
     },
     {
       "id": "H10",
-      "expected": "sol_medium",
+      "expected": "sol_high",
       "acceptable": [
-        "sol_medium",
+        "sol_high",
         "astra_medium"
       ],
       "severity": "normal",
@@ -722,7 +722,7 @@
       "id": "H13",
       "expected": "astra_medium",
       "acceptable": [
-        "sol_medium",
+        "sol_high",
         "astra_medium"
       ],
       "severity": "normal",

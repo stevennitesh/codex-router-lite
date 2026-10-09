@@ -45,7 +45,7 @@ test("route selection preserves an exact ordered subset and rejects ambiguous re
 });
 
 test("batch preflight reads shared state once and retains per-route readiness", () => {
-  const routes = certificationRoutes(["switchyard/auto", "openrouter/deepseek-v4.1-flash-together"]);
+  const routes = certificationRoutes(["switchyard/auto", "openrouter/deepseek-v4.1-flash-together"]).map(route => ({ ...route, multiAgentVersion: "v2" }));
   const catalog = { models: routes.map(route => ({slug:route.slug,visibility:"list",multi_agent_version:"v2"})) };
   const files = new Map([
     ["catalog", JSON.stringify(catalog)],
@@ -117,8 +117,15 @@ test("CLI preserves single-route output and emits complete batch plans without c
     }));
     const slug = CHECKED_IN_MODELS[0].slug;
     assert.equal(run([slug]).slug, slug);
-    const batch = run(["--all"]);
-    assert.equal(batch.readyForFreshParent, true);
+    const batchRun = spawnSync(process.execPath, ["maintenance/certification-preflight.mjs", "--all"], {
+      encoding:"utf8", windowsHide:true,
+      env:{...process.env,CODEX_HOME:home,MODEL_ROUTER_STATE_DIR:state},
+    });
+    const batch = JSON.parse(batchRun.stdout);
+    const expectedReady = CHECKED_IN_MODELS.every(route => route.multiAgentVersion === "v2");
+    assert.equal(batchRun.status, expectedReady ? 0 : 1);
+    assert.equal(batch.readyForFreshParent, expectedReady);
+    for (const report of batch.reports) assert.equal(report.readyForFreshParent, MODEL_BY_SLUG.get(report.slug).multiAgentVersion === "v2");
     assert.deepEqual(batch.reports.map(report => report.slug), CHECKED_IN_MODELS.map(route => route.slug));
     assert.equal(readFileSync(path.join(state, "merged-models.json"), "utf8"), catalog);
     assert.equal(readFileSync(path.join(state, "install-manifest.json"), "utf8"), manifest);

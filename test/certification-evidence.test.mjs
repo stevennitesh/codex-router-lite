@@ -298,7 +298,7 @@ test("partial extraction cannot bypass shared parent, runtime, scope or identity
 });
 
 function planFor(input) {
-  const routes = input.run.routes.map(spec => MODEL_BY_SLUG.get(spec.slug));
+  const routes = input.run.routes.map(spec => ({ ...MODEL_BY_SLUG.get(spec.slug), multiAgentVersion: "v2" }));
   const roles = new Map(routes.map(route => {
     const role = routedAgentDefinition(route);
     return [path.join("roles",role.fileName),role.contents];
@@ -390,7 +390,7 @@ test("preflight blockers stay explicit without stopping a ready independent rout
 test("optional Switchyard smoke is route-scoped except for changed runtime identity", async () => {
   for (const scenario of ["pass","check-failed","process-failed","missing-binding","exception","runtime-changed","stream-failed"]) {
     const input = pairedFixture("switchyard/auto");
-    const binding = JSON.parse(readFileSync(new URL("../v2_agent/switchyard/auto/proof.json",import.meta.url),"utf8")).runtimeBinding;
+    const binding = JSON.parse(readFileSync(new URL("../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.json",import.meta.url),"utf8")).runtimeBinding;
     input.runtimeBinding = {...binding,routerCommit:input.run.routerCommit};
     const {batch,streaming} = planFor(input);
     let smokeCalls = 0;

@@ -7,6 +7,16 @@ import {
   summarizeSwitchyardUsage,
 } from "../src/switchyard-trace.mjs";
 
+test("trace accepts complete Sol High and historical Sol Medium probability schemas separately", () => {
+  const event = '2026-10-08T12:00:00Z INFO evidence_source="type_safe_classifier" evidence_final_target="sol_high" evidence_probability_luna_max=0.1 evidence_probability_sol_high=0.7 evidence_probability_astra_medium=0.1 evidence_probability_astra_xhigh=0.1';
+  const summary = summarizeSwitchyardTrace(`Switchyard libsy server\n${event}`);
+  assert.deepEqual(summary.classifier.recent[0].probabilities, { luna_max: 0.1, sol_high: 0.7, astra_medium: 0.1, astra_xhigh: 0.1 });
+  const hybrid = summarizeSwitchyardTrace(`Switchyard libsy server\n${event} evidence_probability_sol_medium=0.7`);
+  assert.equal(hybrid.classifier.recent[0].probabilities, undefined);
+  const usage = summarizeSwitchyardUsage(JSON.stringify({ ts: "2026-10-08T12:00:00Z", model: "switchyard/sol-high", session_id: "synthetic" }));
+  assert.deepEqual(usage.targets.solHigh, { model: "gpt-6.1-sol", effort: "high", records: 1 });
+});
+
 test("Switchyard trace summarizes only the latest generation without raw identifiers", () => {
   const summary = summarizeSwitchyardTrace([
     "old agent_id=\"old-secret-looking-id\" status=400",

@@ -1716,7 +1716,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.end(
         `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item })}\n\n` +
-        `data: ${JSON.stringify({ type: "response.completed", response: { id: "native-v2-compaction", status: "completed", model: "gpt-5.6-sol", output: [item] } })}\n\n` +
+        `data: ${JSON.stringify({ type: "response.completed", response: { id: "native-v2-compaction", status: "completed", model: "gpt-6.1-sol", output: [item] } })}\n\n` +
         "data: [DONE]\n\n",
       );
       return;
@@ -1852,13 +1852,15 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     const compact = await fetch(`${routerBase(routerPort)}/responses/compact`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: "switchyard/auto", input }),
+      body: JSON.stringify({ model: "switchyard/auto", input, reasoning: { effort: "medium", summary: "auto" }, reasoning_effort: "medium" }),
     });
     assert.equal(compact.status, 200);
     assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 2);
     assert.equal(nativeRequests[1].url, "/backend-api/codex/responses/compact");
-    assert.equal(nativeRequests[1].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[1].body.model, "gpt-6.1-sol");
+    assert.deepEqual(nativeRequests[1].body.reasoning, { effort: "high", summary: "auto" });
+    assert.equal(nativeRequests[1].body.reasoning_effort, undefined);
     assert.equal(nativeRequests[1].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
     assert.equal(nativeRequests[1].headers["chatgpt-account-id"], "account-id");
     assert.equal(nativeRequests[1].headers["x-codex-router-switchyard-capability"], undefined);
@@ -1870,6 +1872,8 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       body: JSON.stringify({
         model: "switchyard/auto",
         input: [...input, { type: "compaction_trigger" }],
+        reasoning: { effort: "medium", summary: "auto" },
+        reasoning_effort: "medium",
         stream: true,
       }),
     });
@@ -1878,7 +1882,9 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 3);
     assert.equal(nativeRequests[2].url, "/backend-api/codex/responses");
-    assert.equal(nativeRequests[2].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[2].body.model, "gpt-6.1-sol");
+    assert.deepEqual(nativeRequests[2].body.reasoning, { effort: "high", summary: "auto" });
+    assert.equal(nativeRequests[2].body.reasoning_effort, undefined);
     assert.equal(nativeRequests[2].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
     assert.equal(nativeRequests[2].headers["chatgpt-account-id"], "account-id");
     assert.equal(nativeRequests[2].headers["x-codex-router-switchyard-capability"], undefined);

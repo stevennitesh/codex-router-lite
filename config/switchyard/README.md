@@ -150,12 +150,19 @@ conversation remains intact for the native answer model. See the repository
 limits. The classifier chooses the dominant bottleneck of the whole request with
 this policy:
 
+| Target | Native model | Reasoning effort |
+| --- | --- | --- |
+| `luna_max` | `gpt-5.6-luna` | `max` |
+| `sol_high` | `gpt-6.1-sol` | `high` |
+| `astra_medium` | `gpt-6-astra` | `medium` |
+| `astra_xhigh` | `gpt-6-astra` | `xhigh` |
+
 - `astra-xhigh`: exceptional reasoning with multiple difficult interacting
   constraints, subtle correctness, recovery after a capable attempt failed, or
   consequential state or security effects.
 - `astra-medium`: planning, review, architecture, interpretation, synthesis,
   or uncertain diagnosis where judgment dominates.
-- `sol-medium`: implementation or concrete debugging with a defined outcome
+- `sol-high`: implementation or concrete debugging with a defined outcome
   and decisive verification; this is also the default when the work mode is
   unclear or classification is uncertain.
 - `luna-max`: bounded retrieval, source-grounded extraction or summarization,
@@ -199,10 +206,15 @@ checked route metadata and never parses Switchyard TOML at runtime.
 
 The public slug, local dispatch model, selected target, and native provider model
 are separate identities. Ordinary turns send `switchyard-auto` to Switchyard;
-native V1/V2 compaction continues to use `gpt-5.6-sol`. Responses restore the
+native V1/V2 compaction uses `gpt-6.1-sol` at `high` effort. Responses restore the
 public `switchyard/auto` identity while routing diagnostics retain the selected
 target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
+
+The Sol High candidate is subagents v1 until its new binary, routes and model
+policy pass native certification. The previous Sol Medium acceptance is retained
+under [historical evidence](../../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md);
+it does not certify this configuration.
 
 The four-target policy advertises multi-agent v2 only with an accepted
 runtime-bound application under `v2_agent/switchyard/auto`. A source change keeps

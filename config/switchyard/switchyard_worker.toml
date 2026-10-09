@@ -2,7 +2,7 @@ name = "switchyard_worker"
 description = "Automatically routed worker using Switchyard across Luna, Sol and Astra targets."
 model_provider = "codex-router"
 model = "switchyard/auto"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Complete only the bounded assignment from the parent and do not delegate it further.

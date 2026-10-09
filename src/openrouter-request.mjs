@@ -86,10 +86,11 @@ export function prepareOpenRouterRequest(payload) {
     prompt_cache_retention: _promptCacheRetention,
     ...clean
   } = payload;
-  // LiteLLM 1.102.x translates a Responses reasoning object into a
+  // LiteLLM translates a Responses reasoning object into a
   // Chat Completions `reasoning_effort` object. OpenRouter's documented chat
   // contract names that object `reasoning`; retain scalar reasoning_effort for
-  // older OpenAI-compatible callers, but canonicalize only the object shape.
+  // older scalar-only callers. Endpoint preparation already removes aliases
+  // when the primary reasoning field is present; canonicalize remaining objects.
   if (
     clean.reasoning_effort &&
     typeof clean.reasoning_effort === "object" &&

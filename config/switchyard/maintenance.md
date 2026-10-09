@@ -101,6 +101,10 @@ fail. Its authored corpus is regression evidence, not a representative dataset.
 After an authorized deployment, the single live smoke/certification entry point
 is `node scripts/verify-switchyard-live.mjs $evidencePath`; it requires an
 explicit output path and applies only to the installed identities it records.
+Each tool, media and compaction phase supplies its own UUID session/thread
+identity and bounded observation window. The two tool requests share one identity.
+Foreign traffic cannot satisfy affinity, fallback or classifier-bypass checks;
+missing or contradictory own evidence fails the smoke.
 
 ## Deploy and roll back
 

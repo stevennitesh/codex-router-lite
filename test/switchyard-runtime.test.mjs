@@ -15,12 +15,41 @@ import {
 } from "../src/switchyard-runtime.mjs";
 import {
   readSwitchyardConfigContract,
+  parseSwitchyardConfigContract,
   validateSwitchyardConfigContract,
 } from "../scripts/switchyard-config-contract.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { PROVIDERS, resolveProviderBaseUrl } from "../src/routed-models.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("Switchyard numeric contract reads whole active decimal values and refuses disguised limits", () => {
+  const template = readFileSync(path.join(root, "config/switchyard/routes.template.toml"), "utf8");
+  const model = readSwitchyardConfigContract(root).routeModel;
+  const cases = [
+    ["timeout_ms = 3000", "timeout_ms = 3000_000", value => value.classifier.timeoutMs, 3000000],
+    ["max_request_bytes = 32768", "max_request_bytes = 32768_000", value => value.classifier.maxRequestBytes, 32768000],
+    ["context_window = 272000", "context_window = 272000_000", value => value.contextWindow, 272000000],
+  ];
+  for (const [old, changed, get, expected] of cases) {
+    assert.ok(template.includes(old));
+    const parsed = parseSwitchyardConfigContract(template.replace(old, changed), model);
+    assert.equal(get(parsed), expected);
+    assert.throws(() => validateSwitchyardConfigContract(parsed));
+  }
+  for (const value of ["3_000", "+3000", "3000 # active comment"]) {
+    assert.doesNotThrow(() => validateSwitchyardConfigContract(parseSwitchyardConfigContract(template.replace("timeout_ms = 3000", `timeout_ms = ${value}`), model)));
+  }
+  for (const value of ["3000junk", "3000__000", "3000.0", "3e3", "0xbb8", '"3000"', "3_000_", "3000\ntimeout_ms = 3000"]) {
+    assert.throws(() => parseSwitchyardConfigContract(template.replace("timeout_ms = 3000", `timeout_ms = ${value}`), model));
+  }
+  assert.doesNotThrow(() => validateSwitchyardConfigContract(parseSwitchyardConfigContract(
+    template.replace("base_threshold = 0.35", "base_threshold = 3.5e-1"), model)));
+  for (const ignored of ['# timeout_ms = 9999', 'description = """\ntimeout_ms = 9999\n"""']) {
+    const source = template.replace("[type_safe_client]", `[type_safe_client]\n${ignored}`);
+    assert.equal(parseSwitchyardConfigContract(source, model).classifier.timeoutMs, 3000);
+  }
+});
 
 test("Switchyard supervision starts only after an explicit provider selection", () => {
   assert.equal(switchyardLaunch({ selected: false }), undefined);
@@ -199,10 +228,11 @@ test("Switchyard accepted proof rejects changed patch and canonical template sou
   const configRoot = path.join(root, "config", "switchyard");
   const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
   const proof = JSON.parse(readFileSync(
-    path.join(root, "v2_agent", "switchyard", "auto", "proof.json"),
+    path.join(root, "docs", "history", "2026-10-08-switchyard-sol-medium-proof", "proof.json"),
     "utf8",
   ));
   proof.status = "accepted";
+  proof.model = "gpt-6.1-sol";
   proof.testedAt = "2026-09-20T00:00:00.000Z";
   proof.routerVersion = "fixture";
   proof.codexVersion = "fixture";
@@ -242,7 +272,7 @@ test("Switchyard accepted proof rejects changed patch and canonical template sou
   const models = [{
     slug: "switchyard/auto",
     provider: "switchyard",
-    upstreamModel: "gpt-5.6-sol",
+    upstreamModel: "gpt-6.1-sol",
     multiAgentVersion: "v2",
   }];
   try {

@@ -89,7 +89,7 @@ function buildCandidate(binary, nativeOverride) {
     assert.ok(member, `${version} is missing Switchyard compatibility model ${slug}`);
     return member;
   });
-  const nativeSol = compatibilityMembers.find((model) => model.slug === "gpt-5.6-sol");
+  const nativeSol = compatibilityMembers.find((model) => model.slug === switchyardRoute.upstreamModel);
   const omittedNativeFields = omittedSwitchyardNativeFields(
     compatibilityMembers,
     builtSwitchyard,

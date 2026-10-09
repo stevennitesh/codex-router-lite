@@ -19,6 +19,9 @@ export function prepareOpenRouterEndpointRequest(payload, route) {
     }
   }
   // The primary object wins even when it intentionally omits an effort.
+  // Remove its alias before translation or final send: OpenRouter forbids
+  // simultaneous reasoning.effort and reasoning_effort values that differ.
+  if (next.reasoning !== undefined) delete next.reasoning_effort;
   const effort = next.reasoning !== undefined
     ? next.reasoning?.effort
     : next.reasoning_effort && typeof next.reasoning_effort === "object"

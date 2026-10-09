@@ -6,6 +6,10 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Switchyard audit repairs and GPT-6.1 Sol High candidate, 2026-10-08](2026-10-08-switchyard-audit-fixes.md)
+
+- [Reasoning alias precedence diagnosis and repair, 2026-10-08](2026-10-08-reasoning-alias-precedence.md)
+
 - [Catalog/config audit fixes and cache cost comparison, 2026-10-08](2026-10-08-catalog-config-audit-fixes.md)
 
 - [Credential-state release: Switchyard proof renewal, 2026-10-08](2026-10-08-credentials-state-certification.json)

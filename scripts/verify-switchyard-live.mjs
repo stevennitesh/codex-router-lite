@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { deflateSync } from "node:zlib";
@@ -6,7 +6,8 @@ import { deflateSync } from "node:zlib";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { nativeAccountCatalogHeaders } from "../src/codex-native-session.mjs";
 import { CALLER_SECRET_PATH, CODEX_HOME, LOG_PATH, PORTS } from "../src/paths.mjs";
-import { summarizeSwitchyardTrace } from "../src/switchyard-trace.mjs";
+import { summarizeSwitchyardSmokeEvidence } from "../src/switchyard-certification-evidence.mjs";
+import { readSwitchyardConfigContract } from "./switchyard-config-contract.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const output = process.argv[2] ? path.resolve(process.argv[2]) : null;
@@ -14,8 +15,9 @@ if (!output) throw new Error("usage: verify-switchyard-live.mjs OUTPUT_JSON");
 const expectedTemplateHash = createHash("sha256").update(readFileSync(
   path.join(root, "config", "switchyard", "routes.template.toml"),
 )).digest("hex");
-const session = "switchyard-live-synthetic-verification";
-const startedAt = Date.now();
+const contract = readSwitchyardConfigContract();
+const solTarget = contract.answers.find(target => target.name === contract.defaultTarget);
+const phases = Object.fromEntries(["tool", "media", "compact"].map(name => [name, { sessionId: randomUUID() }]));
 
 function parseSse(text) {
   return text.split(/\r?\n/u)
@@ -136,14 +138,20 @@ function compact(result) {
   };
 }
 
-function providerCallCount(trace) {
-  return Object.values(trace.classifier.providerModels).reduce((sum, count) => sum + count, 0);
+function phaseHeaders(phase) {
+  phase.startedAt = new Date().toISOString();
+  return { ...nativeHeaders, "session-id": phase.sessionId, "thread-id": phase.sessionId };
+}
+
+function endPhase(phase) {
+  // Include sub-millisecond Rust events in the final observed millisecond.
+  phase.endedAt = new Date(Date.now() + 1).toISOString();
 }
 
 const callerSecret = readFileSync(CALLER_SECRET_PATH, "utf8").trim();
 const nativeHeaders = await nativeAccountCatalogHeaders();
 if (!nativeHeaders) throw new Error("signed-in native Codex authentication is unavailable");
-const headers = { ...nativeHeaders, "session-id": session };
+const headers = phaseHeaders(phases.tool);
 const base = callerBaseUrl(PORTS.router, callerSecret);
 const health = await fetch(`http://127.0.0.1:${PORTS.router}/health`, {
   signal: AbortSignal.timeout(5_000),
@@ -197,6 +205,7 @@ const second = await post(`${base}/responses`, {
   store: false,
   stream: false,
 }, headers);
+endPhase(phases.tool);
 
 const mediaInput = [{
   type: "message",
@@ -207,21 +216,20 @@ const mediaInput = [{
   ],
 }];
 const nativeMedia = await post(`${base}/responses`, {
-  model: "gpt-5.6-sol",
+  model: solTarget.model,
+  reasoning: { effort: solTarget.effort },
   input: mediaInput,
   store: false,
   stream: true,
-}, { ...nativeHeaders, "session-id": `${session}-media-native` });
-const beforeMedia = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+}, nativeHeaders);
 const media = await post(`${base}/responses`, {
   model: "switchyard/auto",
   input: mediaInput,
   store: false,
   stream: true,
-}, { ...nativeHeaders, "session-id": `${session}-media-auto` });
-const afterMedia = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+}, phaseHeaders(phases.media));
+endPhase(phases.media);
 
-const beforeCompact = afterMedia;
 const nativeCompact = await post(`${base}/responses`, {
   model: "switchyard/auto",
   input: [
@@ -230,32 +238,30 @@ const nativeCompact = await post(`${base}/responses`, {
   ],
   store: false,
   stream: true,
-}, nativeHeaders);
-const afterCompact = summarizeSwitchyardTrace(readFileSync(LOG_PATH, "utf8"));
+}, phaseHeaders(phases.compact));
+endPhase(phases.compact);
 
 const installedProvenance = JSON.parse(readFileSync(
   path.join(CODEX_HOME, "switchyard", "provenance.json"),
   "utf8",
 ));
-const recentClassifier = afterCompact.classifier.recent
-  .filter((item) => Date.parse(item.at) >= startedAt)
-  .slice(-10);
+const routerLog = readFileSync(LOG_PATH, "utf8");
+const routingLog = readFileSync(path.join(CODEX_HOME, "switchyard", "routing.jsonl"), "utf8");
+const observations = Object.fromEntries(Object.entries(phases).map(([name, phase]) => [name,
+  summarizeSwitchyardSmokeEvidence({ routerLog, routingLog, ...phase, expectedRequests: name === "tool" ? 2 : 1 }),
+]));
+const recentClassifier = Object.values(observations).flatMap(item => item.classifier.recent).slice(-10);
 const providerVersions = [...new Set(recentClassifier.map((item) => item.providerModel).filter(Boolean))];
-const routingRecords = readFileSync(path.join(CODEX_HOME, "switchyard", "routing.jsonl"), "utf8")
-  .split(/\r?\n/u)
-  .flatMap((line) => {
-    try { return [JSON.parse(line)]; } catch { return []; }
-  })
-  .filter((item) => Date.parse(item.ts) >= startedAt);
-const firstSelected = routingRecords[0]?.model || null;
-const secondSelected = routingRecords[1]?.model || null;
+const [firstSelected = null, secondSelected = null] = observations.tool.routing.selectedTargets;
 const templateObserved = installedProvenance.templateSha256 === expectedTemplateHash;
-const mediaFallbackObserved = recentClassifier.some((item) =>
-  item.source === "fail_open" && item.reasonCode === "non_text_state" && item.finalTarget === "sol_medium");
-const probabilityMapObserved = recentClassifier.some((item) =>
+const mediaFallbackObserved = observations.media.attributed && observations.media.routing.total === 1 &&
+  observations.media.routing.selectedTargets[0] === solTarget.routingId && observations.media.classifier.recent.some((item) =>
+    item.source === "fail_open" && item.reasonCode === "non_text_state" && item.finalTarget === contract.defaultTarget);
+const probabilityMapObserved = observations.tool.attributed && observations.tool.classifier.recent.some((item) =>
   item.source === "type_safe_classifier" &&
   item.probabilities &&
-  Object.keys(item.probabilities).length === 4);
+  Object.keys(item.probabilities).length === contract.answers.length &&
+  contract.answers.every(target => Object.hasOwn(item.probabilities, target.name)));
 
 const evidence = {
   schemaVersion: 1,
@@ -274,7 +280,9 @@ const evidence = {
     callObserved: Boolean(call),
     argumentsValid,
     selectedTargets: [firstSelected, secondSelected],
-    affinityStable: Boolean(firstSelected) && firstSelected === secondSelected,
+    attributed: observations.tool.attributed,
+    affinityStable: observations.tool.attributed && observations.tool.routing.total === 2 &&
+      contract.answers.some(target => target.routingId === firstSelected) && firstSelected === secondSelected,
   },
   nativeMediaControl: {
     ...compact(nativeMedia),
@@ -284,23 +292,22 @@ const evidence = {
     ...compact(media),
     answer: responseText(media),
     fallbackObserved: mediaFallbackObserved,
-    providerCallsBefore: providerCallCount(beforeMedia),
-    providerCallsAfter: providerCallCount(afterMedia),
-    zeroProviderCalls: providerCallCount(beforeMedia) === providerCallCount(afterMedia),
+    attributed: observations.media.attributed,
+    zeroProviderCalls: observations.media.attributed && Object.keys(observations.media.classifier.providerModels).length === 0,
   },
   nativeCompaction: {
     status: nativeCompact.status,
     latencyMs: nativeCompact.latencyMs,
     publicModel: nativeCompact.value?.model || null,
-    classifierDecisionsBefore: beforeCompact.classifier.decisions,
-    classifierDecisionsAfter: afterCompact.classifier.decisions,
-    bypassedClassifier: beforeCompact.classifier.decisions === afterCompact.classifier.decisions,
+    attributed: observations.compact.attributed,
+    bypassedClassifier: observations.compact.attributed && observations.compact.classifier.decisions === 0 &&
+      observations.compact.routing.total === 0,
   },
   classifier: {
     providerVersions,
     templateObserved,
     probabilityMapObserved,
-    fallbacks: afterCompact.classifier.fallbacks,
+    fallbacks: Object.fromEntries(Object.entries(observations).map(([name, item]) => [name, item.classifier.fallbacks])),
     recent: recentClassifier,
   },
   privatePayloadsRetained: false,
@@ -317,7 +324,7 @@ if (first.value?.model !== "switchyard/auto" || second.value?.model !== "switchy
 }
 if (!evidence.ordinaryToolRoundTrip.affinityStable) evidence.requiredFailures.push("tool continuation affinity drifted");
 if (!firstSelected || !secondSelected) evidence.requiredFailures.push("selected answer identity was not recorded");
-if (!completed(nativeMedia) || nativeMedia.value?.model !== "gpt-5.6-sol" || responseText(nativeMedia).toLowerCase() !== "red") {
+if (!completed(nativeMedia) || nativeMedia.value?.model !== solTarget.model || responseText(nativeMedia).toLowerCase() !== "red") {
   evidence.requiredFailures.push("native Sol media control did not complete with the expected visual answer");
 }
 if (!completed(media) || media.value?.model !== "switchyard/auto" || responseText(media).toLowerCase() !== "red") {

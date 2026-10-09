@@ -12,6 +12,11 @@ of whether a route defines sampling or an implicit output default. Explicit
 reasoning efforts use the registry's advertised vocabulary. Provider-controlled
 Pareto reasoning is removed by its adapter before that validation.
 
+A present `reasoning` field takes precedence, including an object without an
+effort. Remove `reasoning_effort` in that case before translation and final send;
+[OpenRouter forbids conflicting effort values](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion).
+Scalar-only compatibility callers keep their validated `reasoning_effort`.
+
 ## Owners
 
 | Concern | Owner |

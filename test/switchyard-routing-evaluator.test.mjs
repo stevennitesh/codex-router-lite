@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   allGatesPass,
+  applyPolicy,
   assertCorpus,
   requestVector,
   routingDiagnostics,
@@ -27,7 +28,7 @@ function decisionBody(overrides = {}) {
       confidence: 0.7,
       probabilities: {
         luna_max: 0.1,
-        sol_medium: 0.1,
+        sol_high: 0.1,
         astra_medium: 0.1,
         astra_xhigh: 0.7,
       },
@@ -43,11 +44,11 @@ test("low-confidence fail-open is a measured vector and receives no retry", asyn
   const body = decisionBody({
     source: "fail_open",
     reason_code: "low_confidence",
-    final_target: "sol_medium",
+    final_target: "sol_high",
     confidence: 0.3,
     probabilities: {
       luna_max: 0.2,
-      sol_medium: 0.2,
+      sol_high: 0.2,
       astra_medium: 0.25,
       astra_xhigh: 0.35,
     },
@@ -64,7 +65,7 @@ test("low-confidence fail-open is a measured vector and receives no retry", asyn
   assert.equal(calls, 1);
   assert.equal(result.vector.measurementKind, "low_confidence");
   assert.equal(result.vector.rawSelected, "astra_xhigh");
-  assert.equal(result.vector.runtimeFinalTarget, "sol_medium");
+  assert.equal(result.vector.runtimeFinalTarget, "sol_high");
 });
 
 test("malformed vectors fail without consuming a retry", async () => {
@@ -73,7 +74,7 @@ test("malformed vectors fail without consuming a retry", async () => {
     requestVector("http://local", "cap", item, 1, {
       fetchImpl: async () => {
         calls += 1;
-        return new Response(JSON.stringify(decisionBody({ probabilities: { sol_medium: 1 } })), {
+        return new Response(JSON.stringify(decisionBody({ probabilities: { sol_high: 1 } })), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -150,14 +151,14 @@ test("paid vectors retain their fixed request contract", async () => {
 test("ordinary paid corpus validation does not require fidelity fixtures", () => {
   const caseBase = {
     input: "Synthetic request",
-    expected: "sol_medium",
-    acceptable: ["sol_medium"],
+    expected: "sol_high",
+    acceptable: ["sol_high"],
     severity: "normal",
   };
   const corpus = {
     schemaVersion: 1,
     privateData: false,
-    labels: ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"],
+    labels: ["luna_max", "sol_high", "astra_medium", "astra_xhigh"],
     development: [{ ...caseBase, id: "D01" }],
     holdout: [{ ...caseBase, id: "H01" }],
     gates: { maximumRetriesPerRequest: 1, minimumAcceptablePerSplit: 1 },
@@ -183,7 +184,7 @@ test("expected local fallback is admitted separately from provider vectors", () 
     decision_evidence: {
       source: "fail_open",
       reason_code: "non_text_state",
-      final_target: "sol_medium",
+      final_target: "sol_high",
     },
   }, 1);
   assert.equal(vector.measurementKind, "local_fallback");
@@ -193,11 +194,34 @@ test("expected local fallback is admitted separately from provider vectors", () 
       decision_evidence: {
         source: "fail_open",
         reason_code: "non_text_state",
-        final_target: "sol_medium",
+        final_target: "sol_high",
       },
     }, 1),
     /unexpected local fallback/u,
   );
+});
+
+test("expected zero-call fallbacks enforce Sol High independently of quality scores and retries", async () => {
+  for (const reason of ["non_text_state", "state_too_large"]) {
+    const fixture = reason === "non_text_state" ? {
+      id: "media", input: [{ type: "message", role: "user", content: [{ type: "input_image", image_url: "synthetic" }] }],
+    } : { ...item, expectedLocalFallbackReasons: [reason] };
+    for (const target of ["sol_high", "luna_max", "astra_medium", "astra_xhigh"]) {
+      let calls = 0;
+      const request = requestVector("http://local", "synthetic", fixture, 1, {
+        fetchImpl: async () => {
+          calls += 1;
+          return new Response(JSON.stringify({ decision_evidence: { source: "fail_open", reason_code: reason, final_target: target } }));
+        },
+      });
+      if (target === "sol_high") assert.equal((await request).vector.measurementKind, "local_fallback");
+      else await assert.rejects(request, /local fallback must use sol_high/u);
+      assert.equal(calls, 1);
+      const vector = { id: fixture.id, measurementKind: "local_fallback", runtimeFinalTarget: target };
+      assert.equal(applyPolicy(vector, 0.35), "sol_high");
+      assert.equal(runtimeParity([fixture], [vector], 0.35).passed, target === "sol_high");
+    }
+  }
 });
 
 test("runtime parity, provider stability, and promotion gates are behavioral", () => {
@@ -206,7 +230,7 @@ test("runtime parity, provider stability, and promotion gates are behavioral", (
     measurementKind: "low_confidence",
     rawSelected: "astra_xhigh",
     confidence: 0.3,
-    runtimeFinalTarget: "sol_medium",
+    runtimeFinalTarget: "sol_high",
     providerModel: "typesafe/jev-1.13-test",
   };
   assert.equal(runtimeParity([{ id: "B1" }], [vector], 0.35).passed, true);
@@ -228,8 +252,8 @@ test("routing diagnostics expose selective risk without treating confidence as c
   const items = [
     { id: "A", expected: "luna_max", acceptable: ["luna_max"], severity: "normal" },
     { id: "B", expected: "astra_xhigh", acceptable: ["astra_medium", "astra_xhigh"], severity: "severe" },
-    { id: "C", expected: "sol_medium", acceptable: ["sol_medium"], severity: "normal" },
-    { id: "D", expected: "astra_medium", acceptable: ["sol_medium", "astra_medium"], severity: "normal" },
+    { id: "C", expected: "sol_high", acceptable: ["sol_high"], severity: "normal" },
+    { id: "D", expected: "astra_medium", acceptable: ["sol_high", "astra_medium"], severity: "normal" },
   ];
   const vector = (id, rawSelected, confidence, probabilities) => ({
     id,
@@ -237,21 +261,21 @@ test("routing diagnostics expose selective risk without treating confidence as c
     rawSelected,
     confidence,
     probabilities,
-    runtimeFinalTarget: confidence < 0.35 ? "sol_medium" : rawSelected,
+    runtimeFinalTarget: confidence < 0.35 ? "sol_high" : rawSelected,
     providerModel: "typesafe/jev-1.13-test",
   });
   const vectors = [
     vector("A", "luna_max", 0.9, {
-      luna_max: 0.85, sol_medium: 0.05, astra_medium: 0.05, astra_xhigh: 0.05,
+      luna_max: 0.85, sol_high: 0.05, astra_medium: 0.05, astra_xhigh: 0.05,
     }),
-    vector("B", "sol_medium", 0.8, {
-      luna_max: 0.05, sol_medium: 0.7, astra_medium: 0.15, astra_xhigh: 0.1,
+    vector("B", "sol_high", 0.8, {
+      luna_max: 0.05, sol_high: 0.7, astra_medium: 0.15, astra_xhigh: 0.1,
     }),
     vector("C", "astra_xhigh", 0.7, {
-      luna_max: 0.05, sol_medium: 0.1, astra_medium: 0.15, astra_xhigh: 0.7,
+      luna_max: 0.05, sol_high: 0.1, astra_medium: 0.15, astra_xhigh: 0.7,
     }),
     vector("D", "astra_medium", 0.3, {
-      luna_max: 0.1, sol_medium: 0.15, astra_medium: 0.55, astra_xhigh: 0.2,
+      luna_max: 0.1, sol_high: 0.15, astra_medium: 0.55, astra_xhigh: 0.2,
     }),
   ];
 
@@ -265,8 +289,8 @@ test("routing diagnostics expose selective risk without treating confidence as c
   assert.equal(diagnostics.currentPolicy.fallbackCount, 1);
   assert.equal(diagnostics.currentPolicy.severeUnderRoutes, 1);
   assert.equal(diagnostics.currentPolicy.expensiveOverRoutes, 1);
-  assert.equal(diagnostics.rawConfusion.astra_xhigh.sol_medium, 1);
-  assert.equal(diagnostics.finalConfusion.astra_medium.sol_medium, 1);
+  assert.equal(diagnostics.rawConfusion.astra_xhigh.sol_high, 1);
+  assert.equal(diagnostics.finalConfusion.astra_medium.sol_high, 1);
   assert.equal(
     diagnostics.confidenceReliability.buckets.reduce((sum, bucket) => sum + bucket.count, 0),
     4,
@@ -312,7 +336,7 @@ test("C2 review evidence binds the repaired evaluator and every frozen gate", ()
     path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r0-failed-evidence.json"),
   );
   const canonicalTemplate = readFileSync(
-    path.join(root, "config", "switchyard", "routes.template.toml"),
+    path.join(root, "docs", "history", "2026-10-08-switchyard-sol-medium-proof", "routes.template.toml"),
     "utf8",
   ).replace(/\r\n?/gu, "\n");
   const canonicalConfigSourceHash = createHash("sha256").update(canonicalTemplate.replace(

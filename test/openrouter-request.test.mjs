@@ -130,7 +130,7 @@ test("registry rejects ambiguous identities before creating route maps", () => {
   for (const compatibilityModels of [
     undefined,
     [],
-    ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-sol"],
+    ["gpt-5.6-luna", "gpt-6.1-sol", "gpt-6.1-sol"],
     ["gpt-5.6-luna", "bad model"],
   ]) {
     const models = structuredClone(CHECKED_IN_MODELS);
@@ -146,7 +146,7 @@ test("Switchyard target declarations fail closed on model, effort, or identity d
   const declaration = readSwitchyardConfigContract();
   assert.doesNotThrow(() => validateSwitchyardConfigContract(declaration));
   for (const [field, value] of [
-    ["model", "gpt-5.6-sol"],
+    ["model", "gpt-6.1-sol"],
     ["routingId", "switchyard/astra-medium"],
     ["effort", "max"],
   ]) {

@@ -18,7 +18,9 @@ the observations for each accepted batch:
 - accepted: [`openrouter/deepseek-v4.1-flash-deepinfra`](openrouter/deepseek-v4.1-flash-deepinfra/proof.md)
 - retired historical acceptance: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md), which does not certify Together.
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
+- awaiting renewal: `switchyard/auto` now uses GPT-6.1 Sol High. Its unchanged
+  [previous acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
+  covers the retired Sol Medium policy; the candidate remains subagents v1.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
 The [credential-state release renewal](../docs/history/2026-10-08-credentials-state-certification.json)

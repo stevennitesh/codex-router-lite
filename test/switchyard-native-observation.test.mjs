@@ -89,7 +89,7 @@ test("explicit association rejects missing, conflicting, oversized, and malforme
 test("writer-produced observations retain the shared model, effort, tier and outcome vocabulary", () => {
   const {root,log,observer} = fixture();
   try {
-    const models = [["gpt-5.6-luna","luna"],["gpt-5.6-sol","sol"],["gpt-6-astra","astra"]];
+    const models = [["gpt-5.6-luna","luna"],["gpt-5.6-sol","sol"],["gpt-6.1-sol","sol"],["gpt-6-astra","astra"]];
     const efforts = ["low","medium","high","xhigh","max"];
     const tiers = ["default","priority","flex"];
     const outcomes = ["completed","incomplete","cancelled","http_error","stream_error",

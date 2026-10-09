@@ -2517,8 +2517,13 @@ async function handleResponses(request, response, requestUrl) {
         internalKey: INTERNAL_KEY,
       });
       const selectedNative = switchyard
-        ? { ...payload, model: compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel }
+        ? {
+            ...payload,
+            model: compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel,
+            ...(compactV1 || compactV2 ? { reasoning: { ...payload.reasoning, effort: route.defaultEffort } } : {}),
+          }
         : payload;
+      if (switchyard && (compactV1 || compactV2)) delete selectedNative.reasoning_effort;
       const prepared = prepareNativePayload(selectedNative, {
         substitutedCaller, compactV1, normalizeEffort: !switchyard,
       });

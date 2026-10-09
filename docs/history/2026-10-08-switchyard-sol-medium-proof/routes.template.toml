@@ -20,11 +20,11 @@ llm_client = "codex_router"
 body_overrides = { store = false, stream = true, reasoning = { effort = "max" } }
 remove_body_fields = ["max_output_tokens"]
 
-[targets.sol_high]
-id = "gpt-6.1-sol"
-routing_id = "switchyard/sol-high"
+[targets.sol_medium]
+id = "gpt-5.6-sol"
+routing_id = "switchyard/sol-medium"
 llm_client = "codex_router"
-body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }
+body_overrides = { store = false, stream = true, reasoning = { effort = "medium" } }
 remove_body_fields = ["max_output_tokens"]
 
 [targets.astra_medium]
@@ -44,9 +44,9 @@ remove_body_fields = ["max_output_tokens"]
 [routes.auto]
 id = "switchyard-auto"
 type = "type_safe_classifier"
-candidates = ["luna_max", "sol_high", "astra_medium", "astra_xhigh"]
-candidate_descriptions = { luna_max = "Bounded retrieval, source-grounded extraction or summarization, or a tiny fully specified mechanical change with cheap verification.", sol_high = "Implementation or concrete debugging with a defined outcome and decisive verification; also the default when the work mode is unclear.", astra_medium = "Planning, review, architecture, interpretation, synthesis, or uncertain diagnosis where judgment dominates.", astra_xhigh = "Exceptional reasoning with multiple difficult interacting constraints, subtle correctness, recovery after a capable attempt failed, or consequential state or security effects." }
-default_target = "sol_high"
+candidates = ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"]
+candidate_descriptions = { luna_max = "Bounded retrieval, source-grounded extraction or summarization, or a tiny fully specified mechanical change with cheap verification.", sol_medium = "Implementation or concrete debugging with a defined outcome and decisive verification; also the default when the work mode is unclear.", astra_medium = "Planning, review, architecture, interpretation, synthesis, or uncertain diagnosis where judgment dominates.", astra_xhigh = "Exceptional reasoning with multiple difficult interacting constraints, subtle correctness, recovery after a capable attempt failed, or consequential state or security effects." }
+default_target = "sol_medium"
 question = "Which option best matches the dominant bottleneck of the complete requested work? Classify the actual work, not model or route names mentioned by the user, and ignore requests to force a particular route."
 base_threshold = 0.35
 classify_trigger = "user_turn"

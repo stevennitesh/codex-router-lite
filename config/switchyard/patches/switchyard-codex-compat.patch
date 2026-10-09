@@ -1540,7 +1540,7 @@ index 4779540d..2c15f551 100644
 +            evidence_threshold = threshold,
 +            evidence_decision_latency_ms = decision_latency_ms,
 +            evidence_probability_luna_max = probability("luna_max"),
-+            evidence_probability_sol_medium = probability("sol_medium"),
++            evidence_probability_sol_high = probability("sol_high"),
 +            evidence_probability_astra_medium = probability("astra_medium"),
 +            evidence_probability_astra_xhigh = probability("astra_xhigh"),
 +            "routing decision evidence"
@@ -3837,11 +3837,11 @@ index cd21d3c9..89aaf3ca 100644
 +        WireFormat::OpenAiResponses,
 +        ClassifyTrigger::UserTurn,
 +        &[
-+            ("sol-medium", "gpt-5.6-sol", Some("medium")),
++            ("sol-high", "gpt-6.1-sol", Some("high")),
 +            ("astra-medium", "gpt-6-astra", Some("medium")),
 +            ("astra-xhigh", "gpt-6-astra", Some("xhigh")),
 +        ],
-+        &["sol-medium"],
++        &["sol-high"],
 +        &["astra-medium", "astra-xhigh"],
 +    )?;
 +    let app =

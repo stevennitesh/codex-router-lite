@@ -155,7 +155,7 @@ function mergedSwitchyard(nativeOverrides = {}) {
         max_context_window: 872000,
         ...nativeOverrides.luna,
       }),
-      switchyardNative("gpt-5.6-sol", {
+      switchyardNative("gpt-6.1-sol", {
         service_tiers: [
           { id: "priority", name: "Fast" },
           { id: "ultrafast", name: "Ultrafast" },
@@ -220,7 +220,7 @@ test("Switchyard omits unknown top-level fields and preserves nested donor metad
       future_scalar: "omit me",
       future_object: { unsafe: true },
       model_messages: {
-        ...switchyardNative("gpt-5.6-sol").model_messages,
+        ...switchyardNative("gpt-6.1-sol").model_messages,
         future_prompt_metadata: { retained: true },
       },
     },
@@ -304,16 +304,16 @@ test("Switchyard omits incompatible projections with their strict reason", () =>
   for (const [models, pattern] of [
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
     ], /missing compatibility model gpt-6-astra/u],
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
       switchyardNative("gpt-6-astra", { tool_mode: "different" }),
     ], /requires compatible tool_mode/u],
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
       switchyardNative("gpt-6-astra", { context_window: undefined }),
     ], /requires valid context_window/u],
   ]) {

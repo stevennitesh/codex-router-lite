@@ -7,7 +7,7 @@ import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 import { nativeAttemptLogPath } from "./switchyard-native-observation.mjs";
 import {
   OBSERVED_NATIVE_MODELS, OBSERVED_NATIVE_EFFORTS, OBSERVED_NATIVE_TIERS,
-  OBSERVED_NATIVE_OUTCOMES, OBSERVED_TARGETS, OBSERVED_CLASSIFIER_LABELS,
+  OBSERVED_NATIVE_OUTCOMES, OBSERVED_TARGETS, OBSERVED_CLASSIFIER_LABELS, OBSERVED_CLASSIFIER_LABEL_SETS,
 } from "./switchyard-observation-contract.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
@@ -139,7 +139,8 @@ export function summarizeSwitchyardTrace(contents) {
         ...(Number.isFinite(confidence) ? { confidence } : {}),
         ...(Number.isFinite(threshold) ? { threshold } : {}),
         ...(Number.isFinite(decisionLatencyMs) ? { decisionLatencyMs } : {}),
-        ...(evidenceSource === "type_safe_classifier" && Object.keys(probabilities).length === OBSERVED_CLASSIFIER_LABELS.length
+        ...(evidenceSource === "type_safe_classifier" && OBSERVED_CLASSIFIER_LABEL_SETS.some(labels =>
+          Object.keys(probabilities).length === labels.length && labels.every(label => Object.hasOwn(probabilities, label)))
           ? { probabilities }
           : {}),
       });

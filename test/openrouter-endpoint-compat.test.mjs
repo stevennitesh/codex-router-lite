@@ -88,7 +88,8 @@ test("Pareto enforces its 131072-token ceiling without inventing provider defaul
 
 test("ordinary reasoning requests reject unsupported efforts before either provider boundary", () => {
   for (const route of [streamlake, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-together"), ...deepseeks]) {
-    const shapes = effort => [{reasoning: {effort}}, {reasoning_effort: effort}, {reasoning_effort: {effort}}];
+    const shapes = effort => [{reasoning: {effort}}, {reasoning_effort: effort},
+      {reasoning_effort: {effort}}, {reasoning: {effort}, reasoning_effort: "low"}];
     for (const effort of ["medium", "xhigh", "ultra", "none", "", null, 42]) {
       for (const shape of shapes(effort)) {
         const input = {model: route.slug, input: "synthetic", ...shape};
@@ -106,13 +107,18 @@ test("ordinary reasoning requests reject unsupported efforts before either provi
       }
     }
     for (const reasoning of [{}, {summary: "auto"}, {effort: "low"}]) {
-      const input = {model: route.slug, input: "synthetic", reasoning, reasoning_effort: {effort: "medium"}};
-      const saved = structuredClone(input);
-      assert.deepEqual(prepareRoutedRequest(input, route).payload.reasoning, reasoning);
-      const final = prepareOpenRouterRequest(input);
-      assert.deepEqual(final.reasoning, reasoning);
-      assert.equal(final.reasoning_effort, undefined, "a translated alias cannot override a present primary object");
-      assert.deepEqual(input, saved);
+      for (const reasoning_effort of ["medium", "high", {effort: "medium"}]) {
+        const input = {model: route.slug, input: "synthetic", reasoning, reasoning_effort};
+        const saved = structuredClone(input);
+        for (const prepared of [prepareRoutedRequest(input, route).payload,
+          prepareRoutedRequest(input, route, {compaction: true}).payload,
+          prepareOpenRouterRequest(input)]) {
+          assert.deepEqual(prepared.reasoning, reasoning);
+          assert.equal(Object.hasOwn(prepared, "reasoning_effort"), false,
+            "a compatibility alias cannot override a present primary object at either boundary");
+        }
+        assert.deepEqual(input, saved);
+      }
     }
   }
 });

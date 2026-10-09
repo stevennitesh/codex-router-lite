@@ -8,7 +8,7 @@ import path from "node:path";
 import { resolveProviderCredential } from "../src/provider-credentials.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const labels = ["luna_max", "sol_medium", "astra_medium", "astra_xhigh"];
+const labels = ["luna_max", "sol_high", "astra_medium", "astra_xhigh"];
 const rank = new Map(labels.map((label, index) => [label, index]));
 const requestTimeoutMs = 8_000;
 
@@ -76,8 +76,8 @@ function materializedConfig(template, routerBase) {
 }
 
 export function applyPolicy(vector, threshold) {
-  if (vector.measurementKind === "local_fallback") return vector.runtimeFinalTarget;
-  return vector.confidence < threshold ? "sol_medium" : vector.rawSelected;
+  if (vector.measurementKind === "local_fallback") return "sol_high";
+  return vector.confidence < threshold ? "sol_high" : vector.rawSelected;
 }
 
 export function score(items, vectors, threshold) {
@@ -328,7 +328,7 @@ export function validateEvidence(item, response, body, fullBodyLatencyMs, thresh
     if (!expectedLocalFallback(item, reasonCode)) {
       throw new Error(`unexpected local fallback ${reasonCode}`);
     }
-    if (!labels.includes(evidence.final_target)) throw new Error("invalid local fallback target");
+    if (evidence.final_target !== "sol_high") throw new Error("local fallback must use sol_high");
     return {
       id: item.id,
       measurementKind: "local_fallback",
@@ -387,7 +387,7 @@ export function runtimeParity(items, vectors, threshold) {
   const mismatches = [];
   for (const item of items) {
     const vector = byId.get(item.id);
-    if (!vector || vector.measurementKind === "local_fallback") continue;
+    if (!vector) continue;
     const expectedTarget = applyPolicy(vector, threshold);
     if (vector.runtimeFinalTarget !== expectedTarget) {
       mismatches.push({ id: item.id, expectedTarget, runtimeTarget: vector.runtimeFinalTarget });
@@ -719,8 +719,8 @@ export async function main(argv = process.argv.slice(2)) {
   if (!template.includes(`base_threshold = ${corpus.policies.threshold}`)) {
     throw new Error("corpus threshold differs from the canonical route");
   }
-  if (!/^default_target = "sol_medium"$/mu.test(template)) {
-    throw new Error("canonical uncertainty fallback is not Sol Medium");
+  if (!/^default_target = "sol_high"$/mu.test(template)) {
+    throw new Error("canonical uncertainty fallback is not Sol High");
   }
   const credential = resolveProviderCredential("openrouter")?.value;
   if (!credential) throw new Error("protected OpenRouter credential is unavailable");

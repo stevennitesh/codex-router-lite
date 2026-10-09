@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { switchyardProofFixture } from "./switchyard-proof-fixture.mjs";
 import { certificationBatchPreflight } from "../maintenance/certification-preflight.mjs";
 import { certificationParentPrompt, certificationResultExitCode, certificationSessionDirectories, completeCertificationDraft, executeCertificationParent, executeCertificationPlan, observeCertificationStream, parseCertificationRunnerArguments, publishCertificationDraft, writeCertificationReview } from "../maintenance/certification-runner.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
@@ -13,7 +14,7 @@ const route = MODEL_BY_SLUG.get(slug);
 const at = second => new Date(Date.UTC(2026,9,7,12,0,second)).toISOString();
 function drafts(modelSlug = slug) {
   const selectedRoute = MODEL_BY_SLUG.get(modelSlug);
-  const proof = JSON.parse(readFileSync(path.join("v2_agent",modelSlug,"proof.json"),"utf8")); proof.status = "draft";
+  const proof = modelSlug === "switchyard/auto" ? switchyardProofFixture() : JSON.parse(readFileSync(path.join("v2_agent",modelSlug,"proof.json"),"utf8")); proof.status = "draft";
   const batch = certificationBatchPreflight([selectedRoute],{read:() => undefined});
   const report = {slug:modelSlug,role:batch.reports[0].role,effort:selectedRoute.defaultEffort,startedAt:at(5),endedAt:at(19),nativeParentSpawnObserved:true,sameChildRollout:true,encryptedHandoffCount:2,tool:{name:"exec_command",output:"42",success:true,defaultSandbox:true},finals:[{marker:"CERT_FIRST_OK"},{marker:"CERT_SECOND_OK"}],timings:[{status:200},{status:200},{status:200}],lifecycle:{completedTurns:2,completedCleanupCalls:2,activeTurnCancelled:false},draftProof:proof};
   const summary = {version:1,historical:true,status:"draft",routerCommit:proof.routerCommit,routerVersion:proof.routerVersion,codexVersion:proof.codexVersion,windowsAppVersion:proof.windowsAppVersion,executionSurface:proof.executionSurface,windowsSandbox:proof.windowsSandbox,sandboxPolicy:proof.sandboxPolicy,approvalPolicy:proof.approvalPolicy,reports:[report]};
@@ -197,7 +198,7 @@ test("Switchyard documentation survives a fresh runtime without inheriting its p
   const modelSlug = "switchyard/auto", root = mkdtempSync(path.join(os.tmpdir(),"certification-switchyard-sources-"));
   try {
     const application = path.join(root,"v2_agent",modelSlug); mkdirSync(application,{recursive:true});
-    copyFileSync(path.join("v2_agent",modelSlug,"proof.json"),path.join(application,"proof.json"));
+    writeFileSync(path.join(application,"proof.json"), JSON.stringify(switchyardProofFixture()));
     const draft = renewalDraft(modelSlug), before = structuredClone(draft);
     const directory = path.join(root,"review"); mkdirSync(directory);
     const saved = JSON.parse(readFileSync(writeCertificationReview(draft,directory,{sourceRoot:root}),"utf8"));
