@@ -4,7 +4,6 @@ For request, replay, tool or stream defects use [debugging](agents/debugging.md)
 This guide owns service and operator diagnosis. Start with read-only checks:
 
 ```powershell
-.\model-router.ps1 codex status
 .\model-router.ps1 codex doctor
 ```
 

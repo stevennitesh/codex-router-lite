@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
 import {
+  createPrivateFile,
   privateFileIsProtected,
   protectPrivateFile,
   writePrivateJson,
@@ -479,8 +480,31 @@ function preservedSkillPath(target) {
 }
 
 function restoreOrPreservePath(content, target) {
-  // Never restore over a path another process may have claimed. A fresh random
-  // sibling preserves both trees and leaves the conflict visible to the user.
+  // Node's rename can replace a competing file on Windows. Directory.Move uses
+  // the Windows no-replace move and rejects any existing destination. Recovery
+  // is rare; one bounded PowerShell call avoids another partial-copy lifecycle.
+  // Unsupported platforms retain the safe preservation fallback.
+  if (process.platform === "win32" && !lstat(target)) {
+    try {
+      execFileSync("powershell.exe", [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference = 'Stop'; [System.IO.Directory]::Move($env:CODEX_ROUTER_RECOVERY_SOURCE, $env:CODEX_ROUTER_RECOVERY_TARGET)",
+      ], {
+        windowsHide: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CODEX_ROUTER_RECOVERY_SOURCE: content,
+          CODEX_ROUTER_RECOVERY_TARGET: target,
+        },
+      });
+      return { restored: true };
+    } catch (error) {
+      if (!lstat(target)) throw error;
+    }
+  }
+  // Never restore over a path another process has claimed.
   const preserved = preservedSkillPath(target);
   renameSync(content, preserved);
   return { restored: false, preserved };
@@ -968,6 +992,36 @@ function sameDirContent(source, target) {
   return Boolean(sourceDigest) && sourceDigest === targetDigest;
 }
 
+function refreshManagedSkillMarker(codexHome, name, ownership, provenance) {
+  const target = path.join(codexSkillsDir(codexHome), name);
+  const marker = path.join(target, MARKER);
+  const targetBefore = lstat(target);
+  const markerBefore = lstat(marker);
+  const token = ownership.skills[name].token;
+  // Stage outside the skill directory so ACL setup cannot alter its contents
+  // or leave a partial marker visible. Ownership is checked again after setup.
+  const temporary = path.join(
+    codexSkillsDir(codexHome),
+    `.codex-router-metadata-${process.pid}-${randomBytes(8).toString("hex")}.tmp`,
+  );
+  createPrivateFile(temporary, markerContent(name, token, provenance));
+  try {
+    const current = readOwnership(codexHome);
+    if (
+      !current.valid || current.skills[name]?.token !== token ||
+      !sameFileIdentity(targetBefore, lstat(target)) ||
+      !sameFileIdentity(markerBefore, lstat(marker)) ||
+      !ownershipEvidenceAt(target, name, { token }).owned
+    ) {
+      throw new Error(`Skill "${name}" changed while refreshing metadata; contents preserved.`);
+    }
+    renameSync(temporary, marker);
+  } finally {
+    try { unlinkSync(temporary); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+}
+
 function installSkillsUnlocked(
   codexHome,
   {
@@ -982,7 +1036,7 @@ function installSkillsUnlocked(
     if (!quiet) {
       console.error("codex-router: no skills/ directory in this checkout; nothing to install.");
     }
-    return { installed: 0, skipped: 0, external: 0, unchanged: 0 };
+    return { installed: 0, skipped: 0, external: 0, unchanged: 0, refreshed: 0 };
   }
   const target = codexSkillsDir(codexHome);
   recoverAbandonedSkillRetirements(codexHome);
@@ -994,6 +1048,7 @@ function installSkillsUnlocked(
   let skipped = 0;
   let external = 0;
   let unchanged = 0;
+  let refreshed = 0;
   let stateChanged = !ownership.valid;
   for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || !validSkillName(entry.name)) continue;
@@ -1035,9 +1090,12 @@ function installSkillsUnlocked(
     }
     if (evidence.owned && sameDirContent(source, dest)) {
       const marker = parseMarker(dest);
-      if (marker?.name === entry.name && marker.token === ownership.skills[entry.name].token &&
-          marker.source.packageVersion === provenance.packageVersion &&
-          marker.source.commit === provenance.commit) {
+      if (marker?.name === entry.name && marker.token === ownership.skills[entry.name].token) {
+        if (marker.source.packageVersion !== provenance.packageVersion ||
+            marker.source.commit !== provenance.commit) {
+          refreshManagedSkillMarker(codexHome, entry.name, ownership, provenance);
+          refreshed += 1;
+        }
         unchanged += 1;
         continue;
       }
@@ -1174,7 +1232,7 @@ function installSkillsUnlocked(
   if (stateChanged) {
     writeOwnership(ownership.path, ownership.skills, ownership.external);
   }
-  return { installed, skipped, external, unchanged };
+  return { installed, skipped, external, unchanged, refreshed };
 }
 
 function uninstallSkillsUnlocked(
@@ -1277,11 +1335,11 @@ if (invokedDirectly) {
   } else {
     try {
       if (command === "install") {
-        const { installed, skipped, external, unchanged } = installSkills(codexHome());
+        const { installed, skipped, external, unchanged, refreshed } = installSkills(codexHome());
         console.error(
           `codex-router: installed ${installed} skill(s) into ${codexSkillsDir(codexHome())}${
             external ? `, using ${external} approved external skill(s)` : ""
-          }${skipped ? `, skipped ${skipped} (existing content preserved)` : ""}${unchanged ? `, unchanged ${unchanged}` : ""}.`,
+          }${skipped ? `, skipped ${skipped} (existing content preserved)` : ""}${unchanged ? `, unchanged ${unchanged}` : ""}${refreshed ? `, refreshed metadata for ${refreshed}` : ""}.`,
         );
       } else if (command === "uninstall") {
         uninstallSkills(codexHome());

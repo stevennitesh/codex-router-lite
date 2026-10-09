@@ -131,7 +131,7 @@ logs from an older installed generation. They do not describe the current Jev
 policy; use the [history index](../../docs/history/README.md) if that generation
 must be investigated.
 
-For a bounded certification packet that combines Router timings with the
+For a diagnostic packet that combines Router timings with the
 current generation's routing decisions, without emitting session, agent, or
 correlation identifiers, run:
 
@@ -139,8 +139,10 @@ correlation identifiers, run:
 .\model-router.ps1 codex switchyard-certification-evidence --limit 20
 ```
 
-Treat only successful entries from one clean window as proof. Cancellations and
-older generations remain diagnostics, not certification evidence.
+This is a whole-generation summary, not an attributed native-child proof. Use the
+[certification runner or manual extractor](../../docs/SUBAGENT-CERTIFICATION.md)
+for fresh proof; both select the actual child's observations. Do not collect
+this packet again after the runner has already extracted the needed evidence.
 
 Provider selection changes the supervised child set and therefore requires one
 guarded Router restart:

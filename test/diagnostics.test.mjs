@@ -84,10 +84,15 @@ $global:LASTEXITCODE=0
 if ($Rest[0] -eq '--version') { 'fixture-1.0' } elseif ($env:DIAGNOSTICS_PLUGIN -eq 'missing') { '{"installed":[]}' } else { '{"installed":[{"pluginId":"codex-app-tools@openai-bundled","version":"fixture-1.0"}]}' }
 `);
     const wrapper = path.join(f.directory, "refresh-fixture.ps1");
-    writeFileSync(wrapper, `param([switch]$SkipTests)
+    writeFileSync(wrapper, `param([switch]$SkipTests,[switch]$FullTests,[switch]$Online)
 $global:npmCalls=0
+$global:networkCalls=0
+$global:catalogCalls=0
+$global:doctorCalls=0
+$global:scopedCalls=0
 function git {
  $global:LASTEXITCODE=0
+ if ($args -contains 'fetch' -or $args -contains 'ls-remote' -or $args -contains 'clone') { $global:networkCalls++ }
  if ($args -contains 'ls-remote') { $lock=Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'config/switchyard/source.lock') | ConvertFrom-Json; "$($lock.commit)\tHEAD" }
  elseif ($args -contains 'rev-parse') { 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }
  elseif ($args -contains 'rev-list') { if ($args -contains '--left-right') { '0 0' } else { '0' } }
@@ -96,30 +101,46 @@ function git {
 function node {
  $global:LASTEXITCODE=0
  if ($args -contains '--input-type=module') { Join-Path $PSScriptRoot 'fixture-codex.ps1' }
- elseif ($args -contains 'src/doctor.mjs') { $env:DIAGNOSTICS_CHECKS }
+ elseif ($args -contains 'src/doctor.mjs') { $global:doctorCalls++; $env:DIAGNOSTICS_CHECKS }
+ elseif ($args -contains 'scripts/check-codex-catalog-compat.mjs') { $global:catalogCalls++ }
+ elseif ($args -contains '--test') { $global:scopedCalls++; if ($env:DIAGNOSTICS_FAIL_SCOPED -eq '1') { $global:LASTEXITCODE=8 } }
 }
 function npm { $global:npmCalls++; $global:LASTEXITCODE=if($env:DIAGNOSTICS_FAIL_TESTS -eq '1'){7}else{0} }
 function Get-AuthenticodeSignature { [pscustomobject]@{Status='Valid';SignerCertificate=[pscustomobject]@{Subject='CN=OpenAI'}} }
 function Get-AppxPackage { [pscustomobject]@{Version='fixture-1.0';PackageFullName='fixture-package'} }
-try { & (Join-Path $PSScriptRoot 'maintenance/refresh-compatibility-state.ps1') -SkipFetch -SkipTests:$SkipTests }
+try { & (Join-Path $PSScriptRoot 'maintenance/refresh-compatibility-state.ps1') -AnalyzeUpstream -SkipFetch:(-not $Online) -SkipTests:$SkipTests -FullTests:$FullTests }
 catch { Write-Output $_.Exception.Message; Write-Output "FIXTURE_NPM_CALLS=$global:npmCalls"; exit 1 }
 Write-Output "FIXTURE_NPM_CALLS=$global:npmCalls"
+Write-Output "FIXTURE_NETWORK_CALLS=$global:networkCalls"
+Write-Output "FIXTURE_CATALOG_CALLS=$global:catalogCalls"
+Write-Output "FIXTURE_DOCTOR_CALLS=$global:doctorCalls"
+Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
 `);
-    for (const mode of ["full", "skip", "skip-missing-plugin", "wrong-service", "failed-tests"]) {
+    for (const mode of ["scoped", "full", "online", "skip", "skip-missing-plugin", "wrong-service", "failed-tests", "failed-scoped"]) {
       // Feed ordinary Doctor's actual produced JSON through the refresh aggregation.
       const doctor = f.runDoctor({ service: mode === "wrong-service" ? "foreign" : "codex-router", degraded: [] });
       assert.equal(doctor.status, 0, doctor.stderr);
-      const skip = mode.startsWith("skip"), result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, ...(skip ? ["-SkipTests"] : [])], {
+      const skip = mode.startsWith("skip"), result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, ...(skip ? ["-SkipTests"] : []), ...(mode === "full" ? ["-FullTests"] : []), ...(mode === "online" ? ["-Online"] : [])], {
         encoding: "utf8", windowsHide: true, timeout: 15_000,
-        env: { ...process.env, DIAGNOSTICS_CHECKS: doctor.stdout, DIAGNOSTICS_PLUGIN: mode === "skip-missing-plugin" ? "missing" : "present", DIAGNOSTICS_FAIL_TESTS: mode === "failed-tests" ? "1" : "0" },
+        env: { ...process.env, DIAGNOSTICS_CHECKS: doctor.stdout, DIAGNOSTICS_PLUGIN: mode === "skip-missing-plugin" ? "missing" : "present", DIAGNOSTICS_FAIL_TESTS: mode === "failed-tests" ? "1" : "0", DIAGNOSTICS_FAIL_SCOPED: mode === "failed-scoped" ? "1" : "0" },
       });
-      assert.equal(result.status, mode === "failed-tests" ? 1 : 0, result.stderr + result.stdout);
-      assert.match(result.stdout, new RegExp(`FIXTURE_NPM_CALLS=${skip ? 0 : mode === "failed-tests" ? 1 : 2}`, "u"));
-      if (mode === "full") assert.match(result.stdout, /Current repository, runtime, catalog, and app-tool relay checks passed/u);
-      else assert.doesNotMatch(result.stdout, /Current repository, runtime, catalog, and app-tool relay checks passed|Source checks passed/u);
-      if (skip) assert.match(result.stdout, /retained product checks were skipped/u);
-      if (mode === "wrong-service" || mode === "skip-missing-plugin") assert.match(result.stdout, /warnings above still require confirmation/iu);
+      const failed = mode.startsWith("failed-");
+      assert.equal(result.status, failed ? 1 : 0, result.stderr + result.stdout);
+      assert.match(result.stdout, new RegExp(`FIXTURE_NPM_CALLS=${skip ? 0 : mode === "full" ? 2 : 1}`, "u"));
+      assert.doesNotMatch(result.stdout, /Current repository, runtime, catalog, and app-tool relay checks passed/u);
+      if (!failed) {
+        assert.match(result.stdout, new RegExp(`FIXTURE_NETWORK_CALLS=${mode === "online" ? 2 : 0}`, "u"));
+        assert.match(result.stdout, /FIXTURE_CATALOG_CALLS=1/u);
+        assert.match(result.stdout, /FIXTURE_DOCTOR_CALLS=1/u);
+        assert.match(result.stdout, new RegExp(`FIXTURE_SCOPED_CALLS=${skip || mode === "full" ? 0 : 1}`, "u"));
+        if (mode !== "online") assert.match(result.stdout, /current head is unknown/u);
+      }
+      if (mode === "full") assert.match(result.stdout, /Full source suite: passed/u);
+      if (mode === "scoped" || mode === "online") assert.match(result.stdout, /Catalog and namespace compatibility tests: passed/u);
+      if (skip) assert.match(result.stdout, /source verification was skipped/u);
+      if (mode === "wrong-service" || mode === "skip-missing-plugin") assert.match(result.stdout, /warnings above still require investigation/iu);
       if (mode === "failed-tests") assert.match(result.stdout, /npm exited with status 7/u);
+      if (mode === "failed-scoped") assert.match(result.stdout, /node exited with status 8/u);
     }
   } finally { f.dispose(); }
 });

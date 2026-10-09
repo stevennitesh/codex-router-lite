@@ -218,9 +218,13 @@ under [historical evidence](../../docs/history/2026-10-08-switchyard-sol-medium-
 it does not certify this configuration.
 
 The four-target policy advertises multi-agent v2 only with an accepted
-runtime-bound application under `v2_agent/switchyard/auto`. A source change keeps
-the route at v1 until the changed source is deployed and recertified. A proof
-binds the deployed Router commit, upstream source, ordered patches, binary,
+runtime-bound application under `v2_agent/switchyard/auto`. A change to the
+certified Switchyard behavior requires a fresh exact-route proof; unrelated
+source updates and new Router commits retain the accepted result. Follow the
+[proof refresh rules](../../docs/SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
+Keep a changed implementation or policy at v1 until deployment and acceptance
+through the authorized proof window.
+A proof records the tested Router commit, upstream source, ordered patches, binary,
 generated routes, exact deployed-template bytes, and the line-ending-independent
 canonical template source.
 

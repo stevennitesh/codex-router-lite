@@ -4,11 +4,104 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { certificationBatchPreflight, certificationPreflight, certificationRoutes } from "../maintenance/certification-preflight.mjs";
+import { certificationBatchPreflight, certificationPreflight, certificationRoutes, switchyardRenewalAssessment, switchyardRenewalScope } from "../maintenance/certification-preflight.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { CHECKED_IN_MODELS, MODEL_BY_SLUG } from "../src/routed-models.mjs";
 const checkedInRoute = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
 const route = { ...checkedInRoute, multiAgentVersion: "v2" };
+
+test("Switchyard renewal distinguishes unrelated work, changed policy, and shared-code review", () => {
+  assert.equal(switchyardRenewalScope([]).decision,"retain");
+  assert.equal(switchyardRenewalScope([
+    "docs/INSTALL.md","test/certification-runner.test.mjs",".github/workflows/ci.yml",
+    "v2_agent/switchyard/auto/proof.json","config/openrouter/pareto.json","config\\switchyard\\maintenance.md",
+  ]).decision,"retain");
+  for(const file of ["config/switchyard/source.lock","config/switchyard/routes.template.toml",
+    "config/switchyard/auto.json","config/switchyard/switchyard.json","config/switchyard/patches/compat.patch"]) {
+    assert.equal(switchyardRenewalScope([file]).decision,"renew",file);
+  }
+  for(const file of ["src/namespace-relay.mjs","src/catalog.mjs","maintenance/certification-runner.mjs",
+    "package-lock.json","package.json","unknown.file","README.md-extra"]) {
+    const result = switchyardRenewalScope([file]);
+    assert.equal(result.decision,"review",file);
+    assert.deepEqual(result.changes.review,[file]);
+  }
+  assert.equal(switchyardRenewalScope([],{comparisonAvailable:false}).decision,"review");
+});
+
+test("ordinary renewal assessment compares the tested commit and preserves staged, working and rename scope", t => {
+  const root = mkdtempSync(path.join(os.tmpdir(),"switchyard-renewal-"));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const git = (...args) => execFileSync("git",["-C",root,...args],{encoding:"utf8",windowsHide:true,stdio:["ignore","pipe","pipe"]}).trim();
+  const put = (file,contents) => { const target=path.join(root,file);mkdirSync(path.dirname(target),{recursive:true});writeFileSync(target,contents); };
+  git("init","-q");git("config","user.name","Fixture");git("config","user.email","fixture@example.test");
+  put("README.md","Fixture\n");put("src/shared.mjs","export const value = 1;\n");
+  put("config/switchyard/routes.template.toml","[routes.auto]\n");
+  git("add",".");git("commit","-qm","tested");
+  const testedCommit = git("rev-parse","HEAD");
+  const proof = {status:"accepted",slug:"switchyard/auto",routerCommit:testedCommit,runtimeBinding:{routerCommit:testedCommit}};
+  put("v2_agent/switchyard/auto/proof.json",JSON.stringify(proof));
+  git("add",".");git("commit","-qm","publish evidence");
+  const assessment = () => switchyardRenewalAssessment({repoRoot:root});
+  const retained = assessment();
+  assert.equal(retained.decision,"retain");assert.equal(retained.testedCommit,testedCommit);
+  assert.notEqual(retained.candidateCommit,testedCommit);
+  put("docs/notes.md","Unrelated docs\n");assert.equal(assessment().decision,"retain");
+  put("src/shared.mjs","export const value = 2;\n");git("add","src/shared.mjs");
+  // Index content still changed, even when the working bytes return to the
+  // tested version. A commit of that index must not evade the review scope.
+  put("src/shared.mjs","export const value = 1;\n");
+  assert.equal(assessment().decision,"review");
+  assert.ok(assessment().changes.review.includes("src/shared.mjs"));
+  git("add","src/shared.mjs");assert.equal(assessment().decision,"retain");
+  put("src/new.mjs","export const untracked = true;\n");
+  assert.ok(assessment().changes.review.includes("src/new.mjs"));
+  rmSync(path.join(root,"src/new.mjs"));
+  git("mv","src/shared.mjs","docs/moved.md");
+  assert.equal(assessment().decision,"review");
+  assert.ok(assessment().changes.review.includes("src/shared.mjs"));
+  git("mv","docs/moved.md","src/shared.mjs");
+  put("config/switchyard/routes.template.toml","[routes.changed]\n");
+  assert.equal(assessment().decision,"renew");
+  assert.equal(readFileSync(path.join(root,"v2_agent/switchyard/auto/proof.json"),"utf8"),JSON.stringify(proof));
+});
+
+test("unavailable, divergent or invalid proof identity requests review without substituting HEAD", t => {
+  const root = mkdtempSync(path.join(os.tmpdir(),"switchyard-renewal-history-"));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const git = (...args) => execFileSync("git",["-C",root,...args],{encoding:"utf8",windowsHide:true,stdio:["ignore","pipe","pipe"]}).trim();
+  git("init","-q");git("config","user.name","Fixture");git("config","user.email","fixture@example.test");
+  writeFileSync(path.join(root,"README.md"),"Fixture\n");git("add",".");git("commit","-qm","base");
+  const baseline = git("rev-parse","HEAD");
+  const proofDir = path.join(root,"v2_agent/switchyard/auto");mkdirSync(proofDir,{recursive:true});
+  const assess = (routerCommit,binding=routerCommit,status="accepted") => {
+    writeFileSync(path.join(proofDir,"proof.json"),JSON.stringify({status,slug:"switchyard/auto",routerCommit,runtimeBinding:{routerCommit:binding}}));
+    return switchyardRenewalAssessment({repoRoot:root});
+  };
+  for(const commit of [undefined,"", "a".repeat(40),[baseline]]) assert.equal(assess(commit).decision,"review");
+  assert.equal(assess(baseline,42).decision,"review");
+  assert.equal(assess(baseline,baseline,"draft").decision,"review");
+  writeFileSync(path.join(root,"README.md"),"Other branch\n");git("add","README.md");git("commit","-qm","other");
+  const divergent = git("rev-parse","HEAD");git("checkout","-q",baseline);
+  assert.equal(assess(divergent).decision,"review");
+});
+
+test("renewal CLI emits a source assessment without needing or altering installed state", () => {
+  const root = path.resolve(import.meta.dirname,"..");
+  const proofPath = path.join(root,"v2_agent/switchyard/auto/proof.json");
+  const before = readFileSync(proofPath,"utf8");
+  const result = spawnSync(process.execPath,["maintenance/certification-preflight.mjs","--renewal","switchyard/auto"],{
+    cwd:root,encoding:"utf8",windowsHide:true,
+    env:{...process.env,MODEL_ROUTER_STATE_DIR:path.join(root,"generated/nonexistent-renewal-state")},
+  });
+  assert.equal(result.status,0,result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.slug,"switchyard/auto");
+  assert.ok(["retain","review","renew"].includes(report.decision));
+  assert.match(report.testedCommit,/^[a-f0-9]{40}$/iu);
+  assert.ok(report.limits.length>0);
+  assert.equal(readFileSync(proofPath,"utf8"),before);
+});
 test("certification preflight distinguishes source claims from native role readiness", () => {
   const state = {catalogEntry:{visibility:"list",multi_agent_version:"v2"},roleContents:routedAgentDefinition(route).contents,deployedCommit:"a".repeat(40)};
   assert.equal(certificationPreflight(route,state).readyForFreshParent,true);

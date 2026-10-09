@@ -157,8 +157,11 @@ to known Markdown documents and historical or route proof records,
 `scripts/verification-scope.mjs` selects `npm run verify:evidence`: source checks
 plus the tests consuming those records, on both Node versions. Manual runs,
 unknown paths, dirty checkouts and unavailable event bases use full verification.
-The shallow checkout may lack the base of a multi-commit push; that also uses the
-full suite. Node and Python dependency audits remain unconditional.
+CI's `--fetch-base` option makes one bounded fetch (`--deepen=64`) when shallow
+history lacks event ancestry. It still requires the actual event base to
+be an ancestor and checks the complete diff. Failed fetches, deeper missing
+history and unrelated bases retain full verification. Ordinary scope inspection
+does not fetch. Node and Python dependency audits remain unconditional.
 
 `npm run check` syntax-checks root, source, test, script, and maintenance modules
 with four bounded workers, then verifies the Python lock, independent product

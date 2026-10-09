@@ -196,15 +196,14 @@ to report bugs or propose a model, endpoint, or behavior change. You can fork
 the repository for your own changes.
 
 Install JavaScript dependencies with `npm ci` for a fresh checkout or a changed
-lockfile. For code changes, run the local verification:
+lockfile. Select checks using the [verification guide](docs/agents/architecture.md#verification).
+For a full source check:
 
 ```powershell
 npm run verify
 ```
 
-Use the [verification guide](docs/agents/architecture.md#verification) for checks
-specific to documentation, catalog, and shared behavior changes. Before release,
-run `npm run audit:ci` and audit the hashed Python production lock with the
+Before release, run `npm run audit:ci` and audit the hashed Python production lock with the
 command in the [GLM dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
 
 To install edited source, follow the [deployment guide](docs/INSTALL.md#update).

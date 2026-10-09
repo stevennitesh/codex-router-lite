@@ -10,9 +10,10 @@ promote a v1 route or replace a checked-in application.
 Source publication requires both an exact route with `multiAgentVersion: "v2"`
 and its matching accepted application. See the [application index](../v2_agent/README.md)
 for current exact-route acceptance. Retired Union Alpha evidence cannot certify
-Pareto. Switchyard acceptance additionally binds its deployed source, patch,
-binary, generated routes and Router commit. A prior installed identity does not
-certify changed source.
+Pareto. Switchyard evidence additionally records its tested deployed source,
+patch, binary, generated routes and Router commit. Retain that observed identity;
+reuse after later deployments depends on whether the certified behavior changed,
+not whether the repository has a new commit.
 
 Generated routed-agent definitions pin each route's checked-in default effort.
 Do not inherit an unsupported parent effort into a routed child: Codex rejects
@@ -48,7 +49,7 @@ are diagnostics; they do not create or revoke certification.
 
 ### Maintained CLI runner
 
-For published roles that pass preflight, use one fresh run directory and name
+For published roles, use one fresh run directory and name
 only the affected exact routes. Run from the normal Windows user context:
 
 ```powershell
@@ -57,8 +58,9 @@ node maintenance/certification-runner.mjs run --output generated/certification-N
 
 `--allow-live` records operator authorization for quota-consuming synthetic
 requests. Choose `mxc` or `elevated` explicitly; the runner keeps workspace-write
-and on-request approval, and does not edit persistent Codex settings. Preflight
-must already pass; new v1 candidates still need the temporary proof window below.
+and on-request approval, and does not edit persistent Codex settings. The runner
+performs preflight itself; use the standalone command to diagnose blockers.
+New v1 candidates still need the temporary proof window below.
 Use `--all` only when the affected contract reaches every route. Add
 `--switchyard-smoke` when the Switchyard change needs its additional tool,
 image fallback and compaction checks; include `switchyard/auto` in that scope.
@@ -117,7 +119,11 @@ Completed-request traces carry a session ID without an agent ID. The extractor
 includes them only through that observed, unshared session; an explicit foreign
 agent or thread cannot acquire attribution through the session.
 
-Start with one read-only readiness check for the exact route, a subset, or all
+### Manual desktop or v1 candidate path
+
+Use this path for a new v1 candidate, a desktop proof, or diagnosis outside the
+maintained runner. Start with one read-only readiness check for the exact route,
+a subset, or all
 registered routes:
 
 ```powershell
@@ -187,7 +193,7 @@ application draft until all five checks pass; accept the proof and registry
 claim together, then require `npm run check` to return green. If the native run
 does not complete, restore the route to v1 rather than committing a red gate.
 
-### Collecting evidence
+### Collecting manual evidence
 
 Preflight emits a `runManifestTemplate` alongside each draft. Save the template
 under ignored `generated/` storage and fill it from the actual run: the parent
@@ -241,14 +247,37 @@ Select routes by the changed contract:
 | --- | --- |
 | One endpoint, provider binding, effort or route-specific profile | That exact route and any other callers of the changed profile |
 | Shared namespace, encrypted handoff, continuation or compatibility transform | Every route using the changed behavior |
-| Switchyard binary, patch, routes, targets or bound runtime identity | Switchyard; other routes only if their shared behavior changed |
+| Switchyard binary, patch, classifier, effective route policy or targets | Switchyard; other routes only if their shared behavior changed |
 | Documentation, test or proof formatting | No new model run |
+| Deployment, restart, commit, installation/diagnostic/verification maintenance with unchanged serving behavior | No new model run; ordinary source checks and deployment acceptance still apply |
 
-Deployment alone is not a reason to buy all route proofs. Switchyard retains its
-strict deployed Router-commit binding; changing that identity still renews its
-proof. Keep unaffected accepted records, and use the refresh conditions below
-rather than an automatic `--all` run. One native sequence can provide the tool,
-handoff and both marker observations; do not repeat equivalent live probes.
+Deployment or a new Router commit alone does not require any route proof,
+including Switchyard. A proof's commits and hashes record what was actually
+tested. Keep them unchanged when reusing its result; never relabel an old run
+with a newer commit. Each fresh run still requires its streaming, native child,
+installed manifest and Switchyard provenance to identify the same deployed
+generation. Deployment's process, manifest, health and file-hash checks remain.
+
+Before deciding to renew Switchyard, inspect changes since its accepted proof:
+
+```powershell
+node maintenance/certification-preflight.mjs --renewal switchyard/auto
+```
+
+This read-only assessment includes committed, staged, unstaged and untracked
+source changes. `retain` identifies unrelated paths; `renew` identifies pinned
+Switchyard implementation or policy changes; `review` asks for a diff review of
+shared/unknown code or unavailable history. A shared file edit can affect only
+an external route, so file names alone do not require Switchyard model calls.
+Also check changes outside Git: the installed binary, effective routing policy,
+and Codex execution/tool contract. An app or CLI version change alone calls for
+compatibility inspection; renew when it changes the certified contract or a
+regression invalidates the previous evidence. There is no time-based expiry.
+
+Keep unaffected accepted records. One fresh native sequence supplies the tool,
+handoff and both marker observations. Add Switchyard smoke only for changes to
+classifier routing, affinity, media fallback or compaction behavior; skip it for
+unrelated maintenance. Never use an automatic `--all` run after deployment.
 
 Refresh the exact route after any change to:
 
@@ -266,12 +295,11 @@ Certification can consume provider or ChatGPT quota. Never run it without explic
 
 After acceptance, follow the [common source verification scope](agents/architecture.md#verification).
 Reuse unchanged test and catalog results; the application changes still require
-`npm run check`. For Switchyard, also bind the proof to the locked commit,
-patch hash, binary hash, generated route hash, and Router commit.
+`npm run check`. For a fresh Switchyard run, also record the tested locked commit,
+patch hash, binary hash, generated route hash, and Router commit. Reusing an
+unchanged contract does not create another proof record or evidence-only commit.
 
-For Switchyard evidence, run
-`.\model-router.ps1 codex switchyard-certification-evidence --limit 20`. The
-command understands the routing log's `ts`, `session_id`, `model`, and token
-fields, but emits no raw session, agent, or correlation identifiers. Select one
-bounded passing window and record its successful Router timings; earlier
-canceled attempts are not evidence for that window.
+The maintained runner already extracts Switchyard's attributed child evidence.
+Its optional `--switchyard-smoke` also runs the separate tool, media and compaction
+checks once. Do not repeat either operation with standalone commands afterward.
+For whole-generation diagnostics, use [runtime operations](../config/switchyard/runtime.md).

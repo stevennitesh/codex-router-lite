@@ -579,12 +579,12 @@ function identityName(model) {
 function rewriteIdentity(text, model) {
   if (typeof text !== "string" || !text) return text;
   const name = identityName(model);
-  return text
-    .replace(
-      /\b(?:a coding agent|an agent) based on GPT-5(?:\.\d+)?(?:[-\s](?:Sol|Terra|Luna))?\b/gi,
-      `a coding agent based on ${name}`,
-    )
-    .replace(/\bbased on GPT-5(?:\.\d+)?(?:[-\s](?:Sol|Terra|Luna))?\b/gi, `based on ${name}`);
+  // Only the opening model identity belongs to this transform. Later GPT
+  // references remain native behavioral context, regardless of generation.
+  return text.replace(
+    /^(\s*You are Codex,\s*(?:(?:a coding agent|an agent)\s+)?based on )GPT-\d+(?:\.\d+)*(?:[-\s](?:Sol|Terra|Luna|Astra))?\b/iu,
+    (_match, prefix) => `${prefix}${name}`,
+  );
 }
 
 function rewriteModelMessages(messages, model) {

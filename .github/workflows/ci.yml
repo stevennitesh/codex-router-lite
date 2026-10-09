@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - name: Select verification from the actual changed inputs
         id: scope
-        run: node scripts/verification-scope.mjs
+        run: node scripts/verification-scope.mjs --fetch-base
       - name: Validate the retained Windows runtime
         if: steps.scope.outputs.scope != 'evidence'
         run: npm run verify

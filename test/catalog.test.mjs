@@ -364,6 +364,33 @@ test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract",
   assert.equal(model.supports_search_tool, true);
 });
 
+test("external donor identity follows GPT generations without changing native instructions or later GPT references", () => {
+  const route = MODEL_BY_SLUG.get("openrouter/pareto");
+  const context = " Advice based on GPT-5.6-Sol remains relevant. Compare GPT-6 with GPT-5.6.\nYou are Codex, an agent based on GPT-6 is an example phrase.";
+  for (const generation of ["5", "5.6-Sol", "6", "6.1-Sol", "6 Astra"]) {
+    for (const role of ["a coding agent ", "an agent ", ""]) {
+      const prompt = `You are Codex, ${role}based on GPT-${generation}.${context}`;
+      const native = {...template,slug:route.behaviorTemplate,base_instructions:prompt,
+        model_messages:{...template.model_messages,instructions_template:prompt}};
+      const before = structuredClone(native);
+      const merged = buildMergedCatalog({models:[native]},[route]);
+      const external = merged.find(model=>model.slug===route.slug);
+      const expected = `You are Codex, ${role}based on Pareto (OpenRouter).${context}`;
+      for(const actual of [external.base_instructions,external.model_messages.instructions_template]) {
+        assert.ok(actual.startsWith(expected),actual);
+      }
+      assert.deepEqual(native,before);
+      assert.deepEqual(merged.find(model=>model.slug===native.slug).base_instructions,prompt);
+      assert.deepEqual(merged.find(model=>model.slug===native.slug).model_messages.instructions_template,prompt);
+    }
+  }
+  const unrelated = "Instructions based on GPT-6 should be preserved.";
+  const model = routedModel({...template,base_instructions:unrelated,
+    model_messages:{instructions_template:unrelated}},route);
+  assert.ok(model.base_instructions.startsWith(unrelated));
+  assert.ok(model.model_messages.instructions_template.startsWith(unrelated));
+});
+
 test("routed models are native v2 spawn-agent model overrides", () => {
   const model = routedModel(template, routeFixture);
   assert.equal(model.visibility, "list");

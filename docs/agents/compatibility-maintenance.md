@@ -9,51 +9,43 @@ when the selected change requires them.
 
 ## Refresh current authority
 
-From the repository root, run the diagnostic refresh first (it fetches Git refs
-and writes disposable analysis evidence, but does not mutate the live runtime):
+From the repository root, refresh diagnostics and inspect changed upstream heads
+in one invocation:
 
 ```powershell
-.\maintenance\refresh-compatibility-state.ps1
+.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream
 ```
 
 It fetches repository heads, resolves and signature-checks the current Windows
 Codex build, records the bundled app-tools plugin identity when available,
-checks the current native catalog, reads Router health, runs the retained suite,
-and reports Switchyard upstream drift. It does not edit product source, consume provider
-quota, or restart the service. Use `-SkipFetch` when offline or when an immediate
-detail pass should inspect the same heads fetched by the complete refresh. Use
-`-SkipTests` for a quick diagnostic or an upstream-detail pass whose unchanged
-source tests are already covered by a complete refresh. A skipped suite alone
-does not support a compatibility claim.
+checks the current native catalog, reads Router health, and runs source checks plus
+catalog and namespace-relay tests. `-AnalyzeUpstream` adds detail only for upstream
+drift: relevant original-Router changes and a disposable Switchyard checkout to
+test the ordered patches. It does not merge, rebuild, deploy, advance the review
+baseline, or consume model quota. Omit that flag for diagnostics alone.
 
-The result distinguishes retained checks passed in this invocation from checks
-skipped. A quick pass reports diagnostic completion and leaves prior proof reuse
-with the operator; it never reports that an unperformed retained suite passed.
+Choose source-test scope using the [common verification rules](architecture.md#verification).
+Use `-FullTests` when shared changes or an unresolved regression need the full
+suite. Use `-SkipTests` when existing source checks still cover unchanged inputs;
+the current binary, catalog and health are still inspected. Skipped checks remain
+unperformed in this report; the command does not certify model execution or
+Desktop app tools.
 
-The default run reports how many original Router commits remain unreviewed
-since `maintenance/upstream-router.json`. When either upstream moved, request
-the conditional detail only then:
-
-```powershell
-.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream -SkipFetch -SkipTests
-```
-
-This groups relevant original-Router changes and, for a changed Switchyard
-head, uses a disposable checkout to list commits and test whether the canonical
-patch still applies. It does not merge, rebuild, deploy, or advance the review
-baseline. This second pass reuses the first complete refresh's source tests and
-fetched Router heads. Omit these skip flags when no complete unchanged refresh
-has passed yet or newly refreshed heads are requested.
+`-SkipFetch` suppresses all upstream network requests, including Switchyard
+discovery and cloning. It can inspect locally available Router refs, but leaves
+current upstream heads unconfirmed. Do not declare upstream current from an
+offline report.
 
 Before editing, confirm the report accounts for:
 
 1. The working tree, active branch, `HEAD`, `origin/main`, and `upstream/main`.
 2. The Windows package, resolved executable, signature, and `codex --version`.
 3. Native catalog parsing and the installed bundled app-tools plugin identity when available.
-4. Router health and the retained product checks.
+4. Router health and the selected source checks, including any valid reused result.
 5. The locked and current Switchyard upstream commits when that route applies.
-6. Whether the user authorized source edits, dependency changes, deployment,
-   restart, commit, and push. These are separate permissions.
+6. Which effects the user authorized: source edits, dependency changes, deployment,
+   restart, commit and push. Existing authorization covers those effects; request
+   only missing authority at the relevant step.
 
 Router Lite does not ship a static Desktop app-tool schema snapshot.
 Desktop-only tools are private host capabilities and can change independently of
@@ -66,22 +58,31 @@ For a changed Windows app or CLI build:
 
 1. Record the Windows app, CLI, and bundled `codex-app-tools` plugin versions
    when the current CLI exposes them.
-2. Refresh the native catalog and run the catalog and namespace-relay tests.
+2. Use the refresh's current catalog check and scoped tests; do not repeat them
+   unless their inputs changed. Publish a refreshed catalog only when needed.
 3. Inspect the official Codex release notes/source for changes to model metadata,
    tool exposure, namespace behavior, or app-server transport. Capture the live
    Desktop registry only when investigating an actual app-tool failure; do not
    copy private Desktop schemas into Router source.
-4. With quota authority, start a fresh native child and send a synthetic
-   encrypted assignment. Verify the representation is recognized and the exact
+4. If encrypted assignment or readable-child handling changed, or current evidence
+   leaves compatibility unresolved, use quota authority for a fresh native child
+   and a synthetic encrypted assignment. Verify the representation is recognized and the exact
    plaintext is recovered, then verify a readable routed-child assignment stays
    readable. Record the tested app/CLI identity in sanitized compatibility
    evidence without retaining ciphertext or private task text. A new
    representation requires investigation and withholds acceptance for the
    affected path; catalog success alone is insufficient.
-5. With quota authority, run an ordinary native routed tool call through the
-   affected external profiles and Switchyard; include Pareto when shared relay changes.
+5. If tool exposure, namespaces or transport changed, or a regression is suspected,
+   use quota authority for an ordinary routed tool call through affected profiles.
+   Include Switchyard and Pareto only when their path is affected.
 6. Refresh affected exact-route proofs when a bound contract changed, using
    [the certification refresh conditions](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
+
+An app version alone does not require paid probes. Collect each needed observation
+once for the same installed candidate and exact route. A certification sequence
+can supply its tool, handoff and continuation observations; retain a separate
+probe only for behavior it does not establish, such as Desktop-only app tools or
+the recovered classifier assignment.
 
 Never copy a versioned Codex app path into source. Never print keys, bearer tokens, account IDs, capability values, or unredacted protected metadata.
 
@@ -124,17 +125,9 @@ families outside this repository's product boundary.
 
 ## Proof
 
-Use the [common verification scope](architecture.md#verification):
-
-```powershell
-npm run verify:codex
-```
-
-Reuse the diagnostic refresh's passing source tests and catalog check until a
-relevant input changes. If upstream detail is needed after a complete refresh,
-use `-AnalyzeUpstream -SkipFetch -SkipTests` to inspect the same fetched Router
-heads without rerunning the unchanged suite; retain
-the initial report as evidence. Use the narrowest additional test that
-distinguishes the defect. After an authorized deployment, follow
-[installation verification](../INSTALL.md#verify) and prove one ordinary routed
-behavior. Source tests do not authorize deployment or establish live readiness.
+Follow the [common verification scope](architecture.md#verification) for any repair.
+Reuse the refresh's passing checks until relevant inputs change, then run the
+narrowest check that distinguishes the defect. After authorized deployment, use
+its [acceptance result](../INSTALL.md#update). Add a routed observation only for
+changed or unresolved serving behavior, reusing certification when it covers
+that claim. Source tests do not establish live readiness.

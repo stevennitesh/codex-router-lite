@@ -80,6 +80,7 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "maintenance/deployment-worker.ps1",
     "maintenance/deployment-json.ps1",
     "maintenance/refresh-compatibility-state.ps1",
+    "maintenance/build-switchyard-candidate.ps1",
   ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);
   const check = [
     `$targets = @(${targets.join(",")})`,

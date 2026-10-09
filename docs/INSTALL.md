@@ -30,10 +30,12 @@ unmarked `model_providers.codex-router` table is refused rather than duplicated.
 Disable preserves a user-owned catalog assignment and restores only an explicitly
 adopted source; invalid or inaccessible source records stop the edit.
 
-Managed skill publication skips an already owned tree only when bounded content
-comparison and source provenance both match. Ownership still requires its
-protected token record. Changed skills use the existing recovery transaction;
-external content and abandoned-operation recovery retain their own checks.
+Managed skill publication skips unchanged instruction files after bounded content
+comparison. If source provenance changed, only the verified ownership marker is
+refreshed atomically. Ownership still requires its protected token record. Changed
+skills use the recovery transaction: a failed Windows update restores the previous
+directory at its original name when free, or preserves a sibling if that name is
+claimed. External content and abandoned-operation recovery retain their own checks.
 
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
@@ -69,6 +71,11 @@ Switchyard installation is maintainer work. Read its
 diagnostic, not deployment acceptance: warnings can leave its exit status zero.
 The deployment transaction separately enforces full health and installed identity.
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
+
+After deployment, select route certification using the
+[proof refresh rules](SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
+A new Router commit or restart alone requires no model requests, including
+Switchyard recertification.
 
 Service operations keep their lock heartbeat active while Windows helpers run.
 An unreadable task or process record cannot establish absence. Failed stop
@@ -138,13 +145,13 @@ After a Codex app, Codex CLI, Router upstream, or Switchyard upstream change,
 run the compatibility refresh from the source repository:
 
 ```powershell
-.\maintenance\refresh-compatibility-state.ps1
+.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream
 ```
 
-If it reports upstream or app-version drift, follow the conditional branch in
-`docs/agents/compatibility-maintenance.md`. Use `-AnalyzeUpstream` only when an
-upstream head moved. The original Router remote is reviewed selectively and is
-never an installation or merge source.
+Follow [compatibility maintenance](agents/compatibility-maintenance.md) for scope
+and reuse rules. The command analyzes upstream detail only when heads differ from
+their maintained baselines. The original Router remote is reviewed selectively
+and is never an installation or merge source.
 
 `maintenance/windows-package.json` is the complete installed file list.
 The source checks validate its literal local JavaScript import dependencies, so adding a

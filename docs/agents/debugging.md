@@ -12,7 +12,7 @@ Identify the exact slug/endpoint, current source and installed generation, calle
 compaction or cancellation. Read configured paths from `src/paths.mjs`; source
 checkout success is not proof about a different installed generation.
 
-Start with redacted `model-router.ps1 codex status` and `doctor`. Inspect only the
+Start with redacted `model-router.ps1 codex doctor` once (`status` is its alias). Inspect only the
 relevant time window in Router timings or a user-authorized conversation log.
 Distinguish provider failure, client cancellation, sandbox restrictions and app
 hydration from Router defects. Do not export an existing conversation merely to
@@ -128,8 +128,9 @@ Switchyard boundaries plus shared stream, retry, history, compaction,
 concurrency, and cancellation behavior. It is intentionally not a live-provider
 certification or a full Cartesian product of models and faults.
 
-For a manual live soak, first run the offline suite and the normal verification
-checks. Then use the installed Router with a new synthetic conversation and send
+For a manual live soak, follow the [common verification scope](architecture.md#verification)
+first. Full verification already includes this offline stress suite; reuse its
+passing result. Then use the installed Router with a new synthetic conversation and send
 at most six requests over at most ten minutes: one short ordinary request through
 each configured OpenRouter GLM route, one short direct-Responses request, one
 Switchyard request, and one tool-call continuation plus compaction on a currently
