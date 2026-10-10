@@ -20,6 +20,9 @@ unreadable or invalid existing key stops setup before either capability is
 changed. Resolve access under its owning Windows user or restore a known-good
 generation; do not delete protected state to bypass a read error. Capability
 status is read-only. Intentional caller-key changes use the rotation transaction.
+Rotation keeps its transaction locks alive while waiting for status and config
+refresh commands. Recovery waits for a failed child command to close before
+restoring the previous capability and client configuration.
 
 Generated-state writes also stop when an existing installation manifest cannot
 establish ownership. Restore a valid manifest before retrying. An intentionally
