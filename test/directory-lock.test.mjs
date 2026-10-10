@@ -42,7 +42,12 @@ test("late heartbeat stat cannot compromise a released lease or touch its succes
   try {
     for (const missing of [true, false]) {
       let armed = false, releaseOperation, arrived, late;
-      const heartbeat = new Promise(resolve => { arrived = resolve; });
+      // The production heartbeat is unref'ed. Keep this isolated test alive
+      // while awaiting it, and fail explicitly if the callback never arrives.
+      const heartbeat = new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => reject(new Error("Lock heartbeat did not arrive.")), 4000);
+        arrived = () => { clearTimeout(deadline); resolve(); };
+      });
       const held = new Promise(resolve => { releaseOperation = resolve; });
       const statMock = t.mock.method(fs, "stat", (...args) => {
         if (!armed || args[0] !== path.join(stateDir, "catalog-publication.lock")) return originalStat(...args);
