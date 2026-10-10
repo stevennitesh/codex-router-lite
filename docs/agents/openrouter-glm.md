@@ -49,6 +49,12 @@ Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
 `src/litellm-config.mjs` sets gateway retries to zero; the Node forwarder owns
 the bounded provider retry. This avoids multiplying attempts across both layers
 while retaining original refusal statuses and exact endpoint selection.
+`src/litellm_stream_cleanup_callback.py` supplies the pinned gateway's missing
+Chat-to-Responses close hook. The existing LiteLLM wrapper closes the acquired SDK
+stream and shields cleanup from cancellation; an upstream close hook takes
+precedence. `writeLiteLlmConfig` publishes this module beside the private YAML.
+Verify it with `test/litellm-stream-cleanup.test.mjs` and the hash-locked interpreter
+when changing the gateway dependency or cancellation behavior.
 `src/zai-responses-compat.mjs` repairs malformed GLM envelopes: visible text
 after reasoning without message/content opening events, a visible-text close
 with a `reasoning_text` part, and overlapping assistant-message and

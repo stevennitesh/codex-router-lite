@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import http from "node:http";
+import net from "node:net";
+import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { handleResponsesWebSocketUpgrade } from "../src/responses-websocket.mjs";
@@ -25,6 +27,9 @@ class FixtureSocket extends EventEmitter {
   }
 
   resume() {}
+
+  destroy() { this.destroyed = true; this.writable = false; }
+  destroySoon() { this.gracefulCloseStarted = true; }
 }
 
 function clientFrame(value) {
@@ -130,6 +135,50 @@ async function exchange(fetchImpl, request = { type: "response.create", input: [
   const socket = openPeer(fetchImpl);
   return { socket, events: await sendRequest(socket, request) };
 }
+
+test("transport failure releases a socket even after graceful close began", () => {
+  let unregisters = 0;
+  const socket = openPeer(() => assert.fail("transport cleanup must not generate"), {}, {
+    onPeer: () => () => { unregisters++; },
+  });
+  socket.emit("data", maskedFrame(Buffer.alloc(0), { opcode: 8 }));
+  assert.equal(socket.gracefulCloseStarted, true);
+  assert.equal(socket.destroyed, false, "close reply may flush before transport failure");
+  socket.emit("end");
+  socket.emit("error", new Error("reset"));
+  assert.equal(socket.destroyed, true);
+  assert.equal(unregisters, 1, "cleanup is not run again during hard destruction");
+});
+
+test("real half-open WebSocket FIN releases the HTTP server connection", { timeout: 5000 }, async () => {
+  const server = http.createServer();
+  let serverSocket, peer;
+  server.on("upgrade", (request, socket, head) => {
+    serverSocket = socket;
+    handleResponsesWebSocketUpgrade(request, socket, head, {
+      callerKey: "synthetic-local-websocket-capability", responsesUrl: "http://127.0.0.1:1/responses",
+      authenticateUpgrade: () => "/responses", fetchImpl: () => assert.fail("no provider call"),
+      onPeer: value => { peer = value; },
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = net.createConnection({ host: "127.0.0.1", port: server.address().port, allowHalfOpen: true });
+  try {
+    await once(client, "connect");
+    const handshake = once(client, "data");
+    client.write("GET /responses HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\n\r\n");
+    assert.match((await handshake)[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
+    const closed = once(serverSocket, "close");
+    client.end();
+    await closed;
+    assert.equal(peer.closed, true);
+    assert.equal(serverSocket.destroyed, true);
+    assert.equal(await new Promise((resolve, reject) => server.getConnections((error, count) => error ? reject(error) : resolve(count))), 0);
+  } finally {
+    client.destroy(); serverSocket?.destroy(); server.close(); await once(server, "close");
+  }
+});
 
 test("invalid message types are rejected without logging private values and leave the peer usable", async (t) => {
   const warnings = [];

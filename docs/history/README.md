@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Windows app compatibility repairs and independent review, 2026-10-10](2026-10-10-compatibility-repairs.json)
+
 - [Switchyard native certification for the verification release, 2026-10-09](2026-10-09-verification-release-certification.json)
 
 - [Diagnostics and update deployment and Switchyard renewal, 2026-10-09](2026-10-09-diagnostics-updates-release.md)
