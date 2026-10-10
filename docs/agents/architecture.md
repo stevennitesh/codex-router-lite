@@ -140,6 +140,14 @@ CI's supported Node versions provide separate environment coverage and remain
 required. Source correctness, installed readiness and native collaboration are
 different claims; each has one owner and an appropriate observation.
 
+Windows sandbox failures before fixture assertions can come from denied temporary
+Git `.git/config` writes or Git's MSYS file-transport helper being unable to create
+named objects. Run the affected offline checks in the normal Windows user context
+through supported escalation, keeping their real Git operations and assertions.
+Workspace scratch can resolve temporary-directory access without resolving the
+MSYS restriction. Canonicalizing Windows short paths addresses path identity,
+not either permission failure; do not treat those test repairs as sandbox repairs.
+
 For documentation and instruction edits, check affected links, commands, ownership,
 and reading paths against their current sources, then run `npm run check`. Shipped
 skills are runtime instructions; exercise affected existing checks and keep source

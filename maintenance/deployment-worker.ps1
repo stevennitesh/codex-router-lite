@@ -24,7 +24,11 @@ try {
   foreach ($property in $request.parameters.PSObject.Properties) { $parameters[$property.Name] = $property.Value }
   $acceptancePath = Join-Path $operationRoot "acceptance.json"
   if ($request.requireAcceptance) { $parameters["AcceptancePath"] = $acceptancePath }
+  # PowerShell does not throw for a script's nonzero exit or a failed native
+  # command. Check that outcome before accepting even a valid-looking receipt.
+  $global:LASTEXITCODE = 0
   & $request.script @parameters
+  if ($LASTEXITCODE -ne 0) { throw "Deployment script exited with status $LASTEXITCODE." }
   $acceptance = $null
   if ($request.requireAcceptance) {
     $acceptance = Get-Content -Raw -LiteralPath $acceptancePath | ConvertFrom-Json

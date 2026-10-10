@@ -120,6 +120,15 @@ rollback. The worker owns an exclusive deployment lock and writes private logs.
 `-InProcess` is the worker's internal entrypoint; use the independent default
 for live maintenance.
 
+Automatic approval review uses Router for inference. During drain, Router rejects
+new inference with HTTP 503 and `ERR_ROUTER_DRAINING`; service replacement also
+has an availability gap. Include any needed bounded read-only completion wait in
+the authorized launch command when possible, so polling does not need a fresh
+review during replacement. If review is unavailable, the requested action has
+not run. Let the independent worker continue and request the read after serving
+resumes. The worker's completed acceptance remains the deployment authority;
+public health alone does not establish admission state or candidate identity.
+
 The script validates Codex configuration before stopping Router, deploys from
 the active repository root, and restores through the detached checkout if
 activation fails. It refuses Switchyard path or address overrides so its file

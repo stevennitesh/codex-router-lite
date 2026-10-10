@@ -119,6 +119,18 @@ unaffected route for shared changes. Follow [verification](architecture.md#verif
 State what was reproduced, the repaired owner, and remaining uncertainty. Store
 dated investigation evidence separately from the maintained behavior guide.
 
+## Git reads in a partial clone
+
+In a partial clone, `git log`, `git show`, and `git diff` can fetch missing
+promisor objects and write `.git/objects` even though the requested operation
+looks read-only. A denied `tmp_pack` write or failed `index-pack` can identify
+that hidden write; it does not establish an ownership or authentication problem.
+Inspect the clone's promisor/partial-clone configuration and the failing command.
+When retrieval is authorized, rerun only the needed object retrieval through the
+supported sandbox escalation, then return to ordinary sandbox reads once those
+objects are present. Check Git's exit status before interpreting its output.
+Shallow ancestry and partial-clone object hydration are separate conditions.
+
 ## Bounded stress checks
 
 Run `npm run test:stress` for the deterministic offline Router stress suite. It
