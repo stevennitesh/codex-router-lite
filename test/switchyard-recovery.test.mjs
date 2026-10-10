@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,7 +13,9 @@ const sha = text => createHash("sha256").update(text).digest("hex");
 const windows = { skip: process.platform !== "win32" };
 
 function fixture() {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "switchyard-recovery-"));
+  // The real PowerShell deployment records expanded paths. Match that producer
+  // when CI supplies a Windows 8.3 temporary-directory alias.
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "switchyard-recovery-")));
   const runtime = path.join(dir, "runtime"), state = path.join(dir, "state");
   const backup = path.join(runtime, ".rollback-" + "c".repeat(32));
   const operation = path.join(state, "deployments", "d".repeat(32));
@@ -45,7 +47,7 @@ function fixture() {
     return JSON.parse(readFileSync(path.join(dir, "outcome.json"), "utf8"));
   };
   return { dir, runtime, backup, operation, archive, metadata, result, metadataFile, resultFile, save, run,
-    cleanup() { assert.ok(dir.startsWith(path.resolve(os.tmpdir()) + path.sep)); rmSync(dir, { recursive: true, force: true }); } };
+    cleanup() { assert.ok(dir.startsWith(realpathSync.native(os.tmpdir()) + path.sep)); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test("accepted recovery is archived intact and the original result is not rewritten", windows, () => {
