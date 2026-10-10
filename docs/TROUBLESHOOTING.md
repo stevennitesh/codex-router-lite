@@ -51,6 +51,13 @@ visibility. A model
 whose native entry still has `visibility: "hide"` remains absent by design;
 automatic refresh cannot turn a staged account rollout into an entitlement.
 
+## Gateway interpreter probe times out
+
+A Python interpreter probe timing out does not establish that its virtual
+environment is broken. Router warns and proceeds to the gateway's bounded
+readiness wait. A missing interpreter or a failing standard-library import still
+stops that gateway launch and requires dependency repair.
+
 ## Native or provider requests fail with a connect timeout
 
 A transport error carrying `UND_ERR_CONNECT_TIMEOUT` means Router did not

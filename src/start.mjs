@@ -19,7 +19,7 @@ import { waitForHealth as pollHealth } from "./health-probe.mjs";
 import { gatewaySupervisorLimits, superviseOptionalChild } from "./gateway-supervisor.mjs";
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
-import { venvRuntimeProblem } from "./venv-runtime.mjs";
+import { requireGatewayRuntime } from "./venv-runtime.mjs";
 import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
@@ -318,10 +318,7 @@ async function main() {
       throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
     }
     if (usesBundledVenv) {
-      const venvProblem = venvRuntimeProblem(litellm);
-      if (venvProblem) {
-        throw new Error(`The LiteLLM virtual environment is broken at ${litellm} (${venvProblem}). ${dependencyFix}.`);
-      }
+      requireGatewayRuntime(litellm, { dependencyFix });
     }
     writeLiteLlmConfig();
     return run(litellm, [

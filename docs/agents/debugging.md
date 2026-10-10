@@ -107,6 +107,13 @@ Resets outside JavaScript's Date range, including overflow during unit conversio
 or addition, leave the estimated delay unknown. The provider's status and original
 header still pass through; invalid telemetry does not become a numeric wait hint.
 
+Responses stream failures retain their diagnosed cause through
+`src/responses-stream-failure.mjs`. The observer runs after the final response
+rewrites and records bounded identity, timestamp and sequence metadata without
+holding client bytes. Local failures use `response.failed` when that metadata is
+trustworthy; ambiguous or absent metadata retains the generic error. An already
+delivered terminal is never followed by another local terminal.
+
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
 scope predicate and a regression that fails without it. Remove unused transforms.

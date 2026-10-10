@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
@@ -26,6 +27,7 @@ export function renderLiteLlmConfig() {
   }
   lines.push(
     "litellm_settings:",
+    "  callbacks: [litellm_stream_cleanup_callback.stream_cleanup_callback]",
     "  drop_params: true",
     "  request_timeout: 600",
     "",
@@ -57,6 +59,12 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
   if (target === LITELLM_CONFIG_PATH) {
     assertStateOwnership("write the gateway routing config");
   }
+  // LiteLLM resolves callback modules beside its YAML. Publish the owned
+  // module privately before referring to it from the gateway configuration.
+  writePrivateFile(
+    path.join(path.dirname(target), "litellm_stream_cleanup_callback.py"),
+    readFileSync(new URL("./litellm_stream_cleanup_callback.py", import.meta.url)),
+  );
   writePrivateFile(target, renderLiteLlmConfig());
   return target;
 }

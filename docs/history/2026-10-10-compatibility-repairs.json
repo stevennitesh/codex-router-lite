@@ -1,0 +1,127 @@
+{
+  "reviewDate": "2026-10-10",
+  "checkoutCommit": "2bde4f6548db2e7869543aaab7d269f88a2fe047",
+  "installedCli": "0.162.0-alpha.17.2",
+  "installedAppPackage": "OpenAI.Codex_26.1007.2314.0_x64__2p2nqsd0c76g0",
+  "compatibility": {
+    "signature": "valid OpenAI signer",
+    "catalogParsing": "passed maintained installed-release check",
+    "routerHealth": "passed maintained doctor",
+    "sourceChecks": "passed",
+    "scopedTests": {
+      "passed": 52,
+      "failed": 0
+    },
+    "nodeAudit": "no vulnerabilities",
+    "pythonAudit": "no known vulnerabilities; pinned pip-audit 2.10.1 against hashed production lock"
+  },
+  "originalRouterUpstream": {
+    "reviewBaseline": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+    "head": "00eed6eb9f894a734eb51bb2e2b058575c6dca7a",
+    "pendingCommitInventory": 113,
+    "recommendations": [
+      {
+        "candidate": "WebSocket transport cleanup",
+        "upstreamCommits": [
+          "4cc417bc",
+          "cd83d324",
+          "3fc05733"
+        ],
+        "owner": "src/responses-websocket.mjs",
+        "evidence": "websocket-fin-probe.mjs: real TCP FIN closes the logical peer but leaves the accepted socket undestroyed, writable side open, and one server connection retained",
+        "action": "Adapt hard destruction for FIN/reset/error and preserve graceful close replies, native transport cleanup, request cancellation and peer unregistration",
+        "disposition": "implemented and locally verified"
+      },
+      {
+        "candidate": "Lock heartbeat after release",
+        "upstreamCommits": [
+          "15ddd916",
+          "87e0de71"
+        ],
+        "owner": "src/directory-lock.mjs",
+        "evidence": "lock-release-probe.mjs: proper-lockfile 4.1.2 reports ECOMPROMISED after successful release when a dispatched heartbeat stat completes late; the latest upstream release guard suppresses the stale callback",
+        "action": "Adapt the narrow released-lease guard at the existing shared lock owner; retain compromise detection for active leases",
+        "disposition": "implemented and locally verified"
+      },
+      {
+        "candidate": "GLM translation cancellation cleanup",
+        "upstreamCommit": "bbacf0cc",
+        "owner": "src/litellm-config.mjs and the pinned gateway compatibility module",
+        "evidence": "litellm-close-probe.py: installed LiteLLM 1.104.0 translation iterator lacks aclose; simulated outer cleanup does not close its acquired recording stream",
+        "action": "Adapt and validate the narrow delegated close hook for LiteLLM 1.104.0; do not copy the upstream callback's 1.96.2 version gate",
+        "limit": "No real provider cancellation request was made",
+        "disposition": "implemented and locally verified"
+      },
+      {
+        "candidate": "Codex-visible stream failure causes",
+        "upstreamCommit": "84f84662",
+        "owner": "src/http-utils.mjs and the final SSE output pipeline",
+        "evidence": "Local helper emits flat generic error frames. Exact installed-release Responses parser handles generic error only for its specific flex-unavailable envelope, while response.failed preserves server errors. Upstream adds bounded final-egress metadata and typed response.failed with generic fallback",
+        "action": "Adapt the typed failure path while preserving unknown-metadata fallback, terminal uniqueness and existing no-replay protections",
+        "limit": "Source comparison; no native Desktop failure turn was run",
+        "disposition": "implemented and locally verified"
+      },
+      {
+        "candidate": "Inconclusive Python startup probe",
+        "upstreamCommit": "00eed6eb",
+        "owner": "src/venv-runtime.mjs and src/start.mjs",
+        "evidence": "Current start.mjs treats all nonempty probe messages, including scheduling timeouts, as proof of a broken virtual environment. Latest upstream distinguishes timeout from interpreter failure and continues to bounded actual readiness",
+        "action": "Adapt typed timeout handling; keep genuine interpreter errors fatal and readiness bounded",
+        "limit": "Source comparison; no current host startup failure observed",
+        "disposition": "implemented and locally verified"
+      }
+    ],
+    "alreadyCovered": [
+      "Current unified CUA companion skills",
+      "Catalog watcher stop ownership, immediate refresh and configurable polling",
+      "Current production security floors (LiteLLM 1.104.0, multidict 6.9.1, urllib3 2.8.0)",
+      "Preservation of existing assistant phases, including partial_answer",
+      "Current native base instructions as developer input messages",
+      "Windows process ownership and shutdown verification"
+    ],
+    "defer": [
+      "Opt-in repetition rejection without an observed need",
+      "Generic provider WebSocket pools; Lite already owns native transport",
+      "VDI tuning and automatic failure cooldown without a demonstrated host need"
+    ],
+    "outOfScopeFamilies": [
+      "Other provider integrations",
+      "macOS",
+      "POSIX",
+      "tray UI",
+      "custom provider registry",
+      "account pools",
+      "optional app-connector withholding"
+    ]
+  },
+  "switchyard": {
+    "pin": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamHead": "fc64565ab5f636f9c04e74e9f6974c6e303b77f0",
+    "newCommits": 36,
+    "recommendation": "Keep the current pin for this update",
+    "reason": "The first contribution patch conflicts with latest upstream, so the Router compatibility layer was not tested against it. Reviewed advisor/escalation/translation changes mostly affect modes not used here; same-format raw Responses preservation already retains structured output. Shipped codex-auto-review routing changes are for standalone Switchyard configs, while Lite sends that native model through Router. Completion-span telemetry is a possible later backport, not an app compatibility requirement. A pin upgrade also raises the Rust toolchain from 1.96.1 to 1.99"
+  },
+  "limits": [
+    "This record precedes PR publication, deployment and live recertification; source checks are not live readiness.",
+    "Original Router upstream baseline remains unchanged; this record does not disposition every upstream commit.",
+    "Switchyard pin and persistent Codex configuration remain unchanged."
+  ],
+  "evidenceKind": "Historical compatibility repair and independent review",
+  "independentReview": {
+    "reviewerModel": "gpt-6.1-sol",
+    "rounds": 2,
+    "firstRoundFinding": "R1: backpressure could supply terminal or sequence metadata from undelivered transform buffers",
+    "repair": "Observe bytes accepted by the response write; retain buffering, callback and backpressure semantics",
+    "finalVerdict": "No actionable findings",
+    "finalCandidateFiles": 20,
+    "verification": [
+      "751 full-suite tests and installed Codex catalog check passed before R1 repair",
+      "Affected stream/stress regressions and source checks passed after repair",
+      "All eight final failure tests passed independently"
+    ],
+    "limits": [
+      "Controlled writable backpressure proof through actual pipeResponse",
+      "No live provider or deployment proof in this record"
+    ]
+  }
+}

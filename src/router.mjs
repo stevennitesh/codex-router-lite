@@ -98,6 +98,7 @@ import {
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
 import { SwitchyardNativeAttemptObserver } from "./switchyard-native-observation.mjs";
+import { markResponsesStream } from "./responses-stream-failure.mjs";
 import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
@@ -2396,6 +2397,7 @@ async function handleResponses(request, response, requestUrl) {
     delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
+    markResponsesStream(response, { model: requestedModel });
     const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
     if (!registeredRoute && retiredMessage) {
       writeJson(response, 400, { error: {

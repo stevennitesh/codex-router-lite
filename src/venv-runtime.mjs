@@ -3,9 +3,9 @@
 // checkable, fixable state.
 import { spawnSync } from "node:child_process";
 
-// Returns undefined when the interpreter runs, or a human-readable reason it
-// cannot. `spawn` is injectable so tests can stub it without forking.
-export function venvRuntimeProblem(
+// A timeout is inconclusive; a spawn error or bad exit proves a failed probe.
+// Startup can proceed to actual readiness without repeating this probe.
+export function venvRuntimeOutcome(
   python,
   { spawn = spawnSync, timeoutMs = 15_000, retryTimeoutMs = 45_000 } = {},
 ) {
@@ -29,12 +29,27 @@ export function venvRuntimeProblem(
   }
   if (probe.error) {
     return probe.error.code === "ETIMEDOUT"
-      ? `timed out after ${retryTimeoutMs} ms; transient process scheduling pressure is possible and this is not proof of a broken virtual environment`
-      : probe.error.message;
+      ? { kind: "timeout", message: `timed out after ${retryTimeoutMs} ms; transient process scheduling pressure is possible and this is not proof of a broken virtual environment` }
+      : { kind: "failed", message: probe.error.message };
   }
   if (probe.status !== 0) {
     const detail = (probe.stderr || "").trim() || "no stderr";
-    return `exited with code ${probe.status}: ${detail}`;
+    return { kind: "failed", message: `exited with code ${probe.status}: ${detail}` };
   }
-  return undefined;
+  return { kind: "ok" };
+}
+
+// Doctor and install-plan retain their descriptive string API.
+export function venvRuntimeProblem(python, options) {
+  return venvRuntimeOutcome(python, options).message;
+}
+
+export function requireGatewayRuntime(python, { probe = venvRuntimeOutcome, warn = console.warn, dependencyFix } = {}) {
+  const outcome = probe(python);
+  if (outcome.kind === "failed") {
+    throw new Error(`The LiteLLM virtual environment is broken at ${python} (${outcome.message}). ${dependencyFix}.`);
+  }
+  if (outcome.kind === "timeout") {
+    warn(`[codex-router] LiteLLM interpreter probe ${outcome.message}; continuing to bounded gateway readiness.`);
+  }
 }

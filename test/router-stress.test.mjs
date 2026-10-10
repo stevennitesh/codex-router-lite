@@ -114,6 +114,33 @@ async function fixture(t, handler, extraEnv = {}) {
     } };
 }
 
+test("native, direct Responses and translated routes retain a single typed disconnect cause", { timeout: 30000 }, async t => {
+  const f = await fixture(t, async (_context, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(frame({ type: "response.created", sequence_number: 0,
+      response: { id: "resp_disconnect", model: "fixture-upstream", created_at: 123, status: "in_progress", output: [] } }));
+    response.write(frame({ type: "response.output_item.added", sequence_number: 1, output_index: 0, item: message("", "msg_disconnect") }));
+    response.write(frame({ type: "response.output_text.delta", sequence_number: 2, output_index: 0,
+      content_index: 0, item_id: "msg_disconnect", delta: "partial evidence" }));
+    await new Promise(resolve => setTimeout(resolve, 25));
+    response.destroy();
+  });
+  for (const model of ["gpt-6.1-sol", PARETO, GLM]) {
+    const prior = f.seen.length;
+    const response = await f.post({ model, stream: true });
+    const wire = await response.text();
+    const failures = eventsFrom(wire).filter(event => event.type === "response.failed");
+    assert.equal(failures.length, 1, `${model} keeps one failure`);
+    assert.equal(failures[0].response.id, "resp_disconnect");
+    assert.equal(failures[0].sequence_number, 3);
+    assert.equal(failures[0].response.status, "failed");
+    assert.equal(failures[0].response.error.code, "server_error");
+    assert.match(failures[0].response.error.message, /lost|disconnected|reset|closed early/iu);
+    assert.doesNotMatch(wire, /response\.completed/u);
+    assert.equal(f.seen.length, prior + 1, "partial response must never trigger a replay");
+  }
+});
+
 async function fragmented(response, events, seed) {
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   const bytes = Buffer.from(events.map(frame).join(""));
