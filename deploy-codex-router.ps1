@@ -35,7 +35,7 @@ function Get-DeploySourceFiles {
   if (-not (Test-Path -LiteralPath $SourceManifestPath -PathType Leaf)) {
     throw "Windows package manifest not found at $SourceManifestPath."
   }
-  $Document = Get-Content -LiteralPath $SourceManifestPath -Raw | ConvertFrom-Json
+  $Document = Get-Content -LiteralPath $SourceManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($Document.version -ne 1 -or $null -eq $Document.files) {
     throw "Unsupported Windows package manifest."
   }
@@ -56,7 +56,7 @@ function Get-DeploySourceFiles {
 function Read-DeployManifest {
   if (-not (Test-Path -LiteralPath $DeployManifestPath -PathType Leaf)) { return @() }
   try {
-    $Document = Get-Content -LiteralPath $DeployManifestPath -Raw | ConvertFrom-Json
+    $Document = Get-Content -LiteralPath $DeployManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Document.version -ne 1 -or $null -eq $Document.files) {
       throw "unsupported manifest shape"
     }

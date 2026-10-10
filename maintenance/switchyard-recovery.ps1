@@ -11,7 +11,7 @@ function Get-SwitchyardRecoveryArchivePlan([string]$RuntimeRoot, [string]$StateR
       [IO.Path]::GetDirectoryName($backup.FullName) -ne $runtimePath) {
     throw "Switchyard recovery directory is not a managed runtime child."
   }
-  $metadata = Get-Content -LiteralPath (Join-Path $backup.FullName "rollback.json") -Raw | ConvertFrom-Json
+  $metadata = Get-Content -LiteralPath (Join-Path $backup.FullName "rollback.json") -Raw -Encoding UTF8 | ConvertFrom-Json
   $files = @($metadata.files)
   $allowed = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
   if ($metadata.version -ne 1 -or $metadata.previousRouterCommit -notmatch '^[a-f0-9]{40}$' -or
@@ -32,7 +32,7 @@ function Get-SwitchyardRecoveryArchivePlan([string]$RuntimeRoot, [string]$StateR
       if ($operation.Name -notmatch '^[a-f0-9]{32}$' -or $operation.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
       $resultPath = Join-Path $operation.FullName "result.json"
       if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) { continue }
-      try { $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json } catch { continue }
+      try { $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
       $accepted = $result.acceptance
       if ($result.state -ne "completed" -or $result.succeeded -ne $true -or
           $accepted.version -ne 1 -or $accepted.accepted -ne $true -or $accepted.deployed -ne $true -or
@@ -50,7 +50,7 @@ function Get-SwitchyardRecoveryArchivePlan([string]$RuntimeRoot, [string]$StateR
     throw "Existing Switchyard recovery has no unique completed acceptance for the installed generation; retain it and resolve the previous deployment."
   }
   $match = $acceptedOwners[0]
-  $provenance = Get-Content -LiteralPath (Join-Path $runtimePath "provenance.json") -Raw | ConvertFrom-Json
+  $provenance = Get-Content -LiteralPath (Join-Path $runtimePath "provenance.json") -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($provenance.routerCommit -ne $InstalledRouterCommit -or
       $provenance.upstreamCommit -ne $match.acceptance.switchyardCommit) {
     throw "Installed Switchyard provenance differs from the accepted recovery owner."

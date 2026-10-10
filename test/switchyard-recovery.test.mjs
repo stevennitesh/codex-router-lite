@@ -12,10 +12,10 @@ const currentCommit = "a".repeat(40), previousCommit = "b".repeat(40);
 const sha = text => createHash("sha256").update(text).digest("hex");
 const windows = { skip: process.platform !== "win32" };
 
-function fixture() {
+function fixture({ unicodePaths = false } = {}) {
   // The real PowerShell deployment records expanded paths. Match that producer
   // when CI supplies a Windows 8.3 temporary-directory alias.
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "switchyard-recovery-")));
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), unicodePaths ? "switchyard-recovery-\u00e9-" : "switchyard-recovery-")));
   const runtime = path.join(dir, "runtime"), state = path.join(dir, "state");
   const backup = path.join(runtime, ".rollback-" + "c".repeat(32));
   const operation = path.join(state, "deployments", "d".repeat(32));
@@ -50,8 +50,8 @@ function fixture() {
     cleanup() { assert.ok(dir.startsWith(realpathSync.native(os.tmpdir()) + path.sep)); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test("accepted recovery is archived intact and the original result is not rewritten", windows, () => {
-  const f = fixture();
+test("accepted recovery preserves Unicode paths and archives without rewriting the original result", windows, () => {
+  const f = fixture({ unicodePaths: true });
   try {
     const receipt = readFileSync(f.resultFile);
     const preview = f.run(true);
@@ -60,6 +60,7 @@ test("accepted recovery is archived intact and the original result is not rewrit
     assert.equal(existsSync(f.archive), false);
     const actual = f.run();
     assert.equal(actual.succeeded, true, actual.error);
+    assert.equal(actual.plan.source, f.backup);
     assert.equal(actual.plan.destination, f.archive);
     assert.equal(existsSync(f.backup), false);
     for (const name of runtimeFiles) assert.equal(readFileSync(path.join(f.archive, name), "utf8"), "previous-" + name);

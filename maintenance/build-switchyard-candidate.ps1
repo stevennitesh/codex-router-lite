@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $configRoot = Join-Path $repoRoot "config\switchyard"
-$lock = Get-Content -Raw -LiteralPath (Join-Path $configRoot "source.lock") | ConvertFrom-Json
+$lock = Get-Content -Raw -LiteralPath (Join-Path $configRoot "source.lock") -Encoding UTF8 | ConvertFrom-Json
 if ($lock.repository -notmatch '^https://github\.com/[^/]+/[^/]+(?:\.git)?$' -or
     $lock.commit -notmatch '^[0-9a-f]{40}$' -or
     $lock.rustToolchain -notmatch '^\d+\.\d+\.\d+$') {

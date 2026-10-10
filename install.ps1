@@ -55,7 +55,7 @@ function Test-RouterCheckout([string]$Directory) {
   $Package = Join-Path $Directory "package.json"
   if (-not (Test-Path $Package)) { return $false }
   try {
-    return (Get-Content $Package -Raw | ConvertFrom-Json).name -eq "codex-router-lite"
+    return (Get-Content $Package -Raw -Encoding UTF8 | ConvertFrom-Json).name -eq "codex-router-lite"
   } catch {
     return $false
   }

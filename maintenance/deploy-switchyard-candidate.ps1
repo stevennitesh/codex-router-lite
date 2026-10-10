@@ -47,7 +47,7 @@ $installManifestPath = Join-Path $stateRoot "install-manifest.json"
 if (-not (Test-Path -LiteralPath $installManifestPath -PathType Leaf)) {
   throw "Installed Router manifest is missing at $installManifestPath."
 }
-$installManifest = Get-Content -Raw -LiteralPath $installManifestPath | ConvertFrom-Json
+$installManifest = Get-Content -Raw -LiteralPath $installManifestPath -Encoding UTF8 | ConvertFrom-Json
 $installedRouterCommit = "$($installManifest.current.commit)".Trim().ToLowerInvariant()
 if ($installedRouterCommit -notmatch '^[0-9a-f]{40}$') {
   throw "Installed Router manifest does not contain a valid current commit."
@@ -71,7 +71,7 @@ $preservedMetadata = if ($preservingRollback) {
   if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
     throw "Preserved runtime rollback metadata is missing."
   }
-  Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+  Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json
 } else { $null }
 $expectedRollbackCommit = if ($preservingRollback) {
   "$($preservedMetadata.previousRouterCommit)".Trim().ToLowerInvariant()
@@ -107,7 +107,7 @@ if ([string]::IsNullOrWhiteSpace($ExpectedRoutesSha256)) {
   if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
     throw "Installed Switchyard provenance is missing at $provenancePath."
   }
-  $installedProvenance = Get-Content -Raw -LiteralPath $provenancePath | ConvertFrom-Json
+  $installedProvenance = Get-Content -Raw -LiteralPath $provenancePath -Encoding UTF8 | ConvertFrom-Json
   $ExpectedRoutesSha256 = "$($installedProvenance.routesSha256)".Trim()
 }
 $expectedRoutesHash = $ExpectedRoutesSha256.ToLowerInvariant()
@@ -296,7 +296,7 @@ function Prepare-RollbackRouter([string]$Root) {
 
 function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
   $stateRoot = Join-Path $codexHome "codex-router"
-  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") -Encoding UTF8 | ConvertFrom-Json
   $runningRoot = [IO.Path]::GetFullPath($processState.sourceRoot)
   foreach ($allowedRoot in $AllowedRoots) {
     $resolved = [IO.Path]::GetFullPath($allowedRoot)
@@ -372,7 +372,7 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$Re
   }
   $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $stateRoot = Join-Path $codexHome "codex-router"
-  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") -Encoding UTF8 | ConvertFrom-Json
   $verified = Invoke-NodeJson $repoRoot @((Join-Path $repoRoot "src\service-process.mjs"), "verify", $Root) "Live Router process identity"
   if ($verified.owned -ne $true) { throw "Router process identity is not live and owned by $Root." }
   if (-not [string]::Equals(
@@ -382,7 +382,7 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$Re
   )) {
     throw "Router process source root does not match $Root."
   }
-  $manifest = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "install-manifest.json") | ConvertFrom-Json
+  $manifest = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "install-manifest.json") -Encoding UTF8 | ConvertFrom-Json
   if (-not $RecoveryPreflight -and ($manifest.current.commit -ne $ExpectedCommit -or
       -not [string]::Equals([IO.Path]::GetFullPath($manifest.current.sourceRoot), [IO.Path]::GetFullPath($Root), [StringComparison]::OrdinalIgnoreCase))) {
     throw "Router install manifest does not match commit $ExpectedCommit."
@@ -399,7 +399,7 @@ function Assert-SwitchyardHealth {
 function Assert-CodexCatalog([string]$Root) {
   $stateRoot = Join-Path $codexHome "codex-router"
   $catalogPath = Join-Path $stateRoot "merged-models.json"
-  $catalog = Get-Content -Raw -LiteralPath $catalogPath | ConvertFrom-Json
+  $catalog = Get-Content -Raw -LiteralPath $catalogPath -Encoding UTF8 | ConvertFrom-Json
   if ($null -eq $catalog.models -or @($catalog.models).Count -eq 0) {
     throw "The installed merged Codex catalog is empty or invalid."
   }
@@ -482,7 +482,7 @@ if ($preservingRollback) {
   $recoveryArchive = Get-SwitchyardRecoveryArchivePlan $runtimeRoot $stateRoot $installedRouterCommit
 }
 
-$lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
+$lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") -Encoding UTF8 | ConvertFrom-Json
 $upstreamContribution = $lock.upstreamContribution
 $upstreamPatchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $upstreamContribution.patch
 $upstreamPatchHash = "$($upstreamContribution.patchSha256)".ToLowerInvariant()

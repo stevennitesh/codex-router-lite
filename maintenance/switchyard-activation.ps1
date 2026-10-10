@@ -51,7 +51,7 @@ try {
   foreach ($path in @("/v1/models", "/v1/decision")) { Assert-ProtectedSwitchyardEndpoint $path }
   Assert-CodexCatalog $repoRoot
   Assert-CheckoutIdentity $repoRoot $expectedRouterCommit "Running Router candidate checkout"
-  $provenance = Get-Content -Raw -LiteralPath (Join-Path $runtimeRoot "provenance.json") | ConvertFrom-Json
+  $provenance = Get-Content -Raw -LiteralPath (Join-Path $runtimeRoot "provenance.json") -Encoding UTF8 | ConvertFrom-Json
   if (
     $provenance.upstreamCommit -ne $lock.commit -or
     $provenance.upstreamContributionCommit -ne "$($upstreamContribution.sourceCommit)".ToLowerInvariant() -or

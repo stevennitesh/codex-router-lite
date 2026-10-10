@@ -94,7 +94,7 @@ foreach ($remoteRef in @("origin/main", "upstream/main")) {
 }
 
 $routerWatchPath = Join-Path $repoRoot "maintenance\upstream-router.json"
-$routerWatch = Get-Content -Raw -LiteralPath $routerWatchPath | ConvertFrom-Json
+$routerWatch = Get-Content -Raw -LiteralPath $routerWatchPath -Encoding UTF8 | ConvertFrom-Json
 if ($routerWatch.version -ne 1 -or $routerWatch.repository -notmatch '^https://github\.com/[^/]+/[^/]+(?:\.git)?$' -or
     $routerWatch.branch -notmatch '^[a-zA-Z0-9._/-]+$' -or
     $routerWatch.remoteRef -notmatch '^[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+$' -or
@@ -208,7 +208,7 @@ if (-not $SkipTests) {
 
 Write-Step "Switchyard upstream signal"
 $sourceLockPath = Join-Path $repoRoot "config\switchyard\source.lock"
-$sourceLock = Get-Content -Raw -LiteralPath $sourceLockPath | ConvertFrom-Json
+$sourceLock = Get-Content -Raw -LiteralPath $sourceLockPath -Encoding UTF8 | ConvertFrom-Json
 $remoteLine = @()
 if ($SkipFetch) {
   Write-Warning "Switchyard upstream refresh skipped; its current head is unknown. No upstream network requests were made."

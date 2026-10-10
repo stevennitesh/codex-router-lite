@@ -542,9 +542,15 @@ test("retired package membership remains a change even when source and installed
   } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
 });
 
-test("a staged Windows deployment prunes only the previous managed generation", { skip: process.platform !== "win32" }, () => {
+test("a staged Windows deployment preserves Unicode package paths and prunes the previous generation", { skip: process.platform !== "win32" }, () => {
   const fixture = deploymentFixture({ candidateFails: false });
   try {
+    const added = "r\u00e9sum\u00e9.txt", retired = "retired-\u00e9.txt";
+    fixture.files.push(added);
+    writeFileSync(path.join(fixture.source, added), "caf\u00e9", "utf8");
+    writeFileSync(path.join(fixture.source, "maintenance/windows-package.json"), JSON.stringify({ version: 1, files: fixture.files }), "utf8");
+    writeFileSync(path.join(fixture.install, retired), "previous Unicode path", "utf8");
+    writeFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files: [...fixture.files.filter(file => file !== added), "retired.txt", retired] }), "utf8");
     const result = spawnSync("powershell.exe", [
       "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
       path.join(fixture.source, "deploy-codex-router.ps1"),
@@ -555,6 +561,8 @@ test("a staged Windows deployment prunes only the previous managed generation", 
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(path.join(fixture.install, "marker.txt"), "utf8"), "candidate\n");
+    assert.equal(readFileSync(path.join(fixture.install, added), "utf8"), "caf\u00e9");
+    assert.throws(() => readFileSync(path.join(fixture.install, retired)), { code: "ENOENT" });
     assert.throws(() => readFileSync(path.join(fixture.install, "retired.txt")), { code: "ENOENT" });
     assert.deepEqual(
       JSON.parse(readFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), "utf8").replace(/^\uFEFF/u, "")).files.sort(),
