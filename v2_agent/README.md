@@ -23,6 +23,20 @@ the observations for each accepted batch:
   covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [Windows compatibility renewal](../docs/history/2026-10-10-compatibility-certification.json)
+passed all five checks for StreamLake, both DeepSeek routes, Pareto and Switchyard
+on deployed commit `f8bc922bd0f79ae1ad253cda77451c72dca8621d`.
+GLM Together returned HTTP 429 before its native sequence; a fresh
+[Together-only run](../docs/history/2026-10-10-compatibility-together-certification.json)
+then passed all five checks on the same deployed commit and exact endpoint.
+Across the accepted runs, all 18 native child requests and six streaming requests
+returned HTTP 200. Each child produced sandboxed output 42, received two encrypted
+handoffs and returned both markers from the same thread. Cleanup cancelled no
+active turns. These proofs used CLI session-only MXC with workspace-write and
+on-request approval; they do not certify the desktop's elevated sandbox or
+arbitrary MCP tools. The [release record](../docs/history/2026-10-10-compatibility-release.md)
+records PR review, deployment acceptance and recovery retention.
+
 The [verification release renewal](../docs/history/2026-10-09-verification-release-certification.json)
 passed all five checks for Switchyard on deployed commit
 `e39ff44e5fa7972815f7cb30bfd8c2e98e5f90ea`. Its three native child requests

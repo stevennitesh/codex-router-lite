@@ -1,12 +1,12 @@
 # openrouter/glm-5.3-flash-streamlake v2 certification
 
-Accepted observations against Router `952339029991e9afb063758b083a195e56a61c41`
-(version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-09T05:12:02.795Z. Exact endpoint: `streamlake/fp8`; fallback disabled.
+Accepted observations against Router `f8bc922bd0f79ae1ad253cda77451c72dca8621d`
+(version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.2314.0.
+Tested at 2026-10-10T17:03:20.439Z. Exact endpoint: `streamlake/fp8`; fallback disabled.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-09-sol-high-release-certification.json) records role `router_openrouter_glm_5_3_flash_streamlake`, effort
+[Redacted run evidence](../../../docs/history/2026-10-10-compatibility-certification.json) records role `router_openrouter_glm_5_3_flash_streamlake`, effort
 `max`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed
