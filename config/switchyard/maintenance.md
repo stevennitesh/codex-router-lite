@@ -127,8 +127,19 @@ and health checks cannot certify a different runtime from the one Router
 starts. Keep the generated rollback worktree and the active runtime rollback
 directory until the authorized acceptance checks pass.
 
-The transaction rejects an old candidate or rollback directory before it
-prepares dependencies. Its preflight report names the candidate, running, and
+The transaction rejects abandoned candidate staging before it prepares dependencies.
+For an existing recovery directory, it finds the unique completed, successful
+deployment result that accepted the installed Router commit and that exact backup.
+Its recorded checks, live provenance and installed binary/route hashes must agree.
+After the ordinary full-health and process-ownership preflight passes, the worker
+moves that backup beside its original result as `retained-runtime-recovery` and
+creates a fresh backup for the next update. The original result and detached
+rollback checkout remain intact; the preflight and private log name the archive.
+Missing, incomplete, mismatched or ambiguous acceptance stops deployment before
+the service changes. `-WhatIf` never moves recovery files, and an explicitly
+preserved rollback stays in place for repair or interrupted-deployment recovery.
+
+Its preflight report names the candidate, running, and
 rollback Router commits plus the v2 agents allowed by local subagent settings.
 If it reports no expected v2 agents, repair the allowlist before certification.
 

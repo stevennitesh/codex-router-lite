@@ -20,6 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "deployment-json.ps1")
+. (Join-Path $PSScriptRoot "switchyard-recovery.ps1")
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)
 if (-not $InProcess -and -not $WhatIfPreference) {
   . (Join-Path $PSScriptRoot "deployment-runner.ps1")
@@ -118,20 +119,6 @@ $stageRoot = Join-Path $runtimeRoot ".candidate-$([Guid]::NewGuid().ToString('N'
 $rollbackRoot = if ($preservingRollback) { $preservedRollback } else { Join-Path $runtimeRoot ".rollback-$([Guid]::NewGuid().ToString('N'))" }
 $keepRollback = $false
 $activationStarted = $false
-
-function Get-Sha256([string]$Path) {
-  $stream = [IO.File]::OpenRead($Path)
-  try {
-    $hasher = [Security.Cryptography.SHA256]::Create()
-    try {
-      return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
-    } finally {
-      $hasher.Dispose()
-    }
-  } finally {
-    $stream.Dispose()
-  }
-}
 
 function Get-CanonicalTextSha256([string]$Path) {
   $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Replace("`r", "`n")
@@ -485,13 +472,14 @@ if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candid
   throw "A Switchyard candidate staging directory already exists."
 }
 $rollbackDirectories = @(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*" -ErrorAction SilentlyContinue)
+$recoveryArchive = $null
 if ($preservingRollback) {
   if ($rollbackDirectories.Count -ne 1 -or
       -not [string]::Equals($rollbackDirectories[0].FullName, $rollbackRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Preserved runtime rollback must be the one existing Switchyard rollback directory."
   }
 } elseif ($rollbackDirectories.Count) {
-  throw "A Switchyard rollback directory already exists; resolve it before deploying another candidate."
+  $recoveryArchive = Get-SwitchyardRecoveryArchivePlan $runtimeRoot $stateRoot $installedRouterCommit
 }
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
@@ -552,6 +540,7 @@ $preflight = [ordered]@{
   expectedPublishedV2Agents = @($subagentPlan.expected)
   ignoredEnabledRoutes = @($subagentPlan.ignoredEnabled)
   hiddenCertifiedRoutes = @($subagentPlan.hiddenCertified)
+  previousRecoveryArchive = $recoveryArchive
 }
 Write-Host "Deployment preflight: $($preflight | ConvertTo-Json -Compress)"
 if (@($subagentPlan.certified).Count -and -not @($subagentPlan.expected).Count) {
@@ -563,6 +552,7 @@ Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Prepared ro
 
 if (-not $PSCmdlet.ShouldProcess($runtimeRoot, "deploy the Router and Switchyard candidate")) { return }
 
+Move-SwitchyardRecoveryArchive $recoveryArchive
 $existing = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 try {
   New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
