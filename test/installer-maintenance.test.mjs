@@ -517,24 +517,31 @@ test("real offline Node restoration rename failure retains old and failed trees 
   try {
     f.environment.ROUTER_FIXTURE_FAULT = "service";
     const wrapper = path.join(f.directory, "restore-failure.ps1");
+    const errorFile = path.join(f.directory, "restore-error.txt");
     writeFileSync(wrapper, `$ErrorActionPreference='Stop'
 function Move-Item { param([string]$LiteralPath,[string]$Destination)
  if([IO.Path]::GetFileName($LiteralPath).StartsWith('.node-deps-previous-')){throw 'fixture Node restore rename failed'}
  Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination
 }
-try { & ${quote(path.join(f.source, "install.ps1"))} -CheckoutInstall -InstallDir ${quote(path.join(f.directory, "unused-install"))} -ForceDeps } catch { Write-Error -ErrorRecord $_ -ErrorAction Continue;exit 1 }
+try { & ${quote(path.join(f.source, "install.ps1"))} -CheckoutInstall -InstallDir ${quote(path.join(f.directory, "unused-install"))} -ForceDeps } catch { [IO.File]::WriteAllText(${quote(errorFile)}, $_.Exception.Message, (New-Object Text.UTF8Encoding $false));Write-Error -ErrorRecord $_ -ErrorAction Continue;exit 1 }
 `);
     const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper], { env: f.environment, encoding: "utf8", windowsHide: true, timeout: 30_000 });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Install failed.*dependency rollback failed/u);
     assert.match(result.stderr, /fixture Node restore rename failed/u);
+    const errorMessage = readFileSync(errorFile, "utf8");
+    assert.match(errorMessage, /Install failed \(Background-service installation failed\.\) and dependency rollback failed \(fixture Node restore rename failed\)/u);
     const counts = f.counts();
     assert.equal(counts.stop, 2); assert.equal(counts.install, 1);
     assert.equal(readFileSync(path.join(f.source, counts.previousNode, "previous.txt"), "utf8"), "previous node tree");
     assert.equal(readFileSync(path.join(f.source, counts.previousPython, "previous.txt"), "utf8"), "previous Python tree");
     const failed = readdirSync(f.source).find(name => name.startsWith(".node-deps-failed-"));
     assert.ok(failed); assert.equal(existsSync(path.join(f.source, failed, "fixture-dependency/package.json")), true);
-    assert.ok(result.stderr.includes(counts.previousNode)); assert.ok(result.stderr.includes(failed));
+    for (const [field, tree] of [["node-previous", counts.previousNode], ["python-previous", counts.previousPython], ["node-failed", failed]]) {
+      const reportedPath = new RegExp(`${field}=([^;]+)`, "u").exec(errorMessage)?.[1];
+      assert.ok(reportedPath, errorMessage);
+      assert.equal(realpathSync.native(reportedPath), realpathSync.native(path.join(f.source, tree)), errorMessage);
+    }
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 

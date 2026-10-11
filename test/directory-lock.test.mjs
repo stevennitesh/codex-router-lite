@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as wait } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { withCatalogPublicationLock } from "../src/catalog-publication-lock.mjs";
 import { withModelOverlayLock } from "../src/model-overlay-lock.mjs";
@@ -18,6 +19,18 @@ const wrappers = [
   [withServiceOperationLock, "service-operation", undefined, "serviceLockReleaseError", "service-operation-lock.mjs"],
 ];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function awaitHeartbeatDispatch(t, dispatched) {
+  // The real heartbeat is unreferenced, while the held operation and mock
+  // effect are only Promises. Own a referenced deadline until it dispatches.
+  const deadline = new AbortController();
+  try {
+    return await Promise.race([
+      dispatched,
+      wait(8000, undefined, { signal: AbortSignal.any([t.signal, deadline.signal]) })
+        .then(() => assert.fail("heartbeat did not dispatch before the test deadline")),
+    ]);
+  } finally { deadline.abort(); }
+}
 const deadPid = 99999999;
 function fixture(t) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "router-locks-"));
@@ -101,45 +114,71 @@ test("each wrapper preserves primary errors when actual owner release also fails
 
 test("heartbeat release waits for the dispatched effect before admitting its successor", { timeout: 8000 }, async t => {
   const stateDir = fixture(t), utimes = fs.promises.utimes;
-  let dispatch, finishEffect, endOperation;
+  let dispatch, finishEffect, endOperation, effect;
   const dispatched = new Promise(resolve => { dispatch = resolve; });
-  t.mock.method(fs.promises, "utimes", (...args) => new Promise((resolve, reject) => {
-    finishEffect = () => utimes(...args).then(resolve, reject);
-    dispatch(args[0]);
-  }));
+  t.mock.method(fs.promises, "utimes", (...args) => {
+    effect = new Promise((resolve, reject) => {
+      finishEffect = () => { finishEffect = undefined; utimes(...args).then(resolve, reject); };
+      dispatch(args[0]);
+    });
+    return effect;
+  });
   let completed = false;
   const first = withCatalogPublicationLock(() => new Promise(resolve => { endOperation = resolve; }), { stateDir, heartbeatMs: 1000 }).then(() => { completed = true; });
-  const owner = await dispatched;
-  assert.match(path.basename(owner), new RegExp(`^owner-${process.pid}-`));
-  endOperation();
-  await delay(25);
-  assert.equal(completed, false, "release must still own the pending heartbeat");
-  await assert.rejects(withCatalogPublicationLock(() => assert.fail("pending release overlapped"), { stateDir, waitMs: 0 }), /still running/u);
-  finishEffect(); await first;
-  await withCatalogPublicationLock(() => assert.equal(fs.readdirSync(path.dirname(owner)).includes(path.basename(owner)), false), { stateDir });
+  const outcome = first.then(value => ({ value }), error => ({ error }));
+  try {
+    const owner = await awaitHeartbeatDispatch(t, Promise.race([
+      dispatched, first.then(() => assert.fail("lock operation ended before its heartbeat dispatched")),
+    ]));
+    assert.match(path.basename(owner), new RegExp(`^owner-${process.pid}-`));
+    endOperation();
+    await delay(25);
+    assert.equal(completed, false, "release must still own the pending heartbeat");
+    await assert.rejects(withCatalogPublicationLock(() => assert.fail("pending release overlapped"), { stateDir, waitMs: 0 }), /still running/u);
+    finishEffect(); await first;
+    await withCatalogPublicationLock(() => assert.equal(fs.readdirSync(path.dirname(owner)).includes(path.basename(owner)), false), { stateDir });
+  } finally {
+    endOperation?.(); finishEffect?.();
+    await Promise.allSettled([outcome, effect]);
+  }
 });
 
 test("an old dispatched heartbeat and release cannot touch a replacement generation", { timeout: 8000 }, async t => {
   const stateDir = fixture(t), utimes = fs.promises.utimes;
-  let dispatch, finishEffect, endFirst, endSecond, secondEntered;
+  let dispatch, finishEffect, endFirst, endSecond, secondEntered, second, effect;
   const dispatched = new Promise(resolve => { dispatch = resolve; });
-  const mock = t.mock.method(fs.promises, "utimes", (...args) => new Promise((resolve, reject) => {
-    finishEffect = () => utimes(...args).then(resolve, reject); dispatch(args[0]);
-  }));
+  const mock = t.mock.method(fs.promises, "utimes", (...args) => {
+    effect = new Promise((resolve, reject) => {
+      finishEffect = () => { finishEffect = undefined; utimes(...args).then(resolve, reject); };
+      dispatch(args[0]);
+    });
+    return effect;
+  });
   const first = withCatalogPublicationLock(() => new Promise(resolve => { endFirst = resolve; }), { stateDir, heartbeatMs: 1000 });
   const firstOutcome = assert.rejects(first, error => error.cause?.code === "ENOENT");
-  const oldOwner = await dispatched, directory = path.dirname(oldOwner);
-  fs.renameSync(directory, path.join(stateDir, "detached-old-generation"));
-  mock.mock.restore();
-  const entered = new Promise(resolve => { secondEntered = resolve; });
-  const second = withCatalogPublicationLock(async () => { secondEntered(); await new Promise(resolve => { endSecond = resolve; }); }, { stateDir });
-  await entered;
-  const successor = fs.readdirSync(directory)[0];
-  const before = fs.statSync(path.join(directory, successor)).mtimeMs;
-  endFirst(); finishEffect(); await firstOutcome;
-  assert.deepEqual(fs.readdirSync(directory), [successor]);
-  assert.equal(fs.statSync(path.join(directory, successor)).mtimeMs, before);
-  endSecond(); await second;
+  // The expected rejection is asserted below; observe an early setup failure
+  // immediately as well so cleanup cannot leave an unhandled rejection.
+  firstOutcome.catch(() => {});
+  try {
+    const oldOwner = await awaitHeartbeatDispatch(t, Promise.race([
+      dispatched, first.then(() => assert.fail("lock operation ended before its heartbeat dispatched")),
+    ])), directory = path.dirname(oldOwner);
+    fs.renameSync(directory, path.join(stateDir, "detached-old-generation"));
+    mock.mock.restore();
+    const entered = new Promise(resolve => { secondEntered = resolve; });
+    second = withCatalogPublicationLock(async () => { secondEntered(); await new Promise(resolve => { endSecond = resolve; }); }, { stateDir, waitMs: 0 });
+    const successorEntered = second.then(() => assert.fail("successor ended before entering its operation"));
+    await Promise.race([entered, successorEntered]);
+    const successor = fs.readdirSync(directory)[0];
+    const before = fs.statSync(path.join(directory, successor)).mtimeMs;
+    endFirst(); finishEffect(); await firstOutcome;
+    assert.deepEqual(fs.readdirSync(directory), [successor]);
+    assert.equal(fs.statSync(path.join(directory, successor)).mtimeMs, before);
+    endSecond(); await second;
+  } finally {
+    endFirst?.(); endSecond?.(); finishEffect?.();
+    await Promise.allSettled([firstOutcome, second, effect]);
+  }
 });
 
 test("unknown, live/reused, malformed and legacy owners never expire into absence", async t => {
