@@ -123,7 +123,10 @@ builds. Do not keep source clones or alternate runtime trees as product files.
 Runtime replacement follows the installation transaction, never a standalone stop.
 
 Windows batch gateway cleanup binds the original `cmd.exe` generation before
-running `taskkill /T /F`. A completed nonzero native result permits retry only
+running `taskkill /T /F`. Its native creation identity is captured synchronously
+after spawn, while Node retains the launch handle, and matched exactly at stop;
+Node's interpolated Windows wall clock does not establish process identity.
+A completed nonzero native result permits retry only
 when retained process handles prove the captured generations exited and a final
 process census finds no live linked descendants. Unknown proof blocks retry;
 native success retains its established authority. Observation and termination

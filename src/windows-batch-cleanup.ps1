@@ -1,8 +1,7 @@
 param(
     [Parameter(Mandatory)][int]$RootPid,
     [Parameter(Mandatory)][int]$ParentPid,
-    [Parameter(Mandatory)][long]$LaunchedAfterMs,
-    [Parameter(Mandatory)][long]$LaunchedBeforeMs,
+    [Parameter(Mandatory)][long]$RootCreatedTicks,
     [Parameter(Mandatory)][string]$ExpectedExecutable,
     [Parameter(Mandatory)][long]$DeadlineMs
 )
@@ -68,15 +67,13 @@ try {
     }
     $root = Capture-Process $rootRow
     $owned[$RootPid] = $root
-    $startedMs = [DateTimeOffset]::new($root.process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
     $imageMatches = if ([IO.Path]::IsPathRooted($ExpectedExecutable)) {
         [string]::Equals($root.process.MainModule.FileName, $ExpectedExecutable, [StringComparison]::OrdinalIgnoreCase)
     } else {
         [string]::Equals($root.process.MainModule.ModuleName, $ExpectedExecutable, [StringComparison]::OrdinalIgnoreCase)
     }
-    if ($startedMs -lt $LaunchedAfterMs -or $startedMs -gt $LaunchedBeforeMs -or
-        -not $imageMatches) {
-        throw "Windows batch root generation did not match the launch (created=$startedMs, window=$LaunchedAfterMs..$LaunchedBeforeMs, imageMatches=$imageMatches)."
+    if ($root.created -ne $RootCreatedTicks -or -not $imageMatches) {
+        throw "Windows batch root generation did not match the launch (created=$($root.created), expected=$RootCreatedTicks, imageMatches=$imageMatches)."
     }
     try {
         Capture-Descendants $rows

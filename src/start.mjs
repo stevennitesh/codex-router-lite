@@ -20,6 +20,7 @@ import { gatewaySupervisorLimits, superviseOptionalChild } from "./gateway-super
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { stopWindowsBatchChild } from "./windows-batch-cleanup.mjs";
+import { processStartIdentity } from "./process-identity.mjs";
 import { requireGatewayRuntime } from "./venv-runtime.mjs";
 import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
@@ -147,7 +148,6 @@ let shuttingDown = false;
 // pass-through on every platform.
 function run(command, args, extraEnv = {}) {
   const spawnable = spawnableCommand(command, args);
-  const launchedAfterMs = Date.now();
   const child = spawn(spawnable.command, spawnable.args, {
     cwd: SOURCE_ROOT,
     env: { ...process.env, ...commonEnv, ...extraEnv },
@@ -157,8 +157,6 @@ function run(command, args, extraEnv = {}) {
   const lifecycle = {
     windowsBatch: /\.(cmd|bat)$/iu.test(command),
     executable: spawnable.command,
-    launchedAfterMs,
-    launchedBeforeMs: Date.now(),
   };
   lifecycle.closed = new Promise(resolve => {
     child.once("error", error => { lifecycle.error = error; });
@@ -169,6 +167,11 @@ function run(command, args, extraEnv = {}) {
   });
   childLifecycles.set(child, lifecycle);
   children.add(child);
+  if (process.platform === "win32" && lifecycle.windowsBatch) {
+    // Capture before yielding: Node still holds this launch's native process
+    // handle, so the PID cannot identify a replacement generation here.
+    lifecycle.createdTicks = processStartIdentity(child.pid)?.split("|")[0];
+  }
   return child;
 }
 

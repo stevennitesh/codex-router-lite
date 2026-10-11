@@ -9,6 +9,7 @@ import test from "node:test";
 import { withServiceOperationLock } from "../src/service-operation-lock.mjs";
 import { spawnableCommand } from "../src/spawnable-command.mjs";
 import { stopWindowsBatchChild } from "../src/windows-batch-cleanup.mjs";
+import { processStartIdentity } from "../src/process-identity.mjs";
 import { openPort } from "./port-pool.mjs";
 
 const windows = process.platform === "win32";
@@ -25,9 +26,9 @@ async function fixture(body) {
   const wrapper = path.join(directory, "gateway.cmd");
   writeFileSync(descendant, "import {writeFileSync} from 'node:fs';writeFileSync(process.argv[2],String(process.pid));setTimeout(()=>{},30000);\n");
   writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${descendant}" "${trace}"\r\n`);
-  const command = spawnableCommand(wrapper, []), launchedAfterMs = Date.now();
+  const command = spawnableCommand(wrapper, []);
   const child = actualSpawn(command.command, command.args, { ...command.options, stdio: "inherit" });
-  const lifecycle = { executable: command.command, launchedAfterMs, launchedBeforeMs: Date.now() };
+  const lifecycle = { executable: command.command, createdTicks: processStartIdentity(child.pid)?.split("|")[0] };
   let pid;
   try {
     const deadline = Date.now() + 3_000;
@@ -92,7 +93,9 @@ test("an unbound batch root rejects cleanup before any native termination", { sk
       return actualSpawn(command, args, options);
     };
     syncBuiltinESMExports();
-    await assert.rejects(stopWindowsBatchChild(child, { ...lifecycle, launchedAfterMs: lifecycle.launchedAfterMs + 60_000 }), /cleanup failed.*root generation did not match the launch/u);
+    await assert.rejects(stopWindowsBatchChild(child, { ...lifecycle, createdTicks: undefined }), /cleanup failed.*identity was unavailable/u);
+    const differentGeneration = String(BigInt(lifecycle.createdTicks) + 1n);
+    await assert.rejects(stopWindowsBatchChild(child, { ...lifecycle, createdTicks: differentGeneration }), /cleanup failed.*root generation did not match the launch/u);
     assert.equal(nativeKills, 0);
     assert.equal(alive(child.pid), true);
     assert.equal(alive(pid), true);
@@ -182,7 +185,10 @@ export async function stopWindowsBatchChild(child,lifecycle){let proof;try{proof
   // and its gateway cleanup is held. The preload affects only this router argv.
   writeFileSync(preload, `import {existsSync} from 'node:fs';import path from 'node:path';if(path.resolve(process.argv[1]||'')===${JSON.stringify(path.join(root,"src/router.mjs"))}){const timer=setInterval(()=>{if(existsSync(${JSON.stringify(crashTrigger)})){clearInterval(timer);throw new Error('intentional fixture frontend crash');}},10);timer.unref();}`);
   writeFileSync(loader, `export async function resolve(s,c,n){const found=await n(s,c);if(c.parentURL===${JSON.stringify(url(path.join(root,"src/start.mjs")))}){if(found.url===${JSON.stringify(url(path.join(root,"src/health-probe.mjs")))})return{url:${JSON.stringify(url(health))},shortCircuit:true};if(found.url===${JSON.stringify(url(path.join(root,"src/windows-batch-cleanup.mjs")))})return{url:${JSON.stringify(url(cleanup))},shortCircuit:true};}return found;}`);
-  writeFileSync(controller, `import {writeFileSync} from 'node:fs';let completed=false;process.on('message',message=>{if(message.type==='close-frontend'){const child=globalThis.fixtureFrontend;child.once('close',()=>process.send({type:'frontend-closed',code:child.exitCode}));if(${frontendExit})writeFileSync(${JSON.stringify(crashTrigger)},'crash');else child.kill('SIGTERM');}else if(message.type==='checkpoint')process.send({type:'checkpoint',completed});else if(message.type==='finish')process.disconnect();});await import(${JSON.stringify(url(path.join(root,"src/foreground-start.mjs")))});completed=true;process.send({type:'import-complete'});`);
+  // V8's interpolated wall clock can disagree with native creation time. Keep
+  // real cleanup and lock custody under that skew in the completion case.
+  const clockSkew = rejectCleanup ? "" : "const now=Date.now;Date.now=()=>now()+100;";
+  writeFileSync(controller, `${clockSkew}import {writeFileSync} from 'node:fs';let completed=false;process.on('message',message=>{if(message.type==='close-frontend'){const child=globalThis.fixtureFrontend;child.once('close',()=>process.send({type:'frontend-closed',code:child.exitCode}));if(${frontendExit})writeFileSync(${JSON.stringify(crashTrigger)},'crash');else child.kill('SIGTERM');}else if(message.type==='checkpoint')process.send({type:'checkpoint',completed});else if(message.type==='finish')process.disconnect();});await import(${JSON.stringify(url(path.join(root,"src/foreground-start.mjs")))});completed=true;process.send({type:'import-complete'});`);
   const [gatewayPort, apiPort, routerPort] = await Promise.all([openPort(), openPort(), openPort()]);
   const env = { ...process.env, CODEX_BIN: codex, CODEX_HOME: path.join(directory, "codex"), MODEL_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_STATE_DIR: state, MODEL_ROUTER_LITELLM_BIN: wrapper, OPENROUTER_API_KEY: "",

@@ -6,6 +6,9 @@ import path from "node:path";
 // exits before taskkill reaches its root. A native handle witness distinguishes
 // that completed tree from an incomplete cleanup without parsing OS messages.
 export function stopWindowsBatchChild(child, lifecycle) {
+  if (!/^\d+$/u.test(lifecycle.createdTicks ?? "")) {
+    return Promise.reject(new Error("Optional Windows child tree cleanup failed. Original batch root identity was unavailable."));
+  }
   const systemRoot = process.env.SystemRoot || process.env.WINDIR;
   const shellPath = systemRoot && path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const shell = shellPath && existsSync(shellPath) ? shellPath : "powershell.exe";
@@ -15,8 +18,7 @@ export function stopWindowsBatchChild(child, lifecycle) {
       "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
       "-File", path.join(import.meta.dirname, "windows-batch-cleanup.ps1"),
       "-RootPid", String(child.pid), "-ParentPid", String(process.pid),
-      "-LaunchedAfterMs", String(lifecycle.launchedAfterMs),
-      "-LaunchedBeforeMs", String(lifecycle.launchedBeforeMs),
+      "-RootCreatedTicks", lifecycle.createdTicks,
       "-ExpectedExecutable", lifecycle.executable,
       "-DeadlineMs", String(deadline),
     ], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, timeout: 5_000 });
