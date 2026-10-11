@@ -76,7 +76,7 @@ try {
     }
     if ($startedMs -lt $LaunchedAfterMs -or $startedMs -gt $LaunchedBeforeMs -or
         -not $imageMatches) {
-        throw 'Windows batch root generation did not match the launch.'
+        throw "Windows batch root generation did not match the launch (created=$startedMs, window=$LaunchedAfterMs..$LaunchedBeforeMs, imageMatches=$imageMatches)."
     }
     try {
         Capture-Descendants $rows
