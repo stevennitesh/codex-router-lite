@@ -7,7 +7,8 @@ import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 import { nativeAttemptLogPath } from "./switchyard-native-observation.mjs";
 import {
   OBSERVED_NATIVE_MODELS, OBSERVED_NATIVE_EFFORTS, OBSERVED_NATIVE_TIERS,
-  OBSERVED_NATIVE_OUTCOMES, OBSERVED_TARGETS, OBSERVED_CLASSIFIER_LABELS,
+  OBSERVED_NATIVE_OUTCOMES, OBSERVED_TARGETS, OBSERVED_CLASSIFIER_LABELS, OBSERVED_CLASSIFIER_LABEL_SETS,
+  OBSERVED_FALLBACK_REASONS, OBSERVED_CLASSIFIER_REASONS, observedClassifierProvider,
 } from "./switchyard-observation-contract.mjs";
 
 const SWITCHYARD_START = "Switchyard libsy server";
@@ -21,19 +22,19 @@ const TOKEN_FIELDS = Object.freeze([
 ]);
 const KNOWN_TARGETS = OBSERVED_TARGETS;
 const KNOWN_ALGORITHMS = new Set(["type_safe_task_classifier", "noop"]);
-const KNOWN_FALLBACK_REASONS = new Set([
-  "empty_state", "non_text_state", "low_confidence", "classifier_unavailable",
-  "classifier_timeout", "provider_http_error", "malformed_response", "state_too_large",
-  "invalid_confidence", "unresolved_label",
-]);
+const KNOWN_FALLBACK_REASONS = new Set(OBSERVED_FALLBACK_REASONS);
+const KNOWN_CLASSIFIER_REASONS = new Set(OBSERVED_CLASSIFIER_REASONS);
 const KNOWN_CLASSIFIER_TARGETS = new Set(OBSERVED_CLASSIFIER_LABELS);
 
 export function latestSwitchyardGeneration(contents) {
   const text = String(contents || "");
-  const marker = text.lastIndexOf(SWITCHYARD_START);
-  if (marker < 0) return undefined;
-  const lineStart = text.lastIndexOf("\n", marker) + 1;
-  return text.slice(lineStart);
+  let latest;
+  for (const record of text.matchAll(/([^\r\n]*)(?:\r\n|\r|\n)/gu)) {
+    // The locked server prints this standalone line; supervision inherits its
+    // stdio without a prefix. Bare historical records have the same grammar.
+    if (record[1] === SWITCHYARD_START) latest = record.index;
+  }
+  return latest === undefined ? undefined : text.slice(latest);
 }
 
 function increment(record, key, amount = 1) {
@@ -113,6 +114,9 @@ export function summarizeSwitchyardTrace(contents) {
       const providerModel = /\b(?:evidence\.provider_model|evidence_provider_model)="([^"]+)"/u.exec(line)?.[1];
       const finalTarget = /\b(?:evidence\.final_target|evidence_final_target)="([^"]+)"/u.exec(line)?.[1];
       const reasonCode = /\b(?:evidence\.reason_code|evidence_reason_code)="([^"]+)"/u.exec(line)?.[1];
+      const provider = providerModel ? observedClassifierProvider(providerModel) : undefined;
+      const safeTarget = finalTarget ? safeBucket(finalTarget, KNOWN_CLASSIFIER_TARGETS) : undefined;
+      const safeReason = reasonCode ? safeBucket(reasonCode, KNOWN_CLASSIFIER_REASONS) : undefined;
       const httpStatus = Number(/\b(?:evidence\.http_status|evidence_http_status)=(\d{3})/u.exec(line)?.[1]);
       const confidence = Number(/\b(?:evidence\.confidence|evidence_confidence)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
       const threshold = Number(/\b(?:evidence\.threshold|evidence_threshold)=([0-9]+(?:\.[0-9]+)?)/u.exec(line)?.[1]);
@@ -123,8 +127,8 @@ export function summarizeSwitchyardTrace(contents) {
       }));
       summary.classifier.decisions += 1;
       if (evidenceSource === "fail_open") summary.classifier.fallbacks += 1;
-      if (providerModel) increment(summary.classifier.providerModels, providerModel);
-      if (finalTarget) increment(summary.classifier.finalTargets, finalTarget);
+      if (provider) increment(summary.classifier.providerModels, provider.providerModel);
+      if (safeTarget) increment(summary.classifier.finalTargets, safeTarget);
       if (Number.isFinite(decisionLatencyMs)) {
         summary.classifier.latency.count += 1;
         summary.classifier.latency.maximumMs = Math.max(summary.classifier.latency.maximumMs ?? 0, decisionLatencyMs);
@@ -132,14 +136,15 @@ export function summarizeSwitchyardTrace(contents) {
       summary.classifier.recent.push({
         ...(timestamp ? { at: timestamp } : {}),
         source: evidenceSource,
-        ...(providerModel ? { providerModel } : {}),
-        ...(finalTarget ? { finalTarget } : {}),
-        ...(reasonCode ? { reasonCode } : {}),
+        ...provider,
+        ...(safeTarget ? { finalTarget: safeTarget } : {}),
+        ...(safeReason ? { reasonCode: safeReason } : {}),
         ...(Number.isFinite(httpStatus) ? { httpStatus } : {}),
         ...(Number.isFinite(confidence) ? { confidence } : {}),
         ...(Number.isFinite(threshold) ? { threshold } : {}),
         ...(Number.isFinite(decisionLatencyMs) ? { decisionLatencyMs } : {}),
-        ...(evidenceSource === "type_safe_classifier" && Object.keys(probabilities).length === OBSERVED_CLASSIFIER_LABELS.length
+        ...(evidenceSource === "type_safe_classifier" && OBSERVED_CLASSIFIER_LABEL_SETS.some(labels =>
+          Object.keys(probabilities).length === labels.length && labels.every(label => Object.hasOwn(probabilities, label)))
           ? { probabilities }
           : {}),
       });
@@ -147,7 +152,7 @@ export function summarizeSwitchyardTrace(contents) {
     }
 
     const selected = /\bselected_model="([^"]+)"/u.exec(line)?.[1];
-    if (selected) increment(summary.selectedTargets, selected);
+    if (selected) increment(summary.selectedTargets, Object.hasOwn(KNOWN_TARGETS, selected) ? selected : "unknown");
 
     const status = statusFrom(line);
     if (status && Number(status) >= 400) summary.failures.http += 1;
@@ -540,6 +545,7 @@ export function summarizeNativeAttemptObservations(contents) {
       associatedAttempts: 0,
       unassociatedAttempts: 0,
       associationResets: 0,
+      uncertainResets: 0,
       invalidOrdering: 0,
     },
     targets: {},
@@ -555,6 +561,7 @@ export function summarizeNativeAttemptObservations(contents) {
     outsideTransitions: {
       initialRequests: 0,
       orderingInvalidRequests: 0,
+      uncertainResetRequests: 0,
       unassociatedAttempts: 0,
     },
     limitations: [
@@ -562,6 +569,7 @@ export function summarizeNativeAttemptObservations(contents) {
       "Attempts are transport observations, not task outcomes, causal cache effects, subscription debits or complete task costs.",
       "Read share includes only attempts reporting both input and cached-input counters; missing counters are never zero-filled.",
       "Historical routing.jsonl records remain a separate partial accounting surface.",
+      "Legacy or malformed reset records cannot identify the invalidated active request; adjacent request groups are excluded from trusted transitions while attempt aggregates are retained.",
     ],
   };
   if (latestStart < 0) return summary;
@@ -591,11 +599,23 @@ export function summarizeNativeAttemptObservations(contents) {
     if (record.event === "association_reset") {
       if (Number.isSafeInteger(record.association) && record.association > 0) {
         const group = groupByAssociation.get(record.association);
-        if (group) groups.push(group);
+        const explicit = Object.hasOwn(record, "invalidatedRequest");
+        const valid = explicit && record.reason === "overlap" && (record.invalidatedRequest === null ||
+          Number.isSafeInteger(record.invalidatedRequest) && record.invalidatedRequest > 0 &&
+          (!group || record.invalidatedRequest >= group.request));
+        if (!valid) {
+          summary.coverage.uncertainResets += 1;
+          if (explicit) summary.coverage.malformedRecords += 1;
+        }
+        if (group) {
+          if (!valid || group.request === record.invalidatedRequest) group.contiguous = false;
+          if (!valid) summary.outsideTransitions.uncertainResetRequests += 1;
+          groups.push(group);
+        }
         groups.push({ association: record.association, reset: true });
         groupByAssociation.delete(record.association);
         summary.coverage.associationResets += 1;
-      }
+      } else { summary.coverage.malformedRecords += 1; flushGroups(true); }
       continue;
     }
     if (record.event !== "native_attempt") continue;
@@ -681,27 +701,6 @@ export function buildSwitchyardUsageReport(
   nativeAttemptContents = "",
 ) {
   const trace = summarizeSwitchyardTrace(routerContents);
-  const safeClassifier = trace.classifier ? {
-    ...trace.classifier,
-    providerModels: Object.entries(trace.classifier.providerModels).reduce((counts, [key, count]) => {
-      increment(counts, /^typesafe\/jev-1\.13-[A-Za-z0-9.-]+$/u.test(key) ? "jev113" : "unknown", count);
-      return counts;
-    }, {}),
-    finalTargets: Object.entries(trace.classifier.finalTargets).reduce((counts, [key, count]) => {
-      increment(counts, safeBucket(key, KNOWN_CLASSIFIER_TARGETS), count);
-      return counts;
-    }, {}),
-    recent: trace.classifier.recent.map((entry) => ({
-      ...entry,
-      ...(entry.providerModel ? {
-        providerModel: /^typesafe\/jev-1\.13-[A-Za-z0-9.-]+$/u.test(entry.providerModel)
-          ? "jev-1.13 build"
-          : "unknown",
-      } : {}),
-      ...(entry.finalTarget ? { finalTarget: safeBucket(entry.finalTarget, KNOWN_CLASSIFIER_TARGETS) } : {}),
-      ...(entry.reasonCode ? { reasonCode: safeBucket(entry.reasonCode, KNOWN_FALLBACK_REASONS) } : {}),
-    })),
-  } : undefined;
   const safeSelectedTargets = Object.entries(trace.selectedTargets || {}).reduce((counts, [key, count]) => {
     increment(counts, KNOWN_TARGETS[key]?.key || "unknown", count);
     return counts;
@@ -712,7 +711,6 @@ export function buildSwitchyardUsageReport(
     generationDiagnostics: {
       scope: "unassociated Router and classifier observations from the latest logged generation",
       ...trace,
-      ...(safeClassifier ? { classifier: safeClassifier } : {}),
       ...(trace.selectedTargets ? { selectedTargets: safeSelectedTargets } : {}),
     },
   };

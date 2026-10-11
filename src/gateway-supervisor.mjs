@@ -19,13 +19,11 @@
 //
 // Three rules keep the restart from being worse than the crash:
 //
-//   1. **Only after the gateway has been healthy once.** A gateway that never
-//      came up is a configuration or dependency failure, and retrying it hides
-//      the message the operator needs. Startup failure is unchanged: it still
-//      throws out of `main()` and takes the service down.
+//   1. **Frontend lifetime is independent.** The optional startup owner retries
+//      first-launch failures without taking down native serving; this owner
+//      watches children that have already become healthy.
 //   2. **Bounded, in a window.** At most `maxRestarts` failures inside
-//      `windowMs`; past that the supervisor returns and the service exits so
-//      the OS supervisor performs a genuinely clean restart. Without the
+//      `windowMs`; past that this child's supervisor returns. Without the
 //      window, an install that crashes once a week would eventually exhaust a
 //      lifetime budget and stop being restarted at all; without the bound, a
 //      gateway that dies on every request becomes a spawn loop.
@@ -174,7 +172,7 @@ export async function superviseGateway({
       // A child that is alive but never became healthy would leave the loop
       // parked on a `waitForExit` that resolves only when something else kills
       // it, so end it here and let the next iteration count it.
-      if (isRunning(current)) stop(current);
+      if (isRunning(current)) await stop(current);
     }
   }
 }
@@ -219,7 +217,15 @@ export async function superviseOptionalChild({
         backoffMs,
       });
     } catch (error) {
-      if (isRunning(child)) stop(child);
+      if (child) {
+        try {
+          if (isRunning(child)) await stop(child);
+          await waitForExit(child, label);
+        } catch (cleanupError) {
+          log(`${label} cleanup failed: ${reason(cleanupError)}; not starting another child.`);
+          return { label, restarts: attempt, exhausted: true };
+        }
+      }
       if (attempt >= maxRestarts) {
         log(`${label} did not become healthy after ${attempt + 1} attempt(s): ${reason(error)}; not restarting it again.`);
         return { label, restarts: attempt, exhausted: true };

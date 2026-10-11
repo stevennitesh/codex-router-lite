@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateFile } from "./file-security.mjs";
@@ -26,6 +27,7 @@ export function renderLiteLlmConfig() {
   }
   lines.push(
     "litellm_settings:",
+    "  callbacks: [litellm_stream_cleanup_callback.stream_cleanup_callback]",
     "  drop_params: true",
     "  request_timeout: 600",
     "",
@@ -45,6 +47,8 @@ export function renderLiteLlmConfig() {
     // credential. This is defense in depth for CVE-2026-84377 in addition to
     // pinning LiteLLM at its fixed release.
     "  allow_client_side_credentials: false",
+    // Cancel pending provider work before the acquired-stream close hook exists.
+    "  cancel_on_disconnect: true",
     "  disable_spend_logs: true",
     "",
   );
@@ -57,6 +61,12 @@ export function writeLiteLlmConfig(target = LITELLM_CONFIG_PATH) {
   if (target === LITELLM_CONFIG_PATH) {
     assertStateOwnership("write the gateway routing config");
   }
+  // LiteLLM resolves callback modules beside its YAML. Publish the owned
+  // module privately before referring to it from the gateway configuration.
+  writePrivateFile(
+    path.join(path.dirname(target), "litellm_stream_cleanup_callback.py"),
+    readFileSync(new URL("./litellm_stream_cleanup_callback.py", import.meta.url)),
+  );
   writePrivateFile(target, renderLiteLlmConfig());
   return target;
 }

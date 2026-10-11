@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 
 import { assertCallerSecret } from "./caller-auth.mjs";
-import { protectPrivateFile } from "./file-security.mjs";
+import { createPrivateFile, protectPrivateFile } from "./file-security.mjs";
 
 function assertOperationId(operationId) {
   const value = String(operationId || "");
@@ -49,13 +49,7 @@ export function swapCallerCapability({
   const temporary = callerCapabilityTemporaryPath(secretPath, operationId);
   const backup = callerCapabilityBackupPath(secretPath, operationId);
   if (existsSync(temporary) || existsSync(backup)) throw new Error("Caller capability rotation generation already exists; recover it before retrying.");
-  writeFileSync(temporary, `${currentSecret}\n`, { encoding: "utf8", flag: "wx" });
-  try {
-    protect(temporary);
-  } catch (error) {
-    removeIfPresent(temporary);
-    throw error;
-  }
+  createPrivateFile(temporary, `${currentSecret}\n`, { protect });
 
   let backupPresent = false;
   let newSecretLive = false;

@@ -1,12 +1,10 @@
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  readFileSync,
-} from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateJson } from "./file-security.mjs";
+import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
 import {
   INSTALL_MANIFEST_PATH,
   SOURCE_ROOT,
@@ -37,14 +35,40 @@ function packageVersion() {
   }
 }
 
-export function readInstallManifest() {
-  if (!existsSync(INSTALL_MANIFEST_PATH)) return undefined;
+export function readInstallManifestDetail({
+  manifestPath = INSTALL_MANIFEST_PATH,
+  lstat,
+  readFile = readFileSync,
+} = {}) {
+  const probe = probeRegularFile(manifestPath, lstat ? { lstat } : {});
+  if (probe.status !== "present") return probe;
+  let contents;
   try {
-    const parsed = JSON.parse(readFileSync(INSTALL_MANIFEST_PATH, "utf8"));
-    return parsed?.version === 1 ? parsed : undefined;
-  } catch {
-    return undefined;
+    contents = readFile(manifestPath, "utf8");
+  } catch (error) {
+    const reason = fileProbeErrorReason(error);
+    return {
+      // Only the initial probe establishes fresh absence. Losing an observed
+      // record before its read cannot establish who owns the directory.
+      status: reason === "missing" ? "probe-failed" : reason,
+      ...(error?.code ? { code: error.code } : {}),
+    };
   }
+  try {
+    const manifest = JSON.parse(contents);
+    return manifest?.version === 1
+      ? { status: "present", manifest }
+      : { status: "invalid" };
+  } catch {
+    return { status: "invalid" };
+  }
+}
+
+// Diagnostics and update callers deliberately tolerate unavailable records.
+// Mutation guards use the detailed read instead of treating every failure as
+// proof that a state directory has no owner.
+export function readInstallManifest() {
+  return readInstallManifestDetail().manifest;
 }
 
 export function installedSourceRoot(manifest = readInstallManifest()) {

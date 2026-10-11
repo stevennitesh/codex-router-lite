@@ -133,7 +133,7 @@ function tableHeaderAtLine(line, lineNumber) {
   }
   const path = tomlDottedKey(line.slice(start, end).trim());
   if (!path) ambiguousToml(lineNumber, "the table key cannot be decoded safely");
-  return path;
+  return { path, array };
 }
 
 function assignmentAtLine(line, lineNumber, decodeBasicString) {
@@ -165,13 +165,15 @@ function assignmentAtLine(line, lineNumber, decodeBasicString) {
   if (equals === -1) return undefined;
   const key = tomlDottedKey(line.slice(0, equals).trim());
   if (!key) ambiguousToml(lineNumber, "an assignment key cannot be decoded safely");
-  const rawValue = line.slice(equals + 1).trimStart();
+  const afterEquals = line.slice(equals + 1);
+  const rawValue = afterEquals.trimStart();
+  const valueStart = equals + 1 + afterEquals.length - rawValue.length;
   const quoteCharacter = rawValue[0];
   if (quoteCharacter !== '"' && quoteCharacter !== "'") {
-    return { key, kind: "other" };
+    return { key, kind: "other", valueStart };
   }
   if (rawValue.startsWith(quoteCharacter.repeat(3))) {
-    return { key, kind: "multiline-string" };
+    return { key, kind: "multiline-string", valueStart };
   }
   let index = 1;
   let body = "";
@@ -199,16 +201,17 @@ function assignmentAtLine(line, lineNumber, decodeBasicString) {
   }
   const value = quoteCharacter === '"' ? decodeBasicString(body) : body;
   if (value === undefined) ambiguousToml(lineNumber, "a basic string escape is invalid");
-  return { key, kind: "string", value };
+  return { key, kind: "string", value, valueStart, valueEnd: valueStart + index };
 }
 
 // A small fail-closed structural lexer, not a general TOML value parser. It
-// identifies real table boundaries and active assignments while ignoring
+// identifies real table boundaries, comment lines and active assignments while ignoring
 // table-looking text and assignments inside multiline strings.
 export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } = {}) {
   const lines = String(contents || "").split("\n");
   const headers = [];
   const assignments = [];
+  const comments = [];
   let tablePath = [];
   let multiline;
   let arrayDepth = 0;
@@ -217,10 +220,13 @@ export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } 
     const line = lines[lineIndex];
     const lineNumber = lineIndex + 1;
     if (!multiline && arrayDepth === 0) {
+      if (line.trimStart().startsWith("#")) {
+        comments.push({ index: lineIndex, text: line.trim() });
+      }
       const header = tableHeaderAtLine(line, lineNumber);
       if (header) {
-        tablePath = header;
-        headers.push({ index: lineIndex, path: header });
+        tablePath = header.path;
+        headers.push({ index: lineIndex, ...header });
         continue;
       }
       const assignment = assignmentAtLine(line, lineNumber, decodeBasicString);
@@ -289,7 +295,7 @@ export function scanTomlDocument(contents, { decodeBasicString = tomlBasicKey } 
     ambiguousToml(lines.length, `an unterminated multiline ${multiline} string was found`);
   }
   if (arrayDepth !== 0) ambiguousToml(lines.length, "an unterminated array was found");
-  return { lines, headers, assignments };
+  return { lines, headers, assignments, comments };
 }
 
 function samePath(left, right) {

@@ -4,7 +4,6 @@ For request, replay, tool or stream defects use [debugging](agents/debugging.md)
 This guide owns service and operator diagnosis. Start with read-only checks:
 
 ```powershell
-.\model-router.ps1 codex status
 .\model-router.ps1 codex doctor
 ```
 
@@ -15,6 +14,36 @@ Distinguish access denial from confirmed absence; a successful owner-context rea
 resolves that ambiguity. Administrator elevation is not required merely to read
 the user's state. Do not change ownership, weaken ACLs, or reinstall to bypass
 the sandbox's access restrictions.
+
+Capability setup creates keys only when their files are confirmed absent. An
+unreadable or invalid existing key stops setup before either capability is
+changed. Resolve access under its owning Windows user or restore a known-good
+generation; do not delete protected state to bypass a read error. Capability
+status is read-only. Intentional caller-key changes use the rotation transaction.
+Rotation keeps its transaction locks alive while waiting for status and config
+refresh commands. Recovery waits for a failed child command to close before
+restoring the previous capability and client configuration.
+
+The catalog publication, model overlay, caller rotation and service command
+locks recover only when their recorded owner process has exited. A paused live
+process keeps its lock even if its heartbeat is old. A failed process probe or
+a reused PID can cause the command to wait or refuse; neither grants permission
+to remove the lock. Resolve the running command before retrying.
+
+Upgrades from empty directory locks require a quiescent transition: complete the
+guarded replacement transaction and wait for all old Router CLI commands to
+exit before using the new commands. If an empty legacy `.lock` directory remains
+under the selected Router state directory, confirm that all previous command
+holders have exited before removing that empty directory. Do not remove a
+populated, unverified or live-owner lock, and do not run old and new lock writers
+together. Only `catalog-publication.lock`, `model-overlay-transaction.lock`,
+`caller-key-rotation.lock` and `service-operation.lock` are part of this cleanup;
+leave capability, manifest and other state files intact.
+
+Generated-state writes also stop when an existing installation manifest cannot
+establish ownership. Restore a valid manifest before retrying. An intentionally
+ownerless version-1 manifest retains its existing initialization behavior; an
+installer ownership transfer remains explicit.
 
 Do not paste the full managed loopback URL, keys, bearer tokens, account IDs, prompt bodies, or unredacted logs into an issue.
 
@@ -38,6 +67,13 @@ visibility. A model
 whose native entry still has `visibility: "hide"` remains absent by design;
 automatic refresh cannot turn a staged account rollout into an entitlement.
 
+## Gateway interpreter probe times out
+
+A Python interpreter probe timing out does not establish that its virtual
+environment is broken. Router warns and proceeds to the gateway's bounded
+readiness wait. A missing interpreter or a failing standard-library import still
+stops that gateway launch and requires dependency repair.
+
 ## Native or provider requests fail with a connect timeout
 
 A transport error carrying `UND_ERR_CONNECT_TIMEOUT` means Router did not
@@ -50,6 +86,12 @@ through 30 seconds. The default pre-header retry budget is derived from the same
 bound, so the retry loop can actually absorb transient connect failures instead
 of discovering them only after its budget has expired.
 
+Literal loopback hops (`localhost`, IPv4 `127/8`, and `::1`) always use direct
+HTTP connections, including the separate health probe pool. They do not depend
+on `NO_PROXY`; ordinary external origins retain the opted-in environment proxy
+and bypass policy. DNS aliases, local-looking suffixes and private network
+addresses do not acquire that mandatory bypass.
+
 Do not raise the timeout merely to hide a persistently unreachable network
 path. Check DNS, proxy selection, local interface/routing, and whether the same
 origin is reachable outside Router. Inference POSTs retry only conclusive
@@ -59,6 +101,13 @@ The retry budget and caller permission are checked again after backoff and
 cleanup, before an extra dispatch. Images retain their no-retry policy.
 
 ## Provider errors wait without completing
+
+The shared payload caps default to 128 MiB for requests and 8 MiB for buffered
+responses. `MODEL_ROUTER_MAX_BODY_BYTES` and
+`MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES` accept positive safe integer byte
+counts. Their `CODEX_ROUTER_` aliases remain supported when the corresponding
+`MODEL_ROUTER_` setting is unset. An invalid, fractional or infinite setting
+stops startup with its name; use a byte count such as `8388608`, not `8MiB`.
 
 Router collects routed error diagnostics for at most one second by default,
 independently of the long generation deadline. A timeout, oversized body or
@@ -173,15 +222,17 @@ Do not reinstall repeatedly over the live old process or discard its backup.
 
 A task with the expected name but different launcher, arguments, source root, ACL, or generation is foreign. Do not adopt or overwrite it. Use the installer or guarded restart transaction after resolving ownership.
 
-The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. If startup still reports an existing module as missing, inspect the named program-tree ACL before changing task identity or reinstalling.
+The installer grants `BUILTIN\Users` read and execute access only to the Router program tree so its Limited scheduled task can load the installed modules. Protected credentials and state remain owner-only. A module-resolution error naming an existing path does not prove a task-token access failure. Readiness uses output written after the service launch began; check the launch entry, installed dependencies, path type and task account access before changing permissions or reinstalling.
 
 Never stop Router separately during maintenance. If the user has not authorized a restart, report that a restart is required and stop before changing the live service.
 
-If replacement reports `ERR_ROUTER_DRAIN_DEFERRED` or
+If an update or restart reports `ERR_ROUTER_DRAIN_DEFERRED` or
 `ERR_ROUTER_DRAIN_UNSUPPORTED`, follow the
-[replacement and drain policy](INSTALL.md#replacement-and-drain). A deferral
-preserves the running generation; it is not a reason to kill the process or
-automatically force replacement.
+[restart and waiting policy](INSTALL.md#replacement-and-drain). Router was left
+running because work is unfinished or that older version cannot wait for
+requests to finish. Let the work finish before retrying. Restarting without
+waiting interrupts running requests and requires explicit approval; never do it
+automatically.
 
 The service task has a minute heartbeat and `MultipleInstances=IgnoreNew`.
 While Router is running, a duplicate heartbeat launch may set Task Scheduler's

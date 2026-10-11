@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   buildSwitchyardUsageReport,
+  latestSwitchyardGeneration,
   summarizeSwitchyardTrace,
   summarizeSwitchyardUsage,
 } from "../src/switchyard-trace.mjs";
+
+test("trace accepts complete Sol High and historical Sol Medium probability schemas separately", () => {
+  const event = '2026-10-08T12:00:00Z INFO evidence_source="type_safe_classifier" evidence_final_target="sol_high" evidence_probability_luna_max=0.1 evidence_probability_sol_high=0.7 evidence_probability_astra_medium=0.1 evidence_probability_astra_xhigh=0.1';
+  const summary = summarizeSwitchyardTrace(`Switchyard libsy server\n${event}`);
+  assert.deepEqual(summary.classifier.recent[0].probabilities, { luna_max: 0.1, sol_high: 0.7, astra_medium: 0.1, astra_xhigh: 0.1 });
+  const hybrid = summarizeSwitchyardTrace(`Switchyard libsy server\n${event} evidence_probability_sol_medium=0.7`);
+  assert.equal(hybrid.classifier.recent[0].probabilities, undefined);
+  const usage = summarizeSwitchyardUsage(JSON.stringify({ ts: "2026-10-08T12:00:00Z", model: "switchyard/sol-high", session_id: "synthetic" }));
+  assert.deepEqual(usage.targets.solHigh, { model: "gpt-6.1-sol", effort: "high", records: 1 });
+});
 
 test("Switchyard trace summarizes only the latest generation without raw identifiers", () => {
   const summary = summarizeSwitchyardTrace([
@@ -30,6 +45,8 @@ test("Switchyard trace summarizes only the latest generation without raw identif
       at: "2026-09-04T05:10:07Z",
       source: "type_safe_classifier",
       providerModel: "typesafe/jev-1.13-20260917",
+      providerFamily: "jev-1.13",
+      providerBuildObserved: true,
       finalTarget: "sol_medium",
       confidence: 0.82,
       threshold: 0.35,
@@ -108,6 +125,64 @@ test("Switchyard trace fails closed when no service generation marker exists", (
   });
 });
 
+test("generation boundaries are complete standalone startup records, never metadata or unrelated messages", () => {
+  const timing = second=>`[codex-router] timing at=2026-10-10T01:00:0${second}Z model=gpt-6.1-sol provider=openai status=200`;
+  const first = `art\nSwitchyard libsy server\n  listening: http://127.0.0.1:4000\n${timing(0)}\n`;
+  for (const field of ["evidence_provider_model", "private_field"]) {
+    const log = `${first}2026-10-10T01:00:01Z INFO ${field}="typesafe/jev-1.13-Switchyard libsy server"\n${timing(2)}`;
+    const summary = summarizeSwitchyardTrace(log);
+    assert.equal(summary.nativeOpenAIRequests.total,2);
+    assert.equal(summary.since,"2026-10-10T01:00:00Z");
+    assert.equal(latestSwitchyardGeneration(log),log.slice(4));
+  }
+  for (const unsupported of ['INFO Switchyard libsy server\n','2026-10-10T01:00:00Z INFO Switchyard libsy server\n',
+    'message="Switchyard libsy server"\n','Switchyard libsy server started\n','Switchyard libsy server']) {
+    assert.equal(latestSwitchyardGeneration(unsupported),undefined);
+    assert.equal(summarizeSwitchyardTrace(first+unsupported).nativeOpenAIRequests.total,1);
+  }
+  const latest = `Switchyard libsy server\r\n${timing(3)}\r\n`;
+  assert.equal(latestSwitchyardGeneration(first+latest),latest);
+  assert.equal(summarizeSwitchyardTrace(first+latest).nativeOpenAIRequests.total,1);
+  assert.equal(summarizeSwitchyardTrace(first+latest).since,"2026-10-10T01:00:03Z");
+});
+
+test("shared trace projection protects default, usage and certification CLIs while retaining approved historical vocabulary", () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(),"switchyard-safe-trace-"));
+  try {
+    const runtime = path.join(fixture,"switchyard"); mkdirSync(runtime);
+    const log = ["Switchyard libsy server",
+      '2026-10-10T01:00:00Z INFO evidence_source="type_safe_classifier" evidence_provider_model="typesafe/jev-1.13-PRIVATE_ACCOUNT_CANARY" evidence_final_target="PRIVATE_TARGET_CANARY" evidence_reason_code="PRIVATE_REASON_CANARY"',
+      '2026-10-10T01:00:01Z INFO evidence_source="type_safe_classifier" evidence_provider_model="typesafe/jev-1.13-20260917" evidence_final_target="sol_medium" evidence_reason_code="selected"',
+      '2026-10-10T01:00:02Z INFO evidence_source="fail_open" evidence_provider_model="PRIVATE_UNKNOWN_PROVIDER" evidence_final_target="sol_high" evidence_reason_code="non_text_state"',
+      '2026-10-10T01:00:03Z INFO selected_model="PRIVATE_SELECTED_CANARY"',
+      '2026-10-10T01:00:04Z INFO selected_model="switchyard/sol-medium"',
+      '[codex-router] timing at=2026-10-10T01:00:05Z model=switchyard/auto provider=switchyard status=200',
+    ].join("\n");
+    writeFileSync(path.join(fixture,"router.log"),log);
+    writeFileSync(path.join(runtime,"routing.jsonl"),"");
+    const binary = path.join(runtime,"switchyard-server.exe"), config = path.join(runtime,"routes.toml");
+    writeFileSync(binary,"fixture file, never executed"); writeFileSync(config,"fixture file, never interpreted");
+    const env = {...process.env,CODEX_HOME:fixture,MODEL_ROUTER_STATE_DIR:fixture,
+      CODEX_ROUTER_SWITCHYARD_ROOT:runtime,CODEX_ROUTER_SWITCHYARD_BIN:binary,CODEX_ROUTER_SWITCHYARD_CONFIG:config,
+      CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG:path.join(runtime,"no-attempt-observations.jsonl")};
+    for (const args of [["src/switchyard-trace.mjs"],["src/switchyard-trace.mjs","--usage"],["src/switchyard-certification-evidence.mjs"]]) {
+      const result = spawnSync(process.execPath,args,{env,encoding:"utf8",windowsHide:true,timeout:10000});
+      assert.equal(result.status,0,result.stderr);
+      assert.doesNotMatch(result.stdout,/PRIVATE_/u);
+      const parsed = JSON.parse(result.stdout), summary = parsed.generationDiagnostics || parsed;
+      assert.equal(summary.classifier.decisions,3);
+      assert.deepEqual(summary.classifier.providerModels,{"jev-1.13 build":1,"typesafe/jev-1.13-20260917":1,unknown:1});
+      assert.deepEqual(summary.classifier.finalTargets,{unknown:1,sol_medium:1,sol_high:1});
+      assert.equal(summary.classifier.recent[0].providerFamily,"jev-1.13");
+      assert.equal(summary.classifier.recent[0].providerBuildObserved,true);
+      assert.equal(summary.classifier.recent[1].providerModel,"typesafe/jev-1.13-20260917");
+      assert.equal(summary.classifier.recent[1].reasonCode,"selected");
+      assert.equal(summary.classifier.recent[2].providerFamily,"unknown");
+      assert.equal(summary.classifier.recent[2].providerBuildObserved,false);
+    }
+  } finally { rmSync(fixture,{recursive:true,force:true}); }
+});
+
 test("routing usage keeps mixed accounting partial, bounded, and identifier-free", () => {
   const privateSessionA = "private-session-alpha";
   const privateSessionB = "private-session-beta";
@@ -184,7 +259,7 @@ test("usage report keeps generation diagnostics separate from serving records", 
   );
   assert.equal(report.coverage.selectedRecords, 1);
   assert.equal(report.generationDiagnostics.classifier.fallbacks, 1);
-  assert.deepEqual(report.generationDiagnostics.classifier.providerModels, { jev113: 1, unknown: 1 });
+  assert.deepEqual(report.generationDiagnostics.classifier.providerModels, { "jev-1.13 build": 1, unknown: 1 });
   assert.deepEqual(report.generationDiagnostics.classifier.finalTargets, { astra_medium: 1, unknown: 1 });
   assert.deepEqual(report.generationDiagnostics.selectedTargets, { unknown: 1 });
   assert.equal(report.generationDiagnostics.classifier.recent[0].providerModel, "jev-1.13 build");

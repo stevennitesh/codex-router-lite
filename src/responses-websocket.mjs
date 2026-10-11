@@ -774,13 +774,18 @@ class ResponsesWebSocketPeer {
     this.socket.resume?.();
   }
 
-  abort() {
-    if (this.closed) return;
-    this.closed = true;
-    this.abortController.abort(new Error("Responses WebSocket closed."));
-    this.nativeTransport?.close();
-    this.continuations.clear();
-    this.options.unregisterPeer?.();
+  abort({ graceful = false } = {}) {
+    if (!this.closed) {
+      this.closed = true;
+      this.abortController.abort(new Error("Responses WebSocket closed."));
+      this.nativeTransport?.close();
+      this.continuations.clear();
+      this.options.unregisterPeer?.();
+    }
+    // HTTP upgrades leave their sockets half-open. FIN/error must destroy the
+    // writable half even after a graceful close began under backpressure.
+    if (graceful) this.socket.destroySoon?.();
+    else this.socket.destroy?.();
   }
 
   forceClose() {
@@ -832,7 +837,7 @@ class ResponsesWebSocketPeer {
       this.send(0x8, closePayload(code, reason));
     }
     this.socket.end();
-    this.abort();
+    this.abort({ graceful: true });
   }
 
   feed(chunk) {
@@ -920,7 +925,7 @@ class ResponsesWebSocketPeer {
         this.send(0x8, payload);
       }
       this.socket.end();
-      this.abort();
+      this.abort({ graceful: true });
       return;
     }
     if (opcode === 0x9) {

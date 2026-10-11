@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { refreshCodexCallerCapabilityContents } from "../src/caller-key-client-refresh.mjs";
+import { scanTomlDocument, tomlStringValue } from "../src/toml-structure.mjs";
+import { privateFileIsProtected, writePrivateFile } from "../src/file-security.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -53,6 +56,254 @@ function run(command, env) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
 }
+
+function configFixture(t) {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-boundary-"));
+  t.after(() => rmSync(testRoot, { recursive: true, force: true }));
+  const home = path.join(testRoot, "codex"), state = path.join(testRoot, "state");
+  mkdirSync(home, { recursive: true }); mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(state, "caller-secret"), "a".repeat(48));
+  return { config: path.join(home, "config.toml"), state,
+    env: { CODEX_HOME: home, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath } };
+}
+
+test("caller refresh updates real enabled assignments while instruction examples remain exact", t => {
+  const f = configFixture(t);
+  for (const quote of ['"""', "'''"]) {
+    const example = [
+      `developer_instructions = ${quote}`, "[model_providers.example]",
+      "# BEGIN codex-router-provider-managed",
+      `base_url = "http://127.0.0.1:4202/_codex-router/${"a".repeat(48)}/v1"`,
+      "# END codex-router-provider-managed",
+      "# BEGIN codex-router-signed-provider-managed",
+      "# END codex-router-signed-provider-managed", quote, "",
+    ].join("\n");
+    writeFileSync(path.join(f.state, "caller-secret"), "a".repeat(48));
+    writeFileSync(f.config, example);
+    run("enable", f.env);
+    const enabled = readFileSync(f.config, "utf8");
+    const oldBase = `http://127.0.0.1:4202/_codex-router/${"a".repeat(48)}/v1`;
+    const before = enabled.replaceAll('"http://127.0.0.1:4202/v1"', JSON.stringify(oldBase));
+    writePrivateFile(f.config, before);
+    writeFileSync(path.join(f.state, "caller-secret"), "b".repeat(48));
+    run("caller-capability-refresh", f.env);
+    const after = readFileSync(f.config, "utf8");
+    assert.ok(after.includes(example));
+    const document = scanTomlDocument(after);
+    const expected = "http://127.0.0.1:4202/v1";
+    assert.equal(tomlStringValue(document, [], "openai_base_url"), expected);
+    assert.equal(tomlStringValue(document, ["model_providers", "codex-router"], "base_url"), expected);
+    assert.equal(after, enabled, "only real legacy URL scalars migrate to the current bearer endpoint");
+  }
+});
+
+test("caller refresh preserves scalar spans and refuses ambiguous real authority", () => {
+  const oldBase = `http://127.0.0.1:4202/_codex-router/${"a".repeat(48)}/v1`;
+  const nextBase = oldBase.replace("a".repeat(48), "b".repeat(48));
+  const rootLine = `  "openai_\\u0062ase_url" = '${oldBase}' # preserve root\r\n`;
+  const block = ["# BEGIN codex-router-signed-provider-managed", "[model_providers.'legacy-name']",
+    `  'base_url' = "${oldBase}" # preserve signed`, "# END codex-router-signed-provider-managed", ""].join("\r\n");
+  assert.equal(refreshCodexCallerCapabilityContents(rootLine + block, nextBase, { port: 4202 }),
+    rootLine.replace(`'${oldBase}'`, JSON.stringify(nextBase)) + block.replace(JSON.stringify(oldBase), JSON.stringify(nextBase)));
+  for (const invalid of [
+    rootLine + `openai_base_url = "${oldBase}"\r\n`,
+    rootLine + block.replace("model_providers.'legacy-name'", "unrelated"),
+    rootLine + block.replace("# END codex-router-signed-provider-managed", ""),
+    rootLine + block.replace("# END codex-router-signed-provider-managed", `base_url = "${oldBase}"\n# END codex-router-signed-provider-managed`),
+    rootLine.replace(oldBase, "https://example.invalid/v1"),
+    rootLine.replace(":4202/", ":9999/"),
+  ]) assert.throws(() => refreshCodexCallerCapabilityContents(invalid, nextBase, { port: 4202 }));
+});
+
+test("real caller rotation and rollback refresh multiline instructions before restoring running intent", { timeout: 30_000 }, t => {
+  const f = configFixture(t);
+  const original = 'developer_instructions = """\n[documentation.example]\n# BEGIN codex-router-provider-managed\nbase_url = "http://127.0.0.1:4202/v1"\n# END codex-router-provider-managed\n"""\n';
+  writeFileSync(f.config, original);
+  run("enable", f.env);
+  const enabled = readFileSync(f.config, "utf8");
+  const code = `import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runCallerKeyRotation,runNodeCommand} from ${JSON.stringify(pathToFileURL(path.join(root, "src/caller-key.mjs")).href)};
+let running=true, verifications=0; const actions=[], commands=[];
+const options={assertOwnership(){},withLock:op=>op(),withMutationLocks:op=>op(),withServiceLock:op=>op(),
+runNode:async(script,args)=>{assert.equal(script,'src/config-manager.mjs');commands.push(args[0]);return runNodeCommand(script,args);},
+readServiceStatus:async()=>({installed:true,state:running?'running':'stopped'}),
+runServiceMutation:async action=>{actions.push(action);running=action!=='stop';},
+verifyServiceKeys:async()=>{verifications++;if(process.env.TEST_ROLLBACK==='1'&&verifications===1)throw new Error('synthetic verification refusal');}};
+let result,error;try{result=await runCallerKeyRotation(options);}catch(e){error=e.message;}
+process.stdout.write(JSON.stringify({result,error,actions,commands,verifications,running,secret:readFileSync(process.env.MODEL_ROUTER_STATE_DIR+'/caller-secret','utf8').trim()}));`;
+  for (const rollback of [false, true]) {
+    writePrivateFile(path.join(f.state, "caller-secret"), "a".repeat(48));
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+      cwd: root, encoding: "utf8", windowsHide: true, timeout: 15_000,
+      env: { ...process.env, ...f.env, TEST_ROLLBACK: rollback ? "1" : "0" },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.running, true);
+    assert.equal(readFileSync(f.config, "utf8"), enabled);
+    assert.equal(existsSync(path.join(f.state, "caller-key-rotation.json")), false);
+    if (rollback) {
+      assert.match(observed.error, /synthetic verification refusal/u);
+      assert.deepEqual(observed.actions, ["stop", "start", "stop", "start"]);
+      assert.equal(observed.verifications, 2);
+      assert.equal(observed.secret, "a".repeat(48));
+      assert.deepEqual(observed.commands, ["status", "caller-capability-refresh", "caller-capability-refresh"]);
+    } else {
+      assert.equal(observed.result.rotated, true);
+      assert.deepEqual(observed.actions, ["stop", "start"]);
+      assert.equal(observed.verifications, 1);
+      assert.notEqual(observed.secret, "a".repeat(48));
+      assert.deepEqual(observed.commands, ["status", "caller-capability-refresh"]);
+    }
+  }
+});
+
+test("first backup receives original bytes only after protection and failures preserve config", { timeout: 30_000 }, t => {
+  const f = configFixture(t), home = path.dirname(f.config);
+  const backup = `${f.config}.pre-codex-router`, observation = path.join(f.state, "backup-observation.json");
+  const preload = path.join(f.state, "backup-observer.mjs");
+  writeFileSync(preload, `import fs from 'node:fs'; import cp from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {privateFileIsProtected} from ${JSON.stringify(pathToFileURL(path.join(root, "src/file-security.mjs")).href)};
+const open=fs.openSync, close=fs.closeSync, write=fs.writeFileSync, exec=cp.execFileSync; let backupFd;
+fs.openSync=(target,...args)=>{if(target===process.env.TEST_BACKUP&&process.env.TEST_FAULT==='exists'){write(target,'competing snapshot');throw Object.assign(new Error('synthetic EEXIST'),{code:'EEXIST'});} const fd=open(target,...args);if(target===process.env.TEST_BACKUP)backupFd=fd;return fd;};
+fs.closeSync=(fd)=>{if(fd===backupFd)backupFd=undefined;return close(fd);};
+fs.writeFileSync=(target,...args)=>{if(target===backupFd){const value={empty:fs.statSync(process.env.TEST_BACKUP).size===0,protected:privateFileIsProtected(process.env.TEST_BACKUP)};write(process.env.TEST_OBSERVATION,JSON.stringify(value));if(process.env.TEST_FAULT==='write')throw new Error('synthetic content failure');}return write(target,...args);};
+cp.execFileSync=(file,args,options)=>{if(process.env.TEST_FAULT==='protect'&&options?.env?.CODEX_ROUTER_PRIVATE_FILES&&JSON.parse(options.env.CODEX_ROUTER_PRIVATE_FILES).includes(process.env.TEST_BACKUP))throw new Error('synthetic protection failure');return exec(file,args,options);};syncBuiltinESMExports();`);
+  const original = Buffer.from('\ufeffdeveloper_instructions = "Synthetic private instruction"\r\n');
+  for (const fault of ["", "protect", "write", "exists"]) {
+    const caseHome = path.join(home, `case-${fault || "success"}`);
+    mkdirSync(caseHome);
+    const config = path.join(caseHome, "config.toml"), target = `${config}.pre-codex-router`;
+    writePrivateFile(config, original);
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href,
+      path.join(root, "src/config-manager.mjs"), "enable"], {
+      cwd: root, encoding: "utf8", windowsHide: true, timeout: 15_000,
+      env: { ...process.env, ...f.env, CODEX_HOME: caseHome,
+        TEST_BACKUP: target, TEST_OBSERVATION: observation, TEST_FAULT: fault },
+    });
+    assert.ifError(result.error);
+    if (!fault) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(readFileSync(observation, "utf8")), { empty: true, protected: true });
+      assert.deepEqual(readFileSync(target), original);
+      assert.equal(privateFileIsProtected(target), true);
+      run("enable", { ...f.env, CODEX_HOME: caseHome });
+      assert.deepEqual(readFileSync(target), original, "retain the first snapshot");
+    } else {
+      assert.notEqual(result.status, 0);
+      assert.deepEqual(readFileSync(config), original);
+      if (fault === "exists") assert.equal(readFileSync(target, "utf8"), "competing snapshot");
+      else assert.equal(existsSync(target), false, "remove only the invocation's failed empty/protected creation");
+    }
+  }
+  assert.equal(existsSync(backup), false);
+});
+
+test("quoted foreign keys and mixed-spelling duplicates are refused before config mutation", t => {
+  const f = configFixture(t);
+  for (const original of [
+    '"openai_base_url" = "https://example.invalid/v1"\n',
+    String.raw`"openai_\u0062ase_url" = "https://example.invalid/v1"` + "\n",
+    "'model_catalog_json' = 'C:/user/models.json'\n",
+    `model_catalog_json = ${JSON.stringify(path.join(f.state, "merged-models.json"))}\n"model_catalog_json" = 'C:/user/models.json'\n`,
+    '[model_providers."codex-router"]\nbase_url = "https://example.invalid/v1"\n',
+  ]) {
+    writeFileSync(f.config, original);
+    for (const command of ["validate-enable", "enable"]) {
+      const result = spawnSync(process.execPath, [path.join(root, "src/config-manager.mjs"), command], {
+        env: { ...process.env, ...f.env }, encoding: "utf8", windowsHide: true,
+      });
+      assert.notEqual(result.status, 0, original);
+      assert.equal(readFileSync(f.config, "utf8"), original);
+    }
+  }
+});
+
+test("managed marker and assignment examples in both multiline string types survive enable and disable", t => {
+  const f = configFixture(t);
+  for (const quote of ['"""', "'''"]) {
+    const instructions = [
+      `developer_instructions = ${quote}`,
+      "# BEGIN codex-router-managed", "KEEP_ROOT", "# END codex-router-managed",
+      "# BEGIN codex-router-provider-managed", "KEEP_PROVIDER", "# END codex-router-provider-managed",
+      "# BEGIN codex-router-multi-agent-v2-managed", "KEEP_AGENTS", "# END codex-router-multi-agent-v2-managed",
+      "[features.multi_agent_v2]", 'openai_base_url = "https://example.invalid"',
+      `model_catalog_json = ${JSON.stringify(path.join(f.state, "merged-models.json"))}`,
+      quote, "",
+    ].join("\n");
+    const userRealtime = '"experimental_realtime_ws_base_url" = "wss://example.invalid/ws#fragment"\n';
+    writeFileSync(f.config, instructions + userRealtime + '"model" = "gpt-5.5"\n');
+    assert.equal(run("status", f.env).managed_router_artifacts_present, false);
+    assert.equal(run("enable", f.env).model, "gpt-5.5");
+    const enabled = readFileSync(f.config, "utf8");
+    assert.ok(enabled.includes(instructions));
+    assert.ok(enabled.includes(userRealtime));
+    assert.equal((enabled.match(/^experimental_realtime_ws_base_url\s*=/gmu) || []).length, 0);
+    assert.match(enabled, /^multi_agent_v2 = \{ enabled = true/mu, "string example does not prevent real managed feature");
+    run("enable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), enabled, "second enable does not duplicate owned fields");
+    run("disable", f.env);
+    const disabled = readFileSync(f.config, "utf8");
+    assert.ok(disabled.includes(instructions));
+    assert.ok(disabled.includes(userRealtime));
+    assert.equal(run("status", f.env).openai_base_url, null);
+    assert.equal(run("status", f.env).managed_router_artifacts_present, false);
+  }
+});
+
+test("quoted user feature configuration is preserved without a second multi-agent setting", t => {
+  const f = configFixture(t);
+  const original = '["features"]\n"multi_agent_v2" = { enabled = false }\n';
+  writeFileSync(f.config, original); run("enable", f.env);
+  const enabled = readFileSync(f.config, "utf8");
+  assert.ok(enabled.includes(original));
+  assert.doesNotMatch(enabled, /# BEGIN codex-router-multi-agent-v2-managed/u);
+});
+
+test("disable preserves foreign catalog assignments and restores only a known adopted source", t => {
+  const f = configFixture(t);
+  for (const key of ["model_catalog_json", '"model_catalog_json"']) {
+    const original = `${key} = 'C:/user/models.json' # keep comment\nmodel = "gpt-5.5"\n`;
+    writeFileSync(f.config, original); run("disable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), original);
+  }
+  const sourcePath = path.join(f.state, "native-catalog-source.json");
+  const original = '"model_catalog_json" = "C:/user/models.json" # keep comment\n';
+  writeFileSync(f.config, original);
+  writeFileSync(sourcePath, JSON.stringify({ version: 1, status: "active", path: "C:/user/models.json" }));
+  if (process.platform === "win32") {
+    run("disable", f.env);
+    assert.equal(readFileSync(f.config, "utf8"), original);
+  }
+  writeFileSync(sourcePath, "{");
+  const failed = spawnSync(process.execPath, [path.join(root, "src/config-manager.mjs"), "disable"], {
+    env: { ...process.env, ...f.env }, encoding: "utf8", windowsHide: true,
+  });
+  assert.notEqual(failed.status, 0);
+  assert.equal(readFileSync(f.config, "utf8"), original);
+});
+
+test("disable refuses inaccessible adoption state without changing user or managed config", t => {
+  const f = configFixture(t);
+  const source = path.join(f.state, "native-catalog-source.json");
+  writeFileSync(source, JSON.stringify({ version: 1, status: "active", path: path.join(f.state, "native.json") }));
+  writeFileSync(f.config, 'model = "gpt-5.5"\n'); run("enable", f.env);
+  const before = readFileSync(f.config, "utf8");
+  const preload = path.join(f.state, "deny-source.mjs");
+  writeFileSync(preload, `import fs from 'node:fs'; import path from 'node:path'; import {syncBuiltinESMExports} from 'node:module';
+const old=fs[process.env.DENY_METHOD];fs[process.env.DENY_METHOD]=function(p,...a){if(path.resolve(String(p))===path.resolve(process.env.DENY_SOURCE)){throw Object.assign(new Error('synthetic source denial'),{code:'EACCES'});}return old(p,...a);};syncBuiltinESMExports();`);
+  for (const method of ["readFileSync", "lstatSync"]) {
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, path.join(root, "src/config-manager.mjs"), "disable"], {
+      env: { ...process.env, ...f.env, DENY_METHOD: method, DENY_SOURCE: source }, encoding: "utf8", windowsHide: true,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Invalid native catalog source state/u);
+    assert.equal(readFileSync(f.config, "utf8"), before);
+  }
+});
 
 test("Codex config enable and disable preserve user TOML and restore the native catalog", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-lite-"));

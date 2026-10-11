@@ -6,6 +6,44 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Audit release six-route certification and Switchyard smoke checks, 2026-10-11](2026-10-11-audit-release-certification.json)
+
+- [Windows compatibility deployment and six-route renewal, 2026-10-10](2026-10-10-compatibility-release.md),
+  [five-route certification](2026-10-10-compatibility-certification.json) and
+  [GLM Together certification](2026-10-10-compatibility-together-certification.json)
+
+- [Windows app compatibility repairs and independent review, 2026-10-10](2026-10-10-compatibility-repairs.json)
+
+- [Switchyard native certification for the verification release, 2026-10-09](2026-10-09-verification-release-certification.json)
+
+- [Diagnostics and update deployment and Switchyard renewal, 2026-10-09](2026-10-09-diagnostics-updates-release.md)
+
+- [Switchyard native certification for the diagnostics release, 2026-10-09](2026-10-09-diagnostics-updates-certification.json)
+
+- [Diagnostics and update audit repairs, 2026-10-09](2026-10-09-diagnostics-updates-audit-fixes.md)
+
+- [Runtime primitives deployment and Switchyard renewal, 2026-10-09](2026-10-09-runtime-primitives-release.md)
+
+- [Switchyard native certification for the runtime primitives release, 2026-10-09](2026-10-09-runtime-primitives-certification.json)
+
+- [Runtime primitives audit repairs and local process-probe measurements, 2026-10-09](2026-10-09-runtime-primitives-audit-fixes.md)
+
+- [GPT-6.1 Sol High deployment and six-route renewal, 2026-10-09](2026-10-09-sol-high-release.md)
+
+- [Six-route native certification for the Sol High release, 2026-10-09](2026-10-09-sol-high-release-certification.json)
+
+- [Frozen Switchyard Sol High routing-quality evaluation, 2026-10-09](2026-10-09-switchyard-sol-high-routing-quality.json)
+
+- [Switchyard audit repairs and GPT-6.1 Sol High candidate, 2026-10-08](2026-10-08-switchyard-audit-fixes.md)
+
+- [Reasoning alias precedence diagnosis and repair, 2026-10-08](2026-10-08-reasoning-alias-precedence.md)
+
+- [Catalog/config audit fixes and cache cost comparison, 2026-10-08](2026-10-08-catalog-config-audit-fixes.md)
+
+- [Credential-state release: Switchyard proof renewal, 2026-10-08](2026-10-08-credentials-state-certification.json)
+
+- [Windows-service release renewal: all six routes passed, 2026-10-08](2026-10-08-windows-service-certification.json)
+
 - [Responses WebSocket interrupt diagnosis and installed-client repair proof, 2026-10-08](2026-10-08-websocket-interrupt.md)
 
 - [Audit-fix deployment, native renewal and completion/drain repairs, 2026-10-08](2026-10-08-audit-release.md)

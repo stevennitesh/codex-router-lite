@@ -12,7 +12,7 @@ Identify the exact slug/endpoint, current source and installed generation, calle
 compaction or cancellation. Read configured paths from `src/paths.mjs`; source
 checkout success is not proof about a different installed generation.
 
-Start with redacted `model-router.ps1 codex status` and `doctor`. Inspect only the
+Start with redacted `model-router.ps1 codex doctor` once (`status` is its alias). Inspect only the
 relevant time window in Router timings or a user-authorized conversation log.
 Distinguish provider failure, client cancellation, sandbox restrictions and app
 hydration from Router defects. Do not export an existing conversation merely to
@@ -107,6 +107,13 @@ Resets outside JavaScript's Date range, including overflow during unit conversio
 or addition, leave the estimated delay unknown. The provider's status and original
 header still pass through; invalid telemetry does not become a numeric wait hint.
 
+Responses stream failures retain their diagnosed cause through
+`src/responses-stream-failure.mjs`. The observer runs after the final response
+rewrites and records bounded identity, timestamp and sequence metadata without
+holding client bytes. Local failures use `response.failed` when that metadata is
+trustworthy; ambiguous or absent metadata retains the generic error. An already
+delivered terminal is never followed by another local terminal.
+
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
 scope predicate and a regression that fails without it. Remove unused transforms.
@@ -119,6 +126,18 @@ unaffected route for shared changes. Follow [verification](architecture.md#verif
 State what was reproduced, the repaired owner, and remaining uncertainty. Store
 dated investigation evidence separately from the maintained behavior guide.
 
+## Git reads in a partial clone
+
+In a partial clone, `git log`, `git show`, and `git diff` can fetch missing
+promisor objects and write `.git/objects` even though the requested operation
+looks read-only. A denied `tmp_pack` write or failed `index-pack` can identify
+that hidden write; it does not establish an ownership or authentication problem.
+Inspect the clone's promisor/partial-clone configuration and the failing command.
+When retrieval is authorized, rerun only the needed object retrieval through the
+supported sandbox escalation, then return to ordinary sandbox reads once those
+objects are present. Check Git's exit status before interpreting its output.
+Shallow ancestry and partial-clone object hydration are separate conditions.
+
 ## Bounded stress checks
 
 Run `npm run test:stress` for the deterministic offline Router stress suite. It
@@ -128,8 +147,9 @@ Switchyard boundaries plus shared stream, retry, history, compaction,
 concurrency, and cancellation behavior. It is intentionally not a live-provider
 certification or a full Cartesian product of models and faults.
 
-For a manual live soak, first run the offline suite and the normal verification
-checks. Then use the installed Router with a new synthetic conversation and send
+For a manual live soak, follow the [common verification scope](architecture.md#verification)
+first. Full verification already includes this offline stress suite; reuse its
+passing result. Then use the installed Router with a new synthetic conversation and send
 at most six requests over at most ten minutes: one short ordinary request through
 each configured OpenRouter GLM route, one short direct-Responses request, one
 Switchyard request, and one tool-call continuation plus compaction on a currently

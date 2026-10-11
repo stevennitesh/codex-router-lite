@@ -1,34 +1,43 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import path from "node:path";
 
-// Node reports a module it cannot *read* the same way it reports one that is
-// not there: `Cannot find module '<path>'` with code MODULE_NOT_FOUND. On
-// Windows that collapses two very different failures into one message, and a
-// scheduled task hits the readable-only-to-someone-else case:
-// the installer creates the managed checkout, the task exits 1, the router log
-// names `src\start.mjs` as missing, and the operator can open that exact file.
-//
-// The distinguishing evidence is cheap and local: does the path the loader
-// named exist right now? If it does, absence was never the problem, and
-// repeating Node's wording sends the operator looking for a missing file that
-// is sitting in front of them.
+// MODULE_NOT_FOUND describes resolution failure. Current path presence cannot
+// establish which file existed, or what the task token could read, at launch.
 const MISSING_MODULE = /Cannot find module '([^']+)'/g;
 
-// The tail is enough: the loader fails within the first lines of a launch, and
-// only the most recent launch is being diagnosed.
 const LOG_TAIL_BYTES = 64 * 1024;
+
+// Capture before the service-manager command: an immediate launch error may
+// already be in the log when the platform command returns and readiness starts.
+export function captureLogPosition(logPath) {
+  try {
+    const { dev, ino, birthtimeMs, size, mtimeMs } = statSync(logPath);
+    return { dev, ino, birthtimeMs, size, mtimeMs };
+  } catch (error) {
+    return error.code === "ENOENT" ? { missing: true } : { unavailable: true };
+  }
+}
 
 // Seeks to the window rather than loading the file: this runs on a failure
 // path that is already reporting an outage, and the router log is long-lived.
-export function readLogTail(logPath, { maxBytes = LOG_TAIL_BYTES } = {}) {
+export function readLogTail(logPath, { maxBytes = LOG_TAIL_BYTES, after } = {}) {
   let descriptor;
   try {
-    if (!existsSync(logPath)) return "";
-    const { size } = statSync(logPath);
-    if (size === 0) return "";
-    const length = Math.min(size, maxBytes);
-    const buffer = Buffer.alloc(length);
+    if (after?.unavailable) return "";
     descriptor = openSync(logPath, "r");
-    const read = readSync(descriptor, buffer, 0, length, size - length);
+    const { dev, ino, birthtimeMs, size, mtimeMs } = fstatSync(descriptor);
+    let start = Math.max(0, size - maxBytes);
+    if (after && !after.missing) {
+      const sameFile = dev === after.dev && ino === after.ino && birthtimeMs === after.birthtimeMs;
+      if (sameFile && size >= after.size) start = Math.max(start, after.size);
+      else if (mtimeMs <= after.mtimeMs) return "";
+      // A changed/shortened file with a newer modification time can contain
+      // fresh output after rotation/truncation. Never reread an unchanged tail.
+    }
+    const length = size - start;
+    if (length <= 0) return "";
+    const buffer = Buffer.alloc(length);
+    const read = readSync(descriptor, buffer, 0, length, start);
     // A window that starts mid-character would corrupt the first rune; the
     // patterns this feeds are anchored well inside the tail, so the partial
     // leading line is simply not worth reconstructing.
@@ -52,32 +61,27 @@ export function readLogTail(logPath, { maxBytes = LOG_TAIL_BYTES } = {}) {
  * Explain a Windows scheduled-task launch failure, or return undefined when
  * the log carries no evidence worth adding.
  *
- * Deliberately narrow. This only speaks when the loader named a module *and*
- * that path exists, because that combination has exactly one meaning: the
- * launch could not read a file that is present, which is a permission or
- * token problem rather than a broken checkout. Every other shape returns
- * undefined so the caller keeps its own wording instead of guessing.
+ * Callers own launch attribution. Report loader/path facts and qualified next
+ * checks; inspecting as the current user cannot prove a task-token failure.
  */
-export function diagnoseWindowsLaunchFailure({ logText, exists = existsSync } = {}) {
+export function diagnoseWindowsLaunchFailure({ logText, inspect = statSync } = {}) {
   if (typeof logText !== "string" || !logText) return undefined;
   const named = [...logText.matchAll(MISSING_MODULE)].map((match) => match[1]);
   if (named.length === 0) return undefined;
   const modulePath = named.at(-1);
-  if (!exists(modulePath)) {
-    return (
-      `The scheduled task could not start: Node reported ${modulePath} missing, ` +
-      "and it is in fact absent. The managed checkout is incomplete — re-run the " +
-      "installer to restore it."
-    );
+  const symptom = `Node could not resolve module '${modulePath}'. `;
+  if (!path.isAbsolute(modulePath)) {
+    return symptom + "Verify the launch entry and its installed dependencies.";
   }
-  return (
-    `The scheduled task could not start: Node reported ${modulePath} missing, ` +
-    "but that file exists. The task's own token could not read it, which Node " +
-    "surfaces as MODULE_NOT_FOUND. An installer run elevated can leave the " +
-    "managed checkout readable only to the elevated identity, while the task " +
-    "itself runs at Limited level.\n" +
-    "Confirm with `icacls \"<checkout>\"` and grant the task's account read and " +
-    "execute on it, or re-run the installer from a non-elevated shell so the " +
-    "checkout and the task share one identity."
-  );
+  try {
+    if (!inspect(modulePath).isFile()) {
+      return symptom + "The path exists but is not a regular file. Verify its module entry and installed dependencies.";
+    }
+    return symptom + "The file exists now. Verify the launch command, module resolution and the task account's read/execute access; presence alone does not identify the cause.";
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return symptom + "The named path is absent now. Verify the launch entry and dependencies; use the installer to restore missing Router program files.";
+    }
+    return symptom + "The named path could not be inspected by this process. Verify its presence and the task account's read/execute access.";
+  }
 }

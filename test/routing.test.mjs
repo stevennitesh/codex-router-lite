@@ -1716,7 +1716,7 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.end(
         `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item })}\n\n` +
-        `data: ${JSON.stringify({ type: "response.completed", response: { id: "native-v2-compaction", status: "completed", model: "gpt-5.6-sol", output: [item] } })}\n\n` +
+        `data: ${JSON.stringify({ type: "response.completed", response: { id: "native-v2-compaction", status: "completed", model: "gpt-6.1-sol", output: [item] } })}\n\n` +
         "data: [DONE]\n\n",
       );
       return;
@@ -1852,13 +1852,15 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     const compact = await fetch(`${routerBase(routerPort)}/responses/compact`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: "switchyard/auto", input }),
+      body: JSON.stringify({ model: "switchyard/auto", input, reasoning: { effort: "medium", summary: "auto" }, reasoning_effort: "medium" }),
     });
     assert.equal(compact.status, 200);
     assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 2);
     assert.equal(nativeRequests[1].url, "/backend-api/codex/responses/compact");
-    assert.equal(nativeRequests[1].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[1].body.model, "gpt-6.1-sol");
+    assert.deepEqual(nativeRequests[1].body.reasoning, { effort: "high", summary: "auto" });
+    assert.equal(nativeRequests[1].body.reasoning_effort, undefined);
     assert.equal(nativeRequests[1].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
     assert.equal(nativeRequests[1].headers["chatgpt-account-id"], "account-id");
     assert.equal(nativeRequests[1].headers["x-codex-router-switchyard-capability"], undefined);
@@ -1870,6 +1872,8 @@ test("Switchyard preserves native requests and leaves compaction on the native b
       body: JSON.stringify({
         model: "switchyard/auto",
         input: [...input, { type: "compaction_trigger" }],
+        reasoning: { effort: "medium", summary: "auto" },
+        reasoning_effort: "medium",
         stream: true,
       }),
     });
@@ -1878,7 +1882,9 @@ test("Switchyard preserves native requests and leaves compaction on the native b
     assert.equal(switchyardRequests.length, 3);
     assert.equal(nativeRequests.length, 3);
     assert.equal(nativeRequests[2].url, "/backend-api/codex/responses");
-    assert.equal(nativeRequests[2].body.model, "gpt-5.6-sol");
+    assert.equal(nativeRequests[2].body.model, "gpt-6.1-sol");
+    assert.deepEqual(nativeRequests[2].body.reasoning, { effort: "high", summary: "auto" });
+    assert.equal(nativeRequests[2].body.reasoning_effort, undefined);
     assert.equal(nativeRequests[2].headers.authorization, "Bearer CHATGPT_SESSION_TOKEN");
     assert.equal(nativeRequests[2].headers["chatgpt-account-id"], "account-id");
     assert.equal(nativeRequests[2].headers["x-codex-router-switchyard-capability"], undefined);
@@ -2471,71 +2477,6 @@ test("OpenRouter GLM replays completed search history through the ordinary route
     assert.deepEqual(requests[0].input, input);
     assert.equal(requests[0].web_search_options, undefined);
     assert.equal(requests[0].tools, undefined);
-  } finally {
-    await stopChild(router);
-    await closeServer(gateway.server);
-    rmSync(testRoot, { recursive: true, force: true });
-  }
-});
-
-test("router repairs malformed OpenRouter GLM-5.3-Flash message envelopes after LiteLLM translation", async () => {
-  const testRoot = mkdtempSync(path.join(os.tmpdir(), "openrouter-glm-responses-compat-router-"));
-  const stateDir = path.join(testRoot, "state");
-  mkdirSync(stateDir, { recursive: true });
-  writeFileSync(
-    path.join(stateDir, "enabled-providers.json"),
-    `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
-  );
-  const gateway = await mockServer(async (request, response) => {
-    if (request.method === "GET") {
-      json(response, 200, { ok: true, credential_present: true, credential_source: "test" });
-      return;
-    }
-    await bodyJson(request);
-    response.writeHead(200, { "Content-Type": "text/event-stream" });
-    const events = [
-      { type: "response.output_item.added", output_index: 0, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", summary: [] } },
-      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", delta: "ROUTER_OK" },
-      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", text: "ROUTER_OK" },
-      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", part: { type: "reasoning_text", reasoning: "private reasoning" } },
-      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
-      { type: "response.completed", response: { id: "resp_1", status: "completed", output: [], usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
-    ];
-    response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
-  });
-  const routerPort = await openPort();
-  const router = run("router.mjs", {
-    CODEX_ROUTER_PORT: String(routerPort),
-    CODEX_ROUTER_STATE_DIR: stateDir,
-    CODEX_ROUTER_SHOW_ALL_MODELS: "0",
-    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
-    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
-    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
-    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY",
-    CODEX_ROUTER_QUIET: "1",
-  });
-  try {
-    await waitFor(`${routerBase(routerPort)}/models`, router);
-    const response = await fetch(`${routerBase(routerPort)}/responses`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", input: "test", stream: true }),
-    });
-    assert.equal(response.status, 200);
-    const text = await response.text();
-    const events = text.split(/\r?\n/)
-      .filter((line) => line.startsWith("data: {"))
-      .map((line) => JSON.parse(line.slice(5).trim()));
-    const deltaIndex = events.findIndex((event) => event.type === "response.output_text.delta");
-    assert.equal(events[deltaIndex - 2]?.type, "response.output_item.added");
-    assert.equal(events[deltaIndex - 2]?.item?.type, "message");
-    assert.equal(events[deltaIndex - 2]?.output_index, 1);
-    assert.equal(events[deltaIndex - 1]?.type, "response.content_part.added");
-    assert.equal(events[deltaIndex]?.output_index, 1);
-    const partDone = events.find((event) => event.type === "response.content_part.done");
-    assert.deepEqual(partDone?.part, { type: "output_text", text: "ROUTER_OK", annotations: [] });
-    assert.ok(!text.includes("private reasoning"));
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);

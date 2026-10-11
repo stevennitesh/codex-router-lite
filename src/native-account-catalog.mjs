@@ -94,9 +94,9 @@ function cacheIsFresh(cache, clientVersion, identity, now) {
   if (!validCatalog(cache) || containsRoutedSlugs(cache)) return false;
   if (cache.identity !== identity) return false;
   if (cache.client_version !== clientVersion) return false;
-  const fetchedAt = Date.parse(cache.fetched_at);
-  const age = now - fetchedAt;
-  return Number.isFinite(fetchedAt) && age >= 0 && age < NATIVE_ACCOUNT_CATALOG_TTL_MS;
+  const validatedAt = Date.parse(cache.validated_at ?? cache.fetched_at);
+  const age = now - validatedAt;
+  return Number.isFinite(validatedAt) && age >= 0 && age < NATIVE_ACCOUNT_CATALOG_TTL_MS;
 }
 
 async function boundedJson(response, maxBytes = MAX_ACCOUNT_CATALOG_BYTES) {
@@ -227,6 +227,7 @@ export async function refreshNativeAccountCatalogUnlocked({
       if (!sameAccountSession(accountHeaders, await headersProvider())) {
         return failed(true);
       }
+      await writeCache(cachePath, { ...current.catalog, validated_at: new Date(now).toISOString() });
       return { status: "not-modified", fingerprint: current.fingerprint };
     }
     if (!response.ok || response.status >= 300) {
@@ -248,6 +249,7 @@ export async function refreshNativeAccountCatalogUnlocked({
       && current.catalog.client_version === clientVersion
       && (!responseEtag || responseEtag === etag)
     ) {
+      await writeCache(cachePath, { ...current.catalog, validated_at: new Date(now).toISOString() });
       return { status: "unchanged", fingerprint };
     }
     await writeCache(cachePath, {

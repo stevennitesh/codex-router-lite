@@ -1,5 +1,6 @@
 // Read-only preparation for a native certification window. Never grants acceptance.
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHECKED_IN_MODELS, MODEL_BY_SLUG } from "../src/routed-models.mjs";
@@ -7,8 +8,69 @@ import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { CODEX_AGENTS_DIR, MERGED_CATALOG_PATH, INSTALL_MANIFEST_PATH } from "../src/paths.mjs";
 
 const PROOF_TEMPLATE = JSON.parse(readFileSync(new URL("../v2_agent/_template/proof.json", import.meta.url), "utf8"));
-const USAGE = "Usage: node maintenance/certification-preflight.mjs <exact-route-slug> [<exact-route-slug> ...] | --all";
+const USAGE = "Usage: node maintenance/certification-preflight.mjs <exact-route-slug> [<exact-route-slug> ...] | --all | --renewal switchyard/auto";
 const FIRST_MARKER = "CERT_FIRST_OK", SECOND_MARKER = "CERT_SECOND_OK";
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// Unknown/shared changes need diff review, not automatic live model requests.
+// This assessment cannot accept evidence or grant permission for live work.
+export function switchyardRenewalScope(paths, { comparisonAvailable = true } = {}) {
+  const changes = { unrelated: [], switchyard: [], review: [] };
+  for (const input of paths) {
+    const file = String(input).replaceAll("\\", "/");
+    if (/^(?:docs|test|v2_agent|\.github|LICENSES)\//u.test(file) ||
+        /^(?:README\.md|AGENTS\.md|SECURITY\.md|LICENSE|NOTICE\.md)$/u.test(file) ||
+        /^config\/openrouter\//u.test(file) ||
+        /^config\/switchyard\/.*\.md$/u.test(file)) {
+      changes.unrelated.push(file);
+    } else if (/^config\/switchyard\/(?:source\.lock|routes\.template\.toml|auto\.json|switchyard\.json|patches\/.*\.patch)$/u.test(file)) {
+      changes.switchyard.push(file);
+    } else {
+      changes.review.push(file);
+    }
+  }
+  const decision = !comparisonAvailable ? "review" : changes.switchyard.length ? "renew" : changes.review.length ? "review" : "retain";
+  return {
+    slug: "switchyard/auto", decision, changes,
+    reasons: [!comparisonAvailable
+      ? "The tested revision cannot be compared with this candidate; inspect the source before deciding."
+      : decision === "renew"
+        ? "Switchyard's pinned implementation or policy changed; renew its exact-route proof after deployment."
+        : decision === "review"
+          ? "Review shared or unknown changes for Switchyard request, tool, handoff, continuation, instruction or execution behavior. Renew only if that contract changed."
+          : "These source changes do not alter Switchyard behavior. Retain the accepted proof after ordinary source and deployment checks."],
+    limits: ["Source assessment only: a changed installed binary, effective routing policy, or Codex execution/tool contract still needs an explicit renewal decision.",
+      "A Router commit change or elapsed time alone does not require renewal. Historical proof identities must not be rewritten.",
+      "This command neither accepts evidence nor authorizes or runs model requests."],
+  };
+}
+
+export function switchyardRenewalAssessment({ repoRoot = ROOT, read = readFileSync } = {}) {
+  const proof = JSON.parse(read(path.join(repoRoot, "v2_agent/switchyard/auto/proof.json"), "utf8"));
+  const testedCommit = proof.routerCommit;
+  if (proof.status !== "accepted" || proof.slug !== "switchyard/auto" ||
+      typeof testedCommit !== "string" ||
+      !/^[a-f0-9]{40}$/iu.test(testedCommit || "") ||
+      typeof proof.runtimeBinding?.routerCommit !== "string" ||
+      proof.runtimeBinding.routerCommit.toLowerCase() !== testedCommit.toLowerCase()) {
+    return {...switchyardRenewalScope([], { comparisonAvailable: false }), testedCommit: null};
+  }
+  const git = (...args) => execFileSync("git", args, { cwd: repoRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).toString("utf8");
+  try {
+    const candidateCommit = git("rev-parse", "--verify", "HEAD").trim();
+    git("merge-base", "--is-ancestor", testedCommit, candidateCommit);
+    // Include staged and unstaged edits. Keep old paths on renames so a shared
+    // module renamed into docs cannot disappear from the review scope.
+    const paths = [...new Set([
+      ...git("diff", "--no-renames", "--name-only", "-z", testedCommit, "--").split("\0"),
+      ...git("diff", "--cached", "--no-renames", "--name-only", "-z", testedCommit, "--").split("\0"),
+      ...git("ls-files", "--others", "--exclude-standard", "-z").split("\0"),
+    ].filter(Boolean))].sort();
+    return {...switchyardRenewalScope(paths), testedCommit, candidateCommit};
+  } catch {
+    return {...switchyardRenewalScope([], { comparisonAvailable: false }), testedCommit};
+  }
+}
 
 function readOptional(file) {
   try { return readFileSync(file, "utf8"); }
@@ -90,13 +152,19 @@ export function certificationBatchPreflight(routes, {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const routes = certificationRoutes(process.argv.slice(2));
-    const batch = certificationBatchPreflight(routes);
-    // Preserve the original single-route interface for existing callers.
-    const report = process.argv.length === 3 && process.argv[2] !== "--all"
-      ? {...batch.reports[0],runManifestTemplate:batch.runManifestTemplate} : batch;
-    console.log(JSON.stringify(report, null, 2));
-    process.exitCode = report.readyForFreshParent ? 0 : 1;
+    if (process.argv.length === 4 && process.argv[2] === "--renewal" && process.argv[3] === "switchyard/auto") {
+      console.log(JSON.stringify(switchyardRenewalAssessment(), null, 2));
+      // These are valid assessments. Inspect decision; no outcome starts work.
+      process.exitCode = 0;
+    } else {
+      const routes = certificationRoutes(process.argv.slice(2));
+      const batch = certificationBatchPreflight(routes);
+      // Preserve the original single-route interface for existing callers.
+      const report = process.argv.length === 3 && process.argv[2] !== "--all"
+        ? {...batch.reports[0],runManifestTemplate:batch.runManifestTemplate} : batch;
+      console.log(JSON.stringify(report, null, 2));
+      process.exitCode = report.readyForFreshParent ? 0 : 1;
+    }
   } catch (error) {
     console.error(error.code ? `Certification state could not be read (${error.code}). Retry with the state owner's authority.` : error.message);
     process.exitCode = 1;

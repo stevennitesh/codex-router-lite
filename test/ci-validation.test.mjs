@@ -23,6 +23,18 @@ async function auditSequence(results) {
   return { status, calls, delays };
 }
 
+function productFixture(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "router-boundary-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manifest = JSON.parse(readFileSync(path.join(root, "maintenance/windows-package.json"), "utf8"));
+  for (const file of [...new Set([...manifest.files, "scripts/check-product-boundary.mjs", "scripts/check-package-closure.mjs"])]) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    copyFileSync(path.join(root, file), path.join(dir, file));
+  }
+  execFileSync("git", ["init", "--quiet"], { cwd: dir });
+  return { dir, manifest, check: () => spawnSync(process.execPath, ["scripts/check-product-boundary.mjs"], { cwd: dir, encoding: "utf8" }) };
+}
+
 test("audit retries absent reports, but never converts exhaustion to success", async () => {
   assert.deepEqual(await auditSequence([unavailable, report()]), { status: 0, calls: 2, delays: [5000] });
   assert.deepEqual(await auditSequence([unavailable]), { status: 1, calls: 3, delays: [5000, 10000] });
@@ -46,15 +58,7 @@ test("audit invokes a real CLI path containing spaces without shell interpretati
 });
 
 test("product boundary sees new files before staging, skips ignored files, and still checks tracked ignored files", (t) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "router-boundary-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const manifest = JSON.parse(readFileSync(path.join(root, "maintenance/windows-package.json"), "utf8"));
-  for (const file of [...new Set([...manifest.files, "scripts/check-product-boundary.mjs", "scripts/check-package-closure.mjs"])]) {
-    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-    copyFileSync(path.join(root, file), path.join(dir, file));
-  }
-  execFileSync("git", ["init", "--quiet"], { cwd: dir });
-  const check = () => spawnSync(process.execPath, ["scripts/check-product-boundary.mjs"], { cwd: dir, encoding: "utf8" });
+  const { dir, check } = productFixture(t);
   assert.equal(check().status, 0);
   mkdirSync(path.join(dir, "hooks"));
   writeFileSync(path.join(dir, "hooks/new.txt"), "forbidden");
@@ -63,4 +67,25 @@ test("product boundary sees new files before staging, skips ignored files, and s
   assert.equal(check().status, 0);
   execFileSync("git", ["add", "--force", "hooks/new.txt"], { cwd: dir });
   assert.match(check().stderr, /forbidden product artifact: hooks\/new.txt/u);
+});
+
+test("product boundary rejects omitted runtime data and complete packaged consumers execute", t => {
+  const { dir, manifest, check } = productFixture(t);
+  assert.equal(check().status, 0);
+  for (const omitted of ["requirements/python.in", "requirements/python.txt", "package.json", "package-lock.json", "maintenance/windows-package.json"]) {
+    writeFileSync(path.join(dir, "maintenance/windows-package.json"), JSON.stringify({ ...manifest, files: manifest.files.filter(file => file !== omitted) }));
+    const result = check();
+    assert.notEqual(result.status, 0, `source still contains ${omitted}, but package omission must fail`);
+    assert.ok(result.stderr.includes(`retained package file is absent: ${omitted}`), result.stderr);
+  }
+  const packaged = mkdtempSync(path.join(os.tmpdir(), "router-materialized-package-"));
+  t.after(() => rmSync(packaged, { recursive: true, force: true }));
+  for (const file of manifest.files) {
+    mkdirSync(path.dirname(path.join(packaged, file)), { recursive: true });
+    copyFileSync(path.join(root, file), path.join(packaged, file));
+  }
+  const lock = spawnSync(process.execPath, ["src/install-plan.mjs", "verify-lock"], { cwd: packaged, encoding: "utf8", windowsHide: true });
+  assert.equal(lock.status, 0, lock.stderr);
+  const version = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { VERSION } from "./src/version.mjs"; if (!VERSION) throw Error("missing version");'], { cwd: packaged, encoding: "utf8", windowsHide: true });
+  assert.equal(version.status, 0, version.stderr);
 });

@@ -93,6 +93,13 @@ for (const file of packageManifest.files) {
 for (const file of [
   ...requiredEntrypoints,
   ...retainedConfig,
+  // Required by the actual installer, locked dependency preparation and version
+  // reader. Source existence alone cannot prove installed package membership.
+  "package.json",
+  "package-lock.json",
+  "requirements/python.in",
+  "requirements/python.txt",
+  "maintenance/windows-package.json",
   "LICENSE",
   "LICENSES/Apache-2.0.txt",
   "NOTICE.md",

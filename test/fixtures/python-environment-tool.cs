@@ -31,7 +31,6 @@ public static class PythonEnvironmentTool {
     }
     var install = Array.IndexOf(arguments, "--require-hashes") >= 0;
     if (install) {
-      if (Environment.GetEnvironmentVariable("ROUTER_FAIL_DEPENDENCY_INSTALL") == "1") return 9;
       var root = uv ? Path.GetDirectoryName(Path.GetDirectoryName(arguments[Array.IndexOf(arguments, "--python") + 1]))
         : Path.GetDirectoryName(Path.GetDirectoryName(executable));
       var packages = Path.Combine(root, "Lib", "site-packages");

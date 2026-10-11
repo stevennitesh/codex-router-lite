@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -8,10 +8,8 @@ import test from "node:test";
 
 import { openPort } from "./port-pool.mjs";
 import { serviceProcessOwns } from "../src/service-process.mjs";
-import { processCommandLine } from "../src/process-identity.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const managedProcessProbeAvailable = Boolean(processCommandLine(process.pid));
 
 function json(response, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
@@ -62,9 +60,10 @@ async function waitForHealth(url, child) {
 
 for (const foreground of [false, true]) {
 for (const selectedProviders of [[], ["openrouter"]]) {
-  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"})`,
+for (const gatewayFails of [false, true]) {
+  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gatewayFails ? "optional spawn failure" : "healthy gateway"})`,
     {
-      skip: process.platform !== "win32" || !managedProcessProbeAvailable,
+      skip: process.platform !== "win32",
       timeout: 30_000,
     }, async t => {
       const state = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-"));
@@ -84,8 +83,9 @@ for (const selectedProviders of [[], ["openrouter"]]) {
         });
       });
       await listen(native, nativePort);
-      const gatewayCommand = path.join(state, "gateway.cmd");
-      writeFileSync(
+      const gatewayCommand = path.join(state, gatewayFails ? "unusable-gateway.exe" : "gateway.cmd");
+      if (gatewayFails) mkdirSync(gatewayCommand);
+      else writeFileSync(
         gatewayCommand,
         `@echo off\r\n"${process.execPath}" "${path.join(root, "test", "managed-startup-gateway-fixture.mjs")}" %*\r\n`,
       );
@@ -129,8 +129,18 @@ for (const selectedProviders of [[], ["openrouter"]]) {
         rmSync(state, { recursive: true, force: true });
       });
 
-      const healthUrl = `http://127.0.0.1:${routerPort}/health`;
+      const healthUrl = `http://127.0.0.1:${routerPort}/${gatewayFails ? "live" : "health"}`;
       assert.equal((await waitForHealth(healthUrl, child)).ok, true);
+      if (gatewayFails) {
+        const deadline = Date.now() + 5_000;
+        while (!child.errors().includes("spawn ") && Date.now() < deadline) {
+          assert.equal(child.exitCode, null, child.errors());
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.match(child.errors(), /spawn .*ENOENT/u);
+        assert.doesNotMatch(child.errors(), /Unhandled 'error' event/u);
+        assert.equal(child.exitCode, null);
+      }
       if (foreground) {
         assert.equal(readFileSync(recordPath, "utf8"), previousRecord, "foreground startup preserves the managed record");
       } else {
@@ -141,8 +151,9 @@ for (const selectedProviders of [[], ["openrouter"]]) {
       const fullHealth = await fetch(
         `http://127.0.0.1:${routerPort}/_codex-router/caller-startup-capability-long-enough/v1/health`,
       );
-      assert.equal(fullHealth.status, 200);
+      assert.equal(fullHealth.status, gatewayFails ? 503 : 200);
       const health = await fullHealth.json();
+      if (gatewayFails) assert.ok(health.degraded.includes("gateway"));
       if (selectedProviders.length) {
         assert.equal(health.api.reachable, true);
         assert.equal(health.api.ready, false);
@@ -176,5 +187,6 @@ for (const selectedProviders of [[], ["openrouter"]]) {
       );
       assert.equal(external.status, selectedProviders.length ? 401 : 409);
     });
+}
 }
 }

@@ -98,6 +98,7 @@ import {
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
 import { SwitchyardNativeAttemptObserver } from "./switchyard-native-observation.mjs";
+import { markResponsesStream } from "./responses-stream-failure.mjs";
 import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
@@ -2132,10 +2133,12 @@ async function summarize(request, payload, route, signal) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(bytes.toString("utf8"));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (jsonIsUnambiguousForRewrite(text)) parsed = JSON.parse(text);
   } catch {
-    // A proxy can return HTML or truncated JSON with an otherwise successful
-    // status. That is a failed provider envelope, not a model summary.
+    // Invalid UTF-8, ambiguous fields/numbers, HTML or truncated JSON cannot
+    // establish successful provider execution or trusted usage. Deterministic
+    // summary fallback applies only after admitting the provider envelope.
   }
   // Compaction is a plain non-streaming call, so the usage block is already
   // available when the provider sends one.
@@ -2159,7 +2162,8 @@ async function summarize(request, payload, route, signal) {
         } },
       };
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.output)) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.output) ||
+        (Object.hasOwn(parsed, "status") && typeof parsed.status !== "string")) {
       return {
         ok: false, status: 502, usage, route,
         payload: { error: { type: "provider_error", code: "compaction_invalid_response",
@@ -2396,6 +2400,7 @@ async function handleResponses(request, response, requestUrl) {
     delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
+    markResponsesStream(response, { model: requestedModel });
     const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
     if (!registeredRoute && retiredMessage) {
       writeJson(response, 400, { error: {
@@ -2517,8 +2522,13 @@ async function handleResponses(request, response, requestUrl) {
         internalKey: INTERNAL_KEY,
       });
       const selectedNative = switchyard
-        ? { ...payload, model: compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel }
+        ? {
+            ...payload,
+            model: compactV1 || compactV2 ? route.upstreamModel : route.gatewayModel,
+            ...(compactV1 || compactV2 ? { reasoning: { ...payload.reasoning, effort: route.defaultEffort } } : {}),
+          }
         : payload;
+      if (switchyard && (compactV1 || compactV2)) delete selectedNative.reasoning_effort;
       const prepared = prepareNativePayload(selectedNative, {
         substitutedCaller, compactV1, normalizeEffort: !switchyard,
       });

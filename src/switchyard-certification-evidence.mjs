@@ -6,6 +6,7 @@ import { LOG_PATH } from "./paths.mjs";
 import { latestSwitchyardGeneration, summarizeSwitchyardTrace } from "./switchyard-trace.mjs";
 import { switchyardRuntimeStatus } from "./switchyard-runtime.mjs";
 import { observationIdentity } from "./request-observation.mjs";
+import { OBSERVED_TARGETS } from "./switchyard-observation-contract.mjs";
 
 function field(line, name) { return new RegExp(`\\b${name}=([^ \\t]+)`, "u").exec(line)?.[1]; }
 
@@ -16,6 +17,59 @@ function traceInstant(value) {
   const base = `${match[1]}.000Z`, milliseconds = Date.parse(base);
   if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== base) return undefined;
   return BigInt(milliseconds) * 1000000n + BigInt((match[2] || "").padEnd(9, "0"));
+}
+
+// Synthetic phases supply matching UUID session/thread headers. Native child
+// selection below instead discovers and validates the child's unshared session.
+export function summarizeSwitchyardSmokeEvidence({
+  routerLog, routingLog, sessionId, startedAt, endedAt, expectedRequests = 1,
+}) {
+  const session = observationIdentity("session", sessionId);
+  const thread = observationIdentity("thread", sessionId);
+  const start = traceInstant(startedAt), end = traceInstant(endedAt);
+  if (!session || start === undefined || end === undefined || start >= end ||
+      ![1, 2].includes(expectedRequests)) throw new Error("A bounded synthetic smoke phase is required.");
+  const within = value => { const at = traceInstant(value); return at !== undefined && at >= start && at <= end; };
+  const generation = latestSwitchyardGeneration(routerLog);
+  let conflicting = false;
+  const selected = String(generation || "").split(/\r?\n/u).filter((line, index) => {
+    if (index === 0 && generation !== undefined) return true;
+    const at = field(line, "at") || /^(\d{4}-\d{2}-\d{2}T[^ ]+Z)/u.exec(line)?.[1];
+    if (!within(at)) return false;
+    const rawSession = /\bsession_id="([^"]*)"/u.exec(line)?.[1];
+    const agent = /\bagent_id="([^"]*)"/u.exec(line)?.[1];
+    const identities = [
+      [field(line, "session_sha256"), session],
+      [field(line, "thread_sha256"), thread],
+      ...(rawSession === undefined ? [] : [[observationIdentity("session", rawSession), session]]),
+      ...(agent === undefined ? [] : [[observationIdentity("thread", agent), thread]]),
+    ].filter(([value]) => value !== undefined);
+    if (!identities.some(([value, expected]) => value === expected)) return false;
+    if (identities.some(([value, expected]) => value !== expected) ||
+        (rawSession !== undefined && !observationIdentity("session", rawSession)) ||
+        (agent !== undefined && !observationIdentity("thread", agent))) {
+      conflicting = true;
+      return false;
+    }
+    return true;
+  });
+  const records = String(routingLog || "").split(/\r?\n/u).flatMap(line => {
+    try {
+      const record = JSON.parse(line);
+      if (observationIdentity("session", record?.session_id) !== session) return [];
+      if (traceInstant(record.ts) === undefined) { conflicting = true; return []; }
+      if (!within(record.ts)) return [];
+      if (!Object.hasOwn(OBSERVED_TARGETS, record.model)) { conflicting = true; return []; }
+      return [record];
+    } catch { return []; }
+  }).sort((a, b) => traceInstant(a.ts) < traceInstant(b.ts) ? -1 : traceInstant(a.ts) > traceInstant(b.ts) ? 1 : 0);
+  const trace = summarizeSwitchyardTrace(selected.join("\n"));
+  return {
+    attributed: !conflicting && trace.generationFound === true &&
+      trace.routedRequests.total === expectedRequests && trace.routedRequests.statuses[200] === expectedRequests,
+    routing: { total: records.length, selectedTargets: records.map(record => record.model) },
+    classifier: trace.classifier || { decisions: 0, fallbacks: 0, providerModels: {}, recent: [] },
+  };
 }
 
 function selectChildObservations(generation, routingLog, child) {

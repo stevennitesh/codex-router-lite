@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateJson } from "./file-security.mjs";
+import { readJsonFile } from "./file-probe.mjs";
 import { scanTomlDocument } from "./toml-structure.mjs";
 import {
   MODEL_BY_SLUG,
@@ -98,23 +99,20 @@ export function readNativeCatalogFile(catalogPath) {
 }
 
 export function readNativeCatalogSource() {
-  if (!existsSync(NATIVE_CATALOG_SOURCE_PATH)) return undefined;
-  try {
-    const state = JSON.parse(readFileSync(NATIVE_CATALOG_SOURCE_PATH, "utf8"));
-    if (
+  const observed = readJsonFile(NATIVE_CATALOG_SOURCE_PATH);
+  if (observed.status === "missing") return undefined;
+  const state = observed.value;
+  if (observed.status !== "present" ||
       state?.version !== 1 ||
       typeof state.path !== "string" ||
       !path.isAbsolute(state.path) ||
       !new Set(["pending", "active"]).has(state.status)
-    ) {
-      throw new Error("invalid state");
-    }
-    return state;
-  } catch {
+  ) {
     throw new Error(
       `Invalid native catalog source state at ${NATIVE_CATALOG_SOURCE_PATH}.`,
     );
   }
+  return state;
 }
 
 function writeNativeCatalogSource(value) {

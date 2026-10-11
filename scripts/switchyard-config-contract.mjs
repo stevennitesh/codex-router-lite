@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanTomlDocument, tomlStringValue } from "../src/toml-structure.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXPECTED_ANSWERS = Object.freeze({
@@ -9,10 +10,10 @@ const EXPECTED_ANSWERS = Object.freeze({
     routingId: "switchyard/luna-max",
     effort: "max",
   }),
-  sol_medium: Object.freeze({
-    model: "gpt-5.6-sol",
-    routingId: "switchyard/sol-medium",
-    effort: "medium",
+  sol_high: Object.freeze({
+    model: "gpt-6.1-sol",
+    routingId: "switchyard/sol-high",
+    effort: "high",
   }),
   astra_medium: Object.freeze({
     model: "gpt-6-astra",
@@ -26,58 +27,147 @@ const EXPECTED_ANSWERS = Object.freeze({
   }),
 });
 
-function section(source, kind, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp(`\\[${kind}\\.${escaped}\\]([\\s\\S]*?)(?=\\n\\[|$)`, "u")
-    .exec(source)?.[1] || "";
+function assignmentFor(document, tablePath, field) {
+  const matches = document.assignments.filter(assignment =>
+    assignment.tablePath.length === tablePath.length &&
+    assignment.tablePath.every((part, index) => part === tablePath[index]) &&
+    assignment.key.length === 1 && assignment.key[0] === field);
+  if (!matches.length) return undefined;
+  if (matches.length !== 1) throw new Error(`Duplicate Switchyard setting ${field}.`);
+  return matches[0];
 }
 
-function quoted(body, field) {
-  return new RegExp(`(?:^|\\n)${field}\\s*=\\s*"([^"]+)"`, "u").exec(body)?.[1];
+function numeric(document, tablePath, field, { integer = false } = {}) {
+  const assignment = assignmentFor(document, tablePath, field);
+  if (!assignment) return undefined;
+  // The shared scanner owns assignment context; this checker supports complete
+  // decimal values only, and explicitly refuses every other representation.
+  const value = document.lines[assignment.index].slice(assignment.valueStart)
+    .split("#", 1)[0].trim();
+  const grammar = integer
+    ? /^[+-]?(?:0|[1-9](?:_?\d)*)$/u
+    : /^[+-]?(?:0|[1-9](?:_?\d)*)(?:\.\d(?:_?\d)*)?(?:[eE][+-]?\d(?:_?\d)*)?$/u;
+  const parsed = Number(value.replaceAll("_", ""));
+  if (assignment.kind !== "other" || !grammar.test(value) || !Number.isFinite(parsed) ||
+      (integer && !Number.isSafeInteger(parsed))) {
+    throw new Error(`Switchyard setting ${field} must be a complete ${integer ? "safe decimal integer" : "decimal number"}.`);
+  }
+  return parsed;
 }
 
-function integer(body, field) {
-  const value = new RegExp(`(?:^|\\n)${field}\\s*=\\s*(\\d+)`, "u").exec(body)?.[1];
-  return value === undefined ? undefined : Number(value);
+// Only the maintained candidate array and inline override values need compound
+// decoding. Keep that bounded semantic grammar here, outside the shared lexer.
+function compoundValue(document, tablePath, field) {
+  const assignment = assignmentFor(document, tablePath, field);
+  if (!assignment) return undefined;
+  const end = Math.min(document.lines.length, ...[...document.assignments, ...document.headers]
+    .filter(record => record.index > assignment.index).map(record => record.index));
+  const source = document.lines.slice(assignment.index, end).join("\n").slice(assignment.valueStart);
+  const invalid = () => { throw new Error(`Unsupported or ambiguous Switchyard setting ${field}.`); };
+  if (source.length > 65536) invalid();
+  let index = 0, count = 0, inlineDepth = 0;
+  function skip() {
+    while (index < source.length) {
+      if (inlineDepth && (source[index] === "\n" || source[index] === "\r" || source[index] === "#")) invalid();
+      if (/\s/u.test(source[index])) index += 1;
+      else if (source[index] === "#") {
+        while (index < source.length && source[index] !== "\n") index += 1;
+      } else break;
+    }
+  }
+  function string() {
+    const start = index, quote = source[index++];
+    if (source.slice(start, start + 3) === quote.repeat(3)) invalid();
+    while (index < source.length && source[index] !== quote) {
+      if (source[index] === "\n" || source[index] === "\r") invalid();
+      if (quote === '"' && source[index] === "\\") index += 1;
+      index += 1;
+    }
+    if (source[index++] !== quote) invalid();
+    return tomlStringValue(scanTomlDocument(`value = ${source.slice(start, index)}`), [], "value");
+  }
+  function value(depth = 0) {
+    if (depth > 8 || ++count > 256) invalid();
+    skip();
+    if (source[index] === '"' || source[index] === "'") return string();
+    const open = source[index];
+    if (open === "[" || open === "{") {
+      const table = open === "{", close = table ? "}" : "]";
+      const result = table ? Object.create(null) : [];
+      if (table) inlineDepth += 1;
+      index += 1; skip();
+      while (source[index] !== close) {
+        if (table) {
+          const quoted = source[index] === '"' || source[index] === "'";
+          const key = quoted ? string() : /^[A-Za-z0-9_-]+/u.exec(source.slice(index))?.[0];
+          if (key === undefined || Object.hasOwn(result, key)) invalid();
+          if (!quoted) index += key.length;
+          skip(); if (source[index++] !== "=") invalid();
+          result[key] = value(depth + 1);
+        } else result.push(value(depth + 1));
+        skip();
+        if (source[index] === close) break;
+        if (source[index++] !== ",") invalid();
+        skip();
+        if (table && source[index] === close) invalid();
+      }
+      if (source[index++] !== close) invalid();
+      if (table) inlineDepth -= 1;
+      return result;
+    }
+    const boolean = /^(?:true|false)(?![A-Za-z0-9_-])/u.exec(source.slice(index));
+    if (!boolean) invalid();
+    index += boolean[0].length;
+    return boolean[0] === "true";
+  }
+  const result = value();
+  skip(); if (index !== source.length) invalid();
+  return result;
 }
 
-function decimal(body, field) {
-  const value = new RegExp(`(?:^|\\n)${field}\\s*=\\s*(\\d+(?:\\.\\d+)?)`, "u").exec(body)?.[1];
-  return value === undefined ? undefined : Number(value);
-}
-
-function target(source, name) {
-  const body = section(source, "targets", name);
+function target(document, name) {
+  const table = ["targets", name];
+  const overrides = compoundValue(document, table, "body_overrides");
   return {
     name,
-    model: quoted(body, "id"),
-    routingId: quoted(body, "routing_id"),
-    effort: /reasoning\s*=\s*\{\s*effort\s*=\s*"([^"]+)"/u.exec(body)?.[1],
+    model: tomlStringValue(document, table, "id"),
+    routingId: tomlStringValue(document, table, "routing_id"),
+    effort: overrides?.reasoning?.effort,
   };
 }
 
 export function parseSwitchyardConfigContract(routesTemplate, routeModel) {
-  const auto = section(routesTemplate, "routes", "auto");
-  const answerNames = [...(/candidates\s*=\s*\[([^\]]*)\]/u.exec(auto)?.[1] || "")
-    .matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
-  const typeSafeClient = /\[type_safe_client\]([\s\S]*?)(?=\n\[|$)/u.exec(routesTemplate)?.[1] || "";
+  const document = scanTomlDocument(routesTemplate);
+  const tables = new Set();
+  for (const header of document.headers) {
+    const key = JSON.stringify(header.path);
+    if (tables.has(key) || header.array) {
+      throw new Error("Switchyard contract requires unique ordinary tables.");
+    }
+    tables.add(key);
+  }
+  const auto = ["routes", "auto"], client = ["type_safe_client"];
+  const answerNames = compoundValue(document, auto, "candidates") || [];
+  if (!Array.isArray(answerNames) || answerNames.some(name => typeof name !== "string")) {
+    throw new Error("Switchyard candidates must be an array of strings.");
+  }
   return {
     routeModel,
-    dispatchId: quoted(auto, "id"),
-    contextWindow: integer(auto, "context_window"),
-    classifyTrigger: quoted(auto, "classify_trigger"),
-    defaultTarget: quoted(auto, "default_target"),
+    dispatchId: tomlStringValue(document, auto, "id"),
+    contextWindow: numeric(document, ["routes", "auto"], "context_window", { integer: true }),
+    classifyTrigger: tomlStringValue(document, auto, "classify_trigger"),
+    defaultTarget: tomlStringValue(document, auto, "default_target"),
     classifier: {
-      type: quoted(auto, "type"),
-      model: quoted(typeSafeClient, "model"),
-      endpoint: quoted(typeSafeClient, "base_url"),
-      apiKeyEnv: quoted(typeSafeClient, "api_key_env"),
-      timeoutMs: integer(typeSafeClient, "timeout_ms"),
-      maxRequestBytes: integer(typeSafeClient, "max_request_bytes"),
-      threshold: decimal(auto, "base_threshold"),
+      type: tomlStringValue(document, auto, "type"),
+      model: tomlStringValue(document, client, "model"),
+      endpoint: tomlStringValue(document, client, "base_url"),
+      apiKeyEnv: tomlStringValue(document, client, "api_key_env"),
+      timeoutMs: numeric(document, ["type_safe_client"], "timeout_ms", { integer: true }),
+      maxRequestBytes: numeric(document, ["type_safe_client"], "max_request_bytes", { integer: true }),
+      threshold: numeric(document, ["routes", "auto"], "base_threshold"),
     },
-    answers: answerNames.map((name) => target(routesTemplate, name)),
-    smokeContextWindow: integer(section(routesTemplate, "routes", "smoke"), "context_window"),
+    answers: answerNames.map((name) => target(document, name)),
+    smokeContextWindow: numeric(document, ["routes", "smoke"], "context_window", { integer: true }),
   };
 }
 
@@ -102,8 +192,11 @@ export function validateSwitchyardConfigContract(contract) {
   ) {
     throw new Error("Switchyard Auto dispatch id must match the registered routes.auto id.");
   }
-  if (model.upstreamModel !== "gpt-5.6-sol") {
-    throw new Error("Switchyard Auto native compaction model must remain gpt-5.6-sol.");
+  if (model.upstreamModel !== "gpt-6.1-sol") {
+    throw new Error("Switchyard Auto native compaction model must remain gpt-6.1-sol.");
+  }
+  if (model.defaultEffort !== "high" || model.behaviorTemplate !== "gpt-6.1-sol") {
+    throw new Error("Switchyard Auto must use the Sol 6.1 behavior template and default high effort.");
   }
   if (
     contract.classifier?.type !== "type_safe_classifier" ||
@@ -152,7 +245,7 @@ export function validateSwitchyardConfigContract(contract) {
     throw new Error("Switchyard answer targets must match the catalog compatibility families.");
   }
   if (
-    contract.defaultTarget !== "sol_medium" ||
+    contract.defaultTarget !== "sol_high" ||
     contract.classifyTrigger !== "user_turn" ||
     contract.contextWindow !== 272000 ||
     contract.smokeContextWindow !== 272000

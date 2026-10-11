@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
+import { switchyardProofFixture } from "./switchyard-proof-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const readProof = slug => JSON.parse(readFileSync(path.join(root, "v2_agent", slug, "proof.json"), "utf8"));
+const readProof = slug => slug === "switchyard/auto" ? switchyardProofFixture() : JSON.parse(readFileSync(path.join(root, "v2_agent", slug, "proof.json"), "utf8"));
 const families = [
   ["active OpenRouter", "openrouter/deepseek-v4.1-flash-together"],
   ["retired OpenRouter", "openrouter/glm-5.3-flash"],
@@ -25,7 +26,7 @@ function withApplication(proof, check) {
   const route = MODEL_BY_SLUG.get(proof.slug);
   const validate = changed => {
     writeFileSync(path.join(directory, "proof.json"), JSON.stringify(changed));
-    return validateV2AgentApplications(applicationsRoot, { models: route ? [route] : [] });
+    return validateV2AgentApplications(applicationsRoot, { models: route ? [{ ...route, multiAgentVersion: "v2" }] : [] });
   };
   try { check(validate); }
   finally { rmSync(applicationsRoot, { recursive: true, force: true }); }

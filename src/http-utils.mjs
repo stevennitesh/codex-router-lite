@@ -2,21 +2,23 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { secretEqual } from "./caller-auth.mjs";
 import { TARGET } from "./paths.mjs";
+import { responsesStreamFailure, observeResponsesStream } from "./responses-stream-failure.mjs";
 
-export const MAX_BODY_BYTES = Number(
-  process.env.MODEL_ROUTER_MAX_BODY_BYTES ||
-    (TARGET === "codex"
-      ? process.env.CODEX_ROUTER_MAX_BODY_BYTES
-      : undefined) ||
-    128 * 1024 * 1024,
+function configuredByteLimit(name, alias, fallback) {
+  const selected = process.env[name] ? name : TARGET === "codex" && process.env[alias] ? alias : undefined;
+  if (!selected) return fallback;
+  const value = Number(process.env[selected]);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${selected} must be a positive safe integer byte count.`);
+  }
+  return value;
+}
+
+export const MAX_BODY_BYTES = configuredByteLimit(
+  "MODEL_ROUTER_MAX_BODY_BYTES", "CODEX_ROUTER_MAX_BODY_BYTES", 128 * 1024 * 1024,
 );
-
-export const MAX_BUFFERED_RESPONSE_BYTES = Number(
-  process.env.MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES ||
-    (TARGET === "codex"
-      ? process.env.CODEX_ROUTER_MAX_BUFFERED_RESPONSE_BYTES
-      : undefined) ||
-    8 * 1024 * 1024,
+export const MAX_BUFFERED_RESPONSE_BYTES = configuredByteLimit(
+  "MODEL_ROUTER_MAX_BUFFERED_RESPONSE_BYTES", "CODEX_ROUTER_MAX_BUFFERED_RESPONSE_BYTES", 8 * 1024 * 1024,
 );
 
 export const HOP_BY_HOP_HEADERS = new Set([
@@ -500,14 +502,10 @@ export async function finishResponse(response) {
 // ("error decoding response body") with nothing to say about the cause. Ending
 // the body instead produces a well-formed, if short, HTTP message.
 //
-// A gracefully ended SSE stream, though, is indistinguishable from a completed
-// one: the turn would simply look short and successful. So on `text/event-stream`
-// we first emit a terminal `error` event, matching the event framing the router
-// already writes elsewhere and the Responses API's own `error` event. A parser
-// that understands it surfaces a real failure; one that does not ignores the
-// unknown event and lands on the plain graceful end, which is still strictly
-// better than a reset. The frame carries a fixed router-side message and never
-// upstream error text, so no response body can leak through it.
+// Marked Responses streams with trustworthy final-egress metadata get a typed
+// response.failed, so Codex retains the diagnosed cause. Other SSE streams and
+// ambiguous metadata keep the generic error contract. Messages are router-owned,
+// never arbitrary upstream error bodies.
 //
 // The frame is prefixed with a blank line because the stream is being ended at
 // the point upstream died, which is very often mid-line: transforms forward
@@ -533,7 +531,7 @@ export function endStreamedResponse(response, { message } = {}) {
   response.end();
 }
 
-// Emit a terminal `error` event into a response whose head is already sent,
+// Emit one terminal failure into a response whose head is already sent,
 // without ending it -- the caller decides when the stream is over. Used where
 // the router has committed to a 200 and then hits a failure it must state
 // rather than let pass as a short, successful-looking turn. The framing and
@@ -544,8 +542,13 @@ export function writeStreamErrorEvent(response, { code, message }) {
   if (!response || response.writableEnded || response.destroyed) return false;
   if (!isEventStream(response)) return false;
   try {
-    const data = { type: "error", code, message, param: null };
-    response.write(`\n\nevent: error\ndata: ${JSON.stringify(data)}\n\n`);
+    const failure = responsesStreamFailure(response, { code, message });
+    if (failure?.terminal) {
+      if (failure.closePendingFrame) response.write("\n\n");
+      return false;
+    }
+    const data = failure?.event || { type: "error", code, message, param: null };
+    response.write(`\n\nevent: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`);
     return true;
   } catch {
     // The socket may already be gone; the caller ends the response anyway.
@@ -567,6 +570,7 @@ export async function pipeResponse(
       : [transform];
   response.statusCode = upstream.status;
   copyResponseHeaders(upstream, response, denylist);
+  observeResponsesStream(response, upstream.headers.get("content-type"));
   if (!upstream.body) {
     if (!leaveOpen) response.end();
     return;

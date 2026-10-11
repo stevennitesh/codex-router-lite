@@ -89,5 +89,12 @@ test("native byte reuse yields to history, effort and trusted-field changes", as
   assert.equal(observed.body.input[0].id, undefined);
   publish(["low", "high"]);
   assert.equal((await send(body, "zstd")).body.reasoning.effort, "high");
-  assert.match(router.errors(), /preparation_ms=\d+ upstream_headers_ms=\d+ first_token_ms=\d+/);
+  const timing = router.errors().split(/\r?\n/u).find(line => line.startsWith("[codex-router] timing "));
+  assert.ok(timing, "native request records timing");
+  const fields = new Map([...timing.matchAll(/(?:^|\s)([a-z_]+)=([^\s]+)/gu)].map(match => [match[1], match[2]]));
+  for (const field of ["preparation_ms", "upstream_headers_ms", "first_token_ms"]) {
+    assert.ok(fields.has(field), `${field} is recorded`);
+    const value = Number(fields.get(field));
+    assert.ok(Number.isFinite(value) && value >= 0, `${field}=${fields.get(field)}`);
+  }
 });

@@ -10,6 +10,7 @@ import {
   SwitchyardNativeAttemptObserver,
 } from "../src/switchyard-native-observation.mjs";
 import { summarizeNativeAttemptObservations } from "../src/switchyard-trace.mjs";
+import { fetchWithRetry } from "../src/upstream-retry.mjs";
 
 function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), "switchyard-native-observation-"));
@@ -28,6 +29,92 @@ function fixture() {
 function marker(capability) {
   return createHash("sha256").update(capability).digest("hex");
 }
+
+function resetSchedule(activeDestination, outcome = "transport_error") {
+  const lines = [];
+  const observer = new SwitchyardNativeAttemptObserver({capability:"synthetic-capability",
+    env:{CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION:"1",CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG:"unused-in-memory"},
+    append:(_path,value)=>lines.push(value)});
+  const headers = {"session-id":"PRIVATE_RESET_SESSION"};
+  const first = observer.beginRequest(headers,{model:"gpt-6.1-sol",effort:"high",requestedTier:"default"});
+  observer.beginAttempt(first,0); observer.finishAttempt(first,{outcome:"completed"},1); observer.endRequest(first);
+  const destination = observer.beginRequest(headers,{model:"gpt-6-astra",effort:"xhigh",requestedTier:"default"});
+  observer.beginAttempt(destination,2); observer.finishAttempt(destination,{outcome},3);
+  let active = destination;
+  if (!activeDestination) {
+    observer.endRequest(destination);
+    active = observer.beginRequest(headers,{model:"gpt-6.1-sol",effort:"high",requestedTier:"default"});
+  }
+  observer.beginAttempt(active,4);
+  const overlap = observer.beginRequest(headers,{model:"gpt-6-astra",effort:"medium",requestedTier:"default"});
+  return {observer,lines,headers,active,overlap};
+}
+
+test("the reset fact distinguishes byte-identical legacy retry and ended-failure histories without guessing outcomes", () => {
+  for (const outcome of ["completed","incomplete","cancelled","http_error","stream_error","transport_error","empty_completion","retryable_http","unknown"]) {
+    const retry = resetSchedule(true,outcome), ended = resetSchedule(false,outcome);
+    const beforeFact = lines=>lines.join("").replace(/,"invalidatedRequest":\d+(?=\})/gu,"");
+    assert.equal(beforeFact(retry.lines),beforeFact(ended.lines));
+    assert.equal(JSON.parse(retry.lines.at(-1)).invalidatedRequest,2);
+    assert.equal(JSON.parse(ended.lines.at(-1)).invalidatedRequest,3);
+    for (const [fixture,expected] of [[retry,0],[ended,1]]) {
+      const summary = summarizeNativeAttemptObservations(fixture.lines.join(""));
+      assert.equal(Object.values(summary.transitions).reduce((sum,count)=>sum+count,0),expected,outcome);
+      assert.equal(summary.coverage.parsedAttempts,2);
+      assert.equal(summary.coverage.uncertainResets,0);
+      assert.doesNotMatch(fixture.lines.join(""),/PRIVATE_RESET_SESSION/u);
+    }
+    const legacy = summarizeNativeAttemptObservations(beforeFact(retry.lines));
+    assert.deepEqual(legacy.transitions,{});
+    assert.equal(legacy.coverage.parsedAttempts,2);
+    assert.equal(legacy.coverage.uncertainResets,1);
+    assert.equal(legacy.outsideTransitions.uncertainResetRequests,1);
+    assert.equal(legacy.outcomes[outcome],outcome === "completed" ? 2 : 1);
+  }
+});
+
+test("repeated overlaps record explicit null after ordered custody is lost", () => {
+  const fixture = resetSchedule(true);
+  fixture.observer.beginRequest(fixture.headers,{model:"gpt-6.1-sol",effort:"high",requestedTier:"default"});
+  const resets = fixture.lines.map(JSON.parse).filter(record=>record.event === "association_reset");
+  assert.deepEqual(resets.map(record=>record.invalidatedRequest),[2,null]);
+  assert.ok(resets.every(record=>record.schemaVersion === 1 && record.reason === "overlap"));
+  const summary = summarizeNativeAttemptObservations(fixture.lines.join(""));
+  assert.deepEqual(summary.transitions,{});
+  assert.equal(summary.coverage.associationResets,2);
+  assert.equal(summary.coverage.uncertainResets,0);
+});
+
+test("malformed reset ordinals exclude uncertain transitions while preserving attempt aggregates", () => {
+  const fixture = resetSchedule(false), original = fixture.lines.map(JSON.parse);
+  for (const value of [0,-1,1,1.5,"PRIVATE_ORDINAL",[],{},Number.MAX_SAFE_INTEGER+1]) {
+    const records = structuredClone(original); records.at(-1).invalidatedRequest = value;
+    const summary = summarizeNativeAttemptObservations(records.map(JSON.stringify).join("\n"));
+    assert.deepEqual(summary.transitions,{});
+    assert.equal(summary.coverage.parsedAttempts,2);
+    assert.equal(summary.coverage.malformedRecords,1);
+    assert.equal(summary.coverage.uncertainResets,1);
+    assert.doesNotMatch(JSON.stringify(summary),/PRIVATE_ORDINAL/u);
+  }
+});
+
+test("actual preconnect retry and exhausted failure share an outcome label but preserve no-overlap attempt coverage", async () => {
+  const lines = [], observer = new SwitchyardNativeAttemptObserver({capability:"synthetic-capability",
+    env:{CODEX_ROUTER_SWITCHYARD_ATTEMPT_OBSERVATION:"1",CODEX_ROUTER_SWITCHYARD_ATTEMPT_LOG:"unused-in-memory"},append:(_path,value)=>lines.push(value)});
+  const request = observer.beginRequest({"session-id":"private-retry"},{model:"gpt-6.1-sol",effort:"high",requestedTier:"default"});
+  observer.beginAttempt(request,0);
+  let attempts = 0;
+  const failure = Object.assign(new Error("synthetic preconnect failure"),{code:"ECONNREFUSED"});
+  await assert.rejects(fetchWithRetry("http://invalid.invalid/",{method:"POST"},{retries:1,backoffMs:0,budgetMs:1000,now:()=>0,
+    fetchImpl:async()=> { attempts++; throw failure; },sleepImpl:async()=>{},onRetry:()=> {
+      observer.finishAttempt(request,{outcome:"transport_error"},1); observer.beginAttempt(request,2);
+    }}),error=>error === failure);
+  observer.finishAttempt(request,{outcome:"transport_error"},3); observer.endRequest(request);
+  assert.equal(attempts,2);
+  const summary = summarizeNativeAttemptObservations(lines.join(""));
+  assert.equal(summary.coverage.parsedAttempts,2); assert.deepEqual(summary.outcomes,{transport_error:2});
+  assert.deepEqual(summary.transitions,{}); assert.equal(summary.coverage.associationResets,0);
+});
 
 test("native attempt observations keep raw identity and hostile metadata out of records", () => {
   const { root, log, capability, observer } = fixture();
@@ -89,7 +176,7 @@ test("explicit association rejects missing, conflicting, oversized, and malforme
 test("writer-produced observations retain the shared model, effort, tier and outcome vocabulary", () => {
   const {root,log,observer} = fixture();
   try {
-    const models = [["gpt-5.6-luna","luna"],["gpt-5.6-sol","sol"],["gpt-6-astra","astra"]];
+    const models = [["gpt-5.6-luna","luna"],["gpt-5.6-sol","sol"],["gpt-6.1-sol","sol"],["gpt-6-astra","astra"]];
     const efforts = ["low","medium","high","xhigh","max"];
     const tiers = ["default","priority","flex"];
     const outcomes = ["completed","incomplete","cancelled","http_error","stream_error",

@@ -155,7 +155,7 @@ function mergedSwitchyard(nativeOverrides = {}) {
         max_context_window: 872000,
         ...nativeOverrides.luna,
       }),
-      switchyardNative("gpt-5.6-sol", {
+      switchyardNative("gpt-6.1-sol", {
         service_tiers: [
           { id: "priority", name: "Fast" },
           { id: "ultrafast", name: "Ultrafast" },
@@ -220,7 +220,7 @@ test("Switchyard omits unknown top-level fields and preserves nested donor metad
       future_scalar: "omit me",
       future_object: { unsafe: true },
       model_messages: {
-        ...switchyardNative("gpt-5.6-sol").model_messages,
+        ...switchyardNative("gpt-6.1-sol").model_messages,
         future_prompt_metadata: { retained: true },
       },
     },
@@ -304,16 +304,16 @@ test("Switchyard omits incompatible projections with their strict reason", () =>
   for (const [models, pattern] of [
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
     ], /missing compatibility model gpt-6-astra/u],
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
       switchyardNative("gpt-6-astra", { tool_mode: "different" }),
     ], /requires compatible tool_mode/u],
     [[
       switchyardNative("gpt-5.6-luna"),
-      switchyardNative("gpt-5.6-sol"),
+      switchyardNative("gpt-6.1-sol"),
       switchyardNative("gpt-6-astra", { context_window: undefined }),
     ], /requires valid context_window/u],
   ]) {
@@ -362,6 +362,33 @@ test("GLM-5.3-Flash replaces the native prompt with its concise Codex contract",
     reminder_threshold_tokens: 6144,
   });
   assert.equal(model.supports_search_tool, true);
+});
+
+test("external donor identity follows GPT generations without changing native instructions or later GPT references", () => {
+  const route = MODEL_BY_SLUG.get("openrouter/pareto");
+  const context = " Advice based on GPT-5.6-Sol remains relevant. Compare GPT-6 with GPT-5.6.\nYou are Codex, an agent based on GPT-6 is an example phrase.";
+  for (const generation of ["5", "5.6-Sol", "6", "6.1-Sol", "6 Astra"]) {
+    for (const role of ["a coding agent ", "an agent ", ""]) {
+      const prompt = `You are Codex, ${role}based on GPT-${generation}.${context}`;
+      const native = {...template,slug:route.behaviorTemplate,base_instructions:prompt,
+        model_messages:{...template.model_messages,instructions_template:prompt}};
+      const before = structuredClone(native);
+      const merged = buildMergedCatalog({models:[native]},[route]);
+      const external = merged.find(model=>model.slug===route.slug);
+      const expected = `You are Codex, ${role}based on Pareto (OpenRouter).${context}`;
+      for(const actual of [external.base_instructions,external.model_messages.instructions_template]) {
+        assert.ok(actual.startsWith(expected),actual);
+      }
+      assert.deepEqual(native,before);
+      assert.deepEqual(merged.find(model=>model.slug===native.slug).base_instructions,prompt);
+      assert.deepEqual(merged.find(model=>model.slug===native.slug).model_messages.instructions_template,prompt);
+    }
+  }
+  const unrelated = "Instructions based on GPT-6 should be preserved.";
+  const model = routedModel({...template,base_instructions:unrelated,
+    model_messages:{instructions_template:unrelated}},route);
+  assert.ok(model.base_instructions.startsWith(unrelated));
+  assert.ok(model.model_messages.instructions_template.startsWith(unrelated));
 });
 
 test("routed models are native v2 spawn-agent model overrides", () => {
@@ -582,14 +609,14 @@ test("native listed models retain the installed catalog's collaboration capabili
     { slug: "gpt-5.6-luna", visibility: "list", multi_agent_version: "v1" },
     { slug: "codex-auto-review", visibility: "hide", multi_agent_version: "v1" },
   ];
+  const original = structuredClone(native);
   const promoted = promoteNativeMultiAgent(native, {
     mode: "all",
     enabled: [],
     disabled: [],
   });
-  assert.equal(promoted[1].multi_agent_version, "v1");
-  // Hidden native entries are never advertised as spawn targets.
-  assert.equal(promoted[2].multi_agent_version, "v1");
+  assert.deepEqual(promoted, original);
+  assert.deepEqual(native, original);
 });
 
 test("external recovery guidance reaches both prompt surfaces without duplication or native mutation", () => {

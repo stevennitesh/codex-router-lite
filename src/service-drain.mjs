@@ -44,7 +44,7 @@ export async function prepareRouterServiceMutation({
   if (!supportsDrain) {
     if (!force) {
       const error = new Error(
-        "The running Router predates authenticated drain. Normal replacement was deferred; settle active work and retry with the explicit service-force option.",
+        "This older Router cannot wait for running requests before stopping. It was left running. Stopping or updating it requires explicit approval to interrupt work with --force-service-replacement.",
       );
       error.code = "ERR_ROUTER_DRAIN_UNSUPPORTED";
       throw error;
@@ -77,7 +77,7 @@ export async function prepareRouterServiceMutation({
   if (response.ok && ["drained", "forced"].includes(result.status)) return result;
   if (response.status === 409 && result.status === "deferred") {
     const error = new Error(
-      `Router replacement was deferred (${result.reason || "active work"}; active requests: ${result.activeRequests ?? "unknown"}, Switchyard workflows: ${result.workflows ?? "unknown"}); admission was restored and the running generation was left unchanged.`,
+      `Router was not stopped or changed because work is still pending (reason: ${result.reason || "active work"}; running requests: ${result.activeRequests ?? "unknown"}, unfinished Switchyard workflows: ${result.workflows ?? "unknown"}). It is accepting new requests again. Wait for the work to finish, or explicitly approve interrupting it with --force-service-replacement.`,
     );
     error.code = "ERR_ROUTER_DRAIN_DEFERRED";
     throw error;

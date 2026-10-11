@@ -37,6 +37,7 @@ export async function windowsScheduledTaskState({
   platform = process.platform,
   timeoutMs = 10_000,
   powershellExecutable = "powershell.exe",
+  signal,
 } = {}) {
   // Task Scheduler queries must not block the event loop that owns the
   // concurrent router-health probe.
@@ -74,17 +75,20 @@ export async function windowsScheduledTaskState({
     encoding: "utf8",
     env: { ...process.env, CODEX_ROUTER_TASK: taskName },
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: timeoutMs,
+    timeout: Math.max(1, Math.min(10_000, timeoutMs)),
+    ...(signal ? { signal } : {}),
     windowsHide: true,
   };
 
+  let closed = Promise.resolve();
   try {
     const output = String(
       await new Promise((resolve, reject) => {
-        execFile(powershellExecutable, command, options, (error, stdout) => {
+        const child = execFile(powershellExecutable, command, options, (error, stdout) => {
           if (error) reject(error);
           else resolve(stdout);
         });
+        if (child?.once) closed = new Promise(resolve => child.once("close", resolve));
       }),
     ).trim();
     const fields = output.split("|");
@@ -97,5 +101,9 @@ export async function windowsScheduledTaskState({
     return { instanceCount, lastTaskResult, launcherAlive };
   } catch {
     return undefined;
+  } finally {
+    // An abort callback can precede actual helper termination. Keep ownership
+    // until its close event rather than returning with a query still running.
+    await closed;
   }
 }

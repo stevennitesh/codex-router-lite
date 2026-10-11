@@ -1,9 +1,7 @@
-import {
-  existsSync,
-  readFileSync,
-} from "node:fs";
 import path from "node:path";
 
+import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
+import { readJsonFile } from "./file-probe.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 
@@ -31,26 +29,26 @@ function readPickerState() {
     seeded: new Set(),
     hasExplicitVisibility: false,
   };
-  if (!existsSync(MODEL_PICKER_STATE_PATH)) return empty;
-  try {
-    const parsed = JSON.parse(readFileSync(MODEL_PICKER_STATE_PATH, "utf8"));
-    if (parsed?.version !== 1 || !Array.isArray(parsed.hidden)) return empty;
-    const slugs = (value) =>
-      new Set((Array.isArray(value) ? value : []).map((slug) => String(slug)).filter(Boolean));
-    const hidden = slugs(parsed.hidden);
-    const seeded = slugs(parsed.seeded);
-    // `visible` was added after version 1 shipped. For an older file, every
-    // seeded model not in `hidden` is an explicit show decision and can be
-    // reconstructed without changing the effective picker behavior.
-    const hasExplicitVisibility = Array.isArray(parsed.visible);
-    const visible = hasExplicitVisibility
-      ? slugs(parsed.visible)
-      : new Set([...seeded].filter((slug) => !hidden.has(slug)));
-    for (const slug of hidden) visible.delete(slug);
-    return { hidden, visible, seeded, hasExplicitVisibility };
-  } catch {
-    return empty;
+  const observed = readJsonFile(MODEL_PICKER_STATE_PATH);
+  if (observed.status === "missing") return empty;
+  const parsed = observed.value;
+  const slugsValid = (value) => Array.isArray(value) && value.every((slug) => typeof slug === "string" && slug.length > 0);
+  if (observed.status !== "present" || parsed?.version !== 1 || !slugsValid(parsed.hidden) ||
+      (parsed.visible !== undefined && !slugsValid(parsed.visible)) ||
+      (parsed.seeded !== undefined && !slugsValid(parsed.seeded))) {
+    throw new Error(`Cannot read model picker settings (${observed.status === "present" ? "invalid" : observed.status}) at ${MODEL_PICKER_STATE_PATH}.`);
   }
+  const hidden = new Set(parsed.hidden);
+  const seeded = new Set(parsed.seeded || []);
+  // `visible` was added after version 1 shipped. For an older file, every
+  // seeded model not in `hidden` is an explicit show decision and can be
+  // reconstructed without changing the effective picker behavior.
+  const hasExplicitVisibility = Array.isArray(parsed.visible);
+  const visible = hasExplicitVisibility
+    ? new Set(parsed.visible)
+    : new Set([...seeded].filter((slug) => !hidden.has(slug)));
+  for (const slug of hidden) visible.delete(slug);
+  return { hidden, visible, seeded, hasExplicitVisibility };
 }
 
 export function readHiddenModels() {
@@ -69,8 +67,13 @@ function writePickerState({ hidden, visible, seeded, hasExplicitVisibility = tru
   return modelPickerSnapshot();
 }
 
-export function modelPickerSnapshot() {
-  const state = readPickerState();
+export function modelPickerSnapshot({ diagnostic = false } = {}) {
+  let state;
+  try { state = readPickerState(); }
+  catch (error) {
+    if (!diagnostic) throw error;
+    return { path: MODEL_PICKER_STATE_PATH, degraded: error.message };
+  }
   return {
     hidden: [...state.hidden].sort(),
     visible: [...state.visible].sort(),
@@ -80,7 +83,7 @@ export function modelPickerSnapshot() {
 }
 
 export function setModelVisible(slug, visible) {
-  return setModelsVisible([slug], visible);
+  return withCatalogPublicationLock(() => setModelsVisible([slug], visible));
 }
 
 // Changes only the supplied models so provider-level actions preserve every
@@ -110,6 +113,8 @@ function setModelsVisible(slugs, visible) {
 // catalog rebuild, and rewriting the operator's picker state to say nothing new
 // is how a protected file starts churning.
 export function seedModelsHidden(slugs) {
+  // The sole production caller is catalog publication, already under this
+  // same lock. Operator mutations acquire it before reading their snapshot.
   const values = [...new Set(
     (Array.isArray(slugs) ? slugs : []).map((slug) => String(slug || "").trim()).filter(Boolean),
   )];

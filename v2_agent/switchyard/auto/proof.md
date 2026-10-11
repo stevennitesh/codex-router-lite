@@ -1,13 +1,13 @@
 # switchyard/auto v2 certification
 
-Accepted observations against Router `5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a`
-(version 0.7.0), codex-cli 0.162.0-alpha.2, Windows app 26.1002.7124.0.
-Tested at 2026-10-08T20:26:55.196Z. Switchyard runtime identities are recorded in proof.json.
+Accepted observations against Router `4806fa3c5962c6bf9f9384a03ed3887813b49bb9`
+(version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.2314.0.
+Tested at 2026-10-11T05:48:57.907Z. Switchyard runtime identities are recorded in proof.json.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-08-workflow-repair-certification.json) records role `router_switchyard_auto`, effort
-`medium`, output 42 from a real sandboxed command, two encrypted
+[Redacted run evidence](../../../docs/history/2026-10-11-audit-release-certification.json) records role `router_switchyard_auto`, effort
+`high`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed
 already-completed turns; no active turn was cancelled.
@@ -22,8 +22,7 @@ already-completed turns; no active turn was cancelled.
 
 ## Official sources
 
-- https://github.com/NVIDIA-NeMo/Switchyard
-- https://developers.openai.com/codex
+- https://github.com/NVIDIA-NeMo/Switchyard/blob/fbabf51c62793ed0f6af042b60e92ce1cfba083b/README.md
 
 ## Scope and reproduction
 

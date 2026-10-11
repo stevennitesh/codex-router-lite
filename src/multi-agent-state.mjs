@@ -1,9 +1,7 @@
-import {
-  existsSync,
-  readFileSync,
-} from "node:fs";
 import path from "node:path";
 
+import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
+import { readJsonFile } from "./file-probe.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 import { MODEL_BY_SLUG, validateRoutedEffort } from "./routed-models.mjs";
@@ -21,26 +19,26 @@ function defaultSettings() {
 // Local selection filters routes already certified in the checked-in registry.
 // It cannot manufacture a v2 claim for an unverified model.
 export function readMultiAgentSettings() {
-  if (existsSync(MULTI_AGENT_STATE_PATH)) {
-    try {
-      const parsed = JSON.parse(readFileSync(MULTI_AGENT_STATE_PATH, "utf8"));
-      if (
-        parsed?.version === 2 &&
-        SUBAGENT_MODES.includes(parsed.mode) &&
-        Array.isArray(parsed.enabled) &&
-        Array.isArray(parsed.disabled)
-      ) {
-        return parsed;
-      }
-    } catch {
-      // Invalid local state cannot expand capability; use the safe default.
-    }
+  const observed = readJsonFile(MULTI_AGENT_STATE_PATH);
+  if (observed.status === "missing") return defaultSettings();
+  const parsed = observed.value;
+  const slugsValid = (value) => Array.isArray(value) && value.every((slug) => typeof slug === "string" && slug.length > 0);
+  if (observed.status !== "present" || parsed?.version !== 2 || !SUBAGENT_MODES.includes(parsed.mode) ||
+      !slugsValid(parsed.enabled) || !slugsValid(parsed.disabled) ||
+      (parsed.efforts !== undefined && (!parsed.efforts || typeof parsed.efforts !== "object" || Array.isArray(parsed.efforts) ||
+        !Object.entries(parsed.efforts).every(([slug, effort]) => slug && typeof effort === "string" && effort)))) {
+    throw new Error(`Cannot read subagent settings (${observed.status === "present" ? "invalid" : observed.status}) at ${MULTI_AGENT_STATE_PATH}.`);
   }
-  return defaultSettings();
+  return parsed;
 }
 
-export function subagentSettingsSnapshot() {
-  const settings = readMultiAgentSettings();
+export function subagentSettingsSnapshot({ diagnostic = false } = {}) {
+  let settings;
+  try { settings = readMultiAgentSettings(); }
+  catch (error) {
+    if (!diagnostic) throw error;
+    return { path: MULTI_AGENT_STATE_PATH, degraded: error.message };
+  }
   return {
     ...settings,
     all: settings.mode === "all",
@@ -55,14 +53,15 @@ function writeSettings(settings) {
   writePrivateJson(MULTI_AGENT_STATE_PATH, settings);
 }
 
-export function setMultiAgentMode(mode) {
+export async function setMultiAgentMode(mode) {
   if (!SUBAGENT_MODES.includes(mode)) {
     throw new Error(`Unknown subagent mode "${mode}". Choose: ${SUBAGENT_MODES.join(", ")}`);
   }
-  const current = readMultiAgentSettings();
-  const next = settingsForMode(current, mode);
-  writeSettings(next);
-  return subagentSettingsSnapshot();
+  return withCatalogPublicationLock(() => {
+    const current = readMultiAgentSettings();
+    writeSettings(settingsForMode(current, mode));
+    return subagentSettingsSnapshot();
+  });
 }
 
 export function settingsForMode(current, mode) {
@@ -79,7 +78,7 @@ export function settingsForMode(current, mode) {
 }
 
 export function setMultiAgentModel(slug, enabled) {
-  return setMultiAgentModels([slug], enabled);
+  return withCatalogPublicationLock(() => setMultiAgentModels([slug], enabled));
 }
 
 // Applies a provider-sized selection in one protected-state write. Besides
@@ -145,19 +144,21 @@ export function subagentEffort(slug) {
 // `effort` of undefined/null clears the override and restores the model's own
 // default. Validation against the model's advertised levels belongs to the
 // settings owner, using the registry's exact endpoint vocabulary.
-export function setSubagentEffort(slug, effort) {
+export async function setSubagentEffort(slug, effort) {
   const key = String(slug || "").trim();
   if (!key) throw new Error("A model slug is required.");
   const value = validateRoutedEffort(MODEL_BY_SLUG.get(key), effort);
-  const current = readMultiAgentSettings();
-  const efforts = { ...current.efforts };
-  if (value === undefined) delete efforts[key];
-  else efforts[key] = value;
-  const next = { ...current, version: 2 };
-  if (Object.keys(efforts).length) next.efforts = efforts;
-  else delete next.efforts;
-  writeSettings(next);
-  return subagentSettingsSnapshot();
+  return withCatalogPublicationLock(() => {
+    const current = readMultiAgentSettings();
+    const efforts = { ...current.efforts };
+    if (value === undefined) delete efforts[key];
+    else efforts[key] = value;
+    const next = { ...current, version: 2 };
+    if (Object.keys(efforts).length) next.efforts = efforts;
+    else delete next.efforts;
+    writeSettings(next);
+    return subagentSettingsSnapshot();
+  });
 }
 
 // `proven` and `all` keep every certified route unless it is disabled.

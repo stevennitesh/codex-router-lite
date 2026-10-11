@@ -579,12 +579,12 @@ function identityName(model) {
 function rewriteIdentity(text, model) {
   if (typeof text !== "string" || !text) return text;
   const name = identityName(model);
-  return text
-    .replace(
-      /\b(?:a coding agent|an agent) based on GPT-5(?:\.\d+)?(?:[-\s](?:Sol|Terra|Luna))?\b/gi,
-      `a coding agent based on ${name}`,
-    )
-    .replace(/\bbased on GPT-5(?:\.\d+)?(?:[-\s](?:Sol|Terra|Luna))?\b/gi, `based on ${name}`);
+  // Only the opening model identity belongs to this transform. Later GPT
+  // references remain native behavioral context, regardless of generation.
+  return text.replace(
+    /^(\s*You are Codex,\s*(?:(?:a coding agent|an agent)\s+)?based on )GPT-\d+(?:\.\d+)*(?:[-\s](?:Sol|Terra|Luna|Astra))?\b/iu,
+    (_match, prefix) => `${prefix}${name}`,
+  );
 }
 
 function rewriteModelMessages(messages, model) {
@@ -1312,6 +1312,11 @@ async function publishCatalog({
   const codexIdentity = codexExecutableIdentity();
   const selectedModelSlug = selectedModel();
   const configuredNativeSource = readNativeCatalogSource();
+  // Establish all local selections before default seeding or account writes.
+  // Existing invalid state is not evidence that the operator chose defaults.
+  const enabledProviders = new Set(readProviderSelection());
+  modelPickerSnapshot();
+  const multiAgentSettings = readMultiAgentSettings();
   const nativeAccountRefresh = configuredNativeSource
     ? { status: "not-selected" }
     : await refreshNativeAccountCatalogUnlocked({
@@ -1319,13 +1324,11 @@ async function publishCatalog({
       versionProvider: () => codexIdentity.version ? codexClientVersion(codexIdentity.version) : undefined,
     });
   const userSlugs = new Set();
-  const enabledProviders = new Set(readProviderSelection());
   const selectedModels = LISTED_MODELS.filter((model) => enabledProviders.has(model.provider));
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();
   const visibleModels = new Set(pickerState.visible);
-  const multiAgentSettings = readMultiAgentSettings();
   // Settings can filter certified routes. The checked-in registry is the only
   // source of a v2 claim.
   const allMultiAgentModels = applyMultiAgentCapabilities(
@@ -1487,7 +1490,7 @@ async function publishCatalog({
         "Model catalog update failed and its previous files could not be restored.",
       );
     }
-    if (error && typeof error === "object") error.catalogRollbackSafe = true;
+    if (error && typeof error === "object" && !error.routedAgentRollbackFailed) error.catalogRollbackSafe = true;
     throw error;
   }
   const changed = catalogChanged
@@ -1529,7 +1532,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   } catch (error) {
     // Ownership conflicts are an operator mistake with a specific remedy, so
     // print the guidance rather than a stack trace.
-    if (error?.code === "foreign_state_owner") {
+    if (error?.code === "foreign_state_owner" || error?.code === "indeterminate_state_owner") {
       console.error(error.message);
       process.exit(1);
     }

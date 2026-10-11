@@ -1,7 +1,7 @@
 import { waitForRouterHealth } from "./router-health.mjs";
 import { LOG_PATH } from "./paths.mjs";
 import { windowsScheduledTaskState } from "./windows-task-state.mjs";
-import { diagnoseWindowsLaunchFailure, readLogTail } from "./windows-launch-diagnosis.mjs";
+import { captureLogPosition, diagnoseWindowsLaunchFailure, readLogTail } from "./windows-launch-diagnosis.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const TASK_LAUNCH_GRACE_MS = 15_000;
@@ -37,6 +37,7 @@ export async function waitForServiceReadiness({
   getWindowsTaskState = windowsScheduledTaskState,
   waitForHealth = waitForRouterHealth,
   logPath = LOG_PATH,
+  logPosition = captureLogPosition(logPath),
 } = {}) {
   const overallTimeoutMs = Math.max(0, timeoutMs);
   const deadline = Date.now() + overallTimeoutMs;
@@ -51,26 +52,36 @@ export async function waitForServiceReadiness({
     outcome.error ??
     new Error(outcome.health?.error || "service did not become healthy");
 
-  let deadSince;
+  let deadlineTimer;
+  const deadlineWinner = new Promise(resolve => {
+    if (overallTimeoutMs > 0) deadlineTimer = setTimeout(() => resolve({ kind: "deadline" }), overallTimeoutMs);
+  });
+  let deadSince, pendingTask;
   try {
     while (Date.now() < deadline) {
       const winner = await Promise.race([
         healthWinner,
+        deadlineWinner,
         sleep(Math.max(0, Math.min(pollMs, deadline - Date.now())), undefined, { signal: operation.signal }).then(() => null),
       ]);
       if (winner) {
+        if (winner.kind === "deadline") throw new Error("service did not become healthy before the readiness deadline");
         // The health attempt settles only after its full budget, which matches
         // this guard's own deadline, so an early settlement is a real verdict.
         if (winner.outcome.healthy) return winner.outcome.health;
         throw failureOf(winner.outcome);
       }
 
-      let taskState;
-      try {
-        taskState = await getWindowsTaskState();
-      } catch {
-        taskState = undefined;
+      pendingTask = Promise.resolve().then(() => getWindowsTaskState({
+        timeoutMs: Math.max(1, deadline - Date.now()), signal: operation.signal,
+      })).then(taskState => ({ kind: "task", taskState }), () => ({ kind: "task" }));
+      const observed = await Promise.race([healthWinner, deadlineWinner, pendingTask]);
+      if (observed.kind === "deadline") throw new Error("service did not become healthy before the readiness deadline");
+      if (observed.kind === "health") {
+        if (observed.outcome.healthy) return observed.outcome.health;
+        throw failureOf(observed.outcome);
       }
+      const { taskState } = observed;
       const launcherAlive =
         taskState?.launcherAlive === true ||
         (taskState?.launcherAlive === undefined && taskState?.instanceCount > 0);
@@ -80,11 +91,9 @@ export async function waitForServiceReadiness({
           const result = Number.isSafeInteger(taskState.lastTaskResult)
             ? `0x${taskState.lastTaskResult.toString(16)}`
             : "unknown";
-          // The task's own result is a bare exit code. When the router log
-          // explains why the launch died, say that instead of leaving the
-          // operator to reconcile "no running launcher" against a Node error
-          // that names a file they can open.
-          const diagnosis = diagnoseWindowsLaunchFailure({ logText: readLogTail(logPath) });
+          // Only output after the caller's launch cursor can explain this
+          // attempt. A previous failure in the long-lived log is inconclusive.
+          const diagnosis = diagnoseWindowsLaunchFailure({ logText: readLogTail(logPath, { after: logPosition }) });
           throw new Error(
             `Windows Scheduled Task has no running launcher process (LastTaskResult=${result}); router cannot become healthy.` +
               (diagnosis ? `\n${diagnosis}` : ""),
@@ -107,6 +116,7 @@ export async function waitForServiceReadiness({
     // Task death or a completed health verdict ends the whole operation. The
     // losing fetch, interval and poll timer must finish before readiness exits.
     operation.abort();
-    await healthWinner;
+    clearTimeout(deadlineTimer);
+    await Promise.all([healthWinner, pendingTask]);
   }
 }

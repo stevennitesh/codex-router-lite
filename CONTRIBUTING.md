@@ -15,16 +15,14 @@ Before opening an issue:
    unredacted logs out of issues, commits, and fixtures. Report a
    vulnerability through [private reporting](SECURITY.md).
 
-Maintainers and people validating their own forks should install dependencies and run:
+For a fresh checkout or changed lockfile, install dependencies with `npm ci`.
+Select local checks using the [verification guide](docs/agents/architecture.md#verification)
+and reuse passing results while their inputs remain unchanged. Before release,
+run `npm run audit:ci` and the Python audit in the
+[dependency guide](docs/agents/openrouter-glm.md#python-dependency-lock).
 
-```powershell
-npm ci
-npm run verify
-npm run audit:ci
-```
-
-CI runs the same verification command on Windows with Node 22.19.0 (the minimum)
-and Node 24. The separate audit command allows at most three attempts when an
+CI follows that verification scope on Windows with Node 22.19.0 (the minimum)
+and Node 24. The Node audit allows at most three attempts when an
 authoritative report is missing; vulnerabilities and exhausted retries fail.
 Run verification on the final candidate, including newly added files. For changes
 to CI, packaging, or evidence hashes, also validate a fresh checkout: local files

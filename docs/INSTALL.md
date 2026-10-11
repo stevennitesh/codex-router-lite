@@ -24,10 +24,18 @@ An absent multi-agent block end marker can be repaired when its single feature
 line exactly matches Router's emitted setting. Modified or ambiguous blocks
 still fail preflight; following user settings are preserved.
 
-Managed skill publication skips an already owned tree only when bounded content
-comparison and source provenance both match. Ownership still requires its
-protected token record. Changed skills use the existing recovery transaction;
-external content and abandoned-operation recovery retain their own checks.
+Managed config editing recognizes quoted TOML keys and marker comments outside
+string values. Marker examples inside user instructions are preserved. An
+unmarked `model_providers.codex-router` table is refused rather than duplicated.
+Disable preserves a user-owned catalog assignment and restores only an explicitly
+adopted source; invalid or inaccessible source records stop the edit.
+
+Managed skill publication skips unchanged instruction files after bounded content
+comparison. If source provenance changed, only the verified ownership marker is
+refreshed atomically. Ownership still requires its protected token record. Changed
+skills use the recovery transaction: a failed Windows update restores the previous
+directory at its original name when free, or preserves a sibling if that name is
+claimed. External content and abandoned-operation recovery retain their own checks.
 
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
@@ -37,6 +45,11 @@ catalog watcher become ready. Their bounded supervision keeps native serving
 available during an optional-child failure. The installer still prepares Python
 dependencies; a missing or unhealthy gateway prevents GLM service, not frontend
 liveness.
+
+Asynchronous launch failures are handled by the child supervisor;
+startup retries wait for child closure. A configured Windows batch gateway is
+terminated as a tree before retry, so its descendants cannot overlap the next
+attempt. A failed cleanup stops retries and is reported in the service log.
 
 To use OpenRouter routes, set the credential with the protected prompt:
 
@@ -59,6 +72,17 @@ diagnostic, not deployment acceptance: warnings can leave its exit status zero.
 The deployment transaction separately enforces full health and installed identity.
 The scheduled task and process must agree on launcher path, arguments, source root, and generation. A task-name match alone is not proof.
 
+After deployment, select route certification using the
+[proof refresh rules](SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
+A new Router commit or restart alone requires no model requests, including
+Switchyard recertification.
+
+Service operations keep their lock heartbeat active while Windows helpers run.
+An unreadable task or process record cannot establish absence. Failed stop
+verification retains the process record and refuses replacement; task removal
+must be verified before its launchers are removed. Resolve the reported
+observation error and retry the operation.
+
 For foreground debugging, run `model-router.ps1 codex start --foreground` after
 the managed service has released the listeners. The foreground supervisor holds
 the service-operation lock for its lifetime and leaves the managed process record
@@ -78,7 +102,9 @@ selected providers are ready.
 
 Readiness owns cancellation of its health fetches and waits when health succeeds,
 the task is definitively dead, or the deadline expires. Inconclusive task queries
-keep waiting. Health and drain share the same bounded refusal check; unknown or
+keep waiting. A health result or deadline can cancel a pending task query;
+readiness waits for that helper to close before returning. Health and drain
+share the same bounded refusal check; unknown or
 mixed transport failures cannot establish that Router is offline.
 
 The model picker labels StreamLake and Together as separate GLM routes, and
@@ -119,13 +145,13 @@ After a Codex app, Codex CLI, Router upstream, or Switchyard upstream change,
 run the compatibility refresh from the source repository:
 
 ```powershell
-.\maintenance\refresh-compatibility-state.ps1
+.\maintenance\refresh-compatibility-state.ps1 -AnalyzeUpstream
 ```
 
-If it reports upstream or app-version drift, follow the conditional branch in
-`docs/agents/compatibility-maintenance.md`. Use `-AnalyzeUpstream` only when an
-upstream head moved. The original Router remote is reviewed selectively and is
-never an installation or merge source.
+Follow [compatibility maintenance](agents/compatibility-maintenance.md) for scope
+and reuse rules. The command analyzes upstream detail only when heads differ from
+their maintained baselines. The original Router remote is reviewed selectively
+and is never an installation or merge source.
 
 `maintenance/windows-package.json` is the complete installed file list.
 The source checks validate its literal local JavaScript import dependencies, so adding a
@@ -134,8 +160,14 @@ runtime helper without packaging it fails before deployment.
 hash-checks the candidate, and removes only files recorded by the prior deployment
 manifest. Identical files and recognized documentation/test/evidence-only changes
 skip runtime installation; source/configuration changes use the guarded replacement
-path. If runtime install or Doctor fails, it restores, reinstalls, and checks the
-previous generation before returning the candidate failure.
+path. Candidate and restored generations must pass Doctor plus a bounded,
+capability-protected full-health check, running owned task and process checks,
+and matching install-manifest source root and target. Packaged installations do
+not require Git metadata. A diagnostic warning alone does not fail acceptance;
+an offline or degraded runtime does. If runtime installation or acceptance fails,
+the deployer restores, reinstalls, and accepts the previous generation before
+returning the candidate failure. Failed recovery retains its backup and reports
+the recovery path without claiming a healthy restoration.
 
 An identical managed file set returns before staging, backup, copying, or
 manifest writes. The deployer still validates managed paths and package
@@ -174,10 +206,35 @@ or touching service state. Older retained checkouts use their isolated
 `-PrepareOnly` procedure. Keep that compatibility path until those older
 generations retire from recovery use.
 
-Python environment creation and locked installation share one installer phase;
-candidate relocation and activation remain inside the recovery transaction.
+For an installed or running checkout, Node and Python dependencies are prepared
+in separate candidates on the checkout's volume. Node preparation uses the exact
+package manifest and lock with normal npm install scripts, and verifies the
+locked tree and required imports before and after relocation. A refused drain
+leaves the active trees and their dependency stamps intact. Active
+`-PrepareOnly` refuses required dependency replacement before preparation effects;
+use the full guarded installation to activate it. Inactive `-DependenciesOnly`
+keeps its dependency-only behavior and refuses to replace a tree whose recorded
+installation may still be active.
+
+Node and Python candidates activate together after one verified service stop.
+The previous trees and stamps remain available until service acceptance. Recovery
+requires positive process absence and silent Router (4202) and Switchyard (4000)
+listeners; unknown or foreign ownership and inconclusive listener observations
+block restoration. If a damaged candidate is already absent, recovery restores
+the retained dependency trees before importing the service manager, without
+reinstalling them. It restores the prior running or stopped intent. A refused
+recovery stop leaves active and previous trees in place; the error reports both
+failures and the retained paths. Failed restoration or previous-service acceptance
+retains remaining recovery trees for repair.
 Service installation owns frontend readiness, so the installer does not repeat
 its liveness poll. Full provider health and Doctor remain deployment checks.
+
+Switchyard rollback metadata must describe exactly the regular managed files
+actually present in the snapshot. Consistent partial or empty snapshots preserve
+legitimate prior absence. Unsupported names, duplicates, missing or unlisted
+managed files, directories and reparse points are rejected before deployment
+effects. Restoration revalidates the frozen membership before its first mutation;
+an invalid backup remains available for inspection and repair.
 
 Restart the existing installed files only when a configuration or provider
 selection change requires it:
@@ -189,6 +246,19 @@ selection change requires it:
 Do not run a standalone stop. The transaction stages one generation, checks readiness, and restores the prior generation on failure.
 
 ### Replacement and drain
+
+An update may need to stop Router and start the new version. Normally, Router
+pauses new requests and waits for requests already running to finish. This wait
+is called **draining**. If the wait times out or unfinished work prevents the
+restart, Router stays running and accepts new requests again; the update is
+postponed.
+
+**Restarting without waiting** interrupts requests still running, so it requires
+explicit approval. This is what the `-ForceServiceReplacement` option does.
+The deployment keeps a recovery copy of the previous version and restores it
+if the update fails. Recovery restores the software; it cannot resume an
+interrupted request. An approval request should say which work may be
+interrupted, rather than calling this only a "controlled replacement."
 
 `src/service.mjs` serializes service mutations and asks the running Router to drain
 before install, stop, restart, or uninstall. The drain endpoint accepts only the
@@ -215,6 +285,9 @@ the install, separate-directory deploy, checkout deployment transaction, or rest
 `--force-service-replacement` on update/service commands. Force never bypasses
 service identity or credential checks. The updater's separate `--force` flag can
 discard tracked checkout edits; it is not the service-interruption option.
+Checkout updates and rollbacks delay tracked-edit discard and branch changes
+until replacement preparation succeeds. A deferral preserves those edits even
+when the updater received `--force`.
 
 Catalog publication uses its existing refresh owner and does not hot-install
 route code. The separate-directory deployer classifies file changes through

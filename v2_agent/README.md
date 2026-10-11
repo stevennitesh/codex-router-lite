@@ -18,10 +18,103 @@ the observations for each accepted batch:
 - accepted: [`openrouter/deepseek-v4.1-flash-deepinfra`](openrouter/deepseek-v4.1-flash-deepinfra/proof.md)
 - retired historical acceptance: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md), which does not certify Together.
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- accepted: [`switchyard/auto`](switchyard/auto/proof.md)
+- accepted: [`switchyard/auto`](switchyard/auto/proof.md), using GPT-6.1 Sol High.
+  Its unchanged [previous acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
+  covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
-The [completion/drain repair renewal](../docs/history/2026-10-08-workflow-repair-certification.json)
+The [audit release renewal](../docs/history/2026-10-11-audit-release-certification.json)
+passed all five checks for all six published routes on deployed commit
+`4806fa3c5962c6bf9f9384a03ed3887813b49bb9`. All six streaming requests and
+18 native child requests returned HTTP 200. Each child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers from the
+same thread; completed-turn cleanup cancelled no active turns. Switchyard's
+additional tool continuation, image fallback and native compaction checks passed
+with evidence attributed to their own requests. These proofs used CLI session-only
+MXC with workspace-write and on-request approval; they do not certify the
+desktop's elevated sandbox or arbitrary MCP tools.
+
+The [Windows compatibility renewal](../docs/history/2026-10-10-compatibility-certification.json)
+passed all five checks for StreamLake, both DeepSeek routes, Pareto and Switchyard
+on deployed commit `f8bc922bd0f79ae1ad253cda77451c72dca8621d`.
+GLM Together returned HTTP 429 before its native sequence; a fresh
+[Together-only run](../docs/history/2026-10-10-compatibility-together-certification.json)
+then passed all five checks on the same deployed commit and exact endpoint.
+Across the accepted runs, all 18 native child requests and six streaming requests
+returned HTTP 200. Each child produced sandboxed output 42, received two encrypted
+handoffs and returned both markers from the same thread. Cleanup cancelled no
+active turns. These proofs used CLI session-only MXC with workspace-write and
+on-request approval; they do not certify the desktop's elevated sandbox or
+arbitrary MCP tools. The [release record](../docs/history/2026-10-10-compatibility-release.md)
+records PR review, deployment acceptance and recovery retention.
+
+The [verification release renewal](../docs/history/2026-10-09-verification-release-certification.json)
+passed all five checks for Switchyard on deployed commit
+`e39ff44e5fa7972815f7cb30bfd8c2e98e5f90ea`. Its three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers from the
+same thread. Cleanup cancelled no active turns. This renews Switchyard's
+Router-commit binding; other routes retain their previous proofs.
+The run used session-only MXC and does not certify the desktop's elevated sandbox
+or arbitrary MCP tools. The later deployment wording commit is separate from
+this proof's installed runtime identity and did not restart Router.
+
+The [diagnostics and update renewal](../docs/history/2026-10-09-diagnostics-updates-certification.json)
+passed all five checks for Switchyard on deployed commit
+`ec7ae0a9df3ee5ced01ae64b548ba4d2c0e68524`. Its three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers from the
+same thread. Cleanup cancelled no active turns. This renews Switchyard's
+Router-commit binding; other routes retain their previous proofs.
+The run used session-only MXC and does not certify the desktop's elevated sandbox
+or arbitrary MCP tools. The [release record](../docs/history/2026-10-09-diagnostics-updates-release.md)
+records deployment acceptance and verification scope.
+
+The [runtime primitives renewal](../docs/history/2026-10-09-runtime-primitives-certification.json)
+passed all five checks for Switchyard on deployed commit
+`3aa818e771b1e644cf891752787f5ea9acbf04b7`. Its three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers in the same
+thread. Cleanup cancelled no active turns. This renews Switchyard's Router-commit
+binding; the other five routes retain the Sol High release proofs below.
+The run used session-only MXC and does not certify the desktop's elevated sandbox
+or arbitrary MCP tools. The [release record](../docs/history/2026-10-09-runtime-primitives-release.md)
+records deployment acceptance and verification scope.
+
+The [Sol High release renewal](../docs/history/2026-10-09-sol-high-release-certification.json)
+passed all five checks for all six routes on deployed commit
+`952339029991e9afb063758b083a195e56a61c41`. All 18 native child requests
+and six separate streaming requests returned HTTP 200. Each child produced
+sandboxed output 42, received two encrypted handoffs and returned both markers
+in the same thread. Completed-turn cleanup cancelled no active turns.
+Switchyard's additional tool continuation, image fallback and native compaction
+checks passed with evidence attributed to their own requests. The run used
+session-only MXC; it does not certify the desktop's elevated sandbox or arbitrary
+MCP tools. The [release record](../docs/history/2026-10-09-sol-high-release.md)
+also records the frozen routing-quality evaluation and deployment acceptance.
+
+The [credential-state release renewal](../docs/history/2026-10-08-credentials-state-certification.json)
+passed all five checks for Switchyard on deployed commit
+`a3fe490d6e7cbdc9fb5b27aeb2c4515860680370`. The three native child requests
+and separate streaming request returned HTTP 200. The child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers in the
+same thread. Completed-turn cleanup cancelled no active turns. This renews
+Switchyard's Router-commit binding; the other five routes retain their accepted
+Windows-service release proofs below. The run used session-only MXC and does
+not certify the desktop's elevated sandbox or arbitrary MCP tools.
+
+The [Windows-service release renewal](../docs/history/2026-10-08-windows-service-certification.json)
+passed all five checks for all six routes on deployed commit
+`75172c2c002b2a6485ca6ae9ae7eb448339033bb`. All 18 native child requests
+and six separate streaming requests returned HTTP 200. Each child produced
+sandboxed output 42, received two encrypted handoffs and returned both markers
+in the same thread. Completed-turn cleanup cancelled no active turns.
+Switchyard's proof binds the unchanged binary and routes to the deployed Router
+commit. These CLI proofs used session-only MXC with workspace-write and
+on-request approval; they do not certify the desktop's elevated sandbox or
+arbitrary MCP tools.
+
+The preceding [completion/drain repair renewal](../docs/history/2026-10-08-workflow-repair-certification.json)
 passed all five checks for StreamLake, both DeepSeek routes, Pareto and
 Switchyard on deployed commit `5b05a931ba707f1bbc5d7f999fe6c8fc023cc76a`.
 All 15 native requests and five separate streaming requests returned HTTP 200.

@@ -22,44 +22,22 @@ published. The reviewed commit plus canonical patch is the candidate.
 
 ## Build from source.lock
 
-Run from the Router repository in PowerShell. This parses the lock once and
-verifies the patch before touching upstream source:
+Run the maintained build owner from the Router repository:
 
 ```powershell
-$routerRoot = (& git rev-parse --show-toplevel).Trim()
-$configRoot = Join-Path $routerRoot "config\switchyard"
-$lock = Get-Content -Raw -LiteralPath (Join-Path $configRoot "source.lock") | ConvertFrom-Json
-$upstreamPatchPath = Join-Path $configRoot $lock.upstreamContribution.patch
-$upstreamPatchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $upstreamPatchPath).Hash.ToLowerInvariant()
-if ($upstreamPatchHash -ne $lock.upstreamContribution.patchSha256.ToLowerInvariant()) {
-  throw "Switchyard upstream contribution hash does not match source.lock"
-}
-$compatPatchPath = Join-Path $configRoot $lock.patch
-$compatPatchHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $compatPatchPath).Hash.ToLowerInvariant()
-if ($compatPatchHash -ne $lock.patchSha256.ToLowerInvariant()) {
-  throw "Switchyard compatibility patch hash does not match source.lock"
-}
-$buildRoot = Join-Path ([IO.Path]::GetTempPath()) ("switchyard-build-" + [guid]::NewGuid())
-git clone $lock.repository $buildRoot
-git -C $buildRoot checkout --detach $lock.commit
-git -C $buildRoot apply --check $upstreamPatchPath
-git -C $buildRoot apply $upstreamPatchPath
-git -C $buildRoot apply --check $compatPatchPath
-git -C $buildRoot apply $compatPatchPath
-rustup toolchain install $lock.rustToolchain --profile minimal
-Push-Location $buildRoot
-rustup run $lock.rustToolchain cargo fmt --all --check
-rustup run $lock.rustToolchain cargo clippy --workspace --all-targets -- -D warnings
-rustup run $lock.rustToolchain cargo test -p switchyard-llm-client -p switchyard-libsy -p switchyard-runner -p switchyard-server -p switchyard-translation -p switchyard-typesafe-client
-rustup run $lock.rustToolchain cargo build --release -p switchyard-server
-Pop-Location
-$candidateBinary = Join-Path $buildRoot ($lock.binary -replace '/', '\')
-$candidateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $candidateBinary).Hash.ToLowerInvariant()
+$candidate = .\maintenance\build-switchyard-candidate.ps1
 ```
 
-Keep `$buildRoot`, `$candidateBinary`, `$candidateHash`, and `$lock` for the
-staging transaction. Delete the disposable checkout after deployment evidence
-and rollback retention are resolved.
+It reads each ordered patch once, validates those exact bytes against the lock,
+and applies invocation-owned snapshots in lock order after cloning the pinned
+source. The snapshots are removed on success or failure. It installs the pinned
+toolchain and required components, and runs formatting, Clippy, the
+retained package tests and release build. Dependency resolution stays locked.
+Every native command must succeed before a candidate is returned. Failure removes
+only that invocation's disposable checkout. Success returns `buildRoot`,
+`candidateBinary`, `candidateHash` and `upstreamCommit`; keep the build directory
+until deployment and rollback retention are resolved. The script does not stage
+private configuration, spend model quota or change the running service.
 
 ## Stage and validate
 
@@ -71,36 +49,41 @@ apply the current-user ACL before validation. The service-generation
 Router-to-Switchyard capability is different and must never be written to this
 file.
 
-Stage the binary, route file, and provenance under the active runtime root so
-the final replacements stay on one volume. Before stopping anything, run:
-
-```powershell
-& $candidateBinary --config $stagedRoutes --dry-run
-npm run check
-node --test test/switchyard-runtime.test.mjs test/routing.test.mjs test/catalog.test.mjs
-node scripts/check-codex-catalog-compat.mjs --current
-```
-
-Use the [common verification scope](../../docs/agents/architecture.md#verification)
-to reuse checks already passed for unchanged inputs. The catalog script checks
-current native-field inheritance and registered route assertions. It does not validate the patch, route-file
-privacy, local-hop authentication, loopback binding, decision redaction, or
-runtime health; those need their own checks above and below.
+The deployment owner validates the candidate hashes and route dry run before
+stopping Router, then stages and protects the complete set on the runtime volume.
+For an active checkout, it stages Node dependencies from the exact package and
+lock inputs with normal npm scripts and verifies the locked tree and imports
+before and after relocation. Node and Python replacements share one verified
+stop, swap and start transaction; retained dependency trees are retired only
+after service acceptance. A refused drain leaves active dependency bytes intact.
+`PrepareOnly` refuses a required replacement for an active checkout before
+generated-state effects. Inactive `DependenciesOnly` retains its guarded
+preparation path.
+Do not repeat its staging procedure by hand. For Router source edits, select
+checks using the [common verification scope](../../docs/agents/architecture.md#verification)
+and reuse unchanged results. Source catalog checks and deployment's installed
+catalog check cover different inputs.
 
 When a classifier criterion or fallback policy changes, run the maintained
 synthetic evaluator only with explicit provider-spend authorization and an
 already frozen corpus:
 
 ```powershell
-node scripts/evaluate-switchyard-routing.mjs $candidateBinary docs/switchyard-routing-corpus.json $evidencePath
+node scripts/evaluate-switchyard-routing.mjs $candidate.candidateBinary docs/switchyard-routing-corpus.json $evidencePath
 ```
 
 The evaluator exercises the candidate's `/v1/decision` path, records provider
 build and runtime-policy parity, and stops before holdout when development gates
 fail. Its authored corpus is regression evidence, not a representative dataset.
-After an authorized deployment, the single live smoke/certification entry point
-is `node scripts/verify-switchyard-live.mjs $evidencePath`; it requires an
-explicit output path and applies only to the installed identities it records.
+After authorized deployment, select proof and additional smoke scope using
+[certification](../../docs/SUBAGENT-CERTIFICATION.md#when-to-refresh-proof).
+Use the maintained runner's `--switchyard-smoke` when those checks are needed.
+It invokes `scripts/verify-switchyard-live.mjs` once and retains the result;
+standalone invocation is for a separately scoped smoke or diagnosis.
+Each tool, media and compaction phase supplies its own UUID session/thread
+identity and bounded observation window. The two tool requests share one identity.
+Foreign traffic cannot satisfy affinity, fallback or classifier-bypass checks;
+missing or contradictory own evidence fails the smoke.
 
 ## Deploy and roll back
 
@@ -109,36 +92,11 @@ copy a rebuilt binary or route file. Because Windows may lock the active
 executable, live replacement must be one independent rollback-owning
 transaction, not a sequence of ad hoc stop/copy/start commands.
 
-The transaction must:
-
-1. Confirm the intended `-InstallDir`, active runtime root, candidate hashes,
-   staged-route dry run, and current Router health.
-2. Snapshot the exact active binary, `routes.toml`, `SOURCE_COMMIT`, and any
-   provenance file into one private same-volume rollback directory. Record
-   which files did not previously exist.
-3. Enter one `try`/rollback boundary; use the guarded service operation and its
-   [admission drain](../../docs/INSTALL.md#replacement-and-drain) before stopping
-   Router. A deferral leaves the running generation in place; do not bypass it
-   with a standalone stop. Replace the complete staged set, write the locked commit and
-   binary/patch/route/Router hashes, then start the same service and wait for
-   readiness.
-4. On any copy, start, or readiness failure, stop the failed generation if
-   needed, restore the exact prior set including prior absences, start it, and
-   prove its health before returning the original failure.
-5. After the candidate is healthy, verify Router health, Switchyard `/health`,
-   unauthenticated 401 responses on protected Switchyard endpoints, merged
-   catalog parsing, installed binary/config/provenance hashes, and—only when
-   separately authorized—one quota-consuming routed smoke.
-6. Retain one rollback set until all authorized acceptance checks pass, then
-   delete the disposable checkout and rollback set. Never keep alternate active
-   runtime trees, activation scripts, PID files, or standalone catalogs.
-
-If no command or reviewed script owns that entire transaction, stop and add
-one before deploying. Do not claim that a restart performed a deployment, and
-do not weaken the no-standalone-stop rule to work around the missing owner.
-
 The repository-owned transaction is
-`maintenance/deploy-switchyard-candidate.ps1`. Pass the staged binary and
+`maintenance/deploy-switchyard-candidate.ps1`. It owns staging, private snapshots,
+[drain](../../docs/INSTALL.md#replacement-and-drain), activation, acceptance and
+exact rollback, including previously absent files. Failure returns only after
+recovery is checked or reports the retained recovery paths. Pass the candidate binary and
 binary hash plus the clean candidate commit. Unless the candidate uses a new
 route file, omit the route and rollback arguments. The script then uses the
 installed private `routes.toml`, reads its expected hash from installed
@@ -150,10 +108,14 @@ with those installed authorities.
 ```powershell
 $routerCommit = (& git rev-parse HEAD).Trim()
 & .\maintenance\deploy-switchyard-candidate.ps1 `
-  -CandidateBinary $candidateBinary `
-  -ExpectedBinarySha256 $candidateHash `
+  -CandidateBinary $candidate.candidateBinary `
+  -ExpectedBinarySha256 $candidate.candidateHash `
   -ExpectedRouterCommit $routerCommit
 ```
+
+This example uses the fresh build result. For a Router-only update, pass the
+unchanged installed binary and its verified hash; do not rebuild Switchyard. A changed private route file
+also needs `-CandidateRoutes` and `-ExpectedRoutesSha256`.
 
 This command launches a hidden Windows worker outside the caller's process
 tree and returns its process ID, `resultPath`, and `logPath`. Read `resultPath`
@@ -168,6 +130,15 @@ rollback. The worker owns an exclusive deployment lock and writes private logs.
 `-InProcess` is the worker's internal entrypoint; use the independent default
 for live maintenance.
 
+Automatic approval review uses Router for inference. During drain, Router rejects
+new inference with HTTP 503 and `ERR_ROUTER_DRAINING`; service replacement also
+has an availability gap. Include any needed bounded read-only completion wait in
+the authorized launch command when possible, so polling does not need a fresh
+review during replacement. If review is unavailable, the requested action has
+not run. Let the independent worker continue and request the read after serving
+resumes. The worker's completed acceptance remains the deployment authority;
+public health alone does not establish admission state or candidate identity.
+
 The script validates Codex configuration before stopping Router, deploys from
 the active repository root, and restores through the detached checkout if
 activation fails. It refuses Switchyard path or address overrides so its file
@@ -175,8 +146,19 @@ and health checks cannot certify a different runtime from the one Router
 starts. Keep the generated rollback worktree and the active runtime rollback
 directory until the authorized acceptance checks pass.
 
-The transaction rejects an old candidate or rollback directory before it
-prepares dependencies. Its preflight report names the candidate, running, and
+The transaction rejects abandoned candidate staging before it prepares dependencies.
+For an existing recovery directory, it finds the unique completed, successful
+deployment result that accepted the installed Router commit and that exact backup.
+Its recorded checks, live provenance and installed binary/route hashes must agree.
+After the ordinary full-health and process-ownership preflight passes, the worker
+moves that backup beside its original result as `retained-runtime-recovery` and
+creates a fresh backup for the next update. The original result and detached
+rollback checkout remain intact; the preflight and private log name the archive.
+Missing, incomplete, mismatched or ambiguous acceptance stops deployment before
+the service changes. `-WhatIf` never moves recovery files, and an explicitly
+preserved rollback stays in place for repair or interrupted-deployment recovery.
+
+Its preflight report names the candidate, running, and
 rollback Router commits plus the v2 agents allowed by local subagent settings.
 If it reports no expected v2 agents, repair the allowlist before certification.
 
@@ -187,14 +169,23 @@ its metadata, files, rollback checkout, ancestry, and singular ownership before
 activation; a repair deployment failure restores the original pre-candidate
 generation. Do not delete the retained rollback to make a second deployment pass.
 
-The worker starts one authenticated drain with a 90-second limit. New inference
-is paused while already-admitted requests settle. An outstanding Switchyard
-workflow still defers replacement. A timeout restores admission; drain refusals
-report the reason and active request/workflow counts and abort before activation
-without another stop or rollback. After activation begins, recovery stops the
+The worker pauses new requests and waits up to 90 seconds for running requests
+to finish. An unfinished Switchyard tool workflow also postpones the update.
+If Router cannot become idle, it stays running and accepts new requests again.
+The worker reports why it could not restart, with the running request and
+unfinished workflow counts; it exits before changing the running service.
+After activation begins, recovery stops the
 verified live checkout
 and refuses to overwrite runtime files if that stop fails. The retained backup
 is preserved on incomplete recovery, and the result reports both failures.
+Absence requires a rich process verdict and confirmed silence on both managed
+ports; an unknown or legacy verdict cannot authorize restoration. When an absent
+candidate has damaged dependencies, recovery restores the retained trees before
+importing the service manager. It preserves prior stopped intent and retains
+recovery paths on an uncertain observation or failed recovery. Snapshot metadata
+must match the complete physical set of regular managed files, including any
+consistent partial or empty prior set. Membership is frozen before effects and
+revalidated immediately before restoration changes its first file.
 Installation also refuses to transfer ownership away from a live process in
 another checkout; HTTP health alone cannot prove installation succeeded.
 
@@ -207,11 +198,16 @@ manifest whose commit is in candidate history. It tolerates the missing schedule
 launcher only during that recovery preflight. Final acceptance still requires
 the live process, scheduled task, manifest, and runtime provenance to agree.
 
-When the operator explicitly authorizes interruption of pending or indeterminate
-work, the checkout transaction accepts `-ForceServiceReplacement`. It forwards
-that choice to the authenticated drain and retains the same identity, acceptance
-and rollback checks. Normal deployment never forces automatically. An abort
-before activation restores admission even after a forced drain.
+With explicit approval, `-ForceServiceReplacement` restarts Router without
+waiting for running requests to finish. Those requests are interrupted, and
+pending Switchyard workflow tracking is cleared. The recovery copy can restore
+the previous software but cannot resume an interrupted request. Describe this
+effect directly when asking for approval. The transaction forwards
+that choice to the authenticated drain, service stop and installer calls during
+activation and recovery, retaining the same identity, acceptance and rollback
+checks. Normal deployment never interrupts work automatically. An abort
+before activation lets Router accept new requests again, even when running
+requests were already interrupted.
 
 ## Switchyard v2 promotion
 
@@ -225,12 +221,18 @@ binary SHA-256, Router commit, generated-routes SHA-256, deployed-template byte
 SHA-256 (`templateSha256`), and line-ending-independent canonical template-source
 SHA-256 (`templateSourceSha256`).
 
-Recertify after any change to one of those identities or to the native
-collaboration/tool namespace contract. Do not duplicate the general v2
-procedure here.
+Those identities describe the tested generation. A new Router commit, deployment
+or restart does not require recertification when Switchyard's certified behavior
+is unchanged. Use the [proof refresh rules](../../docs/SUBAGENT-CERTIFICATION.md#when-to-refresh-proof)
+and read-only renewal assessment there. Renew for Switchyard implementation,
+effective routing policy or native collaboration/tool contract changes; inspect
+shared changes before selecting the affected route. Keep historical proof commits
+and hashes unchanged and retain normal deployment identity/health/hash acceptance.
 
-Deployment and certification normally require two commits. Commit the clean
+When fresh certification is necessary, deployment and evidence publication use
+two commits. Commit the clean
 Router and Switchyard candidate first because deployment binds the running
 generation to that commit. After the live v2 run passes, update and commit its
 proof separately. The proof must name the deployed candidate commit, not the
-later evidence-only commit.
+later evidence-only commit. An unrelated deployment reuses the accepted proof
+and requires no extra certification run or evidence commit.

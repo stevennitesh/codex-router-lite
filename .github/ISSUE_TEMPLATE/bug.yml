@@ -26,18 +26,12 @@ body:
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     id: route
     attributes:
-      label: Affected route
-      options:
-        - Native Codex
-        - GLM-5.3-Flash via Novita
-        - GLM-5.3-Flash via GMICloud
-        - Pareto via Unbiased
-        - Switchyard Auto
-        - Installation, update, or service lifecycle
-        - Other or unknown
+      label: Affected model, route, or area
+      description: For a model problem, copy the exact model or route name shown in Codex, including its provider when shown. For installation, update, or service problems, enter that area. Enter unknown if you cannot identify it.
+      placeholder: Model/route name, installation, update, service, or unknown
     validations:
       required: true
 

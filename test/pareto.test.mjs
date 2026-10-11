@@ -516,9 +516,20 @@ test("Pareto uses the authenticated direct Responses hop for native tools, repla
     assert.equal(emptyCall.status, 200);
     assert.match(await emptyCall.text(), /"arguments":""/);
     // The warning precedes response completion but crosses a separate stderr pipe.
-    for (let i = 0; i < 50 && !router.errors().includes("empty_function_arguments"); i++)
+    const diagnostics = () => router.errors().split(/\r?\n/u).slice(0, -1)
+      .flatMap(line => {
+        const match = /^\[codex-router\] tool-protocol .*? (\{.*\})$/u.exec(line);
+        return match ? [JSON.parse(match[1])] : [];
+      });
+    const emptyDiagnostic = () => diagnostics().find(diagnostic => diagnostic.code === "empty_function_arguments");
+    for (let i = 0; i < 50 && !emptyDiagnostic(); i++)
       await new Promise(resolve => setTimeout(resolve, 10));
-    assert.match(router.errors(), /tool-protocol.*"sourceCharacters":0,"restoredCharacters":0,"deltaCharacters":null,"doneCharacters":null/);
+    const diagnostic = emptyDiagnostic();
+    assert.ok(diagnostic, "empty provider close records absent streamed argument events");
+    for (const [field, expected] of Object.entries({ code: "empty_function_arguments", sourceCharacters: 0,
+      restoredCharacters: 0, deltaCharacters: null, doneCharacters: null })) {
+      assert.equal(diagnostic[field], expected, field);
+    }
     const providerError = await post({ stream: true, max_output_tokens: 19 });
     assert.equal(providerError.status, 200);
     const errorWire = await providerError.text();

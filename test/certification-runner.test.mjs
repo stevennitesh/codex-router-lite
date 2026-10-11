@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { switchyardProofFixture } from "./switchyard-proof-fixture.mjs";
 import { certificationBatchPreflight } from "../maintenance/certification-preflight.mjs";
 import { certificationParentPrompt, certificationResultExitCode, certificationSessionDirectories, completeCertificationDraft, executeCertificationParent, executeCertificationPlan, observeCertificationStream, parseCertificationRunnerArguments, publishCertificationDraft, writeCertificationReview } from "../maintenance/certification-runner.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
@@ -13,7 +14,7 @@ const route = MODEL_BY_SLUG.get(slug);
 const at = second => new Date(Date.UTC(2026,9,7,12,0,second)).toISOString();
 function drafts(modelSlug = slug) {
   const selectedRoute = MODEL_BY_SLUG.get(modelSlug);
-  const proof = JSON.parse(readFileSync(path.join("v2_agent",modelSlug,"proof.json"),"utf8")); proof.status = "draft";
+  const proof = modelSlug === "switchyard/auto" ? switchyardProofFixture() : JSON.parse(readFileSync(path.join("v2_agent",modelSlug,"proof.json"),"utf8")); proof.status = "draft";
   const batch = certificationBatchPreflight([selectedRoute],{read:() => undefined});
   const report = {slug:modelSlug,role:batch.reports[0].role,effort:selectedRoute.defaultEffort,startedAt:at(5),endedAt:at(19),nativeParentSpawnObserved:true,sameChildRollout:true,encryptedHandoffCount:2,tool:{name:"exec_command",output:"42",success:true,defaultSandbox:true},finals:[{marker:"CERT_FIRST_OK"},{marker:"CERT_SECOND_OK"}],timings:[{status:200},{status:200},{status:200}],lifecycle:{completedTurns:2,completedCleanupCalls:2,activeTurnCancelled:false},draftProof:proof};
   const summary = {version:1,historical:true,status:"draft",routerCommit:proof.routerCommit,routerVersion:proof.routerVersion,codexVersion:proof.codexVersion,windowsAppVersion:proof.windowsAppVersion,executionSurface:proof.executionSurface,windowsSandbox:proof.windowsSandbox,sandboxPolicy:proof.sandboxPolicy,approvalPolicy:proof.approvalPolicy,reports:[report]};
@@ -54,6 +55,25 @@ test("stream proof reads chunked SSE and rejects snapshots, partial and failed c
   ]) await assert.rejects(observeCertificationStream(response));
 });
 
+test("stream observation enforces the total raw byte bound before shared framing under split final LF", async () => {
+  const max = 8 * 1024 * 1024;
+  const canonical = Buffer.from(streamedEvents.map(event=>`data: ${JSON.stringify(event)}\r\n\r\n`).join(""));
+  const exact = Buffer.concat([canonical,Buffer.from(`:${"x".repeat(max-canonical.length-5)}\r\n\r\n`)]);
+  assert.equal(exact.length,max);
+  for (const bytes of [exact,Buffer.concat([exact,Buffer.from("\n")])]) for (const split of [false,true]) {
+    const body = new ReadableStream({start(controller) {
+      if (split) { controller.enqueue(bytes.subarray(0,-1)); controller.enqueue(bytes.subarray(-1)); }
+      else controller.enqueue(bytes);
+      controller.close();
+    }});
+    const response = new Response(body,{headers:{"content-type":"text/event-stream"}});
+    if (bytes.length === max) assert.equal((await observeCertificationStream(response)).pass,true);
+    else await assert.rejects(observeCertificationStream(response),error=>error.code === "stream_limit");
+  }
+  const malformed = Buffer.concat([Buffer.from('data: {"type":"response.output_text.delta","delta":"'),Buffer.from([0xff]),Buffer.from('"}\n\n')]);
+  await assert.rejects(observeCertificationStream(new Response(malformed,{headers:{"content-type":"text/event-stream"}})),error=>error.code === "malformed_sse");
+});
+
 test("structured failures distinguish refusals, malformed streams, timeouts and shared outages safely", async () => {
   const otherSlug = "openrouter/deepseek-v4.1-flash-deepinfra", canary = "PRIVATE_PROVIDER_CANARY";
   const otherEvents = structuredClone(streamedEvents); otherEvents.at(-1).response.model = otherSlug;
@@ -63,8 +83,8 @@ test("structured failures distinguish refusals, malformed streams, timeouts and 
     ["http_refusal",() => new Response(canary,{status:429}),false,429],
     ["http_refusal",() => new Response(canary,{status:503}),false,503],
     ["not_event_stream",() => new Response(canary,{headers:{"content-type":"application/json"}}),false,200],
-    ["malformed_sse",() => new Response(`data: {"private":"${canary}",BROKEN}\n`,{headers:{"content-type":"text/event-stream"}}),false,200],
-    ["malformed_sse",() => new Response("data: null\n",{headers:{"content-type":"text/event-stream"}}),false,200],
+    ["malformed_sse",() => new Response(`data: {"private":"${canary}",BROKEN}\n\n`,{headers:{"content-type":"text/event-stream"}}),false,200],
+    ["malformed_sse",() => new Response("data: null\n\n",{headers:{"content-type":"text/event-stream"}}),false,200],
     ["incomplete_stream",() => eventResponse(streamedEvents.slice(0,1)),false,200],
     ["timeout",() => { throw new DOMException(canary,"TimeoutError"); },false,undefined],
     ["router_unavailable",() => { throw new TypeError(canary,{cause:Object.assign(new Error(canary),{code:"ECONNREFUSED"})}); },true,undefined],
@@ -197,7 +217,7 @@ test("Switchyard documentation survives a fresh runtime without inheriting its p
   const modelSlug = "switchyard/auto", root = mkdtempSync(path.join(os.tmpdir(),"certification-switchyard-sources-"));
   try {
     const application = path.join(root,"v2_agent",modelSlug); mkdirSync(application,{recursive:true});
-    copyFileSync(path.join("v2_agent",modelSlug,"proof.json"),path.join(application,"proof.json"));
+    writeFileSync(path.join(application,"proof.json"), JSON.stringify(switchyardProofFixture()));
     const draft = renewalDraft(modelSlug), before = structuredClone(draft);
     const directory = path.join(root,"review"); mkdirSync(directory);
     const saved = JSON.parse(readFileSync(writeCertificationReview(draft,directory,{sourceRoot:root}),"utf8"));
@@ -291,6 +311,7 @@ test("native runner bounds its parent and never turns a failed process into a se
     assert.equal(await executeCertificationParent({binary:"codex.exe"},batch,directory,"mxc",{launch,timeoutMs:5000}),"synthetic-parent");
     assert.ok(observed.args.includes('windows.sandbox="mxc"')); assert.ok(observed.args.includes("workspace-write"));
     assert.ok(observed.args.includes('approval_policy="on-request"'));
+    assert.ok(observed.args.includes('model_reasoning_effort="high"'));
     assert.equal(JSON.parse(readFileSync(path.join(directory,"parent-exit.json"),"utf8")).deadlineExpired,false);
     const timed = path.join(directory,"timed"); mkdirSync(timed);
     await assert.rejects(executeCertificationParent({binary:"codex.exe"},batch,timed,"elevated",{timeoutMs:100,launch:(_binary,_args,options) => spawn(process.execPath,["-e","setInterval(()=>{},1000);"],options)}),/deadline/u);

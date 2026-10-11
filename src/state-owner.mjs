@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 
-import { readInstallManifest } from "./install-manifest.mjs";
+import { readInstallManifestDetail } from "./install-manifest.mjs";
 import { SOURCE_ROOT, STATE_DIR } from "./paths.mjs";
 
 // One state directory is owned by exactly one checkout. A second checkout can
@@ -27,12 +27,17 @@ function canonical(directory) {
 
 function stateOwnershipStatus() {
   const current = canonical(SOURCE_ROOT);
-  const recorded = readInstallManifest()?.current?.sourceRoot;
+  const record = readInstallManifestDetail();
+  const recorded = record.manifest?.current?.sourceRoot;
+  const validOwner = recorded === undefined || recorded === "" ||
+    (typeof recorded === "string" && path.isAbsolute(recorded));
   const owner = canonical(recorded);
   return {
     stateDir: STATE_DIR,
     current,
     owner,
+    recordStatus: validOwner ? record.status : "invalid-owner",
+    indeterminate: !["missing", "present"].includes(record.status) || !validOwner,
     // Unowned state (a fresh or hand-made directory) belongs to whoever writes
     // it first; only a recorded, different owner is a conflict.
     foreign: Boolean(owner && current && owner !== current),
@@ -55,7 +60,17 @@ function stateOwnershipMessage(operation, status) {
 
 export function assertStateOwnership(operation) {
   const status = stateOwnershipStatus();
-  if (!status.foreign || status.overridden) return status;
+  if (status.overridden) return status;
+  if (status.indeterminate) {
+    const error = new Error(
+      `Refusing to ${operation}: ownership of ${status.stateDir} cannot be established (${status.recordStatus}). ` +
+      "Read the installation manifest from its owning Windows user and restore a valid record before retrying. " +
+      "Use the installer only for an intentional ownership transfer.",
+    );
+    error.code = "indeterminate_state_owner";
+    throw error;
+  }
+  if (!status.foreign) return status;
   const error = new Error(stateOwnershipMessage(operation, status));
   error.code = "foreign_state_owner";
   throw error;

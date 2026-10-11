@@ -29,13 +29,20 @@ export async function ready(url, child, headers = {}, {
   timeoutMs = 5_000, probeTimeoutMs = 500, accept = response => response.status < 500,
 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const alive = () => {
     assert.equal(child.exitCode, null, child.errors());
+    assert.equal(child.signalCode, null, child.errors());
+  };
+  while (Date.now() < deadline) {
+    alive();
+    let accepted = false;
     try {
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(Math.max(1, Math.min(probeTimeoutMs, deadline - Date.now()))) });
       await response.arrayBuffer();
-      if (accept(response)) return;
+      accepted = accept(response);
     } catch {}
+    alive();
+    if (accepted) return;
     await new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(20, deadline - Date.now()))));
   }
   throw new Error("Isolated service not ready: " + child.errors());

@@ -1,89 +1,58 @@
-import {
-  isManagedCodexBaseUrl,
-} from "./caller-auth.mjs";
+import { isManagedCodexBaseUrl } from "./caller-auth.mjs";
+import { scanTomlDocument, tomlStringValue } from "./toml-structure.mjs";
 
-const CODEX_PROVIDER_BEGIN = "# BEGIN codex-router-provider-managed";
-const CODEX_PROVIDER_END = "# END codex-router-provider-managed";
-const CODEX_SIGNED_BEGIN = "# BEGIN codex-router-signed-provider-managed";
-const CODEX_SIGNED_END = "# END codex-router-signed-provider-managed";
+const BLOCKS = [
+  ["# BEGIN codex-router-provider-managed", "# END codex-router-provider-managed"],
+  ["# BEGIN codex-router-signed-provider-managed", "# END codex-router-signed-provider-managed"],
+];
 
-function decodeScalar(raw) {
-  const token = String(raw ?? "").trim();
-  if (token.startsWith('"') && token.endsWith('"')) {
-    try { return JSON.parse(token); } catch { return undefined; }
-  }
-  if (token.startsWith("'") && token.endsWith("'")) return token.slice(1, -1).replaceAll("''", "'");
-  return token.split(/\s+#/, 1)[0].trim();
-}
-
-function escapedPattern(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function replaceAssignmentLine(line, key, value, separator = "=") {
-  const escaped = escapedPattern(key);
-  const operator = separator === ":" ? ":" : "=";
-  const pattern = new RegExp(`^(\\s*${escaped}\\s*${operator}\\s*)("(?:\\\\.|[^"\\\\])*"|'[^']*'|[^#\\s]+)(\\s*(?:#.*)?)$`);
-  const match = line.match(pattern);
-  if (!match) throw new Error(`Managed ${key} assignment is not a supported scalar.`);
-  return `${match[1]}${JSON.stringify(value)}${match[3]}`;
-}
-
-function assignmentValue(line, key, separator = "=") {
-  const escaped = escapedPattern(key);
-  const operator = separator === ":" ? ":" : "=";
-  const match = line.match(new RegExp(`^\\s*${escaped}\\s*${operator}\\s*(.+?)\\s*$`));
-  return match ? decodeScalar(match[1]) : undefined;
-}
-
-function replaceRootCallerBase(contents, nextBase, port) {
-  const lines = contents.split("\n");
-  const firstTable = lines.findIndex((line) => /^\s*\[/.test(line));
-  const end = firstTable === -1 ? lines.length : firstTable;
-  const matches = [];
-  for (let index = 0; index < end; index += 1) {
-    if (/^\s*openai_base_url\s*=/.test(lines[index])) matches.push(index);
-  }
-  if (matches.length !== 1) {
-    throw new Error("Codex caller capability refresh requires exactly one managed openai_base_url.");
-  }
-  const oldBase = assignmentValue(lines[matches[0]], "openai_base_url");
+function managedScalar(document, assignment, nextBase, port) {
+  const oldBase = tomlStringValue(document, assignment.tablePath, assignment.key[0]);
   if (!isManagedCodexBaseUrl(oldBase, port)) {
-    throw new Error("Codex openai_base_url is not a managed router URL.");
+    throw new Error("Codex caller capability assignment is not a managed router URL.");
   }
-  lines[matches[0]] = replaceAssignmentLine(lines[matches[0]], "openai_base_url", nextBase);
-  return lines.join("\n");
-}
-
-function replaceMarkedBase(contents, begin, end, nextBase, port) {
-  const lines = contents.split("\n");
-  const starts = lines.flatMap((line, index) => line.trim() === begin ? [index] : []);
-  const ends = lines.flatMap((line, index) => line.trim() === end ? [index] : []);
-  if (!starts.length && !ends.length) return contents;
-  if (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0]) {
-    throw new Error(`Managed caller capability block ${begin} is ambiguous.`);
-  }
-  const matches = [];
-  for (let index = starts[0] + 1; index < ends[0]; index += 1) {
-    if (/^\s*base_url\s*=/.test(lines[index])) matches.push(index);
-  }
-  if (matches.length !== 1) {
-    throw new Error(`Managed caller capability block ${begin} has no unique base_url.`);
-  }
-  const oldBase = assignmentValue(lines[matches[0]], "base_url");
-  if (!isManagedCodexBaseUrl(oldBase, port)) {
-    throw new Error(`Managed Codex block ${begin} has an unmanaged base_url.`);
-  }
-  lines[matches[0]] = replaceAssignmentLine(lines[matches[0]], "base_url", nextBase);
-  return lines.join("\n");
+  const line = document.lines[assignment.index];
+  return line.slice(0, assignment.valueStart) + JSON.stringify(nextBase) + line.slice(assignment.valueEnd);
 }
 
 export function refreshCodexCallerCapabilityContents(contents, nextBase, { port } = {}) {
   if (!isManagedCodexBaseUrl(nextBase, port)) {
     throw new Error("Refusing an invalid Codex router URL.");
   }
-  let next = replaceRootCallerBase(String(contents ?? ""), nextBase, port);
-  next = replaceMarkedBase(next, CODEX_PROVIDER_BEGIN, CODEX_PROVIDER_END, nextBase, port);
-  next = replaceMarkedBase(next, CODEX_SIGNED_BEGIN, CODEX_SIGNED_END, nextBase, port);
-  return next;
+  const document = scanTomlDocument(String(contents ?? ""));
+  const roots = document.assignments.filter(assignment =>
+    assignment.tablePath.length === 0 && assignment.key.length === 1 &&
+    assignment.key[0] === "openai_base_url");
+  if (roots.length !== 1) {
+    throw new Error("Codex caller capability refresh requires exactly one managed openai_base_url.");
+  }
+  const selected = [roots[0]];
+  const ranges = [];
+  for (const [begin, end] of BLOCKS) {
+    const starts = document.comments.filter(comment => comment.text === begin);
+    const ends = document.comments.filter(comment => comment.text === end);
+    if (!starts.length && !ends.length) continue;
+    if (starts.length !== 1 || ends.length !== 1 || ends[0].index <= starts[0].index) {
+      throw new Error(`Managed caller capability block ${begin} is ambiguous.`);
+    }
+    const from = starts[0].index, to = ends[0].index;
+    if (ranges.some(([left, right]) => from < right && to > left)) {
+      throw new Error("Managed caller capability blocks overlap.");
+    }
+    ranges.push([from, to]);
+    const bases = document.assignments.filter(assignment =>
+      assignment.index > from && assignment.index < to &&
+      assignment.key.length === 1 && assignment.key[0] === "base_url");
+    if (bases.length !== 1 || bases[0].tablePath.length !== 2 ||
+        bases[0].tablePath[0] !== "model_providers") {
+      throw new Error(`Managed caller capability block ${begin} has no unique provider base_url.`);
+    }
+    selected.push(bases[0]);
+  }
+  // Validate every edit before changing bytes. Keep key spelling, comments,
+  // instruction examples and line endings intact.
+  const edits = selected.map(assignment => [assignment.index,
+    managedScalar(document, assignment, nextBase, port)]);
+  for (const [index, line] of edits) document.lines[index] = line;
+  return document.lines.join("\n");
 }

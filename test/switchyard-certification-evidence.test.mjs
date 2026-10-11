@@ -2,7 +2,29 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { summarizeSwitchyardCertificationEvidence } from "../src/switchyard-certification-evidence.mjs";
+import { summarizeSwitchyardCertificationEvidence, summarizeSwitchyardSmokeEvidence } from "../src/switchyard-certification-evidence.mjs";
+import { observationIdentity } from "../src/request-observation.mjs";
+
+test("smoke attribution rejects contradictory identity, missing generation and out-of-phase evidence", () => {
+  const own = "019a0780-0000-7000-8000-000000000001", foreign = "019a0780-0000-7000-8000-000000000002";
+  const at = "2026-10-08T12:00:01.000000001Z";
+  const timing = `[codex-router] timing at=${at} model=switchyard/auto provider=switchyard status=200 session_sha256=${observationIdentity("session", own)} thread_sha256=${observationIdentity("thread", own)}`;
+  const handled = `${at} INFO selected_model="switchyard/sol-high" session_id="${own}" agent_id="${own}"`;
+  const input = { sessionId: own, startedAt: "2026-10-08T12:00:01.000Z", endedAt: "2026-10-08T12:00:01.001Z",
+    routerLog: `Switchyard libsy server\n${handled}\n${timing}`, routingLog: JSON.stringify({ ts: at, session_id: own, model: "switchyard/sol-high" }) };
+  const summary = summarizeSwitchyardSmokeEvidence(input);
+  assert.equal(summary.attributed, true);
+  assert.deepEqual(summary.routing.selectedTargets, ["switchyard/sol-high"]);
+  for (const changed of [
+    { routerLog: `${handled}\n${timing}` },
+    { endedAt: "2026-10-08T12:00:01.000000000Z", startedAt: "2026-10-08T12:00:00.000Z" },
+    { routerLog: input.routerLog.replace(`agent_id="${own}"`, `agent_id="${foreign}"`) },
+    { routerLog: input.routerLog.replace(`agent_id="${own}"`, 'agent_id="invalid"') },
+    { routingLog: JSON.stringify({ ts: "invalid", session_id: own, model: "switchyard/sol-high" }) },
+    { routingLog: JSON.stringify({ ts: at, session_id: own, model: "unknown" }) },
+  ]) assert.equal(summarizeSwitchyardSmokeEvidence({ ...input, ...changed }).attributed, false);
+  for (const id of [own, foreign, observationIdentity("session", own), observationIdentity("thread", own)]) assert.ok(!JSON.stringify(summary).includes(id));
+});
 
 test("certification evidence keeps useful route facts and removes identifiers", () => {
   const summary = summarizeSwitchyardCertificationEvidence({

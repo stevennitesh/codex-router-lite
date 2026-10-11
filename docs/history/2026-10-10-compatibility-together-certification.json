@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "historical": true,
+  "routerCommit": "f8bc922bd0f79ae1ad253cda77451c72dca8621d",
+  "routerVersion": "0.7.0",
+  "codexVersion": "codex-cli 0.162.0-alpha.17.2",
+  "windowsAppVersion": "26.1007.2314.0",
+  "executionSurface": "codex-cli",
+  "windowsSandbox": "mxc",
+  "sandboxPolicy": "workspace-write",
+  "approvalPolicy": "on-request",
+  "limits": [
+    "Synthetic native CLI collaboration for the named backend only; desktop and arbitrary MCP tools are outside this proof.",
+    "Streaming was observed separately on the same deployed generation.",
+    "Completed drafts require review before acceptance. Raw transcripts and private identities remain local."
+  ],
+  "status": "accepted",
+  "reports": [
+    {
+      "slug": "openrouter/glm-5.3-flash-together",
+      "role": "router_openrouter_glm_5_3_flash_together",
+      "effort": "max",
+      "startedAt": "2026-10-10T17:10:27.658Z",
+      "endedAt": "2026-10-10T17:10:45.181Z",
+      "nativeParentSpawnObserved": true,
+      "sameChildRollout": true,
+      "encryptedHandoffCount": 2,
+      "tool": {
+        "name": "exec_command",
+        "output": "42",
+        "outputAt": "2026-10-10T17:10:35.568Z",
+        "success": true,
+        "defaultSandbox": true,
+        "callOutputIdentityMatched": true
+      },
+      "finals": [
+        {
+          "at": "2026-10-10T17:10:36.270Z",
+          "marker": "CERT_FIRST_OK"
+        },
+        {
+          "at": "2026-10-10T17:10:45.155Z",
+          "marker": "CERT_SECOND_OK"
+        }
+      ],
+      "timings": [
+        {
+          "at": "2026-10-10T17:10:34.183Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 5443
+        },
+        {
+          "at": "2026-10-10T17:10:36.206Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 538
+        },
+        {
+          "at": "2026-10-10T17:10:45.148Z",
+          "model": "openrouter/glm-5.3-flash-together",
+          "provider": "openrouter",
+          "status": 200,
+          "totalMs": 3250
+        }
+      ],
+      "lifecycle": {
+        "completedTurns": 2,
+        "completedCleanupCalls": 2,
+        "activeTurnCancelled": false
+      },
+      "streaming": {
+        "slug": "openrouter/glm-5.3-flash-together",
+        "routerCommit": "f8bc922bd0f79ae1ad253cda77451c72dca8621d",
+        "startedAt": "2026-10-10T17:10:13.513Z",
+        "endedAt": "2026-10-10T17:10:17.657Z",
+        "status": 200,
+        "events": 104,
+        "textDeltas": 1,
+        "terminalType": "response.completed",
+        "returnedModel": "openrouter-glm-5-3-flash-together",
+        "markerObserved": true,
+        "pass": true
+      },
+      "proof": {
+        "version": 1,
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.3-flash",
+        "slug": "openrouter/glm-5.3-flash-together",
+        "status": "accepted",
+        "officialSources": [
+          "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
+          "https://openrouter.ai/docs/guides/routing/provider-selection"
+        ],
+        "testedAt": "2026-10-10T17:10:45.181Z",
+        "routerVersion": "0.7.0",
+        "routerCommit": "f8bc922bd0f79ae1ad253cda77451c72dca8621d",
+        "codexVersion": "codex-cli 0.162.0-alpha.17.2",
+        "executionSurface": "codex-cli",
+        "endpointProvider": "together",
+        "checks": {
+          "streaming": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-10T17:10:17.657Z"
+          },
+          "toolCall": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-10T17:10:35.568Z",
+            "mode": "auto"
+          },
+          "encryptedRelay": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-10T17:10:41.874Z"
+          },
+          "markerReturn": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-10T17:10:36.270Z"
+          },
+          "sameThreadFollowUp": {
+            "outcome": "pass",
+            "status": 200,
+            "observedAt": "2026-10-10T17:10:45.155Z"
+          }
+        },
+        "windowsAppVersion": "26.1007.2314.0",
+        "windowsSandbox": "mxc",
+        "sandboxPolicy": "workspace-write",
+        "approvalPolicy": "on-request",
+        "evidence": "docs/history/2026-10-10-compatibility-together-certification.json"
+      }
+    }
+  ]
+}

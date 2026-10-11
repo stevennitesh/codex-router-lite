@@ -49,6 +49,7 @@ export class SseFrameBuffer {
   #tailBytes = 0;
   #nextPartBytes = 1024;
   #pendingBytes = 0;
+  #completedFrameBytes = 0;
   #lineHasContent = false;
   #atStreamStart = true;
   #lineBytes = 0;
@@ -72,15 +73,21 @@ export class SseFrameBuffer {
       // half of a split CRLF, attach its remaining raw byte to that frame's
       // emission/hold instead of treating it as an unfinished next event.
       if (!endLine && !content.length && ending.length && !this.#pendingBytes) {
+        if (this.#completedFrameBytes + ending.length > this.#maxFrameBytes) {
+          throw Object.assign(new Error(`SSE frame exceeds ${this.#maxFrameBytes} bytes.`), { code: "SSE_FRAME_LIMIT" });
+        }
+        this.#completedFrameBytes = 0;
         capturedUntil = end;
         yield { bytes: ending, atStreamStart: false, continuation: true };
         continue;
       }
+      this.#completedFrameBytes = 0;
       this.#lineBytes += content.length;
       if (this.#lineBytes > this.#maxLineBytes) {
         throw Object.assign(new Error(`SSE line exceeds ${this.#maxLineBytes} bytes.`), { code: "SSE_LINE_LIMIT" });
       }
-      if (this.#pendingBytes + end - capturedUntil > this.#maxFrameBytes) {
+      const frameBytes = this.#pendingBytes + end - capturedUntil;
+      if (frameBytes > this.#maxFrameBytes) {
         throw Object.assign(new Error(`SSE frame exceeds ${this.#maxFrameBytes} bytes.`), { code: "SSE_FRAME_LIMIT" });
       }
       if (content.length) this.#lineHasContent = true;
@@ -100,6 +107,9 @@ export class SseFrameBuffer {
           // unfinished suffix is captured across transform callbacks.
           bytes = chunk.subarray(capturedUntil, end);
         }
+        // A final bare CR dispatches now, but a later LF still belongs to
+        // this frame's raw budget. Retain only its size, never its payload.
+        this.#completedFrameBytes = frameBytes;
         capturedUntil = end;
         yield { bytes, atStreamStart, continuation: false };
       }

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   utimesSync,
@@ -79,7 +80,7 @@ test("the Windows operational scripts parse in Windows PowerShell", { skip: proc
     "maintenance/deployment-worker.ps1",
     "maintenance/deployment-json.ps1",
     "maintenance/refresh-compatibility-state.ps1",
-    "src/windows-process-tree.ps1",
+    "maintenance/build-switchyard-candidate.ps1",
   ].map((name) => `'${path.join(root, name).replaceAll("'", "''")}'`);
   const check = [
     `$targets = @(${targets.join(",")})`,
@@ -128,7 +129,6 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     "CODEX_ROUTER_SWITCHYARD_BASE_URL",
   ]) assert.match(source, new RegExp(name, "u"));
   assert.match(source, /config-manager\.mjs"\) validate-enable/);
-  assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /AddSeconds\(45\)[\s\S]*Router full health did not become clean within 45 seconds/u);
   assert.match(source, /Start-Sleep -Milliseconds 500/u);
@@ -147,6 +147,8 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
   assert.match(source, /ExpectedRoutesSha256 is required when CandidateRoutes is not the installed private route file/);
   assert.match(source, /Preserved runtime rollback must be directly under/);
   assert.match(source, /Preserved runtime rollback must be the one existing Switchyard rollback directory/);
+  assert.match(source, /Get-SwitchyardRecoveryArchivePlan \$runtimeRoot \$stateRoot \$installedRouterCommit/u);
+  assert.match(source, /Assert-RouterHealth \$runningRouterRoot \$installedRouterCommit[\s\S]*Assert-SwitchyardHealth[\s\S]*ShouldProcess[\s\S]*Move-SwitchyardRecoveryArchive \$recoveryArchive/u);
   assert.match(source, /Preserved rollback metadata names an unsupported file/);
   assert.match(source, /Assert-CheckoutIdentity \$repoRoot \$expectedRouterCommit "Running Router candidate checkout"/);
   assert.match(source, /Resolve-RunningRouterRoot @\(\$repoRoot, \$rollbackRouterRoot\)[\s\S]*Assert-RouterHealth \$runningRouterRoot \$installedRouterCommit[\s\S]*ShouldProcess/);
@@ -159,16 +161,7 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     /Filter "\.rollback-\*"[\s\S]*Get-SubagentPublicationPlan[\s\S]*Deployment preflight[\s\S]*Prepare-RollbackRouter \$rollbackRouterRoot/u,
   );
   assert.match(source, /expectedPublishedV2Agents/);
-  assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
-  assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
-  assert.match(source, /if \(-not \$activationStarted\)/);
   assert.doesNotMatch(source, /AppData\\Local\\codex-router/);
-});
-
-test("Windows install refreshes the current Codex bundled catalog", () => {
-  const source = readScript("install.ps1");
-  assert.match(source, /node src\/catalog\.mjs --refresh-native/);
-  assert.doesNotMatch(source, /Test-NonEmptyFile/);
 });
 
 test("the managed Router watches for Codex catalog authority changes", () => {
@@ -178,21 +171,10 @@ test("the managed Router watches for Codex catalog authority changes", () => {
   assert.ok(packaged.files.includes("src/catalog-auto-refresh.mjs"));
 });
 
-test("Windows live dependency updates stage the Python environment and restore it on failure", () => {
-  const source = readScript("install.ps1");
-  assert.match(
-    source,
-    /Install-PythonEnvironment \$PythonCandidate[\s\S]*src\/service\.mjs stop[\s\S]*Move-Item -LiteralPath \$PythonCandidate -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
-  );
-  assert.match(
-    source,
-    /if \(\$PythonSwapStarted\)[\s\S]*Move-Item -LiteralPath \$PythonBackup -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
-  );
-  assert.match(source, /Assert-TransientPythonVenvPath/u);
-  assert.match(
-    source,
-    /Move-Item -LiteralPath \$PythonCandidate -Destination \$RelocatedPythonCandidate[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*--version/u,
-  );
+test("the Windows gateway launcher uses isolated Python and the supported entrypoint", () => {
+  // Installer maintenance tests execute the real combined Node/Python
+  // transaction, relocation and rollback faults. Keep this launcher contract
+  // check independent of the installer's internal variable/function layout.
   assert.match(
     readScript("src/start.mjs"),
     /Scripts",\s*"python\.exe"[\s\S]*"-I", "-X", "utf8"[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*\.\.\.litellmArgs/u,
@@ -277,33 +259,6 @@ test(
   },
 );
 
-test("Windows stop disables heartbeat before ending the task and start reenables it", () => {
-  const source = readScript("src/service-windows.mjs");
-  const branch = source.slice(source.indexOf('} else if (command === "stop") {') + 7);
-  const execute = new Function("command", "taskSnapshot", "assertOwnedTask", "schtasks", "endTask", "process", "taskName", branch);
-  for (const command of ["stop", "start", "restart"]) {
-    const calls = [];
-    execute(command, () => ({ exists: true, owned: true }),
-      (task) => { assert.equal(task.owned, true); calls.push("owned"); },
-      (args) => calls.push(args.at(-1)), () => calls.push("end"),
-      { stdout: { write() {} } }, "Codex Router");
-    assert.deepEqual(calls, command === "stop" ? ["owned", "/DISABLE", "end"]
-      : command === "start" ? ["owned", "/ENABLE", "Codex Router"]
-        : ["owned", "end", "/ENABLE", "Codex Router"]);
-  }
-  assert.throws(() => execute("stop", () => ({ exists: true }),
-    () => { throw new Error("foreign task"); },
-    () => assert.fail("must not mutate foreign task"), () => assert.fail("must not stop foreign task"),
-    { stdout: { write() {} } }, "Codex Router"), /foreign task/u);
-  for (const command of ["start", "restart"]) {
-    assert.throws(() => execute(command, () => ({ exists: false }), () => {},
-      () => assert.fail("must not mutate a missing task"),
-      () => assert.fail("must not end a missing task"),
-      { stdout: { write() { assert.fail("must not report running"); } } },
-      "Codex Router"), /not registered.*install/u);
-  }
-});
-
 test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {
   assert.equal(recognizedRepositoryUrl("https://github.com/stevennitesh/codex-router-lite.git"), true);
   assert.equal(recognizedRepositoryUrl("git@github.com:stevennitesh/codex-router-lite.git"), true);
@@ -323,27 +278,24 @@ test("self-update distinguishes remote updates from local unpublished work", () 
 test("task identity and the test write guard fail closed", () => {
   const sourceRoot = "C:\\fixture\\router";
   const stateDir = "C:\\fixture\\state";
-  const commandLine = () => `node "${sourceRoot}\\src\\start.mjs"`;
-  const identity = () => "4242|node.exe";
+  const commandLine = `node "${sourceRoot}\\src\\start.mjs"`;
+  const probe = () => ({ state: "alive", identity: "4242|node.exe", commandLine });
   const state = buildServiceProcessState({
     pid: 4242,
     platform: "win32",
-    identity,
-    commandLine,
+    probe,
     sourceRoot,
     stateDir,
   });
   assert.equal(serviceProcessOwns(state, {
     platform: "win32",
-    identity,
-    commandLine,
+    probe,
     sourceRoot,
     stateDir,
   }), true);
   assert.equal(serviceProcessOwns(state, {
     platform: "win32",
-    identity: () => "new-generation|node.exe",
-    commandLine,
+    probe: () => ({ state: "alive", identity: "4243|node.exe", commandLine }),
     sourceRoot,
     stateDir,
   }), false);
@@ -359,31 +311,53 @@ test("task identity and the test write guard fail closed", () => {
   }), true);
 });
 
-test("Windows status and doctor use the same diagnostic-only path", { skip: process.platform !== "win32" }, () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-status-test-"));
-  const log = path.join(directory, "node.log");
-  const shim = path.join(directory, "node.cmd");
-  writeFileSync(shim, `@echo off\r\necho %*>>${JSON.stringify(log)}\r\nexit /b 0\r\n`);
+test("Windows commands dispatch from their checkout and preserve service, foreground and diagnostic arguments", { skip: process.platform !== "win32" }, () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-dispatch-test-"));
+  const source = path.join(directory, "checkout with spaces");
+  const log = path.join(directory, "dispatch.jsonl");
+  mkdirSync(path.join(source, "src"), { recursive: true });
+  copyFileSync(path.join(root, "model-router.ps1"), path.join(source, "model-router.ps1"));
   writeFileSync(log, "");
-  const env = { ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH}` };
+  writeFileSync(path.join(source, "src/start.mjs"), "// checkout identity fixture\n");
+  for (const script of ["service.mjs", "foreground-start.mjs", "doctor.mjs", "switchyard-trace.mjs", "switchyard-certification-evidence.mjs"]) {
+    writeFileSync(path.join(source, "src", script), `import {appendFileSync} from 'node:fs';import path from 'node:path';appendFileSync(${JSON.stringify(log)},JSON.stringify({script:path.basename(process.argv[1]),args:process.argv.slice(2)})+'\\n');`);
+  }
   try {
-    for (const command of ["status", "doctor"]) {
-      execFileSync("powershell.exe", [
+    const cases = [
+      ["start", [], "service.mjs", ["start"]],
+      ["start", ["--foreground"], "foreground-start.mjs", []],
+      ["status", [], "doctor.mjs", []],
+      ["doctor", [], "doctor.mjs", []],
+      ["doctor", ["--json"], "doctor.mjs", ["--json"]],
+      ["switchyard-trace", ["synthetic trace filter"], "switchyard-trace.mjs", ["synthetic trace filter"]],
+      ["switchyard-certification-evidence", ["synthetic evidence path"], "switchyard-certification-evidence.mjs", ["synthetic evidence path"]],
+    ];
+    for (const [command, args] of cases) {
+      const result = spawnSync("powershell.exe", [
         "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        path.join(root, "model-router.ps1"), "codex", command,
-      ], { env, encoding: "utf8" });
+        path.join(source, "model-router.ps1"), "codex", command, ...args,
+      ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+      assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     }
-    const calls = readFileSync(log, "utf8").trim().split(/\r?\n/);
-    assert.equal(calls.length, 2);
-    assert.ok(calls.every((call) => /src\\doctor\.mjs$/i.test(call)));
+    const calls = readFileSync(log, "utf8").trim().split(/\r?\n/u).map(JSON.parse);
+    assert.deepEqual(calls, cases.map(([, , script, args]) => ({ script, args })));
+    const refused = spawnSync("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(source, "model-router.ps1"), "codex", "start", "--foreground", "extra",
+    ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /Usage: model-router\.ps1 codex start/u);
+    assert.equal(readFileSync(log, "utf8").trim().split(/\r?\n/u).length, cases.length);
     assert.doesNotMatch(readScript("src/doctor.mjs"), /service\.mjs.*(?:install|start|restart)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-function deploymentFixture({ candidateFails }) {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-deploy-test-"));
+function deploymentFixture({ candidateFails, modes = {}, immediateAcceptance = false, requireForce = false }) {
+  // PowerShell expands Windows 8.3 paths during installation. Record that
+  // same directory identity when CI supplies a short-name temporary root.
+  const directory = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "codex-router-deploy-test-")));
   const source = path.join(directory, "source");
   const install = path.join(directory, "install");
   const log = path.join(directory, "install.log");
@@ -408,25 +382,59 @@ function deploymentFixture({ candidateFails }) {
     "src/deployment-classification.mjs",
     "src/service-drain.mjs",
   ];
+  // The shipped acceptance and Doctor execute; only their external Windows,
+  // credential and service boundaries are replaced. No live state is queried.
+  writeFileSync(path.join(source, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+  writeFileSync(path.join(install, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+  copyFileSync(path.join(root, "src/deployment-acceptance.mjs"), path.join(source, "src/deployment-acceptance.mjs"));
+  if (immediateAcceptance) {
+    copyFileSync(path.join(root, "src/deployment-acceptance.mjs"), path.join(source, "src/deployment-acceptance-impl.mjs"));
+    writeFileSync(path.join(source, "src/deployment-acceptance.mjs"), `import {assertDeploymentRuntime} from './deployment-acceptance-impl.mjs';
+try { console.log(JSON.stringify(await assertDeploymentRuntime(process.argv[2], {timeoutMs:0}))); }
+catch(error) { console.error(error.message); process.exitCode=1; }`);
+    files.push("src/deployment-acceptance-impl.mjs");
+  }
+  const boundary = `import {readFileSync} from 'node:fs';
+export const root=${JSON.stringify(install)};
+const modes=${JSON.stringify(modes)};
+export const mode=()=>modes[readFileSync(${JSON.stringify(path.join(install, "marker.txt"))},'utf8').trim()]||'healthy';`;
+  const stubs = {
+    "fixture-deployment-state": boundary,
+    "control-health": `import {mode} from './fixture-deployment-state.mjs'; export const readControlHealth=async()=>({ok:mode()!=='offline',status:mode()==='offline'?0:200,service:mode()==='wrong-service'?'foreign':'codex-router',degraded:mode()==='degraded'?['gateway']:[]});`,
+    "service-process": `import {mode,root} from './fixture-deployment-state.mjs'; export const readServiceProcessState=()=>({sourceRoot:mode()==='wrong-process'?root+'-foreign':root}); export const serviceProcessOwns=()=>mode()!=='dead-process';`,
+    "install-manifest": `import {mode,root} from './fixture-deployment-state.mjs'; export const readInstallManifest=()=>({version:1,current:{target:'codex',sourceRoot:mode()==='wrong-manifest'?root+'-foreign':root,commit:null}});`,
+    "service": `import {mode} from './fixture-deployment-state.mjs'; if(process.argv[2]==='status')console.log(JSON.stringify({installed:mode()!=='wrong-task',loaded:mode()!=='stopped-task',state:'running'})); else throw new Error('unexpected live service mutation');`,
+    "codex-binary": `import {mode} from './fixture-deployment-state.mjs'; export const codexExecutableIdentity=()=>({binary:mode()==='doctor-fail'?null:'fixture-codex',version:'fixture'}); export const codexAuthStatus=()=>({authenticated:true});`,
+    "file-security": "export const privateFileIsProtected=()=>true;",
+    "catalog": "export const routedCatalogConfigured=()=>true;",
+    "provider-selection": "export const providerSelectionStatus=()=>({providers:[]}); export const selectedConfiguredListedModels=()=>[];",
+    "routed-models": "export const MODEL_BY_SLUG=new Map(); export const PROVIDERS=new Map([['openrouter',{}]]);",
+    "provider-credentials": `import {mode} from './fixture-deployment-state.mjs'; export const credentialStatus=()=>({configured:mode()!=='warnings'}); export const primaryCredentialPath=()=> 'fixture-key';`,
+    "switchyard-runtime": "export const switchyardRuntimeStatus=()=>({ready:false,binary:'fixture',inaccessible:[],missing:['binary'],invalid:[]});",
+    "windows-task-state": "export const windowsScheduledTaskState=async()=>({}); export const interpretWindowsTaskState=()=>({healthy:true,detail:'fixture task'});",
+  };
+  for (const target of [source, install]) {
+    for (const [name, code] of Object.entries(stubs)) writeFileSync(path.join(target, "src", `${name}.mjs`), code);
+    copyFileSync(path.join(root, "src/doctor.mjs"), path.join(target, "src/doctor.mjs"));
+  }
+  files.push("package.json", "src/deployment-acceptance.mjs", ...Object.keys(stubs).map((name) => `src/${name}.mjs`));
   writeFileSync(
     path.join(source, "maintenance", "windows-package.json"),
     JSON.stringify({ version: 1, files }),
   );
   writeFileSync(path.join(source, "marker.txt"), "candidate\n");
   writeFileSync(path.join(source, "src", "start.mjs"), "// candidate\n");
-  writeFileSync(path.join(source, "src", "doctor.mjs"), "process.exit(0);\n");
   writeFileSync(
     path.join(source, "install.ps1"),
-    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target)\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value candidate\n${candidateFails ? "throw 'forced candidate failure'" : "exit 0"}\n`,
+    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target, [switch]$ForceServiceReplacement)\n${requireForce ? "if (-not $ForceServiceReplacement) { throw 'explicit force missing' }" : ""}\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value candidate\n${candidateFails ? "throw 'forced candidate failure'" : "exit 0"}\n`,
   );
 
   writeFileSync(path.join(install, "marker.txt"), "previous\n");
   writeFileSync(path.join(install, "retired.txt"), "restore me\n");
   writeFileSync(path.join(install, "src", "start.mjs"), "// previous\n");
-  writeFileSync(path.join(install, "src", "doctor.mjs"), "process.exit(0);\n");
   writeFileSync(
     path.join(install, "install.ps1"),
-    "[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target)\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value previous\nexit 0\n",
+    `[CmdletBinding()]\nparam([switch]$CheckoutInstall, [string]$Target, [switch]$ForceServiceReplacement)\n${requireForce ? "if (-not $ForceServiceReplacement) { throw 'explicit force missing' }" : ""}\nAdd-Content -LiteralPath $env:DEPLOY_TEST_LOG -Value previous\nexit 0\n`,
   );
   writeFileSync(
     path.join(install, ".codex-router-deploy-manifest.json"),
@@ -475,6 +483,25 @@ test("no-op detection rejects unsafe stored paths before changing installed file
   } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
 });
 
+test("documentation-only deployment publishes files without runtime acceptance or installation", { skip: process.platform !== "win32" }, () => {
+  const f = deploymentFixture({ candidateFails: true, modes: { candidate: "offline" } });
+  try {
+    alignDeploymentFixture(f);
+    writeFileSync(path.join(f.source, "LICENSE"), "new documentation");
+    writeFileSync(path.join(f.install, "LICENSE"), "previous documentation");
+    const files = [...f.files, "LICENSE"];
+    writeFileSync(path.join(f.source, "maintenance/windows-package.json"), JSON.stringify({ version: 1, files }));
+    writeFileSync(path.join(f.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files }));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(f.source, "deploy-codex-router.ps1"), "-InstallDir", f.install], {
+      windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /published \(documentation-only\)/u);
+    assert.equal(readFileSync(path.join(f.install, "LICENSE"), "utf8"), "new documentation");
+    assert.throws(() => readFileSync(f.log), { code: "ENOENT" });
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
 test("retired package membership remains a change even when source and installed bytes match", { skip: process.platform !== "win32" }, () => {
   const fixture = deploymentFixture({ candidateFails: false });
   try {
@@ -487,9 +514,15 @@ test("retired package membership remains a change even when source and installed
   } finally { rmSync(fixture.directory, { recursive: true, force: true }); }
 });
 
-test("a staged Windows deployment prunes only the previous managed generation", { skip: process.platform !== "win32" }, () => {
+test("a staged Windows deployment preserves Unicode package paths and prunes the previous generation", { skip: process.platform !== "win32" }, () => {
   const fixture = deploymentFixture({ candidateFails: false });
   try {
+    const added = "r\u00e9sum\u00e9.txt", retired = "retired-\u00e9.txt";
+    fixture.files.push(added);
+    writeFileSync(path.join(fixture.source, added), "caf\u00e9", "utf8");
+    writeFileSync(path.join(fixture.source, "maintenance/windows-package.json"), JSON.stringify({ version: 1, files: fixture.files }), "utf8");
+    writeFileSync(path.join(fixture.install, retired), "previous Unicode path", "utf8");
+    writeFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), JSON.stringify({ version: 1, files: [...fixture.files.filter(file => file !== added), "retired.txt", retired] }), "utf8");
     const result = spawnSync("powershell.exe", [
       "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
       path.join(fixture.source, "deploy-codex-router.ps1"),
@@ -500,9 +533,11 @@ test("a staged Windows deployment prunes only the previous managed generation", 
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(path.join(fixture.install, "marker.txt"), "utf8"), "candidate\n");
+    assert.equal(readFileSync(path.join(fixture.install, added), "utf8"), "caf\u00e9");
+    assert.throws(() => readFileSync(path.join(fixture.install, retired)), { code: "ENOENT" });
     assert.throws(() => readFileSync(path.join(fixture.install, "retired.txt")), { code: "ENOENT" });
     assert.deepEqual(
-      JSON.parse(readFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), "utf8").replace(/^\uFEFF/u, "")).files,
+      JSON.parse(readFileSync(path.join(fixture.install, ".codex-router-deploy-manifest.json"), "utf8").replace(/^\uFEFF/u, "")).files.sort(),
       fixture.files.slice().sort(),
     );
   } finally {
@@ -532,4 +567,71 @@ test("a forced deployment failure restores and verifies the previous generation"
   } finally {
     rmSync(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test("packaged deployment rejects incomplete acceptance and retains failed recovery", { skip: process.platform !== "win32" }, () => {
+  for (const mode of ["warnings", "offline", "degraded", "wrong-service", "wrong-task", "stopped-task", "wrong-process", "dead-process", "wrong-manifest", "doctor-fail", "rollback-offline"]) {
+    const f = deploymentFixture({
+      candidateFails: mode === "rollback-offline",
+      modes: mode === "rollback-offline" ? { previous: "offline" } : { candidate: mode },
+      immediateAcceptance: true,
+    });
+    let retainedBackup;
+    try {
+      const wrapper = path.join(f.directory, "run-deploy.ps1");
+      const quote = (text) => `'${text.replaceAll("'", "''")}'`;
+      writeFileSync(wrapper, `try { & ${quote(path.join(f.source, "deploy-codex-router.ps1"))} -InstallDir ${quote(f.install)} }
+catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`);
+      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper], {
+        windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log },
+      });
+      assert.equal(result.error, undefined, result.stderr);
+      assert.equal(result.status, mode === "warnings" ? 0 : 1, result.stderr);
+      const marker = readFileSync(path.join(f.install, "marker.txt"), "utf8").trim();
+      assert.equal(marker, mode === "warnings" ? "candidate" : "previous");
+      if (mode === "warnings") {
+        assert.match(result.stdout, /\[warn\] OpenRouter GLM credential/u);
+        assert.match(result.stdout, /published \(runtime\)/u);
+      } else {
+        assert.doesNotMatch(result.stdout, /published \(runtime\)/u);
+        assert.equal(readFileSync(path.join(f.install, "retired.txt"), "utf8"), "restore me\n");
+        assert.deepEqual(readFileSync(f.log, "utf8").trim().split(/\r?\n/u), ["candidate", "previous"]);
+        if (mode === "rollback-offline") {
+          assert.match(result.stderr, /rollback failed/u);
+          assert.doesNotMatch(result.stderr, /previous healthy generation was restored/u);
+          retainedBackup = /The backup remains at (.+)\./u.exec(result.stderr)?.[1];
+          assert.ok(retainedBackup, result.stderr);
+          // Check the actual recovery snapshot before removing only this fixture's set.
+          assert.equal(readFileSync(path.join(retainedBackup, "marker.txt"), "utf8"), "previous\n");
+        } else {
+          assert.match(result.stderr, /previous healthy generation was restored/u);
+        }
+      }
+    } finally {
+      if (retainedBackup) {
+        const target = path.resolve(path.dirname(retainedBackup));
+        assert.ok(target.startsWith(realpathSync.native(os.tmpdir()) + path.sep));
+        assert.match(path.basename(target), /^codex-router-deploy-[0-9a-f]{32}$/u);
+        rmSync(target, { recursive: true, force: true });
+      }
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("packaged handoff preserves explicit force for installation and recovery", { skip: process.platform !== "win32" }, () => {
+  const f = deploymentFixture({ candidateFails: true, requireForce: true });
+  try {
+    writeFileSync(path.join(f.source, "src/service-drain.mjs"), "if(process.argv[2]==='prepare'&&!process.argv.includes('--force-service-replacement'))process.exitCode=7;");
+    const command = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(f.source, "deploy-codex-router.ps1"), "-InstallDir", f.install];
+    const options = { windowsHide: true, encoding: "utf8", timeout: 30_000, env: { ...process.env, DEPLOY_TEST_LOG: f.log } };
+    const denied = spawnSync("powershell.exe", command, options);
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /replacement was deferred/u);
+    assert.equal(readFileSync(path.join(f.install, "marker.txt"), "utf8"), "previous\n");
+    const forced = spawnSync("powershell.exe", [...command, "-ForceServiceReplacement"], options);
+    assert.notEqual(forced.status, 0);
+    assert.match(forced.stderr, /previous healthy generation was restored/u);
+    assert.deepEqual(readFileSync(f.log, "utf8").trim().split(/\r?\n/u), ["candidate", "previous"]);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import http from "node:http";
+import net from "node:net";
+import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { handleResponsesWebSocketUpgrade } from "../src/responses-websocket.mjs";
@@ -25,6 +27,9 @@ class FixtureSocket extends EventEmitter {
   }
 
   resume() {}
+
+  destroy() { this.destroyed = true; this.writable = false; }
+  destroySoon() { this.gracefulCloseStarted = true; }
 }
 
 function clientFrame(value) {
@@ -73,9 +78,9 @@ function serverEvents(socket) {
   return events;
 }
 
-function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
+function upgradePeer(fetchImpl, requestHeaders = {}, options = {}) {
   const socket = new FixtureSocket();
-  assert.equal(handleResponsesWebSocketUpgrade({
+  const accepted = handleResponsesWebSocketUpgrade({
     method: "GET",
     url: "/responses",
     headers: {
@@ -98,7 +103,13 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
     ...(options.admitUpgrade ? { admitUpgrade: options.admitUpgrade } : {}),
     ...(options.admitRequest ? { admitRequest: options.admitRequest } : {}),
     ...(options.onPeer ? { onPeer: options.onPeer } : {}),
-  }), true);
+  });
+  return { socket, accepted };
+}
+
+function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
+  const { socket, accepted } = upgradePeer(fetchImpl, requestHeaders, options);
+  assert.equal(accepted, true);
   assert.match(socket.writes[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
   return socket;
 }
@@ -130,6 +141,50 @@ async function exchange(fetchImpl, request = { type: "response.create", input: [
   const socket = openPeer(fetchImpl);
   return { socket, events: await sendRequest(socket, request) };
 }
+
+test("transport failure releases a socket even after graceful close began", () => {
+  let unregisters = 0;
+  const socket = openPeer(() => assert.fail("transport cleanup must not generate"), {}, {
+    onPeer: () => () => { unregisters++; },
+  });
+  socket.emit("data", maskedFrame(Buffer.alloc(0), { opcode: 8 }));
+  assert.equal(socket.gracefulCloseStarted, true);
+  assert.equal(socket.destroyed, false, "close reply may flush before transport failure");
+  socket.emit("end");
+  socket.emit("error", new Error("reset"));
+  assert.equal(socket.destroyed, true);
+  assert.equal(unregisters, 1, "cleanup is not run again during hard destruction");
+});
+
+test("real half-open WebSocket FIN releases the HTTP server connection", { timeout: 5000 }, async () => {
+  const server = http.createServer();
+  let serverSocket, peer;
+  server.on("upgrade", (request, socket, head) => {
+    serverSocket = socket;
+    handleResponsesWebSocketUpgrade(request, socket, head, {
+      callerKey: "synthetic-local-websocket-capability", responsesUrl: "http://127.0.0.1:1/responses",
+      authenticateUpgrade: () => "/responses", fetchImpl: () => assert.fail("no provider call"),
+      onPeer: value => { peer = value; },
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = net.createConnection({ host: "127.0.0.1", port: server.address().port, allowHalfOpen: true });
+  try {
+    await once(client, "connect");
+    const handshake = once(client, "data");
+    client.write("GET /responses HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\n\r\n");
+    assert.match((await handshake)[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
+    const closed = once(serverSocket, "close");
+    client.end();
+    await closed;
+    assert.equal(peer.closed, true);
+    assert.equal(serverSocket.destroyed, true);
+    assert.equal(await new Promise((resolve, reject) => server.getConnections((error, count) => error ? reject(error) : resolve(count))), 0);
+  } finally {
+    client.destroy(); serverSocket?.destroy(); server.close(); await once(server, "close");
+  }
+});
 
 test("invalid message types are rejected without logging private values and leave the peer usable", async (t) => {
   const warnings = [];
@@ -267,6 +322,23 @@ test("SSE relaying preserves validated raw JSON across byte-split UTF-8 and mult
   }
 });
 
+test("headerless HTTP fallback forwards Unicode field values identically across partitions", async () => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    const expected = [
+      {type:"response.output_text.delta",delta:`visible${separator}text`},
+      {type:"response.completed",response:{id:"resp_headerless_unicode",status:"completed",output:[]}},
+    ];
+    const wire = Buffer.from(expected.map(event=>`data: ${JSON.stringify(event)}\n\n`).join(""));
+    for (const chunks of [[wire],[wire.subarray(0,5),wire.subarray(5)],[...wire].map(byte=>Buffer.from([byte]))]) {
+      const {socket,events} = await exchange(async()=>new Response(new ReadableStream({start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk); controller.close();
+      }})));
+      assert.deepEqual(events,expected);
+      socket.emit("end");
+    }
+  }
+});
+
 test("UTF-8 SSE line byte bounds are exact across partial code points", async () => {
   const line = `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_utf8", status: "completed", output: [], fixture: "漢🙂" } })}`;
   const body = Buffer.from(`${line}\r\n\r\n`);
@@ -292,10 +364,18 @@ test("WebSocket rejects an invalid completed terminal as one protocol failure", 
 });
 
 test("WebSocket admission rejects upgrades and later logical requests while force closes peers", async () => {
-  assert.throws(
-    () => openPeer(async () => new Response(), {}, { admitUpgrade: () => { throw new Error("draining"); } }),
-    /false !== true/u,
-  );
+  let fetches = 0, peers = 0;
+  const rejected = upgradePeer(async () => { fetches++; return new Response(); }, {}, {
+    admitUpgrade: () => { throw new Error("draining"); },
+    onPeer: () => { peers++; return () => {}; },
+  });
+  assert.equal(rejected.accepted, false);
+  const handshake = Buffer.concat(rejected.socket.writes).toString("utf8");
+  assert.match(handshake, /^HTTP\/1\.1 503 /u);
+  assert.equal(JSON.parse(handshake.split("\r\n\r\n")[1]).error.type, "websocket_upgrade_rejected");
+  assert.equal(rejected.socket.writable, false);
+  assert.equal(fetches, 0);
+  assert.equal(peers, 0);
 
   let open = true;
   let registered;

@@ -136,6 +136,21 @@ test("ordinary Router and internal forwarder reject unsupported route settings b
       assert.equal(payload.max_output_tokens, 2048);
       if (payload.model !== "unbiased/pareto") assert.equal(payload.reasoning.effort, "low");
     }
+    for (const route of OPENROUTER_MODELS.filter(route => route.requestProfile === "deepseek-v4.1-flash")) {
+      for (const [url, headers] of [[`${base}/responses`, {}],
+        [`http://127.0.0.1:${apiPort}/v1/responses`, {Authorization: `Bearer ${internal}`}]]) {
+        for (const reasoning of [{effort: "low"}, {}]) {
+          const prior = captured.length;
+          const response = await post(url, {model: route.slug, input: "Synthetic conflicting reasoning settings",
+            stream: false, max_output_tokens: 2048, reasoning, reasoning_effort: "medium"}, headers);
+          assert.equal(response.status, 200, await response.text());
+          assert.equal(captured.length, prior + 1);
+          assert.deepEqual(captured.at(-1).reasoning, reasoning);
+          assert.equal(Object.hasOwn(captured.at(-1), "reasoning_effort"), false);
+          assert.deepEqual(captured.at(-1).provider, route.openRouterProviderPolicy);
+        }
+      }
+    }
   } finally {
     await Promise.all([stop(router), stop(api)]);
     await new Promise(resolve => provider.close(resolve));

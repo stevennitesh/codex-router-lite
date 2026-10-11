@@ -127,7 +127,15 @@ test("actual Router preserves provider evidence, repairs framing and replays pro
       response.end(encode({ type: "response.output_text.delta", item_id: "msg", delta: "OK" })
         + 'data: {"type":"response.output_text.delta","delta":"A","delta":"B"}\n\n'); return;
     }
-    const events = mode.startsWith("glm-") ? [
+    const events = mode === "glm-lf" ? [
+      { type: "response.output_item.added", output_index: 0, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", status: "in_progress", summary: [] } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 6, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "rs_1", type: "reasoning", summary: [] } },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", delta: "ROUTER_OK" },
+      { type: "response.output_text.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", text: "ROUTER_OK" },
+      { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg_1", model: "openrouter-glm-5-3-flash-streamlake", part: { type: "reasoning_text", reasoning: "private reasoning" } },
+      { type: "response.output_item.done", output_index: 0, sequence_number: 1, model: "openrouter-glm-5-3-flash-streamlake", item: { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text: "ROUTER_OK", annotations: [] }] } },
+      { type: "response.completed", response: { id: "resp_1", status: "completed", output: [], usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
+    ] : mode.startsWith("glm-") ? [
       { type: "response.output_item.done", output_index: 0, item: { id: "rs", type: "reasoning" } },
       { type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "OK" },
       { type: "response.content_part.done", output_index: 0, item_id: "msg", part: { type: "reasoning_text", reasoning: "PRIVATE" } },
@@ -152,7 +160,8 @@ test("actual Router preserves provider evidence, repairs framing and replays pro
   const post = async (input = "synthetic") => {
     const response = await fetch(`${base}/responses`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openrouter/glm-5.3-flash-streamlake", stream: !mode.endsWith("json"), input,
-        tools: mode.startsWith("glm-") || mode === "unsafe-after-glm" ? tools : [{ type: "web_search" }, ...tools] }),
+        tools: mode === "glm-lf" ? undefined
+          : mode.startsWith("glm-") || mode === "unsafe-after-glm" ? tools : [{ type: "web_search" }, ...tools] }),
       signal: AbortSignal.timeout(10000) });
     const wire = await response.text();
     if (mode.startsWith("unsafe-")) assert.ok([200, 502].includes(response.status), `${mode}: ${wire}`);
@@ -178,11 +187,34 @@ test("actual Router preserves provider evidence, repairs framing and replays pro
       assert.equal(replay.find(item => item.call_id === "call" && item.type === "function_call").arguments, call.arguments);
       assert.equal(replay.find(item => item.type === "function_call_output").output, "DONE");
     }
-    for (mode of ["glm-cr", "glm-multiline"]) {
+    for (mode of ["glm-lf", "glm-cr", "glm-multiline"]) {
+      const before = captured.length;
       const wire = await post(); const events = eventsFrom(wire);
-      assert.equal(wire.includes("PRIVATE"), false);
-      assert.equal(events.find(event => event.type === "response.output_text.delta").output_index, 1);
+      assert.equal(captured.length, before + 1, "GLM envelope repair does not replay inference");
+      assert.doesNotMatch(wire, /PRIVATE|private reasoning/u);
+      const deltaIndex = events.findIndex(event => event.type === "response.output_text.delta");
+      assert.equal(events[deltaIndex - 2]?.type, "response.output_item.added");
+      assert.equal(events[deltaIndex - 2]?.item?.type, "message");
+      assert.equal(events[deltaIndex - 2]?.output_index, 1);
+      assert.equal(events[deltaIndex - 1]?.type, "response.content_part.added");
+      assert.equal(events[deltaIndex]?.output_index, 1);
       assert.equal(events.filter(event => event.type === "response.output_item.added" && event.item.type === "message").length, 1);
+      if (mode === "glm-lf") {
+        const partDone = events.find(event => event.type === "response.content_part.done");
+        assert.deepEqual(partDone?.part, { type: "output_text", text: "ROUTER_OK", annotations: [] });
+        assert.equal(partDone.output_index, 1);
+        const textDone = events.find(event => event.type === "response.output_text.done");
+        assert.equal(textDone.text, "ROUTER_OK");
+        assert.equal(textDone.output_index, 1);
+        const messageDone = events.find(event => event.type === "response.output_item.done" && event.item.type === "message");
+        assert.deepEqual(messageDone.item.content, [{ type: "output_text", text: "ROUTER_OK", annotations: [] }]);
+        assert.equal(messageDone.output_index, 1);
+        const reasoningIndex = events.findIndex(event => event.type === "response.output_item.done" && event.item.type === "reasoning");
+        assert.ok(reasoningIndex >= 0 && reasoningIndex < deltaIndex - 2,
+          "reasoning closes before the message opens despite contradictory sequence numbers");
+        assert.deepEqual(events.find(event => event.type === "response.completed").response.output, [],
+          "envelope repair preserves the original completed snapshot");
+      }
     }
     for (mode of ["duplicate-json", "precise-json"]) {
       const wire = await post(); const output = JSON.parse(wire).output;

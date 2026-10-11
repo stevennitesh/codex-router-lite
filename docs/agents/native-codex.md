@@ -24,6 +24,11 @@ endpoint in Router's protected `native-account-models.json`; Codex alone owns
 for the matching account or authentication identity, residency, and CLI
 version. Account, residency, and client changes discard prior validators; a
 failed identity-changing refresh cannot reuse the prior account's visibility.
+An unchanged successful account revalidation records `validated_at` in the same
+private snapshot. Unforced refreshes reuse that validation for five minutes;
+older snapshots fall back to `fetched_at`, and explicit forced refresh still
+fetches. This timestamp does not change model fingerprints or rewrite unchanged
+published catalogs.
 An explicitly adopted native source remains the selected authority and does not
 read or refresh the unused account snapshot; native authentication publication
 rules still apply to its models.
@@ -38,6 +43,21 @@ publication. An incompatible enabled optional route is omitted with its managed
 agent and a bounded diagnostic; disabled providers are not projected. The
 watcher does not weaken route compatibility, override native `visibility`, or
 manufacture account entitlements.
+
+Provider, picker and subagent settings distinguish confirmed absence from invalid
+or inaccessible existing state. Absence retains the established first-use
+defaults. Invalid existing state stops publication before seeding or changing
+output; status commands report the failure without inventing effective choices.
+An explicit full provider `set` can replace that provider selection. Supported
+legacy picker files still reconstruct visible choices from their seeded/hidden
+sets.
+
+Operator settings mutations acquire the same publication lock before reading
+and replacing their state. Publisher seeding runs inside its already-held lock,
+so an overlapping operator choice waits and then updates the current generation.
+Read-only status and inference do not acquire this lock. Required managed-agent
+removal failures trigger publication recovery; incomplete agent restoration is
+not reported as a rollback-safe result.
 
 Native discovery retains the managed static catalog until the installed client
 proves a supported refresh path that preserves the built-in provider, account

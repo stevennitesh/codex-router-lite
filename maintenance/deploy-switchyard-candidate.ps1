@@ -20,6 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "deployment-json.ps1")
+. (Join-Path $PSScriptRoot "switchyard-recovery.ps1")
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)
 if (-not $InProcess -and -not $WhatIfPreference) {
   . (Join-Path $PSScriptRoot "deployment-runner.ps1")
@@ -46,7 +47,7 @@ $installManifestPath = Join-Path $stateRoot "install-manifest.json"
 if (-not (Test-Path -LiteralPath $installManifestPath -PathType Leaf)) {
   throw "Installed Router manifest is missing at $installManifestPath."
 }
-$installManifest = Get-Content -Raw -LiteralPath $installManifestPath | ConvertFrom-Json
+$installManifest = Get-Content -Raw -LiteralPath $installManifestPath -Encoding UTF8 | ConvertFrom-Json
 $installedRouterCommit = "$($installManifest.current.commit)".Trim().ToLowerInvariant()
 if ($installedRouterCommit -notmatch '^[0-9a-f]{40}$') {
   throw "Installed Router manifest does not contain a valid current commit."
@@ -70,7 +71,10 @@ $preservedMetadata = if ($preservingRollback) {
   if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
     throw "Preserved runtime rollback metadata is missing."
   }
-  Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+  Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json
+} else { $null }
+$preservedExisting = if ($preservingRollback) {
+  Get-ValidatedSwitchyardSnapshotMembership $preservedRollback $preservedMetadata
 } else { $null }
 $expectedRollbackCommit = if ($preservingRollback) {
   "$($preservedMetadata.previousRouterCommit)".Trim().ToLowerInvariant()
@@ -106,7 +110,7 @@ if ([string]::IsNullOrWhiteSpace($ExpectedRoutesSha256)) {
   if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
     throw "Installed Switchyard provenance is missing at $provenancePath."
   }
-  $installedProvenance = Get-Content -Raw -LiteralPath $provenancePath | ConvertFrom-Json
+  $installedProvenance = Get-Content -Raw -LiteralPath $provenancePath -Encoding UTF8 | ConvertFrom-Json
   $ExpectedRoutesSha256 = "$($installedProvenance.routesSha256)".Trim()
 }
 $expectedRoutesHash = $ExpectedRoutesSha256.ToLowerInvariant()
@@ -118,20 +122,6 @@ $stageRoot = Join-Path $runtimeRoot ".candidate-$([Guid]::NewGuid().ToString('N'
 $rollbackRoot = if ($preservingRollback) { $preservedRollback } else { Join-Path $runtimeRoot ".rollback-$([Guid]::NewGuid().ToString('N'))" }
 $keepRollback = $false
 $activationStarted = $false
-
-function Get-Sha256([string]$Path) {
-  $stream = [IO.File]::OpenRead($Path)
-  try {
-    $hasher = [Security.Cryptography.SHA256]::Create()
-    try {
-      return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
-    } finally {
-      $hasher.Dispose()
-    }
-  } finally {
-    $stream.Dispose()
-  }
-}
 
 function Get-CanonicalTextSha256([string]$Path) {
   $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Replace("`r", "`n")
@@ -210,12 +200,14 @@ function Invoke-NodeJson([string]$Root, [string[]]$Arguments, [string]$Label) {
 }
 
 function Invoke-RouterService([string]$Root, [string]$Command) {
-  & node (Join-Path $Root "src\service.mjs") $Command
+  $serviceArguments = @((Join-Path $Root "src\service.mjs"), $Command)
+  if ($ForceServiceReplacement) { $serviceArguments += "--force-service-replacement" }
+  & node @serviceArguments
   if ($LASTEXITCODE -ne 0) { throw "Router service $Command failed from $Root." }
 }
 
 function Invoke-RouterInstall([string]$Root) {
-  & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex
+  & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex -ForceServiceReplacement:$ForceServiceReplacement
   if ($LASTEXITCODE -ne 0) { throw "Router install failed from $Root." }
 }
 
@@ -307,7 +299,7 @@ function Prepare-RollbackRouter([string]$Root) {
 
 function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
   $stateRoot = Join-Path $codexHome "codex-router"
-  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") -Encoding UTF8 | ConvertFrom-Json
   $runningRoot = [IO.Path]::GetFullPath($processState.sourceRoot)
   foreach ($allowedRoot in $AllowedRoots) {
     $resolved = [IO.Path]::GetFullPath($allowedRoot)
@@ -319,13 +311,30 @@ function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
 }
 
 function Resolve-LiveRouterRoot([string[]]$AllowedRoots) {
+  $observations = @()
   foreach ($root in $AllowedRoots) {
     $verified = Invoke-NodeJson $repoRoot @(
       (Join-Path $repoRoot "src\service-process.mjs"), "verify", $root
     ) "Router process identity"
-    if ($verified.owned -eq $true) { return $root }
+    if ($verified.status -notin @("owned", "absent", "unknown", "foreign") -or
+        $verified.owned -isnot [bool] -or $verified.owned -ne ($verified.status -eq "owned") -or
+        ($verified.status -ne "owned" -and $null -ne $verified.sourceRoot)) {
+      throw "Router process identity returned an invalid or legacy verdict; refusing file replacement."
+    }
+    if ($verified.status -eq "owned") {
+      if (-not [string]::Equals([IO.Path]::GetFullPath("$($verified.sourceRoot)"),
+          [IO.Path]::GetFullPath($root), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Router process identity returned a mismatched owned root."
+      }
+      return $root
+    }
+    $observations += $verified.status
+  }
+  if (-not $observations.Count -or @($observations | Where-Object { $_ -ne "absent" }).Count) {
+    throw "Router process absence is not positively established; refusing file replacement."
   }
   Assert-LoopbackOffline 4202
+  Assert-LoopbackOffline 4000
   return $null
 }
 
@@ -340,9 +349,8 @@ function Stop-RouterGeneration([string]$Root) {
   if (Resolve-LiveRouterRoot @($repoRoot, $rollbackRouterRoot)) {
     throw "Router stop returned success while a managed process was still running."
   }
-  # The previous checkout may contain an older service manager. Independently
-  # require Switchyard to have exited before its locked executable is replaced.
-  Assert-LoopbackOffline 4000
+  # Resolve-LiveRouterRoot independently checks both managed listeners, even
+  # when the previous checkout contains an older service manager.
 }
 
 function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$RecoveryPreflight) {
@@ -383,7 +391,7 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$Re
   }
   $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $stateRoot = Join-Path $codexHome "codex-router"
-  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") | ConvertFrom-Json
+  $processState = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "service-process.json") -Encoding UTF8 | ConvertFrom-Json
   $verified = Invoke-NodeJson $repoRoot @((Join-Path $repoRoot "src\service-process.mjs"), "verify", $Root) "Live Router process identity"
   if ($verified.owned -ne $true) { throw "Router process identity is not live and owned by $Root." }
   if (-not [string]::Equals(
@@ -393,7 +401,7 @@ function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$Re
   )) {
     throw "Router process source root does not match $Root."
   }
-  $manifest = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "install-manifest.json") | ConvertFrom-Json
+  $manifest = Get-Content -Raw -LiteralPath (Join-Path $stateRoot "install-manifest.json") -Encoding UTF8 | ConvertFrom-Json
   if (-not $RecoveryPreflight -and ($manifest.current.commit -ne $ExpectedCommit -or
       -not [string]::Equals([IO.Path]::GetFullPath($manifest.current.sourceRoot), [IO.Path]::GetFullPath($Root), [StringComparison]::OrdinalIgnoreCase))) {
     throw "Router install manifest does not match commit $ExpectedCommit."
@@ -410,7 +418,7 @@ function Assert-SwitchyardHealth {
 function Assert-CodexCatalog([string]$Root) {
   $stateRoot = Join-Path $codexHome "codex-router"
   $catalogPath = Join-Path $stateRoot "merged-models.json"
-  $catalog = Get-Content -Raw -LiteralPath $catalogPath | ConvertFrom-Json
+  $catalog = Get-Content -Raw -LiteralPath $catalogPath -Encoding UTF8 | ConvertFrom-Json
   if ($null -eq $catalog.models -or @($catalog.models).Count -eq 0) {
     throw "The installed merged Codex catalog is empty or invalid."
   }
@@ -443,6 +451,12 @@ function Copy-RuntimeFile([string]$FromRoot, [string]$ToRoot, [string]$Name) {
 }
 
 function Restore-Switchyard([Collections.Generic.HashSet[string]]$Existing) {
+  $metadata = Get-Content -Raw -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8 | ConvertFrom-Json
+  $validated = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $metadata
+  if (-not $Existing.SetEquals($validated)) { throw "Switchyard recovery snapshot membership changed after preflight." }
+  # Admit every target before the first copy/delete; directories or reparse
+  # points cannot redirect restoration or turn prior absence into deletion.
+  $null = Get-SwitchyardRuntimeMembership $runtimeRoot
   foreach ($name in $runtimeFiles) {
     $target = Join-Path $runtimeRoot $name
     if ($Existing.Contains($name)) {
@@ -483,16 +497,18 @@ if (@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".candid
   throw "A Switchyard candidate staging directory already exists."
 }
 $rollbackDirectories = @(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force -Filter ".rollback-*" -ErrorAction SilentlyContinue)
+$recoveryArchive = $null
 if ($preservingRollback) {
   if ($rollbackDirectories.Count -ne 1 -or
       -not [string]::Equals($rollbackDirectories[0].FullName, $rollbackRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Preserved runtime rollback must be the one existing Switchyard rollback directory."
   }
 } elseif ($rollbackDirectories.Count) {
-  throw "A Switchyard rollback directory already exists; resolve it before deploying another candidate."
+  $recoveryArchive = Get-SwitchyardRecoveryArchivePlan $runtimeRoot $stateRoot $installedRouterCommit
 }
+$originalRuntimeMembers = if (-not $preservingRollback) { Get-SwitchyardRuntimeMembership $runtimeRoot } else { $null }
 
-$lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") | ConvertFrom-Json
+$lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") -Encoding UTF8 | ConvertFrom-Json
 $upstreamContribution = $lock.upstreamContribution
 $upstreamPatchPath = Join-Path (Join-Path $repoRoot "config\switchyard") $upstreamContribution.patch
 $upstreamPatchHash = "$($upstreamContribution.patchSha256)".ToLowerInvariant()
@@ -550,6 +566,7 @@ $preflight = [ordered]@{
   expectedPublishedV2Agents = @($subagentPlan.expected)
   ignoredEnabledRoutes = @($subagentPlan.ignoredEnabled)
   hiddenCertifiedRoutes = @($subagentPlan.hiddenCertified)
+  previousRecoveryArchive = $recoveryArchive
 }
 Write-Host "Deployment preflight: $($preflight | ConvertTo-Json -Compress)"
 if (@($subagentPlan.certified).Count -and -not @($subagentPlan.expected).Count) {
@@ -561,6 +578,7 @@ Assert-CheckoutIdentity $rollbackRouterRoot $expectedRollbackCommit "Prepared ro
 
 if (-not $PSCmdlet.ShouldProcess($runtimeRoot, "deploy the Router and Switchyard candidate")) { return }
 
+Move-SwitchyardRecoveryArchive $recoveryArchive
 $existing = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 try {
   New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
@@ -571,14 +589,11 @@ try {
   Assert-FileHash (Join-Path $stageRoot "switchyard-server.exe") $expectedBinaryHash "Staged Switchyard binary"
   Assert-FileHash (Join-Path $stageRoot "routes.toml") $expectedRoutesHash "Staged Switchyard routes"
   if ($preservingRollback) {
-    foreach ($name in @($preservedMetadata.files)) {
-      if ($runtimeFiles -notcontains $name) { throw "Preserved rollback metadata names an unsupported file: $name" }
-      if (-not (Test-Path -LiteralPath (Join-Path $rollbackRoot $name) -PathType Leaf)) {
-        throw "Preserved rollback file is missing: $name"
-      }
-      [void]$existing.Add($name)
-    }
+    $existing = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $preservedMetadata
+    if (-not $preservedExisting.SetEquals($existing)) { throw "Preserved snapshot membership changed after preflight." }
   } else {
+    $observed = Get-SwitchyardRuntimeMembership $runtimeRoot
+    if (-not $originalRuntimeMembers.SetEquals($observed)) { throw "Runtime membership changed after preflight." }
     foreach ($name in $runtimeFiles) {
       if (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) {
         [void]$existing.Add($name)
@@ -595,6 +610,7 @@ try {
       createdAt = (Get-Date).ToUniversalTime().ToString("o")
     }
     Write-DeploymentJson (Join-Path $rollbackRoot "rollback.json") $rollbackMetadata
+    $existing = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $rollbackMetadata
   }
 
   . (Join-Path $PSScriptRoot "switchyard-activation.ps1")

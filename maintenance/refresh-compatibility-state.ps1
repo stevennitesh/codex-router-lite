@@ -2,10 +2,12 @@
 param(
   [switch]$SkipFetch,
   [switch]$SkipTests,
+  [switch]$FullTests,
   [switch]$AnalyzeUpstream
 )
 
 $ErrorActionPreference = "Stop"
+if ($SkipTests -and $FullTests) { throw "Choose -SkipTests or -FullTests, not both." }
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
 function Write-Step([string]$Message) {
@@ -92,7 +94,7 @@ foreach ($remoteRef in @("origin/main", "upstream/main")) {
 }
 
 $routerWatchPath = Join-Path $repoRoot "maintenance\upstream-router.json"
-$routerWatch = Get-Content -Raw -LiteralPath $routerWatchPath | ConvertFrom-Json
+$routerWatch = Get-Content -Raw -LiteralPath $routerWatchPath -Encoding UTF8 | ConvertFrom-Json
 if ($routerWatch.version -ne 1 -or $routerWatch.repository -notmatch '^https://github\.com/[^/]+/[^/]+(?:\.git)?$' -or
     $routerWatch.branch -notmatch '^[a-zA-Z0-9._/-]+$' -or
     $routerWatch.remoteRef -notmatch '^[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+$' -or
@@ -191,18 +193,31 @@ if (-not $healthClean) {
 }
 
 if (-not $SkipTests) {
-  Write-Step "Retained product checks"
+  Write-Step "Source verification"
   Invoke-Checked "npm" @("run", "check")
-  Invoke-Checked "npm" @("test")
+  if ($FullTests) {
+    Invoke-Checked "npm" @("test")
+    Write-Host "Full source suite: passed in this invocation."
+  } else {
+    Invoke-Checked "node" @("--test", "test/catalog.test.mjs", "test/native-catalog-source.test.mjs", "test/namespace-relay.test.mjs", "test/namespace-relay-routing.test.mjs")
+    Write-Host "Catalog and namespace compatibility tests: passed in this invocation."
+  }
+} else {
+  Write-Host "Source verification: skipped; reuse prior checks only while their inputs remain unchanged."
 }
 
 Write-Step "Switchyard upstream signal"
 $sourceLockPath = Join-Path $repoRoot "config\switchyard\source.lock"
-$sourceLock = Get-Content -Raw -LiteralPath $sourceLockPath | ConvertFrom-Json
-$remoteLine = @(& git ls-remote $sourceLock.repository HEAD)
-if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
-  Write-Warning "Switchyard upstream HEAD could not be read. The locked commit remains $($sourceLock.commit)."
+$sourceLock = Get-Content -Raw -LiteralPath $sourceLockPath -Encoding UTF8 | ConvertFrom-Json
+$remoteLine = @()
+if ($SkipFetch) {
+  Write-Warning "Switchyard upstream refresh skipped; its current head is unknown. No upstream network requests were made."
 } else {
+  $remoteLine = @(& git ls-remote $sourceLock.repository HEAD)
+}
+if (-not $SkipFetch -and ($LASTEXITCODE -ne 0 -or -not $remoteLine)) {
+  Write-Warning "Switchyard upstream HEAD could not be read. The locked commit remains $($sourceLock.commit)."
+} elseif ($remoteLine) {
   $upstreamHead = ($remoteLine[0] -split "\s+")[0]
   Write-Host "Locked Switchyard commit: $($sourceLock.commit)"
   Write-Host "Switchyard upstream HEAD: $upstreamHead"
@@ -246,9 +261,13 @@ if ($LASTEXITCODE -ne 0 -or -not $remoteLine) {
 }
 
 Write-Step "Result"
-if ($appToolsVersion -and $healthClean) {
-  Write-Host "Current repository, runtime, catalog, and app-tool relay checks passed."
+if ($SkipTests) {
+  Write-Host "Diagnostic checks completed; source verification was skipped."
 } else {
-  Write-Host "Source checks passed, but warnings above still require confirmation before declaring full compatibility."
+  Write-Host "Selected source checks completed; current native catalog parsing passed."
 }
-Write-Host "No files, configuration, provider quota, or service state were changed."
+if (-not $appToolsVersion -or -not $healthClean) {
+  Write-Host "Warnings above still require investigation."
+}
+Write-Host "Model execution and Desktop app-tool behavior were not tested; select additional checks from the changed contract."
+Write-Host "No live configuration, provider quota, or service state was changed. Git refs and disposable upstream checkouts may have been refreshed."

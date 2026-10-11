@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,28 +52,39 @@ function installedTargetsFromStatus({ codex = {} } = {}) {
 }
 
 function commandDetail(result, fallback) {
-  if (result.error) return result.error.message;
+  if (result.error) return redactCallerUrl(result.error.message);
   const detail = String(result.stderr || result.stdout || "").trim();
   return detail ? redactCallerUrl(detail.slice(-2_000)) : fallback;
 }
 
-function runNodeCommand(script, args = []) {
-  const result = spawnSync(process.execPath, [path.join(ROOT, script), ...args], {
-    cwd: ROOT, env: process.env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+export async function runNodeCommand(script, args = []) {
+  // Rotation holds heartbeat-based transaction locks. Await the child without
+  // blocking those heartbeats, and finish collecting it before rollback can
+  // touch the same config. A direct-child timeout could leave native descendants
+  // mutating that config after recovery starts.
+  const result = await new Promise(resolve => {
+    execFile(process.execPath, [path.join(ROOT, script), ...args], {
+      cwd: ROOT, env: process.env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+      windowsHide: true,
+    }, (error, stdout, stderr) => resolve({
+      error: error && typeof error.code !== "number" ? error : undefined,
+      status: error ? error.code ?? 1 : 0,
+      stdout, stderr,
+    }));
   });
   if (result.error || result.status !== 0) throw new Error(commandDetail(result, `${script} failed.`));
   return String(result.stdout || "");
 }
 
-function parseJsonCommand(script, args, runNode = runNodeCommand) {
-  const output = runNode(script, args);
+async function parseJsonCommand(script, args, runNode = runNodeCommand) {
+  const output = await runNode(script, args);
   try { return JSON.parse(String(output || "")); }
   catch { throw new Error(`${script} returned invalid status JSON.`); }
 }
 
 async function readManagedClientStatuses({ runNode = runNodeCommand } = {}) {
   return {
-    codex: parseJsonCommand("src/config-manager.mjs", ["status"], runNode),
+    codex: await parseJsonCommand("src/config-manager.mjs", ["status"], runNode),
   };
 }
 
@@ -233,9 +244,9 @@ async function recoverPendingCallerKeyRotationUnlocked({
   return { recovered: true, committed: false };
 }
 
-async function runCallerKeyRotation({
-  readClientStatuses = () => readManagedClientStatuses(),
-  readServiceStatus = () => readRouterServiceStatus(),
+export async function runCallerKeyRotation({
+  readClientStatuses = () => readManagedClientStatuses({ runNode }),
+  readServiceStatus = () => readRouterServiceStatus({ runNode }),
   runNode = runNodeCommand,
   withLock = withCallerKeyRotationLock,
   withMutationLocks = withModelOverlayLock,

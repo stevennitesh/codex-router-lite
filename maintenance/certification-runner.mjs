@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { certificationBatchPreflight, certificationRoutes } from "./certification-preflight.mjs";
 import { collectCertificationOutcomes, EvidenceError } from "./certification-evidence.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
@@ -70,11 +71,16 @@ export async function observeCertificationStream(response) {
     try { await response.body?.cancel(); } catch { /* Preserve the observed HTTP refusal. */ }
     throw new CertificationRunnerError("The synthetic response is not an HTTP 200 event stream.", {code:response.status === 200 ? "not_event_stream" : "http_refusal",httpStatus:response.status});
   }
-  let pending = "", visible = "", bytes = 0, events = 0, textDeltas = 0, terminal;
-  const decoder = new TextDecoder();
-  function line(value) {
-    if (!value.startsWith("data:")) return;
-    const data = value.slice(5).trim();
+  let visible = "", bytes = 0, events = 0, textDeltas = 0, terminal;
+  const maxBytes = 8 * 1024 * 1024;
+  const frames = new SseFrameBuffer({maxFrameBytes:maxBytes,maxLineBytes:maxBytes});
+  function observe(frame) {
+    if (frame.continuation) return;
+    let fields;
+    try { fields = sseFrameFields(frame.bytes, frame.atStreamStart); }
+    catch { throw new CertificationRunnerError("The synthetic stream contained invalid UTF-8.", {code:"malformed_sse",httpStatus:response.status}); }
+    if (!fields.hasData) return;
+    const data = fields.data.trim();
     if (!data || data === "[DONE]") return;
     let event;
     try { event = JSON.parse(data); }
@@ -87,12 +93,10 @@ export async function observeCertificationStream(response) {
   }
   for await (const chunk of response.body) {
     bytes += chunk.byteLength;
-    requireCondition(bytes <= 8 * 1024 * 1024, "The synthetic stream exceeded its byte limit.", {code:"stream_limit",httpStatus:response.status});
-    pending += decoder.decode(chunk, {stream:true});
-    let newline;
-    while ((newline = pending.indexOf("\n")) !== -1) { line(pending.slice(0,newline).replace(/\r$/u,"")); pending = pending.slice(newline + 1); }
+    requireCondition(bytes <= maxBytes, "The synthetic stream exceeded its byte limit.", {code:"stream_limit",httpStatus:response.status});
+    for (const frame of frames.write(Buffer.from(chunk))) observe(frame);
   }
-  pending += decoder.decode(); if (pending) line(pending.replace(/\r$/u,""));
+  // An event dispatches only at a blank line. Pending EOF data is discarded.
   const markerObserved = visible.trim() === "CERT_STREAM_OK";
   requireCondition(textDeltas > 0 && terminal?.type === "response.completed" && terminal.response?.status === "completed" && markerObserved, "The synthetic stream lacks text deltas, a completed response, or the requested marker.", {code:"incomplete_stream",httpStatus:response.status});
   return {status:response.status,events,textDeltas,terminalType:terminal.type,returnedModel:terminal.response.model,markerObserved,pass:true};
@@ -248,7 +252,7 @@ export async function executeCertificationParent(identity, batch, directory, san
   const events = openSync(eventsPath,"a"), errors = openSync(errorsPath,"a");
   let child, timer, deadlineExpired = false;
   try {
-    const args = ["exec","--json","--skip-git-repo-check","--sandbox","workspace-write","--model","gpt-6.1-sol","--config",'model_reasoning_effort="medium"',"--config",'approval_policy="on-request"',"--config",`windows.sandbox="${sandbox}"`,"--cd",directory,"--output-last-message",finalPath,"-"];
+    const args = ["exec","--json","--skip-git-repo-check","--sandbox","workspace-write","--model","gpt-6.1-sol","--config",'model_reasoning_effort="high"',"--config",'approval_policy="on-request"',"--config",`windows.sandbox="${sandbox}"`,"--cd",directory,"--output-last-message",finalPath,"-"];
     const target = spawnableCommand(identity.binary,args);
     child = launch(target.command,target.args,{...target.options,windowsHide:true,stdio:["pipe",events,errors]});
     const completion = new Promise((resolve,reject) => { child.once("error",reject); child.once("close",(code,signal) => resolve({exitCode:code,signal})); });

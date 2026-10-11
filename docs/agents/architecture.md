@@ -28,8 +28,11 @@ Update explicit allowlists for an authorized addition; never disable their check
   capability contract. A failed endpoint does not silently select another one.
 - Tool identity, produced history, and response restoration remain request-local
   and reversible across ordinary turns, replay, and compaction.
-- One installed generation is active at a time. Deployment is transactional;
-  runtime-bound certification applies only to the exact deployed identities.
+- One installed generation is active at a time. Deployment is transactional.
+- Certification records retain the exact identities of the tested generation.
+  Historical proof remains applicable while the certified behavior is unchanged;
+  use the [proof refresh rules](../SUBAGENT-CERTIFICATION.md#when-to-refresh-proof)
+  when its contract changes.
 - Checked-in source and configuration remain authoritative. Generated files,
   installed hashes, and historical evidence describe a runtime but do not redefine it.
 
@@ -104,9 +107,11 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Catalog derivation and native authority | `src/catalog.mjs`, `src/native-catalog-source.mjs`; [native Codex](native-codex.md) |
 | Paths, overrides and state locations | `src/paths.mjs`; inspect these before runtime work |
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
-| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
+| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/windows-batch-cleanup.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
-| Async directory-lock lifecycle | `src/directory-lock.mjs`; named catalog, overlay, caller-key, and service wrappers retain their paths and policies |
+| Packaged deployment acceptance | `src/deployment-acceptance.mjs`; full health and installed task/process/manifest identity for activation and rollback, without Git or Switchyard-only proof |
+| Async directory-lock lifecycle | `src/directory-lock.mjs`; catalog, overlay, caller-key, and service wrappers use complete generations with unique owner files. Release drains dispatched heartbeats; only positive owner-process exit permits recovery. Legacy or uncertain ownership requires quiescent cleanup. |
+| Synchronous skill ownership lock | `src/atomic-state-lock.mjs`; complete generations have unique owner files, and recovery/release remove only their observed owner and an empty directory |
 | Nested transport errors | `src/transport-error-graph.mjs`; health, diagnostics, and retry retain their own eligibility rules |
 | Switchyard observation vocabulary | `src/switchyard-observation-contract.mjs`; sanitized writer and historical reader share the schema, independently of serving-policy validation |
 | Agent instructions and installed skills | [Context ownership](context-ownership.md) |
@@ -116,6 +121,17 @@ Keep one active runtime; installed files, catalogs and state are generated outpu
 Use `generated/` or a disposable temporary directory for scratch work and upstream
 builds. Do not keep source clones or alternate runtime trees as product files.
 Runtime replacement follows the installation transaction, never a standalone stop.
+
+Windows batch gateway cleanup binds the original `cmd.exe` generation before
+running `taskkill /T /F`. Its native creation identity is captured synchronously
+after spawn, while Node retains the launch handle, and matched exactly at stop;
+Node's interpolated Windows wall clock does not establish process identity.
+A completed nonzero native result permits retry only
+when retained process handles prove the captured generations exited and a final
+process census finds no live linked descendants. Unknown proof blocks retry;
+native success retains its established authority. Observation and termination
+share the original five-second stop budget. This is bounded process-snapshot
+cleanup, without launch-time containment of arbitrary detached descendants.
 
 ## Verification
 
@@ -135,6 +151,14 @@ CI's supported Node versions provide separate environment coverage and remain
 required. Source correctness, installed readiness and native collaboration are
 different claims; each has one owner and an appropriate observation.
 
+Windows sandbox failures before fixture assertions can come from denied temporary
+Git `.git/config` writes or Git's MSYS file-transport helper being unable to create
+named objects. Run the affected offline checks in the normal Windows user context
+through supported escalation, keeping their real Git operations and assertions.
+Workspace scratch can resolve temporary-directory access without resolving the
+MSYS restriction. Canonicalizing Windows short paths addresses path identity,
+not either permission failure; do not treat those test repairs as sandbox repairs.
+
 For documentation and instruction edits, check affected links, commands, ownership,
 and reading paths against their current sources, then run `npm run check`. Shipped
 skills are runtime instructions; exercise affected existing checks and keep source
@@ -149,6 +173,17 @@ For shared impact, `npm run verify:codex` runs the source checks, full suite, an
 current installed-Codex catalog check once. CI uses `npm run verify` because it
 does not have an installed Codex. An explicit executable and `--catalog <path>`
 remain available when checking a specific build or installed catalog.
+
+CI runs both supported Node versions for runtime candidates. For changes limited
+to known Markdown documents and historical or route proof records,
+`scripts/verification-scope.mjs` selects `npm run verify:evidence`: source checks
+plus the tests consuming those records, on both Node versions. Manual runs,
+unknown paths, dirty checkouts and unavailable event bases use full verification.
+CI's `--fetch-base` option makes one bounded fetch (`--deepen=64`) when shallow
+history lacks event ancestry. It still requires the actual event base to
+be an ancestor and checks the complete diff. Failed fetches, deeper missing
+history and unrelated bases retain full verification. Ordinary scope inspection
+does not fetch. Node and Python dependency audits remain unconditional.
 
 `npm run check` syntax-checks root, source, test, script, and maintenance modules
 with four bounded workers, then verifies the Python lock, independent product

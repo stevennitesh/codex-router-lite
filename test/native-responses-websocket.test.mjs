@@ -26,7 +26,6 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
   const handshakes = [];
   const httpHeaders = [];
   const results = [];
-  const prior = new Map();
   let httpRequests = 0;
   let generation = 0;
   let router;
@@ -83,11 +82,10 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
         const send = value => socket.write(frame(value));
         const id = `resp_native_fixture_${++generation}`;
         const complete = output => {
-          prior.set(id, { input: payload.input, output });
           for (const [index, item] of output.entries()) send({ type: "response.output_item.done", output_index: index, item });
           send({ type: "response.completed", response: { id, status: "completed", output, usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } } });
         };
-        if (handle) handle({ payload, send, sendRaw: rawJson => socket.write(frame(undefined, rawJson)), complete, socket, id, prior });
+        if (handle) handle({ payload, send, sendRaw: rawJson => socket.write(frame(undefined, rawJson)), complete, socket, id });
         else complete([]);
       }
     });

@@ -1,11 +1,9 @@
-import {
-  existsSync,
-  readFileSync,
-} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writePrivateJson } from "./file-security.mjs";
+import { readJsonFile } from "./file-probe.mjs";
+import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { PROVIDER_SELECTION_PATH } from "./paths.mjs";
 import { LISTED_MODELS, PROVIDERS } from "./routed-models.mjs";
 import { resolveProviderCredential } from "./provider-credentials.mjs";
@@ -45,48 +43,52 @@ function defaultProviderIds() {
 }
 
 function readProviderSelectionDetail() {
-  if (!existsSync(PROVIDER_SELECTION_PATH)) {
-    return { providers: [...PROVIDER_IDS], ignored: [], degraded: undefined };
+  const observed = readJsonFile(PROVIDER_SELECTION_PATH);
+  if (observed.status === "missing") {
+    return { providers: [...PROVIDER_IDS], ignored: [], explicit: false };
   }
-  try {
-    const parsed = JSON.parse(readFileSync(PROVIDER_SELECTION_PATH, "utf8"));
-    if (parsed?.version !== 1 || !Array.isArray(parsed.providers)) {
-      throw new Error("version/providers are invalid");
-    }
-    const known = [];
-    const ignored = [];
-    for (const value of parsed.providers) {
-      const id = canonicalProviderId(value);
-      if (PROVIDERS.has(id)) {
-        if (!known.includes(id)) known.push(id);
-      } else if (id && !ignored.includes(id)) {
-        ignored.push(id);
-      }
-    }
-    return {
-      providers: known,
-      ignored,
-      ...(ignored.length
-        ? { degraded: `Provider selection ignores unsupported providers: ${ignored.join(", ")}` }
-        : {}),
-    };
-  } catch (error) {
-    return {
-      providers: [...PROVIDER_IDS],
-      ignored: [],
-      degraded: `Unreadable provider selection: ${error instanceof Error ? error.message : String(error)}`,
-    };
+  const parsed = observed.value;
+  if (observed.status !== "present" || parsed?.version !== 1 || !Array.isArray(parsed.providers) ||
+      !parsed.providers.every((provider) => typeof provider === "string")) {
+    return { providers: [], ignored: [], explicit: true, invalid: true,
+      degraded: `Cannot read provider selection (${observed.status === "present" ? "invalid" : observed.status}) at ${PROVIDER_SELECTION_PATH}.` };
   }
+  const known = [];
+  const ignored = [];
+  for (const value of parsed.providers) {
+    const id = canonicalProviderId(value);
+    if (PROVIDERS.has(id)) {
+      if (!known.includes(id)) known.push(id);
+    } else if (id && !ignored.includes(id)) {
+      ignored.push(id);
+    }
+  }
+  return {
+    providers: known,
+    ignored,
+    explicit: true,
+    ...(ignored.length
+      ? { degraded: `Provider selection ignores unsupported providers: ${ignored.join(", ")}` }
+      : {}),
+  };
 }
 
 export function readProviderSelection() {
-  return readProviderSelectionDetail().providers;
+  const detail = readProviderSelectionDetail();
+  if (detail.invalid) throw new Error(detail.degraded);
+  return detail.providers;
 }
 
-export function writeProviderSelection(values) {
+function saveProviderSelection(values) {
   const providers = validateProviderIds(values);
   writePrivateJson(PROVIDER_SELECTION_PATH, { version: 1, providers });
   return providers;
+}
+
+// A full set is an explicit replacement; read-modify-write operations below
+// must first establish the current selection. All writers join publication.
+export function writeProviderSelection(values) {
+  return withCatalogPublicationLock(() => saveProviderSelection(values));
 }
 
 export function enableProvider(providerId) {
@@ -97,12 +99,12 @@ export function enableProvider(providerId) {
       throw new Error(`Switchyard cannot be enabled; missing: ${runtime.missing.join(", ")}`);
     }
   }
-  return writeProviderSelection([...readProviderSelection(), id]);
+  return withCatalogPublicationLock(() => saveProviderSelection([...readProviderSelection(), id]));
 }
 
 export function disableProvider(providerId) {
   const id = validateProviderIds([providerId])[0];
-  return writeProviderSelection(readProviderSelection().filter((entry) => entry !== id));
+  return withCatalogPublicationLock(() => saveProviderSelection(readProviderSelection().filter((entry) => entry !== id)));
 }
 
 function selectedListedModels() {
@@ -119,9 +121,10 @@ export function providerSelectionStatus() {
   const detail = readProviderSelectionDetail();
   return {
     path: PROVIDER_SELECTION_PATH,
-    explicit: existsSync(PROVIDER_SELECTION_PATH),
+    explicit: detail.explicit,
     providers: detail.providers,
     ignored: detail.ignored,
+    ...(detail.invalid ? { status: "invalid" } : {}),
     ...(detail.degraded ? { degraded: detail.degraded } : {}),
   };
 }
@@ -133,11 +136,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       process.stdout.write(`${JSON.stringify(providerSelectionStatus(), null, 2)}\n`);
     } else if (command === "set") {
       process.stdout.write(
-        `${JSON.stringify({ providers: writeProviderSelection(process.argv.slice(3).flatMap((value) => value.split(","))) }, null, 2)}\n`,
+        `${JSON.stringify({ providers: await writeProviderSelection(process.argv.slice(3).flatMap((value) => value.split(","))) }, null, 2)}\n`,
       );
     } else if (command === "ensure-configured") {
-      const explicit = existsSync(PROVIDER_SELECTION_PATH);
-      const providers = explicit ? readProviderSelection() : writeProviderSelection(defaultProviderIds());
+      const providers = await withCatalogPublicationLock(() => {
+        const detail = readProviderSelectionDetail();
+        if (detail.invalid) throw new Error(detail.degraded);
+        return detail.explicit ? detail.providers : saveProviderSelection(defaultProviderIds());
+      });
       // API-key providers can be selected before their optional credential is
       // installed. Their forwarder remains live and reports ready:false until
       // the key is set; only a provider whose local runtime is itself missing

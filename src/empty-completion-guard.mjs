@@ -1,7 +1,9 @@
 import { Transform } from "node:stream";
 
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
-import { SseFrameBuffer, sseFrameText } from "./sse-framing.mjs";
+import { SseFrameBuffer, sseFrameFields } from "./sse-framing.mjs";
+import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
+import { responseTerminalOutcome } from "./response-usage.mjs";
 
 const MAX_INCOMPLETE_EVENT_BYTES = 10 * 1024 * 1024;
 const MAX_PRECONTENT_BYTES = 1024 * 1024;
@@ -60,39 +62,30 @@ export function isEmptyCompletionPreludeLimitError(error) {
 // that follows it; `data: [DONE]` is the chat-completions sentinel some
 // gateways emit instead. All three close the response, so the guard holds
 // them until it knows the turn actually produced something.
-function isTerminalEvent(eventType, dataText) {
-  // Match content/liveness classification when the optional SSE event field
-  // is absent. Both guards, including their flush paths, use this predicate.
-  if (eventType === undefined && dataText && dataText !== "[DONE]") {
-    try {
-      eventType = JSON.parse(dataText)?.type;
-    } catch {
-      // Unparseable data is not evidence of a successful terminal.
-    }
+function guardEvent(bytes, atStreamStart) {
+  let fields;
+  try { fields = sseFrameFields(bytes, atStreamStart); }
+  catch { return { indeterminate: true }; }
+  const { eventName, data: dataText, hasData } = fields;
+  const generic = !eventName || eventName === "message";
+  if (!hasData || !dataText) return {};
+  if (dataText === "[DONE]") {
+    return generic || ["response.completed", "response.done"].includes(eventName)
+      ? { terminal: true, parseable: true }
+      : { indeterminate: true };
   }
-  return (
-    dataText === "[DONE]" ||
-    eventType === "response.completed" ||
-    eventType === "response.done"
-  );
-}
-
-function sseFields(block) {
-  let eventType = undefined;
-  const dataLines = [];
-  for (const line of block.split(/\r\n|\r|\n/)) {
-    if (line.startsWith("event:")) eventType = line.slice(6).trim();
-    else if (line.startsWith("data:")) {
-      const value = line.slice(5);
-      dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
-    }
+  if (!jsonIsUnambiguousForRewrite(dataText)) return { indeterminate: true };
+  const data = JSON.parse(dataText);
+  if (!data || typeof data !== "object" || Array.isArray(data) ||
+      (!generic && eventName !== data.type) ||
+      (typeof data.type !== "string" && !Array.isArray(data.choices))) {
+    return { indeterminate: true };
   }
-  return {
-    eventType,
-    // The SSE algorithm joins repeated data fields with a line feed before
-    // dispatch. Overwriting them truncates valid multiline JSON.
-    dataText: dataLines.length ? dataLines.join("\n") : undefined,
-  };
+  const eventType = generic ? data.type : eventName;
+  const outcome = responseTerminalOutcome(data);
+  return { data, eventType, outcome, parseable: true,
+    terminal: outcome === "completed" &&
+      ["response.completed", "response.done"].includes(eventType) };
 }
 
 // The empty-completion guard may release a stream after reasoning or a time
@@ -111,6 +104,7 @@ export class EmptyCompletionTerminalGuard extends Transform {
   #heldTerminal = [];
   #heldTerminalBytes = 0;
   #maxHeldTerminalBytes;
+  #indeterminate = false;
 
   constructor(
     guard,
@@ -163,16 +157,19 @@ export class EmptyCompletionTerminalGuard extends Transform {
       if (!this.#eventStream) {
         if (this.#frames.pendingBytes) this.push(this.#frames.take());
       } else {
-        if (this.#guard.hasContent()) this.#releaseTerminal();
+        if (!this.#canSuppressTerminal()) this.#releaseTerminal();
         // A non-terminal final block may omit its trailing blank line. A held
         // terminal is deliberately dropped when the paired guard found no
         // content, leaving the router's subsequent `event: error` observable.
         if (this.#frames.pendingBytes) {
           const atStreamStart = this.#frames.atStreamStart;
           const pending = this.#frames.take();
-          const { eventType, dataText } = sseFields(sseFrameText(pending, atStreamStart));
-          if (!isTerminalEvent(eventType, dataText)) this.push(pending);
-          else if (this.#guard.hasContent()) this.push(pending);
+          const event = guardEvent(pending, atStreamStart);
+          if (event.indeterminate) {
+            this.#indeterminate = true;
+            this.#releaseTerminal();
+          }
+          if (!event.terminal || !this.#canSuppressTerminal()) this.push(pending);
         }
       }
       this.#frames.take();
@@ -190,7 +187,7 @@ export class EmptyCompletionTerminalGuard extends Transform {
       this.push(bytes);
       return;
     }
-    if (this.#guard.hasContent()) {
+    if (!this.#canSuppressTerminal()) {
       this.#releaseTerminal();
       if (this.#frames.pendingBytes) this.push(this.#frames.take());
       this.push(bytes);
@@ -207,10 +204,13 @@ export class EmptyCompletionTerminalGuard extends Transform {
         } else this.push(raw);
         continue;
       }
-      const block = sseFrameText(raw, atStreamStart);
-      const { eventType, dataText } = sseFields(block);
-      if (isTerminalEvent(eventType, dataText)) {
-        if (this.#guard.hasContent()) this.push(raw);
+      const event = guardEvent(raw, atStreamStart);
+      if (event.indeterminate || ["stream_error", "incomplete"].includes(event.outcome)) {
+        this.#indeterminate = true;
+        this.#releaseTerminal();
+      }
+      if (event.terminal) {
+        if (!this.#canSuppressTerminal()) this.push(raw);
         else {
           this.#heldTerminal.push(Buffer.from(raw));
           this.#heldTerminalBytes += raw.length;
@@ -219,11 +219,11 @@ export class EmptyCompletionTerminalGuard extends Transform {
           }
         }
       } else {
-        if (this.#guard.hasContent()) this.#releaseTerminal();
+        if (!this.#canSuppressTerminal()) this.#releaseTerminal();
         this.push(raw);
       }
     }
-    if (this.#guard.hasContent()) {
+    if (!this.#canSuppressTerminal()) {
       this.#releaseTerminal();
       if (this.#frames.pendingBytes) this.push(this.#frames.take());
     }
@@ -233,6 +233,10 @@ export class EmptyCompletionTerminalGuard extends Transform {
     for (const block of this.#heldTerminal) this.push(block);
     this.#heldTerminal = [];
     this.#heldTerminalBytes = 0;
+  }
+
+  #canSuppressTerminal() {
+    return !this.#indeterminate && this.#guard.canSuppressTerminal();
   }
 }
 
@@ -365,7 +369,7 @@ function isContentEvent(eventType, data) {
     // branch holds the event, or a turn whose only content rides on
     // `response.completed` would be suppressed and retried as if it were
     // silent.
-    if (eventType === "response.completed" || eventType === "message.completed") {
+    if (["response.completed", "response.done", "message.completed"].includes(eventType)) {
       return outputHasContent(data?.response?.output);
     }
   }
@@ -395,6 +399,7 @@ export class EmptyCompletionGuard extends Transform {
   #sawContent = false;
   #sawTerminal = false;
   #sawParseableEvent = false;
+  #indeterminate = false;
   #empty = false;
   #released = false;
   #keepParsingAfterRelease = false;
@@ -444,6 +449,12 @@ export class EmptyCompletionGuard extends Transform {
 
   hasContent() {
     return this.#sawContent;
+  }
+
+  // Uncertain provider evidence must remain raw and cannot authorize either a
+  // quiet replay or suppression of the original terminal by the paired guard.
+  canSuppressTerminal() {
+    return !this.#sawContent && !this.#indeterminate;
   }
 
   // True when the hold ended because the upstream proved it was generating
@@ -567,14 +578,14 @@ export class EmptyCompletionGuard extends Transform {
         // to learn that this one cannot be retried behind the client's back.
         if (!this.#settled()) {
           this.#classifyTail();
-          if (!this.#sawContent && this.#sawTerminal) this.#empty = true;
+          if (this.canSuppressTerminal() && this.#sawTerminal) this.#empty = true;
         }
         callback();
         return;
       }
       // Preserve the guard's final-EOF compatibility policy.
       this.#classifyTail();
-      if (!this.#sawContent && this.#sawTerminal) {
+      if (this.canSuppressTerminal() && this.#sawTerminal) {
         this.#empty = true;
         // Every byte is still held, so the retry can replace this attempt whole.
         this.#suppressedPrologue = true;
@@ -599,7 +610,7 @@ export class EmptyCompletionGuard extends Transform {
   #consumeBlocks(bytes) {
     for (const frame of this.#frames.write(bytes)) {
       if (frame.continuation) continue;
-      this.#classifyBlock(sseFrameText(frame.bytes, frame.atStreamStart));
+      this.#classifyBlock(frame.bytes, frame.atStreamStart);
       if (this.#settled()) return;
     }
   }
@@ -607,45 +618,31 @@ export class EmptyCompletionGuard extends Transform {
   #classifyTail() {
     if (!this.#frames.pendingBytes) return;
     const atStreamStart = this.#frames.atStreamStart;
-    this.#classifyBlock(sseFrameText(this.#frames.take(), atStreamStart));
+    this.#classifyBlock(this.#frames.take(), atStreamStart);
   }
 
-  #classifyBlock(block) {
-    const { eventType, dataText } = this.#fields(block);
-    let data;
-    let parsed = false;
-    if (dataText === "[DONE]") {
-      this.#sawParseableEvent = true;
-    } else if (dataText) {
-      try {
-        data = JSON.parse(dataText);
-        parsed = true;
-        this.#sawParseableEvent = true;
-      } catch {
-        // `#contentOf` below keeps malformed terminal data indeterminate. The
-        // byte-budget decision remains fail-closed unless another complete
-        // JSON event already established framing.
-      }
+  #classifyBlock(bytes, atStreamStart) {
+    const { eventType, data, outcome, terminal, parseable, indeterminate } =
+      guardEvent(bytes, atStreamStart);
+    if (indeterminate) {
+      this.#indeterminate = true;
+      this.#sawTerminal = false;
+      this.#release();
+      return;
     }
+    if (parseable) this.#sawParseableEvent = true;
     // Content is decided before the terminal check: a gateway that puts the
     // whole turn in `response.completed` emits a terminal event that is also
     // the only content event in the stream.
-    const content = this.#contentOf(eventType, dataText, data, parsed);
+    const content = ["stream_error", "incomplete"].includes(outcome) ||
+      isContentEvent(eventType, data);
     if (content === true) {
       this.#sawContent = true;
       this.#clearTimer();
       this.#release();
       return;
     }
-    if (isTerminalEvent(eventType, dataText)) {
-      // A terminal event whose payload cannot be parsed is not evidence of an
-      // empty completion — the very event that would carry the output is the
-      // one we could not read. Release the stream (indeterminate) rather than
-      // declaring the turn empty and forcing a retry of a possibly valid one.
-      if (content === undefined) {
-        this.#release();
-        return;
-      }
+    if (terminal) {
       this.#sawTerminal = true;
       return;
     }
@@ -654,7 +651,7 @@ export class EmptyCompletionGuard extends Transform {
     // the empty completions it repairs are a fraction of a percent of them.
     if (
       !this.#released &&
-      this.#livenessOf(eventType, dataText, data, parsed) === true
+      isLivenessEvent(eventType, data) === true
     ) {
       this.#release({ liveness: true });
     }
@@ -724,35 +721,4 @@ export class EmptyCompletionGuard extends Transform {
     else throw error;
   }
 
-  #fields(block) {
-    return sseFields(block);
-  }
-
-  // Liveness never decides the verdict, only the hold, so an unparseable block
-  // is simply "not yet proven alive" rather than the indeterminate that
-  // `#contentOf` has to preserve.
-  #livenessOf(eventType, dataText, data, parsed) {
-    if (!dataText || dataText === "[DONE]") return false;
-    if (!parsed) return false;
-    return isLivenessEvent(eventType ?? data?.type, data);
-  }
-
-  #contentOf(eventType, dataText, data, parsed) {
-    if (!dataText || dataText === "[DONE]") return false;
-    if (!parsed) {
-      // Indeterminate, not "no content": the payload could not be parsed, so
-      // the absence of recognized content says nothing about whether the turn
-      // produced output. Callers must not treat this as evidence of an empty
-      // completion.
-      return undefined;
-    }
-    const type = eventType ?? data?.type;
-    // Explicit unsuccessful terminals are actionable client content for every
-    // Responses provider. A following [DONE] must not hide their diagnostic
-    // behind an empty-success retry, even when output is empty.
-    if (type === "error" || data?.type === "error" ||
-        (type === "response.incomplete" && data?.response?.status === "incomplete") ||
-        (type === "response.failed" && data?.response?.status === "failed")) return true;
-    return isContentEvent(type, data);
-  }
 }

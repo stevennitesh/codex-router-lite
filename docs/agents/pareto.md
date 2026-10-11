@@ -47,8 +47,10 @@ metadata. Recheck it and the ordinary Router caller after endpoint changes.
 
 ## Validation
 
-Run the Pareto, namespace-relay, compaction-checkpoint, empty-completion-guard,
-and retained suites, then `npm run check` and the current native catalog check.
+Follow the [common verification scope](architecture.md#verification). Use Pareto,
+namespace-relay, compaction-checkpoint and empty-completion-guard tests for affected
+behavior; a required full suite already includes them. Reuse unchanged source and
+catalog checks.
 [Dated investigation evidence](../history/2026-09-17-pareto.md) records the
 bounded probes and is not live status. Keep scratch payloads under
 `generated/pareto` with no credentials or private project-file contents.

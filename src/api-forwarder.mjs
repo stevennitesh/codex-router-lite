@@ -21,6 +21,7 @@ import { fetchWithRetry } from "./upstream-retry.mjs";
 import { installStableFetchTransport } from "./fetch-transport.mjs";
 import { prepareOpenRouterRequest } from "./openrouter-request.mjs";
 import { FORWARDER_LOCAL_ERROR_HEADER } from "./error-translation.mjs";
+import { markResponsesStream } from "./responses-stream-failure.mjs";
 
 installStableFetchTransport();
 
@@ -106,6 +107,9 @@ async function handle(request, response) {
   }
 
   const abort = new AbortController();
+  if (["/responses", "/v1/responses"].includes(request.url?.split("?")[0])) {
+    markResponsesStream(response, { model: payload.model });
+  }
   const onAborted = () => abort.abort(new Error("Caller disconnected."));
   const onClosed = () => {
     if (!response.writableFinished) onAborted();

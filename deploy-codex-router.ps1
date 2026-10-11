@@ -35,7 +35,7 @@ function Get-DeploySourceFiles {
   if (-not (Test-Path -LiteralPath $SourceManifestPath -PathType Leaf)) {
     throw "Windows package manifest not found at $SourceManifestPath."
   }
-  $Document = Get-Content -LiteralPath $SourceManifestPath -Raw | ConvertFrom-Json
+  $Document = Get-Content -LiteralPath $SourceManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($Document.version -ne 1 -or $null -eq $Document.files) {
     throw "Unsupported Windows package manifest."
   }
@@ -56,7 +56,7 @@ function Get-DeploySourceFiles {
 function Read-DeployManifest {
   if (-not (Test-Path -LiteralPath $DeployManifestPath -PathType Leaf)) { return @() }
   try {
-    $Document = Get-Content -LiteralPath $DeployManifestPath -Raw | ConvertFrom-Json
+    $Document = Get-Content -LiteralPath $DeployManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Document.version -ne 1 -or $null -eq $Document.files) {
       throw "unsupported manifest shape"
     }
@@ -153,6 +153,13 @@ function Assert-StagedFiles([string]$StageRoot, [string[]]$Files) {
       throw "Staged candidate verification failed for $RelativePath."
     }
   }
+}
+
+function Assert-DeployedRuntime {
+  # Use this source's acceptance owner for both generations. A retained older
+  # install need not ship the new helper, and packaged installs need no Git data.
+  & node (Join-Path $sourceDir "src\deployment-acceptance.mjs") $installDir
+  if ($LASTEXITCODE -ne 0) { throw "Codex Router deployment acceptance failed." }
 }
 
 function Get-ChangedManagedFiles([string[]]$CurrentFiles, [string[]]$PreviousFiles) {
@@ -267,6 +274,7 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
           if ($DoctorExitCode -ne 0) {
             throw "Codex Router doctor failed with exit code $DoctorExitCode."
           }
+          Assert-DeployedRuntime
         }
       } finally {
         Pop-Location
@@ -289,6 +297,7 @@ if ($PSCmdlet.ShouldProcess($installDir, "copy router source")) {
             if (-not $?) { throw "The previous Codex Router generation could not be restarted." }
             & node (Join-Path $installDir "src\doctor.mjs")
             if ($LASTEXITCODE -ne 0) { throw "The restored Codex Router generation failed doctor." }
+            Assert-DeployedRuntime
           }
         } finally {
           Pop-Location

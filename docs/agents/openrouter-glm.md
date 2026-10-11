@@ -48,7 +48,27 @@ usage can still require gateway estimation; a reported zero is authoritative.
 Ordinary GLM traffic uses LiteLLM to translate Codex Responses traffic.
 `src/litellm-config.mjs` sets gateway retries to zero; the Node forwarder owns
 the bounded provider retry. This avoids multiplying attempts across both layers
-while retaining original refusal statuses and exact endpoint selection.
+while retaining original refusal statuses and exact endpoint selection. The
+generated private gateway enables `cancel_on_disconnect`, so caller cancellation
+also reaches provider work still awaiting headers or a non-streaming body.
+`src/litellm_stream_cleanup_callback.py` supplies the pinned gateway's missing
+Chat-to-Responses close hook. The existing LiteLLM wrapper closes the acquired SDK
+stream and shields cleanup from cancellation; an upstream close hook takes
+precedence. `writeLiteLlmConfig` publishes this module beside the private YAML.
+The same module preserves prepared ECMAScript tool schemas before the pinned
+OpenAI Chat sanitizer applies Python regex rules, only for provider `openai`
+and the exact configured `CODEX_ROUTER_API_FORWARD_BASE_URL`. That base must be
+the canonical private `http://127.0.0.1:<port>/v1` URL. Hosted OpenAI and every
+other base/provider retain the upstream sanitizer. Client-side credentials stay
+disabled in the generated YAML. Endpoint overrides stay disabled, and caller
+credentials cannot replace the forwarder's configured provider credential. The
+forwarder retains authentication and final validation before the external send.
+Retire this schema hook when upstream preserves the custom endpoint's schemas
+and the same controls pass; retire the close hook when upstream supplies it.
+Verify both hooks with `test/litellm-stream-cleanup.test.mjs` and the actual
+loopback gateway handoff in `test/litellm-gateway.test.mjs`, using the hash-locked
+interpreter when changing gateway dependencies, schemas or cancellation.
+These checks do not establish live endpoint acceptance or model tool reliability.
 `src/zai-responses-compat.mjs` repairs malformed GLM envelopes: visible text
 after reasoning without message/content opening events, a visible-text close
 with a `reasoning_text` part, and overlapping assistant-message and
@@ -56,6 +76,14 @@ function-call lifecycles. The transform repairs only those envelope/order
 defects and leaves valid streams unchanged. LiteLLM generates distinct
 reasoning and message identities itself, so Router Lite does not rewrite those IDs.
 Keep the generic namespace relay's identity checks intact.
+
+Message fallback text comes from the sanitized visible content close; hidden
+reasoning-marked text cannot overwrite an earlier visible answer. A legitimate
+visible close still replaces its prior deltas and retains annotations. The
+transform commits when emitted lifecycle bytes overtake an earlier held frame,
+as well as when it repairs an envelope. Unsafe input after either kind of repair
+fails the current stream without replay. Before commitment, held frames can be
+flushed in their original byte order and unsafe input remains unchanged.
 
 Fresh hosted-search turns bypass the Chat Completions translation and use the internal OpenRouter forwarder's direct Responses path. `src/openrouter-hosted-search.mjs` maps only native `web_search` and `web_search_preview` tools to the bounded `openrouter:web_search` server tool, restores returned items to `web_search_call`, preserves citations and sources, and reverses completed search history on another direct-search turn. A plain function named `web_search` is unrelated and must remain unchanged. Keep the checked-in Exa engine, result and call limits, exact endpoint policy, and fallback prohibition together. OpenRouter reports live search usage under `server_tool_use_details`; tolerate the documented `server_tool_use` spelling in diagnostics, but never infer zero from an absent field.
 

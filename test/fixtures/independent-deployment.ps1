@@ -15,5 +15,6 @@ if ($InProcess) {
 $env:CODEX_HOME = $FixtureRoot
 . (Join-Path $CodeRoot "maintenance\deployment-runner.ps1")
 $launch = Start-IndependentDeployment -ScriptPath $PSCommandPath -Parameters @{ FixtureRoot = $FixtureRoot; CodeRoot = $CodeRoot } -RepoRoot $CodeRoot | Out-String | ConvertFrom-Json
-$launch | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $FixtureRoot "launch.json") -Encoding UTF8
+$launch | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $FixtureRoot "launch.json.tmp") -Encoding UTF8
+Move-Item -LiteralPath (Join-Path $FixtureRoot "launch.json.tmp") -Destination (Join-Path $FixtureRoot "launch.json")
 Start-Sleep -Seconds 300
