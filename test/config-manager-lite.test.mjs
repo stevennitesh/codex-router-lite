@@ -23,27 +23,37 @@ test("missing multi-agent end marker is repaired only for the exact owned featur
   const env = { CODEX_HOME: codexHome, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath };
   run("enable", env);
   const end = "# END codex-router-multi-agent-v2-managed";
-  const damaged = readFileSync(configPath, "utf8").replace(end, 'user_feature = true\n# user-owned note');
-  writeFileSync(configPath, damaged);
-  assert.equal(run("validate-enable", env).mode, "router");
-  assert.equal(readFileSync(configPath, "utf8"), damaged, "preflight remains read-only");
-  run("enable", env);
-  const repaired = readFileSync(configPath, "utf8");
-  assert.equal(repaired.split(end).length - 1, 1);
-  assert.match(repaired, /user_feature = true\n# user-owned note/u);
-  assert.match(repaired, /apps = true/u);
-  assert.match(repaired, /\[desktop\]\nnotifications = true/u);
+  const emitted = readFileSync(configPath, "utf8");
+  const currentFeature = emitted.split("\n").find(line => line.startsWith("multi_agent_v2 = "));
+  const priorFeature = readFileSync(path.join(root, "test/fixtures/managed-multi-agent-v2-before-routing.txt"), "utf8").trim();
+  for (const feature of [currentFeature, priorFeature]) {
+    const damaged = emitted.replace(currentFeature, feature).replace(end, 'user_feature = true\n# user-owned note');
+    writeFileSync(configPath, damaged);
+    assert.equal(run("validate-enable", env).mode, "router");
+    assert.equal(readFileSync(configPath, "utf8"), damaged, "preflight remains read-only");
+    run("enable", env);
+    const repaired = readFileSync(configPath, "utf8");
+    assert.equal(repaired.split(end).length - 1, 1);
+    assert.equal(managedRootHint(repaired), managedRootHint(emitted), "repair upgrades the owned hint");
+    assert.match(repaired, /user_feature = true\n# user-owned note/u);
+    assert.match(repaired, /apps = true/u);
+    assert.match(repaired, /\[desktop\]\nnotifications = true/u);
 
-  const modified = repaired.replace(end, "").replace(
-    "max_concurrent_threads_per_session = 6", "max_concurrent_threads_per_session = 7",
-  );
-  writeFileSync(configPath, modified);
-  const rejected = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "enable"], {
-    cwd: root, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true,
-  });
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /Refusing to edit an unterminated managed block/u);
-  assert.equal(readFileSync(configPath, "utf8"), modified, "a changed feature cannot authorize removal");
+    writeFileSync(configPath, damaged);
+    assert.equal(run("disable", env).mode, "native");
+    const disabled = readFileSync(configPath, "utf8");
+    assert.doesNotMatch(disabled, /codex-router-multi-agent-v2-managed/u);
+    assert.match(disabled, /user_feature = true\n# user-owned note/u);
+
+    const modified = damaged.replace("max_concurrent_threads_per_session = 6", "max_concurrent_threads_per_session = 7");
+    writeFileSync(configPath, modified);
+    const rejected = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "enable"], {
+      cwd: root, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true,
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /Refusing to edit an unterminated managed block/u);
+    assert.equal(readFileSync(configPath, "utf8"), modified, "a changed feature cannot authorize removal");
+  }
 });
 
 function run(command, env) {
