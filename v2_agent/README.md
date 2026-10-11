@@ -23,6 +23,17 @@ the observations for each accepted batch:
   covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [audit release renewal](../docs/history/2026-10-11-audit-release-certification.json)
+passed all five checks for all six published routes on deployed commit
+`4806fa3c5962c6bf9f9384a03ed3887813b49bb9`. All six streaming requests and
+18 native child requests returned HTTP 200. Each child produced sandboxed
+output 42, received two encrypted handoffs and returned both markers from the
+same thread; completed-turn cleanup cancelled no active turns. Switchyard's
+additional tool continuation, image fallback and native compaction checks passed
+with evidence attributed to their own requests. These proofs used CLI session-only
+MXC with workspace-write and on-request approval; they do not certify the
+desktop's elevated sandbox or arbitrary MCP tools.
+
 The [Windows compatibility renewal](../docs/history/2026-10-10-compatibility-certification.json)
 passed all five checks for StreamLake, both DeepSeek routes, Pareto and Switchyard
 on deployed commit `f8bc922bd0f79ae1ad253cda77451c72dca8621d`.

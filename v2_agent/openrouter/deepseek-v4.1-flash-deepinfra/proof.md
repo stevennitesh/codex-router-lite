@@ -1,12 +1,12 @@
 # openrouter/deepseek-v4.1-flash-deepinfra v2 certification
 
-Accepted observations against Router `f8bc922bd0f79ae1ad253cda77451c72dca8621d`
+Accepted observations against Router `4806fa3c5962c6bf9f9384a03ed3887813b49bb9`
 (version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.2314.0.
-Tested at 2026-10-10T17:04:08.536Z. Exact endpoint: `deepinfra/fp8`; fallback disabled.
+Tested at 2026-10-11T05:48:11.295Z. Exact endpoint: `deepinfra/fp8`; fallback disabled.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-10-compatibility-certification.json) records role `router_openrouter_deepseek_v4_1_flash_deepinfra`, effort
+[Redacted run evidence](../../../docs/history/2026-10-11-audit-release-certification.json) records role `router_openrouter_deepseek_v4_1_flash_deepinfra`, effort
 `high`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed

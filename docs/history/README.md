@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Audit release six-route certification and Switchyard smoke checks, 2026-10-11](2026-10-11-audit-release-certification.json)
+
 - [Windows compatibility deployment and six-route renewal, 2026-10-10](2026-10-10-compatibility-release.md),
   [five-route certification](2026-10-10-compatibility-certification.json) and
   [GLM Together certification](2026-10-10-compatibility-together-certification.json)
