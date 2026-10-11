@@ -57,6 +57,20 @@ function run(command, env) {
   return JSON.parse(result.stdout);
 }
 
+function managedRootHint(contents) {
+  const document = scanTomlDocument(contents);
+  const feature = document.assignments.find(({ tablePath, key }) =>
+    tablePath.length === 1 && tablePath[0] === "features" &&
+    key.length === 1 && key[0] === "multi_agent_v2",
+  );
+  assert.ok(feature, "the managed feature is a real TOML assignment");
+  const rootHint = /\broot_agent_usage_hint_text\s*=\s*("(?:\\.|[^"\\])*")/u.exec(
+    document.lines[feature.index],
+  );
+  assert.ok(rootHint, "guidance uses the native root-agent instruction field");
+  return JSON.parse(rootHint[1]);
+}
+
 function configFixture(t) {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-config-boundary-"));
   t.after(() => rmSync(testRoot, { recursive: true, force: true }));
@@ -335,12 +349,14 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     assert.match(routed, /# BEGIN codex-router-managed/u);
     assert.match(routed, /# BEGIN codex-router-provider-managed/u);
     assert.match(routed, /# BEGIN codex-router-multi-agent-v2-managed/u);
-    assert.match(routed, /## Delegated-agent waiting/u);
-    assert.match(routed, /Wait again without commentary/u);
-    assert.match(routed, /call interrupt_agent on that child/u);
-    assert.match(routed, /## Delegation routing/u);
-    assert.match(routed, /may intentionally be on the critical path/u);
-    assert.match(routed, /fork_turns=\\\"none\\\"/u);
+    const rootHint = managedRootHint(routed);
+    assert.match(rootHint, /## Delegated-agent waiting/u);
+    assert.match(rootHint, /Wait again without commentary/u);
+    assert.match(rootHint, /call interrupt_agent on that child/u);
+    assert.match(rootHint, /## Delegation routing/u);
+    assert.match(rootHint, /Delegate only when authorized by the user, applicable AGENTS\.md, or an invoked skill/u);
+    assert.match(rootHint, /may intentionally be on the critical path/u);
+    assert.match(rootHint, /fork_turns="none"/u);
     assert.match(routed, /developer_instructions = "USER_POLICY"/u);
     assert.match(routed, /\[desktop\]\nnotifications = true/u);
 
@@ -350,7 +366,7 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     );
     run("enable", env);
     const refreshed = readFileSync(path.join(codexHome, "config.toml"), "utf8");
-    assert.match(refreshed, /## Delegated-agent waiting/u);
+    assert.equal(managedRootHint(refreshed), rootHint, "enable refreshes the complete effective root hint");
     assert.doesNotMatch(refreshed, /OLD_ROUTER_HINT/u);
     assert.match(refreshed, /developer_instructions = "USER_POLICY"/u);
 
