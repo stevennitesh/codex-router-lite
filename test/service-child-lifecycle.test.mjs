@@ -46,6 +46,7 @@ export async function waitForHealth(options){if(options.label!=='LiteLLM gateway
     const deadline = Date.now() + 12_000;
     while (events().length < 2 || !errorText().includes("not restarting it again")) {
       assert.equal(child.exitCode, null, errorText());
+      assert.ok(!errorText().includes("gateway cleanup failed:"), errorText());
       assert.ok(Date.now() < deadline, errorText());
       await new Promise(resolve => setTimeout(resolve, 25));
     }
