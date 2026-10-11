@@ -126,6 +126,7 @@ try {
     [Console]::Out.WriteLine(('{"complete":true,"nativeCode":' + $nativeCode + ',"proof":"held-handles","captured":' + $owned.Count + '}'))
     exit 0
 } catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
 } finally {
     foreach ($entry in $owned.Values) { $entry.process.Dispose() }

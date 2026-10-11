@@ -92,7 +92,7 @@ test("an unbound batch root rejects cleanup before any native termination", { sk
       return actualSpawn(command, args, options);
     };
     syncBuiltinESMExports();
-    await assert.rejects(stopWindowsBatchChild(child, { ...lifecycle, launchedAfterMs: lifecycle.launchedAfterMs + 60_000 }), /cleanup failed/u);
+    await assert.rejects(stopWindowsBatchChild(child, { ...lifecycle, launchedAfterMs: lifecycle.launchedAfterMs + 60_000 }), /cleanup failed.*root generation did not match the launch/u);
     assert.equal(nativeKills, 0);
     assert.equal(alive(child.pid), true);
     assert.equal(alive(pid), true);

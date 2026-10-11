@@ -19,8 +19,11 @@ export function stopWindowsBatchChild(child, lifecycle) {
       "-LaunchedBeforeMs", String(lifecycle.launchedBeforeMs),
       "-ExpectedExecutable", lifecycle.executable,
       "-DeadlineMs", String(deadline),
-    ], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, timeout: 5_000 });
+    ], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, timeout: 5_000 });
     let failure;
+    let diagnostic = "";
+    witness.stderr.setEncoding("utf8");
+    witness.stderr.on("data", chunk => { diagnostic = (diagnostic + chunk).slice(0, 1_024); });
     let output = "";
     let outputSize = 0;
     let killer;
@@ -75,7 +78,8 @@ export function stopWindowsBatchChild(child, lifecycle) {
           (receipt.nativeCode === 0 || receipt.proof === "held-handles")) {
         resolve(receipt);
       } else {
-        reject(failure ?? new Error("Optional Windows child tree cleanup failed."));
+        const detail = diagnostic.trim();
+        reject(failure ?? new Error(`Optional Windows child tree cleanup failed.${detail ? ` ${detail}` : ""}`));
       }
     });
   });
