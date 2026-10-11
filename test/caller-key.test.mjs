@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -32,7 +32,7 @@ test("rotation command captures completion and redacts a failed child's caller U
   } finally { f.cleanup(); }
 });
 
-test("rotation child wait keeps the service lock live beyond its stale horizon", { timeout: 30_000 }, async () => {
+test("rotation child wait holds the service generation and advances its own heartbeat", { timeout: 30_000 }, async () => {
   const f = fixture();
   const ready = path.join(f.dir, "ready"), finish = path.join(f.dir, "finish");
   const lock = path.join(f.dir, "service-operation.lock");
@@ -49,7 +49,7 @@ const watchdog=setTimeout(()=>{clearInterval(poll);process.exitCode=2;},25000);
     child = spawn(process.execPath, ["--input-type=module", "-e", `
 import { runNodeCommand } from ${JSON.stringify(runner)};
 import { withServiceOperationLock } from ${JSON.stringify(locks)};
-await withServiceOperationLock(()=>runNodeCommand(${JSON.stringify(f.relative)}),{stateDir:${JSON.stringify(f.dir)},staleMs:5000,waitMs:0});
+await withServiceOperationLock(()=>runNodeCommand(${JSON.stringify(f.relative)}),{stateDir:${JSON.stringify(f.dir)},heartbeatMs:1000,waitMs:0});
 process.stdout.write('released');
 `], { cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     ended = new Promise(resolve => child.once("close", (code, signal) => resolve({ code, signal })));
@@ -58,12 +58,13 @@ process.stdout.write('released');
     const readyDeadline = Date.now() + 10_000;
     while (!existsSync(ready) && Date.now() < readyDeadline && child.exitCode === null) await delay(20);
     assert.ok(existsSync(ready), `fixture child did not reach the command: ${errors}`);
-    const initialMtime = statSync(lock).mtimeMs;
-    await delay(6_000); // A real wait longer than proper-lockfile's 5s minimum stale horizon.
+    const owner = path.join(lock, readdirSync(lock)[0]);
+    const initialMtime = statSync(owner).mtimeMs;
+    await delay(6_000); // The actual async child keeps this generation held.
     assert.equal(child.exitCode, null, "the command must still be running at contention");
-    assert.ok(statSync(lock).mtimeMs > initialMtime, "heartbeat must advance while awaiting the child");
+    assert.ok(statSync(owner).mtimeMs > initialMtime, "the generation's heartbeat advances while awaiting the child");
     let entered = false;
-    await assert.rejects(withServiceOperationLock(() => { entered = true; }, { stateDir: f.dir, staleMs: 5000, waitMs: 0 }), /still running/u);
+    await assert.rejects(withServiceOperationLock(() => { entered = true; }, { stateDir: f.dir, waitMs: 0 }), /still running/u);
     assert.equal(entered, false);
     writeFileSync(finish, "finish");
     assert.deepEqual(await ended, { code: 0, signal: null }, errors);

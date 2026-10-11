@@ -1,6 +1,7 @@
 param([string]$CodeRoot, [string]$FixtureRoot, [string]$Failure, [switch]$ForceServiceReplacement)
 $ErrorActionPreference = "Stop"
 . (Join-Path $CodeRoot "maintenance\deployment-json.ps1")
+. (Join-Path $CodeRoot "maintenance\switchyard-recovery.ps1")
 $repoRoot = Join-Path $FixtureRoot "candidate"
 $rollbackRouterRoot = Join-Path $FixtureRoot "previous"
 $runtimeRoot = Join-Path $FixtureRoot "runtime"
@@ -24,6 +25,9 @@ foreach ($name in $runtimeFiles) {
   [IO.File]::WriteAllText((Join-Path $runtimeRoot $name), "previous-$name")
   Copy-Item -LiteralPath (Join-Path $runtimeRoot $name) -Destination (Join-Path $rollbackRoot $name)
   [void]$existing.Add($name)
+}
+Write-DeploymentJson (Join-Path $rollbackRoot "rollback.json") @{
+  version = 1; previousRouterCommit = $expectedRollbackCommit; rollbackRouterRoot = $rollbackRouterRoot; files = @($existing)
 }
 [IO.File]::WriteAllText((Join-Path $stageRoot "switchyard-server.exe"), "candidate-binary")
 [IO.File]::WriteAllText((Join-Path $stageRoot "routes.toml"), "candidate-routes")

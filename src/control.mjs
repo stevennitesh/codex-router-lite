@@ -81,7 +81,7 @@ async function main() {
     return;
   }
   if (command === "service") {
-    await runServiceCli(args.slice(1));
+    process.exitCode = await runServiceCli(args.slice(1));
     return;
   }
   throw new Error("Usage: control health|providers|picker|subagents|service");

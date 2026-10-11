@@ -115,6 +115,29 @@ test("hosted-search bounds multiline frames and preserves incomplete EOF without
   assert.equal(await transformBody([raw], "text/event-stream"), raw);
 });
 
+test("hosted-search enforces raw frame ceilings across CRLF partitions and resets per event", async () => {
+  const wire = Buffer.from('data: 1\r\n\r\n');
+  assert.equal(wire.length, 11);
+  const partitions = [[wire], [...wire].map(byte => Buffer.from([byte]))];
+  for (let index = 1; index < wire.length; index += 1) {
+    partitions.push([wire.subarray(0, index), wire.subarray(index)]);
+  }
+  for (const chunks of partitions) {
+    assert.equal(await transformBody(chunks, "text/event-stream", {
+      maxFrameBytes: 11, maxPendingBytes: 7,
+    }), wire.toString());
+    await assert.rejects(transformBody(chunks, "text/event-stream", {
+      maxFrameBytes: 10, maxPendingBytes: 7,
+    }), { code: "SSE_FRAME_LIMIT" });
+  }
+  assert.equal(await transformBody([wire.subarray(0, -1), Buffer.concat([
+    Buffer.from('\n'), wire, wire,
+  ])], "text/event-stream", { maxFrameBytes: 11, maxPendingBytes: 7 }), wire.toString().repeat(3));
+  assert.equal(await transformBody(['data: 1\r\r', 'data: 2\n\n'], "text/event-stream", {
+    maxFrameBytes: 9, maxPendingBytes: 7,
+  }), 'data: 1\r\rdata: 2\n\n');
+});
+
 test("hosted-search response restores non-streaming calls without changing citations", async () => {
   const payload = {
     status: "completed",

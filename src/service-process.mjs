@@ -187,7 +187,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 2;
   } else {
     const state = readServiceProcessState();
-    const owned = serviceProcessOwns(state, { sourceRoot: path.resolve(process.argv[3]) });
-    process.stdout.write(`${JSON.stringify({ owned, sourceRoot: owned ? state.sourceRoot : null })}\n`);
+    const status = serviceProcessStatus(state, { sourceRoot: path.resolve(process.argv[3]) });
+    const owned = status === "owned";
+    process.stdout.write(`${JSON.stringify({ status, owned, sourceRoot: owned ? state.sourceRoot : null })}\n`);
   }
 }

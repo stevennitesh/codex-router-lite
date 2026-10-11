@@ -206,15 +206,35 @@ or touching service state. Older retained checkouts use their isolated
 `-PrepareOnly` procedure. Keep that compatibility path until those older
 generations retire from recovery use.
 
-Python environment creation and locked installation share one installer phase;
-candidate relocation and activation remain inside the recovery transaction.
-Activation begins only after the service stop owner verifies stoppage. Recovery
-also requires a successful stop before moving either environment. A refused
-recovery stop leaves the active candidate and previous environment in place;
-the error reports both failures and the retained paths. A failed restoration or
-previous-service install retains remaining recovery environments for repair.
+For an installed or running checkout, Node and Python dependencies are prepared
+in separate candidates on the checkout's volume. Node preparation uses the exact
+package manifest and lock with normal npm install scripts, and verifies the
+locked tree and required imports before and after relocation. A refused drain
+leaves the active trees and their dependency stamps intact. Active
+`-PrepareOnly` refuses required dependency replacement before preparation effects;
+use the full guarded installation to activate it. Inactive `-DependenciesOnly`
+keeps its dependency-only behavior and refuses to replace a tree whose recorded
+installation may still be active.
+
+Node and Python candidates activate together after one verified service stop.
+The previous trees and stamps remain available until service acceptance. Recovery
+requires positive process absence and silent Router (4202) and Switchyard (4000)
+listeners; unknown or foreign ownership and inconclusive listener observations
+block restoration. If a damaged candidate is already absent, recovery restores
+the retained dependency trees before importing the service manager, without
+reinstalling them. It restores the prior running or stopped intent. A refused
+recovery stop leaves active and previous trees in place; the error reports both
+failures and the retained paths. Failed restoration or previous-service acceptance
+retains remaining recovery trees for repair.
 Service installation owns frontend readiness, so the installer does not repeat
 its liveness poll. Full provider health and Doctor remain deployment checks.
+
+Switchyard rollback metadata must describe exactly the regular managed files
+actually present in the snapshot. Consistent partial or empty snapshots preserve
+legitimate prior absence. Unsupported names, duplicates, missing or unlisted
+managed files, directories and reparse points are rejected before deployment
+effects. Restoration revalidates the frozen membership before its first mutation;
+an invalid backup remains available for inspection and repair.
 
 Restart the existing installed files only when a configuration or provider
 selection change requires it:

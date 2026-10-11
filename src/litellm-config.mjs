@@ -47,6 +47,8 @@ export function renderLiteLlmConfig() {
     // credential. This is defense in depth for CVE-2026-84377 in addition to
     // pinning LiteLLM at its fixed release.
     "  allow_client_side_credentials: false",
+    // Cancel pending provider work before the acquired-stream close hook exists.
+    "  cancel_on_disconnect: true",
     "  disable_spend_logs: true",
     "",
   );

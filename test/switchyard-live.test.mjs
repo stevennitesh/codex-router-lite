@@ -14,7 +14,8 @@ const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
 
 test("ordinary Switchyard smoke attributes phases despite concurrent foreign traffic and rejects missing or drifting own evidence", async () => {
-  for (const scenario of ["stable", "drift", "foreign-only", "missing-media", "compact-classifier"]) {
+  for (const scenario of ["stable", "drift", "foreign-only", "missing-media", "compact-classifier",
+    "known-build", "provider-canary", "unknown-provider", "unversioned-provider", "empty-build-provider"]) {
     const fixture = mkdtempSync(path.join(tmpdir(), "switchyard-smoke-"));
     const runtime = path.join(fixture, "switchyard");
     mkdirSync(runtime);
@@ -48,7 +49,10 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
           if (target) appendFileSync(routing, JSON.stringify({ ts: at, session_id: session, model: target }) + "\n");
           if (evidence) appendFileSync(log, `${at} INFO libsy.run: ${evidence} session_id="${session}" agent_id="${session}"\n`);
         };
-        const classifier = 'evidence_source="type_safe_classifier" evidence_provider_model="typesafe/jev-1.13-fixture" evidence_final_target="sol_high" evidence_probability_luna_max=0.1 evidence_probability_sol_high=0.7 evidence_probability_astra_medium=0.1 evidence_probability_astra_xhigh=0.1';
+        const provider = ({"known-build":"typesafe/jev-1.13-20260917","provider-canary":"typesafe/jev-1.13-PRIVATE_ACCOUNT_CANARY",
+          "unknown-provider":"typesafe/jev-latest-PRIVATE_ACCOUNT_CANARY","unversioned-provider":"typesafe/jev-1.13",
+          "empty-build-provider":"typesafe/jev-1.13-"})[scenario] || "typesafe/jev-1.13-fixture";
+        const classifier = `evidence_source="type_safe_classifier" evidence_provider_model="${provider}" evidence_final_target="sol_high" evidence_probability_luna_max=0.1 evidence_probability_sol_high=0.7 evidence_probability_astra_medium=0.1 evidence_probability_astra_xhigh=0.1`;
         // Foreign traffic is deliberately earlier than this request's evidence.
         observe(foreign, "switchyard/luna-max", classifier);
         const missing = scenario === "foreign-only" || (scenario === "missing-media" && media);
@@ -69,17 +73,27 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
     try {
       let code = 0;
       try {
-        await run(process.execPath, ["scripts/verify-switchyard-live.mjs", outputPath], {
+        const result = await run(process.execPath, ["scripts/verify-switchyard-live.mjs", outputPath], {
           cwd: root, windowsHide: true, timeout: 20_000,
           env: { ...process.env, CODEX_HOME: fixture, MODEL_ROUTER_STATE_DIR: fixture,
             MODEL_ROUTER_CODEX_AUTH: path.join(fixture, "auth.json"), MODEL_ROUTER_PORT: String(port) },
         });
+        assert.doesNotMatch(result.stdout,/PRIVATE_ACCOUNT_CANARY/u);
       } catch (error) { code = error.code; assert.equal(code, 1, error.stderr); }
       const evidence = JSON.parse(readFileSync(outputPath, "utf8"));
-      assert.equal(code, scenario === "stable" ? 0 : 1, JSON.stringify(evidence.requiredFailures));
-      assert.equal(evidence.ordinaryToolRoundTrip.affinityStable, ["stable", "missing-media", "compact-classifier"].includes(scenario));
+      assert.equal(code, ["stable","known-build","provider-canary"].includes(scenario) ? 0 : 1, JSON.stringify(evidence.requiredFailures));
+      assert.equal(evidence.ordinaryToolRoundTrip.affinityStable, !["drift","foreign-only"].includes(scenario));
       assert.equal(evidence.mediaFallback.fallbackObserved, !["foreign-only", "missing-media"].includes(scenario));
       assert.equal(evidence.nativeCompaction.bypassedClassifier, !["foreign-only", "compact-classifier"].includes(scenario));
+      assert.doesNotMatch(JSON.stringify(evidence),/PRIVATE_ACCOUNT_CANARY/u);
+      if (["unknown-provider","unversioned-provider","empty-build-provider"].includes(scenario)) {
+        assert.equal(evidence.classifier.pinnedClassifierBuildObserved,false);
+        assert.deepEqual(evidence.requiredFailures,["classifier binding evidence is incomplete"]);
+      }
+      if (["stable","known-build","provider-canary"].includes(scenario)) {
+        assert.equal(evidence.classifier.pinnedClassifierBuildObserved,true);
+        assert.deepEqual(evidence.classifier.providerVersions,[scenario === "known-build" ? "typesafe/jev-1.13-20260917" : "jev-1.13 build"]);
+      }
       const own = requests.filter(item => item.body.model === "switchyard/auto");
       assert.equal(own.length, 4);
       assert.equal(own[0].id, own[1].id);

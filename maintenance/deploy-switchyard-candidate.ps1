@@ -73,6 +73,9 @@ $preservedMetadata = if ($preservingRollback) {
   }
   Get-Content -Raw -LiteralPath $metadataPath -Encoding UTF8 | ConvertFrom-Json
 } else { $null }
+$preservedExisting = if ($preservingRollback) {
+  Get-ValidatedSwitchyardSnapshotMembership $preservedRollback $preservedMetadata
+} else { $null }
 $expectedRollbackCommit = if ($preservingRollback) {
   "$($preservedMetadata.previousRouterCommit)".Trim().ToLowerInvariant()
 } else { $installedRouterCommit }
@@ -308,13 +311,30 @@ function Resolve-RunningRouterRoot([string[]]$AllowedRoots) {
 }
 
 function Resolve-LiveRouterRoot([string[]]$AllowedRoots) {
+  $observations = @()
   foreach ($root in $AllowedRoots) {
     $verified = Invoke-NodeJson $repoRoot @(
       (Join-Path $repoRoot "src\service-process.mjs"), "verify", $root
     ) "Router process identity"
-    if ($verified.owned -eq $true) { return $root }
+    if ($verified.status -notin @("owned", "absent", "unknown", "foreign") -or
+        $verified.owned -isnot [bool] -or $verified.owned -ne ($verified.status -eq "owned") -or
+        ($verified.status -ne "owned" -and $null -ne $verified.sourceRoot)) {
+      throw "Router process identity returned an invalid or legacy verdict; refusing file replacement."
+    }
+    if ($verified.status -eq "owned") {
+      if (-not [string]::Equals([IO.Path]::GetFullPath("$($verified.sourceRoot)"),
+          [IO.Path]::GetFullPath($root), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Router process identity returned a mismatched owned root."
+      }
+      return $root
+    }
+    $observations += $verified.status
+  }
+  if (-not $observations.Count -or @($observations | Where-Object { $_ -ne "absent" }).Count) {
+    throw "Router process absence is not positively established; refusing file replacement."
   }
   Assert-LoopbackOffline 4202
+  Assert-LoopbackOffline 4000
   return $null
 }
 
@@ -329,9 +349,8 @@ function Stop-RouterGeneration([string]$Root) {
   if (Resolve-LiveRouterRoot @($repoRoot, $rollbackRouterRoot)) {
     throw "Router stop returned success while a managed process was still running."
   }
-  # The previous checkout may contain an older service manager. Independently
-  # require Switchyard to have exited before its locked executable is replaced.
-  Assert-LoopbackOffline 4000
+  # Resolve-LiveRouterRoot independently checks both managed listeners, even
+  # when the previous checkout contains an older service manager.
 }
 
 function Assert-RouterHealth([string]$Root, [string]$ExpectedCommit, [switch]$RecoveryPreflight) {
@@ -432,6 +451,12 @@ function Copy-RuntimeFile([string]$FromRoot, [string]$ToRoot, [string]$Name) {
 }
 
 function Restore-Switchyard([Collections.Generic.HashSet[string]]$Existing) {
+  $metadata = Get-Content -Raw -LiteralPath (Join-Path $rollbackRoot "rollback.json") -Encoding UTF8 | ConvertFrom-Json
+  $validated = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $metadata
+  if (-not $Existing.SetEquals($validated)) { throw "Switchyard recovery snapshot membership changed after preflight." }
+  # Admit every target before the first copy/delete; directories or reparse
+  # points cannot redirect restoration or turn prior absence into deletion.
+  $null = Get-SwitchyardRuntimeMembership $runtimeRoot
   foreach ($name in $runtimeFiles) {
     $target = Join-Path $runtimeRoot $name
     if ($Existing.Contains($name)) {
@@ -481,6 +506,7 @@ if ($preservingRollback) {
 } elseif ($rollbackDirectories.Count) {
   $recoveryArchive = Get-SwitchyardRecoveryArchivePlan $runtimeRoot $stateRoot $installedRouterCommit
 }
+$originalRuntimeMembers = if (-not $preservingRollback) { Get-SwitchyardRuntimeMembership $runtimeRoot } else { $null }
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") -Encoding UTF8 | ConvertFrom-Json
 $upstreamContribution = $lock.upstreamContribution
@@ -563,14 +589,11 @@ try {
   Assert-FileHash (Join-Path $stageRoot "switchyard-server.exe") $expectedBinaryHash "Staged Switchyard binary"
   Assert-FileHash (Join-Path $stageRoot "routes.toml") $expectedRoutesHash "Staged Switchyard routes"
   if ($preservingRollback) {
-    foreach ($name in @($preservedMetadata.files)) {
-      if ($runtimeFiles -notcontains $name) { throw "Preserved rollback metadata names an unsupported file: $name" }
-      if (-not (Test-Path -LiteralPath (Join-Path $rollbackRoot $name) -PathType Leaf)) {
-        throw "Preserved rollback file is missing: $name"
-      }
-      [void]$existing.Add($name)
-    }
+    $existing = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $preservedMetadata
+    if (-not $preservedExisting.SetEquals($existing)) { throw "Preserved snapshot membership changed after preflight." }
   } else {
+    $observed = Get-SwitchyardRuntimeMembership $runtimeRoot
+    if (-not $originalRuntimeMembers.SetEquals($observed)) { throw "Runtime membership changed after preflight." }
     foreach ($name in $runtimeFiles) {
       if (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) {
         [void]$existing.Add($name)
@@ -587,6 +610,7 @@ try {
       createdAt = (Get-Date).ToUniversalTime().ToString("o")
     }
     Write-DeploymentJson (Join-Path $rollbackRoot "rollback.json") $rollbackMetadata
+    $existing = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $rollbackMetadata
   }
 
   . (Join-Path $PSScriptRoot "switchyard-activation.ps1")

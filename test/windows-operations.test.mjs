@@ -181,21 +181,10 @@ test("the managed Router watches for Codex catalog authority changes", () => {
   assert.ok(packaged.files.includes("src/catalog-auto-refresh.mjs"));
 });
 
-test("Windows live dependency updates stage the Python environment and restore it on failure", () => {
-  const source = readScript("install.ps1");
-  assert.match(
-    source,
-    /Install-PythonEnvironment \$PythonCandidate[\s\S]*src\/service\.mjs stop[\s\S]*Move-Item -LiteralPath \$PythonCandidate -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
-  );
-  assert.match(
-    source,
-    /if \(\$PythonSwapStarted\)[\s\S]*Move-Item -LiteralPath \$PythonBackup -Destination \$PythonVenv[\s\S]*src\/service\.mjs install/u,
-  );
-  assert.match(source, /Assert-TransientPythonVenvPath/u);
-  assert.match(
-    source,
-    /Move-Item -LiteralPath \$PythonCandidate -Destination \$RelocatedPythonCandidate[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*--version/u,
-  );
+test("the Windows gateway launcher uses isolated Python and the supported entrypoint", () => {
+  // Installer maintenance tests execute the real combined Node/Python
+  // transaction, relocation and rollback faults. Keep this launcher contract
+  // check independent of the installer's internal variable/function layout.
   assert.match(
     readScript("src/start.mjs"),
     /Scripts",\s*"python\.exe"[\s\S]*"-I", "-X", "utf8"[\s\S]*from litellm import run_server; run_server\(\)[\s\S]*\.\.\.litellmArgs/u,

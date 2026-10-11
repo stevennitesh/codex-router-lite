@@ -641,3 +641,167 @@ test("stress: a missing lifecycle event times out without background polling", a
   );
   await setImmediate();
 });
+
+test("Router keeps original snapshots and uncertain outcomes without replay on both profiles", { timeout: 30000 }, async t => {
+  const original = message("ORIGINAL_漢🙂");
+  const completed = output => ({ type: "response.completed", response: { status: "completed", output } });
+  const cases = new Map([
+    ["generic", `event: message\ndata: ${JSON.stringify(completed([original]))}\n\n`],
+    ["done", `data: ${JSON.stringify({ ...completed([original]), type: "response.done" })}\n\n`],
+    ["failed", frame({ type: "response.completed", response: { status: "failed", error: { message: "ORIGINAL_FAILURE" }, output: [] } })],
+    ["incomplete", frame({ type: "response.completed", response: { status: "incomplete", output: [] } })],
+    ["duplicate", 'data: {"type":"response.completed","response":{"status":"failed","sta\\u0074us":"completed","output":[]}}\n\n'],
+    ["conflict", 'event: response.completed\ndata: {"type":"response.failed","response":{"status":"failed","output":[]}}\n\n'],
+    ["lossy", 'data: {"type":"response.completed","sequence_number":18446744073709551615,"response":{"status":"completed","output":[]}}\n\n'],
+    ["malformed", 'event: response.completed\ndata: {"type":"response.completed",\n\n'],
+    ["utf8", Buffer.concat([Buffer.from('data: {"type":"response.completed","response":{"status":"completed","output":[],"id":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}}\n\n')])],
+    ["empty", frame(completed([]))],
+    ["ordinary", frame(completed([original]))],
+  ]);
+  const attempts = new Map(), requests = new Map();
+  const f = await fixture(t, ({ body }, response) => {
+    const label = /VERDICT_TEST:([a-z0-9-]+)/u.exec(JSON.stringify(body.input))[1];
+    const scenario = label.split("-").at(-1);
+    const count = (attempts.get(label) || 0) + 1;
+    attempts.set(label, count);
+    requests.set(label, [...(requests.get(label) || []), body]);
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    const reasoning = label.includes("-released-") ? frame({ type: "response.reasoning_summary_text.delta", delta: "visible progress" }) : "";
+    response.end(Buffer.concat([Buffer.from(reasoning), Buffer.from(count === 1 ? cases.get(scenario)
+      : frame(completed([message("REPAIRED_CONTROL")]))), Buffer.from("data: [DONE]\n\n")]));
+  }, { CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1" });
+  for (const [profile, model] of [["direct", PARETO], ["translated", GLM]]) {
+    for (const released of [false, true]) for (const scenario of cases.keys()) {
+      const label = `${profile}-${released ? "released" : "held"}-${scenario}`;
+      const response = await f.post({ model, stream: true, input: `VERDICT_TEST:${label}` });
+      const wire = await response.text();
+      assert.equal(response.status, 200, `${label}: ${wire}`);
+      assert.equal(attempts.get(label), scenario === "empty" && !released ? 2 : 1, label);
+      if (scenario === "empty" && !released) {
+        assert.match(wire, /REPAIRED_CONTROL/u);
+        assert.deepEqual(requests.get(label)[0], requests.get(label)[1], "quiet repair preserves the provider payload");
+      } else {
+        assert.doesNotMatch(wire, /REPAIRED_CONTROL/u, label);
+        if (scenario === "empty") {
+          assert.match(wire, /empty_completion/u, "reasoning release retains the existing no-replay error");
+          assert.doesNotMatch(wire, /response\.completed/u, "empty success is held after reasoning release");
+        }
+        if (["generic", "done", "ordinary"].includes(scenario)) assert.match(wire, /ORIGINAL_漢🙂/u, label);
+        if (scenario === "failed") assert.match(wire, /ORIGINAL_FAILURE/u, label);
+      }
+    }
+  }
+  const native = await f.post({ model: "gpt-6.1-sol", stream: true, input: "VERDICT_TEST:native-generic" });
+  assert.match(await native.text(), /ORIGINAL_漢🙂/u);
+  assert.equal(attempts.get("native-generic"), 1);
+});
+
+test("compaction validates raw provider envelopes before checkpoint fallback on both profiles and versions", { timeout: 30000 }, async t => {
+  const summary = JSON.stringify([message("A completed summary may miss the checkpoint schema.")]);
+  const cases = new Map([
+    ["completed", `{"status":"completed","output":${summary}}`],
+    ["legacy", `{"output":${summary}}`],
+    ["empty", '{"status":"completed","output":[]}'],
+    ["null-status", `{"status":null,"output":${summary}}`],
+    ["boolean-status", `{"status":false,"output":${summary}}`],
+    ["object-status", `{"status":{},"output":${summary}}`],
+    ["duplicate-status", `{"status":"failed","sta\\u0074us":"completed","output":${summary}}`],
+    ["duplicate-error", `{"status":"completed","error":{"message":"failure"},"err\\u006fr":null,"output":${summary}}`],
+    ["duplicate-output", `{"status":"completed","output":[],"out\\u0070ut":${summary}}`],
+    ["lossy", `{"status":"completed","output":${summary},"usage":{"input_tokens":18446744073709551615,"output_tokens":1}}`],
+    ["malformed", '{"status":"completed","output":'],
+    ["utf8", Buffer.concat([Buffer.from('{"status":"completed","output":[],"id":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}')])],
+    ["failed", `{"status":"failed","output":${summary}}`],
+    ["incomplete", `{"status":"incomplete","output":${summary}}`],
+  ]);
+  const f = await fixture(t, ({ body }, response) => {
+    const scenario = /COMPACT_TEST:([a-z0-9-]+)/u.exec(JSON.stringify(body.input))[1];
+    assert.equal(body.stream, false);
+    assert.equal(body.tools?.length || 0, 0, "compaction remains tool-free");
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(cases.get(scenario));
+  });
+  for (const model of [PARETO, GLM]) for (const endpoint of ["responses/compact", "responses"]) {
+    for (const scenario of cases.keys()) {
+      const before = f.seen.length;
+      const input = [{ role: "user", content: `COMPACT_TEST:${scenario}` },
+        ...(endpoint === "responses" ? [{ type: "compaction_trigger" }] : [])];
+      const response = await f.post({ model, stream: false, input }, endpoint);
+      const result = await response.json();
+      const admitted = ["completed", "legacy", "empty"].includes(scenario);
+      assert.equal(response.status, admitted ? 200 : 502, `${model}/${endpoint}/${scenario}: ${JSON.stringify(result)}`);
+      assert.equal(f.seen.length, before + 1, "compaction makes one provider call");
+      if (admitted) {
+        if (endpoint === "responses") {
+          assert.equal(result.output[0].type, "compaction");
+          assert.match(result.output[0].encrypted_content, /^kcr2:/u);
+        } else assert.match(checkpointText(result), /BEGIN_CODEX_ROUTER_CHECKPOINT_V2/u,
+          "only admitted envelopes get deterministic checkpoint fallback");
+      } else {
+        assert.equal(result.error.code, scenario === "failed" ? "compaction_failed"
+          : scenario === "incomplete" ? "compaction_incomplete" : "compaction_invalid_response");
+        assert.doesNotMatch(JSON.stringify(result), /BEGIN_CODEX_ROUTER_CHECKPOINT_V2/u);
+        assert.equal(result.usage, undefined, "rejected ambiguous usage is not accepted");
+      }
+    }
+  }
+  for (const model of [PARETO, GLM]) for (const scenario of ["completed", "duplicate-status"]) {
+    const before = f.seen.length;
+    const response = await f.post({ model, stream: true, input: [
+      { role: "user", content: `COMPACT_TEST:${scenario}` }, { type: "compaction_trigger" },
+    ] });
+    const wire = await response.text();
+    assert.equal(response.status, scenario === "completed" ? 200 : 502);
+    assert.equal(f.seen.length, before + 1);
+    if (scenario === "completed") {
+      assert.match(wire, /"type":"compaction"/u);
+      assert.match(wire, /"encrypted_content":"kcr2:/u);
+      assert.match(wire, /response\.completed/u);
+    } else {
+      assert.equal(JSON.parse(wire).error.code, "compaction_invalid_response");
+      assert.doesNotMatch(wire, /kcr2:|response\.completed/u);
+    }
+  }
+});
+
+test("both GLM routes preserve visible fallback and fail after lifecycle reordering commits", { timeout: 20000 }, async t => {
+  const visible = { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "msg", delta: "VISIBLE_漢🙂" };
+  const open = { type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", role: "assistant", content: [] } };
+  const close = { type: "response.output_item.done", output_index: 0, item: message(visible.delta, "msg") };
+  const completed = { type: "response.completed", response: { id: "resp_glm", status: "completed", output: [] } };
+  const hidden = [open, visible,
+    { type: "response.content_part.done", output_index: 0, content_index: 0, item_id: "msg", part: { type: "output_text", text: "HIDDEN_FIXTURE", reasoning: "PRIVATE_FIXTURE" } },
+    { ...close, item: { ...close.item, content: [{ type: "reasoning_text", reasoning: "PRIVATE_FIXTURE" }] } }, completed].map(frame).join("");
+  const held = [
+    { type: "response.output_item.added", output_index: 1, item: { id: "fc", type: "function_call", call_id: "call", name: "lookup", arguments: "" } },
+    { type: "response.function_call_arguments.done", output_index: 1, item_id: "fc", call_id: "call", name: "lookup", arguments: "{}" },
+    { type: "response.output_item.done", output_index: 1, item: { id: "fc", type: "function_call", call_id: "call", name: "lookup", arguments: "{}" } },
+  ];
+  const ambiguous = 'data: {"type":"response.output_text.delta","item_id":"late","delta":"A","delt\\u0061":"B"}\n\n';
+  const reordered = [open, visible, ...held, close].map(frame).join("") + ambiguous + frame(completed);
+  const f = await fixture(t, ({ body }, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(JSON.stringify(body.input).includes("GLM_TEST:hidden") ? hidden : reordered);
+  }, { CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1" });
+  for (const model of [GLM, GLM_TOGETHER]) for (const scenario of ["hidden", "order"]) {
+    const before = f.seen.length;
+    const response = await f.post({ model, stream: true, input: `GLM_TEST:${scenario}`,
+      tools: [{ type: "function", name: "lookup", parameters: { type: "object" } }] });
+    const wire = await response.text();
+    assert.equal(response.status, 200);
+    assert.equal(f.seen.length, before + 1, `${model}/${scenario} never replays`);
+    assert.match(wire, /VISIBLE_漢🙂/u);
+    if (scenario === "hidden") {
+      assert.doesNotMatch(wire, /HIDDEN_FIXTURE|PRIVATE_FIXTURE/u);
+      const done = eventsFrom(wire).find(event => event.type === "response.output_item.done");
+      assert.equal(done.item.content[0].text, visible.delta);
+      assert.equal(done.item.phase, "final_answer");
+    } else {
+      assert.match(wire, /local_router_stream_failed/u);
+      assert.doesNotMatch(wire, /response\.completed/u);
+      assert.ok(!wire.includes(ambiguous), "unsafe tail is not forwarded after order repair");
+      assert.deepEqual(eventsFrom(wire).filter(event => event.output_index !== undefined).slice(0, 6)
+        .map(event => event.output_index), [0, 0, 0, 1, 1, 1]);
+    }
+  }
+});

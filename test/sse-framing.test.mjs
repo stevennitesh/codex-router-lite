@@ -47,3 +47,52 @@ test("frame and line ceilings reject coalesced and fragmented input equally", ()
   const frames = new SseFrameBuffer({ maxLineBytes: 3 });
   assert.throws(() => [...frames.write(Buffer.from('abcd'))], /line exceeds 3/u);
 });
+
+test("raw frame ceiling counts split final CRLF across every byte partition", () => {
+  const wire = Buffer.from('data: 1\r\n\r\n');
+  assert.equal(wire.length, 11);
+  // Enumerate every subset of the ten byte boundaries, independently of the
+  // scanner's line tokens. A frame's raw size cannot depend on that partition.
+  for (let mask = 0; mask < 2 ** (wire.length - 1); mask += 1) {
+    const chunks = [];
+    let start = 0;
+    for (let index = 1; index < wire.length; index += 1) {
+      if (mask & (1 << (index - 1))) {
+        chunks.push(wire.subarray(start, index));
+        start = index;
+      }
+    }
+    chunks.push(wire.subarray(start));
+    const exact = new SseFrameBuffer({ maxFrameBytes: 11, maxLineBytes: 7 });
+    const emitted = chunks.flatMap(chunk => [...exact.write(chunk)].map(frame => frame.bytes));
+    assert.deepEqual(Buffer.concat(emitted), wire, `exact limit, partition ${mask}`);
+    assert.equal(exact.pendingBytes, 0);
+    const over = new SseFrameBuffer({ maxFrameBytes: 10, maxLineBytes: 7 });
+    assert.throws(() => { for (const chunk of chunks) [...over.write(chunk)]; },
+      { code: "SSE_FRAME_LIMIT" }, `over limit, partition ${mask}`);
+  }
+});
+
+test("frame ceilings reset after continuations and preserve immediate bare-CR dispatch", () => {
+  const crlf = Buffer.from('data: 1\r\n\r\n');
+  const bounded = new SseFrameBuffer({ maxFrameBytes: 11, maxLineBytes: 7 });
+  const initial = [...bounded.write(crlf.subarray(0, -1))];
+  assert.equal(initial.length, 1);
+  assert.equal(initial[0].continuation, false);
+  assert.deepEqual(initial[0].bytes, crlf.subarray(0, -1));
+  assert.equal(bounded.pendingBytes, 0, "bare CR dispatch is immediate");
+  const next = [...bounded.write(Buffer.concat([Buffer.from('\n'), crlf, crlf]))];
+  assert.deepEqual(next.map(frame => frame.continuation), [true, false, false]);
+  assert.deepEqual(Buffer.concat([...initial, ...next].map(frame => frame.bytes)),
+    Buffer.concat([crlf, crlf, crlf]));
+
+  const bare = new SseFrameBuffer({ maxFrameBytes: 9, maxLineBytes: 7 });
+  const bareFrame = Buffer.from('data: 1\r\r');
+  assert.deepEqual([...bare.write(bareFrame)].map(frame => frame.bytes), [bareFrame]);
+  const lfFrame = Buffer.from('data: 2\n\n');
+  assert.deepEqual([...bare.write(lfFrame)].map(frame => frame.bytes), [lfFrame]);
+
+  const over = new SseFrameBuffer({ maxFrameBytes: 10 });
+  assert.equal([...over.write(crlf.subarray(0, -1))].length, 1);
+  assert.throws(() => [...over.write(Buffer.from('\n'))], { code: "SSE_FRAME_LIMIT" });
+});

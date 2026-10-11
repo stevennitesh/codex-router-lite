@@ -146,9 +146,12 @@ export class SwitchyardNativeAttemptObserver {
     };
     if (association) {
       if (association.active.size) {
+        const orderedActive = [...association.active].find(active => active.ordered);
+        const invalidatedRequest = Number.isSafeInteger(orderedActive?.requestOrdinal) && orderedActive.requestOrdinal > 0
+          ? orderedActive.requestOrdinal : null;
         for (const active of association.active) active.ordered = false;
         context.ordered = false;
-        this.#write({ event: "association_reset", association: association.ordinal, reason: "overlap" });
+        this.#write({ event: "association_reset", association: association.ordinal, reason: "overlap", invalidatedRequest });
       }
       association.active.add(context);
     }

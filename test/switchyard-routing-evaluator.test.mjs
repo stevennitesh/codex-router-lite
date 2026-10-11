@@ -224,6 +224,49 @@ test("expected zero-call fallbacks enforce Sol High independently of quality sco
   }
 });
 
+test("media fallback follows the latest genuine explicit user task without changing input", async () => {
+  const message = content => ({ type: "message", role: "user", content });
+  const media = message([{ type: "input_image", image_url: "data:image/png;base64,AA==" }]);
+  const text = message([{ type: "input_text", text: "Current text task." }]);
+  const blank = message([{ type: "input_text", text: "  \n\t" }]);
+  const body = { decision_evidence: { source: "fail_open", reason_code: "non_text_state", final_target: "sol_high" } };
+  const corpus = JSON.parse(readFileSync(path.join(root, "docs/switchyard-routing-corpus.json"), "utf8"));
+  assertCorpus(corpus, { requireFidelity: true });
+  const authored = corpus.fidelity.filter(sample => /^F(?:09|10|11)-/u.test(sample.id));
+  assert.equal(authored.length, 3);
+  for (const [input, expected] of [
+    [[media], true], [[media, message([])], true], [[media, blank], true],
+    [[text, media, message([]), blank], true], [[media, text, blank], false],
+    [[message([]), blank], false],
+    ...authored.map(sample => [sample.input, sample.expectedZeroCalls === true]),
+  ]) {
+    const sample = { id: "media-control", input, expected: "sol_high", acceptable: ["sol_high"], severity: "normal" };
+    let sent, calls = 0;
+    const request = requestVector("http://local", "synthetic", sample, 1, {
+      fetchImpl: async (_url, options) => {
+        calls++;
+        sent = JSON.parse(options.body).request.input;
+        return new Response(JSON.stringify(body));
+      },
+    });
+    if (expected) {
+      const { vector } = await request;
+      assert.equal(vector.measurementKind, "local_fallback");
+      const diagnostics = routingDiagnostics([sample], [vector], 0.35);
+      assert.equal(diagnostics.currentPolicy.classifierMeasured, 0);
+      assert.equal(diagnostics.probabilities.multiclassBrierExact, null);
+    } else {
+      await assert.rejects(request, /unexpected local fallback/u);
+      const measured = await requestVector("http://local", "synthetic", sample, 0, {
+        fetchImpl: async () => new Response(JSON.stringify(decisionBody())),
+      });
+      assert.equal(measured.vector.measurementKind, "classifier");
+    }
+    assert.equal(calls, 1);
+    assert.deepEqual(sent, input);
+  }
+});
+
 test("runtime parity, provider stability, and promotion gates are behavioral", () => {
   const vector = {
     id: "B1",

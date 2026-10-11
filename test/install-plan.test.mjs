@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { pythonLockDrift, pythonRequirements, recordStep, stepStatus } from "../src/install-plan.mjs";
+import { pythonLockDrift, pythonRequirements, recordStep, stepStatus, verifyNodeDependencies } from "../src/install-plan.mjs";
 
 function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), "router-install-plan-"));
@@ -77,4 +77,43 @@ test("regenerating an exact lock cannot bypass the gateway security floor or req
     writeFileSync(path.join(f.requirements, "python.in"), "litellm[proxy]>=1.104.0\nfastapi==0.141.1\n");
     assert.throws(() => pythonRequirements(f.root), /exact direct requirement pins/u);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+function nodeFixture() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "router-node-plan-"));
+  const dependency = path.join(root, "node_modules/fixture-dependency");
+  mkdirSync(dependency, { recursive: true });
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture", dependencies: { "fixture-dependency": "1.0.0" } }));
+  writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {
+    "": { name: "fixture" }, "node_modules/fixture-dependency": { version: "1.0.0" },
+  } }));
+  writeFileSync(path.join(root, "node_modules/.package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "node_modules/fixture-dependency": { version: "1.0.0" } } }));
+  writeFileSync(path.join(dependency, "package.json"), JSON.stringify({ name: "fixture-dependency", version: "1.0.0", main: "index.cjs" }));
+  writeFileSync(path.join(dependency, "index.cjs"), "module.exports = {ready:true};");
+  return { root, dependency };
+}
+test("Node stamp requires exact package inputs and a complete usable locked tree", () => {
+  const f = nodeFixture();
+  try {
+    assert.equal(verifyNodeDependencies(f.root), true);
+    recordStep("node-deps", { root: f.root });
+    assert.equal(stepStatus("node-deps", { root: f.root }), "skip");
+    writeFileSync(path.join(f.root, "package.json"), readFileSync(path.join(f.root, "package.json"), "utf8") + "\n");
+    assert.equal(stepStatus("node-deps", { root: f.root }), "run", "package input belongs to the stamp");
+    recordStep("node-deps", { root: f.root });
+    rmSync(path.join(f.dependency, "package.json"));
+    assert.equal(stepStatus("node-deps", { root: f.root }), "run");
+    assert.throws(() => recordStep("node-deps", { root: f.root }));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+test("Node verifier refuses desired-input mismatch, omitted dependencies and broken imports", () => {
+  for (const scenario of ["input", "hidden", "import"]) {
+    const f = nodeFixture(), desired = nodeFixture();
+    try {
+      if (scenario === "input") writeFileSync(path.join(f.root, "package.json"), "{\"name\":\"wrong\"}");
+      if (scenario === "hidden") writeFileSync(path.join(f.root, "node_modules/.package-lock.json"), JSON.stringify({ packages: {} }));
+      if (scenario === "import") writeFileSync(path.join(f.dependency, "index.cjs"), "throw new Error('fixture broken import');");
+      assert.throws(() => verifyNodeDependencies(f.root, desired.root), scenario === "input" ? /desired checkout inputs/u : scenario === "hidden" ? /missing or mismatched/u : /broken import/u);
+    } finally { rmSync(f.root, { recursive: true, force: true }); rmSync(desired.root, { recursive: true, force: true }); }
+  }
 });

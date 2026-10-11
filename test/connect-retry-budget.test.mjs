@@ -10,6 +10,11 @@ class FakeAgent {
     this.options = options;
     this.kind = "direct";
   }
+
+  dispatch(_options, handler) {
+    handler.selected(this);
+    return true;
+  }
 }
 
 class FakeProxyAgent extends FakeAgent {
@@ -42,6 +47,12 @@ function connectTimeoutError() {
   return error;
 }
 
+function selected(dispatcher, origin) {
+  let agent;
+  dispatcher.dispatch({ origin }, { selected(value) { agent = value; } });
+  return agent;
+}
+
 test("connect timeout is explicit, overridable, and clamped", () => {
   assert.equal(connectTimeoutMs({}), 3_000);
   assert.equal(connectTimeoutMs({ CODEX_ROUTER_CONNECT_TIMEOUT_MS: "1200" }), 1_200);
@@ -61,11 +72,12 @@ test("direct and opted-in proxy dispatchers share the bounded connect policy", (
     autoSelectFamilyAttemptTimeout: 250,
   });
 
-  const proxy = install({
+  const routed = install({
     NODE_USE_ENV_PROXY: "1",
     HTTPS_PROXY: "http://proxy.invalid:8080",
     CODEX_ROUTER_CONNECT_TIMEOUT_MS: "1500",
   });
+  const proxy = selected(routed, "https://upstream.invalid");
   assert.equal(proxy.kind, "proxy");
   assert.deepEqual(proxy.options, {
     allowH2: false,
@@ -74,6 +86,8 @@ test("direct and opted-in proxy dispatchers share the bounded connect policy", (
     autoSelectFamily: true,
     autoSelectFamilyAttemptTimeout: 250,
   });
+  assert.equal(selected(routed, "http://127.0.0.1").kind, "direct");
+  assert.deepEqual(selected(routed, "http://127.0.0.1").options, proxy.options);
 });
 
 test("default retry budget can afford both bounded connect retries", async () => {

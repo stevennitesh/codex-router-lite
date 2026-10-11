@@ -112,3 +112,133 @@ print('acquired SDK streams closed once; active cancellation shielded; upstream 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /no provider requests/u);
 });
+
+test("private gateway schema hook preserves sync/async declarations and delegates foreign endpoints", {
+  skip: python ? false : "supply the hash-locked gateway interpreter with MODEL_ROUTER_TEST_LITELLM_PYTHON",
+  timeout: 60000,
+}, () => {
+  const script = String.raw`
+import asyncio, copy, importlib.util, os, sys
+os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+os.environ['LITELLM_TELEMETRY'] = 'False'
+trusted = 'http://127.0.0.1:32123/v1'
+os.environ['CODEX_ROUTER_API_FORWARD_BASE_URL'] = trusted
+from litellm.llms.openai.chat.gpt_transformation import OpenAIGPTConfig
+original = OpenAIGPTConfig._sanitized_tools_update_for_openai
+spec = importlib.util.spec_from_file_location('router_cleanup', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+config = OpenAIGPTConfig()
+pattern = '^(?<word>[a-z]+)$'
+schema = {'type': 'object', '$defs': {'word': {'type': 'string', 'pattern': pattern}},
+    'properties': {'word': {'$ref': '#/$defs/word'}, 'plain': {'type': 'string', 'pattern': '^[a-z]+$'}},
+    'patternProperties': {pattern: {'type': 'string', 'pattern': pattern}},
+    'anyOf': [{'required': ['word']}, {'required': ['plain']}],
+    'required': ['word'], 'additionalProperties': False}
+tools = [{'type': 'function', 'function': {'name': 'match_word', 'strict': True, 'parameters': schema}}]
+before = copy.deepcopy(tools)
+params = {'custom_llm_provider': 'openai', 'api_base': trusted}
+
+async def main():
+    for asynchronous in [False, True]:
+        kwargs = {'model': 'offline-fixture', 'messages': [{'role': 'user', 'content': 'synthetic'}],
+            'optional_params': {'tools': copy.deepcopy(tools)}, 'litellm_params': params, 'headers': {}}
+        result = await config.async_transform_request(**kwargs) if asynchronous else config.transform_request(**kwargs)
+        assert result['tools'] == tools
+        assert tools == before
+    # Compare delegation against the captured actual pinned method, not a
+    # reconstructed Python-regex approximation.
+    for base in [None, '', trusted + '/', trusted + '/extra', trusted + '?spoof=1',
+            'http://127.0.0.1:32124/v1', 'http://localhost:32123/v1',
+            'http://127.0.0.1:32123@foreign.invalid/v1', 'https://api.openai.com/v1', 'http://foreign.invalid/v1']:
+        foreign = {'custom_llm_provider': 'openai', 'api_base': base}
+        expected = original(config, {'tools': copy.deepcopy(tools)}, foreign)
+        actual = config._sanitized_tools_update_for_openai({'tools': copy.deepcopy(tools)}, foreign)
+        assert actual == expected, base
+        assert 'pattern' not in actual['tools'][0]['function']['parameters']['$defs']['word']
+    for provider in ['anthropic', 'openrouter', None]:
+        foreign = {'custom_llm_provider': provider, 'api_base': trusted}
+        assert config._sanitized_tools_update_for_openai({'tools': tools}, foreign) == original(config, {'tools': tools}, foreign)
+    installed = OpenAIGPTConfig._sanitized_tools_update_for_openai
+    assert module.install_private_schema_preservation() is False
+    assert OpenAIGPTConfig._sanitized_tools_update_for_openai is installed
+    # Environment drift after installation cannot broaden the frozen boundary.
+    os.environ['CODEX_ROUTER_API_FORWARD_BASE_URL'] = 'http://foreign.invalid/v1'
+    assert config._sanitized_tools_update_for_openai({'tools': tools}, params) == {}
+    foreign = {'custom_llm_provider': 'openai', 'api_base': os.environ['CODEX_ROUTER_API_FORWARD_BASE_URL']}
+    assert config._sanitized_tools_update_for_openai({'tools': tools}, foreign) == original(config, {'tools': tools}, foreign)
+    try:
+        for invalid in ['', 'https://api.openai.com/v1', 'http://foreign.invalid/v1',
+                'http://127.0.0.1:32123@foreign.invalid/v1', trusted + '?spoof=1', trusted + '/',
+                'http://127.0.0.1:bad/v1', 'http://127.0.0.1:032123/v1', trusted + '\r\n', '\t' + trusted]:
+            OpenAIGPTConfig._sanitized_tools_update_for_openai = original
+            os.environ['CODEX_ROUTER_API_FORWARD_BASE_URL'] = invalid
+            assert module.install_private_schema_preservation() is False, invalid
+            assert OpenAIGPTConfig._sanitized_tools_update_for_openai is original
+    finally:
+        OpenAIGPTConfig._sanitized_tools_update_for_openai = installed
+    assert tools == before
+asyncio.run(main())
+print('trusted sync/async schemas preserved; foreign/hosted/spoofed bases delegated; no provider requests')
+`;
+  const result = spawnSync(python, ["-I", "-B", "-c", script, path.join(root, "src/litellm_stream_cleanup_callback.py")], {
+    encoding: "utf8", windowsHide: true, timeout: 45000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /no provider requests/u);
+});
+
+test("pinned disconnect monitor cancels pending work and retires normal/error receive tasks", {
+  skip: python ? false : "supply the hash-locked gateway interpreter with MODEL_ROUTER_TEST_LITELLM_PYTHON",
+  timeout: 60000,
+}, () => {
+  const script = String.raw`
+import asyncio, os
+from types import SimpleNamespace
+os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+os.environ['LITELLM_TELEMETRY'] = 'False'
+from fastapi import HTTPException
+from litellm.proxy.common_request_processing import _await_llm_call_cancelling_on_disconnect as await_call
+
+async def main():
+    started, stopped = asyncio.Event(), asyncio.Event()
+    async def receive():
+        started.set()
+        try: await asyncio.Event().wait()
+        finally: stopped.set()
+    async def completes():
+        await started.wait()
+        return 'completed'
+    assert await await_call(SimpleNamespace(receive=receive), asyncio.create_task(completes())) == 'completed'
+    await asyncio.wait_for(stopped.wait(), 1)
+    async def disconnect(): return {'type': 'http.disconnect'}
+    pending = asyncio.create_task(asyncio.Event().wait())
+    try:
+        await await_call(SimpleNamespace(receive=disconnect), pending)
+        raise AssertionError('disconnect must cancel pending work')
+    except HTTPException as error:
+        assert error.status_code == 499
+    assert pending.cancelled()
+    # A receive failure must not manufacture caller cancellation. Its monitor
+    # exits while the normal result remains authoritative.
+    received = asyncio.Event()
+    async def broken_receive():
+        received.set()
+        raise RuntimeError('synthetic receive failure')
+    async def completes_after_receive():
+        await received.wait()
+        return 'completed after receive failure'
+    assert await await_call(SimpleNamespace(receive=broken_receive), asyncio.create_task(completes_after_receive())) == 'completed after receive failure'
+    await asyncio.sleep(0)
+    assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task() and not task.done()]
+asyncio.run(main())
+print('pending work cancelled; normal/error receive monitors retired; no provider requests')
+`;
+  const result = spawnSync(python, ["-I", "-B", "-c", script], {
+    encoding: "utf8", windowsHide: true, timeout: 45000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /no provider requests/u);
+});

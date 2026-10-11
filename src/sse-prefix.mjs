@@ -1,5 +1,5 @@
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
-const SSE_FIELD = /^(?:event|data|id|retry)(?::.*)?$/;
+const SSE_FIELD = /^(?:event|data|id|retry)(?::[^\r\n]*)?$/;
 const SSE_FIELDS = ["event", "data", "id", "retry"];
 
 export const HEADERLESS_SSE_SNIFF_BYTES = 512;

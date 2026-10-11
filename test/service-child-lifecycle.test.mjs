@@ -25,8 +25,13 @@ test("ordinary startup reaps batch descendants before retrying the optional gate
   writeFileSync(health, `import {readFileSync} from 'node:fs';import {waitForHealth as real} from ${JSON.stringify(pathToFileURL(path.join(root,'src/health-probe.mjs')).href)};let calls=0;
 export async function waitForHealth(options){if(options.label!=='LiteLLM gateway')return real(options);calls++;const deadline=Date.now()+3000;while(readFileSync(${JSON.stringify(trace)},'utf8').trim().split(/\\r?\\n/u).filter(Boolean).length<calls){if(Date.now()>deadline)throw new Error('fixture descendant never started');await new Promise(r=>setTimeout(r,10));}throw new Error('intentional bounded gateway health refusal');}`);
   writeFileSync(loader, `export async function resolve(s,c,n){const found=await n(s,c);if(c.parentURL===${JSON.stringify(pathToFileURL(path.join(root,'src/start.mjs')).href)}&&found.url===${JSON.stringify(pathToFileURL(path.join(root,'src/health-probe.mjs')).href)})return{url:${JSON.stringify(pathToFileURL(health).href)},shortCircuit:true};return found;}`);
+  // Ordinary startup immediately starts its catalog watcher. Keep that unrelated
+  // watcher on this fixture's signed-out CLI instead of discovering installed Codex.
+  const codex = path.join(directory, "codex.cmd"), codexScript = path.join(directory, "codex.mjs");
+  writeFileSync(codexScript, `const args=process.argv.slice(2).join(' ');if(args==='--version')console.log('codex-cli 0.153.0');else if(args==='login status'){console.error('Not logged in');process.exitCode=1;}else if(args==='debug models --bundled')console.log(JSON.stringify({models:[]}));else process.exitCode=2;`);
+  writeFileSync(codex, `@echo off\r\n"${process.execPath}" "${codexScript}" %*\r\n`);
   const [gatewayPort, apiPort, routerPort] = await Promise.all([openPort(), openPort(), openPort()]);
-  const env = { ...process.env, CODEX_HOME: path.join(directory, "codex"), MODEL_ROUTER_STATE_DIR: state,
+  const env = { ...process.env, CODEX_BIN: codex, CODEX_HOME: path.join(directory, "codex"), MODEL_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_STATE_DIR: state, MODEL_ROUTER_LITELLM_BIN: wrapper, OPENROUTER_API_KEY: "",
     MODEL_ROUTER_GATEWAY_PORT: String(gatewayPort), MODEL_ROUTER_API_PORT: String(apiPort), MODEL_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_GATEWAY_RESTARTS: "1", CODEX_ROUTER_GATEWAY_RESTART_BACKOFF_MS: "0", CODEX_ROUTER_CATALOG_REFRESH_MS: "600000" };

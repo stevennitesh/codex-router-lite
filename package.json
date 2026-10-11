@@ -17,7 +17,6 @@
     "test:stress": "node --test test/router-stress.test.mjs"
   },
   "dependencies": {
-    "proper-lockfile": "4.1.2",
     "undici": "8.11.2"
   }
 }

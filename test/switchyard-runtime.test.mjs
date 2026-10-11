@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +23,49 @@ import { validateV2AgentApplications } from "../scripts/check-v2-agent-applicati
 import { PROVIDERS, resolveProviderBaseUrl } from "../src/routed-models.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("Switchyard validates effective target values through materialization, ignoring inert examples", t => {
+  const template = readFileSync(path.join(root, "config/switchyard/routes.template.toml"), "utf8");
+  const model = readSwitchyardConfigContract(root).routeModel;
+  const fixture = mkdtempSync(path.join(tmpdir(), "switchyard-effective-contract-"));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  for (const directory of ["src", "scripts", "config/switchyard"]) mkdirSync(path.join(fixture, directory), { recursive: true });
+  for (const file of ["src/toml-structure.mjs", "scripts/switchyard-config-contract.mjs", "scripts/materialize-switchyard-routes.mjs", "config/switchyard/auto.json"]) {
+    copyFileSync(path.join(root, file), path.join(fixture, file));
+  }
+  const candidates = '["luna_max", "sol_high", "astra_medium", "astra_xhigh"]';
+  const variants = [
+    [true, template],
+    [true, template.replace('[targets.sol_high]', '["targets"."sol_high"]')
+      .replace('body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }',
+        '"body_overrides" = { store = false, stream = true, "reasoning" = { "ef\\u0066ort" = \'high\' } }')
+      .replace(`candidates = ${candidates}`, 'candidates = [\n"luna_max", # active array comment\n"sol_high", "astra_medium", "astra_xhigh",\n]')],
+    [false, template.replace('id = "gpt-6.1-sol"', 'description = """\nid = "gpt-6.1-sol"\n"""\nid = "gpt-6-astra"')],
+    [false, template.replace('body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }',
+      '# body_overrides = { reasoning = { effort = "high" } }\nbody_overrides = { store = false, stream = true, reasoning = { effort = "low" } }')],
+    [false, template.replace(`candidates = ${candidates}`, `description = '''\ncandidates = ${candidates}\n'''\ncandidates = ["sol_high"]`)],
+    [false, template.replace('reasoning = { effort = "high" }', 'reasoning = { effort = "high", effort = "low" }')],
+    [false, template.replace('reasoning = { effort = "high" }', 'reasoning.effort = "high"')],
+    [false, template.replace('[targets.sol_high]', '[targets.sol_high]\n[targets.sol_high]')],
+    [false, template.replace('[targets.sol_high]', '[[targets.sol_high]]')],
+    [false, template.replace(`candidates = ${candidates}`, 'candidates = ["luna_max", "sol_high", "astra_medium", "astra_medium"]')],
+  ];
+  for (const [accepted, source] of variants) {
+    const validate = () => validateSwitchyardConfigContract(parseSwitchyardConfigContract(source, model));
+    if (accepted) assert.doesNotThrow(validate);
+    else assert.throws(validate);
+    writeFileSync(path.join(fixture, "config/switchyard/routes.template.toml"), source);
+    const output = path.join(fixture, "routes.toml");
+    rmSync(output, { force: true });
+    const result = spawnSync(process.execPath, [path.join(fixture, "scripts/materialize-switchyard-routes.mjs"),
+      output, "http://127.0.0.1:4202/v1"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    assert.ifError(result.error);
+    assert.equal(result.status === 0, accepted, result.stderr);
+    assert.equal(existsSync(output), accepted, "rejected effective policy cannot publish routes");
+    if (accepted) assert.equal(readFileSync(output, "utf8"), source.replace(/\r\n/gu, "\n")
+      .replace("__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__", "http://127.0.0.1:4202/v1"));
+  }
+});
 
 test("Switchyard numeric contract reads whole active decimal values and refuses disguised limits", () => {
   const template = readFileSync(path.join(root, "config/switchyard/routes.template.toml"), "utf8");
@@ -347,7 +391,7 @@ test("Switchyard keeps one maintained routing evaluator over the actual decision
   assert.equal(corpus.gates.maximumRetriesPerRequest, 1);
   assert.equal(corpus.gates.minimumAcceptablePerSplit, 17);
   assert.equal(corpus.gates.maximumSevereUnderRoutes, 0);
-  assert.equal(corpus.fidelity.length, 8);
+  assert.equal(corpus.fidelity.length, 11);
   assert.match(evaluator, /fetchImpl\(`\$\{base\}\/v1\/decision`/u);
   assert.match(evaluator, /request:\s*\{[\s\S]{0,160}model: "switchyard-auto",[\s\S]{0,160}input: item\.input/u);
   assert.doesNotMatch(evaluator, /fetch\("https:\/\/openrouter\.ai/u);

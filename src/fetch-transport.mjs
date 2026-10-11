@@ -1,4 +1,5 @@
-import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, setGlobalDispatcher } from "undici";
+import { isIP } from "node:net";
+import { Agent, Dispatcher, EnvHttpProxyAgent, fetch as undiciFetch, setGlobalDispatcher } from "undici";
 
 import { connectTimeoutMs } from "./connect-timeout.mjs";
 import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
@@ -34,6 +35,57 @@ function fetchDispatcherOptions(environment = process.env) {
   };
 }
 
+function isLoopbackOrigin(origin) {
+  const { hostname } = new URL(origin);
+  return hostname === "localhost" || hostname === "[::1]" ||
+    (isIP(hostname) === 4 && hostname.startsWith("127."));
+}
+
+// Private Router, gateway and forwarder hops carry credentials and request
+// bodies. Their literal loopback destinations must never depend on NO_PROXY.
+// Leave every other origin with Undici's existing environment proxy policy;
+// do not resolve names or expand this boundary to private networks or aliases.
+class LoopbackIsolatingDispatcher extends Dispatcher {
+  #direct;
+  #external;
+
+  constructor(direct, external) {
+    super();
+    this.#direct = direct;
+    this.#external = external;
+  }
+
+  dispatch(options, handler) {
+    const dispatcher = isLoopbackOrigin(options.origin) ? this.#direct : this.#external;
+    return dispatcher.dispatch(options, handler);
+  }
+
+  get closed() { return this.#direct.closed && this.#external.closed; }
+  get destroyed() { return this.#direct.destroyed && this.#external.destroyed; }
+  get webSocketOptions() { return this.#external.webSocketOptions; }
+  get eventSourceOptions() { return this.#external.eventSourceOptions; }
+
+  close(callback) {
+    return this.#finish("close", undefined, callback);
+  }
+
+  destroy(error, callback) {
+    if (typeof error === "function") { callback = error; error = undefined; }
+    return this.#finish("destroy", error, callback);
+  }
+
+  #finish(method, error, callback) {
+    if (callback !== undefined && typeof callback !== "function") throw new TypeError("invalid callback");
+    const done = Promise.allSettled([this.#direct, this.#external].map(dispatcher =>
+      Promise.resolve().then(() => dispatcher[method](error)))).then(results => {
+      const failure = results.find(result => result.status === "rejected");
+      if (failure) throw failure.reason;
+    });
+    if (callback) { done.then(() => callback(null), callback); return; }
+    return done;
+  }
+}
+
 export function installStableFetchTransport({
   AgentClass = Agent,
   EnvHttpProxyAgentClass = EnvHttpProxyAgent,
@@ -41,10 +93,11 @@ export function installStableFetchTransport({
   environment = process.env,
   execArgv = process.execArgv,
 } = {}) {
-  const DispatcherClass = environmentHttpProxyConfigured(environment, execArgv)
-    ? EnvHttpProxyAgentClass
-    : AgentClass;
-  const dispatcher = new DispatcherClass(fetchDispatcherOptions(environment));
+  const options = fetchDispatcherOptions(environment);
+  const direct = new AgentClass(options);
+  const dispatcher = environmentHttpProxyConfigured(environment, execArgv)
+    ? new LoopbackIsolatingDispatcher(direct, new EnvHttpProxyAgentClass(options))
+    : direct;
   setDispatcher(dispatcher);
   return dispatcher;
 }
@@ -59,15 +112,9 @@ export function installStableFetchTransport({
 // probe looks unreachable, and `/health` stays 503 until startup gives up.
 function createLoopbackProbeDispatcher({
   AgentClass = Agent,
-  EnvHttpProxyAgentClass = EnvHttpProxyAgent,
-  environment = process.env,
-  execArgv = process.execArgv,
   timeoutMs = 3_000,
 } = {}) {
-  const DispatcherClass = environmentHttpProxyConfigured(environment, execArgv)
-    ? EnvHttpProxyAgentClass
-    : AgentClass;
-  return new DispatcherClass({
+  return new AgentClass({
     allowH2: false,
     pipelining: 1,
     keepAliveTimeout: 10_000,
@@ -88,5 +135,6 @@ function loopbackProbeDispatcher() {
 }
 
 export function loopbackProbeFetch(url, init = {}, dispatcher = loopbackProbeDispatcher()) {
+  if (!isLoopbackOrigin(url)) throw new TypeError("Health probes require a literal loopback origin.");
   return undiciFetch(url, { ...init, dispatcher });
 }

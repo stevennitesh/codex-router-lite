@@ -67,6 +67,8 @@ function sanitizeMessageItem(item, fallbackText = "") {
 export class ZaiResponsesCompatTransform extends Transform {
   #frames;
   #heldOutputItems = new Map();
+  #heldBlockOrder = new Map();
+  #nextBlockOrder = 0;
   #heldBytes = 0;
   #lastHeldBlock;
   #maxHeldBytes;
@@ -139,25 +141,32 @@ export class ZaiResponsesCompatTransform extends Transform {
       throw new Error(`GLM response became unsafe after compatibility repair (${reason}).`);
     }
     this.#disabled = true;
-    this.#flushHeldOutputItems();
+    this.#flushHeldOutputItems(true);
     this.#message = undefined;
     if (bytes) this.#pushBlock(bytes);
   }
 
-  #pushBlock(block) {
+  #pushBlock(block, order) {
+    const oldestHeld = this.#heldBlockOrder.keys().next().value;
+    if (order !== undefined && oldestHeld !== undefined && oldestHeld < order) {
+      // Once emitted bytes pass an earlier held frame, raw fallback can no
+      // longer preserve the provider's original lifecycle order.
+      this.#committed = true;
+    }
     this.#lastHeldBlock = undefined;
     this.push(typeof block === "string" ? Buffer.from(block) : block);
   }
 
   #emitLifecycleBlock(piece, separator) {
     const block = Buffer.from(`${piece.block}${separator}`);
+    const order = this.#nextBlockOrder++;
     const event = piece.parsed.event;
     const type = event?.type;
     const terminal = ["response.completed", "response.done"].includes(type) ||
       piece.parsed.done;
     if (terminal) {
       this.#flushHeldOutputItems();
-      this.#pushBlock(block);
+      this.#pushBlock(block, order);
       return;
     }
 
@@ -165,16 +174,16 @@ export class ZaiResponsesCompatTransform extends Transform {
       ? event.output_index
       : undefined;
     if (outputIndex === undefined) {
-      this.#pushBlock(block);
+      this.#pushBlock(block, order);
       return;
     }
     if (this.#openOutputIndex === undefined) {
-      this.#pushBlock(block);
+      this.#pushBlock(block, order);
       if (type === "response.output_item.added") this.#openOutputIndex = outputIndex;
       return;
     }
     if (outputIndex === this.#openOutputIndex) {
-      this.#pushBlock(block);
+      this.#pushBlock(block, order);
       if (type === "response.output_item.done") {
         this.#openOutputIndex = undefined;
         this.#pendingDrain = true;
@@ -191,8 +200,9 @@ export class ZaiResponsesCompatTransform extends Transform {
       group = { outputIndex, blocks: [] };
       this.#heldOutputItems.set(outputIndex, group);
     }
-    this.#lastHeldBlock = { block, type };
+    this.#lastHeldBlock = { block, type, order };
     group.blocks.push(this.#lastHeldBlock);
+    this.#heldBlockOrder.set(order, this.#lastHeldBlock);
     this.#heldBytes += block.length;
   }
 
@@ -212,9 +222,10 @@ export class ZaiResponsesCompatTransform extends Transform {
     while (this.#openOutputIndex === undefined && this.#heldOutputItems.size) {
       const [index, group] = this.#heldOutputItems.entries().next().value;
       this.#heldOutputItems.delete(index);
-      for (const { block, type } of group.blocks) {
+      for (const { block, type, order } of group.blocks) {
         this.#heldBytes -= block.length;
-        this.#pushBlock(block);
+        this.#heldBlockOrder.delete(order);
+        this.#pushBlock(block, order);
         if (type === "response.output_item.added") {
           this.#openOutputIndex = group.outputIndex;
         } else if (type === "response.output_item.done") {
@@ -224,9 +235,13 @@ export class ZaiResponsesCompatTransform extends Transform {
     }
   }
 
-  #flushHeldOutputItems() {
-    for (const group of this.#heldOutputItems.values()) {
-      for (const { block } of group.blocks) this.#pushBlock(block);
+  #flushHeldOutputItems(preserveOrder = false) {
+    const blocks = preserveOrder
+      ? this.#heldBlockOrder.values()
+      : [...this.#heldOutputItems.values()].flatMap(group => group.blocks);
+    for (const { block, order } of blocks) {
+      this.#heldBlockOrder.delete(order);
+      this.#pushBlock(block, order);
     }
     this.#heldOutputItems.clear();
     this.#heldBytes = 0;
@@ -393,8 +408,10 @@ export class ZaiResponsesCompatTransform extends Transform {
           },
         };
       }
-      if (part?.type === "output_text" && typeof part.text === "string") {
-        this.#setMessageText(part.text);
+      // The sanitized close is the accepted visible source. A hidden original
+      // must not become fallback text for the later message close.
+      if (next.part?.type === "output_text" && typeof next.part.text === "string") {
+        this.#setMessageText(next.part.text);
       }
       return [
         ...injected,

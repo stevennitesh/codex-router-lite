@@ -252,6 +252,8 @@ const observations = Object.fromEntries(Object.entries(phases).map(([name, phase
 ]));
 const recentClassifier = Object.values(observations).flatMap(item => item.classifier.recent).slice(-10);
 const providerVersions = [...new Set(recentClassifier.map((item) => item.providerModel).filter(Boolean))];
+const pinnedClassifierBuildObserved = recentClassifier.some(item =>
+  item.providerFamily === "jev-1.13" && item.providerBuildObserved === true);
 const [firstSelected = null, secondSelected = null] = observations.tool.routing.selectedTargets;
 const templateObserved = installedProvenance.templateSha256 === expectedTemplateHash;
 const mediaFallbackObserved = observations.media.attributed && observations.media.routing.total === 1 &&
@@ -305,6 +307,7 @@ const evidence = {
   },
   classifier: {
     providerVersions,
+    pinnedClassifierBuildObserved,
     templateObserved,
     probabilityMapObserved,
     fallbacks: Object.fromEntries(Object.entries(observations).map(([name, item]) => [name, item.classifier.fallbacks])),
@@ -339,7 +342,7 @@ if (nativeCompact.status !== 200 || !evidence.nativeCompaction.bypassedClassifie
 if (
   !templateObserved ||
   !probabilityMapObserved ||
-  !providerVersions.some((model) => model.startsWith("typesafe/jev-1.13-"))
+  !pinnedClassifierBuildObserved
 ) {
   evidence.requiredFailures.push("classifier binding evidence is incomplete");
 }

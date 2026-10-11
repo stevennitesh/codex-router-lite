@@ -316,6 +316,23 @@ test("SSE relaying preserves validated raw JSON across byte-split UTF-8 and mult
   }
 });
 
+test("headerless HTTP fallback forwards Unicode field values identically across partitions", async () => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    const expected = [
+      {type:"response.output_text.delta",delta:`visible${separator}text`},
+      {type:"response.completed",response:{id:"resp_headerless_unicode",status:"completed",output:[]}},
+    ];
+    const wire = Buffer.from(expected.map(event=>`data: ${JSON.stringify(event)}\n\n`).join(""));
+    for (const chunks of [[wire],[wire.subarray(0,5),wire.subarray(5)],[...wire].map(byte=>Buffer.from([byte]))]) {
+      const {socket,events} = await exchange(async()=>new Response(new ReadableStream({start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk); controller.close();
+      }})));
+      assert.deepEqual(events,expected);
+      socket.emit("end");
+    }
+  }
+});
+
 test("UTF-8 SSE line byte bounds are exact across partial code points", async () => {
   const line = `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_utf8", status: "completed", output: [], fixture: "漢🙂" } })}`;
   const body = Buffer.from(`${line}\r\n\r\n`);
