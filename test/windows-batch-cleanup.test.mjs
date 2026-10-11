@@ -61,48 +61,27 @@ async function fixture(body) {
   }
 }
 
-function affinity(script) {
-  const result = cp.spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `$ErrorActionPreference='Stop';$p=Get-Process -Id ${process.pid};${script}`], { encoding: "utf8", windowsHide: true, timeout: 5_000 });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim();
-}
-
-test("a native batch root exit race completes only after the captured generations exit", { skip: !windows, timeout: 30_000 }, async () => {
-  const originalAffinity = affinity("[Console]::Out.Write($p.ProcessorAffinity.ToInt64());$p.ProcessorAffinity=[IntPtr]1");
-  try {
-    // One CPU and reversed process priorities expose cmd's normal return from
-    // its killed child before taskkill reaches cmd. No process is mocked.
-    await fixture(async ({ child, pid }) => {
-      os.setPriority(child.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
-      const killer = actualSpawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 5_000 });
-      os.setPriority(killer.pid, os.constants.priority.PRIORITY_LOW);
-      const code = await new Promise(resolve => killer.once("close", resolve));
-      assert.equal(code, 255, "the original native result rule rejects this real exit race");
-      assert.equal(alive(child.pid), false);
-      // Native close can precede the final descendant's signaled state.
-      const deadline = Date.now() + 3_000;
-      while (alive(pid) && Date.now() < deadline) await sleep(10);
-      assert.equal(alive(pid), false);
-    });
-    await fixture(async ({ child, lifecycle, pid }) => {
-      os.setPriority(child.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
-      cp.spawn = (command, args, options) => {
-        const spawned = actualSpawn(command, args, options);
-        if (command === "taskkill.exe") os.setPriority(spawned.pid, os.constants.priority.PRIORITY_LOW);
-        return spawned;
+test("a completed nonzero native tree result succeeds only after the captured generations exit", { skip: !windows, timeout: 30_000 }, async () => {
+  await fixture(async ({ child, lifecycle, pid }) => {
+    cp.spawn = (command, args, options) => {
+      const spawned = actualSpawn(command, args, options);
+      if (command !== "taskkill.exe") return spawned;
+      // Execute the real tree termination, then change only its completed
+      // status. Scheduling cannot guarantee taskkill's exit-race result.
+      const emit = spawned.emit;
+      spawned.emit = function (event, ...values) {
+        return emit.call(this, event, ...(event === "close" ? [255, values[1]] : values));
       };
-      syncBuiltinESMExports();
-      const receipt = await stopWindowsBatchChild(child, lifecycle);
-      assert.equal(receipt.nativeCode, 255);
-      assert.equal(receipt.proof, "held-handles");
-      assert.ok(receipt.captured >= 2);
-      assert.equal(alive(child.pid), false);
-      assert.equal(alive(pid), false);
-    });
-  } finally {
-    affinity(`$p.ProcessorAffinity=[IntPtr]::new([long]::Parse('${originalAffinity}'))`);
-  }
+      return spawned;
+    };
+    syncBuiltinESMExports();
+    const receipt = await stopWindowsBatchChild(child, lifecycle);
+    assert.equal(receipt.nativeCode, 255);
+    assert.equal(receipt.proof, "held-handles");
+    assert.ok(receipt.captured >= 2);
+    assert.equal(alive(child.pid), false);
+    assert.equal(alive(pid), false);
+  });
 });
 
 test("an unbound batch root rejects cleanup before any native termination", { skip: !windows, timeout: 15_000 }, async () => {
@@ -175,7 +154,7 @@ for (const { rejectCleanup, frontendExit } of [
   { rejectCleanup: true, frontendExit: 0 },
   { rejectCleanup: true, frontendExit: 95 },
 ]) test(frontendExit ? "foreground custody preserves frontend status 95 after cleanup failure" :
-  `foreground custody covers cleanup ${rejectCleanup ? "failure" : "completion"} after the batch root closes`, { skip: !windows, timeout: 30_000 }, async () => {
+  `foreground custody covers cleanup ${rejectCleanup ? "failure" : "completion"} after the batch root closes`, { skip: !windows, timeout: 30_000 }, async t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "router-batch-custody-"));
   const root = path.resolve(import.meta.dirname, ".."), state = path.join(directory, "state");
   mkdirSync(state);
@@ -196,7 +175,7 @@ export async function waitForHealth(options){if(options.label==='Codex router')g
   // Delay only the completion handoff after the real native tree cleanup and
   // witness have succeeded. No tree cleanup or descendant exit is mocked.
   writeFileSync(cleanup, `import {stopWindowsBatchChild as real} from ${JSON.stringify(url(path.join(root,"src/windows-batch-cleanup.mjs")))};
-export async function stopWindowsBatchChild(child,lifecycle){const proof=await real(child,lifecycle);process.send({type:'cleanup-proof',rootPid:child.pid});await new Promise(resolve=>{const listener=message=>{if(message.type==='release-cleanup'){process.off('message',listener);resolve();}};process.on('message',listener);});if(${rejectCleanup})throw new Error('intentional cleanup handoff failure');return proof;}`);
+export async function stopWindowsBatchChild(child,lifecycle){let proof;try{proof=await real(child,lifecycle);}catch(error){process.send({type:'cleanup-error',message:error.message});throw error;}process.send({type:'cleanup-proof',rootPid:child.pid});await new Promise(resolve=>{const listener=message=>{if(message.type==='release-cleanup'){process.off('message',listener);resolve();}};process.on('message',listener);});if(${rejectCleanup})throw new Error('intentional cleanup handoff failure');return proof;}`);
   const loader = path.join(directory, "loader.mjs"), controller = path.join(directory, "controller.mjs");
   const crashTrigger = path.join(directory, "crash-frontend"), preload = path.join(directory, "preload.mjs");
   // Exercise the real frontend's diagnostic exit handler, after it is healthy
@@ -217,14 +196,32 @@ export async function stopWindowsBatchChild(child,lifecycle){const proof=await r
   const messages = [], errors = [];
   child.on("message", message => messages.push(message));
   child.stderr.on("data", chunk => errors.push(chunk));
-  async function message(type) {
-    const deadline = Date.now() + 12_000;
-    while (!messages.some(value => value.type === type)) {
-      assert.equal(child.exitCode, null, Buffer.concat(errors).toString("utf8"));
-      assert.ok(Date.now() < deadline, `missing fixture checkpoint: ${type}`);
-      await sleep(10);
-    }
-    return messages.find(value => value.type === type);
+  function message(type) {
+    // Startup and cleanup share the enclosing test's existing deadline.
+    // IPC, exit, and cancellation determine progress without a shorter poll budget.
+    return new Promise((resolve, reject) => {
+      const finish = (settle, value) => {
+        child.off("message", check);
+        child.off("close", closed);
+        t.signal.removeEventListener("abort", aborted);
+        settle(value);
+      };
+      const failure = reason => new Error(`Fixture checkpoint ${type}: ${reason}; received=${JSON.stringify(messages)}; stderr=${Buffer.concat(errors).toString("utf8")}`);
+      const closed = () => finish(reject, failure(`controller exited (code=${child.exitCode}, signal=${child.signalCode})`));
+      const aborted = () => finish(reject, failure("test deadline expired"));
+      const check = () => {
+        const failed = messages.find(value => value.type === "cleanup-error");
+        if (failed) return finish(reject, failure(`native cleanup failed: ${failed.message}`));
+        const found = messages.find(value => value.type === type);
+        if (found) return finish(resolve, found);
+        if (child.exitCode !== null || child.signalCode !== null) return closed();
+        if (t.signal.aborted) return aborted();
+      };
+      child.on("message", check);
+      child.once("close", closed);
+      t.signal.addEventListener("abort", aborted, { once: true });
+      check();
+    });
   }
   try {
     const proof = await message("cleanup-proof");
