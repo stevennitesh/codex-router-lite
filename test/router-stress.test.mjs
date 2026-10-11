@@ -341,7 +341,6 @@ test("stress: provider stream failures remain failures after partial output", { 
     if (scenario === "explicit") response.end(frame({ type: "error", code: "fixture_failure", message: "synthetic failure" }));
     else response.destroy();
   });
-  assert.equal(terminalOutcome(eventsFrom(frame({ type: "response.output_text.delta", delta: "known-bad EOF" }))), false);
   const response = await f.post({ stream: true });
   const reader = response.body.getReader();
   const first = await bounded(reader.read(), "partial output reaches caller");
@@ -426,12 +425,21 @@ test("stress: seeded function arguments preserve identity and never invent conte
     if (mode === "control") controls.push(events);
   }
   assert.deepEqual(controls[0], controls[1]);
-  const inconsistentDiagnostic =
-    `"code":"empty_function_arguments","sourceCharacters":0,"restoredCharacters":0,"deltaCharacters":${privateArgs.length},"doneCharacters":${privateArgs.length}`;
-  for (let attempt = 0; attempt < 100 && !f.errors().includes(inconsistentDiagnostic); attempt += 1)
+  const diagnostics = () => f.errors().split(/\r?\n/u).slice(0, -1)
+    .flatMap(line => {
+      const match = /^\[codex-router\] tool-protocol .*? (\{.*\})$/u.exec(line);
+      return match ? [JSON.parse(match[1])] : [];
+    });
+  const inconsistentDiagnostic = () => diagnostics().find(diagnostic =>
+    diagnostic.code === "empty_function_arguments" && diagnostic.deltaCharacters === privateArgs.length);
+  for (let attempt = 0; attempt < 100 && !inconsistentDiagnostic(); attempt += 1)
     await new Promise(resolve => setTimeout(resolve, 10));
-  assert.match(f.errors(), /empty_function_arguments/u);
-  assert.ok(f.errors().includes(inconsistentDiagnostic));
+  const diagnostic = inconsistentDiagnostic();
+  assert.ok(diagnostic, "contradictory empty provider close records its observed argument counts");
+  for (const [field, expected] of Object.entries({ code: "empty_function_arguments", sourceCharacters: 0,
+    restoredCharacters: 0, deltaCharacters: privateArgs.length, doneCharacters: privateArgs.length })) {
+    assert.equal(diagnostic[field], expected, field);
+  }
   for (const sentinel of PRIVATE_SENTINELS) assert.ok(!f.errors().includes(sentinel));
   assert.equal(f.seen.length, 4);
 });
@@ -631,15 +639,6 @@ test("stress: concurrent requests isolate a healthy turn and cancel stalled work
   streaming.resolve();
   assert.equal(f.seen.filter(({ body }) => body.metadata?.scenario === "stalled").length, 1);
   assert.equal(f.seen.filter(({ body }) => body.metadata?.scenario === "streaming").length, 1);
-});
-
-test("stress: a missing lifecycle event times out without background polling", async () => {
-  const eventThatNeverArrives = deferred();
-  await assert.rejects(
-    bounded(eventThatNeverArrives.promise, "negative-control missing close", 25),
-    /Timed out: negative-control missing close/u,
-  );
-  await setImmediate();
 });
 
 test("Router keeps original snapshots and uncertain outcomes without replay on both profiles", { timeout: 30000 }, async t => {

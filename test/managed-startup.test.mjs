@@ -8,10 +8,8 @@ import test from "node:test";
 
 import { openPort } from "./port-pool.mjs";
 import { serviceProcessOwns } from "../src/service-process.mjs";
-import { processCommandLine } from "../src/process-identity.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const managedProcessProbeAvailable = Boolean(processCommandLine(process.pid));
 
 function json(response, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
@@ -65,7 +63,7 @@ for (const selectedProviders of [[], ["openrouter"]]) {
 for (const gatewayFails of [false, true]) {
   test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gatewayFails ? "optional spawn failure" : "healthy gateway"})`,
     {
-      skip: process.platform !== "win32" || !managedProcessProbeAvailable,
+      skip: process.platform !== "win32",
       timeout: 30_000,
     }, async t => {
       const state = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-"));

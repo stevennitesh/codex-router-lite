@@ -609,14 +609,14 @@ test("native listed models retain the installed catalog's collaboration capabili
     { slug: "gpt-5.6-luna", visibility: "list", multi_agent_version: "v1" },
     { slug: "codex-auto-review", visibility: "hide", multi_agent_version: "v1" },
   ];
+  const original = structuredClone(native);
   const promoted = promoteNativeMultiAgent(native, {
     mode: "all",
     enabled: [],
     disabled: [],
   });
-  assert.equal(promoted[1].multi_agent_version, "v1");
-  // Hidden native entries are never advertised as spawn targets.
-  assert.equal(promoted[2].multi_agent_version, "v1");
+  assert.deepEqual(promoted, original);
+  assert.deepEqual(native, original);
 });
 
 test("external recovery guidance reaches both prompt surfaces without duplication or native mutation", () => {

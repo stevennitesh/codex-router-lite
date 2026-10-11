@@ -184,19 +184,22 @@ test("sharing cannot be enabled before the user signs in", () => {
   assert.equal(existsSync(NATIVE_SESSION_CONSENT_PATH), false);
 });
 
-test("status reports presence, never the credential", () => {
-  writeAuth({ access_token: ACCESS, account_id: ACCOUNT });
-  writeConsentFixture();
-  const status = nativeSessionStatus();
-  assert.equal(status.present, true);
-  assert.equal(status.usable, true);
-  assert.equal(status.hasAccountId, true);
-  assert.equal(status.sharingEnabled, true);
-  // The whole point of the status shape: it is safe to print, log, and paste
-  // into an issue. A token that reaches any of those has to be rotated.
-  const serialized = JSON.stringify(status);
-  assert.doesNotMatch(serialized, new RegExp(ACCESS));
-  assert.doesNotMatch(serialized, new RegExp(ACCOUNT));
+test("status reports presence and known remaining life without exposing opaque or JWT credentials", () => {
+  const seconds = Math.floor(Date.now() / 1000);
+  for (const [token, hasExpiry] of [[ACCESS, false], [jwtWithExp(seconds + 36000), true]]) {
+    writeAuth({ access_token: token, account_id: ACCOUNT });
+    writeConsentFixture();
+    const status = nativeSessionStatus();
+    assert.equal(status.present, true);
+    assert.equal(status.usable, true);
+    assert.equal(status.hasAccountId, true);
+    assert.equal(status.sharingEnabled, true);
+    if (hasExpiry) assert.ok(status.expiresInHours > 9 && status.expiresInHours <= 10);
+    // Status can be printed, logged, or pasted into an issue without disclosure.
+    const serialized = JSON.stringify(status);
+    assert.equal(serialized.includes(token), false);
+    assert.equal(serialized.includes(ACCOUNT), false);
+  }
 });
 
 test("a session with no access token is not a session", () => {
@@ -370,17 +373,4 @@ test("failed asynchronous refresh leaves expired credentials withheld and does n
     t.mock.restoreAll();
     syncBuiltinESMExports();
   }
-});
-
-test("status reports the remaining life, never the token", () => {
-  const seconds = Math.floor(Date.now() / 1000);
-  writeAuth({ access_token: jwtWithExp(seconds + 36000), account_id: ACCOUNT });
-  writeConsentFixture();
-  const status = nativeSessionStatus();
-  assert.ok(status.expiresInHours > 9 && status.expiresInHours <= 10);
-  assert.doesNotMatch(JSON.stringify(status), new RegExp(ACCOUNT));
-});
-
-test.after(() => {
-  rmSync(home, { recursive: true, force: true });
 });

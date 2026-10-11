@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 // These assertions describe the checked-in registry and synthetic account
 // fixtures, so the machine's own models, credentials, and quota history must
 // not leak in; the imports are dynamic for that reason.
 const testRoot = mkdtempSync(path.join(os.tmpdir(), "glm-5.3-flash-test-"));
+after(() => rmSync(testRoot, { recursive: true, force: true }));
 process.env.MODEL_ROUTER_STATE_DIR = path.join(testRoot, "state");
 
 const { MODEL_BY_SLUG, validateOpenRouterRoute } = await import("../src/routed-models.mjs");

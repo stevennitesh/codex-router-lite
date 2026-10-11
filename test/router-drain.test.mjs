@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -9,9 +8,8 @@ import { zstdDecompressSync } from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { openPort } from "./port-pool.mjs";
-import { launch, ready, stop as stopFixture } from "./router-fixture.mjs";
+import { launch, ready, stop } from "./router-fixture.mjs";
 
-const root = path.resolve(import.meta.dirname, "..");
 const CALLER = "drain-caller-capability-long-enough";
 const INTERNAL = "drain-internal-capability-long-enough";
 
@@ -21,25 +19,6 @@ async function listen(server) {
     server.listen(0, "127.0.0.1", resolve);
   });
   return server.address().port;
-}
-
-async function stop(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise((resolve) => child.once("exit", resolve));
-}
-
-async function waitLive(port, child) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`router exited: ${child.errors()}`);
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/live`);
-      if (response.ok) return response.json();
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`router did not become live: ${child.errors()}`);
 }
 
 function routedRequest(port, input) {
@@ -54,8 +33,9 @@ function routedRequest(port, input) {
   });
 }
 
-function lifecycle(port, pathName, body) {
+function lifecycle(port, pathName, body, signal) {
   return fetch(`http://127.0.0.1:${port}/internal/lifecycle${pathName}`, {
+    signal,
     method: body === undefined ? "GET" : "POST",
     headers: {
       authorization: `Bearer ${INTERNAL}`,
@@ -63,6 +43,17 @@ function lifecycle(port, pathName, body) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+}
+
+async function waitDraining(port) {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const response = await lifecycle(port, "", undefined, AbortSignal.timeout(Math.max(1, deadline - Date.now())));
+    assert.equal(response.status, 200);
+    if ((await response.json()).state === "draining") return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail("Router did not enter draining state");
 }
 
 test("real Router callers drain buffered and SSE work, reject new work, resume, and force", {
@@ -88,23 +79,14 @@ test("real Router callers drain buffered and SSE work, reject new work, resume, 
   const nativePort = await listen(native);
   const routerPort = await openPort();
   const state = mkdtempSync(path.join(os.tmpdir(), "router-drain-"));
-  const router = spawn(process.execPath, [path.join(root, "src", "router.mjs")], {
-    cwd: root,
-    env: {
-      ...process.env,
-      CODEX_ROUTER_PORT: String(routerPort),
-      CODEX_ROUTER_STATE_DIR: state,
-      CODEX_ROUTER_CALLER_KEY: CALLER,
-      CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
-      CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}`,
-      CODEX_ROUTER_QUIET: "1",
-    },
-    stdio: ["ignore", "ignore", "pipe"],
+  const router = launch("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: state,
+    CODEX_ROUTER_CALLER_KEY: CALLER,
+    CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}`,
+    CODEX_ROUTER_QUIET: "1",
   });
-  let errors = "";
-  router.stderr.setEncoding("utf8");
-  router.stderr.on("data", (chunk) => { errors += chunk; });
-  router.errors = () => errors;
   t.after(async () => {
     for (const item of held) item.response.destroy();
     await stop(router);
@@ -113,7 +95,8 @@ test("real Router callers drain buffered and SSE work, reject new work, resume, 
     rmSync(state, { recursive: true, force: true });
   });
 
-  const live = await waitLive(routerPort, router);
+  await ready(`http://127.0.0.1:${routerPort}/live`, router, {}, { accept: response => response.ok });
+  const live = await (await fetch(`http://127.0.0.1:${routerPort}/live`)).json();
   assert.deepEqual(live.capabilities, ["drain-v1"]);
   const unauthorized = await fetch(`http://127.0.0.1:${routerPort}/internal/lifecycle`, {
     headers: { authorization: `Bearer ${CALLER}` },
@@ -125,7 +108,7 @@ test("real Router callers drain buffered and SSE work, reject new work, resume, 
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   const sseDrain = lifecycle(routerPort, "/drain", { timeout_ms: 2_000 });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await waitDraining(routerPort);
   const rejected = await routedRequest(routerPort, "rejected-during-drain");
   assert.equal(rejected.status, 503);
   const sseHeld = held.find((item) => item.marker === "hold-sse");
@@ -220,26 +203,17 @@ test("an admitted Switchyard request keeps only its nested callback lease and to
   writeFileSync(path.join(runtime, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "fixture");
   writeFileSync(path.join(runtime, "routes.toml"), "# fixture\n");
   writeFileSync(path.join(state, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["switchyard"] }));
-  const router = spawn(process.execPath, [path.join(root, "src", "router.mjs")], {
-    cwd: root,
-    env: {
-      ...process.env,
-      CODEX_ROUTER_PORT: String(routerPort),
-      CODEX_ROUTER_STATE_DIR: state,
-      CODEX_ROUTER_SWITCHYARD_ROOT: runtime,
-      CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyardPort}/v1`,
-      CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
-      CODEX_ROUTER_CALLER_KEY: CALLER,
-      CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
-      CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}`,
-      CODEX_ROUTER_QUIET: "1",
-    },
-    stdio: ["ignore", "ignore", "pipe"],
+  const router = launch("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: state,
+    CODEX_ROUTER_SWITCHYARD_ROOT: runtime,
+    CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${switchyardPort}/v1`,
+    CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
+    CODEX_ROUTER_CALLER_KEY: CALLER,
+    CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}`,
+    CODEX_ROUTER_QUIET: "1",
   });
-  let errors = "";
-  router.stderr.setEncoding("utf8");
-  router.stderr.on("data", (chunk) => { errors += chunk; });
-  router.errors = () => errors;
   t.after(async () => {
     await stop(router);
     for (const server of [native, switchyard]) {
@@ -248,7 +222,7 @@ test("an admitted Switchyard request keeps only its nested callback lease and to
     }
     rmSync(state, { recursive: true, force: true });
   });
-  await waitLive(routerPort, router);
+  await ready(`http://127.0.0.1:${routerPort}/live`, router, {}, { accept: response => response.ok });
 
   handlerEntered = entered();
   callbackAllowed = callbackGate();
@@ -263,7 +237,7 @@ test("an admitted Switchyard request keeps only its nested callback lease and to
   });
   await handlerEntered;
   const draining = lifecycle(routerPort, "/drain", { timeout_ms: 2_000 });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await waitDraining(routerPort);
   releaseCallback();
   assert.equal((await outer).status, 200);
   assert.equal((await (await draining).json()).status, "drained");
@@ -369,7 +343,7 @@ test("public completed tool continuations drain across models and current conver
   });
   t.after(async () => {
     held?.destroy();
-    await stopFixture(router);
+    await stop(router);
     upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
     rmSync(state, { recursive: true, force: true });

@@ -13,14 +13,10 @@ import { launch, ready, stop as stopChild } from "./router-fixture.mjs";
 // MCP namespaces (mcp__node_repl__js and friends) that LiteLLM's bridge drops
 // when left as namespace entries -- and function calls streaming back must be
 // restored to the client's native { name, namespace } shape. The router must
-// not execute any app tool itself. The whole scenario runs twice and must
-// produce byte-identical outgoing and incoming bodies (determinism).
+// not execute any app tool itself.
 
 const CALLER_KEY = "test-router-caller-capability-with-sufficient-length";
 const INTERNAL_KEY = "test-internal-service-key-with-sufficient-length";
-const IMAGE =
-  "data:image/png;base64," +
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 function routerBase(port) {
   return callerBaseUrl(port, CALLER_KEY);
@@ -69,10 +65,8 @@ async function closeServer(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-// The namespace inventory the Codex client actually sends on routed requests
-// (legacy namespace with explicit schemas): plain tools, collaboration, codex_app, and MCP
-// namespaces -- including mcp__node_repl, the in-app browser / computer-use
-// runtime, and a server whose namespace name contains the delimiter.
+// Synthetic plain, collaboration, legacy app, and MCP declarations cover the
+// supported relay shapes without fixing a Desktop build's private inventory.
 function routedRequestPayload(stream = true, model = "openrouter/glm-5.3-flash-streamlake") {
   return {
     model,
@@ -389,21 +383,37 @@ function gatewayJsonBody() {
   };
 }
 
-function responseItemsFromSse(body) {
-  const items = [];
-  for (const line of body.split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
-    const data = line.slice(5).trimStart();
-    if (!data || data === "[DONE]") continue;
-    let event;
-    try {
-      event = JSON.parse(data);
-    } catch {
-      continue;
+function responseEventsFromSse(body) {
+  const events = [];
+  let data = [], eventName = "";
+  const lines = body.replace(/^\uFEFF/u, "").split(/\r\n|\r|\n/u);
+  assert.equal(lines.pop(), "", "test response contains an unterminated SSE line");
+  for (const line of lines) {
+    if (line === "") {
+      if (data.length) {
+        const payload = data.join("\n");
+        if (payload !== "[DONE]") {
+          const event = JSON.parse(payload);
+          if (eventName && eventName !== "message") {
+            assert.equal(eventName, event.type, "emitted SSE label must match its payload type");
+          }
+          events.push(event);
+        }
+      }
+      data = [];
+      eventName = "";
+    } else if (line === "data" || line.startsWith("data:")) {
+      data.push(line.slice(5).replace(/^ /u, ""));
+    } else if (line === "event" || line.startsWith("event:")) {
+      eventName = line.slice(6).replace(/^ /u, "");
     }
-    if (event?.item) items.push(event.item);
   }
-  return items;
+  assert.equal(data.length, 0, "test response contains unterminated SSE data");
+  return events;
+}
+
+function responseItemsFromSse(body) {
+  return responseEventsFromSse(body).filter(event => event?.item).map(event => event.item);
 }
 
 function functionCallsFromSse(body) {
@@ -417,15 +427,11 @@ function functionCallsFromSse(body) {
 async function scenario(
   stream = true,
   {
-    endpoint = "/responses",
     model = "openrouter/glm-5.3-flash-streamlake",
     sseBody = gatewaySseBody,
     jsonBody = gatewayJsonBody,
     requestPayload = routedRequestPayload,
-    routerEnv = {},
-    prepareRouterEnv,
     followupPayload,
-    expectedStatus = 200,
   } = {},
 ) {
   const gatewayBodies = [];
@@ -448,19 +454,14 @@ async function scenario(
     json(response, 404, { error: { message: `unexpected ${request.url}` } });
   });
   const routerPort = await openPort();
-  const preparedRouterEnv = prepareRouterEnv
-    ? prepareRouterEnv({ gatewayPort: gateway.port })
-    : {};
   const router = run("router.mjs", {
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
     CODEX_ROUTER_QUIET: "1",
-    ...routerEnv,
-    ...preparedRouterEnv,
   });
   try {
     await waitFor(`${routerBase(routerPort)}/models`, router);
-    const response = await fetch(`${routerBase(routerPort)}${endpoint}`, {
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: {
         Authorization: "Bearer CODEX_CALLER_SECRET",
@@ -468,11 +469,11 @@ async function scenario(
       },
       body: JSON.stringify(requestPayload(stream, model)),
     });
-    assert.equal(response.status, expectedStatus, `router status ${response.status}`);
+    assert.equal(response.status, 200, `router status ${response.status}`);
     const clientBody = await response.text();
     let followup;
     if (followupPayload) {
-      const next = await fetch(`${routerBase(routerPort)}${endpoint}`, {
+      const next = await fetch(`${routerBase(routerPort)}/responses`, {
         method: "POST",
         headers: {
           Authorization: "Bearer CODEX_CALLER_SECRET",
@@ -517,8 +518,14 @@ test("real Router restores null ordinary calls and exact u64 strings, then repla
       },
     });
     assert.equal(result.followup.status, 200);
-    assert.doesNotMatch(result.clientBody, /local_router_stream_failed/);
-    if (stream) assert.match(result.clientBody, /response.completed/);
+    const responseEvents = stream ? responseEventsFromSse(result.clientBody) : [];
+    if (stream) assert.deepEqual(responseEvents.map(event => event.type), [
+      "response.output_item.added", "response.function_call_arguments.delta", "response.function_call_arguments.done",
+      "response.output_item.done", "response.completed",
+    ]);
+    const completed = stream ? responseEvents.at(-1).response : JSON.parse(result.clientBody);
+    assert.equal(completed.status, "completed");
+    assert.deepEqual(completed.output, [{ ...providerCall, namespace: "mcp__fixture" }]);
     const [initial, replay] = result.gatewayBodies;
     assert.equal(replay.input[0].name, initial.tools[0].name);
     assert.equal(replay.input[0].namespace, undefined);
@@ -759,7 +766,14 @@ test("restored native tool discovery survives the completion guard and its resul
       ],
     );
     assert.equal(result.followup.status, 200);
-    assert.match(result.followup.body, /continued/u);
+    const followupEvents = stream ? responseEventsFromSse(result.followup.body) : [];
+    if (stream) assert.equal(followupEvents.at(-1).type, "response.completed");
+    const completed = stream ? followupEvents.at(-1).response : JSON.parse(result.followup.body);
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.output.length, 1);
+    assert.equal(completed.output[0].type, "message");
+    assert.equal(completed.output[0].role, "assistant");
+    assert.deepEqual(completed.output[0].content, providerMessage.content);
   }
 });
 

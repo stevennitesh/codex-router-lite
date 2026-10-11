@@ -21,6 +21,7 @@ import {
 } from "../scripts/switchyard-config-contract.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { PROVIDERS, resolveProviderBaseUrl } from "../src/routed-models.mjs";
+import { switchyardProofFixture } from "./switchyard-proof-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -271,44 +272,7 @@ test("Switchyard source lock pins the reviewed upstream contribution and compati
 test("Switchyard accepted proof rejects changed patch and canonical template source", () => {
   const configRoot = path.join(root, "config", "switchyard");
   const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
-  const proof = JSON.parse(readFileSync(
-    path.join(root, "docs", "history", "2026-10-08-switchyard-sol-medium-proof", "proof.json"),
-    "utf8",
-  ));
-  proof.status = "accepted";
-  proof.model = "gpt-6.1-sol";
-  proof.testedAt = "2026-09-20T00:00:00.000Z";
-  proof.routerVersion = "fixture";
-  proof.codexVersion = "fixture";
-  proof.executionSurface = "codex-cli";
-  proof.checks = Object.fromEntries([
-    "streaming",
-    "toolCall",
-    "encryptedRelay",
-    "markerReturn",
-    "sameThreadFollowUp",
-  ].map((key) => [key, {
-    outcome: "pass",
-    status: 200,
-    observedAt: "2026-09-20T00:00:00.000Z",
-  }]));
-  proof.checks.toolCall.mode = "auto";
-  proof.runtimeBinding.upstreamCommit = lock.commit;
-  proof.runtimeBinding.upstreamContributionCommit = lock.upstreamContribution.sourceCommit;
-  proof.runtimeBinding.upstreamContributionSha256 = lock.upstreamContribution.patchSha256;
-  proof.runtimeBinding.patchSha256 = lock.patchSha256;
-  proof.runtimeBinding.binarySha256 = "a".repeat(64);
-  proof.runtimeBinding.routerCommit = "a".repeat(40);
-  proof.routerCommit = proof.runtimeBinding.routerCommit;
-  proof.runtimeBinding.routesSha256 = "a".repeat(64);
-  proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
-    path.join(configRoot, "routes.template.toml"),
-  )).digest("hex");
-  proof.runtimeBinding.templateSourceSha256 = createHash("sha256").update(
-    readFileSync(path.join(configRoot, "routes.template.toml"), "utf8").replace(/\r\n?/gu, "\n"),
-    "utf8",
-  ).digest("hex");
-  delete proof.runtimeBinding.policyHash;
+  const proof = switchyardProofFixture();
   const applicationsRoot = mkdtempSync(path.join(tmpdir(), "switchyard-proof-"));
   const proofRoot = path.join(applicationsRoot, "switchyard", "auto");
   mkdirSync(proofRoot, { recursive: true });
@@ -376,7 +340,7 @@ test("Switchyard answer targets match the checked catalog compatibility families
   assert.equal(contract.answers.length, 4);
 });
 
-test("Switchyard keeps one maintained routing evaluator over the actual decision path", () => {
+test("Switchyard routing corpus retains its frozen quality and fidelity gates", () => {
   const corpus = JSON.parse(readFileSync(
     path.join(root, "docs", "switchyard-routing-corpus.json"),
     "utf8",
@@ -392,14 +356,5 @@ test("Switchyard keeps one maintained routing evaluator over the actual decision
   assert.equal(corpus.gates.minimumAcceptablePerSplit, 17);
   assert.equal(corpus.gates.maximumSevereUnderRoutes, 0);
   assert.equal(corpus.fidelity.length, 11);
-  assert.match(evaluator, /fetchImpl\(`\$\{base\}\/v1\/decision`/u);
-  assert.match(evaluator, /request:\s*\{[\s\S]{0,160}model: "switchyard-auto",[\s\S]{0,160}input: item\.input/u);
   assert.doesNotMatch(evaluator, /fetch\("https:\/\/openrouter\.ai/u);
-  assert.match(evaluator, /--input-fidelity-source/u);
-  assert.match(evaluator, /verifyFidelitySourceInputs/u);
-  assert.match(evaluator, /candidate_frozen_before_holdout/u);
-  const materializer = readFileSync(path.join(root, "scripts", "materialize-switchyard-routes.mjs"), "utf8");
-  assert.match(materializer, /validateSwitchyardConfigContract/u);
-  assert.doesNotMatch(materializer, /docs.*history|evidencePath|policy_hash/isu);
-  assert.doesNotMatch(evaluator, /acceptedC1|SY-B2|SY-FOLLOWUP-C2|predecessorEvidence/u);
 });

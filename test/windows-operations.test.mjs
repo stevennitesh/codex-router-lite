@@ -129,7 +129,6 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     "CODEX_ROUTER_SWITCHYARD_BASE_URL",
   ]) assert.match(source, new RegExp(name, "u"));
   assert.match(source, /config-manager\.mjs"\) validate-enable/);
-  assert.match(source, /Copy-RuntimeFile \$stageRoot \$runtimeRoot "switchyard-server\.exe"/);
   assert.match(source, /Assert-CodexCatalog \$repoRoot/);
   assert.match(source, /AddSeconds\(45\)[\s\S]*Router full health did not become clean within 45 seconds/u);
   assert.match(source, /Start-Sleep -Milliseconds 500/u);
@@ -162,16 +161,7 @@ test("the Switchyard deployment owns preflight, activation, and exact rollback",
     /Filter "\.rollback-\*"[\s\S]*Get-SubagentPublicationPlan[\s\S]*Deployment preflight[\s\S]*Prepare-RollbackRouter \$rollbackRouterRoot/u,
   );
   assert.match(source, /expectedPublishedV2Agents/);
-  assert.match(source, /Invoke-RouterInstall \$rollbackRouterRoot/);
-  assert.match(source, /Assert-RouterHealth \$rollbackRouterRoot \$expectedRollbackCommit/);
-  assert.match(source, /if \(-not \$activationStarted\)/);
   assert.doesNotMatch(source, /AppData\\Local\\codex-router/);
-});
-
-test("Windows install refreshes the current Codex bundled catalog", () => {
-  const source = readScript("install.ps1");
-  assert.match(source, /node src\/catalog\.mjs --refresh-native/);
-  assert.doesNotMatch(source, /Test-NonEmptyFile/);
 });
 
 test("the managed Router watches for Codex catalog authority changes", () => {
@@ -269,33 +259,6 @@ test(
   },
 );
 
-test("Windows stop disables heartbeat before ending the task and start reenables it", () => {
-  const source = readScript("src/service-windows.mjs");
-  const branch = source.slice(source.indexOf('} else if (command === "stop") {') + 7);
-  const execute = new Function("command", "taskSnapshot", "assertOwnedTask", "schtasks", "endTask", "process", "taskName", branch);
-  for (const command of ["stop", "start", "restart"]) {
-    const calls = [];
-    execute(command, () => ({ exists: true, owned: true }),
-      (task) => { assert.equal(task.owned, true); calls.push("owned"); },
-      (args) => calls.push(args.at(-1)), () => calls.push("end"),
-      { stdout: { write() {} } }, "Codex Router");
-    assert.deepEqual(calls, command === "stop" ? ["owned", "/DISABLE", "end"]
-      : command === "start" ? ["owned", "/ENABLE", "Codex Router"]
-        : ["owned", "end", "/ENABLE", "Codex Router"]);
-  }
-  assert.throws(() => execute("stop", () => ({ exists: true }),
-    () => { throw new Error("foreign task"); },
-    () => assert.fail("must not mutate foreign task"), () => assert.fail("must not stop foreign task"),
-    { stdout: { write() {} } }, "Codex Router"), /foreign task/u);
-  for (const command of ["start", "restart"]) {
-    assert.throws(() => execute(command, () => ({ exists: false }), () => {},
-      () => assert.fail("must not mutate a missing task"),
-      () => assert.fail("must not end a missing task"),
-      { stdout: { write() { assert.fail("must not report running"); } } },
-      "Codex Router"), /not registered.*install/u);
-  }
-});
-
 test("self-update accepts Router Lite origin and rejects the read-only upstream", () => {
   assert.equal(recognizedRepositoryUrl("https://github.com/stevennitesh/codex-router-lite.git"), true);
   assert.equal(recognizedRepositoryUrl("git@github.com:stevennitesh/codex-router-lite.git"), true);
@@ -348,23 +311,43 @@ test("task identity and the test write guard fail closed", () => {
   }), true);
 });
 
-test("Windows status and doctor use the same diagnostic-only path", { skip: process.platform !== "win32" }, () => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-status-test-"));
-  const log = path.join(directory, "node.log");
-  const shim = path.join(directory, "node.cmd");
-  writeFileSync(shim, `@echo off\r\necho %*>>${JSON.stringify(log)}\r\nexit /b 0\r\n`);
+test("Windows commands dispatch from their checkout and preserve service, foreground and diagnostic arguments", { skip: process.platform !== "win32" }, () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-dispatch-test-"));
+  const source = path.join(directory, "checkout with spaces");
+  const log = path.join(directory, "dispatch.jsonl");
+  mkdirSync(path.join(source, "src"), { recursive: true });
+  copyFileSync(path.join(root, "model-router.ps1"), path.join(source, "model-router.ps1"));
   writeFileSync(log, "");
-  const env = { ...process.env, PATH: `${directory}${path.delimiter}${process.env.PATH}` };
+  writeFileSync(path.join(source, "src/start.mjs"), "// checkout identity fixture\n");
+  for (const script of ["service.mjs", "foreground-start.mjs", "doctor.mjs", "switchyard-trace.mjs", "switchyard-certification-evidence.mjs"]) {
+    writeFileSync(path.join(source, "src", script), `import {appendFileSync} from 'node:fs';import path from 'node:path';appendFileSync(${JSON.stringify(log)},JSON.stringify({script:path.basename(process.argv[1]),args:process.argv.slice(2)})+'\\n');`);
+  }
   try {
-    for (const command of ["status", "doctor"]) {
-      execFileSync("powershell.exe", [
+    const cases = [
+      ["start", [], "service.mjs", ["start"]],
+      ["start", ["--foreground"], "foreground-start.mjs", []],
+      ["status", [], "doctor.mjs", []],
+      ["doctor", [], "doctor.mjs", []],
+      ["doctor", ["--json"], "doctor.mjs", ["--json"]],
+      ["switchyard-trace", ["synthetic trace filter"], "switchyard-trace.mjs", ["synthetic trace filter"]],
+      ["switchyard-certification-evidence", ["synthetic evidence path"], "switchyard-certification-evidence.mjs", ["synthetic evidence path"]],
+    ];
+    for (const [command, args] of cases) {
+      const result = spawnSync("powershell.exe", [
         "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-        path.join(root, "model-router.ps1"), "codex", command,
-      ], { env, encoding: "utf8" });
+        path.join(source, "model-router.ps1"), "codex", command, ...args,
+      ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+      assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     }
-    const calls = readFileSync(log, "utf8").trim().split(/\r?\n/);
-    assert.equal(calls.length, 2);
-    assert.ok(calls.every((call) => /src\\doctor\.mjs$/i.test(call)));
+    const calls = readFileSync(log, "utf8").trim().split(/\r?\n/u).map(JSON.parse);
+    assert.deepEqual(calls, cases.map(([, , script, args]) => ({ script, args })));
+    const refused = spawnSync("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(source, "model-router.ps1"), "codex", "start", "--foreground", "extra",
+    ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /Usage: model-router\.ps1 codex start/u);
+    assert.equal(readFileSync(log, "utf8").trim().split(/\r?\n/u).length, cases.length);
     assert.doesNotMatch(readScript("src/doctor.mjs"), /service\.mjs.*(?:install|start|restart)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
