@@ -356,7 +356,7 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     assert.match(rootHint, /## Delegation routing/u);
     assert.match(rootHint, /Delegate only when authorized by the user, applicable AGENTS\.md, or an invoked skill/u);
     assert.match(rootHint, /may intentionally be on the critical path/u);
-    assert.match(rootHint, /fork_turns="none"/u);
+    assert.match(rootHint, /If the active workflow calls for a fresh child context, use fork_turns="none"/u);
     assert.match(routed, /developer_instructions = "USER_POLICY"/u);
     assert.match(routed, /\[desktop\]\nnotifications = true/u);
 

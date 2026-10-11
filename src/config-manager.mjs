@@ -49,7 +49,7 @@ const managedDelegationUsageHint = `## Delegation routing
 Delegate only when authorized by the user, applicable AGENTS.md, or an invoked skill. Follow that workflow's delegation policy; delegated work may intentionally be on the critical path to reduce parent context or cost.
 - Do not duplicate work while a delegated agent has exclusive custody.
 - Use the model, reasoning effort, and context fork required by the active workflow and supported by the available tools.
-- When overriding a child model or reasoning effort, use fork_turns="none" and supply the context needed for the task.`;
+- If the active workflow calls for a fresh child context, use fork_turns="none" and supply the context needed for the task.`;
 
 const markerPairs = [
   [startMarker, endMarker],
