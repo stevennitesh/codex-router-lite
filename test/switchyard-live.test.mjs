@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { openPort } from "./port-pool.mjs";
 import { observationIdentity } from "../src/request-observation.mjs";
@@ -28,6 +29,14 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
       routerCommit: "a".repeat(40), upstreamCommit: "b".repeat(40), binarySha256: "a".repeat(64), routesSha256: "b".repeat(64),
       templateSha256: createHash("sha256").update(readFileSync(path.join(root, "config/switchyard/routes.template.toml"))).digest("hex"),
     }));
+    // Share a clock for synthetic logs and verifier phase bounds: separate
+    // Windows processes can disagree by a millisecond at this boundary.
+    const fixtureNow = Date.now();
+    const clockPath = path.join(fixture, "clock.mjs");
+    writeFileSync(clockPath, `globalThis.Date = class extends Date {
+  constructor(...args) { super(...(args.length ? args : [${fixtureNow}])); }
+  static now() { return ${fixtureNow}; }
+};\n`);
     const requests = [];
     let tools = 0;
     const server = createServer(async (request, response) => {
@@ -42,7 +51,7 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
       const isTool = !media && !compact;
       if (isTool) tools += 1;
       if (body.model === "switchyard/auto") {
-        const at = new Date().toISOString();
+        const at = new Date(fixtureNow).toISOString();
         const foreign = randomUUID();
         const observe = (session, target, evidence) => {
           appendFileSync(log, `[codex-router] timing at=${at} model=switchyard/auto provider=switchyard status=200 session_sha256=${observationIdentity("session", session)} thread_sha256=${observationIdentity("thread", session)}\n`);
@@ -73,7 +82,7 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
     try {
       let code = 0;
       try {
-        const result = await run(process.execPath, ["scripts/verify-switchyard-live.mjs", outputPath], {
+        const result = await run(process.execPath, ["--import", pathToFileURL(clockPath).href, "scripts/verify-switchyard-live.mjs", outputPath], {
           cwd: root, windowsHide: true, timeout: 20_000,
           env: { ...process.env, CODEX_HOME: fixture, MODEL_ROUTER_STATE_DIR: fixture,
             MODEL_ROUTER_CODEX_AUTH: path.join(fixture, "auth.json"), MODEL_ROUTER_PORT: String(port) },
@@ -81,7 +90,7 @@ test("ordinary Switchyard smoke attributes phases despite concurrent foreign tra
         assert.doesNotMatch(result.stdout,/PRIVATE_ACCOUNT_CANARY/u);
       } catch (error) { code = error.code; assert.equal(code, 1, error.stderr); }
       const evidence = JSON.parse(readFileSync(outputPath, "utf8"));
-      assert.equal(code, ["stable","known-build","provider-canary"].includes(scenario) ? 0 : 1, JSON.stringify(evidence.requiredFailures));
+      assert.equal(code, ["stable","known-build","provider-canary"].includes(scenario) ? 0 : 1, JSON.stringify({ scenario, requiredFailures: evidence.requiredFailures }));
       assert.equal(evidence.ordinaryToolRoundTrip.affinityStable, !["drift","foreign-only"].includes(scenario));
       assert.equal(evidence.mediaFallback.fallbackObserved, !["foreign-only", "missing-media"].includes(scenario));
       assert.equal(evidence.nativeCompaction.bypassedClassifier, !["foreign-only", "compact-classifier"].includes(scenario));

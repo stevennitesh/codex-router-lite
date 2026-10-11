@@ -23,27 +23,37 @@ test("missing multi-agent end marker is repaired only for the exact owned featur
   const env = { CODEX_HOME: codexHome, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath };
   run("enable", env);
   const end = "# END codex-router-multi-agent-v2-managed";
-  const damaged = readFileSync(configPath, "utf8").replace(end, 'user_feature = true\n# user-owned note');
-  writeFileSync(configPath, damaged);
-  assert.equal(run("validate-enable", env).mode, "router");
-  assert.equal(readFileSync(configPath, "utf8"), damaged, "preflight remains read-only");
-  run("enable", env);
-  const repaired = readFileSync(configPath, "utf8");
-  assert.equal(repaired.split(end).length - 1, 1);
-  assert.match(repaired, /user_feature = true\n# user-owned note/u);
-  assert.match(repaired, /apps = true/u);
-  assert.match(repaired, /\[desktop\]\nnotifications = true/u);
+  const emitted = readFileSync(configPath, "utf8");
+  const currentFeature = emitted.split("\n").find(line => line.startsWith("multi_agent_v2 = "));
+  const priorFeature = readFileSync(path.join(root, "test/fixtures/managed-multi-agent-v2-before-routing.txt"), "utf8").trim();
+  for (const feature of [currentFeature, priorFeature]) {
+    const damaged = emitted.replace(currentFeature, feature).replace(end, 'user_feature = true\n# user-owned note');
+    writeFileSync(configPath, damaged);
+    assert.equal(run("validate-enable", env).mode, "router");
+    assert.equal(readFileSync(configPath, "utf8"), damaged, "preflight remains read-only");
+    run("enable", env);
+    const repaired = readFileSync(configPath, "utf8");
+    assert.equal(repaired.split(end).length - 1, 1);
+    assert.equal(managedRootHint(repaired), managedRootHint(emitted), "repair upgrades the owned hint");
+    assert.match(repaired, /user_feature = true\n# user-owned note/u);
+    assert.match(repaired, /apps = true/u);
+    assert.match(repaired, /\[desktop\]\nnotifications = true/u);
 
-  const modified = repaired.replace(end, "").replace(
-    "max_concurrent_threads_per_session = 6", "max_concurrent_threads_per_session = 7",
-  );
-  writeFileSync(configPath, modified);
-  const rejected = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "enable"], {
-    cwd: root, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true,
-  });
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /Refusing to edit an unterminated managed block/u);
-  assert.equal(readFileSync(configPath, "utf8"), modified, "a changed feature cannot authorize removal");
+    writeFileSync(configPath, damaged);
+    assert.equal(run("disable", env).mode, "native");
+    const disabled = readFileSync(configPath, "utf8");
+    assert.doesNotMatch(disabled, /codex-router-multi-agent-v2-managed/u);
+    assert.match(disabled, /user_feature = true\n# user-owned note/u);
+
+    const modified = damaged.replace("max_concurrent_threads_per_session = 6", "max_concurrent_threads_per_session = 7");
+    writeFileSync(configPath, modified);
+    const rejected = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "enable"], {
+      cwd: root, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true,
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /Refusing to edit an unterminated managed block/u);
+    assert.equal(readFileSync(configPath, "utf8"), modified, "a changed feature cannot authorize removal");
+  }
 });
 
 function run(command, env) {
@@ -55,6 +65,20 @@ function run(command, env) {
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+function managedRootHint(contents) {
+  const document = scanTomlDocument(contents);
+  const feature = document.assignments.find(({ tablePath, key }) =>
+    tablePath.length === 1 && tablePath[0] === "features" &&
+    key.length === 1 && key[0] === "multi_agent_v2",
+  );
+  assert.ok(feature, "the managed feature is a real TOML assignment");
+  const rootHint = /\broot_agent_usage_hint_text\s*=\s*("(?:\\.|[^"\\])*")/u.exec(
+    document.lines[feature.index],
+  );
+  assert.ok(rootHint, "guidance uses the native root-agent instruction field");
+  return JSON.parse(rootHint[1]);
 }
 
 function configFixture(t) {
@@ -335,9 +359,14 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     assert.match(routed, /# BEGIN codex-router-managed/u);
     assert.match(routed, /# BEGIN codex-router-provider-managed/u);
     assert.match(routed, /# BEGIN codex-router-multi-agent-v2-managed/u);
-    assert.match(routed, /## Delegated-agent waiting/u);
-    assert.match(routed, /Wait again without commentary/u);
-    assert.match(routed, /call interrupt_agent on that child/u);
+    const rootHint = managedRootHint(routed);
+    assert.match(rootHint, /## Delegated-agent waiting/u);
+    assert.match(rootHint, /Wait again without commentary/u);
+    assert.match(rootHint, /call interrupt_agent on that child/u);
+    assert.match(rootHint, /## Delegation routing/u);
+    assert.match(rootHint, /Delegate only when authorized by the user, applicable AGENTS\.md, or an invoked skill/u);
+    assert.match(rootHint, /may intentionally be on the critical path/u);
+    assert.match(rootHint, /If the active workflow calls for a fresh child context, use fork_turns="none"/u);
     assert.match(routed, /developer_instructions = "USER_POLICY"/u);
     assert.match(routed, /\[desktop\]\nnotifications = true/u);
 
@@ -347,7 +376,7 @@ test("Codex config enable and disable preserve user TOML and restore the native 
     );
     run("enable", env);
     const refreshed = readFileSync(path.join(codexHome, "config.toml"), "utf8");
-    assert.match(refreshed, /## Delegated-agent waiting/u);
+    assert.equal(managedRootHint(refreshed), rootHint, "enable refreshes the complete effective root hint");
     assert.doesNotMatch(refreshed, /OLD_ROUTER_HINT/u);
     assert.match(refreshed, /developer_instructions = "USER_POLICY"/u);
 

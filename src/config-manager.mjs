@@ -45,6 +45,12 @@ This exception ends when custody returns or useful local work resumes.
 
 When a child agent finishes (FINAL_ANSWER, task_complete, or an idle/errored wait snapshot), call interrupt_agent on that child so Codex can mark it done. Do not leave finished children in the working state.`;
 
+const managedDelegationUsageHint = `## Delegation routing
+Delegate only when authorized by the user, applicable AGENTS.md, or an invoked skill. Follow that workflow's delegation policy; delegated work may intentionally be on the critical path to reduce parent context or cost.
+- Do not duplicate work while a delegated agent has exclusive custody.
+- Use the model, reasoning effort, and context fork required by the active workflow and supported by the available tools.
+- If the active workflow calls for a fresh child context, use fork_turns="none" and supply the context needed for the task.`;
+
 const markerPairs = [
   [startMarker, endMarker],
   [providerStartMarker, providerEndMarker, `[model_providers.${routerProviderId}]`],
@@ -55,11 +61,11 @@ function tomlValue(value) {
   return JSON.stringify(value);
 }
 
-function managedMultiAgentV2FeatureLine() {
+function managedMultiAgentV2FeatureLine(rootHint = `${managedRootAgentUsageHint}\n\n${managedDelegationUsageHint}`) {
   return (
     `multi_agent_v2 = { enabled = true, max_concurrent_threads_per_session = ${managedAgentMaxConcurrency}, ` +
     `expose_spawn_agent_model_overrides = true, usage_hint_enabled = true, ` +
-    `root_agent_usage_hint_text = ${tomlValue(managedRootAgentUsageHint)} }`
+    `root_agent_usage_hint_text = ${tomlValue(rootHint)} }`
   );
 }
 
@@ -175,10 +181,14 @@ function recoverUnterminatedMultiAgentBlock(input) {
   const ends = markerIndexes(input, multiAgentEndMarker);
   if (starts.length !== 1 || ends.length !== 0) return String(input);
   const start = starts[0];
-  // Only the exact single-line feature emitted by this owner establishes the
+  // Only an exact single-line feature emitted by this owner establishes the
   // missing boundary. A modified feature or following user content is never
   // inferred to be Router-owned.
-  if (lines[start + 1]?.trim() !== managedMultiAgentV2FeatureLine()) return String(input);
+  const ownedFeatures = [
+    managedMultiAgentV2FeatureLine(),
+    managedMultiAgentV2FeatureLine(managedRootAgentUsageHint), // Installed before delegation routing.
+  ];
+  if (!ownedFeatures.includes(lines[start + 1]?.trim())) return String(input);
   lines.splice(start + 2, 0, multiAgentEndMarker);
   return lines.join("\n");
 }
