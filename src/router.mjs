@@ -2133,10 +2133,12 @@ async function summarize(request, payload, route, signal) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(bytes.toString("utf8"));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (jsonIsUnambiguousForRewrite(text)) parsed = JSON.parse(text);
   } catch {
-    // A proxy can return HTML or truncated JSON with an otherwise successful
-    // status. That is a failed provider envelope, not a model summary.
+    // Invalid UTF-8, ambiguous fields/numbers, HTML or truncated JSON cannot
+    // establish successful provider execution or trusted usage. Deterministic
+    // summary fallback applies only after admitting the provider envelope.
   }
   // Compaction is a plain non-streaming call, so the usage block is already
   // available when the provider sends one.
@@ -2160,7 +2162,8 @@ async function summarize(request, payload, route, signal) {
         } },
       };
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.output)) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.output) ||
+        (Object.hasOwn(parsed, "status") && typeof parsed.status !== "string")) {
       return {
         ok: false, status: 502, usage, route,
         payload: { error: { type: "provider_error", code: "compaction_invalid_response",

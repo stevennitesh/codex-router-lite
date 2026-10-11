@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,9 +21,11 @@ function managerFixture(scenario) {
   if (scenario === "invalid-record") writeFileSync(record, "malformed JSON");
   for (const name of ["start-codex-router.cmd", "start-codex-router-hidden.vbs"]) writeFileSync(path.join(state, name), "previous launcher");
   const helpers = path.join(directory, "helpers.mjs"), security = path.join(directory, "security.mjs"), filesystem = path.join(directory, "filesystem.mjs");
-  writeFileSync(helpers, `import {appendFileSync} from 'node:fs';import path from 'node:path';
+  const realChild = path.join(directory, "real-child.mjs");
+  writeFileSync(realChild, "export {spawnSync} from 'node:child_process';");
+  writeFileSync(helpers, `import {appendFileSync} from 'node:fs';import path from 'node:path';import {spawnSync as actualSpawnSync} from ${JSON.stringify(pathToFileURL(realChild).href)};
 const scenario=${JSON.stringify(scenario)},source=${JSON.stringify(source)},trace=${JSON.stringify(trace)};
-let exists=!['missing','install-new'].includes(scenario),killed=false,identityCalls=0;
+let exists=!['missing','install-new'].includes(scenario),registered=false,killed=false,identityCalls=0;
 const note=(name,args)=>appendFileSync(trace,JSON.stringify({name,args})+'\\n');
 export function execFileSync(executable,args){const name=path.basename(executable).toLowerCase();note(name,args);
  if(name==='schtasks.exe'){
@@ -35,11 +37,18 @@ export function execFileSync(executable,args){const name=path.basename(executabl
  if(name==='powershell.exe'||name==='pwsh.exe'){
   const script=args.at(-1);
   if(script.includes('$snapshot =')){
+   if(scenario.startsWith('task-error-')&&!registered){
+    const hresult={'task-error-account':-2147216625,'task-error-missing':-2147024894,'task-error-denied':-2147024891}[scenario];
+    const prefix="function New-Object { param($ComObject) if ($ComObject -ne 'Schedule.Service') { throw 'unexpected COM construction' }; $scheduler=[pscustomobject]@{}; $scheduler | Add-Member -MemberType ScriptMethod -Name Connect -Value {}; $scheduler | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($name) $folder=[pscustomobject]@{}; $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($taskName) throw [Runtime.InteropServices.COMException]::new('synthetic task observation', "+hresult+") }; return $folder }; return $scheduler }; ";
+    const observed=actualSpawnSync('powershell.exe',[...args.slice(0,-1),prefix+script],{windowsHide:true,encoding:'utf8',timeout:15000});
+    if(observed.error||observed.status!==0)throw observed.error??new Error('synthetic task query failed');
+    return observed.stdout;
+   }
    if(scenario==='query-error')throw new Error('fixture query unavailable');
    if(scenario==='malformed-task')return '{}';
    return JSON.stringify(exists?{exists:true,owned:scenario!=='foreign',running:false,xml:'fixture XML',sddl:'fixture SDDL'}:{exists:false});
   }
-  if(script.includes('Register-ScheduledTask')){exists=true;return '';}
+  if(script.includes('Register-ScheduledTask')){exists=true;registered=true;return '';}
   if(script.includes('.State.ToString()'))return 'ready';
   throw new Error('unexpected PowerShell fixture call');
  }
@@ -70,7 +79,7 @@ export function execFile(){throw new Error('unexpected async helper');}
   writeFileSync(filesystem, `import * as fs from 'node:fs';export * from 'node:fs';export function unlinkSync(p){if(${JSON.stringify(scenario)}==='unlink-error'&&String(p).endsWith('start-codex-router-hidden.vbs'))throw new Error('fixture unlink refused');return fs.unlinkSync(p);}`);
   const loader = path.join(directory, "loader.mjs");
   writeFileSync(loader, `export async function resolve(s,c,n){
-if(s==='node:child_process')return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};
+if(s==='node:child_process'&&c.parentURL!==${JSON.stringify(pathToFileURL(realChild).href)})return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};
 if(s==='node:fs'&&c.parentURL===${JSON.stringify(fileUrl('src/service-windows.mjs'))})return{url:${JSON.stringify(pathToFileURL(filesystem).href)},shortCircuit:true};
 const r=await n(s,c);if(r.url===${JSON.stringify(fileUrl('src/file-security.mjs'))})return{url:${JSON.stringify(pathToFileURL(security).href)},shortCircuit:true};return r;}`);
   const env = { ...process.env, CODEX_HOME: path.join(directory, "codex"), CODEX_ROUTER_SOURCE_ROOT: source,
@@ -102,12 +111,38 @@ for (const scenario of ["stop-proven", "stop-reused"]) {
   });
 }
 for (const scenario of ["query-error", "malformed-task", "foreign"]) {
-  for (const command of ["install", "uninstall", "status"]) test(`Windows ${command} refuses ${scenario} before changing the task`, () => {
+  for (const command of ["install", "uninstall", "status", "stop", "start", "restart"]) test(`Windows ${command} refuses ${scenario} before changing the task`, () => {
     const f = managerFixture(scenario);
     try { const result = f.run(command); assert.equal(result.error, undefined); assert.notEqual(result.status, 0);
       assert.match(result.stderr, /Unable to verify ownership|not owned by/u);
       assert.equal(readFileSync(path.join(f.state, "start-codex-router.cmd"), "utf8"), "previous launcher");
       assert.equal(f.calls().some(c => c.name === "schtasks.exe" || c.args.at(-1).includes("Register-ScheduledTask")), false);
+    } finally { f.dispose(); }
+  });
+}
+test("Windows stop disables heartbeat before ending the task and start reenables it", () => {
+  for (const command of ["stop", "start", "restart"]) {
+    const f = managerFixture("owned");
+    try {
+      const result = f.run(command);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(f.calls().filter(call => call.name === "schtasks.exe").map(call => call.args),
+        command === "stop" ? [["/Change", "/TN", "Codex Router", "/DISABLE"], ["/End", "/TN", "Codex Router"]]
+          : command === "start" ? [["/Change", "/TN", "Codex Router", "/ENABLE"], ["/Run", "/TN", "Codex Router"]]
+            : [["/End", "/TN", "Codex Router"], ["/Change", "/TN", "Codex Router", "/ENABLE"], ["/Run", "/TN", "Codex Router"]]);
+      assert.equal(JSON.parse(result.stdout).state, command === "stop" ? "stopped" : "running");
+    } finally { f.dispose(); }
+  }
+});
+for (const command of ["start", "restart"]) {
+  test(`Windows ${command} refuses a missing task before mutation`, () => {
+    const f = managerFixture("missing");
+    try {
+      const result = f.run(command);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /not registered.*install/u);
+      assert.equal(f.calls().some(call => call.name === "schtasks.exe"), false);
+      assert.equal(result.stdout.includes('"state":"running"'), false);
     } finally { f.dispose(); }
   });
 }
@@ -142,20 +177,69 @@ test("the authoritative task snapshot recognizes actual COM task absence", { ski
   } finally { f.dispose(); }
 });
 
-test("the ordinary service caller renews its lock while awaiting the renderer", { timeout: 15_000 }, async () => {
+for (const scenario of ["task-error-account", "task-error-denied", "task-error-missing"]) {
+  for (const command of ["status", "install", "uninstall"]) test(`actual task catch preserves ${scenario} in ${command}`, { skip: process.platform !== "win32" }, () => {
+    const f = managerFixture(scenario);
+    try {
+      const result = f.run(command);
+      assert.equal(result.error, undefined);
+      if (scenario !== "task-error-missing") {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Unable to verify ownership/u);
+        for (const name of ["start-codex-router.cmd", "start-codex-router-hidden.vbs"]) assert.equal(readFileSync(path.join(f.state, name), "utf8"), "previous launcher");
+        assert.equal(f.calls().some(c => c.name === "schtasks.exe" || c.args.at(-1).includes("Register-ScheduledTask")), false);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        if (command === "status") assert.equal(JSON.parse(result.stdout).installed, false);
+        if (command === "install") assert.equal(JSON.parse(result.stdout).installed, true);
+        if (command === "uninstall") assert.equal(existsSync(path.join(f.state, "start-codex-router.cmd")), false);
+      }
+    } finally { f.dispose(); }
+  });
+}
+
+test("direct and control service entries propagate returned status after cleanup", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-service-control-"));
+  const source = path.join(directory, "source"), state = path.join(directory, "state"), rendered = path.join(directory, "rendered");
+  mkdirSync(path.join(source, "src"), { recursive: true }); mkdirSync(state);
+  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(rendered)},'rendered');process.exitCode=Number(process.env.RENDERER_STATUS);`);
+  const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs");
+  writeFileSync(helpers, "export async function prepareRouterServiceMutation(){if(process.env.THROW_REFUSAL==='1')throw new Error('synthetic ownership refusal');return {status:'offline'};}export async function resumeRouterAdmission(){return {};}");
+  writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&r.url===${JSON.stringify(fileUrl('src/service-drain.mjs'))})return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
+  try {
+    for (const status of [0, 7, "throw"]) for (const entry of ["direct", "control"]) {
+      rmSync(rendered, { force: true });
+      const result = spawnSync(process.execPath, ["--no-warnings", "--experimental-loader", pathToFileURL(loader).href,
+        path.join(root, entry === "direct" ? "src/service.mjs" : "src/control.mjs"), ...(entry === "direct" ? ["stop"] : ["service", "stop"])], {
+        encoding: "utf8", windowsHide: true, timeout: 15000,
+        env: { ...process.env, CODEX_HOME: path.join(directory, "codex"), CODEX_ROUTER_SOURCE_ROOT: source,
+          MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state, CODEX_ROUTER_SERVICE_PLATFORM: "win32",
+          RENDERER_STATUS: String(status), THROW_REFUSAL: status === "throw" ? "1" : "0" },
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, status === "throw" ? 1 : status, result.stderr);
+      assert.equal(existsSync(rendered), status !== "throw", "preflight refusal must not launch the renderer");
+      assert.equal(existsSync(path.join(state, "service-operation.lock")), false, "the awaited wrapper must release before exit");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("the ordinary service caller retains its lease while awaiting the renderer", { timeout: 15_000 }, async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "router-service-lock-fixture-"));
   const state = path.join(directory, "state"), source = path.join(directory, "source"), trace = path.join(directory, "trace.jsonl");
   mkdirSync(path.join(source, "src"), { recursive: true }); mkdirSync(state); writeFileSync(trace, "");
-  const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs");
+  const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs"), release = path.join(directory, "release-renderer");
   const log = path.join(state, "router.log"), oldOutput = "previous launch output\n";
   writeFileSync(log, oldOutput);
   writeFileSync(helpers, `import {withServiceOperationLock as lock} from ${JSON.stringify(fileUrl('src/service-operation-lock.mjs'))};
 import assert from 'node:assert/strict';import {readLogTail} from ${JSON.stringify(fileUrl('src/windows-launch-diagnosis.mjs'))};
-export const withServiceOperationLock=operation=>lock(operation,{stateDir:${JSON.stringify(state)},waitMs:0,staleMs:2000,retryMs:50});
+export const withServiceOperationLock=operation=>lock(operation,{stateDir:${JSON.stringify(state)},waitMs:0,heartbeatMs:1000,retryMs:50});
 export const prepareRouterServiceMutation=async()=>({status:'offline'});export const resumeRouterAdmission=async()=>({});
 export const waitForServiceReadiness=async options=>{assert.equal(options.logPosition.size,${Buffer.byteLength(oldOutput)});const fresh=readLogTail(${JSON.stringify(log)},{after:options.logPosition});assert.equal(fresh,'current renderer output\\n');return {ok:true};};`);
   writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&${JSON.stringify(['service-operation-lock.mjs','service-drain.mjs','service-readiness.mjs'].map(p=>fileUrl('src/'+p)))}.includes(r.url))return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
-  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(log)},'current renderer output\\n');appendFileSync(${JSON.stringify(trace)},JSON.stringify({command:process.argv[2],at:Date.now()})+'\\n');await new Promise(r=>setTimeout(r,4500));`);
+  // Only the owner waits at the gate. A wrongly admitted stop must finish so
+  // the custody assertion can fail and release the owner's renderer.
+  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {appendFileSync,existsSync} from 'node:fs';appendFileSync(${JSON.stringify(log)},'current renderer output\\n');appendFileSync(${JSON.stringify(trace)},JSON.stringify({command:process.argv[2],at:Date.now()})+'\\n');if(process.argv[2]==='install')while(!existsSync(${JSON.stringify(release)}))await new Promise(r=>setTimeout(r,20));`);
   const env = { ...process.env, CODEX_HOME: path.join(directory, "codex"), CODEX_ROUTER_SOURCE_ROOT: source,
     MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state, CODEX_ROUTER_SERVICE_PLATFORM: "win32" };
   const run = command => new Promise((resolve, reject) => {
@@ -166,10 +250,22 @@ export const waitForServiceReadiness=async options=>{assert.equal(options.logPos
   let owner;
   try {
     owner = run("install");
-    while (!readFileSync(trace, "utf8")) await new Promise(r => setTimeout(r,20));
-    await new Promise(r => setTimeout(r,3300));
+    const waitFor = async (description, observed) => {
+      const deadline = Date.now() + 3_300;
+      while (!observed()) {
+        assert.ok(Date.now() < deadline, description);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    await waitFor("the renderer must start under its caller's lease", () => readFileSync(trace, "utf8"));
+    const lock = path.join(state, "service-operation.lock");
+    const ownerPath = path.join(lock, readdirSync(lock)[0]);
+    const initialHeartbeat = statSync(ownerPath).mtimeMs;
+    await waitFor("the service lease must heartbeat while the renderer remains pending", () => statSync(ownerPath).mtimeMs > initialHeartbeat);
     const contender = await run("stop"); assert.notEqual(contender.code, 0); assert.match(contender.stderr, /operation is still running/u);
+    writeFileSync(release, "complete renderer\n");
     const result = await owner; assert.equal(result.code, 0, result.stderr);
     assert.equal(readFileSync(trace, "utf8").trim().split(/\r?\n/u).length, 1);
-  } finally { if (owner) await owner; rmSync(directory, { recursive: true, force: true }); }
+    assert.equal(existsSync(lock), false);
+  } finally { writeFileSync(release, "complete renderer\n"); if (owner) await owner; rmSync(directory, { recursive: true, force: true }); }
 });

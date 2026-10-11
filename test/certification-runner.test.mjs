@@ -55,6 +55,25 @@ test("stream proof reads chunked SSE and rejects snapshots, partial and failed c
   ]) await assert.rejects(observeCertificationStream(response));
 });
 
+test("stream observation enforces the total raw byte bound before shared framing under split final LF", async () => {
+  const max = 8 * 1024 * 1024;
+  const canonical = Buffer.from(streamedEvents.map(event=>`data: ${JSON.stringify(event)}\r\n\r\n`).join(""));
+  const exact = Buffer.concat([canonical,Buffer.from(`:${"x".repeat(max-canonical.length-5)}\r\n\r\n`)]);
+  assert.equal(exact.length,max);
+  for (const bytes of [exact,Buffer.concat([exact,Buffer.from("\n")])]) for (const split of [false,true]) {
+    const body = new ReadableStream({start(controller) {
+      if (split) { controller.enqueue(bytes.subarray(0,-1)); controller.enqueue(bytes.subarray(-1)); }
+      else controller.enqueue(bytes);
+      controller.close();
+    }});
+    const response = new Response(body,{headers:{"content-type":"text/event-stream"}});
+    if (bytes.length === max) assert.equal((await observeCertificationStream(response)).pass,true);
+    else await assert.rejects(observeCertificationStream(response),error=>error.code === "stream_limit");
+  }
+  const malformed = Buffer.concat([Buffer.from('data: {"type":"response.output_text.delta","delta":"'),Buffer.from([0xff]),Buffer.from('"}\n\n')]);
+  await assert.rejects(observeCertificationStream(new Response(malformed,{headers:{"content-type":"text/event-stream"}})),error=>error.code === "malformed_sse");
+});
+
 test("structured failures distinguish refusals, malformed streams, timeouts and shared outages safely", async () => {
   const otherSlug = "openrouter/deepseek-v4.1-flash-deepinfra", canary = "PRIVATE_PROVIDER_CANARY";
   const otherEvents = structuredClone(streamedEvents); otherEvents.at(-1).response.model = otherSlug;
@@ -64,8 +83,8 @@ test("structured failures distinguish refusals, malformed streams, timeouts and 
     ["http_refusal",() => new Response(canary,{status:429}),false,429],
     ["http_refusal",() => new Response(canary,{status:503}),false,503],
     ["not_event_stream",() => new Response(canary,{headers:{"content-type":"application/json"}}),false,200],
-    ["malformed_sse",() => new Response(`data: {"private":"${canary}",BROKEN}\n`,{headers:{"content-type":"text/event-stream"}}),false,200],
-    ["malformed_sse",() => new Response("data: null\n",{headers:{"content-type":"text/event-stream"}}),false,200],
+    ["malformed_sse",() => new Response(`data: {"private":"${canary}",BROKEN}\n\n`,{headers:{"content-type":"text/event-stream"}}),false,200],
+    ["malformed_sse",() => new Response("data: null\n\n",{headers:{"content-type":"text/event-stream"}}),false,200],
     ["incomplete_stream",() => eventResponse(streamedEvents.slice(0,1)),false,200],
     ["timeout",() => { throw new DOMException(canary,"TimeoutError"); },false,undefined],
     ["router_unavailable",() => { throw new TypeError(canary,{cause:Object.assign(new Error(canary),{code:"ECONNREFUSED"})}); },true,undefined],

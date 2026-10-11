@@ -1,3 +1,42 @@
+$SwitchyardManagedRuntimeFiles = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
+
+function Get-SwitchyardRuntimeMembership([string]$Root) {
+  $directory = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
+  if (-not $directory.PSIsContainer -or $directory.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw "Switchyard snapshot root is not a regular directory."
+  }
+  $members = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  foreach ($name in $SwitchyardManagedRuntimeFiles) {
+    $target = Join-Path $Root $name
+    if (-not (Test-Path -LiteralPath $target -ErrorAction Stop)) { continue }
+    $entry = Get-Item -LiteralPath $target -Force -ErrorAction Stop
+    if ($entry.PSIsContainer -or $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      throw "Switchyard snapshot member is not a regular file: $name"
+    }
+    [void]$members.Add($name)
+  }
+  return ,$members
+}
+
+function Get-ValidatedSwitchyardSnapshotMembership([string]$Root, [object]$Metadata) {
+  if ($Metadata.version -ne 1 -or $Metadata.previousRouterCommit -notmatch '^[a-f0-9]{40}$' -or
+      -not [IO.Path]::IsPathRooted("$($Metadata.rollbackRouterRoot)") -or
+      $Metadata.files -isnot [Array]) {
+    throw "Switchyard recovery metadata is incomplete or invalid."
+  }
+  $members = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  foreach ($name in $Metadata.files) {
+    if ($name -isnot [string] -or $name -cnotin $SwitchyardManagedRuntimeFiles -or -not $members.Add($name)) {
+      throw "Switchyard recovery metadata contains an unsupported or duplicate member."
+    }
+  }
+  $physical = Get-SwitchyardRuntimeMembership $Root
+  if (-not $members.SetEquals($physical)) {
+    throw "Switchyard recovery metadata does not match physical snapshot membership."
+  }
+  return ,$members
+}
+
 # Resolve only completed acceptance for the installed generation. The caller's
 # existing full-health/process preflight must pass before it executes this plan.
 function Get-SwitchyardRecoveryArchivePlan([string]$RuntimeRoot, [string]$StateRoot, [string]$InstalledRouterCommit) {
@@ -12,19 +51,7 @@ function Get-SwitchyardRecoveryArchivePlan([string]$RuntimeRoot, [string]$StateR
     throw "Switchyard recovery directory is not a managed runtime child."
   }
   $metadata = Get-Content -LiteralPath (Join-Path $backup.FullName "rollback.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-  $files = @($metadata.files)
-  $allowed = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
-  if ($metadata.version -ne 1 -or $metadata.previousRouterCommit -notmatch '^[a-f0-9]{40}$' -or
-      -not [IO.Path]::IsPathRooted("$($metadata.rollbackRouterRoot)") -or
-      @($files | Where-Object { $_ -notin $allowed }).Count -or
-      @($files | Select-Object -Unique).Count -ne $files.Count) {
-    throw "Switchyard recovery metadata is incomplete or invalid."
-  }
-  foreach ($name in $files) {
-    if (-not (Test-Path -LiteralPath (Join-Path $backup.FullName $name) -PathType Leaf)) {
-      throw "Switchyard recovery file is missing: $name"
-    }
-  }
+  $files = Get-ValidatedSwitchyardSnapshotMembership $backup.FullName $metadata
   $deployments = [IO.Path]::GetFullPath((Join-Path $StateRoot "deployments"))
   $acceptedOwners = @()
   if (Test-Path -LiteralPath $deployments -PathType Container) {

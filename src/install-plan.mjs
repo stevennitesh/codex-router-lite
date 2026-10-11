@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
@@ -44,6 +45,38 @@ function repoPath(root, relative) {
 }
 
 const STAMP_NAME = ".codex-router-install.json";
+
+export function verifyNodeDependencies(root = SOURCE_ROOT, expectedRoot = root) {
+  for (const name of ["package.json", "package-lock.json"]) {
+    const actual = readFile(path.join(root, name));
+    if (actual === undefined || actual !== readFile(path.join(expectedRoot, name))) {
+      throw new Error(`Node candidate ${name} does not match the desired checkout inputs`);
+    }
+  }
+  const manifest = JSON.parse(readFile(path.join(root, "package.json")));
+  const lock = JSON.parse(readFile(path.join(root, "package-lock.json")));
+  const installed = JSON.parse(readFile(path.join(root, "node_modules", ".package-lock.json")));
+  if (!lock.packages || !installed.packages) throw new Error("Node dependency tree summary is missing");
+  for (const [name, item] of Object.entries(lock.packages)) {
+    if (!name || item.dev || item.optional) continue;
+    if (installed.packages[name]?.version !== item.version) throw new Error(`Node dependency is missing or mismatched: ${name}`);
+  }
+  for (const [name, item] of Object.entries(installed.packages)) {
+    if (!name.startsWith("node_modules/") || name.split("/").includes("..") ||
+        item.version !== lock.packages[name]?.version ||
+        JSON.parse(readFile(path.join(root, name, "package.json")))?.version !== item.version) {
+      throw new Error(`Node dependency tree is incomplete or mismatched: ${name}`);
+    }
+  }
+  const require = createRequire(path.join(root, "package.json"));
+  for (const name of Object.keys(manifest.dependencies || {})) {
+    const resolved = require.resolve(name);
+    const relative = path.relative(path.join(root, "node_modules"), resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Node dependency resolves outside the prepared tree: ${name}`);
+    require(name);
+  }
+  return true;
+}
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -149,12 +182,15 @@ const STEPS = {
       sha256(
         [
           `node:${process.versions.node.split(".")[0]}`,
+          readFile(path.join(root, "package.json")) ?? "",
           readFile(path.join(root, "package-lock.json")) ?? "",
         ].join("\0"),
       ),
     // npm writes this tree summary on every successful install; a partially
     // deleted `node_modules` therefore reads as "not installed".
-    installed: (root) => existsSync(path.join(root, "node_modules", ".package-lock.json")),
+    installed: (root) => {
+      try { return verifyNodeDependencies(root); } catch { return false; }
+    },
   },
   "python-deps": {
     stamp: (root) => path.join(root, ".venv", STAMP_NAME),
@@ -211,6 +247,7 @@ export function stepStatus(
 export function recordStep(step, { root = SOURCE_ROOT } = {}) {
   const definition = STEPS[step];
   if (!definition) throw new Error(`Unknown install step: ${step}`);
+  if (step === "node-deps") verifyNodeDependencies(root);
   const target = definition.stamp(root);
   writeFileSync(
     target,
@@ -310,6 +347,10 @@ export function pythonLockDrift(root = SOURCE_ROOT) {
 
 function main(argv) {
   const [command, step] = argv;
+  if (command === "verify-node") {
+    verifyNodeDependencies(step ? path.resolve(step) : SOURCE_ROOT, SOURCE_ROOT);
+    return 0;
+  }
   if (command === "status") {
     // Fail open: an unexpected error must run the step, never skip it.
     let status = "run";
@@ -355,7 +396,7 @@ function main(argv) {
   }
   console.error(
     "Usage: install-plan.mjs status|record <node-deps|python-deps> | requirements | " +
-      "verify-lock | venv-home-ok | venv-runtime-ok",
+      "verify-lock | verify-node [candidate-root] | venv-home-ok | venv-runtime-ok",
   );
   return 2;
 }

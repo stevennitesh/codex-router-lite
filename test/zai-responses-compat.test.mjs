@@ -19,6 +19,23 @@ async function transformed(chunks, options) {
   return output;
 }
 
+async function transformResult(chunks) {
+  const stream = new ZaiResponsesCompatTransform();
+  const output = [];
+  stream.on("data", chunk => output.push(chunk));
+  const ended = once(stream, "end");
+  for (const chunk of chunks) stream.write(chunk);
+  stream.end();
+  let error;
+  try { await ended; } catch (caught) { error = caught; }
+  return { output: Buffer.concat(output), error };
+}
+
+function wireLayouts(wire) {
+  const bytes = Buffer.isBuffer(wire) ? wire : Buffer.from(wire);
+  return [[bytes], [...bytes].map(byte => Buffer.from([byte]))];
+}
+
 function block(event) {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
@@ -102,6 +119,135 @@ test("GLM preserves unsafe source before repair and fails it after repair commit
   assert.equal(await transformed([conflict]), conflict);
   await assert.rejects(transformed([safe, conflict]), /conflicting SSE event/u);
   await assert.rejects(transformed([safe, Buffer.from([0xff, 10, 10])]), /invalid UTF-8/u);
+});
+
+test("GLM keeps visible fallback after a hidden-marked output-text close", async () => {
+  const visible = "VISIBLE 漢🙂";
+  const annotations = [{ type: "url_citation", url: "https://example.invalid/source" }];
+  for (const ending of ["\n", "\r\n"]) {
+    const wire = [
+      block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } }),
+      block({ type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: visible }),
+      block({ type: "response.content_part.done", output_index: 0, item_id: "msg", part: { type: "output_text", text: "HIDDEN_FIXTURE", reasoning: "PRIVATE_FIXTURE", annotations } }),
+      block({ type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", phase: "final_answer", content: [{ type: "output_text", text: "HIDDEN_FIXTURE", reasoning: "PRIVATE_FIXTURE" }] } }),
+    ].join("").replaceAll("\n", ending);
+    for (const chunks of wireLayouts(wire)) {
+      const output = await transformed(chunks);
+      const events = dataEvents(output);
+      assert.deepEqual(events.find(event => event.type === "response.content_part.done").part,
+        { type: "output_text", text: visible, annotations });
+      assert.deepEqual(events.at(-1).item.content,
+        [{ type: "output_text", text: visible, annotations: [] }]);
+      assert.equal(events.at(-1).item.id, "msg");
+      assert.equal(events.at(-1).item.phase, "final_answer");
+      assert.equal(output.includes("HIDDEN_FIXTURE"), false);
+      assert.equal(output.includes("PRIVATE_FIXTURE"), false);
+    }
+  }
+});
+
+test("GLM accepts visible closes over deltas and preserves mixed visible parts", async () => {
+  const annotations = [{ type: "url_citation", url: "https://example.invalid/source" }];
+  const visibleParts = [
+    { type: "output_text", text: "FINAL 漢", annotations },
+    { type: "output_text", text: "🙂", annotations: [] },
+  ];
+  for (const content of [
+    [{ type: "reasoning_text", reasoning: "PRIVATE_FIXTURE" }],
+    [visibleParts[0], { type: "output_text", text: "HIDDEN_FIXTURE", reasoning: "PRIVATE_FIXTURE" }, visibleParts[1]],
+  ]) {
+    const wire = [
+      block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } }),
+      block({ type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "earlier delta" }),
+      block({ type: "response.content_part.done", output_index: 0, item_id: "msg", part: { type: "output_text", text: "VISIBLE CLOSE 漢🙂", annotations } }),
+      block({ type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content } }),
+    ].join("");
+    for (const chunks of wireLayouts(wire)) {
+      const output = await transformed(chunks);
+      const events = dataEvents(output);
+      assert.equal(events.find(event => event.type === "response.content_part.done").part.text, "VISIBLE CLOSE 漢🙂");
+      assert.deepEqual(events.at(-1).item.content, content.length === 1
+        ? [{ type: "output_text", text: "VISIBLE CLOSE 漢🙂", annotations: [] }]
+        : visibleParts);
+      assert.equal(output.includes("PRIVATE_FIXTURE"), false);
+      assert.equal(output.includes("HIDDEN_FIXTURE"), false);
+    }
+  }
+});
+
+test("GLM fails unsafe tails after ordering-only lifecycle repair", async () => {
+  const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "msg", type: "message", content: [] } });
+  const delta = block({ type: "response.output_text.delta", output_index: 0, item_id: "msg", delta: "Checking." });
+  const held = [
+    block({ type: "response.output_item.added", output_index: 1, item: { id: "call", type: "function_call", arguments: "" } }),
+    block({ type: "response.function_call_arguments.done", output_index: 1, item_id: "call", arguments: "{}" }),
+    block({ type: "response.output_item.done", output_index: 1, item: { id: "call", type: "function_call", arguments: "{}" } }),
+  ].join("");
+  const close = block({ type: "response.output_item.done", output_index: 0, item: { id: "msg", type: "message", content: [{ type: "output_text", text: "Checking." }] } });
+  const unsafeTails = [
+    Buffer.from("data: {broken\n\n"),
+    Buffer.from('data: {"type":"response.output_text.delta","delta":"A","delt\\u0061":"B"}\n\n'),
+    Buffer.from('data: {"type":"response.output_text.delta","marker":0.123456789012345678901}\n\n'),
+    Buffer.from('data: {"type":"response.output_text.delta","marker":9007199254740993}\n\n'),
+    Buffer.from('event: response.failed\ndata: {"type":"response.output_text.delta","delta":"bad"}\n\n'),
+    Buffer.from([0xff, 10, 10]),
+  ];
+  const terminal = block({ type: "response.completed", response: { status: "completed" } });
+  for (const ending of ["\n", "\r\n"]) {
+    const prefix = Buffer.from((open + delta + held + close).replaceAll("\n", ending));
+    const expected = Buffer.from((open + delta + close + held).replaceAll("\n", ending));
+    for (const tail of unsafeTails) {
+      const wire = Buffer.concat([prefix, tail, Buffer.from(terminal)]);
+      for (const chunks of wireLayouts(wire)) {
+        const result = await transformResult(chunks);
+        assert.match(result.error?.message ?? "", /unsafe after compatibility repair/u);
+        assert.deepEqual(result.output, expected);
+        assert.equal(result.output.includes(Buffer.from("response.completed")), false);
+      }
+    }
+  }
+});
+
+test("GLM preserves unsafe-first bytes and arrival order across interleaved held groups", async () => {
+  const prefix = [
+    block({ type: "response.output_item.added", output_index: 0, item: { id: "rs", type: "reasoning" } }),
+    block({ type: "response.output_item.added", output_index: 1, item: { id: "call1", type: "function_call", arguments: "" } }),
+    block({ type: "response.output_item.added", output_index: 2, item: { id: "call2", type: "function_call", arguments: "" } }),
+    block({ type: "response.function_call_arguments.done", output_index: 1, item_id: "call1", arguments: "{}" }),
+  ].join("").replaceAll("\n", "\r\n");
+  const terminal = block({ type: "response.completed", response: { status: "completed" } });
+  for (const tail of [
+    Buffer.from("data: {broken\r\n\r\n"),
+    Buffer.from('data: {"type":"response.output_text.delta","delta":"A","delt\\u0061":"B"}\r\n\r\n'),
+    Buffer.from('data: {"type":"response.output_text.delta","marker":9007199254740993}\r\n\r\n'),
+    Buffer.from('event: response.failed\r\ndata: {"type":"response.output_text.delta"}\r\n\r\n'),
+    Buffer.from([0xff, 13, 10, 13, 10]),
+  ]) {
+    const wire = Buffer.concat([Buffer.from(prefix), tail, Buffer.from(terminal)]);
+    for (const chunks of wireLayouts(wire)) {
+      const result = await transformResult(chunks);
+      assert.equal(result.error, undefined);
+      assert.deepEqual(result.output, wire);
+    }
+  }
+});
+
+test("GLM commits when unindexed output or a grouped terminal flush overtakes held frames", async () => {
+  const open = block({ type: "response.output_item.added", output_index: 0, item: { id: "rs", type: "reasoning" } });
+  const first = block({ type: "response.output_item.added", output_index: 1, item: { id: "call1", type: "function_call", arguments: "" } });
+  const second = block({ type: "response.output_item.added", output_index: 2, item: { id: "call2", type: "function_call", arguments: "" } });
+  const firstDone = block({ type: "response.output_item.done", output_index: 1, item: { id: "call1", type: "function_call", arguments: "{}" } });
+  const unsafe = "data: {broken\n\n";
+  for (const prefix of [
+    open + first + ": progress\n\n",
+    open + first + second + firstDone + block({ type: "response.completed", response: { status: "completed" } }),
+  ]) {
+    for (const chunks of wireLayouts(prefix + unsafe)) {
+      const result = await transformResult(chunks);
+      assert.match(result.error?.message ?? "", /unsafe after compatibility repair/u);
+      assert.equal(result.output.includes(Buffer.from(unsafe)), false);
+    }
+  }
 });
 
 test("GLM bounds unfinished frames, held bytes, held item groups and message text", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -189,5 +189,37 @@ test("a missing process record is absent but malformed records refuse replacemen
       assert.throws(() => readServiceProcessState(target), /could not be verified/u);
     }
     assert.throws(() => readServiceProcessState(directory), /could not be verified/u);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("verify CLI preserves rich verdicts and diagnostic fields from one observation", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-verify-status-"));
+  const sourceRoot = path.join(directory, "router"), stateDir = path.join(directory, "state");
+  mkdirSync(stateDir);
+  const identityUrl = pathToFileURL(path.resolve("src/process-identity.mjs")).href;
+  const helper = path.join(directory, "probe.mjs"), loader = path.join(directory, "loader.mjs"), trace = path.join(directory, "observations");
+  const commandLine = `node "${path.join(sourceRoot, "src/start.mjs")}"`;
+  const record = buildServiceProcessState({ pid: 42, sourceRoot, stateDir, probe: () => ({ state: "alive", identity: "42|node.exe", commandLine }) });
+  try {
+    writeFileSync(helper, `export {isProcessStartIdentity,SERVICE_START_PROBE_BUDGET} from ${JSON.stringify(identityUrl)};import {appendFileSync} from 'node:fs';export function processSnapshotProbe(){appendFileSync(${JSON.stringify(trace)},'probe\\n');return JSON.parse(process.env.FIXTURE_OBSERVATION);}`);
+    writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(r.url===${JSON.stringify(identityUrl)}&&c.parentURL!==${JSON.stringify(pathToFileURL(helper).href)})return{url:${JSON.stringify(pathToFileURL(helper).href)},shortCircuit:true};return r;}`);
+    // The record is synthetic; every OS process observation is intercepted.
+    const recordPath = path.join(stateDir, "service-process.json");
+    for (const [expectedRoot, observed, expected] of [
+      [sourceRoot, { state: "unknown" }, "unknown"],
+      [sourceRoot, { state: "absent" }, "absent"],
+      [sourceRoot, { state: "alive", identity: "43|node.exe" }, "absent"],
+      [sourceRoot, { state: "alive", identity: "42|node.exe", commandLine }, "owned"],
+      [path.join(directory, "foreign"), { state: "alive", identity: "42|node.exe", commandLine }, "foreign"],
+    ]) {
+      writeFileSync(trace, ""); writeFileSync(recordPath, JSON.stringify(record));
+      const output = execFileSync(process.execPath, ["--no-warnings", "--experimental-loader", pathToFileURL(loader).href,
+        path.resolve("src/service-process.mjs"), "verify", expectedRoot], { encoding: "utf8", windowsHide: true, timeout: 10000,
+        env: { ...process.env, MODEL_ROUTER_STATE_DIR: stateDir,
+          FIXTURE_OBSERVATION: JSON.stringify(observed) } });
+      assert.deepEqual(JSON.parse(output), { status: expected, owned: expected === "owned", sourceRoot: expected === "owned" ? sourceRoot : null });
+      assert.equal(readFileSync(trace, "utf8"), "probe\n", "verify must not launch separate boolean and status observations");
+      assert.equal(output.includes(commandLine), false);
+    }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

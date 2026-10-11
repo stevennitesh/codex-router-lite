@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -27,7 +27,11 @@ test("Switchyard build checks ordered native commands and returns only complete 
   writeFileSync(wrapper, `
 $ErrorActionPreference='Stop'
 function Record-Command([string]$Name,[string[]]$Arguments) {
- Add-Content -LiteralPath (Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'trace.jsonl') -Value (@{command=$Name;args=$Arguments} | ConvertTo-Json -Compress)
+ $record=@{command=$Name;args=$Arguments}
+ if ($Name -eq 'git' -and $Arguments -contains 'apply') {
+  $record.patchBytes=[IO.File]::ReadAllText($Arguments[-1])
+ }
+ Add-Content -LiteralPath (Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'trace.jsonl') -Value ($record | ConvertTo-Json -Compress)
 }
 function git {
  Record-Command 'git' $args
@@ -36,6 +40,15 @@ function git {
   $buildPath=$args[-1]; New-Item -ItemType Directory -Path $buildPath | Out-Null
   [IO.File]::WriteAllText((Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'build-path.txt'),$buildPath)
   if ($env:SWITCHYARD_BUILD_FAILURE -eq 'clone') { $global:LASTEXITCODE=9 }
+  if ($env:SWITCHYARD_BUILD_FAILURE -eq 'change-and-restore') {
+   [IO.File]::WriteAllText((Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'config/switchyard/patches/compatibility.patch'),'changed')
+  }
+ }
+ if ($args -contains 'checkout' -and $env:SWITCHYARD_BUILD_FAILURE -eq 'change-and-restore') {
+  [IO.File]::WriteAllText((Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'config/switchyard/patches/compatibility.patch'),'compatibility')
+ }
+ if ($args -contains '--check' -and $env:SWITCHYARD_BUILD_FAILURE -eq 'post-check-mutation') {
+  [IO.File]::WriteAllText((Join-Path $env:SWITCHYARD_BUILD_FIXTURE 'config/switchyard/patches/compatibility.patch'),'changed after validation')
  }
 }
 function rustup {
@@ -52,7 +65,9 @@ try {
  Write-Output ('BUILD_RESULT=' + ($candidate | ConvertTo-Json -Compress))
 } catch { Write-Output $_.Exception.Message; exit 1 }
 `);
-  for (const mode of ["success", "clone", "lint", "patch-hash", "binary-path"]) {
+  for (const mode of ["success", "post-check-mutation", "change-and-restore", "clone", "lint", "patch-hash", "binary-path"]) {
+    const snapshotsBefore = new Set(readdirSync(os.tmpdir()).filter(name => /^switchyard-patches-[a-f0-9]{32}$/u.test(name)));
+    for (const name of ["contribution", "compatibility"]) writeFileSync(path.join(directory, `config/switchyard/patches/${name}.patch`), name);
     const inputs = structuredClone(lock);
     if (mode === "patch-hash") inputs.patchSha256 = "f".repeat(64);
     if (mode === "binary-path") inputs.binary = "../foreign.exe";
@@ -62,7 +77,9 @@ try {
       encoding: "utf8", windowsHide: true, timeout: 15_000,
       env: { ...process.env, SWITCHYARD_BUILD_FIXTURE: directory, SWITCHYARD_BUILD_FAILURE: mode },
     });
-    assert.equal(result.status, mode === "success" ? 0 : 1, result.stdout + result.stderr);
+    const succeeds = ["success", "post-check-mutation", "change-and-restore"].includes(mode);
+    assert.equal(result.status, succeeds ? 0 : 1, result.stdout + result.stderr);
+    assert.deepEqual(readdirSync(os.tmpdir()).filter(name => /^switchyard-patches-[a-f0-9]{32}$/u.test(name) && !snapshotsBefore.has(name)), [], "success and failure retire their snapshots");
     const tracePath = path.join(directory, "trace.jsonl");
     const trace = existsSync(tracePath) ? readFileSync(tracePath, "utf8").trim().split(/\r?\n/u).map(JSON.parse) : [];
     const buildPathFile = path.join(directory, "build-path.txt");
@@ -72,17 +89,27 @@ try {
       assert.match(path.basename(buildPath), /^switchyard-build-[a-f0-9]{32}$/u);
       t.after(() => rmSync(buildPath, { recursive: true, force: true }));
     }
-    if (mode === "success") {
+    const applications = trace.filter(row => row.command === "git" && row.args.includes("apply"));
+    for (const application of applications) {
+      const snapshot = application.args.at(-1);
+      assert.equal(realpathSync.native(path.dirname(path.dirname(snapshot))), realpathSync.native(os.tmpdir()));
+      assert.match(path.basename(path.dirname(snapshot)), /^switchyard-patches-[a-f0-9]{32}$/u);
+      assert.equal(existsSync(path.dirname(snapshot)), false, "patch snapshots were retired");
+    }
+    if (succeeds) {
       const candidate = JSON.parse(/^BUILD_RESULT=(.+)$/mu.exec(result.stdout)[1]);
       assert.equal(candidate.candidateHash, hash("synthetic binary"));
       assert.equal(candidate.upstreamCommit, lock.commit);
       assert.equal(candidate.buildRoot, buildPath);
       assert.ok(existsSync(candidate.candidateBinary));
+      const [contribution, , compatibility] = applications.map(row => row.args.at(-1));
       assert.deepEqual(trace.filter(row => row.command === "git").map(row => row.args.slice(2)), [
         ["--no-checkout", lock.repository, buildPath], ["checkout", "--detach", lock.commit],
-        ["apply", "--check", path.join(directory, "config/switchyard/patches/contribution.patch")], ["apply", path.join(directory, "config/switchyard/patches/contribution.patch")],
-        ["apply", "--check", path.join(directory, "config/switchyard/patches/compatibility.patch")], ["apply", path.join(directory, "config/switchyard/patches/compatibility.patch")],
+        ["apply", "--check", contribution], ["apply", contribution],
+        ["apply", "--check", compatibility], ["apply", compatibility],
       ]);
+      assert.deepEqual(applications.map(row => row.patchBytes), ["contribution", "contribution", "compatibility", "compatibility"]);
+      if (mode === "post-check-mutation") assert.equal(readFileSync(path.join(directory, "config/switchyard/patches/compatibility.patch"), "utf8"), "changed after validation");
       const cargo = trace.filter(row => row.args[2] === "cargo").map(row => row.args.slice(3));
       assert.deepEqual(cargo.map(args => args[0]), ["fmt", "clippy", "test", "build"]);
       assert.ok(cargo.slice(1).every(args => args.includes("--locked")));

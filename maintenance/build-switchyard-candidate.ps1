@@ -41,23 +41,34 @@ $patches = @(
 )
 foreach ($patch in $patches) {
   $patch.Path = Resolve-Child $configRoot $patch.Path
-  if ($patch.Hash -notmatch '^[0-9a-f]{64}$' -or
-      (Get-Sha256 $patch.Path) -ne $patch.Hash) {
+  $patch.Bytes = [IO.File]::ReadAllBytes($patch.Path)
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { $capturedHash = ([BitConverter]::ToString($hasher.ComputeHash($patch.Bytes))).Replace("-", "").ToLowerInvariant() }
+  finally { $hasher.Dispose() }
+  if ($patch.Hash -notmatch '^[0-9a-f]{64}$' -or $capturedHash -ne $patch.Hash) {
     throw "Switchyard patch hash does not match source.lock."
   }
 }
 
 $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char[]]@('\', '/'))
 $buildRoot = Resolve-Child $tempParent ("switchyard-build-" + [Guid]::NewGuid().ToString('N'))
+$patchRoot = Resolve-Child $tempParent ("switchyard-patches-" + [Guid]::NewGuid().ToString('N'))
 $candidateBinary = Resolve-Child $buildRoot $lock.binary
-if (Test-Path -LiteralPath $buildRoot) { throw "Switchyard build directory already exists." }
+if ((Test-Path -LiteralPath $buildRoot) -or (Test-Path -LiteralPath $patchRoot)) {
+  throw "Switchyard temporary directory already exists."
+}
 $completed = $false
 try {
+  New-Item -ItemType Directory -Path $patchRoot | Out-Null
+  for ($index = 0; $index -lt $patches.Count; $index++) {
+    $patches[$index].Snapshot = Resolve-Child $patchRoot ("$index.patch")
+    [IO.File]::WriteAllBytes($patches[$index].Snapshot, $patches[$index].Bytes)
+  }
   Invoke-Checked "git" @("clone", "--filter=blob:none", "--no-checkout", $lock.repository, $buildRoot)
   Invoke-Checked "git" @("-C", $buildRoot, "checkout", "--detach", $lock.commit)
   foreach ($patch in $patches) {
-    Invoke-Checked "git" @("-C", $buildRoot, "apply", "--check", $patch.Path)
-    Invoke-Checked "git" @("-C", $buildRoot, "apply", $patch.Path)
+    Invoke-Checked "git" @("-C", $buildRoot, "apply", "--check", $patch.Snapshot)
+    Invoke-Checked "git" @("-C", $buildRoot, "apply", $patch.Snapshot)
   }
   Invoke-Checked "rustup" @("toolchain", "install", $lock.rustToolchain, "--profile", "minimal")
   Invoke-Checked "rustup" @("component", "add", "--toolchain", $lock.rustToolchain, "rustfmt", "clippy")
@@ -73,11 +84,20 @@ try {
   $completed = $true
   [pscustomobject]@{ buildRoot = $buildRoot; candidateBinary = $candidateBinary; candidateHash = $candidateHash; upstreamCommit = $lock.commit }
 } finally {
-  if (-not $completed -and (Test-Path -LiteralPath $buildRoot)) {
-    # Delete only this invocation's direct-child disposable checkout.
-    if (-not [string]::Equals([IO.Path]::GetDirectoryName($buildRoot), $tempParent, [StringComparison]::OrdinalIgnoreCase)) {
-      throw "Unsafe Switchyard build cleanup path: $buildRoot"
+  try {
+    if (Test-Path -LiteralPath $patchRoot) {
+      if (-not [string]::Equals([IO.Path]::GetDirectoryName($patchRoot), $tempParent, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe Switchyard patch cleanup path: $patchRoot"
+      }
+      Remove-Item -LiteralPath $patchRoot -Recurse -Force
     }
-    Remove-Item -LiteralPath $buildRoot -Recurse -Force
+  } finally {
+    if (-not $completed -and (Test-Path -LiteralPath $buildRoot)) {
+      # Delete only this invocation's direct-child disposable checkout.
+      if (-not [string]::Equals([IO.Path]::GetDirectoryName($buildRoot), $tempParent, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe Switchyard build cleanup path: $buildRoot"
+      }
+      Remove-Item -LiteralPath $buildRoot -Recurse -Force
+    }
   }
 }

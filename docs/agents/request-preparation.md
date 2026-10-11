@@ -100,6 +100,24 @@ replay belongs to the pinned LiteLLM bridge described in the
 Pareto and DeepSeek's custom-tool bridge and historical-name aliasing apply to both paths. GLM hosted
 search uses the direct Responses hop; ordinary GLM requests still use LiteLLM.
 
+Router admits compaction provider bytes with strict UTF-8 and the safe outer JSON
+envelope check before interpreting status, output or usage. Duplicate decoded
+keys, lossy numeric tokens and malformed envelopes cannot replace history with a
+checkpoint. Valid completed output, including the accepted missing-status legacy
+shape, may still use deterministic checkpoint fallback when the model summary
+misses its schema. Both `/responses/compact` and the ordinary Responses endpoint
+with a terminal `compaction_trigger` use this boundary; stored checkpoints keep
+their existing encoding and replay contract.
+
+Ordinary routed streams permit one quiet repair only after conclusive successful
+empty completion. The paired completion guards validate raw event evidence,
+resolve a generic SSE `message` label from the payload type, require other named
+labels to agree, and inspect both `response.completed` and `response.done`
+snapshots for content. Failure, incomplete or ambiguous evidence disables replay
+and terminal suppression while preserving the provider bytes. Reasoning still
+releases promptly, the prelude remains bounded and native traffic bypasses this
+repair policy.
+
 The forwarder calls `prepareOpenRouterRequest` for final payload validation and
 Pareto and endpoint parameter filtering at the external send boundary. This is intentional:
 internal callers can reach the

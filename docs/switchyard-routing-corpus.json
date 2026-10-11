@@ -903,6 +903,33 @@
         { "role": "user", "content": [{ "type": "input_text", "text": "Old controlling history must not win." }] },
         { "type": "agent_message", "content": [{ "type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n" }, { "type": "encrypted_content", "encrypted_content": "gAAAAA-synthetic=" }] }
       ]
+    },
+    {
+      "id": "F09-media-empty-control",
+      "expectedZeroCalls": true,
+      "expectedReason": "non_text_state",
+      "input": [
+        { "type": "message", "role": "user", "content": [{ "type": "input_image", "image_url": "data:image/png;base64,AA==" }] },
+        { "type": "message", "role": "user", "content": [] }
+      ]
+    },
+    {
+      "id": "F10-media-whitespace-control",
+      "expectedZeroCalls": true,
+      "expectedReason": "non_text_state",
+      "input": [
+        { "type": "message", "role": "user", "content": [{ "type": "input_image", "image_url": "data:image/png;base64,AA==" }] },
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "  \n\t" }] }
+      ]
+    },
+    {
+      "id": "F11-new-text-after-media",
+      "expectedState": "Use this newer genuine text request.",
+      "input": [
+        { "type": "message", "role": "user", "content": [{ "type": "input_image", "image_url": "data:image/png;base64,AA==" }] },
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Use this newer genuine text request." }] },
+        { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": " \t" }] }
+      ]
     }
   ]
 }

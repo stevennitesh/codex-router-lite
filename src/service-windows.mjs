@@ -215,7 +215,7 @@ function taskSnapshot() {
     "  while ($null -ne $errorObject) {",
     // Exact COM task-not-found / Win32 file-not-found results only. Scheduler
     // unavailability, access denial and malformed output are not absence.
-    "    if ($errorObject.HResult -eq -2147024894 -or $errorObject.HResult -eq -2147216625) { [Console]::Out.Write('{\"exists\":false}'); exit 0 }",
+    "    if ($errorObject.HResult -eq -2147024894) { [Console]::Out.Write('{\"exists\":false}'); exit 0 }",
     "    $errorObject = $errorObject.InnerException",
     "  }",
     "  throw",

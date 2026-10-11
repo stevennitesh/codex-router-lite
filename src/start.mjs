@@ -19,6 +19,7 @@ import { waitForHealth as pollHealth } from "./health-probe.mjs";
 import { gatewaySupervisorLimits, superviseOptionalChild } from "./gateway-supervisor.mjs";
 import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
+import { stopWindowsBatchChild } from "./windows-batch-cleanup.mjs";
 import { requireGatewayRuntime } from "./venv-runtime.mjs";
 import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
@@ -133,6 +134,8 @@ const commonEnv = {
 
 const children = new Set();
 const childLifecycles = new WeakMap();
+const pendingChildStops = new Set();
+let childCleanupFailed = false;
 let shuttingDown = false;
 
 // Every child goes through `spawnableCommand` for the one case that needs it:
@@ -144,13 +147,19 @@ let shuttingDown = false;
 // pass-through on every platform.
 function run(command, args, extraEnv = {}) {
   const spawnable = spawnableCommand(command, args);
+  const launchedAfterMs = Date.now();
   const child = spawn(spawnable.command, spawnable.args, {
     cwd: SOURCE_ROOT,
     env: { ...process.env, ...commonEnv, ...extraEnv },
     stdio: "inherit",
     ...spawnable.options,
   });
-  const lifecycle = { windowsBatch: /\.(cmd|bat)$/iu.test(command) };
+  const lifecycle = {
+    windowsBatch: /\.(cmd|bat)$/iu.test(command),
+    executable: spawnable.command,
+    launchedAfterMs,
+    launchedBeforeMs: Date.now(),
+  };
   lifecycle.closed = new Promise(resolve => {
     child.once("error", error => { lifecycle.error = error; });
     child.once("close", (code, signal) => {
@@ -168,22 +177,25 @@ function waitForExit(child, label) {
 }
 
 async function stopChild(child, signal = "SIGTERM") {
-  if (child.exitCode !== null || child.signalCode !== null) return;
   const lifecycle = childLifecycles.get(child);
+  if (lifecycle?.stopping) return lifecycle.stopping;
+  if (child.exitCode !== null || child.signalCode !== null) return;
   if (process.platform === "win32" && lifecycle?.windowsBatch) {
     // Killing cmd.exe alone strands its gateway descendant. Terminate the
     // still-owned tree before its root disappears; a failed cleanup must not
     // authorize another startup attempt.
-    lifecycle.stopping ??= new Promise((resolve, reject) => {
-      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-        stdio: "ignore", windowsHide: true, timeout: 5_000,
-      });
-      let failure;
-      killer.once("error", error => { failure = error; });
-      killer.once("close", code => code === 0 && !failure
-        ? resolve() : reject(failure ?? new Error("Optional Windows child tree cleanup failed.")));
-    }).finally(() => { lifecycle.stopping = undefined; });
-    await lifecycle.stopping;
+    const stopping = stopWindowsBatchChild(child, lifecycle);
+    lifecycle.stopping = stopping;
+    pendingChildStops.add(stopping);
+    try {
+      await stopping;
+    } catch (error) {
+      childCleanupFailed = true;
+      throw error;
+    } finally {
+      pendingChildStops.delete(stopping);
+      lifecycle.stopping = undefined;
+    }
   } else if (!child.kill(signal)) {
     throw new Error("Optional child termination could not be requested.");
   }
@@ -385,6 +397,13 @@ try {
 } finally {
   stopChildren();
   await Promise.all([...children].map((child) => waitForExit(child, "child")));
+  // Batch roots can close before their native tree witness settles. Keep
+  // import/foreground-lock and managed-record custody over those stops too,
+  // including optional-startup cleanup already removed from the live-root set.
+  while (pendingChildStops.size > 0) {
+    await Promise.allSettled([...pendingChildStops]);
+  }
+  if (childCleanupFailed) exitCode ||= 1;
   if (serviceProcessRecorded) {
     try {
       clearServiceProcessState();

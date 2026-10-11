@@ -185,9 +185,9 @@ test("ordinary picker show waits for overlapping watcher seeding and disjoint ch
   writeFileSync(pause, `import fs from 'node:fs'; import path from 'node:path'; import {syncBuiltinESMExports} from 'node:module'; const rename=fs.renameSync;
 fs.renameSync=function(a,b){if(path.resolve(String(b))===path.resolve(process.env.PAUSE_PICKER)){fs.writeFileSync(process.env.READY,'ready');const start=Date.now();while(!fs.existsSync(process.env.RELEASE)){if(Date.now()-start>15000)throw new Error('barrier timeout');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);}}return rename(a,b);};syncBuiltinESMExports();`);
   const observer = path.join(f.root, "observer.mjs");
-  // Detect an actual attempted acquisition in proper-lockfile's callback API.
-  writeFileSync(observer, `import fs from 'node:fs'; const original=fs.mkdir;
-fs.mkdir=function(p,...rest){if(String(p)===process.env.LOCK_PATH)fs.writeFileSync(process.env.WAITING,'waiting');return original.call(this,p,...rest);};`);
+  // Observe the production lease inspecting the already-held publication path.
+  writeFileSync(observer, `import fs from 'node:fs'; const original=fs.promises.lstat;
+fs.promises.lstat=function(p,...rest){if(String(p)===process.env.LOCK_PATH)fs.writeFileSync(process.env.WAITING,'waiting');return original.call(this,p,...rest);};`);
   const publisher = await launch(f, "catalog.mjs", ["--refresh-if-stale"], { PAUSE_PICKER: f.picker, READY: ready, RELEASE: release }, pause);
   let operator;
   try {

@@ -219,6 +219,13 @@ $PythonSwapStarted = $false
 $PythonVenvActivated = $false
 $FailedPythonVenv = $null
 $AdmissionPrepared = $false
+$NodeCandidate = $null
+$NodeBackup = $null
+$NodeActivated = $false
+$FailedNodeTree = $null
+$DependencySwapStarted = $false
+$ServiceWasRunning = $false
+$NodeModules = Join-Path $ScriptDirectory "node_modules"
 
 function Assert-TransientPythonVenvPath([string]$Path) {
   $Root = [IO.Path]::GetFullPath($ScriptDirectory).TrimEnd([char[]]@('\', '/'))
@@ -230,6 +237,93 @@ function Assert-TransientPythonVenvPath([string]$Path) {
     throw "Unsafe transient Python environment path: $Target"
   }
   return $Target
+}
+
+function Assert-TransientNodePath([string]$Path) {
+  $Root = [IO.Path]::GetFullPath($ScriptDirectory).TrimEnd([char[]]@('\', '/'))
+  $Target = [IO.Path]::GetFullPath($Path)
+  if (-not [IO.Path]::GetDirectoryName($Target).Equals($Root, [StringComparison]::OrdinalIgnoreCase) -or
+      [IO.Path]::GetFileName($Target) -notmatch '^\.node-deps-(candidate|previous|failed)-[0-9a-f]{32}$') {
+    throw "Unsafe transient Node dependency path: $Target"
+  }
+  return $Target
+}
+
+function Get-InstallerJson([string[]]$Arguments, [string]$Label) {
+  $raw = (& node @Arguments | Out-String)
+  if ($LASTEXITCODE -ne 0) { throw "$Label could not be observed; refusing dependency replacement." }
+  try { return ConvertFrom-Json $raw } catch { throw "$Label returned invalid JSON; refusing dependency replacement." }
+}
+
+function Get-InstallerProcessVerdict {
+  $result = Get-InstallerJson @("src\service-process.mjs", "verify", $ScriptDirectory) "Router process identity"
+  if ($result.status -notin @("owned", "absent", "unknown", "foreign") -or
+      $result.owned -isnot [bool] -or $result.owned -ne ($result.status -eq "owned") -or
+      ($result.status -ne "owned" -and $null -ne $result.sourceRoot)) {
+    throw "Router process identity is invalid or legacy; refusing dependency replacement."
+  }
+  if ($result.status -eq "owned" -and -not [string]::Equals(
+      [IO.Path]::GetFullPath("$($result.sourceRoot)"), [IO.Path]::GetFullPath($ScriptDirectory), [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Router process identity names another checkout."
+  }
+  return $result.status
+}
+
+function Assert-InstallerListenersOffline {
+  foreach ($port in @(4202, 4000)) {
+    $probe = "const s=(await import('node:net')).createConnection({host:'127.0.0.1',port:Number(process.argv[1])});s.setTimeout(3000);s.on('connect',()=>{s.destroy();process.exitCode=1});s.on('timeout',()=>{s.destroy();process.exitCode=1});s.on('error',e=>{if(e.code!=='ECONNREFUSED')process.exitCode=1});"
+    & node --input-type=module -e $probe $port
+    if ($LASTEXITCODE -ne 0) { throw "Managed port $port is live or unknown; dependency trees were retained." }
+  }
+}
+
+function Assert-InstallerProcessAbsent {
+  if ((Get-InstallerProcessVerdict) -ne "absent") { throw "Router process absence is not positively established; dependency trees were retained." }
+  Assert-InstallerListenersOffline
+}
+
+function Assert-InactiveDependencyPreparation {
+  # Inactive rollback preparation remains service/config-free. Read ownership
+  # hints without creating state; a same-checkout or unreadable record requires
+  # the current process owner and both listeners to prove inactivity.
+  $homeRoot = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+  $state = if ($env:MODEL_ROUTER_STATE_DIR) { $env:MODEL_ROUTER_STATE_DIR }
+    elseif ($env:CODEX_ROUTER_STATE_DIR) { $env:CODEX_ROUTER_STATE_DIR } else { Join-Path $homeRoot "codex-router" }
+  $potentiallyActive = $false
+  foreach ($entry in @("service-process.json", "install-manifest.json")) {
+    $file = Join-Path $state $entry
+    if (-not (Test-Path -LiteralPath $file -ErrorAction Stop)) { continue }
+    try {
+      $record = Get-Content -Raw -LiteralPath $file -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
+      $owner = if ($entry -eq "install-manifest.json") { $record.current.sourceRoot } else { $record.sourceRoot }
+      if (-not [IO.Path]::IsPathRooted("$owner")) { throw "Invalid dependency preparation owner." }
+      if ([string]::Equals([IO.Path]::GetFullPath($owner), [IO.Path]::GetFullPath($ScriptDirectory), [StringComparison]::OrdinalIgnoreCase)) { $potentiallyActive = $true }
+    } catch { throw "Dependency preparation ownership is unknown; use a verified full installation." }
+  }
+  if ($potentiallyActive) {
+    Assert-InstallerProcessAbsent
+  }
+}
+
+function Install-NodeCandidate {
+  $candidate = Assert-TransientNodePath (Join-Path $ScriptDirectory ".node-deps-candidate-$([Guid]::NewGuid().ToString('N'))")
+  $script:NodeCandidate = $candidate
+  New-Item -ItemType Directory -Path $candidate | Out-Null
+  foreach ($name in @("package.json", "package-lock.json")) {
+    Copy-Item -LiteralPath (Join-Path $ScriptDirectory $name) -Destination (Join-Path $candidate $name)
+  }
+  Push-Location $candidate
+  try {
+    & npm ci --omit=dev
+    if ($LASTEXITCODE -ne 0) { throw "npm candidate dependency installation failed." }
+  } finally { Pop-Location }
+  & node src/install-plan.mjs verify-node $candidate
+  if ($LASTEXITCODE -ne 0) { throw "The candidate Node dependency tree failed its import/input probe." }
+  $relocated = Assert-TransientNodePath (Join-Path $ScriptDirectory ".node-deps-candidate-$([Guid]::NewGuid().ToString('N'))")
+  Move-Item -LiteralPath $candidate -Destination $relocated
+  $script:NodeCandidate = $relocated
+  & node src/install-plan.mjs verify-node $relocated
+  if ($LASTEXITCODE -ne 0) { throw "The relocated Node dependency tree failed its import/input probe." }
 }
 
 function Install-PinnedPythonRequirements(
@@ -302,13 +396,15 @@ function Get-InstallerStateField {
 try {
   if (-not $DependenciesOnly) {
     $ConfigWasEnabled = (Get-InstallerStateField @($ConfigManager, "status") "mode") -eq "router"
-    $ServiceWasInstalled = (Get-InstallerStateField @("src\service.mjs", "status") "installed") -eq $true
-    $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
-    New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
-  }
-  if (-not $PrepareOnly -and -not $DependenciesOnly) {
-    & node src/provider-selection.mjs ensure-configured | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Configure at least one provider before installing." }
+    $ServiceState = Get-InstallerJson @("src\service.mjs", "status") "Router service state"
+    if ($ServiceState.installed -isnot [bool] -or $ServiceState.loaded -isnot [bool]) {
+      throw "Router service state is incomplete; refusing dependency replacement."
+    }
+    $ServiceWasInstalled = $ServiceState.installed
+    $ProcessStatus = Get-InstallerProcessVerdict
+    if ($ProcessStatus -in @("unknown", "foreign")) { throw "Router process ownership is unresolved; refusing dependency replacement." }
+    $ServiceWasRunning = $ServiceState.loaded -or $ProcessStatus -eq "owned"
+    $DependencyTransaction = $ServiceWasInstalled -or $ProcessStatus -eq "owned"
   }
 
   & node src/install-plan.mjs verify-lock
@@ -327,8 +423,25 @@ try {
     }
   }
 
-  if ((Get-InstallStep "node-deps") -eq "skip") {
+  $NodeStep = Get-InstallStep "node-deps"
+  $PythonStep = Get-InstallStep "python-deps"
+  if ($DependenciesOnly -and ($NodeStep -ne "skip" -or $PythonStep -ne "skip")) { Assert-InactiveDependencyPreparation }
+  if ($PrepareOnly -and $DependencyTransaction -and ($NodeStep -ne "skip" -or $PythonStep -ne "skip")) {
+    throw "Active -PrepareOnly cannot replace dependency trees; use the guarded full installation."
+  }
+  if (-not $DependenciesOnly) {
+    $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+    New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
+  }
+  if (-not $PrepareOnly -and -not $DependenciesOnly) {
+    & node src/provider-selection.mjs ensure-configured | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Configure at least one provider before installing." }
+  }
+
+  if ($NodeStep -eq "skip") {
     Write-Host "Node dependencies already match package-lock.json; skipping npm ci."
+  } elseif ($DependencyTransaction -and -not $PrepareOnly -and -not $DependenciesOnly) {
+    Install-NodeCandidate
   } else {
     & npm ci --omit=dev
     if ($LASTEXITCODE -ne 0) { throw "npm dependency installation failed." }
@@ -338,9 +451,9 @@ try {
 
   $PythonVenv = Join-Path $ScriptDirectory ".venv"
   $Python = Join-Path $PythonVenv "Scripts\python.exe"
-  if ((Get-InstallStep "python-deps") -eq "skip") {
+  if ($PythonStep -eq "skip") {
     Write-Host "LiteLLM already matches the pinned versions; skipping the Python install."
-  } elseif ($ServiceWasInstalled -and -not $PrepareOnly) {
+  } elseif ($DependencyTransaction -and -not $PrepareOnly -and -not $DependenciesOnly) {
     # Windows locks imported native Python modules. Updating the active venv in
     # place can therefore fail halfway through while LiteLLM is running. Build
     # and verify a complete replacement first; it is activated only inside the
@@ -385,7 +498,7 @@ try {
   # A live generation must agree to replacement before generated state, client
   # configuration, manifests, or active dependencies change. Candidate
   # dependency environments above are isolated and do not affect the service.
-  if ($ServiceWasInstalled -and -not $PrepareOnly) {
+  if ($DependencyTransaction -and -not $PrepareOnly) {
     $DrainArguments = @("prepare") + $ServiceMutationArguments
     & node src/service-drain.mjs @DrainArguments
     if ($LASTEXITCODE -ne 0) { throw "Router replacement was deferred before installation state changed." }
@@ -446,12 +559,29 @@ try {
   # the whole readiness budget while the ownership transfer never ran.
   & node src/install-manifest.mjs record | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Install-manifest recording failed." }
+  if ($PythonCandidate -or $NodeCandidate) {
+    & node src/service.mjs stop @ServiceMutationArguments
+    $StopExit = $LASTEXITCODE
+    Assert-InstallerProcessAbsent
+    $DependencySwapStarted = $true
+    if ($StopExit -ne 0) { throw "The running Router could not enter the dependency activation transaction." }
+  }
+  if ($NodeCandidate) {
+    $NodeBackup = Assert-TransientNodePath (Join-Path $ScriptDirectory ".node-deps-previous-$([Guid]::NewGuid().ToString('N'))")
+    if (Test-Path -LiteralPath $NodeModules -PathType Container) {
+      Move-Item -LiteralPath $NodeModules -Destination $NodeBackup
+    }
+    Move-Item -LiteralPath (Join-Path $NodeCandidate "node_modules") -Destination $NodeModules
+    $NodeActivated = $true
+    & node src/install-plan.mjs verify-node
+    if ($LASTEXITCODE -ne 0) { throw "The activated Node dependency tree failed its import/input probe." }
+    & node src/install-plan.mjs record node-deps
+    if ($LASTEXITCODE -ne 0) { throw "Recording the activated Node dependency state failed." }
+  }
   if ($PythonCandidate) {
     $PythonBackup = Assert-TransientPythonVenvPath (
       Join-Path $ScriptDirectory ".venv-previous-$([Guid]::NewGuid().ToString('N'))"
     )
-    & node src/service.mjs stop @ServiceMutationArguments
-    if ($LASTEXITCODE -ne 0) { throw "The running Router could not enter the dependency activation transaction." }
     $PythonSwapStarted = $true
     if (Test-Path -LiteralPath $PythonVenv -PathType Container) {
       Move-Item -LiteralPath $PythonVenv -Destination $PythonBackup
@@ -466,9 +596,16 @@ try {
   & node src/service.mjs install @ServiceMutationArguments
   if ($LASTEXITCODE -ne 0) { throw "Background-service installation failed." }
 
+  if ($NodeBackup -and (Test-Path -LiteralPath $NodeBackup -PathType Container)) {
+    try {
+      Remove-Item -LiteralPath (Assert-TransientNodePath $NodeBackup) -Recurse -Force
+      $NodeBackup = $null
+    } catch { Write-Warning "The previous inactive Node dependency tree could not be removed: $NodeBackup" }
+  }
+
   if ($PythonBackup -and (Test-Path -LiteralPath $PythonBackup -PathType Container)) {
     try {
-      Remove-Item -LiteralPath $PythonBackup -Recurse -Force
+      Remove-Item -LiteralPath (Assert-TransientPythonVenvPath $PythonBackup) -Recurse -Force
       $PythonBackup = $null
     } catch {
       Write-Warning "The previous inactive Python environment could not be removed: $PythonBackup"
@@ -491,11 +628,25 @@ try {
   Write-Host "Codex Router installation completed. Fully quit and reopen Codex to reload its model catalog."
 } catch {
   $InstallFailure = $_
-  if ($PythonSwapStarted) {
+  if ($DependencySwapStarted) {
     try {
-      & node src/service.mjs stop @ServiceMutationArguments 2>$null | Out-Null
-      if ($LASTEXITCODE -ne 0) {
-        throw "The candidate Router could not be verified stopped; Python environments were left in place."
+      # Process/listener proof does not import npm dependencies. If a damaged
+      # candidate is already absent, restore the retained trees before trying
+      # the service manager that needs those imports.
+      $RecoveryProcess = Get-InstallerProcessVerdict
+      if ($RecoveryProcess -eq "owned") {
+        & node src/service.mjs stop @ServiceMutationArguments 2>$null | Out-Null
+      } elseif ($RecoveryProcess -ne "absent") {
+        throw "The candidate Router stoppage is unknown; dependency trees were left in place."
+      }
+      Assert-InstallerProcessAbsent
+      if ($NodeActivated -and (Test-Path -LiteralPath $NodeModules -PathType Container)) {
+        $FailedNodeTree = Assert-TransientNodePath (Join-Path $ScriptDirectory ".node-deps-failed-$([Guid]::NewGuid().ToString('N'))")
+        Move-Item -LiteralPath $NodeModules -Destination $FailedNodeTree
+      }
+      if ($NodeBackup -and (Test-Path -LiteralPath $NodeBackup -PathType Container)) {
+        Move-Item -LiteralPath (Assert-TransientNodePath $NodeBackup) -Destination $NodeModules
+        $NodeBackup = $null
       }
       $FailedPythonVenv = Assert-TransientPythonVenvPath (
         Join-Path $ScriptDirectory ".venv-failed-$([Guid]::NewGuid().ToString('N'))"
@@ -504,16 +655,26 @@ try {
         Move-Item -LiteralPath $PythonVenv -Destination $FailedPythonVenv
       }
       if ($PythonBackup -and (Test-Path -LiteralPath $PythonBackup -PathType Container)) {
-        Move-Item -LiteralPath $PythonBackup -Destination $PythonVenv
+        Move-Item -LiteralPath (Assert-TransientPythonVenvPath $PythonBackup) -Destination $PythonVenv
         $PythonBackup = $null
       }
-      & node src/service.mjs install @ServiceMutationArguments
-      if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
+      if ($ServiceWasInstalled -or $ServiceWasRunning) {
+        & node src/service.mjs install @ServiceMutationArguments
+        if ($LASTEXITCODE -ne 0) { throw "The previous Router service could not be restored." }
+        if (-not $ServiceWasRunning) {
+          & node src/service.mjs stop @ServiceMutationArguments
+          if ($LASTEXITCODE -ne 0) { throw "The previous stopped Router intent could not be restored." }
+          Assert-InstallerProcessAbsent
+        }
+      }
+      if ($FailedNodeTree -and (Test-Path -LiteralPath $FailedNodeTree -PathType Container)) {
+        Remove-Item -LiteralPath (Assert-TransientNodePath $FailedNodeTree) -Recurse -Force
+      }
       if (Test-Path -LiteralPath $FailedPythonVenv -PathType Container) {
-        Remove-Item -LiteralPath $FailedPythonVenv -Recurse -Force
+        Remove-Item -LiteralPath (Assert-TransientPythonVenvPath $FailedPythonVenv) -Recurse -Force
       }
     } catch {
-      throw "Install failed ($($InstallFailure.Exception.Message)) and Python environment rollback failed ($($_.Exception.Message)). Recovery environments: active=$PythonVenv; previous=$PythonBackup; failed=$FailedPythonVenv."
+      throw "Install failed ($($InstallFailure.Exception.Message)) and dependency rollback failed ($($_.Exception.Message)). Recovery trees: node-active=$NodeModules; node-previous=$NodeBackup; node-failed=$FailedNodeTree; python-active=$PythonVenv; python-previous=$PythonBackup; python-failed=$FailedPythonVenv."
     }
   }
   # Undo only what this run created. The router health wait can time out on a
@@ -534,7 +695,10 @@ try {
     & node src/service-drain.mjs resume 2>$null | Out-Null
   }
   if ($PythonCandidate -and (Test-Path -LiteralPath $PythonCandidate -PathType Container)) {
-    Remove-Item -LiteralPath $PythonCandidate -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Assert-TransientPythonVenvPath $PythonCandidate) -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  if ($NodeCandidate -and (Test-Path -LiteralPath $NodeCandidate -PathType Container)) {
+    Remove-Item -LiteralPath (Assert-TransientNodePath $NodeCandidate) -Recurse -Force -ErrorAction SilentlyContinue
   }
   # Restore the caller's environment exactly as it was found: a value this run
   # did not set is removed, and a pre-existing one is put back verbatim. The

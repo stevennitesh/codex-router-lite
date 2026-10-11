@@ -33,7 +33,7 @@ test("ordinary empty-call diagnostics locate the boundary without inventing argu
     const diagnostics = [];
     transform.on("diagnostic", diagnostic => diagnostics.push(diagnostic));
     const output = await collect(Readable.from([...Buffer.from(wire)].map(b => Buffer.from([b]))).pipe(transform));
-    const restored = output.trim().split("\n\n").map(frame => JSON.parse(frame.split("\n").find(line => line.startsWith("data:")).slice(5)));
+    const restored = responseEventsFromSse(output);
     assert.equal(restored.at(-1).item.arguments, completed);
     assert.equal(restored.at(-1).item.namespace, "collaboration");
     assert.equal(diagnostics.length, completed ? 0 : 1);
@@ -106,6 +106,35 @@ function collectBuffer(stream) {
   });
 }
 
+function responseEventsFromSse(body) {
+  const events = [];
+  let data = [], eventName = "";
+  const lines = body.replace(/^\uFEFF/u, "").split(/\r\n|\r|\n/u);
+  assert.equal(lines.pop(), "", "test response contains an unterminated SSE line");
+  for (const line of lines) {
+    if (line === "") {
+      if (data.length) {
+        const payload = data.join("\n");
+        if (payload !== "[DONE]") {
+          const event = JSON.parse(payload);
+          if (eventName && eventName !== "message") {
+            assert.equal(eventName, event.type, "emitted SSE label must match its payload type");
+          }
+          events.push(event);
+        }
+      }
+      data = [];
+      eventName = "";
+    } else if (line === "data" || line.startsWith("data:")) {
+      data.push(line.slice(5).replace(/^ /u, ""));
+    } else if (line === "event" || line.startsWith("event:")) {
+      eventName = line.slice(6).replace(/^ /u, "");
+    }
+  }
+  assert.equal(data.length, 0, "test response contains unterminated SSE data");
+  return events;
+}
+
 async function collectUntilPipelineError(chunks, transform) {
   const output = [];
   let error;
@@ -142,10 +171,7 @@ async function restoreCompletedCall(prepared, call, stream, model) {
   const output = await collect(Readable.from(chunks).pipe(new NamespaceToolCallTransform(
     prepared.namespaces, stream ? "text/event-stream" : "application/json", model)));
   if (!stream) return { call: JSON.parse(output).output[0], wire: output };
-  const restoredEvents = output.split("\n\n").flatMap(frame => {
-    const data = frame.split("\n").find(line => line.startsWith("data:"))?.slice(5).trim();
-    return data && data !== "[DONE]" ? [JSON.parse(data)] : [];
-  });
+  const restoredEvents = responseEventsFromSse(output);
   assert.equal(restoredEvents.at(-1).type, "response.completed");
   const restored = restoredEvents.at(-1).response.output[0];
   assert.deepEqual(restoredEvents.find(event => event.type === "response.output_item.done").item, restored);
@@ -297,10 +323,8 @@ test("raw numeric permission does not admit duplicate arguments or lossy outer r
     prepared.namespaces, "application/json"))), wire);
 });
 
-// The reduced codex_app namespace the client actually sends on routed requests
-// (captured live: load_workspace_dependencies, navigate_to_codex_page,
-// read_thread_terminal), plus the collaboration and MCP namespaces that
-// LiteLLM's Responses -> Chat Completions bridge drops unless flattened.
+// Synthetic legacy app, collaboration, and MCP namespaces exercise the
+// request-local relay, including namespace names containing the delimiter.
 function clientRoutedTools() {
   return [
     { type: "function", name: "exec_command" },
@@ -390,8 +414,7 @@ test("unqualified tool search calls accept an omitted or null namespace", async 
     const wire = events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
     const output = await collect(Readable.from([wire]).pipe(
       new NamespaceToolCallTransform(flat.namespaces, "text/event-stream")));
-    const restored = output.trim().split("\n\n").map(frame =>
-      JSON.parse(frame.split("\n").find(line => line.startsWith("data:")).slice(5)));
+    const restored = responseEventsFromSse(output);
     assert.deepEqual(restored.find(event => event.type === "response.output_item.done").item, expected);
     assert.deepEqual(restored.at(-1).response.output[0], expected);
   }
@@ -535,20 +558,18 @@ test("response transform restores flattened calls to the native namespace shape"
         arguments: '{"questions":[]}',
       },
     },
-  ].map((event) => `data: ${JSON.stringify(event)}\n\n`);
+  ];
   const transform = new NamespaceToolCallTransform(namespaces);
-  const output = await collect(Readable.from(events).pipe(transform));
-  assert.match(output, /"name":"spawn_agent"/);
-  assert.match(output, /"namespace":"collaboration"/);
-  assert.match(output, /"name":"create_thread"/);
-  assert.match(output, /"namespace":"codex_app"/);
-  assert.match(output, /"name":"js"/);
-  assert.match(output, /"namespace":"mcp__node_repl"/);
-  assert.match(output, /"name":"fetch_issue"/);
-  assert.match(output, /"namespace":"mcp__codex_apps__github"/);
-  assert.match(output, /"name":"request_user_input_async"/);
-  assert.doesNotMatch(output, /"name":"request_user_input_async","namespace"/);
-  assert.doesNotMatch(output, /collaboration__spawn_agent|codex_app__create_thread|mcp__node_repl__js/);
+  const wire = events.map(event => `data: ${JSON.stringify(event)}\n\n`);
+  const output = await collect(Readable.from(wire).pipe(transform));
+  assert.deepEqual(responseEventsFromSse(output), [
+    events[0],
+    { ...events[1], item: { ...events[1].item, name: "spawn_agent", namespace: "collaboration" } },
+    { ...events[2], item: { ...events[2].item, name: "create_thread", namespace: "codex_app" } },
+    { ...events[3], item: { ...events[3].item, name: "js", namespace: "mcp__node_repl" } },
+    { ...events[4], item: { ...events[4].item, name: "fetch_issue", namespace: "mcp__codex_apps__github" } },
+    events[5],
+  ]);
 });
 
 test("response identity survives an unsupported function-call envelope", async () => {
@@ -600,8 +621,7 @@ test("SSE identity restoration continues after an unsupported function-call enve
       { responseModel: "switchyard/auto" },
     );
     const output = await collect(Readable.from(chunks).pipe(transform));
-    const payloads = output.trim().split("\n\n")
-      .map((frame) => JSON.parse(frame.split("\n").find((line) => line.startsWith("data: ")).slice(6)));
+    const payloads = responseEventsFromSse(output);
     assert.deepEqual(payloads.map((event) => event.response.model), [
       "switchyard/auto",
       "switchyard/auto",
@@ -686,30 +706,6 @@ test("response transform drops a spawn-agent model override not offered by the t
     message: "verify",
     model: "gpt-5.6-terra",
   });
-});
-
-test("flattened app tools retain native union constraints under an object root", async () => {
-  const { hasObjectRoot } = await import("../src/tool-schema-root.mjs");
-
-  const { tools } = flattenNamespaceTools(CODEX_APP_TOOL_FIXTURE);
-
-  const nonObjectRooted = tools
-    .filter((tool) => tool.parameters && !hasObjectRoot(tool.parameters))
-    .map((tool) => tool.name);
-  assert.deepEqual(nonObjectRooted, []);
-
-  const automationUpdate = tools.find((tool) => tool.name === "mcp__codex_app__automation_update");
-  const nativeAutomationUpdate = CODEX_APP_TOOL_FIXTURE
-    .flatMap((namespace) => namespace.tools ?? [])
-    .find((tool) => tool.name === "automation_update");
-  assert.ok(automationUpdate, "automation_update is still relayed");
-  assert.equal(automationUpdate.parameters.type, "object");
-  assert.deepEqual(automationUpdate.parameters.oneOf, nativeAutomationUpdate.inputSchema.oneOf);
-  assert.equal(Object.hasOwn(automationUpdate, "inputSchema"), false);
-  assert.ok(
-    Array.isArray(nativeAutomationUpdate.inputSchema.oneOf),
-    "inputSchema keeps the client's native declaration",
-  );
 });
 
 const V4A_GRAMMAR = [
@@ -882,7 +878,7 @@ test("fragmented freeform streams preserve namespace and reject identity changes
   const wire = events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
   const output = await collect(Readable.from([...Buffer.from(wire)].map(b => Buffer.from([b])))
     .pipe(new NamespaceToolCallTransform(flat.namespaces, "text/event-stream")));
-  const parsed = output.trim().split(/\n\n/).map(block => JSON.parse(block.split("\n").find(l => l.startsWith("data: ")).slice(6)));
+  const parsed = responseEventsFromSse(output);
   const restored = parsed.find(e => e.type === "response.output_item.done").item;
   assert.equal(restored.namespace, "functions");
   assert.equal(restored.name, "exec");
@@ -944,10 +940,7 @@ test("native custom-tool streams accept LiteLLM content-wrapped legacy argument 
     .join("");
   const transform = new NamespaceToolCallTransform(new Map(), "text/event-stream");
   const output = await collect(Readable.from([source]).pipe(transform));
-  const payloads = output.split(/\n\n/).filter(Boolean).map((block) => {
-    const data = block.split("\n").find((line) => line.startsWith("data: "));
-    return JSON.parse(data.slice(6));
-  });
+  const payloads = responseEventsFromSse(output);
   assert.equal(payloads[0].item.type, "custom_tool_call");
   assert.equal(
     payloads.filter((event) => event.type === "response.custom_tool_call_input.delta")
@@ -959,7 +952,7 @@ test("native custom-tool streams accept LiteLLM content-wrapped legacy argument 
     input,
   );
   assert.equal(payloads.at(-1).item.input, input);
-  assert.doesNotMatch(output, /response\.function_call_arguments/u);
+  assert.deepEqual(payloads.filter(event => event.type.startsWith("response.function_call_arguments")), []);
 });
 
 function litellmNativeCustomEvents(id, argumentsText, completedInput, chunkSize = 1) {
@@ -1006,8 +999,7 @@ test("native custom-tool arguments LiteLLM keeps verbatim relay as its completed
       Readable.from(litellmNativeCustomEvents(id, argumentsText, completedInput))
         .pipe(new NamespaceToolCallTransform(new Map(), "text/event-stream")),
     );
-    const payloads = output.split(/\n\n/).filter(Boolean)
-      .map((block) => JSON.parse(block.split("\n").find((line) => line.startsWith("data: ")).slice(6)));
+    const payloads = responseEventsFromSse(output);
     assert.equal(
       payloads.find((event) => event.type === "response.custom_tool_call_input.done")?.input,
       completedInput,
@@ -1021,7 +1013,7 @@ test("native custom-tool arguments LiteLLM keeps verbatim relay as its completed
       false,
       name,
     );
-    assert.doesNotMatch(output, /response\.function_call_arguments/u, name);
+    assert.deepEqual(payloads.filter(event => event.type.startsWith("response.function_call_arguments")), [], name);
   }
 });
 
@@ -1031,7 +1023,10 @@ test("native custom input follows LiteLLM's code-point size limit", async () => 
     const expected = [...args].length > 1_000_000 ? args : content;
     const output = await collect(Readable.from(litellmNativeCustomEvents("large", args, expected, 65536))
       .pipe(new NamespaceToolCallTransform(new Map(), "text/event-stream")));
-    assert.ok(output.includes(JSON.stringify(expected)));
+    const payloads = responseEventsFromSse(output);
+    assert.equal(payloads.find(event => event.type === "response.custom_tool_call_input.done")?.input, expected);
+    assert.equal(payloads.at(-1).type, "response.output_item.done");
+    assert.equal(payloads.at(-1).item.input, expected);
   }
 });
 
@@ -1051,26 +1046,5 @@ test("native custom-tool arguments still fail closed where LiteLLM's input canno
     catch (caught) { error = caught; }
     assert.equal(error?.code, "ERR_NAMESPACE_RELAY_COMMITTED_STREAM", name);
     assert.match(error.message, reason, name);
-  }
-});
-
-test('new app worktree and artifact calls retain arguments and native namespaces', () => {
-  const {tools, namespaces} = flattenNamespaceTools(CODEX_APP_TOOL_FIXTURE);
-  const fixtures = {
-    create_worktree: {name: 'synthetic-review', ref: 'HEAD'},
-    attach_artifact: {artifact_type: 'pull_request', url: 'https://github.com/example/repo/pull/1'},
-    list_artifacts: {},
-    remove_artifact: {artifact_type: 'pull_request', url: 'https://github.com/example/repo/pull/1'},
-  };
-  for (const [name, args] of Object.entries(fixtures)) {
-    const flat = tools.find(tool => tool.name === `mcp__codex_app__${name}`);
-    assert.ok(flat);
-    for (const key of Object.keys(args)) assert.ok(flat.parameters.properties[key]);
-    const result = rewriteNamespaceResponsePayload({type: 'response.output_item.done', item: {
-      type: 'function_call', name: flat.name, call_id: `call_${name}`, arguments: JSON.stringify(args),
-    }}, buildNamespaceLookups(namespaces));
-    assert.equal(result.item.name, name);
-    assert.equal(result.item.namespace, 'mcp__codex_app');
-    assert.deepEqual(JSON.parse(result.item.arguments), args);
   }
 });

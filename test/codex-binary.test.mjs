@@ -20,44 +20,25 @@ import {
   findCodexBinaryAsync,
 } from "../src/codex-binary.mjs";
 
-test("equal-version Codex app binaries select the newest installed build", () => {
-  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-binary-"));
-  const oldBinary = path.join(testRoot, "old.exe");
-  const newBinary = path.join(testRoot, "new.exe");
-  writeFileSync(oldBinary, "old");
-  writeFileSync(newBinary, "new");
-  try {
-    assert.equal(
-      newestCodexBinary(
-        [oldBinary, newBinary],
-        () => "codex-cli 1.2.3",
-        (candidate) => candidate === newBinary ? 2 : 1,
-      ),
-      newBinary,
-    );
-  } finally {
-    rmSync(testRoot, { recursive: true, force: true });
-  }
-});
-
-test("async Codex selection retains version, prerelease, mtime, and missing-version policies", async () => {
+test("sync and async Codex selection retain version, prerelease, mtime, and missing-version policies", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "codex-router-async-binary-"));
   const binaries = ["a", "b", "c"].map((name) => path.join(root, `${name}.exe`));
   for (const binary of binaries) writeFileSync(binary, "fixture");
   try {
-    for (const versions of [
-      ["codex-cli 1.2.3", "codex-cli 1.2.4-alpha.2", "codex-cli 1.2.4"],
-      ["codex-cli 1.2.4-alpha.9", "codex-cli 1.2.4-alpha.10", "codex-cli 1.2.3"],
-      ["codex-cli 1.2.3", "codex-cli 1.2.3", "codex-cli 1.2.3"],
-      [undefined, "codex-cli 1.2.3", undefined],
-      [undefined, undefined, undefined],
+    for (const [name, versions, expected] of [
+      ["stable release outranks prerelease", ["codex-cli 1.2.3", "codex-cli 1.2.4-alpha.2", "codex-cli 1.2.4"], binaries[2]],
+      ["prerelease numbers sort numerically", ["codex-cli 1.2.4-alpha.9", "codex-cli 1.2.4-alpha.10", "codex-cli 1.2.3"], binaries[1]],
+      ["equal versions select the newest build", ["codex-cli 1.2.3", "codex-cli 1.2.3", "codex-cli 1.2.3"], binaries[1]],
+      ["known versions outrank unknown versions", [undefined, "codex-cli 1.2.3", undefined], binaries[1]],
+      ["unknown versions retain the mtime fallback", [undefined, undefined, undefined], binaries[1]],
     ]) {
       const versionFor = (binary) => versions[binaries.indexOf(binary)];
       const modifiedFor = (binary) => [1, 3, 2][binaries.indexOf(binary)];
       const candidates = [path.join(root, "missing.exe"), ...binaries, binaries[0]];
-      assert.equal(await newestCodexBinaryAsync(candidates, async (binary) => versionFor(binary), modifiedFor),
-        newestCodexBinary(candidates, versionFor, modifiedFor));
+      assert.equal(newestCodexBinary(candidates, versionFor, modifiedFor), expected, `sync: ${name}`);
+      assert.equal(await newestCodexBinaryAsync(candidates, async (binary) => versionFor(binary), modifiedFor), expected, `async: ${name}`);
     }
+    assert.equal(newestCodexBinary([]), undefined);
     assert.equal(await newestCodexBinaryAsync([]), undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });

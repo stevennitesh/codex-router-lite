@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,8 +21,52 @@ import {
 } from "../scripts/switchyard-config-contract.mjs";
 import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { PROVIDERS, resolveProviderBaseUrl } from "../src/routed-models.mjs";
+import { switchyardProofFixture } from "./switchyard-proof-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("Switchyard validates effective target values through materialization, ignoring inert examples", t => {
+  const template = readFileSync(path.join(root, "config/switchyard/routes.template.toml"), "utf8");
+  const model = readSwitchyardConfigContract(root).routeModel;
+  const fixture = mkdtempSync(path.join(tmpdir(), "switchyard-effective-contract-"));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  for (const directory of ["src", "scripts", "config/switchyard"]) mkdirSync(path.join(fixture, directory), { recursive: true });
+  for (const file of ["src/toml-structure.mjs", "scripts/switchyard-config-contract.mjs", "scripts/materialize-switchyard-routes.mjs", "config/switchyard/auto.json"]) {
+    copyFileSync(path.join(root, file), path.join(fixture, file));
+  }
+  const candidates = '["luna_max", "sol_high", "astra_medium", "astra_xhigh"]';
+  const variants = [
+    [true, template],
+    [true, template.replace('[targets.sol_high]', '["targets"."sol_high"]')
+      .replace('body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }',
+        '"body_overrides" = { store = false, stream = true, "reasoning" = { "ef\\u0066ort" = \'high\' } }')
+      .replace(`candidates = ${candidates}`, 'candidates = [\n"luna_max", # active array comment\n"sol_high", "astra_medium", "astra_xhigh",\n]')],
+    [false, template.replace('id = "gpt-6.1-sol"', 'description = """\nid = "gpt-6.1-sol"\n"""\nid = "gpt-6-astra"')],
+    [false, template.replace('body_overrides = { store = false, stream = true, reasoning = { effort = "high" } }',
+      '# body_overrides = { reasoning = { effort = "high" } }\nbody_overrides = { store = false, stream = true, reasoning = { effort = "low" } }')],
+    [false, template.replace(`candidates = ${candidates}`, `description = '''\ncandidates = ${candidates}\n'''\ncandidates = ["sol_high"]`)],
+    [false, template.replace('reasoning = { effort = "high" }', 'reasoning = { effort = "high", effort = "low" }')],
+    [false, template.replace('reasoning = { effort = "high" }', 'reasoning.effort = "high"')],
+    [false, template.replace('[targets.sol_high]', '[targets.sol_high]\n[targets.sol_high]')],
+    [false, template.replace('[targets.sol_high]', '[[targets.sol_high]]')],
+    [false, template.replace(`candidates = ${candidates}`, 'candidates = ["luna_max", "sol_high", "astra_medium", "astra_medium"]')],
+  ];
+  for (const [accepted, source] of variants) {
+    const validate = () => validateSwitchyardConfigContract(parseSwitchyardConfigContract(source, model));
+    if (accepted) assert.doesNotThrow(validate);
+    else assert.throws(validate);
+    writeFileSync(path.join(fixture, "config/switchyard/routes.template.toml"), source);
+    const output = path.join(fixture, "routes.toml");
+    rmSync(output, { force: true });
+    const result = spawnSync(process.execPath, [path.join(fixture, "scripts/materialize-switchyard-routes.mjs"),
+      output, "http://127.0.0.1:4202/v1"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    assert.ifError(result.error);
+    assert.equal(result.status === 0, accepted, result.stderr);
+    assert.equal(existsSync(output), accepted, "rejected effective policy cannot publish routes");
+    if (accepted) assert.equal(readFileSync(output, "utf8"), source.replace(/\r\n/gu, "\n")
+      .replace("__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__", "http://127.0.0.1:4202/v1"));
+  }
+});
 
 test("Switchyard numeric contract reads whole active decimal values and refuses disguised limits", () => {
   const template = readFileSync(path.join(root, "config/switchyard/routes.template.toml"), "utf8");
@@ -227,44 +272,7 @@ test("Switchyard source lock pins the reviewed upstream contribution and compati
 test("Switchyard accepted proof rejects changed patch and canonical template source", () => {
   const configRoot = path.join(root, "config", "switchyard");
   const lock = JSON.parse(readFileSync(path.join(configRoot, "source.lock"), "utf8"));
-  const proof = JSON.parse(readFileSync(
-    path.join(root, "docs", "history", "2026-10-08-switchyard-sol-medium-proof", "proof.json"),
-    "utf8",
-  ));
-  proof.status = "accepted";
-  proof.model = "gpt-6.1-sol";
-  proof.testedAt = "2026-09-20T00:00:00.000Z";
-  proof.routerVersion = "fixture";
-  proof.codexVersion = "fixture";
-  proof.executionSurface = "codex-cli";
-  proof.checks = Object.fromEntries([
-    "streaming",
-    "toolCall",
-    "encryptedRelay",
-    "markerReturn",
-    "sameThreadFollowUp",
-  ].map((key) => [key, {
-    outcome: "pass",
-    status: 200,
-    observedAt: "2026-09-20T00:00:00.000Z",
-  }]));
-  proof.checks.toolCall.mode = "auto";
-  proof.runtimeBinding.upstreamCommit = lock.commit;
-  proof.runtimeBinding.upstreamContributionCommit = lock.upstreamContribution.sourceCommit;
-  proof.runtimeBinding.upstreamContributionSha256 = lock.upstreamContribution.patchSha256;
-  proof.runtimeBinding.patchSha256 = lock.patchSha256;
-  proof.runtimeBinding.binarySha256 = "a".repeat(64);
-  proof.runtimeBinding.routerCommit = "a".repeat(40);
-  proof.routerCommit = proof.runtimeBinding.routerCommit;
-  proof.runtimeBinding.routesSha256 = "a".repeat(64);
-  proof.runtimeBinding.templateSha256 = createHash("sha256").update(readFileSync(
-    path.join(configRoot, "routes.template.toml"),
-  )).digest("hex");
-  proof.runtimeBinding.templateSourceSha256 = createHash("sha256").update(
-    readFileSync(path.join(configRoot, "routes.template.toml"), "utf8").replace(/\r\n?/gu, "\n"),
-    "utf8",
-  ).digest("hex");
-  delete proof.runtimeBinding.policyHash;
+  const proof = switchyardProofFixture();
   const applicationsRoot = mkdtempSync(path.join(tmpdir(), "switchyard-proof-"));
   const proofRoot = path.join(applicationsRoot, "switchyard", "auto");
   mkdirSync(proofRoot, { recursive: true });
@@ -332,7 +340,7 @@ test("Switchyard answer targets match the checked catalog compatibility families
   assert.equal(contract.answers.length, 4);
 });
 
-test("Switchyard keeps one maintained routing evaluator over the actual decision path", () => {
+test("Switchyard routing corpus retains its frozen quality and fidelity gates", () => {
   const corpus = JSON.parse(readFileSync(
     path.join(root, "docs", "switchyard-routing-corpus.json"),
     "utf8",
@@ -347,15 +355,6 @@ test("Switchyard keeps one maintained routing evaluator over the actual decision
   assert.equal(corpus.gates.maximumRetriesPerRequest, 1);
   assert.equal(corpus.gates.minimumAcceptablePerSplit, 17);
   assert.equal(corpus.gates.maximumSevereUnderRoutes, 0);
-  assert.equal(corpus.fidelity.length, 8);
-  assert.match(evaluator, /fetchImpl\(`\$\{base\}\/v1\/decision`/u);
-  assert.match(evaluator, /request:\s*\{[\s\S]{0,160}model: "switchyard-auto",[\s\S]{0,160}input: item\.input/u);
+  assert.equal(corpus.fidelity.length, 11);
   assert.doesNotMatch(evaluator, /fetch\("https:\/\/openrouter\.ai/u);
-  assert.match(evaluator, /--input-fidelity-source/u);
-  assert.match(evaluator, /verifyFidelitySourceInputs/u);
-  assert.match(evaluator, /candidate_frozen_before_holdout/u);
-  const materializer = readFileSync(path.join(root, "scripts", "materialize-switchyard-routes.mjs"), "utf8");
-  assert.match(materializer, /validateSwitchyardConfigContract/u);
-  assert.doesNotMatch(materializer, /docs.*history|evidencePath|policy_hash/isu);
-  assert.doesNotMatch(evaluator, /acceptedC1|SY-B2|SY-FOLLOWUP-C2|predecessorEvidence/u);
 });

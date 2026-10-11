@@ -52,6 +52,17 @@ immutable startup readiness (`ready`, `unavailable` with a local reason, or
 and do not mutate readiness. Use the raw log only when this redacted summary
 cannot distinguish the failing owner.
 
+The default, usage and certification summaries share the historical vocabulary
+in `src/switchyard-observation-contract.mjs`. Approved identities, including the
+retired Sol Medium target and known Jev build, remain readable; unexpected model,
+target and reason strings become fixed safe buckets. Classifier family and the
+presence of a nonempty build suffix are separate observed facts used by the live
+gate. These facts do not approve an unknown build or copy its suffix into output.
+The generation boundary is a complete standalone `Switchyard libsy server` line,
+as emitted by the locked server through inherited stdio. The same bare historical
+record remains supported; quoted metadata and unrelated messages containing the
+banner text cannot start a generation.
+
 For read-only serving-record usage, add `--usage`. The default groups every
 observed `routing.jsonl` record into bounded local session ordinals and keeps
 latest-generation Router diagnostics in a separate scope:
@@ -103,6 +114,14 @@ Transition counts describe explicitly associated requests. Each transition's
 detail bucket includes all actual destination attempts, including retries, and
 reports counter coverage, weighted read share and attempt-weighted latency.
 Missing or noncontiguous request/attempt ordinals cannot bridge a transition.
+An overlap reset records the sole ordered active request ordinal before the
+writer invalidates it, or explicit `null` when no active request has ordered
+custody. The reader excludes that request from transitions while retaining
+earlier completed groups and all attempt aggregates. This additive scalar keeps
+schema version 1 and is ignored by older readers. Older reset records lack the
+fact needed to distinguish an active retry from an ended request with the same
+outcome; the reader reports uncertain reset coverage and conservatively excludes
+the adjacent group from transitions while preserving its attempt counters.
 Usage preserves provider field presence, including explicit zero; input
 estimates used for compaction never enter these records. Read share uses only
 records with both input and cached-input counters and rejects cached input above

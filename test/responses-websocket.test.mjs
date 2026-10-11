@@ -78,9 +78,9 @@ function serverEvents(socket) {
   return events;
 }
 
-function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
+function upgradePeer(fetchImpl, requestHeaders = {}, options = {}) {
   const socket = new FixtureSocket();
-  assert.equal(handleResponsesWebSocketUpgrade({
+  const accepted = handleResponsesWebSocketUpgrade({
     method: "GET",
     url: "/responses",
     headers: {
@@ -103,7 +103,13 @@ function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
     ...(options.admitUpgrade ? { admitUpgrade: options.admitUpgrade } : {}),
     ...(options.admitRequest ? { admitRequest: options.admitRequest } : {}),
     ...(options.onPeer ? { onPeer: options.onPeer } : {}),
-  }), true);
+  });
+  return { socket, accepted };
+}
+
+function openPeer(fetchImpl, requestHeaders = {}, options = {}) {
+  const { socket, accepted } = upgradePeer(fetchImpl, requestHeaders, options);
+  assert.equal(accepted, true);
   assert.match(socket.writes[0].toString("ascii"), /^HTTP\/1\.1 101 /u);
   return socket;
 }
@@ -316,6 +322,23 @@ test("SSE relaying preserves validated raw JSON across byte-split UTF-8 and mult
   }
 });
 
+test("headerless HTTP fallback forwards Unicode field values identically across partitions", async () => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    const expected = [
+      {type:"response.output_text.delta",delta:`visible${separator}text`},
+      {type:"response.completed",response:{id:"resp_headerless_unicode",status:"completed",output:[]}},
+    ];
+    const wire = Buffer.from(expected.map(event=>`data: ${JSON.stringify(event)}\n\n`).join(""));
+    for (const chunks of [[wire],[wire.subarray(0,5),wire.subarray(5)],[...wire].map(byte=>Buffer.from([byte]))]) {
+      const {socket,events} = await exchange(async()=>new Response(new ReadableStream({start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk); controller.close();
+      }})));
+      assert.deepEqual(events,expected);
+      socket.emit("end");
+    }
+  }
+});
+
 test("UTF-8 SSE line byte bounds are exact across partial code points", async () => {
   const line = `data: ${JSON.stringify({ type: "response.completed", response: { id: "resp_utf8", status: "completed", output: [], fixture: "漢🙂" } })}`;
   const body = Buffer.from(`${line}\r\n\r\n`);
@@ -341,10 +364,18 @@ test("WebSocket rejects an invalid completed terminal as one protocol failure", 
 });
 
 test("WebSocket admission rejects upgrades and later logical requests while force closes peers", async () => {
-  assert.throws(
-    () => openPeer(async () => new Response(), {}, { admitUpgrade: () => { throw new Error("draining"); } }),
-    /false !== true/u,
-  );
+  let fetches = 0, peers = 0;
+  const rejected = upgradePeer(async () => { fetches++; return new Response(); }, {}, {
+    admitUpgrade: () => { throw new Error("draining"); },
+    onPeer: () => { peers++; return () => {}; },
+  });
+  assert.equal(rejected.accepted, false);
+  const handshake = Buffer.concat(rejected.socket.writes).toString("utf8");
+  assert.match(handshake, /^HTTP\/1\.1 503 /u);
+  assert.equal(JSON.parse(handshake.split("\r\n\r\n")[1]).error.type, "websocket_upgrade_rejected");
+  assert.equal(rejected.socket.writable, false);
+  assert.equal(fetches, 0);
+  assert.equal(peers, 0);
 
   let open = true;
   let registered;

@@ -309,8 +309,14 @@ function latestUserHasNonText(input) {
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = input[index];
     if (item?.type !== "message" || item.role !== "user") continue;
-    return (Array.isArray(item.content) ? item.content : [])
-      .some((part) => part?.type !== "input_text");
+    const content = Array.isArray(item.content) ? item.content : [];
+    const hasNonText = content.some((part) => part?.type !== "input_text");
+    const text = content.filter((part) => part?.type === "input_text")
+      .map((part) => typeof part.text === "string" ? part.text : "").join("\n");
+    // Match the serving selector: empty/control-only decoded user messages do
+    // not supersede the latest genuine task. The original input is forwarded.
+    if (!hasNonText && !text.trim()) continue;
+    return hasNonText;
   }
   return false;
 }

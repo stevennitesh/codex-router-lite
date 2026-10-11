@@ -127,8 +127,8 @@ Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
       const failed = mode.startsWith("failed-");
       assert.equal(result.status, failed ? 1 : 0, result.stderr + result.stdout);
       assert.match(result.stdout, new RegExp(`FIXTURE_NPM_CALLS=${skip ? 0 : mode === "full" ? 2 : 1}`, "u"));
-      assert.doesNotMatch(result.stdout, /Current repository, runtime, catalog, and app-tool relay checks passed/u);
       if (!failed) {
+        assert.match(result.stdout, /Model execution and Desktop app-tool behavior were not tested/u);
         assert.match(result.stdout, new RegExp(`FIXTURE_NETWORK_CALLS=${mode === "online" ? 2 : 0}`, "u"));
         assert.match(result.stdout, /FIXTURE_CATALOG_CALLS=1/u);
         assert.match(result.stdout, /FIXTURE_DOCTOR_CALLS=1/u);

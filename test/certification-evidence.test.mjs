@@ -10,6 +10,7 @@ import { extractCertificationEvidence, extractCertificationOutcomes } from "../m
 import { certificationBatchPreflight } from "../maintenance/certification-preflight.mjs";
 import { certificationResultExitCode, executeCertificationPlan, publishCertificationDraft } from "../maintenance/certification-runner.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
+import { validateV2AgentApplications } from "../scripts/check-v2-agent-applications.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
@@ -319,6 +320,56 @@ function streamResponse(slug, status = 200) {
     {type:"response.completed",response:{status:"completed",model:slug}},
   ].map(event => `data: ${JSON.stringify(event)}\n\n`).join(""),{headers:{"content-type":"text/event-stream"}});
 }
+
+test("dispatched SSE observations reach native extraction and accepted applications only for valid complete streams", async () => {
+  const input = fixture(undefined,true), slug = input.run.routes[0].slug, route = MODEL_BY_SLUG.get(slug);
+  const jsons = [
+    {type:"response.output_text.delta",delta:"CERT_",padding:"漢🙂\u2028"},
+    {type:"response.output_text.delta",delta:"STREAM_OK"},
+    {type:"response.completed",response:{status:"completed",model:slug}},
+  ].map(event=>JSON.stringify(event));
+  const canonical = jsons.map(data=>`data: ${data}\n\n`).join("");
+  const cases = [
+    ["canonical",canonical,true], ["CR-only",canonical.replaceAll("\n","\r"),true],
+    ["multiline",jsons.map(data=> { const split = data.indexOf(","); return `data: ${data.slice(0,split+1)}\ndata: ${data.slice(split+1)}\n\n`; }).join(""),true],
+    ["BOM",`\uFEFF${canonical}`,true],
+    ["merged invalid data",jsons.map(data=>`data: ${data}\n`).join("")+"\n",false],
+    ["no dispatch",jsons.map(data=>`data: ${data}\n`).join(""),false],
+    ["terminal EOF",canonical.slice(0,-1),false],
+    ["missing terminal",jsons.slice(0,2).map(data=>`data: ${data}\n\n`).join(""),false],
+    ["failed terminal",jsons.slice(0,2).map(data=>`data: ${data}\n\n`).join("")+'data: {"type":"response.failed"}\n\n',false],
+    ["after terminal",canonical+'data: {"type":"response.output_text.delta","delta":"late"}\n\n',false],
+  ];
+  for (const [name,wire,pass] of cases) for (const size of [1,7]) {
+    const {batch,streaming} = planFor(input), bytes = Buffer.from(wire);
+    let requests = 0, parents = 0;
+    const result = await executeCertificationPlan(batch,{streaming,now:()=>at(0),
+      request:()=> { requests++; return new Response(new ReadableStream({start(controller) {
+        for (let offset=0;offset<bytes.length;offset+=size) controller.enqueue(bytes.subarray(offset,offset+size));
+        controller.close();
+      }}),{headers:{"content-type":"text/event-stream"}}); },
+      native:async selected=> {
+        parents++; assert.deepEqual(selected.runManifestTemplate.routes,input.run.routes);
+        const observed = extractCertificationOutcomes(input);
+        assert.equal(observed.reports[0].sameChildRollout,true);
+        assert.equal(observed.reports[0].encryptedHandoffCount,2);
+        assert.equal(observed.reports[0].lifecycle.completedCleanupCalls,2);
+        return observed;
+      }});
+    assert.equal(requests,1,name); assert.equal(parents,pass?1:0,name);
+    assert.equal(result.status,pass?"draft":"failed",name);
+    if (!pass) { assert.equal(result.summary,null,name); continue; }
+    const root = mkdtempSync(path.join(os.tmpdir(),"certification-frame-gate-"));
+    try {
+      const evidencePath = path.join(root,"docs/history/frames.json");
+      assert.equal(publishCertificationDraft(result.summary,evidencePath,{sourceRoot:root}).status,"accepted");
+      assert.equal(validateV2AgentApplications(path.join(root,"v2_agent"),{models:[route]})[0].status,"accepted");
+      const proof = JSON.parse(readFileSync(path.join(root,"v2_agent",slug,"proof.json"),"utf8"));
+      assert.ok(Object.values(proof.checks).every(check=>check.outcome === "pass"));
+      assert.equal(proof.routerCommit,input.run.routerCommit,"retain observed generation identity");
+    } finally { rmSync(root,{recursive:true,force:true}); }
+  }
+});
 
 test("one shared plan publishes only the independently complete native route", async () => {
   for (const invalidIndex of [0,1]) {

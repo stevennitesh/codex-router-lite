@@ -26,40 +26,46 @@ import {
   validateSwitchyardConfigContract,
 } from "./switchyard-config-contract.mjs";
 
-const binaryArgument = process.argv[2];
-const binary = binaryArgument === "--current" ? findCodexBinary() : binaryArgument;
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const installedCatalogPath = process.argv[3] === "--catalog" ? process.argv[4] : undefined;
-if (
-  !binary ||
-  (process.argv.length !== 3 && process.argv.length !== 5) ||
-  (process.argv.length === 5 && !installedCatalogPath)
-) {
-  console.error(
-    "Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX|--current [--catalog PATH]",
-  );
-  process.exit(2);
-}
 
-function runCodex(binary, args, options = {}) {
-  const target = spawnableCommand(binary, args);
-  const result = spawnSync(target.command, target.args, {
-    ...target.options,
-    encoding: "utf8",
-    windowsHide: true,
-    ...options,
-  });
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || `Codex exited ${result.status}`).trim());
+export function runCodex(binary, args, options = {}) {
+  const operation = args[0] === "--version" ? "version" : args[0] === "--config" ? "parse" : "bundled";
+  let result;
+  try {
+    const target = spawnableCommand(binary, args);
+    result = spawnSync(target.command, target.args, {
+      ...target.options,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30_000,
+      maxBuffer: 32 * 1024 * 1024,
+      ...options,
+    });
+  } catch {
+    throw new Error(`Codex ${operation} probe failed: invocation rejected.`);
+  }
+  if (result.error || result.signal || result.status !== 0) {
+    const reason = result.error?.code === "ENOBUFS" ? "output limit exceeded"
+      : result.error?.code === "ETIMEDOUT" ? "timeout"
+      : result.error ? "could not start or capture command"
+      : result.signal ? "command terminated"
+      : Number.isInteger(result.status) ? `exit status ${result.status}` : "no exit status";
+    // Neither stream nor exception text is safe diagnostic metadata.
+    throw new Error(`Codex ${operation} probe failed: ${reason}.`);
   }
   return result.stdout;
+}
+
+function parseCodexJson(output) {
+  try { return JSON.parse(output); }
+  catch { throw new Error("Codex catalog probe failed: invalid JSON."); }
 }
 
 const routed = CHECKED_IN_MODELS;
 
 function buildCandidate(binary, nativeOverride) {
   const version = runCodex(binary, ["--version"]).trim();
-  const native = nativeOverride || JSON.parse(runCodex(binary, ["debug", "models", "--bundled"]));
+  const native = nativeOverride || parseCodexJson(runCodex(binary, ["debug", "models", "--bundled"]));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();
   const nativeBaseSlugs = new Set(native.models.map((model) => String(model.slug || "")));
@@ -220,56 +226,67 @@ function buildCandidate(binary, nativeOverride) {
   return { binary, version, catalog };
 }
 
-const installedNative = installedCatalogPath
-  ? JSON.parse(readFileSync(path.join(path.dirname(installedCatalogPath), "native-models.json"), "utf8"))
-  : undefined;
-const source = buildCandidate(binary, installedNative);
-const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
-const catalogPath = installedCatalogPath || path.join(temporaryHome, "merged-models.json");
-try {
-  const checkedCatalog = installedCatalogPath
-    ? JSON.parse(readFileSync(installedCatalogPath, "utf8"))
-    : source.catalog;
-  if (!installedCatalogPath) {
-    writeFileSync(catalogPath, `${JSON.stringify(checkedCatalog)}\n`);
+export function main(args = process.argv.slice(2)) {
+  const binary = args[0] === "--current" ? findCodexBinary() : args[0];
+  const installedCatalogPath = args[1] === "--catalog" ? args[2] : undefined;
+  if (!binary || (args.length !== 1 && args.length !== 3) || (args.length === 3 && !installedCatalogPath)) {
+    console.error("Usage: node scripts/check-codex-catalog-compat.mjs PATH_TO_CURRENT_CODEX|--current [--catalog PATH]");
+    process.exitCode = 2;
+    return;
   }
-  const checkedBySlug = new Map(checkedCatalog.models?.map((model) => [model.slug, model]) || []);
-  const expectedBySlug = new Map(source.catalog.models.map((model) => [model.slug, model]));
-  const routeOwnedFields = (model) => {
-    const { availability_nux: _announcementState, ...owned } = model;
-    return owned;
-  };
-  for (const model of routed) {
-    if (!checkedBySlug.has(model.slug)) {
-      throw new Error(`${source.version} catalog is missing routed entry ${model.slug}`);
+  const installedNative = installedCatalogPath
+    ? JSON.parse(readFileSync(path.join(path.dirname(installedCatalogPath), "native-models.json"), "utf8"))
+    : undefined;
+  const source = buildCandidate(binary, installedNative);
+  const temporaryHome = mkdtempSync(path.join(os.tmpdir(), "codex-router-catalog-compat-"));
+  const catalogPath = installedCatalogPath || path.join(temporaryHome, "merged-models.json");
+  try {
+    const checkedCatalog = installedCatalogPath
+      ? JSON.parse(readFileSync(installedCatalogPath, "utf8"))
+      : source.catalog;
+    if (!installedCatalogPath) {
+      writeFileSync(catalogPath, `${JSON.stringify(checkedCatalog)}\n`);
     }
-    assert.deepEqual(
-      routeOwnedFields(checkedBySlug.get(model.slug)),
-      routeOwnedFields(expectedBySlug.get(model.slug)),
-      `${source.version} installed routed entry ${model.slug} does not match the candidate`,
+    const checkedBySlug = new Map(checkedCatalog.models?.map((model) => [model.slug, model]) || []);
+    const expectedBySlug = new Map(source.catalog.models.map((model) => [model.slug, model]));
+    const routeOwnedFields = (model) => {
+      const { availability_nux: _announcementState, ...owned } = model;
+      return owned;
+    };
+    for (const model of routed) {
+      if (!checkedBySlug.has(model.slug)) {
+        throw new Error(`${source.version} catalog is missing routed entry ${model.slug}`);
+      }
+      assert.deepEqual(
+        routeOwnedFields(checkedBySlug.get(model.slug)),
+        routeOwnedFields(expectedBySlug.get(model.slug)),
+        `${source.version} installed routed entry ${model.slug} does not match the candidate`,
+      );
+    }
+    const parsed = parseCodexJson(
+      runCodex(
+        source.binary,
+        ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
+        { env: { ...process.env, CODEX_HOME: temporaryHome } },
+      ),
     );
-  }
-  const parsed = JSON.parse(
-    runCodex(
-      source.binary,
-      ["--config", `model_catalog_json=${JSON.stringify(catalogPath)}`, "debug", "models"],
-      { env: { ...process.env, CODEX_HOME: temporaryHome } },
-    ),
-  );
-  const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
-  for (const model of routed) {
-    if (!bySlug.has(model.slug)) {
-      throw new Error(`${source.version} did not parse routed catalog entry ${model.slug}`);
+    const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
+    for (const model of routed) {
+      if (!bySlug.has(model.slug)) {
+        throw new Error(`${source.version} did not parse routed catalog entry ${model.slug}`);
+      }
     }
+    const switchyard = bySlug.get("switchyard/auto");
+    assert.equal(switchyard.auto_compact_token_limit ?? undefined,
+      expectedBySlug.get("switchyard/auto").auto_compact_token_limit ?? undefined,
+      `${source.version} did not preserve Switchyard native compaction`);
+    process.stdout.write(
+      `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
+        "GLM, DeepSeek, Pareto, and Switchyard compatibility passed\n",
+    );
+  } finally {
+    rmSync(temporaryHome, { recursive: true, force: true });
   }
-  const switchyard = bySlug.get("switchyard/auto");
-  assert.equal(switchyard.auto_compact_token_limit ?? undefined,
-    expectedBySlug.get("switchyard/auto").auto_compact_token_limit ?? undefined,
-    `${source.version} did not preserve Switchyard native compaction`);
-  process.stdout.write(
-    `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
-      "GLM, DeepSeek, Pareto, and Switchyard compatibility passed\n",
-  );
-} finally {
-  rmSync(temporaryHome, { recursive: true, force: true });
 }
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

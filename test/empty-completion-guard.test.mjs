@@ -173,3 +173,32 @@ test("only explicitly actionable native call items satisfy the completion guard"
     assert.equal(output, actionable ? wire : "", type);
   }
 });
+
+test("paired guards preserve snapshot answers and uncertain outcomes without empty-success evidence", async () => {
+  const answer = [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ORIGINAL_漢🙂" }] }];
+  const cases = [
+    ["generic snapshot", `event: message\ndata: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: answer } })}\n\n`],
+    ["done snapshot", `data: ${JSON.stringify({ type: "response.done", response: { status: "completed", output: answer } })}\n\n`],
+    ["failed status", 'event: response.completed\ndata: {"type":"response.completed","response":{"status":"failed","error":{"message":"ORIGINAL_FAILURE"},"output":[]}}\n\n'],
+    ["incomplete status", 'data: {"type":"response.completed","response":{"status":"incomplete","output":[]}}\n\n'],
+    ["duplicate status", 'data: {"type":"response.completed","response":{"status":"failed","sta\\u0074us":"completed","output":[]}}\n\n'],
+    ["conflicting label", 'event: response.completed\ndata: {"type":"response.failed","response":{"status":"failed","output":[]}}\n\n'],
+    ["lossy envelope", 'data: {"type":"response.completed","sequence_number":18446744073709551615,"response":{"status":"completed","output":[]}}\n\n'],
+    ["malformed terminal", 'event: response.completed\ndata: {"type":"response.completed",\n\n'],
+    ["untyped data", 'data: {"response":{"output":[]}}\n\n'],
+    ["invalid UTF-8", Buffer.concat([Buffer.from('data: {"type":"response.completed","response":{"status":"completed","output":[],"id":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}}\n\n')])],
+  ];
+  for (const [label, body] of cases) for (const reasoning of [false, true]) for (const layout of ["whole", "bytes"]) {
+    const prefix = reasoning ? 'data: {"type":"response.reasoning_summary_text.delta","delta":"progress"}\n\n' : "";
+    const wire = Buffer.concat([Buffer.from(prefix), Buffer.from(body), Buffer.from('data: [DONE]\n\n')]);
+    const chunks = layout === "whole" ? [wire] : [...wire].map(byte => Buffer.from([byte]));
+    const guard = new EmptyCompletionGuard("text/event-stream");
+    const output = [];
+    for await (const chunk of Readable.from(chunks).pipe(guard)
+      .pipe(new EmptyCompletionTerminalGuard(guard, "text/event-stream"))) output.push(chunk);
+    const context = `${label}/${reasoning}/${layout}`;
+    assert.equal(guard.isEmpty(), false, context);
+    assert.equal(guard.canSuppressTerminal(), false, context);
+    assert.deepEqual(Buffer.concat(output), wire, context);
+  }
+});

@@ -72,6 +72,12 @@ other complete observations. Authentication refusals and known Router
 unavailability stop further attempts. Shared parent or runtime invalidity rejects
 the run. The runner does not retry a failed route or substitute an endpoint.
 
+The streaming observer accepts complete SSE dispatches, with CRLF, LF or CR
+line endings and joined multiline data fields. An unfinished event at EOF does
+not prove completion. The observer rejects raw streams above 8 MiB before
+passing each chunk to the shared framer; HTTP success or parseable undelimited
+JSON lines cannot create a passed streaming check.
+
 `result.json` records each route's status, phase, safe failure code and observed
 HTTP status where available. Running snapshots also retain successful streaming
 metadata; raw provider bodies and arbitrary exception messages are excluded.

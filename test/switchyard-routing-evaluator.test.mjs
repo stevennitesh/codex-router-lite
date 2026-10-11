@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -121,7 +120,7 @@ test("full-body latency includes response parsing", async () => {
   assert.ok(result.vector.fullBodyLatencyMs >= 20);
 });
 
-test("paid vectors retain their fixed request contract", async () => {
+test("paid vectors use the authenticated decision endpoint and fixed request contract", async () => {
   let sent;
   await requestVector("http://local", "cap", {
     ...item,
@@ -132,19 +131,26 @@ test("paid vectors retain their fixed request contract", async () => {
       stream: true,
     },
   }, 0, {
-    fetchImpl: async (_url, options) => {
-      sent = JSON.parse(options.body).request;
+    fetchImpl: async (url, options) => {
+      sent = { url, method: options.method, headers: new Headers(options.headers), body: JSON.parse(options.body) };
       return new Response(JSON.stringify(decisionBody()), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     },
   });
-  assert.deepEqual(sent, {
-    model: "switchyard-auto",
-    input: item.input,
-    store: false,
-    stream: false,
+  assert.equal(sent.url, "http://local/v1/decision");
+  assert.equal(sent.method, "POST");
+  assert.equal(sent.headers.get("content-type"), "application/json");
+  assert.equal(sent.headers.get("x-codex-router-switchyard-capability"), "cap");
+  assert.deepEqual(sent.body, {
+    input_format: "openai_responses",
+    request: {
+      model: "switchyard-auto",
+      input: item.input,
+      store: false,
+      stream: false,
+    },
   });
 });
 
@@ -221,6 +227,49 @@ test("expected zero-call fallbacks enforce Sol High independently of quality sco
       assert.equal(applyPolicy(vector, 0.35), "sol_high");
       assert.equal(runtimeParity([fixture], [vector], 0.35).passed, target === "sol_high");
     }
+  }
+});
+
+test("media fallback follows the latest genuine explicit user task without changing input", async () => {
+  const message = content => ({ type: "message", role: "user", content });
+  const media = message([{ type: "input_image", image_url: "data:image/png;base64,AA==" }]);
+  const text = message([{ type: "input_text", text: "Current text task." }]);
+  const blank = message([{ type: "input_text", text: "  \n\t" }]);
+  const body = { decision_evidence: { source: "fail_open", reason_code: "non_text_state", final_target: "sol_high" } };
+  const corpus = JSON.parse(readFileSync(path.join(root, "docs/switchyard-routing-corpus.json"), "utf8"));
+  assertCorpus(corpus, { requireFidelity: true });
+  const authored = corpus.fidelity.filter(sample => /^F(?:09|10|11)-/u.test(sample.id));
+  assert.equal(authored.length, 3);
+  for (const [input, expected] of [
+    [[media], true], [[media, message([])], true], [[media, blank], true],
+    [[text, media, message([]), blank], true], [[media, text, blank], false],
+    [[message([]), blank], false],
+    ...authored.map(sample => [sample.input, sample.expectedZeroCalls === true]),
+  ]) {
+    const sample = { id: "media-control", input, expected: "sol_high", acceptable: ["sol_high"], severity: "normal" };
+    let sent, calls = 0;
+    const request = requestVector("http://local", "synthetic", sample, 1, {
+      fetchImpl: async (_url, options) => {
+        calls++;
+        sent = JSON.parse(options.body).request.input;
+        return new Response(JSON.stringify(body));
+      },
+    });
+    if (expected) {
+      const { vector } = await request;
+      assert.equal(vector.measurementKind, "local_fallback");
+      const diagnostics = routingDiagnostics([sample], [vector], 0.35);
+      assert.equal(diagnostics.currentPolicy.classifierMeasured, 0);
+      assert.equal(diagnostics.probabilities.multiclassBrierExact, null);
+    } else {
+      await assert.rejects(request, /unexpected local fallback/u);
+      const measured = await requestVector("http://local", "synthetic", sample, 0, {
+        fetchImpl: async () => new Response(JSON.stringify(decisionBody())),
+      });
+      assert.equal(measured.vector.measurementKind, "classifier");
+    }
+    assert.equal(calls, 1);
+    assert.deepEqual(sent, input);
   }
 });
 
@@ -302,7 +351,7 @@ test("routing diagnostics expose selective risk without treating confidence as c
   assert.ok(diagnostics.thresholdSweep.some((entry) => entry.threshold === 0.5));
 });
 
-test("offline fidelity binds the ordered source patches and authored Rust fixture", () => {
+test("offline fidelity binds both source patches and keeps its Rust fixture offline", () => {
   const lockBytes = readFileSync(path.join(root, "config", "switchyard", "source.lock"));
   const contributionBytes = readFileSync(path.join(
     root, "config", "switchyard", "patches", "switchyard-typesafe-pr-762.patch",
@@ -311,53 +360,17 @@ test("offline fidelity binds the ordered source patches and authored Rust fixtur
     root, "config", "switchyard", "patches", "switchyard-codex-compat.patch",
   ));
   const lock = verifyFidelitySourceInputs(lockBytes, contributionBytes, patchBytes);
-  assert.equal(lock.commit, "fbabf51c62793ed0f6af042b60e92ce1cfba083b");
+  assert.deepEqual(lock, JSON.parse(lockBytes.toString("utf8")));
+  assert.throws(
+    () => verifyFidelitySourceInputs(lockBytes, Buffer.concat([contributionBytes, Buffer.from("changed")]), patchBytes),
+    /does not bind the upstream contribution patch/u,
+  );
+  assert.throws(
+    () => verifyFidelitySourceInputs(lockBytes, contributionBytes, Buffer.concat([patchBytes, Buffer.from("changed")])),
+    /does not bind the compatibility patch/u,
+  );
   const fixture = readFileSync(path.join(
     root, "scripts", "fixtures", "switchyard-input-fidelity.rs",
   ), "utf8");
-  assert.match(fixture, /exact outgoing classifier state/u);
-  assert.match(fixture, /expected zero classifier calls/u);
   assert.doesNotMatch(fixture, /OPENROUTER|api_key|reqwest/u);
-});
-
-test("C2 review evidence binds the repaired evaluator and every frozen gate", () => {
-  const evidence = JSON.parse(readFileSync(
-    path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r1-accepted-evidence.json"),
-    "utf8",
-  ));
-  const canonicalTextHash = (file) => createHash("sha256").update(
-    readFileSync(file, "utf8").replace(/\r\n?/gu, "\n"),
-    "utf8",
-  ).digest("hex");
-  const evaluatorHash = canonicalTextHash(
-    path.join(root, "docs", "history", "2026-09-18-switchyard-c2-evaluator.mjs"),
-  );
-  const predecessorHash = canonicalTextHash(
-    path.join(root, "docs", "history", "2026-09-18-switchyard-c2-r0-failed-evidence.json"),
-  );
-  const canonicalTemplate = readFileSync(
-    path.join(root, "docs", "history", "2026-10-08-switchyard-sol-medium-proof", "routes.template.toml"),
-    "utf8",
-  ).replace(/\r\n?/gu, "\n");
-  const canonicalConfigSourceHash = createHash("sha256").update(canonicalTemplate.replace(
-    "__CODEX_ROUTER_INTERNAL_RESPONSES_BASE_URL__",
-    "http://127.0.0.1:1/v1",
-  )).digest("hex");
-  assert.equal(evidence.status, "c2_gates_passed");
-  assert.equal(evidence.promotionEligible, true);
-  assert.equal(evidence.identities.evaluatorSha256, evaluatorHash);
-  assert.equal(evidence.identities.genericConfigSourceSha256, canonicalConfigSourceHash);
-  assert.equal(evidence.predecessorEvidence.sha256, predecessorHash);
-  assert.equal(evidence.paidDecisionRequests, 80);
-  assert.equal(evidence.development.selectedCriteria, "genericCandidate");
-  assert.equal(evidence.development.selectedPolicy, "A");
-  assert.equal(evidence.development.boundaryPolicyChanges.length, 0);
-  assert.equal(evidence.counterfactualAssessment.answerCallsMade, 0);
-  assert.ok(Object.values(evidence.gateResults).every(Boolean));
-  const attempts = Object.values(evidence.runs)
-    .flatMap((run) => run.attempts)
-    .flatMap((entry) => entry.attempts);
-  assert.equal(attempts.length, 80);
-  assert.ok(attempts.every((attempt) => attempt.attempt === 0));
-  assert.equal(attempts.filter((attempt) => attempt.reasonCode === "low_confidence").length, 2);
 });

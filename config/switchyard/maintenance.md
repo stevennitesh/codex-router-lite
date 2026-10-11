@@ -28,8 +28,10 @@ Run the maintained build owner from the Router repository:
 $candidate = .\maintenance\build-switchyard-candidate.ps1
 ```
 
-It validates the ordered patch hashes before cloning the pinned source, installs
-the pinned toolchain and required components, and runs formatting, Clippy, the
+It reads each ordered patch once, validates those exact bytes against the lock,
+and applies invocation-owned snapshots in lock order after cloning the pinned
+source. The snapshots are removed on success or failure. It installs the pinned
+toolchain and required components, and runs formatting, Clippy, the
 retained package tests and release build. Dependency resolution stays locked.
 Every native command must succeed before a candidate is returned. Failure removes
 only that invocation's disposable checkout. Success returns `buildRoot`,
@@ -49,6 +51,14 @@ file.
 
 The deployment owner validates the candidate hashes and route dry run before
 stopping Router, then stages and protects the complete set on the runtime volume.
+For an active checkout, it stages Node dependencies from the exact package and
+lock inputs with normal npm scripts and verifies the locked tree and imports
+before and after relocation. Node and Python replacements share one verified
+stop, swap and start transaction; retained dependency trees are retired only
+after service acceptance. A refused drain leaves active dependency bytes intact.
+`PrepareOnly` refuses a required replacement for an active checkout before
+generated-state effects. Inactive `DependenciesOnly` retains its guarded
+preparation path.
 Do not repeat its staging procedure by hand. For Router source edits, select
 checks using the [common verification scope](../../docs/agents/architecture.md#verification)
 and reuse unchanged results. Source catalog checks and deployment's installed
@@ -168,6 +178,14 @@ After activation begins, recovery stops the
 verified live checkout
 and refuses to overwrite runtime files if that stop fails. The retained backup
 is preserved on incomplete recovery, and the result reports both failures.
+Absence requires a rich process verdict and confirmed silence on both managed
+ports; an unknown or legacy verdict cannot authorize restoration. When an absent
+candidate has damaged dependencies, recovery restores the retained trees before
+importing the service manager. It preserves prior stopped intent and retains
+recovery paths on an uncertain observation or failed recovery. Snapshot metadata
+must match the complete physical set of regular managed files, including any
+consistent partial or empty prior set. Membership is frozen before effects and
+revalidated immediately before restoration changes its first file.
 Installation also refuses to transfer ownership away from a live process in
 another checkout; HTTP health alone cannot prove installation succeeded.
 

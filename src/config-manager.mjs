@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import {
-  copyFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -13,7 +12,7 @@ import path from "node:path";
 import { findCodexBinary } from "./codex-binary.mjs";
 import { assertCallerSecret, isManagedCallerBaseUrl, redactCallerUrl } from "./caller-auth.mjs";
 import { refreshCodexCallerCapabilityContents } from "./caller-key-client-refresh.mjs";
-import { privateFileIsProtected, protectPrivateFile, writePrivateFile } from "./file-security.mjs";
+import { createPrivateFile, privateFileIsProtected, protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { catalogPathsEqual, readNativeCatalogSource } from "./native-catalog-source.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import {
@@ -435,7 +434,10 @@ if (command === "caller-capability-refresh") {
   next = command === "enable" ? enabledContents(current) : disabledContents(current);
 }
 
-if (existsSync(CONFIG_PATH) && !existsSync(BACKUP_PATH)) copyFileSync(CONFIG_PATH, BACKUP_PATH);
-if (existsSync(BACKUP_PATH)) protectPrivateFile(BACKUP_PATH);
+if (existsSync(CONFIG_PATH) && !existsSync(BACKUP_PATH)) {
+  createPrivateFile(BACKUP_PATH, readFileSync(CONFIG_PATH));
+} else if (existsSync(BACKUP_PATH)) {
+  protectPrivateFile(BACKUP_PATH);
+}
 atomicWrite(next);
 process.stdout.write(`${JSON.stringify(snapshot(next))}\n`);

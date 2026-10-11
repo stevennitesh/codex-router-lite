@@ -117,6 +117,8 @@
     "src/sse-framing.mjs",
     "src/sse-prefix.mjs",
     "src/start.mjs",
+    "src/windows-batch-cleanup.mjs",
+    "src/windows-batch-cleanup.ps1",
     "src/state-owner.mjs",
     "src/switchyard-certification-evidence.mjs",
     "src/switchyard-native-observation.mjs",

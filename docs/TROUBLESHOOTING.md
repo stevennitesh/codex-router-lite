@@ -24,6 +24,22 @@ Rotation keeps its transaction locks alive while waiting for status and config
 refresh commands. Recovery waits for a failed child command to close before
 restoring the previous capability and client configuration.
 
+The catalog publication, model overlay, caller rotation and service command
+locks recover only when their recorded owner process has exited. A paused live
+process keeps its lock even if its heartbeat is old. A failed process probe or
+a reused PID can cause the command to wait or refuse; neither grants permission
+to remove the lock. Resolve the running command before retrying.
+
+Upgrades from empty directory locks require a quiescent transition: complete the
+guarded replacement transaction and wait for all old Router CLI commands to
+exit before using the new commands. If an empty legacy `.lock` directory remains
+under the selected Router state directory, confirm that all previous command
+holders have exited before removing that empty directory. Do not remove a
+populated, unverified or live-owner lock, and do not run old and new lock writers
+together. Only `catalog-publication.lock`, `model-overlay-transaction.lock`,
+`caller-key-rotation.lock` and `service-operation.lock` are part of this cleanup;
+leave capability, manifest and other state files intact.
+
 Generated-state writes also stop when an existing installation manifest cannot
 establish ownership. Restore a valid manifest before retrying. An intentionally
 ownerless version-1 manifest retains its existing initialization behavior; an
@@ -69,6 +85,12 @@ connect bound. `CODEX_ROUTER_CONNECT_TIMEOUT_MS` may override it from 500 ms
 through 30 seconds. The default pre-header retry budget is derived from the same
 bound, so the retry loop can actually absorb transient connect failures instead
 of discovering them only after its budget has expired.
+
+Literal loopback hops (`localhost`, IPv4 `127/8`, and `::1`) always use direct
+HTTP connections, including the separate health probe pool. They do not depend
+on `NO_PROXY`; ordinary external origins retain the opted-in environment proxy
+and bypass policy. DNS aliases, local-looking suffixes and private network
+addresses do not acquire that mandatory bypass.
 
 Do not raise the timeout merely to hide a persistently unreachable network
 path. Check DNS, proxy selection, local interface/routing, and whether the same
