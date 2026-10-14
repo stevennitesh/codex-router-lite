@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Windows app compatibility and upstream assessment, 2026-10-13](2026-10-13-app-compatibility-review.json)
+
 - [Audit release six-route certification and Switchyard smoke checks, 2026-10-11](2026-10-11-audit-release-certification.json)
 
 - [Windows compatibility deployment and six-route renewal, 2026-10-10](2026-10-10-compatibility-release.md),

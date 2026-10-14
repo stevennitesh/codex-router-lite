@@ -1,0 +1,72 @@
+{
+  "reviewDate": "2026-10-13",
+  "checkoutCommit": "38ad2e0c1548fe42952a57355ed5930466aa7321",
+  "installedAppPackage": "OpenAI.Codex_26.1007.9446.0_x64__2p2nqsd0c76g0",
+  "installedCli": "0.162.0-alpha.17.2",
+  "installedCliSha256": "e98c516f1c8935789aabe9122ee7e05ec4c3efd1ba6acf179242e031c495b99e",
+  "bundledAppToolsPlugin": "0.1.6",
+  "checks": {
+    "command": "maintenance/refresh-compatibility-state.ps1 -AnalyzeUpstream",
+    "signature": "valid",
+    "nativeCatalogModelsParsed": 17,
+    "routerHealth": "healthy",
+    "sourceChecks": "passed",
+    "catalogAndNamespaceTests": { "passed": 50, "failed": 0, "skipped": 0 },
+    "transportAndOutcomeTests": {
+      "files": ["native-responses-websocket.test.mjs", "responses-websocket.test.mjs", "response-usage.test.mjs", "responses-stream-failure.test.mjs"],
+      "passed": 109, "failed": 0, "skipped": 0
+    },
+    "selectedModel": "gpt-6.1-sol",
+    "sourceUpdateCheck": "HEAD and origin/main synchronized"
+  },
+  "deploymentGap": {
+    "installedCommit": "4806fa3c5962c6bf9f9384a03ed3887813b49bb9",
+    "sourceRootMatchesCheckout": true,
+    "installedFastApi": "0.141.1",
+    "sourceFastApi": "0.142.2",
+    "installedLiteLlm": "1.104.0",
+    "recommendation": "Deploy the already-merged update through model-router.ps1 codex update; synchronized source still reinstalls when the install manifest revision differs.",
+    "deploymentPerformed": false
+  },
+  "originalRouterUpstream": {
+    "head": "089f90c94837b3b5c9f091b1fc6be0e7885f2690",
+    "maintainedBaseline": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+    "pendingInventory": 133,
+    "previousRelevantReview": "2026-10-10-compatibility-repairs.json",
+    "previousRelevantHead": "00eed6eb9f894a734eb51bb2e2b058575c6dca7a",
+    "newCommitsSincePreviousRelevantReview": 20,
+    "dispositions": [
+      { "commits": ["b850d97d", "a0ceb5e6"], "decision": "already covered", "reason": "Native interruption bypasses the generation queue, validates connection-owned response identity, supports discard_partial_items, and retains interrupted continuations; current regression tests pass." },
+      { "commits": ["e08c1bf4", "5135fa4f"], "decision": "no direct integration", "reason": "Lite already observes explicit terminal outcomes and preserves failure precedence. Upstream's additional ledger, provider-success aggregation, progress and subagent metering owners are not retained." },
+      { "commits": ["6f32de5e", "6cf33f7d"], "decision": "excluded", "reason": "Control Center outcome presentation is outside Lite." },
+      { "commits": ["3f4a8917", "a8ad9588"], "decision": "excluded", "reason": "Lite does not retain the generic reasoning-tag-stripper owner; the supported translated route is owned by pinned LiteLLM." },
+      { "commits": ["7bb40adc", "089f90c9"], "decision": "excluded", "reason": "Upstream-only Playwright development dependency." },
+      { "commits": ["cf3f30ac", "c22c9bf5", "6cec25b1", "3a1ede3b", "8de73474", "432fe2b4", "b3238e5b"], "decision": "excluded", "reason": "Antigravity/POSIX lease fixtures and upstream/macOS CI behavior are not retained." },
+      { "commits": ["a4c4e9b9", "3c7157b2", "d18d48b9"], "decision": "no direct integration", "reason": "Upstream test-fixture contracts do not establish a new Lite production requirement. Lite retains its existing owned-process and explicit terminal regressions." }
+    ],
+    "baselineAdvanced": false,
+    "baselineLimit": "This relevant-change assessment does not individually close the earlier 113-commit inventory; retain the baseline rather than claim a complete historical disposition."
+  },
+  "switchyard": {
+    "pin": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "head": "4bdf5719ce1c43902df92ef64407b858d1f99394",
+    "contributionPatchApplicability": "failed: Cargo.lock, algorithm.rs, config.rs, route.rs and TOML schema conflict",
+    "compatibilityPatchApplicability": "not tested because its required contribution layer could not apply",
+    "recommendation": "Keep the current pin for this app update.",
+    "futureCandidate": {
+      "commit": "50f635d74c7225587c2aea3b06e22334d0d33836",
+      "topic": "Cancellation of abandoned offloaded model/decision calls",
+      "assessment": "Potential resource-lifecycle improvement, but changes call.respond into an awaited work-future API across the driver and bindings. Establish relevance to the retained Jev path, deliberately rebase the ordered patches, build, and verify cancellation before selecting an upgrade. No current retained-route incident was reproduced."
+    },
+    "otherChanges": "New decision/composite routing APIs, stage-router selection, alternative algorithms, SDK bindings and macOS components do not warrant changing the current exact routing policy."
+  },
+  "officialReleaseNotes": {
+    "url": "https://learn.chatgpt.com/docs/changelog",
+    "finding": "No entry establishes a transport migration specific to Windows package 26.1007.9446. GPT-5.5 retires from signed-in Codex on October 14; the configured selection and exact Switchyard targets already use supported GPT-6 models. The optional catalog donor fallback is not a serving-model selection."
+  },
+  "limits": [
+    "No app-specific Router code defect was identified by these scoped checks.",
+    "The full suite, paid provider execution, live Desktop-only tools and fresh encrypted-child handoffs were not tested in this review.",
+    "No service restart, live configuration edit, dependency install, Switchyard build/pin change, commit or push was performed."
+  ]
+}
