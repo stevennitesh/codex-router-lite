@@ -11,10 +11,21 @@
     "nativeCatalogModelsParsed": 17,
     "routerHealth": "healthy",
     "sourceChecks": "passed",
-    "catalogAndNamespaceTests": { "passed": 50, "failed": 0, "skipped": 0 },
+    "catalogAndNamespaceTests": {
+      "passed": 50,
+      "failed": 0,
+      "skipped": 0
+    },
     "transportAndOutcomeTests": {
-      "files": ["native-responses-websocket.test.mjs", "responses-websocket.test.mjs", "response-usage.test.mjs", "responses-stream-failure.test.mjs"],
-      "passed": 109, "failed": 0, "skipped": 0
+      "files": [
+        "native-responses-websocket.test.mjs",
+        "responses-websocket.test.mjs",
+        "response-usage.test.mjs",
+        "responses-stream-failure.test.mjs"
+      ],
+      "passed": 109,
+      "failed": 0,
+      "skipped": 0
     },
     "selectedModel": "gpt-6.1-sol",
     "sourceUpdateCheck": "HEAD and origin/main synchronized"
@@ -25,8 +36,10 @@
     "installedFastApi": "0.141.1",
     "sourceFastApi": "0.142.2",
     "installedLiteLlm": "1.104.0",
-    "recommendation": "Deploy the already-merged update through model-router.ps1 codex update; synchronized source still reinstalls when the install manifest revision differs.",
-    "deploymentPerformed": false
+    "recommendation": "Resolved by the independent checkout deployment transaction because the active service runs directly from this checkout with Switchyard.",
+    "deploymentPerformed": false,
+    "observationScope": "Before the subsequently authorized deployment; retained as the original compatibility-review observation.",
+    "resolved": true
   },
   "originalRouterUpstream": {
     "head": "089f90c94837b3b5c9f091b1fc6be0e7885f2690",
@@ -36,13 +49,68 @@
     "previousRelevantHead": "00eed6eb9f894a734eb51bb2e2b058575c6dca7a",
     "newCommitsSincePreviousRelevantReview": 20,
     "dispositions": [
-      { "commits": ["b850d97d", "a0ceb5e6"], "decision": "already covered", "reason": "Native interruption bypasses the generation queue, validates connection-owned response identity, supports discard_partial_items, and retains interrupted continuations; current regression tests pass." },
-      { "commits": ["e08c1bf4", "5135fa4f"], "decision": "no direct integration", "reason": "Lite already observes explicit terminal outcomes and preserves failure precedence. Upstream's additional ledger, provider-success aggregation, progress and subagent metering owners are not retained." },
-      { "commits": ["6f32de5e", "6cf33f7d"], "decision": "excluded", "reason": "Control Center outcome presentation is outside Lite." },
-      { "commits": ["3f4a8917", "a8ad9588"], "decision": "excluded", "reason": "Lite does not retain the generic reasoning-tag-stripper owner; the supported translated route is owned by pinned LiteLLM." },
-      { "commits": ["7bb40adc", "089f90c9"], "decision": "excluded", "reason": "Upstream-only Playwright development dependency." },
-      { "commits": ["cf3f30ac", "c22c9bf5", "6cec25b1", "3a1ede3b", "8de73474", "432fe2b4", "b3238e5b"], "decision": "excluded", "reason": "Antigravity/POSIX lease fixtures and upstream/macOS CI behavior are not retained." },
-      { "commits": ["a4c4e9b9", "3c7157b2", "d18d48b9"], "decision": "no direct integration", "reason": "Upstream test-fixture contracts do not establish a new Lite production requirement. Lite retains its existing owned-process and explicit terminal regressions." }
+      {
+        "commits": [
+          "b850d97d",
+          "a0ceb5e6"
+        ],
+        "decision": "already covered",
+        "reason": "Native interruption bypasses the generation queue, validates connection-owned response identity, supports discard_partial_items, and retains interrupted continuations; current regression tests pass."
+      },
+      {
+        "commits": [
+          "e08c1bf4",
+          "5135fa4f"
+        ],
+        "decision": "no direct integration",
+        "reason": "Lite already observes explicit terminal outcomes and preserves failure precedence. Upstream's additional ledger, provider-success aggregation, progress and subagent metering owners are not retained."
+      },
+      {
+        "commits": [
+          "6f32de5e",
+          "6cf33f7d"
+        ],
+        "decision": "excluded",
+        "reason": "Control Center outcome presentation is outside Lite."
+      },
+      {
+        "commits": [
+          "3f4a8917",
+          "a8ad9588"
+        ],
+        "decision": "excluded",
+        "reason": "Lite does not retain the generic reasoning-tag-stripper owner; the supported translated route is owned by pinned LiteLLM."
+      },
+      {
+        "commits": [
+          "7bb40adc",
+          "089f90c9"
+        ],
+        "decision": "excluded",
+        "reason": "Upstream-only Playwright development dependency."
+      },
+      {
+        "commits": [
+          "cf3f30ac",
+          "c22c9bf5",
+          "6cec25b1",
+          "3a1ede3b",
+          "8de73474",
+          "432fe2b4",
+          "b3238e5b"
+        ],
+        "decision": "excluded",
+        "reason": "Antigravity/POSIX lease fixtures and upstream/macOS CI behavior are not retained."
+      },
+      {
+        "commits": [
+          "a4c4e9b9",
+          "3c7157b2",
+          "d18d48b9"
+        ],
+        "decision": "no direct integration",
+        "reason": "Upstream test-fixture contracts do not establish a new Lite production requirement. Lite retains its existing owned-process and explicit terminal regressions."
+      }
     ],
     "baselineAdvanced": false,
     "baselineLimit": "This relevant-change assessment does not individually close the earlier 113-commit inventory; retain the baseline rather than claim a complete historical disposition."
@@ -66,7 +134,59 @@
   },
   "limits": [
     "No app-specific Router code defect was identified by these scoped checks.",
-    "The full suite, paid provider execution, live Desktop-only tools and fresh encrypted-child handoffs were not tested in this review.",
-    "No service restart, live configuration edit, dependency install, Switchyard build/pin change, commit or push was performed."
-  ]
+    "The full suite was verified for the merged PR; this deployment repeated 140 affected and installed-gateway tests plus source/evidence validation. Native CLI proofs do not certify desktop-only tools or the desktop elevated sandbox.",
+    "The original compatibility assessment performed no deployment or publication; the separately authorized deployment and certification are recorded in deploymentResult."
+  ],
+  "deploymentResult": {
+    "deployedAt": "2026-10-14T03:49:18.5908295Z",
+    "routerCommit": "3bcae1da455b586a01b9ccdb15ee499dedafb8a4",
+    "accepted": true,
+    "transaction": "maintenance/deploy-switchyard-candidate.ps1",
+    "fastApi": "0.142.2",
+    "liteLlm": "1.104.0",
+    "switchyardPinChanged": false,
+    "checks": {
+      "routerFullHealth": true,
+      "taskIdentity": true,
+      "processIdentity": true,
+      "installManifest": true,
+      "doctor": true,
+      "protectedEndpoints": true,
+      "provenance": true,
+      "installedHashes": true,
+      "installedCatalog": true
+    },
+    "certification": {
+      "reason": "Changed native parent delegation instructions require renewing the collaboration contract for all six published routes.",
+      "routesPassed": 6,
+      "streamingRequestsPassed": 6,
+      "nativeChildRequestsPassed": 18,
+      "evidence": "2026-10-13-deployed-certification.json",
+      "executionSurface": "codex-cli",
+      "windowsSandbox": "mxc",
+      "additionalSwitchyardSmoke": "Not repeated: classifier, affinity, media fallback and compaction behavior unchanged."
+    },
+    "validation": {
+      "sourceCheck": "npm run check passed",
+      "affectedTests": {
+        "passed": 123,
+        "failed": 0,
+        "skipped": 0
+      },
+      "installedGatewayTests": {
+        "passed": 17,
+        "failed": 0,
+        "skipped": 0
+      },
+      "initialSandboxAttempt": "Restricted-context attempts produced 12 temporary TOML rename failures and 6 evidence-fixture cleanup/launch failures (EPERM). Normal Windows-user reruns passed all 123 affected tests and all 50 evidence tests.",
+      "evidenceTests": {
+        "command": "npm run verify:evidence",
+        "passed": 50,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "postCertificationRuntimeAcceptance": true,
+    "recovery": "Retained exact previous checkout and private runtime snapshot for rollback."
+  }
 }

@@ -1,12 +1,12 @@
 # openrouter/glm-5.3-flash-together v2 certification
 
-Accepted observations against Router `4806fa3c5962c6bf9f9384a03ed3887813b49bb9`
-(version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.2314.0.
-Tested at 2026-10-11T05:47:33.919Z. Exact endpoint: `together`; fallback disabled.
+Accepted observations against Router `3bcae1da455b586a01b9ccdb15ee499dedafb8a4`
+(version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.9446.0.
+Tested at 2026-10-14T03:50:56.500Z. Exact endpoint: `together`; fallback disabled.
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-11-audit-release-certification.json) records role `router_openrouter_glm_5_3_flash_together`, effort
+[Redacted run evidence](../../../docs/history/2026-10-13-deployed-certification.json) records role `router_openrouter_glm_5_3_flash_together`, effort
 `max`, output 42 from a real sandboxed command, two encrypted
 handoffs, and both markers from the same child. 3 Router requests
 completed successfully. 2 cleanup calls observed

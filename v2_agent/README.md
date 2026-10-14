@@ -23,6 +23,17 @@ the observations for each accepted batch:
   covers the retired Sol Medium policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
+The [deployed update renewal](../docs/history/2026-10-13-deployed-certification.json)
+passed all five checks for all six published routes on deployed commit
+`3bcae1da455b586a01b9ccdb15ee499dedafb8a4`, using Windows app 26.1007.9446.0.
+All six streaming requests and 18 native child requests returned HTTP 200.
+Each child produced sandboxed output 42, received two encrypted handoffs and
+returned both markers from the same thread; cleanup cancelled no active turns.
+This renews the changed native parent delegation contract. Switchyard binary and
+routing policy were unchanged; its additional classifier smoke was not repeated.
+These proofs used CLI session-only MXC with workspace-write and on-request
+approval; they do not certify desktop elevated sandbox behavior or arbitrary MCP tools.
+
 The [audit release renewal](../docs/history/2026-10-11-audit-release-certification.json)
 passed all five checks for all six published routes on deployed commit
 `4806fa3c5962c6bf9f9384a03ed3887813b49bb9`. All six streaming requests and
