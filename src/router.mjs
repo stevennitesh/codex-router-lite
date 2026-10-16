@@ -1,4 +1,5 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
+import { isWebBridgeModel, requestWebBridge } from "./chatgpt-web.mjs";
 import { observationFields, requestObservation } from "./request-observation.mjs";
 import { readFileSync } from "node:fs";
 import { createCatalogReader } from "./catalog-reader.mjs";
@@ -2277,7 +2278,7 @@ async function handleModels(response) {
   const data = catalogModels().map((model) => ({
     id: model.slug,
     object: "model",
-    owned_by: MODEL_BY_SLUG.has(model.slug)
+    owned_by: isWebBridgeModel(model.slug) ? "chatgpt-web" : MODEL_BY_SLUG.has(model.slug)
       ? providerForModel(MODEL_BY_SLUG.get(model.slug)).ownedBy
       : "openai",
   }));
@@ -2401,6 +2402,23 @@ async function handleResponses(request, response, requestUrl) {
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
     markResponsesStream(response, { model: requestedModel });
+    if (isWebBridgeModel(requestedModel)) {
+      route = { slug: requestedModel, provider: "chatgpt-web" };
+      const childEffort = configuredChildEffort(request, route);
+      if (childEffort !== undefined) payload = { ...payload, reasoning: { ...payload.reasoning, effort: childEffort } };
+      const beforeFetch = Date.now();
+      const upstream = await requestWebBridge(payload, {
+        compact: /\/responses\/compact$/.test(requestUrl.pathname),
+        signal: controller.signal,
+        headers: request.headers,
+      });
+      upstreamLatencyMs = Date.now() - beforeFetch;
+      finalStatus = upstream.status;
+      // This backend implements the caller's Responses/tool/history contract
+      // itself. Preserve its compaction envelopes and tool identities exactly.
+      await pipeResponse(upstream, response, new Set([...HOP_BY_HOP_HEADERS, "set-cookie"]));
+      return;
+    }
     const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
     if (!registeredRoute && retiredMessage) {
       writeJson(response, 400, { error: {

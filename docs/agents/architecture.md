@@ -9,6 +9,11 @@ failure use [debugging](debugging.md).
 The product is Windows Codex desktop and native CLI compatibility, the explicitly
 registered OpenRouter endpoints, Switchyard over native Codex models, and exact-route
 subagents. `src/routed-models.mjs` and the route JSON own the supported model set.
+The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) adds exact Web routes through
+`src/chatgpt-web.mjs` and its safe account capability snapshot. It uses an isolated
+launcher and a separate loopback Responses transport; it does not replace native
+catalog authority or participate in OpenRouter preparation. The explicit V1/V2
+selector governs new-conversation collaboration, with Web roles available only in V1.
 A requested new model extends that set deliberately; it does not authorize other
 clients, platforms, provider discovery, fallback fleets, Router UIs, or migration systems.
 

@@ -12,21 +12,30 @@ import {
   setMultiAgentModel,
   setSubagentEffort,
   subagentSettingsSnapshot,
+  readSubagentProtocol,
+  setSubagentProtocol,
 } from "./multi-agent-state.mjs";
 import { LISTED_MODELS, MODEL_BY_SLUG } from "./routed-models.mjs";
-import { modelPickerSnapshot, setModelVisible } from "./model-picker-state.mjs";
+import { modelPickerSnapshot, setModelVisible, seedWebModelsVisible } from "./model-picker-state.mjs";
 import { runServiceCli } from "./service.mjs";
+import {
+  connectWebBridge,
+  disconnectWebBridge,
+  launchWebBridge,
+  webBridgeModels,
+  webBridgeStatus,
+} from "./chatgpt-web.mjs";
 
 const args = process.argv.slice(2);
-const slugs = new Set(LISTED_MODELS.map((model) => model.slug));
-
 function requireRoute(slug) {
-  if (!slugs.has(slug)) throw new Error(`Unknown routed model: ${slug}`);
-  return MODEL_BY_SLUG.get(slug);
+  const model = MODEL_BY_SLUG.get(slug) || webBridgeModels().find((model) => model.slug === slug);
+  if (!model) throw new Error(`Unknown routed model: ${slug}`);
+  return model;
 }
 
 function requireCertifiedRoute(slug) {
   const route = requireRoute(slug);
+  if (readSubagentProtocol() === "v1") return route;
   if (route.multiAgentVersion !== "v2") {
     throw new Error(`${slug} is not certified for subagents v2.`);
   }
@@ -59,14 +68,41 @@ async function main() {
     }
     return;
   }
+  if (command === "web") {
+    if (action === "status") print({ ...webBridgeStatus(), subagentProtocol: readSubagentProtocol() });
+    else if (action === "launch") {
+      print({
+        ...await launchWebBridge(value),
+        next: "Finish browser login and MCP setup in the isolated bridge launcher, then run model-router.ps1 codex web connect <base-url>.",
+      });
+    } else if (action === "connect") {
+      const status = await connectWebBridge(value);
+      await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
+      print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
+        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex. Web subagents require V1; connecting does not change the protocol." });
+    } else if (action === "disconnect") {
+      print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
+        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
+    } else throw new Error("Usage: control web status|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
+    return;
+  }
   if (command === "subagents") {
     if (action === "status") {
       const snapshot = subagentSettingsSnapshot({ diagnostic: true });
       print({
         ...(snapshot.degraded ? {} : { settings: readMultiAgentSettings() }),
         snapshot,
-        routes: LISTED_MODELS.map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
+        web: webBridgeStatus(),
+        routes: [...LISTED_MODELS, ...webBridgeModels()].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
       });
+    } else if (action === "protocol") {
+      if (value === undefined || value === "status") {
+        print({ protocol: readSubagentProtocol(), web: webBridgeStatus(),
+          webSubagentsAvailable: readSubagentProtocol() === "v1" && webBridgeModels().length > 0 });
+      } else {
+        print({ ...await setSubagentProtocol(value), web: webBridgeStatus(),
+          next: "Run model-router.ps1 codex refresh-catalog, fully quit and reopen Codex, and start a new conversation." });
+      }
     } else if (["all", "selected", "proven"].includes(action)) {
       print(await setMultiAgentMode(action));
     } else if (action === "on" || action === "off") {
@@ -76,7 +112,7 @@ async function main() {
       requireRoute(value);
       print(await setSubagentEffort(value, extra));
     } else {
-      throw new Error("Usage: control subagents status|all|selected|proven|on <route>|off <route>|effort <route> <level>");
+      throw new Error("Usage: control subagents status|protocol status|v1|v2|all|selected|proven|on <route>|off <route>|effort <route> <level>");
     }
     return;
   }
@@ -84,7 +120,7 @@ async function main() {
     process.exitCode = await runServiceCli(args.slice(1));
     return;
   }
-  throw new Error("Usage: control health|providers|picker|subagents|service");
+  throw new Error("Usage: control health|providers|picker|subagents|web|service");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

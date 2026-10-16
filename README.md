@@ -14,6 +14,11 @@ responses, tool calls and conversation history. Codex runs the tools and
 applies its sandbox permissions and approvals. Native GPT models remain
 available through the user's Codex login.
 
+An optional [ChatGPT Web bridge](docs/CHATGPT-WEB.md) adds browser-backed models
+to the same picker, with explicit model-family labels and a separate V1/V2
+subagent selector. Browser and MCP setup plus account-bound verification are
+required; the existing routes remain the default.
+
 This is an independent Windows adaptation of
 [duolahypercho/codex-router](https://github.com/duolahypercho/codex-router),
 currently before version 1.0. The Lite adaptation maintains Windows installation

@@ -56,6 +56,7 @@ import {
   MODEL_BY_SLUG,
 } from "./routed-models.mjs";
 import { readProviderSelection } from "./provider-selection.mjs";
+import { webBridgeModels } from "./chatgpt-web.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
 const refreshIfStale = process.argv.includes("--refresh-if-stale");
@@ -1174,6 +1175,8 @@ export function promoteNativeMultiAgent(models, settings, hidden = new Set()) {
   const enabled = new Set(settings.enabled || []);
   const disabled = new Set(settings.disabled || []);
   return models.map((model) => {
+    if (settings.protocol === "v1") return model.multi_agent_version === "disabled"
+      ? model : { ...model, multi_agent_version: "v1" };
     const slug = String(model.slug);
     if (model.visibility !== "list") return model;
     if (hidden.has(slug) || disabled.has(slug)) {
@@ -1204,7 +1207,7 @@ function behaviorTemplateFor(nativeModels, model, fallback) {
 export function buildMergedCatalog(
   native,
   routedModelsList,
-  { includeNative = true, nativeSlugs, omittedRoutes = [] } = {},
+  { includeNative = true, nativeSlugs, omittedRoutes = [], webModels = [] } = {},
 ) {
   if (!validNativeCatalog(native)) {
     throw new Error("Native model catalog is invalid.");
@@ -1247,6 +1250,24 @@ export function buildMergedCatalog(
         reason: String(error instanceof Error ? error.message : error).slice(0, 500),
       });
     }
+  }
+  // Inherit the installed client's required schema, then let the bridge's
+  // account-bounded metadata own model identity, effort and limits. Reusing the
+  // external projection also removes native-only capability defaults.
+  let webPriority = Math.max(0, ...[...models.values()].map((model) => Number(model.priority) || 0)) + 1;
+  for (const model of webModels) {
+    const entry = routedModel(template, {
+      ...model,
+      displayName: model.display_name,
+      defaultEffort: model.default_reasoning_level,
+      reasoningLevels: model.supported_reasoning_levels,
+      contextWindow: model.context_window,
+      autoCompact: model.auto_compact_token_limit,
+      inputModalities: model.input_modalities || ["text", "image"],
+      priority: webPriority++,
+      multiAgentVersion: "v1",
+    });
+    models.set(model.slug, { ...entry, ...model, multi_agent_version: "v1" });
   }
   return sortCatalogModels(models.values());
 }
@@ -1317,6 +1338,7 @@ async function publishCatalog({
   const enabledProviders = new Set(readProviderSelection());
   modelPickerSnapshot();
   const multiAgentSettings = readMultiAgentSettings();
+  const webModels = webBridgeModels();
   const nativeAccountRefresh = configuredNativeSource
     ? { status: "not-selected" }
     : await refreshNativeAccountCatalogUnlocked({
@@ -1325,6 +1347,9 @@ async function publishCatalog({
     });
   const userSlugs = new Set();
   const selectedModels = LISTED_MODELS.filter((model) => enabledProviders.has(model.provider));
+  // Web models are explicitly enabled by bridge connection, whose picker
+  // seeding preserves prior choices. A watcher must not race that opt-in by
+  // recording a hidden default for the newly connected rows.
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();
@@ -1405,6 +1430,7 @@ async function publishCatalog({
     includeNative: nativePublication !== "none",
     nativeSlugs: preservedNativeSlugs,
     omittedRoutes,
+    webModels: routedCatalog ? webModels : [],
   });
   for (const omitted of omittedRoutes) {
     process.stderr.write(`${JSON.stringify({ warning: "routed_model_omitted", ...omitted })}\n`);
@@ -1452,8 +1478,11 @@ async function publishCatalog({
     // switched off as a subagent needs its definition gone as well. Without
     // this, switching it off changes multi_agent_version and nothing else, and
     // the model still answers when it is spawned by name.
+    const webAgentModels = applyMultiAgentCapabilities(webModels, multiAgentSettings, {
+      hidden: new Set(publishedCatalog.models.filter((model) => model.visibility !== "list").map((model) => model.slug)),
+    });
     const eligibleAgents = routedCatalog
-      ? subagentEligibleModels(admittedRoutedModels, multiAgentSettings)
+      ? subagentEligibleModels([...admittedRoutedModels, ...webAgentModels], multiAgentSettings)
       : [];
     routedAgents = syncRoutedCodexAgents(eligibleAgents);
     // Removing every definition is how an operator's subagents disappear, and
@@ -1503,6 +1532,8 @@ async function publishCatalog({
     path: MERGED_CATALOG_PATH,
     models: merged.length,
     routed_models: admittedRoutedModels.length,
+    web_models: routedCatalog ? webModels.length : 0,
+    subagent_protocol: multiAgentSettings.protocol || "v2",
     omitted_routes: omittedRoutes,
     routed_agents: routedAgents.written.length,
     removed_agents: routedAgents.removed.length,

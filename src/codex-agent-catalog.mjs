@@ -81,16 +81,16 @@ export function routedAgentDefinition(model) {
   const fileStem = `router-model-${safeIdentifier(slug, "-")}`;
   const agentName = `router_${safeIdentifier(slug, "_")}`;
   const displayName = String(model.displayName || model.display_name || slug).trim();
-  const defaultEffort = String(model.defaultEffort || "").trim();
+  const defaultEffort = String(model.defaultEffort || model.default_reasoning_level || "").trim();
   if (!defaultEffort) {
     throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`);
   }
-  try { validateRoutedEffort(model, defaultEffort); }
+  try { validateRoutedEffort({ ...model, reasoningLevels: model.reasoningLevels || model.supported_reasoning_levels }, defaultEffort); }
   catch (cause) { throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`, {cause}); }
   const contents = [
     "# Managed by Codex Router. Refresh the model catalog to update this file.",
     `name = ${tomlString(agentName)}`,
-    `description = ${tomlString(`${displayName} agent routed through an authenticated Codex Router provider.`)}`,
+    `description = ${tomlString(`${displayName} agent routed through an authenticated Codex Router provider${model.multiAgentVersion === "v1" ? " using the V1 subagent protocol" : ""}.`)}`,
     'model_provider = "codex-router"',
     `model = ${tomlString(slug)}`,
     `model_reasoning_effort = ${tomlString(defaultEffort)}`,

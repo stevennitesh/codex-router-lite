@@ -22,7 +22,7 @@ if (-not $Root -or -not (Test-Path -LiteralPath (Join-Path $Root "src\start.mjs"
 $Commands = @(
   "install", "doctor", "status", "providers", "provider-key", "caller-key",
   "enable", "disable", "uninstall", "update", "rollback", "start", "stop",
-  "restart", "subagents", "refresh-catalog", "switchyard-trace",
+  "restart", "subagents", "picker", "web", "refresh-catalog", "switchyard-trace",
   "switchyard-certification-evidence"
 )
 if ($Command -notin $Commands) {
@@ -69,6 +69,8 @@ switch ($Command) {
   "stop" { Invoke-RouterNode "src\service.mjs" (@("stop") + $CommandArguments) }
   "restart" { Invoke-RouterNode "src\service.mjs" (@("restart") + $CommandArguments) }
   "subagents" { Invoke-RouterNode "src\control.mjs" (@("subagents") + $CommandArguments) }
+  "picker" { Invoke-RouterNode "src\control.mjs" (@("picker") + $CommandArguments) }
+  "web" { Invoke-RouterNode "src\control.mjs" (@("web") + $CommandArguments) }
   "refresh-catalog" { Invoke-RouterNode "src\refresh-catalog.mjs" $CommandArguments }
   "switchyard-trace" { Invoke-RouterNode "src\switchyard-trace.mjs" $CommandArguments }
   "switchyard-certification-evidence" { Invoke-RouterNode "src\switchyard-certification-evidence.mjs" $CommandArguments }

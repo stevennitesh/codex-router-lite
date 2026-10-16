@@ -2,7 +2,12 @@
 
 Read this only when changing exact-route subagent eligibility, encrypted relay, certification records, or `multiAgentVersion`.
 
-A route is spawnable only when its published model has `multiAgentVersion: "v2"`. Certification belongs to one exact public slug and its current provider, upstream model, request profile, endpoint policy, Router behavior, and Codex execution path.
+In the default V2 protocol, a routed model is spawnable only when its published model has `multiAgentVersion: "v2"`. Certification belongs to one exact public slug and its current provider, upstream model, request profile, endpoint policy, Router behavior, and Codex execution path.
+
+The explicitly selected [V1 Web workflow](CHATGPT-WEB.md#subagent-selector) uses
+plaintext collaboration and separate V1 role eligibility. Choosing V1 does not
+create a V2 certification claim or change historical proofs; switching protocol
+requires restarting Codex and starting a new conversation.
 
 Local subagent settings may hide or select among certified routes. They cannot
 promote a v1 route or replace a checked-in application.

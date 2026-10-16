@@ -140,6 +140,7 @@
     "src/zai-responses-compat.mjs",
     "config/openrouter/deepseek-v4.1-flash-together.json",
     "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
-    "src/openrouter-endpoint-compat.mjs"
+    "src/openrouter-endpoint-compat.mjs",
+    "src/chatgpt-web.mjs"
   ]
 }

@@ -31,6 +31,12 @@ Configuration lives in [OpenRouter route files](../config/openrouter/) and
 
 ## External subagents
 
+Optional [ChatGPT Web models](CHATGPT-WEB.md) use an isolated browser bridge.
+Their picker labels identify the selected browser family, including GPT-6 Astra
+Pro, and their effort selector follows the bridge's Instant/Medium/High/Extra
+High/Pro controls. Web roles require the explicit V1 protocol; choosing a Web
+primary model does not change the global protocol.
+
 Certified external routes are available as subagents by default. Local settings
 can restrict which eligible routes Codex may select. Run from the repository root:
 

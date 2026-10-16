@@ -1,16 +1,21 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { readJsonFile } from "./file-probe.mjs";
-import { writePrivateJson } from "./file-security.mjs";
-import { STATE_DIR } from "./paths.mjs";
+import { writePrivateFile, writePrivateJson } from "./file-security.mjs";
+import { CONFIG_PATH, STATE_DIR } from "./paths.mjs";
 import { MODEL_BY_SLUG, validateRoutedEffort } from "./routed-models.mjs";
+import { webBridgeModels } from "./chatgpt-web.mjs";
 
 const MULTI_AGENT_STATE_PATH =
   process.env.MODEL_ROUTER_MULTI_AGENT_STATE ||
   path.join(STATE_DIR, "multi-agent-settings.json");
 
 const SUBAGENT_MODES = Object.freeze(["all", "selected", "proven"]);
+const SUBAGENT_PROTOCOLS = Object.freeze(["v1", "v2"]);
 
 function defaultSettings() {
   return { version: 2, mode: "proven", enabled: [], disabled: [] };
@@ -25,11 +30,16 @@ export function readMultiAgentSettings() {
   const slugsValid = (value) => Array.isArray(value) && value.every((slug) => typeof slug === "string" && slug.length > 0);
   if (observed.status !== "present" || parsed?.version !== 2 || !SUBAGENT_MODES.includes(parsed.mode) ||
       !slugsValid(parsed.enabled) || !slugsValid(parsed.disabled) ||
+      (parsed.protocol !== undefined && !SUBAGENT_PROTOCOLS.includes(parsed.protocol)) ||
       (parsed.efforts !== undefined && (!parsed.efforts || typeof parsed.efforts !== "object" || Array.isArray(parsed.efforts) ||
         !Object.entries(parsed.efforts).every(([slug, effort]) => slug && typeof effort === "string" && effort)))) {
     throw new Error(`Cannot read subagent settings (${observed.status === "present" ? "invalid" : observed.status}) at ${MULTI_AGENT_STATE_PATH}.`);
   }
   return parsed;
+}
+
+export function readSubagentProtocol() {
+  return readMultiAgentSettings().protocol || "v2";
 }
 
 export function subagentSettingsSnapshot({ diagnostic = false } = {}) {
@@ -41,6 +51,9 @@ export function subagentSettingsSnapshot({ diagnostic = false } = {}) {
   }
   return {
     ...settings,
+    protocol: settings.protocol || "v2",
+    protocolChangeRequiresRestart: true,
+    protocolChangeRequiresNewConversation: true,
     all: settings.mode === "all",
     path: MULTI_AGENT_STATE_PATH,
     // Per-model reasoning depth applied only to child turns. Empty when the
@@ -51,6 +64,44 @@ export function subagentSettingsSnapshot({ diagnostic = false } = {}) {
 
 function writeSettings(settings) {
   writePrivateJson(MULTI_AGENT_STATE_PATH, settings);
+}
+
+// Protocol changes are deliberate configuration edits, never a side effect of
+// selecting a model. Keep the state and its owned native feature together under
+// the same lock used by catalog publishers.
+export async function setSubagentProtocol(protocol) {
+  if (!SUBAGENT_PROTOCOLS.includes(protocol)) {
+    throw new Error(`Unknown subagent protocol "${protocol}". Choose: ${SUBAGENT_PROTOCOLS.join(", ")}`);
+  }
+  return withCatalogPublicationLock(() => {
+    const current = readMultiAgentSettings();
+    const originals = [CONFIG_PATH, MULTI_AGENT_STATE_PATH].map(target => ({
+      target, contents: existsSync(target) ? readFileSync(target) : undefined,
+    }));
+    try {
+      const result = spawnSync(process.execPath, [
+        fileURLToPath(new URL("./config-manager.mjs", import.meta.url)),
+        "subagent-protocol", protocol,
+      ], { env: process.env, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+      if (result.error || result.status !== 0) {
+        throw new Error(String(result.stderr || result.error?.message || "Could not update the managed subagent protocol.").trim());
+      }
+      writeSettings({ ...current, protocol });
+      return { ...subagentSettingsSnapshot(), restartRequired: true, newConversationRequired: true };
+    } catch (error) {
+      const rollbackErrors = [];
+      for (const { target, contents } of originals.reverse()) {
+        try {
+          const after = existsSync(target) ? readFileSync(target) : undefined;
+          if (contents === undefined) {
+            if (after !== undefined) unlinkSync(target);
+          } else if (!after?.equals(contents)) writePrivateFile(target, contents);
+        } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], "Subagent protocol update failed and its prior configuration could not be fully restored.");
+      throw error;
+    }
+  });
 }
 
 export async function setMultiAgentMode(mode) {
@@ -100,13 +151,11 @@ function setMultiAgentModels(slugs, enabled) {
     }
   }
   const next = {
+    ...current,
     version: 2,
     mode: current.mode === "proven" && enabled ? "selected" : current.mode,
     enabled: [...enabledSet].sort(),
     disabled: [...disabledSet].sort(),
-    // Rebuilt literally rather than spread, so every writer has to carry the
-    // effort map forward by hand or silently drop a user's choices.
-    ...(current.efforts ? { efforts: current.efforts } : {}),
   };
   writeSettings(next);
   return subagentSettingsSnapshot();
@@ -138,7 +187,16 @@ function subagentEfforts() {
 export function subagentEffort(slug) {
   const key = String(slug || "");
   const effort = readMultiAgentSettings().efforts?.[key];
-  return effort === undefined ? undefined : validateRoutedEffort(MODEL_BY_SLUG.get(key), effort);
+  return effort === undefined ? undefined : validateRoutedEffort(effortRoute(key), effort);
+}
+
+function effortRoute(slug) {
+  const registered = MODEL_BY_SLUG.get(slug);
+  if (registered) return registered;
+  if (!slug.startsWith("chatgpt-web/")) return undefined;
+  const row = webBridgeModels().find(model => model.slug === slug);
+  return row && { ...row, defaultEffort: row.default_reasoning_level,
+    reasoningLevels: row.supported_reasoning_levels };
 }
 
 // `effort` of undefined/null clears the override and restores the model's own
@@ -147,8 +205,8 @@ export function subagentEffort(slug) {
 export async function setSubagentEffort(slug, effort) {
   const key = String(slug || "").trim();
   if (!key) throw new Error("A model slug is required.");
-  const value = validateRoutedEffort(MODEL_BY_SLUG.get(key), effort);
   return withCatalogPublicationLock(() => {
+    const value = validateRoutedEffort(effortRoute(key), effort);
     const current = readMultiAgentSettings();
     const efforts = { ...current.efforts };
     if (value === undefined) delete efforts[key];
@@ -161,17 +219,25 @@ export async function setSubagentEffort(slug, effort) {
   });
 }
 
-// `proven` and `all` keep every certified route unless it is disabled.
-// `selected` keeps only certified routes the operator explicitly enabled.
+// V2 retains the registry's certification boundary. V1 allows ordinary
+// plaintext-handoff roles, including Web routes. Both respect local choices.
 function applyMultiAgentSettings(models, settings, hidden = new Set()) {
   const disabled = new Set(settings.disabled || []);
   const enabled = new Set(settings.enabled || []);
   const mode = settings.mode || "proven";
+  const protocol = settings.protocol || "v2";
   return models.map((model) => {
     const slug = String(model.slug || "");
+    const excluded = hidden.has(slug) || disabled.has(slug) || (mode === "selected" && !enabled.has(slug));
+    if (protocol === "v1") {
+      return { ...model, multiAgentVersion: "v1", subagentEnabled: !excluded };
+    }
+    if (slug.startsWith("chatgpt-web/")) {
+      return { ...model, multiAgentVersion: "v1", subagentEnabled: false };
+    }
     if (
       model.multiAgentVersion === "v2" &&
-      (hidden.has(slug) || disabled.has(slug) || (mode === "selected" && !enabled.has(slug)))
+      excluded
     ) {
       return { ...model, multiAgentVersion: "v1" };
     }
@@ -184,11 +250,15 @@ export function applyMultiAgentCapabilities(models, settings, { hidden = new Set
   return applyMultiAgentSettings(models, configured, hidden);
 }
 
-// Return the certified routes that remain after local filtering.
+// Return roles admitted by the selected protocol and local filtering.
 export function subagentEligibleModels(models, settings) {
   const disabled = new Set(settings?.disabled || []);
+  const enabled = new Set(settings?.enabled || []);
+  const protocol = settings?.protocol || "v2";
   return models.filter(
     (model) =>
-      model.multiAgentVersion === "v2" && !disabled.has(String(model.slug)),
+      (protocol === "v1" || (model.multiAgentVersion === "v2" && !String(model.slug).startsWith("chatgpt-web/"))) &&
+      model.subagentEnabled !== false && !disabled.has(String(model.slug)) &&
+      (settings?.mode !== "selected" || enabled.has(String(model.slug))),
   );
 }
