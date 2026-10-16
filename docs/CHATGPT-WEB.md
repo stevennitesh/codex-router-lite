@@ -23,9 +23,12 @@ Codex `sessions` directory without copying it. Real `config.toml` and `auth.json
 are not linked or copied. This lets the trusted local bridge read canonical task
 rollouts; it does not establish live browser/tool compatibility by itself.
 
-In the isolated launcher, sign in to ChatGPT and choose Full harness / Automatic.
-Keep experimental Bigger Context off. Complete its browser smoke test, MCP tunnel
-and connector setup, then Verify runtime. The browser profile and tunnel keys
+In the isolated launcher, sign in to ChatGPT and use Automatic mode with
+experimental Bigger Context off. Browser-only mode can publish models for text
+conversations without MCP setup; its descriptions state that local coding tools
+are unavailable, and it does not expose Web subagents. For coding tools, choose
+Full harness, complete its browser smoke test, MCP tunnel and connector setup,
+then Verify runtime. Reconnect after changing modes. The browser profile and tunnel keys
 stay private; never commit or share them. Router does not import browser cookies
 or supply native Codex account credentials to the bridge.
 
@@ -79,7 +82,7 @@ The CLI reports the configured protocol and this restart requirement, not the
 protocol of an already-running conversation. User-owned conflicting feature
 settings are refused rather than overwritten.
 
-The Web bridge must be separately launched, provisioned and connected; choosing
+The Full harness Web bridge must be separately launched, provisioned and connected; choosing
 V1 alone does not establish browser authentication or activate an unavailable
 listener. Native parents continue to use their ordinary Codex allowance.
 

@@ -10,6 +10,7 @@ import { buildWebBridgeModels } from "../src/chatgpt-web.mjs";
 import { applyPickerVisibility, buildMergedCatalog, promoteNativeMultiAgent } from "../src/catalog.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
 import { LISTED_MODELS } from "../src/routed-models.mjs";
+import { applyMultiAgentCapabilities, subagentEligibleModels } from "../src/multi-agent-state.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const native = {
@@ -24,6 +25,14 @@ const native = {
   future_schema: { retained: true },
 };
 const capabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: true };
+
+test("browser-only Web choices remain primary models even when V1 is selected", () => {
+  const models = buildWebBridgeModels(capabilities, { mode: "browser-only" });
+  const settings = { protocol: "v1", mode: "all", enabled: [], disabled: [] };
+  const effective = applyMultiAgentCapabilities(models, settings);
+  assert.equal(effective.length, 6);
+  assert.deepEqual(subagentEligibleModels(effective, settings), []);
+});
 
 test("Web catalog preserves bridge identity and effort without borrowing native-only capabilities", () => {
   const web = buildWebBridgeModels(capabilities);

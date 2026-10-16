@@ -98,7 +98,7 @@ async function main() {
     } else if (action === "protocol") {
       if (value === undefined || value === "status") {
         print({ protocol: readSubagentProtocol(), web: webBridgeStatus(),
-          webSubagentsAvailable: readSubagentProtocol() === "v1" && webBridgeModels().length > 0 });
+          webSubagentsAvailable: readSubagentProtocol() === "v1" && webBridgeModels().some(model => model.supportsSubagents !== false) });
       } else {
         print({ ...await setSubagentProtocol(value), web: webBridgeStatus(),
           next: "Run model-router.ps1 codex refresh-catalog, fully quit and reopen Codex, and start a new conversation." });

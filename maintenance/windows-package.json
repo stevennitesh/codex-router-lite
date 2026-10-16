@@ -141,6 +141,7 @@
     "config/openrouter/deepseek-v4.1-flash-together.json",
     "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
     "src/openrouter-endpoint-compat.mjs",
-    "src/chatgpt-web.mjs"
+    "src/chatgpt-web.mjs",
+    "src/web-bridge-launch.ps1"
   ]
 }

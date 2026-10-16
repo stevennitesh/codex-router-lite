@@ -230,7 +230,7 @@ function applyMultiAgentSettings(models, settings, hidden = new Set()) {
     const slug = String(model.slug || "");
     const excluded = hidden.has(slug) || disabled.has(slug) || (mode === "selected" && !enabled.has(slug));
     if (protocol === "v1") {
-      return { ...model, multiAgentVersion: "v1", subagentEnabled: !excluded };
+      return { ...model, multiAgentVersion: "v1", subagentEnabled: !excluded && model.supportsSubagents !== false };
     }
     if (slug.startsWith("chatgpt-web/")) {
       return { ...model, multiAgentVersion: "v1", subagentEnabled: false };

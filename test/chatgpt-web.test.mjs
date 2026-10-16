@@ -178,7 +178,7 @@ test("connect checks credential-free health and stores only safe account observa
   await web.connectWebBridge(bridge.baseUrl);
   assert.equal(bridge.requests.length, 1);
   const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
-  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "bridgeVersion", "capabilities", "connectedAt", "enabled", "version"]);
+  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "bridgeVersion", "capabilities", "connectedAt", "enabled", "mode", "version"]);
   assert.deepEqual(stored.capabilities, allCapabilities);
   assert.equal(stored.enabled, true);
   assert.equal(stored.bridgeVersion, "6.1.9");
@@ -192,15 +192,26 @@ test("connect checks credential-free health and stores only safe account observa
 test("connect rejects non-production launcher modes before probing and rejects a non-accepting service", async t => {
   const bridge = await listener(t, ({ response }) => json(response,
     { service: "codex-chatgpt-web", status: "ok", mode: "full", accepting_turns: false }));
-  for (const overrides of [{ mode: "browser-only" }, { browserInteractionMode: "manual" }, { experimentalBiggerContext: true },
+  for (const overrides of [{ mode: "invalid" }, { browserInteractionMode: "manual" }, { experimentalBiggerContext: true },
     { purpose: "dev-harness" }, { host: "0.0.0.0" }, { port: bridge.port + 1 }, { version: 2 }]) {
     saveLauncherConfig(launcherConfig(bridge.port, overrides));
     await assert.rejects(web.connectWebBridge(bridge.baseUrl), /isolated production launcher setup/u);
   }
   assert.equal(bridge.requests.length, 0);
   saveLauncherConfig(launcherConfig(bridge.port));
-  await assert.rejects(web.connectWebBridge(bridge.baseUrl), /not an accepting Full-mode/u);
+  await assert.rejects(web.connectWebBridge(bridge.baseUrl), /not an accepting ChatGPT Web bridge/u);
   assert.equal(bridge.requests.length, 1);
+});
+
+test("browser-only connection publishes actual models without claiming local tools or subagents", async t => {
+  const bridge = await listener(t, ({ response }) => json(response,
+    { service: "codex-chatgpt-web", status: "ok", mode: "browser-only", accepting_turns: true, version: "6.1.9" }));
+  saveLauncherConfig(launcherConfig(bridge.port, { mode: "browser-only" }));
+  const status = await web.connectWebBridge(bridge.baseUrl);
+  assert.equal(status.mode, "browser-only");
+  assert.equal(status.localToolsConfigured, false);
+  assert.equal(web.webBridgeModels().length, 6);
+  assert.ok(web.webBridgeModels().every(model => model.supportsSubagents === false && model.description.includes("local coding tools are unavailable")));
 });
 
 test("launcher exposes native rollouts through the expected junction while keeping configuration and credentials isolated", async () => {
