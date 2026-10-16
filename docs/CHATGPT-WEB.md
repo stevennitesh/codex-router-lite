@@ -42,6 +42,17 @@ Connect the accepting listener and refresh the picker:
 Fully quit and reopen Codex, then choose a model ending in `(Web)`. Connect reads
 the isolated launcher's saved account capability observations and checks its
 `/healthz`; this is listener readiness, not a successful live model/tool proof.
+
+In launcher 6.1.9, the Install step can remain unchecked with a **Reinstall**
+button and restart warning after this succeeds. The button means setup has
+already run; the checkmark waits for a catalog request through the bridge.
+Router serves the catalog itself, so that request does not occur. Reinstalling
+or repeatedly restarting Codex does not resolve this status mismatch. Use the
+Router Web status and an actual Web conversation to check this integration.
+The launcher also gates **Configure MCP** on that checkmark; if it is disabled,
+Full harness setup through that screen remains blocked even though browser-only
+conversations work.
+
 After changing accounts or refreshing account capabilities, reconnect and refresh
 the catalog. Only the seven exact current bridge slugs are supported; aliases
 that ignore the selected effort are excluded. The initial contract was inspected
