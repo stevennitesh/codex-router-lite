@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [ChatGPT Web deployment, independent launcher and live native conversations, 2026-10-16](2026-10-16-web-bridge-release.json)
+
 - [Deployed Router update and six-route certification, 2026-10-13](2026-10-13-deployed-certification.json)
 
 - [Windows app compatibility and upstream assessment, 2026-10-13](2026-10-13-app-compatibility-review.json)
