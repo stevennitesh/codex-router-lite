@@ -125,6 +125,62 @@
     "nativeCompactionTraceIndependentlyChecked": true,
     "closedTabTraceIndependentCheck": true
   },
+  "subsequentReplyIdentityRepair": {
+    "routerCommit": "a7618bbe830f671b8e6ba1941b07f3d64e4472fc",
+    "deployedAndAcceptedAt": "2026-10-17T21:42:27.5074807Z",
+    "originalRollbackPreserved": true,
+    "trigger": "A confirmed Send had baseline six rendered replies; the following observation had five on the same owned URL and tab. Router rejected it before recording the answer, and the next native turn lost its browser binding.",
+    "failedPreflightWebSends": 1,
+    "failedContinuationWebSends": 0,
+    "failedPreflightCodingSideEffects": 0,
+    "readOnlyDomGrounding": {
+      "identityAttribute": "data-chatgpt-selection-message-id",
+      "uniqueMountedReplyIds": 5,
+      "allIdsStableAcrossReload": true,
+      "alreadySentPreflightAnswerObservedComplete": true,
+      "inspectionSentNoMessages": true
+    },
+    "repair": "Attribute answers to newly observed message identities, retain previously proven IDs across continuation, and preserve the existing exact URL/prefix recovery for successful older saved records before adopting a verified ID.",
+    "disposableStateReconciliation": {
+      "originalNonceFramedSendReceiptChecked": true,
+      "observationBackfilledFromActualReadOnlyReply": true,
+      "protectedOriginalMappingPreserved": true,
+      "failedNativeOutcomesPreserved": true,
+      "messagesOrToolsReplayed": false
+    },
+    "verification": {
+      "command": "npm run verify:codex",
+      "passed": 1158,
+      "failed": 0,
+      "skipped": 0,
+      "nativeCatalogModelsParsed": 17,
+      "independentReviewRemainingFindings": 0
+    },
+    "liveContinuation": {
+      "completedAt": "2026-10-17T21:43:31.686Z",
+      "durationMs": 11377,
+      "nativeOutcome": "completed",
+      "sameSavedChatAndTab": true,
+      "browserBindingRecovered": true,
+      "replyIdentityObserved": true,
+      "renderedReplyCountBeforeSend": 5,
+      "renderedReplyCountAtCompletion": 5,
+      "webSendCount": 1,
+      "promptCharacters": 2585,
+      "historyItems": 4,
+      "codingToolCalls": 0,
+      "externalLauncherUsed": false,
+      "additionalModelDrivingBrowser": false
+    },
+    "hookPreflight": {
+      "currentInstalledCliConfirmsEnabledAndTrusted": true,
+      "storedTrustHashesMatchCurrentHandlers": true,
+      "currentAppTrustSaveRequestsRuntimeReload": true,
+      "probeExecutionRecordedAfterCompletedTurn": false,
+      "missingSavedHookEventsDoesNotProveNonExecution": true,
+      "immediateStopVerified": false
+    }
+  },
   "limits": [
     "These live observations apply to the named Instant Web route and installed identities; they do not certify every Web model or effort.",
     "The manual closure is user-attested. The native trace independently records recovery, a changed tab identity, the same saved URL and a fresh paired tool result.",
