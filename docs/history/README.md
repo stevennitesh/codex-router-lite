@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Live Web compaction, efficient continuation and closed-tab recovery, 2026-10-17](2026-10-17-web-saved-chat-verification.json)
+
 - [Windows app compatibility and complete upstream review, 2026-10-17](2026-10-17-app-compatibility-review.json)
 
 - [ChatGPT Web deployment, independent launcher and live native conversations, 2026-10-16](2026-10-16-web-bridge-release.json)

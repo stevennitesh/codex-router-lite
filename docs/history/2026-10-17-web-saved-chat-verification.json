@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "date": "2026-10-17",
+  "evidenceKind": "Historical live native Codex and saved ChatGPT Web verification",
+  "testedRouterCommit": "2a7e3a9b5ba287d91d368d53f41758ed5085f5b6",
+  "nativeCodex": {
+    "desktopVersion": "26.1013.40934",
+    "cli": "0.163.0-alpha.10.2",
+    "cliSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "officialBrowserRuntimeVersion": "26.1013.40934"
+  },
+  "route": {
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "observedBrowserFamily": "GPT-6",
+    "observedBrowserPower": 0,
+    "normalSavedChat": true,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingBrowser": false,
+    "browserControl": "Router-generated deterministic browser operations executed by the native harness using the current official in-app runtime.",
+    "codingTools": "ChatGPT requests through the connector are executed by native Codex; actual paired command results are observed before final completion."
+  },
+  "deployment": {
+    "acceptedAt": "2026-10-17T20:20:57.2770831Z",
+    "accepted": true,
+    "fullHealthAndInstalledIdentityPassed": true,
+    "originalRollbackPreserved": true,
+    "forcedInterruption": false
+  },
+  "observations": {
+    "initialBaseline": {
+      "testedRouterCommit": "7d0f7386464a198a6705373ce1f49c6fe351e176",
+      "promptCharacters": 80743,
+      "historyItems": 8,
+      "nativeCommandCalls": 1,
+      "pairedFixtureResultObserved": true,
+      "commandExitCode": 0
+    },
+    "ordinaryContinuationBeforeCompaction": {
+      "testedRouterCommit": "7d0f7386464a198a6705373ce1f49c6fe351e176",
+      "promptCharacters": 1577,
+      "historyItems": 1,
+      "markerRecalledWithoutResupply": true,
+      "sameSavedChat": true,
+      "nativeCommandCalls": 1,
+      "pairedFixtureResultObserved": true,
+      "commandExitCode": 0
+    },
+    "manualNativeCompaction": {
+      "completedAt": "2026-10-17T20:56:32.564Z",
+      "nativeContextCompactionCompleted": true,
+      "durationMs": 778,
+      "recordedBrowserOrCodingCalls": 0,
+      "readableCheckpointVersion": 2,
+      "checkpointSourceItems": 8,
+      "checkpointRecentTailItems": 10,
+      "undeliveredRetainedTailItems": 0,
+      "checkpointSha256": "4ea52cc2dcd3dd62866cf40f6258a961daced5694ff298428c2654b4bb9c6825"
+    },
+    "postCompactionContinuation": {
+      "completedAt": "2026-10-17T20:57:47.775Z",
+      "durationMs": 25002,
+      "promptCharacters": 55807,
+      "historyItems": 6,
+      "refreshedNativeContextItems": 5,
+      "renderedCheckpointReplayed": false,
+      "historicalCodingCallsReplayed": 0,
+      "markerRecalledWithoutResupply": true,
+      "sameSavedChatAndBinding": true,
+      "browserBindingRecoveredAfterAppUpdate": true,
+      "nativeCommandCalls": 1,
+      "pairedFixtureResultObserved": true,
+      "commandExitCode": 0
+    },
+    "followingOrdinaryDelta": {
+      "completedAt": "2026-10-17T20:58:31.125Z",
+      "durationMs": 10039,
+      "promptCharacters": 1344,
+      "historyItems": 1,
+      "repeatedNativeContext": false,
+      "markerRecalledWithoutResupply": true,
+      "sameSavedChatAndBinding": true,
+      "codingToolCalls": 0
+    },
+    "closedTabRecovery": {
+      "completedAt": "2026-10-17T21:00:35.014Z",
+      "durationMs": 25501,
+      "tabClosureAttestedByUser": true,
+      "nativeRecoveryReported": true,
+      "newTabIdentityObserved": true,
+      "sameSavedChatUrlAndBinding": true,
+      "previousReplyValidated": true,
+      "promptCharacters": 1840,
+      "historyItems": 1,
+      "webSendCount": 1,
+      "markerRecalledWithoutResupply": true,
+      "nativeCommandCalls": 1,
+      "pairedFixtureResultObserved": true,
+      "commandExitCode": 0,
+      "newConversationOrHistoryReplay": false
+    }
+  },
+  "protectedMappingAfterRecovery": {
+    "ownershipProtectionPassed": true,
+    "checkpointHashes": 18,
+    "uncertainSend": false,
+    "unresolvedCodingCalls": 0,
+    "completed": true,
+    "pendingCompaction": false,
+    "activeCompaction": false,
+    "rolloverRequired": false,
+    "rawPromptsOrToolResultsStored": false
+  },
+  "verification": {
+    "fullSourceValidation": {
+      "command": "npm run verify:codex",
+      "testedRouterCommit": "2a7e3a9b5ba287d91d368d53f41758ed5085f5b6",
+      "node": "24.13.0",
+      "passed": 1140,
+      "failed": 0,
+      "skipped": 0,
+      "nativeCatalogModelsParsed": 17
+    },
+    "sourceReviewActionableFindings": 0,
+    "nativeCompactionTraceIndependentlyChecked": true,
+    "closedTabTraceIndependentCheck": true
+  },
+  "limits": [
+    "These live observations apply to the named Instant Web route and installed identities; they do not certify every Web model or effort.",
+    "The manual closure is user-attested. The native trace independently records recovery, a changed tab identity, the same saved URL and a fresh paired tool result.",
+    "Native compaction completed locally without recorded browser or coding calls; independent network instrumentation was not used.",
+    "Immediate Stop of ChatGPT generation remains unresolved. Tool revocation and next-turn reconciliation do not establish immediate browser cancellation.",
+    "Real conversation-capacity rollover is covered offline and by inspected UI evidence, but has not been verified end to end against a full live conversation.",
+    "The earlier failed startup and compaction attempts remain historical failures; the successful observations do not erase them."
+  ]
+}
