@@ -64,6 +64,11 @@ function fakeBrowser() {
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() { return name === '[role="status"]' ? (ui.complete ? ["Response complete"] : []) : [...ui.texts]; },
+    async evaluateAll(callback) {
+      assert.equal(name, '[data-markdown-text-style="assistant-message"]');
+      return callback(ui.texts.map(value => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
+        childNodes: [{ nodeType: 3, textContent: value }] })));
+    },
   });
   const tab = { id: "owned-temporary-tab", goto: async url => { ui.url = url; }, url: async () => ui.url,
     playwright: { getByRole: (kind, options) => locator(kind, options.name), locator: selector => locator("selector", selector) },

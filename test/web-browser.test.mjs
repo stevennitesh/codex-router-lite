@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
-import { browserScript, discoverBrowserExecutor, parseBrowserOutput } from "../src/web-browser.mjs";
+import { browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplyTexts } from "../src/web-browser.mjs";
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
@@ -9,6 +10,62 @@ const base = { bindingId, frameToken: token, modelFamily: "GPT-6", power: 0 };
 const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", pluginSelectionButtonName: "Current tools The current tool collection" };
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
 const offered = parameters => [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", parameters }] }];
+
+const domText = value => ({ nodeType: 3, textContent: value });
+function domElement(tag, attributes = {}, ...children) {
+  const node = { nodeType: 1, tagName: tag.toUpperCase(), childNodes: children, children: children.filter(child => child.nodeType === 1),
+    getAttribute: name => attributes[name] ?? null,
+    classList: { contains: name => (attributes.class ?? "").split(/\s+/).includes(name) },
+    get textContent() { return children.map(child => child.textContent).join(""); },
+    querySelectorAll(selector) {
+      const found = [];
+      const visit = candidate => {
+        if (candidate.nodeType !== 1) return;
+        if (selector === "code" ? candidate.tagName === "CODE"
+          : selector === ".cm-content[data-language]" && candidate.classList.contains("cm-content") && candidate.getAttribute("data-language") !== null) found.push(candidate);
+        candidate.childNodes.forEach(visit);
+      };
+      children.forEach(visit);
+      return found;
+    } };
+  return node;
+}
+const sourceBlock = source => domElement("div", { "data-markdown-copy": "code-block" },
+  domElement("div", { "data-markdown-copy": "exclude" }, domText("Plain text")),
+  domElement("div", { "data-code-block-source": "true" }, domElement("code", {}, domElement("span", {}, domText(source)))));
+
+test("reply projection excludes the observed code toolbar while preserving literal code, indentation and blank lines", () => {
+  const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
+  const root = domElement("div", {}, domElement("div", {}, sourceBlock(source)));
+  const isolatedReader = runInNewContext(`(${readBrowserReplyTexts.toString()})`);
+  assert.equal(isolatedReader([root])[0], source);
+  assert.equal(root.textContent, `Plain text${source}`, "The read does not mutate the browser DOM.");
+});
+
+test("reply projection preserves paragraph, BR and code boundaries without removing literal Plain text prose", () => {
+  const root = domElement("div", {},
+    domElement("p", {}, domText("Literal Plain text belongs to the answer.")),
+    domElement("p", {}, domText("Second paragraph"), domElement("br"), domText("continued")),
+    sourceBlock("  first\n\n    second"),
+    domElement("p", {}, domText("After "), domElement("code", {}, domText("inline")), domText(" code.")));
+  assert.equal(readBrowserReplyTexts([root])[0], "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
+});
+
+test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
+  const editor = domElement("div", { class: "cm-content", "data-language": "python" },
+    domElement("div", { class: "cm-line" }, domText("  first")),
+    domElement("div", { class: "cm-line" }, domElement("br")),
+    domElement("div", { class: "cm-line" }, domText("    last")),
+    domElement("div", { class: "cm-line" }, domElement("br")));
+  const block = (...content) => domElement("div", { "data-markdown-copy": "code-block" },
+    domElement("div", { "data-markdown-copy": "exclude" }, domText("Python")), ...content);
+  assert.equal(readBrowserReplyTexts([block(editor)])[0], "  first\n\n    last\n");
+  for (const invalid of [
+    block(domElement("code", {}, domText("one")), domElement("code", {}, domText("two"))),
+    block(editor, editor),
+    block(domElement("div", { class: "cm-content", "data-language": "python" }, domElement("div", { class: "spacer" }))),
+  ]) assert.throws(() => readBrowserReplyTexts([invalid]), /one complete source/);
+});
 
 test("native browser executor preserves the exact declared schema and identity", () => {
   const executor = discoverBrowserExecutor(offered(schema));
@@ -106,9 +163,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
     async isEnabled() { return name === "Send" ? ui.sendEnabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() {
-      if (name === '[data-markdown-text-style="assistant-message"]') { ui.replyReads += 1; return [...ui.texts]; }
       if (name === '[role="status"]') return ui.complete ? ["Response complete"] : [];
       throw new Error("Unobserved selector");
+    },
+    async evaluateAll(callback) {
+      assert.equal(name, '[data-markdown-text-style="assistant-message"]');
+      ui.replyReads += 1;
+      return callback(ui.texts.map(value => typeof value === "string" ? domElement("div", {}, domText(value)) : value));
     },
   });
   const tab = { id: "owned-tab", url: async () => ui.url ?? "https://chatgpt.com/?temporary-chat=true", goto: async url => { ui.url = url; ui.navigations.push(url); },
@@ -301,6 +362,20 @@ test("observations require a fresh assistant reply and continuation retains exac
   await f.run("send", { ...plugin, prompt: "Following turn" });
   assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("native observation returns the original projected source whitespace while testing nonempty content separately", async () => {
+  const f = fixture();
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Return the formatted source." });
+  const source = "  first\n\n    last\n";
+  f.ui.texts.push(domElement("div", {}, sourceBlock(" \n")));
+  f.ui.complete = true;
+  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
+  f.ui.texts[0] = domElement("div", {}, sourceBlock(source));
+  const result = await f.run("observe", { observeIterations: 1 });
+  assert.equal(result.completed, true);
+  assert.equal(result.assistantText, source);
 });
 
 test("retained follow-up requires the observed Save chat control and the Temporary Chat URL together", async () => {

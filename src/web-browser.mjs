@@ -95,13 +95,49 @@ const defaultUi = {
   stopButtonExactName: "Stop", responseCompleteStatusText: "Response complete", regenerateButtonExactName: "Regenerate response",
 };
 
+// Self-contained read-only DOM projection, also usable directly with the public
+// locator.evaluateAll API. Code source excludes the renderer's toolbar and uses
+// logical lines rather than layout-derived wrapping.
+export function readBrowserReplyTexts(elements) {
+  const codeBlock = node => node.nodeType === 1 && (node.tagName === "PRE" || node.getAttribute("data-markdown-copy") === "code-block");
+  const block = node => node.nodeType === 1 && (codeBlock(node) || /^(?:DIV|P|BLOCKQUOTE|H[1-6]|UL|OL|LI|TABLE|TR)$/.test(node.tagName));
+  const paragraph = node => codeBlock(node) || node.nodeType === 1 && /^(?:P|BLOCKQUOTE|H[1-6])$/.test(node.tagName);
+  const readCode = element => {
+    const codes = element.querySelectorAll("code");
+    const editors = element.querySelectorAll(".cm-content[data-language]");
+    if (codes.length === 1 && editors.length === 0) return codes[0].textContent ?? "";
+    if (codes.length === 0 && editors.length === 1) {
+      const lines = Array.from(editors[0].children);
+      if (lines.every(line => line.classList.contains("cm-line"))) return lines.map(line => line.textContent ?? "").join("\n");
+    }
+    throw new Error("The assistant code block does not expose one complete source.");
+  };
+  const read = node => {
+    if (node.nodeType === 3) return node.textContent ?? "";
+    if (node.nodeType !== 1) return "";
+    if (node.getAttribute("data-markdown-copy") === "exclude" || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return "";
+    if (node.tagName === "BR") return "\n";
+    if (codeBlock(node)) return readCode(node);
+    let text = "", previous;
+    for (const child of node.childNodes) {
+      const content = read(child);
+      if (content === "") continue;
+      if (text && (block(previous) || block(child))) text += paragraph(previous) || paragraph(child) ? "\n\n" : "\n";
+      text += content;
+      previous = child;
+    }
+    return text;
+  };
+  return Array.from(elements, read);
+}
+
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-async function runBrowserOperation(state, options, nodeRepl) {
+async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const role = (name, kind = "button") => state.tab.playwright.getByRole(kind, { name, exact: true });
-  const replies = () => state.tab.playwright.locator(ui.assistantFinalReplySelector).allTextContents({ timeoutMs: 1000 });
+  const replies = () => state.tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
   const temporary = async () => {
     const url = new URL(await state.tab.url());
     if (url.origin !== "https://chatgpt.com" || url.searchParams.get("temporary-chat") !== "true") return false;
@@ -253,12 +289,12 @@ async function runBrowserOperation(state, options, nodeRepl) {
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
       const texts = await replies();
-      const assistantText = texts.length > state.baselineReplyCount ? texts.at(-1).trim() : "";
+      const assistantText = texts.length > state.baselineReplyCount ? texts.at(-1) : "";
       const stopVisible = await role(ui.stopButtonExactName).isVisible();
       const statuses = await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
       const statusComplete = statuses.some(text => text.trim() === ui.responseCompleteStatusText);
       const regenerateVisible = await role(ui.regenerateButtonExactName).isVisible();
-      const completed = texts.length > state.baselineReplyCount && assistantText.length > 0 && !stopVisible && statusComplete && regenerateVisible;
+      const completed = texts.length > state.baselineReplyCount && assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
       observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId };
       if (completed) { state.completed = true; break; }
       if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
@@ -296,5 +332,5 @@ export function browserScript(options) {
     config.pluginSelectionButtonName = options.pluginSelectionButtonName ?? options.ui?.pluginSelectionButtonExactName ?? options.pluginName;
   }
   const binding = `routerWeb_${options.bindingId}`;
-  return `${options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};` : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl);`;
+  return `${options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};` : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplyTexts.toString()});`;
 }
