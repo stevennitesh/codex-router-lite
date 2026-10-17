@@ -83,18 +83,15 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
   globalThis[Symbol.for(key)] = browser.agent;
   const runtimeModule = `data:text/javascript,${encodeURIComponent(`export async function setupBrowserRuntime(){ return globalThis[Symbol.for(${JSON.stringify(key)})]; }`)}`;
   const broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
-  const observations = { watchers: [], services: [], nativeOperations: [], bindings: [], controlTokens: [] };
-  let controls;
+  const observations = { watchers: [], services: [], nativeOperations: [], bindings: [], fetchCalls: 0 };
   const settings = { browser: { runtimeModule, pluginName: "Current Codex Tools", pluginAppId: "asdk_current_tools",
     pluginSelectionButtonName: "Current Codex Tools Workspace tools", observeIterations: 1, observeDelayMs: 0 },
   tunnel: { executable: "test-tunnel", id: "test-owned-tunnel" }, mcpPort: 0 };
   const runtime = createInAppWebRuntime({ broker, stateDir,
     startMcp: async options => {
-      controls = options;
       assert.equal(options.broker, broker);
       observations.services.push("mcp");
-      return { url: "http://127.0.0.1:40123/mcp", status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); },
-        controlUrl: token => { observations.controlTokens.push(token); return `http://127.0.0.1:40123/control/${token}`; } };
+      return { url: "http://127.0.0.1:40123/mcp", status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); } };
     },
     startTunnel: async options => {
       observations.services.push("tunnel");
@@ -124,11 +121,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     assert.ok(binding, "The emitted native JavaScript carries its persistent binding.");
     observations.bindings.push(binding);
     let framed;
-    const nativeFetch = async (url, options) => {
-      const token = new URL(url).pathname.split("/").at(-1);
-      assert.equal(options.headers.Authorization, `Bearer ${token}`);
-      return new Response(JSON.stringify(controls.controlState(token)), { headers: { "content-type": "application/json" } });
-    };
+    const nativeFetch = () => { observations.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
     const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "fetch", binding, `${args.code}\nreturn ${binding};`);
     const state = await execute({ write: value => { framed = value; } }, nativeFetch, bindings.get(binding));
     bindings.set(binding, state);
@@ -152,17 +145,22 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     throw new Error("Browser orchestration did not reach observation.");
   };
   return { runtime, broker, browser, observations, settings, request, executeBrowser, answerBrowser, toObserve,
-    token: () => observations.controlTokens.at(-1), input: () => payload.input,
+    token: () => {
+      const token = browser.ui.sends.at(-1)?.match(/Use turn_token (web_turn_[a-f0-9]{32}) unchanged/u)?.[1];
+      assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
+      return token;
+    }, input: () => payload.input,
     append: (...items) => payload.input.push(...items),
     newTurn: (turn, userText) => { currentTurn = turn; payload = { ...payload, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
 
-test("a real MCP invocation becomes a native coding call and resolves only from its paired output", async t => {
+test("a queued MCP invocation routes after UI-only observation and resolves only from paired native output", async t => {
   const h = harness(t, { toolChoice: "required" });
   const { call: observe } = await h.toObserve();
   assert.equal(h.browser.ui.sends.length, 1);
   assert.equal(h.browser.ui.marks, 0);
+  h.browser.ui.stop = true;
   const token = h.token();
   const read = h.broker.list(token).find(tool => tool.name === "read");
   assert.deepEqual(read.parameters, currentRead.tools[0].parameters);
@@ -171,6 +169,7 @@ test("a real MCP invocation becomes a native coding call and resolves only from 
   void mcpResult.then(() => { resolved = true; });
   const codingResponse = await h.answerBrowser(observe);
   const coding = codingResponse.output[0];
+  assert.equal(h.observations.fetchCalls, 0);
   assert.equal(coding.namespace, "mcp__work");
   assert.equal(coding.name, "read");
   assert.deepEqual(JSON.parse(coding.arguments), { path: "actual.txt", limit: 3 });
@@ -183,6 +182,7 @@ test("a real MCP invocation becomes a native coding call and resolves only from 
   assert.equal(h.browser.ui.sends.length, 1);
   h.browser.ui.texts.push("The native file contains actual native file contents.");
   h.browser.ui.complete = true;
+  h.browser.ui.stop = false;
   const retain = await h.answerBrowser(afterCoding.output[0]);
   assert.equal(h.browser.ui.marks, 0);
   const final = await h.answerBrowser(retain.output[0]);

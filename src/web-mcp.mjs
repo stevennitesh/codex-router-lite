@@ -38,14 +38,13 @@ function reject(response, status) {
 }
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
-export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel, controlState } = {}) {
+export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel } = {}) {
   if (!broker || !["list", "invoke", "cancel"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
   if (typeof capability !== "string" || !/^[A-Za-z0-9_-]{32,256}$/u.test(capability)) throw new TypeError("Invalid Web MCP capability.");
   if (onCancel !== undefined && typeof onCancel !== "function") throw new TypeError("Invalid Web MCP cancellation callback.");
-  if (controlState !== undefined && typeof controlState !== "function") throw new TypeError("Invalid Web MCP control callback.");
   const path = `/${capability}/mcp`;
   const sessions = new Map(), creating = new Set();
   let closing = false, closed;
@@ -111,18 +110,6 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   const listener = createServer(async (request, response) => {
     if (closing) return reject(response, 503);
     if (request.headers.origin !== undefined) return reject(response, 403);
-    const controlToken = request.url?.startsWith(`/${capability}/turn/`) ? request.url.slice(capability.length + 7) : undefined;
-    if (controlToken !== undefined) {
-      if (request.method !== "GET") return reject(response, 405);
-      if (!/^web_turn_[a-f0-9]{32}$/u.test(controlToken) || !controlState) return reject(response, 404);
-      try {
-        const state = controlState(controlToken);
-        if (!state) return reject(response, 404);
-        response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-        response.end(JSON.stringify({ pendingTool: state.pendingTool === true, cancelled: state.cancelled === true }));
-      } catch { reject(response, 503); }
-      return;
-    }
     if (request.url !== path) return reject(response, 404);
     if (!["POST", "GET", "DELETE"].includes(request.method)) return reject(response, 405);
     const sessionId = request.headers["mcp-session-id"];
@@ -163,10 +150,6 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   }
   return {
     url: `http://127.0.0.1:${listener.address().port}${path}`,
-    controlUrl: token => {
-      if (typeof token !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(token)) throw new TypeError("Invalid Web MCP turn token.");
-      return `http://127.0.0.1:${listener.address().port}/${capability}/turn/${token}`;
-    },
     status: () => ({ listening: listener.listening && !closing, sessions: sessions.size, pending: [...sessions.values()].reduce((sum, entry) => sum + entry.pending.size, 0) }),
     close() {
       if (closed) return closed;

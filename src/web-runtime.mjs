@@ -144,15 +144,6 @@ export function createInAppWebRuntime({
     turn.conversation.activeTurn = undefined;
     void turn.watcher?.close();
   };
-  const controlState = token => {
-    const turn = tokenOwners.get(token);
-    if (!turn) return undefined;
-    if (!turn.cancelled && !turn.done) {
-      try { return { pendingTool: broker.takeCalls(token).length > 0, cancelled: false }; }
-      catch { cancel(turn); }
-    }
-    return { pendingTool: false, cancelled: turn.cancelled };
-  };
   const ensureServices = async settings => {
     if (closing) throw fail("Router's in-app Web runtime is stopping.");
     const signature = digest({ browser: settings.browser, tunnel: settings.tunnel, port: settings.mcpPort });
@@ -161,7 +152,7 @@ export function createInAppWebRuntime({
     if (!servicePromise) servicePromise = (async () => {
       let mcp, tunnel;
       try {
-        mcp = await startMcp({ broker, port: settings.mcpPort ?? 0, controlState,
+        mcp = await startMcp({ broker, port: settings.mcpPort ?? 0,
           onCancel: token => { const turn = tokenOwners.get(token); if (turn) cancel(turn); } });
         if (closing) throw fail("Router's in-app Web runtime is stopping.");
         tunnel = await startTunnel({ executable: settings.tunnel.executable, tunnelId: settings.tunnel.id,
@@ -188,7 +179,6 @@ export function createInAppWebRuntime({
         ...turn.settings.browser, ...turn.selection,
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt } : {}),
-        ...(operation === "observe" ? { controlUrl: services.mcp.controlUrl(turn.token), controlToken: turn.token } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
     internalCalls.add(call.call_id);
     turn.pending = { kind: "browser", operation, frameToken, calls: [call] };

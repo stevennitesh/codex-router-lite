@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import test from "node:test";
 
 import { browserScript, discoverBrowserExecutor, parseBrowserOutput } from "../src/web-browser.mjs";
@@ -45,7 +44,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
     familyText: "GPT-6", familyClicks: 0, saveChat: false, sendEnabled: true, waitedMs: 0,
-    composerVisible: true, modelButtonVisible: true, temporaryHeadingVisible: true, navigations: [] };
+    composerVisible: true, modelButtonVisible: true, temporaryHeadingVisible: true, navigations: [], replyReads: 0, fetchCalls: 0 };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -107,7 +106,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
     async isEnabled() { return name === "Send" ? ui.sendEnabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() {
-      if (name === '[data-markdown-text-style="assistant-message"]') return [...ui.texts];
+      if (name === '[data-markdown-text-style="assistant-message"]') { ui.replyReads += 1; return [...ui.texts]; }
       if (name === '[role="status"]') return ui.complete ? ["Response complete"] : [];
       throw new Error("Unobserved selector");
     },
@@ -128,8 +127,9 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
     const code = browserScript({ ...base, operation, ...extra });
     // Run the actual serialized operation with the persistent native binding as
     // a parameter. Its top-level var shares that parameter's binding, as in REPL.
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", `${code}\nreturn routerWeb_${bindingId};`);
-    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout);
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", "fetch", `${code}\nreturn routerWeb_${bindingId};`);
+    const forbiddenFetch = () => { ui.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
+    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout, forbiddenFetch);
     return parseBrowserOutput(output, token);
   };
   const ready = async () => {
@@ -333,38 +333,24 @@ test("a lost retained tab fails continuation without replacing it; cancel stops 
   assert.equal(f.ui.newTabs, 1);
 });
 
-test("bounded observation reads protected local tool state and cancels the owned browser on request", async t => {
-  let cancelled = false;
-  const controlToken = "current_private_control_token_1234";
-  const authorization = [];
-  const server = createServer((request, response) => {
-    authorization.push(request.headers.authorization);
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ pendingTool: !cancelled, cancelled }));
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const controlUrl = `http://127.0.0.1:${server.address().port}/exact-owned-control`;
-  const f = fixture();
+test("a short UI-only observation returns unfinished generation without network access or another Send", async () => {
+  const f = fixture({ fastTimers: true });
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Call the current tools" });
-  const pending = await f.run("observe", { controlUrl, controlToken, observeIterations: 1 });
-  assert.equal(pending.pendingTool, true);
-  assert.equal(pending.completed, false);
-  assert.equal(f.ui.closeCount, 0);
-  cancelled = true;
   f.ui.stop = true;
-  const result = await f.run("observe", { controlUrl, controlToken, observeIterations: 1 });
-  assert.equal(result.cancelled, true);
-  assert.equal(result.closed, true);
-  assert.equal(f.ui.stop, false);
-  assert.equal(f.ui.closeCount, 1);
+  const before = f.ui.replyReads;
+  const pending = await f.run("observe");
+  assert.equal(pending.completed, false);
+  assert.equal(pending.stopVisible, true);
+  assert.equal(f.ui.replyReads - before, 2);
+  assert.equal(f.ui.waitedMs, 500);
+  assert.equal(f.ui.fetchCalls, 0);
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.handoffs, 0);
-  assert.deepEqual(authorization, [`Bearer ${controlToken}`, `Bearer ${controlToken}`]);
 });
 
-test("script arguments reject executable binding names and nonlocal control endpoints", () => {
+test("script arguments reject executable binding names and unbounded observation", () => {
   for (const binding of ['x;alert(1)', "x.y", "x-y", "x\nvar evil"]) assert.throws(() => browserScript({ ...base, operation: "open", bindingId: binding }), /binding ID/);
-  assert.throws(() => browserScript({ ...base, operation: "observe", controlUrl: "https://example.com", controlToken: "a".repeat(32) }), /local Web endpoint/);
   assert.throws(() => browserScript({ ...base, operation: "observe", observeIterations: 100 }), /bounded browser/);
 });

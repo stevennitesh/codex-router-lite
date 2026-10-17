@@ -252,14 +252,6 @@ async function runBrowserOperation(state, options, nodeRepl) {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
-      if (options.controlUrl) {
-        const response = await fetch(options.controlUrl, { headers: { Authorization: `Bearer ${options.controlToken}` }, signal: AbortSignal.timeout(3000) });
-        if (!response.ok) throw new Error("The local Web control endpoint is unavailable.");
-        const control = await response.json();
-        if (typeof control.pendingTool !== "boolean" || typeof control.cancelled !== "boolean") throw new Error("Invalid local Web control state.");
-        if (control.cancelled) { emit({ cancelled: true, ...await stopAndClose() }); return; }
-        if (control.pendingTool) { emit({ pendingTool: true, completed: false, tabId: state.tabId }); return; }
-      }
       const texts = await replies();
       const assistantText = texts.length > state.baselineReplyCount ? texts.at(-1).trim() : "";
       const stopVisible = await role(ui.stopButtonExactName).isVisible();
@@ -287,7 +279,9 @@ export function browserScript(options) {
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0,
-    observeIterations: options.observeIterations ?? 12, observeDelayMs: options.observeDelayMs ?? 500 };
+    // Short UI-only rounds return to Router promptly so it can relay MCP calls.
+    // Native browser JavaScript does not need access to Router's loopback server.
+    observeIterations: options.observeIterations ?? 2, observeDelayMs: options.observeDelayMs ?? 500 };
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()
       || !Number.isInteger(config.observeIterations) || config.observeIterations < 1 || config.observeIterations > 20
       || !Number.isInteger(config.observeDelayMs) || config.observeDelayMs < 0 || config.observeDelayMs > 1000) throw failure("Invalid bounded browser selection or observation arguments.");
@@ -300,11 +294,6 @@ export function browserScript(options) {
     config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
     if (options.pluginMentionName) config.pluginChipSelector += `[app-mention-name=${css(options.pluginMentionName)}]`;
     config.pluginSelectionButtonName = options.pluginSelectionButtonName ?? options.ui?.pluginSelectionButtonExactName ?? options.pluginName;
-  }
-  if (options.controlUrl !== undefined) {
-    let url;
-    try { url = new URL(options.controlUrl); } catch { throw failure("Invalid local Web control URL."); }
-    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || url.username || url.password || url.hash || typeof options.controlToken !== "string" || options.controlToken.length < 16) throw failure("Observe control must use the protected local Web endpoint.");
   }
   const binding = `routerWeb_${options.bindingId}`;
   return `${options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};` : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl);`;

@@ -150,22 +150,3 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   assert.equal(broker.finish(turn.token), true);
   assert.equal((await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } })).isError, true);
 });
-
-test("protected control observation exposes only generation flags and cannot mutate a turn", { timeout: 10_000 }, async t => {
-  const states = new Map();
-  const { broker, service } = await fixture(t, { controlState: token => states.get(token) });
-  const turn = register(broker, "control");
-  states.set(turn.token, { pendingTool: true, cancelled: false, privatePayload: "must stay private" });
-  const url = service.controlUrl(turn.token);
-  const response = await fetch(url);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { pendingTool: true, cancelled: false });
-  assert.equal(response.headers.get("access-control-allow-origin"), null);
-  assert.equal((await fetch(url, { method: "POST" })).status, 405);
-  assert.equal((await fetch(url, { headers: { origin: "https://chatgpt.com" } })).status, 403);
-  assert.equal((await fetch(url.replace(turn.token, "web_turn_00000000000000000000000000000000"))).status, 404);
-  assert.equal((await fetch(new URL(`/wrong/turn/${turn.token}`, url))).status, 404);
-  assert.equal(broker.list(turn.token).length, 1);
-  assert.deepEqual(broker.takeCalls(turn.token), []);
-  broker.finish(turn.token);
-});
