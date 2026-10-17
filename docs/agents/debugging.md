@@ -111,8 +111,11 @@ Responses stream failures retain their diagnosed cause through
 `src/responses-stream-failure.mjs`. The observer runs after the final response
 rewrites and records bounded identity, timestamp and sequence metadata without
 holding client bytes. Local failures use `response.failed` when that metadata is
-trustworthy; ambiguous or absent metadata retains the generic error. An already
-delivered terminal is never followed by another local terminal.
+trustworthy. Native streaming Responses also use a minimal `response.failed`
+when metadata is absent or ambiguous, retaining the diagnosed safe error without
+inventing identity or sequence fields. Other consumers retain the generic error
+in that case. An already delivered terminal is never followed by another local
+terminal.
 
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact

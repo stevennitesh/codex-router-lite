@@ -3,15 +3,18 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+  "lastReviewedCommit": "eb5acc9c5dc8d87fdce8bcd428ae59d789ddeb47",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
     "3706102a and 0829fa5a: malformed function JSON gate/retry; investigate with exact provider evidence before changing streamed execution and retry semantics",
     "233ae7bd: bulk SSE scanner optimization; no measured bottleneck in the retained router",
-    "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound"
+    "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound",
+    "6625cb07, 3c708bd2 and cc369942: connector/tool declaration deferral changes model-visible tools; no current context or latency defect warrants replacing request-local discovery",
+    "3cea80e9, 3f31f9fe and 84cd25a5: image-history elision changes preserved input; retain current bounds until retained-endpoint evidence requires it",
+    "042a6d70: pre-TLS reset recovery expands safe retry eligibility; defer without a retained-route incident"
   ],
-  "reviewedAt": "2026-10-05",
+  "reviewedAt": "2026-10-17",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -24,7 +27,10 @@
       "ce40ef5b and merge 84c6e1ba: update Undici to 8.11.2",
       "c089d403, 6d450845 and merge 60e9421a: adapt startup-only timeout retries and absolute system PowerShell resolution; retain strict private-file ACL handling",
       "753a18de and merge 1e209887: reject out-of-range reset timestamps after conversion so routed 429 errors do not invent retry estimates",
-      "f35327d2, 9feb6289 and merge 564edd6a: foreground Windows supervisor explicitly leaves the managed process record untouched while retaining lifecycle locking; managed start identity remains fail-closed"
+      "f35327d2, 9feb6289 and merge 564edd6a: foreground Windows supervisor explicitly leaves the managed process record untouched while retaining lifecycle locking; managed start identity remains fail-closed",
+      "26ef38c9 and merge d0855644: reject catalog polling intervals above the Node timer maximum using the existing default",
+      "0cf37ce4 and merge 304af3b1: refuse native inference redirects without changing the conservative no-replay policy",
+      "d578d9f9 and merge 3eaef7b7: native stream failures retain their safe cause without invented metadata; infer SSE only for successful headerless native streaming Responses"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -40,7 +46,8 @@
       "b6bb8cf7: Responses-native reasoning stays as reasoning because Router Lite retired its Chat reasoning carry when LiteLLM 1.102.1 took ownership of the GLM bridge",
       "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge",
       "9b344199 and merge 4294adfa: managed periodic native catalog refresh already uses the current binary and catalog authority",
-      "1972ac43 and merge d65dc169: complete-line WebSocket SSE bounds already count events independently of HTTP chunks, including partial/CRLF/EOF coverage"
+      "1972ac43 and merge d65dc169: complete-line WebSocket SSE bounds already count events independently of HTTP chunks, including partial/CRLF/EOF coverage",
+      "The 29 covered commits in 85259b67..eb5acc9c retain current stream/terminal, process proof, lock, gateway cleanup, WebSocket, namespace, dependency and UTF-8 behavior; complete dispositions are in docs/history/2026-10-17-app-compatibility-review.json"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
@@ -69,7 +76,8 @@
       "173f908c and merge fa371063: generic Responses provider handoffs outside exact retained routes",
       "894c4585 and merges bd0862f2/01afbfb8: direct Z.ai reasoning deadlines and Ollama transport outside retained OpenRouter endpoints",
       "f4e2108c, a6aa0e77 and merge 18c01b66: retired generic multi-client publication owner",
-      "Remaining 0a70b48c..85259b67 commits are excluded Ollama/Grok/MiniMax/vision/registry/tray/UI/macOS/POSIX/docs/tests or merge synchronization; all 52 commits have individual dispositions in docs/history/2026-10-05-compatibility-review.json"
+      "Remaining 0a70b48c..85259b67 commits are excluded Ollama/Grok/MiniMax/vision/registry/tray/UI/macOS/POSIX/docs/tests or merge synchronization; all 52 commits have individual dispositions in docs/history/2026-10-05-compatibility-review.json",
+      "All 156 commits in 85259b67..eb5acc9c are individually accounted for by grouped full-SHA dispositions in docs/history/2026-10-17-app-compatibility-review.json, including 57 excluded changes and 57 topology-only merges; all resolution-bearing merges received explicit review"
     ]
   }
 }

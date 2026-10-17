@@ -2453,6 +2453,7 @@ async function handleResponses(request, response, requestUrl) {
       return;
     }
     // Anything without a route from here on is native GPT traffic.
+    if (!route && !compactV1) markResponsesStream(response, { model: requestedModel, minimalFailure: true });
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
     if (!compactV1 && !compactV2 && !execution.nestedSwitchyardCallback) {
@@ -2604,10 +2605,9 @@ async function handleResponses(request, response, requestUrl) {
       headers,
       body: routedBody,
       signal: controller.signal,
-      // A routed hop has a fixed loopback owner. Following 307/308 would
-      // replay the prompt and, for Switchyard, native authorization to a
-      // destination outside that route contract. Recovery uses this same policy.
-      ...(route ? { redirect: "error" } : {}),
+      // A redirect may follow an accepted inference POST. Refuse it instead
+      // of replaying the prompt or credentials at another destination.
+      redirect: "error",
     };
     const observedFetch = observedNativeRequest
       ? async (...args) => {
@@ -2719,7 +2719,15 @@ async function handleResponses(request, response, requestUrl) {
     // predicate is structural (this request, these bytes, an explicit zero),
     // so it cannot fire on a provider that reports correctly and it disables
     // itself the moment the upstream starts reporting again.
-    const upstreamContentType = upstream.headers.get("content-type") || "";
+    let upstreamContentType = upstream.headers.get("content-type") || "";
+    if (!route && upstream.ok && !compactV1 && payload.stream === true && !upstream.headers.has("content-type")) {
+      // Successful native streaming Responses can omit their Content-Type.
+      // Give both the pipeline and final-egress observer the expected type,
+      // retaining the same body stream and all explicitly supplied headers.
+      upstreamContentType = "text/event-stream; charset=utf-8";
+      upstream = responseWithBody(upstream, upstream.body);
+      upstream.headers.set("Content-Type", upstreamContentType);
+    }
     const requestPreludeMs = preludeBudgetMs({
       baseMs: EMPTY_COMPLETION_PRELUDE_MS,
       requestBytes: routedBody?.length || 0,

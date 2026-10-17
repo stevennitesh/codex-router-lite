@@ -12,7 +12,7 @@ function identity(value) {
     !/[\u0000-\u001f\u007f]/u.test(value) ? value : undefined;
 }
 
-export function markResponsesStream(response, { model } = {}) {
+export function markResponsesStream(response, { model, minimalFailure = false } = {}) {
   const requestedModel = identity(model);
   if (!contexts.has(response)) {
     const write = response.write;
@@ -23,7 +23,8 @@ export function markResponsesStream(response, { model } = {}) {
       return result;
     };
   }
-  contexts.set(response, { requestedModel, model: requestedModel, trusted: true, terminal: false });
+  contexts.set(response, { requestedModel, model: requestedModel, minimalFailure: minimalFailure === true,
+    trusted: true, terminal: false });
 }
 
 // Observe bytes accepted by the destination's write, after holding/rewriting
@@ -179,12 +180,20 @@ export function responsesStreamFailure(response, { code, message }) {
   const pending = context.observer?.finishForFailure() === true;
   if (context.terminal) return { terminal: true, closePendingFrame: pending };
   context.terminal = true;
-  if (!context.trusted || !context.id || !context.model || context.createdAt === undefined || context.nextSequence === undefined) return undefined;
+  const safeCode = (typeof code === "string" && code || "local_router_stream_failed").slice(0, 128).toWellFormed();
+  const safeMessage = (typeof message === "string" && message || "The local router lost the upstream response stream.").slice(0, 2048).toWellFormed();
+  if (!context.trusted || !context.id || !context.model || context.createdAt === undefined || context.nextSequence === undefined) {
+    // Codex ignores generic errors on native streams. This local failure
+    // preserves the diagnosed cause without claiming an upstream snapshot.
+    if (context.minimalFailure) return { event: { type: "response.failed", code: safeCode,
+      response: { status: "failed", error: { code: "server_error", message: safeMessage } } } };
+    return undefined;
+  }
   return { event: {
     type: "response.failed", sequence_number: context.nextSequence,
-    code: String(code || "local_router_stream_failed").slice(0, 128).toWellFormed(),
+    code: safeCode,
     response: { id: context.id, object: "response", created_at: context.createdAt, model: context.model,
-      status: "failed", error: { code: "server_error", message: String(message || "The local router lost the upstream response stream.").slice(0, 2048).toWellFormed() },
+      status: "failed", error: { code: "server_error", message: safeMessage },
       output: [], parallel_tool_calls: false, tool_choice: "none", tools: [] },
   } };
 }

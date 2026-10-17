@@ -503,9 +503,10 @@ export async function finishResponse(response) {
 // the body instead produces a well-formed, if short, HTTP message.
 //
 // Marked Responses streams with trustworthy final-egress metadata get a typed
-// response.failed, so Codex retains the diagnosed cause. Other SSE streams and
-// ambiguous metadata keep the generic error contract. Messages are router-owned,
-// never arbitrary upstream error bodies.
+// response.failed, so Codex retains the diagnosed cause. Native Responses can
+// opt into a minimal failure when metadata is absent or ambiguous; other SSE
+// streams retain the generic error contract. Messages are router-owned, never
+// arbitrary upstream error bodies.
 //
 // The frame is prefixed with a blank line because the stream is being ended at
 // the point upstream died, which is very often mid-line: transforms forward

@@ -110,6 +110,50 @@ test("a discarded pipeline cannot lend its identity to a replacement attempt", (
   assert.equal(appended(response, offset)[0].type, "error");
 });
 
+test("opted-in native failures retain their cause without invented metadata and settle once", () => {
+  for (const wire of ["", frame({ ...created, sequence_number: undefined }),
+    frame({ type: "response.compaction.delta", delta: "synthetic partial" }),
+    frame(created) + 'data: {"type":"response.created","type":"response.in_progress"}\n\n']) {
+    const response = new ResponseSink();
+    markResponsesStream(response, { model: "fixture-model", minimalFailure: true });
+    observeResponsesStream(response, "text/event-stream");
+    response.write(wire);
+    const offset = response.text().length;
+    assert.equal(writeStreamErrorEvent(response, { code: "disconnect", message: "The provider connection was reset." }), true);
+    assert.deepEqual(appended(response, offset), [{ type: "response.failed", code: "disconnect",
+      response: { status: "failed", error: { code: "server_error", message: "The provider connection was reset." } } }]);
+    const ended = response.text();
+    assert.equal(writeStreamErrorEvent(response, { code: "duplicate", message: "duplicate" }), false);
+    assert.equal(response.text(), ended);
+  }
+});
+
+test("opted-in native failures bound router strings and never stringify unknown error objects", () => {
+  for (const [message, expected] of [["x".repeat(3000), "x".repeat(2048)],
+    [{ toString() { throw new Error("private provider payload must not be inspected"); } }, "The local router lost the upstream response stream."]]) {
+    const response = new ResponseSink();
+    markResponsesStream(response, { minimalFailure: true });
+    observeResponsesStream(response, "text/event-stream");
+    writeStreamErrorEvent(response, { code: "x".repeat(200), message });
+    const [failure] = appended(response, 0);
+    assert.equal(failure.type, "response.failed");
+    assert.equal(failure.code.length, 128);
+    assert.equal(failure.response.error.message, expected);
+  }
+});
+
+test("opted-in native failures preserve an already delivered terminal without identity metadata", () => {
+  for (const type of ["response.completed", "response.failed", "response.incomplete"]) {
+    const response = new ResponseSink();
+    markResponsesStream(response, { minimalFailure: true });
+    observeResponsesStream(response, "text/event-stream");
+    const wire = frame({ type, response: { status: type.slice(9) } });
+    response.write(wire);
+    assert.equal(writeStreamErrorEvent(response, { code: "duplicate", message: "duplicate" }), false);
+    assert.equal(response.text(), wire);
+  }
+});
+
 test("unmarked chat SSE and non-SSE output retain their existing contracts", () => {
   const response = new ResponseSink();
   assert.equal(observeResponsesStream(response, "text/event-stream"), undefined);

@@ -80,8 +80,8 @@ backpressure and service drain apply to native WebSocket turns as well as HTTP.
 External routes, substituted native credentials and compaction triggers retain
 the HTTP preparation path.
 
-Native HTTP inference POSTs recover only from conclusive connection failures,
-within the bounded retry budget. A socket reset, header timeout or gateway 5xx
+Native HTTP inference POSTs refuse redirects and recover only from conclusive
+connection failures within the bounded retry budget. A socket reset, header timeout or gateway 5xx
 does not establish that the upstream never accepted the request, so Router
 returns that failure without automatic replay. Caller output and cancellation
 also prohibit replay. The explicit routed empty-completion repair keeps its
@@ -89,6 +89,14 @@ separate completed-response and usage-accounting policy: it requires a parsed
 completed-empty result with every prologue byte still suppressed. A pre-content
 time or byte failure has an unknown inference outcome and returns
 `precontent_limit` without another POST. Prompt-scaled prefill allowance remains.
+
+Successful native streaming Responses with no Content-Type use the expected SSE
+type; explicit upstream types and error responses remain authoritative. If a
+stream fails before trustworthy response identity and sequence metadata arrive,
+native Responses receive a minimal `response.failed` containing only failed status
+and the diagnosed safe error. Other stream consumers retain their existing error
+envelope. No response ID, sequence, output, or usage is invented, and an observed
+terminal event prevents a duplicate terminal.
 
 The WebSocket edge captures masked frames and external SSE lines incrementally,
 with allocation growing only as bytes arrive. Native request input is serialized

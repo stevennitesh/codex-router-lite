@@ -6,10 +6,11 @@ import { SOURCE_ROOT } from "./paths.mjs";
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const MINIMUM_INTERVAL_MS = 10_000;
+const MAXIMUM_INTERVAL_MS = 2 ** 31 - 1;
 
 export function catalogRefreshIntervalMs(value = process.env.CODEX_ROUTER_CATALOG_REFRESH_MS) {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= MINIMUM_INTERVAL_MS
+  return Number.isSafeInteger(parsed) && parsed >= MINIMUM_INTERVAL_MS && parsed <= MAXIMUM_INTERVAL_MS
     ? parsed
     : DEFAULT_INTERVAL_MS;
 }
