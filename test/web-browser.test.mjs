@@ -44,7 +44,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
-    familyText: "GPT-6", familyClicks: 0, saveChat: false, sendEnabled: true, waitedMs: 0 };
+    familyText: "GPT-6", familyClicks: 0, saveChat: false, sendEnabled: true, waitedMs: 0,
+    composerVisible: true, modelButtonVisible: true, temporaryHeadingVisible: true, navigations: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -67,9 +68,12 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
     },
     async isVisible() {
       if (name === "Select ChatGPT model" && kind === "menu") return ui.menu;
+      if (name === "Select ChatGPT model" && kind === "button") return ui.modelButtonVisible;
+      if (name === "Ask ChatGPT" && kind === "textbox") return ui.composerVisible;
       if (name === "Stop") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
-      if (name === "Temporary chat" || name === "Turn off temporary chat") return ui.temporary;
+      if (name === "Temporary chat") return ui.temporary && ui.temporaryHeadingVisible;
+      if (name === "Turn off temporary chat") return ui.temporary;
       if (name === "Save chat") return ui.saveChat;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
@@ -108,7 +112,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
       throw new Error("Unobserved selector");
     },
   });
-  const tab = { id: "owned-tab", url: async () => ui.url ?? "https://chatgpt.com/?temporary-chat=true", goto: async url => { ui.url = url; },
+  const tab = { id: "owned-tab", url: async () => ui.url ?? "https://chatgpt.com/?temporary-chat=true", goto: async url => { ui.url = url; ui.navigations.push(url); },
     playwright: { getByRole: (kind, options) => makeLocator(kind, options.name), locator: name => makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser", documentation: async () => "Current public browser docs",
@@ -148,6 +152,42 @@ test("generated bootstrap reads the current session browser and open waits for T
   assert.equal(f.ui.url, "https://chatgpt.com/?temporary-chat=true");
   assert.equal(f.ui.handoffs, 0);
   await assert.rejects(f.run("open"), /already owns/);
+});
+
+test("open observes deferred hydration of all four controls without opening or navigating again", async () => {
+  const f = fixture({ fastTimers: true });
+  await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
+  f.ui.composerVisible = false;
+  f.ui.modelButtonVisible = false;
+  f.ui.temporary = false;
+  f.ui.temporaryHeadingVisible = false;
+  f.ui.onWait = () => {
+    f.ui.composerVisible = f.ui.waitedMs >= 100;
+    f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
+    f.ui.temporary = f.ui.waitedMs >= 300;
+    f.ui.temporaryHeadingVisible = f.ui.waitedMs >= 400;
+  };
+  const result = await f.run("open");
+  assert.equal(result.temporary, true);
+  assert.equal(f.ui.waitedMs, 400);
+  assert.equal(f.ui.newTabs, 1);
+  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/?temporary-chat=true"]);
+  assert.equal(f.ui.sendClicks, 0);
+});
+
+test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
+  for (const control of ["composerVisible", "modelButtonVisible", "temporary", "temporaryHeadingVisible"]) {
+    const f = fixture({ fastTimers: true });
+    await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
+    f.ui[control] = false;
+    await assert.rejects(f.run("open"), /controls did not become ready within 10 seconds/);
+    assert.equal(f.ui.waitedMs, 10000);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/?temporary-chat=true"]);
+    assert.equal(f.ui.sendClicks, 0);
+    await assert.rejects(f.run("open"), /already owns/);
+    assert.equal(f.ui.newTabs, 1);
+  }
 });
 
 test("exact family selection moves Power one step at a time and verifies each step", async () => {

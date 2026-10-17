@@ -187,8 +187,12 @@ async function runBrowserOperation(state, options, nodeRepl) {
     state.tab = await state.browser.tabs.new();
     state.tabId = state.tab.id;
     await state.tab.goto("https://chatgpt.com/?temporary-chat=true");
-    for (const locator of [role(ui.composerName, "textbox"), role(ui.modelButtonName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")]) {
-      await locator.waitFor({ state: "visible", timeoutMs: 10000 });
+    const controls = [role(ui.composerName, "textbox"), role(ui.modelButtonName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
+    const openDeadline = Date.now() + 10000;
+    while (!(await Promise.all(controls.map(control => control.isVisible()))).every(Boolean)) {
+      const remaining = openDeadline - Date.now();
+      if (remaining <= 0) throw new Error("Temporary Chat controls did not become ready within 10 seconds.");
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
     }
     state.temporaryVerified = await temporary();
     if (!state.temporaryVerified) throw new Error("The initial Temporary Chat state was not verified.");
