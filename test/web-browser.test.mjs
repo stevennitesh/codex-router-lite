@@ -235,7 +235,7 @@ test("generated bootstrap reads the current session browser and open waits for T
   const open = await f.run("open", { ui: { stopButtonExactName: "Stop generating" } });
   assert.deepEqual([open.tabId, open.temporary, open.replyCount], ["owned-tab", true, 0]);
   assert.equal(f.ui.url, "https://chatgpt.com/?temporary-chat=true");
-  assert.equal(f.ui.handoffs, 0);
+  assert.equal(f.ui.handoffs, 1);
   assert.deepEqual(f.activeTurn(), { turnId: base.turnId, state: f.getState(), stopButtonName: "Stop generating" });
   await assert.rejects(f.run("open"), /already owns/);
 });
@@ -315,7 +315,7 @@ test("sending preserves the plugin chip, treats prompt as data, and refuses unce
   assert.equal(f.ui.chip, true);
   await assert.rejects(f.run("send", { ...plugin, prompt }), /cannot be replayed/);
   assert.equal(f.ui.sendClicks, 1);
-  assert.equal(f.ui.handoffs, 0);
+  assert.equal(f.ui.handoffs, 1);
 });
 
 test("typing that removes the required app chip cannot trigger Send", async () => {
@@ -384,7 +384,7 @@ test("observations require a fresh assistant reply and continuation retains exac
   assert.equal(result.completed, true);
   assert.equal(f.activeTurn()?.turnId, base.turnId, "Completion retains the exact owner for the next native handoff.");
   await f.run("retain");
-  assert.equal(f.ui.handoffs, 1);
+  assert.equal(f.ui.handoffs, 2);
   assert.equal(f.activeTurn()?.turnId, base.turnId);
   const next = await f.run("continue", { tabId: "owned-tab", turnId: "following-turn" });
   assert.equal(next.replyCount, 2);
@@ -658,7 +658,7 @@ test("a short UI-only observation returns unfinished generation without network 
   assert.equal(f.ui.fetchCalls, 0);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);
-  assert.equal(f.ui.handoffs, 0);
+  assert.equal(f.ui.handoffs, 1);
 });
 
 test("script arguments reject unsafe bindings or native identities and unbounded observation", () => {
@@ -675,4 +675,12 @@ test("script arguments reject unsafe bindings or native identities and unbounded
     assert.throws(() => browserScript({ ...base, operation: "continue", expectedOwnerTurnIds }), /expected native owner identities/);
   }
   assert.throws(() => browserScript({ ...base, operation: "cancel", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
+  const recovery = { browserId: "owned-browser", tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation?temporary-chat=true",
+    baselineReplyCount: 0, replyCount: 1, assistantText: "Observed partial", completed: false };
+  const continuation = { ...base, operation: "continue", tabId: "owned-tab", runtimeModule: "current-runtime.mjs", expectedOwnerTurnIds: [base.turnId] };
+  for (const change of [{ url: "https://chatgpt.com/?temporary-chat=true" }, { url: "https://elsewhere.test/c/owned?temporary-chat=true" },
+    { tabId: "other-tab" }, { baselineReplyCount: -1 }, { replyCount: 0 }, { assistantText: " " }, { completed: undefined }]) {
+    assert.throws(() => browserScript({ ...continuation, recovery: { ...recovery, ...change } }), /confirmed owned chat and observed assistant reply/u);
+  }
+  assert.throws(() => browserScript({ ...base, operation: "observe", recovery }), /confirmed owned chat and observed assistant reply/u);
 });

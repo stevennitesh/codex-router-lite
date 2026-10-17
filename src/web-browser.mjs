@@ -227,6 +227,33 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     return { tabId: state.tabId, closed: true };
   };
 
+  let recovered = false;
+  if (operation === "continue" && state.bindingLost) {
+    // Only Router's confirmed Send and subsequent observed reply can recover a
+    // lost JS kernel. Reacquire that exact tab through the public SDK; never open
+    // or navigate a replacement and never replace a surviving active owner.
+    const proof = options.recovery;
+    if (globalThis.routerWebActiveTurns?.has(options.sessionId)) throw new Error("A different native turn owns the active browser recovery.");
+    const agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
+    const own = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
+    if (own.length !== 1 || own[0].id !== proof.browserId) throw new Error("The observed same-session browser is unavailable for recovery.");
+    const browser = await agent.browsers.get(proof.browserId);
+    if (browser.browserId !== proof.browserId) throw new Error("The observed browser identity changed during recovery.");
+    const matches = (await browser.tabs.list()).filter(tab => tab.id === proof.tabId);
+    if (matches.length !== 1) throw new Error("The observed owned tab is unavailable for recovery.");
+    const tab = await browser.tabs.get(proof.tabId);
+    if (tab.id !== proof.tabId || await tab.url() !== proof.url) throw new Error("The observed owned chat URL changed; recovery cannot navigate it.");
+    Object.assign(state, { agent, browser, tab, tabId: proof.tabId, sessionId: options.sessionId, runtimeModule: options.runtimeModule,
+      temporaryVerified: true, hasSentMessage: true, baselineReplyCount: proof.baselineReplyCount,
+      sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
+    if (!(await temporary())) throw new Error("The observed Temporary Chat controls changed; recovery cannot reuse it.");
+    const texts = await replies();
+    if (texts.length !== proof.replyCount || !texts.at(-1)?.startsWith(proof.assistantText)) throw new Error("The observed assistant reply changed; recovery cannot reuse this chat.");
+    registerActive();
+    delete state.bindingLost;
+    recovered = true;
+  }
+
   if (operation === "bootstrap") {
     if (state.sessionId && (state.sessionId !== options.sessionId || state.runtimeModule !== options.runtimeModule)) throw new Error("Browser binding belongs to another session or runtime.");
     if (!state.agent) state.agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
@@ -257,16 +284,19 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.temporaryVerified = await temporary();
     if (!state.temporaryVerified) throw new Error("The initial Temporary Chat state was not verified.");
     state.baselineReplyCount = (await replies()).length;
+    await state.tab.markHandoff();
     emit({ tabId: state.tabId, url: await state.tab.url(), temporary: true, composer: true, modelButton: true, replyCount: state.baselineReplyCount });
     return;
   }
   await ensureOwned();
   if (operation === "continue") {
     const interrupted = options.interruptedTurnId !== undefined;
-    activeOwner(options.expectedOwnerTurnIds, true);
+    const owners = recovered ? [options.turnId] : options.expectedOwnerTurnIds;
+    activeOwner(owners, true);
     if (state.closed || !(await temporary())) throw new Error("The retained conversation is not ready for continuation.");
+    await state.tab.markHandoff();
     if (interrupted) {
-      await stopGeneration(options.expectedOwnerTurnIds, true);
+      await stopGeneration(owners, true);
       if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
       if (state.sendAttempted && !state.sendConfirmed) {
         const composer = role(ui.composerName, "textbox");
@@ -291,7 +321,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.retained = false;
     state.interrupted = false;
     registerActive();
-    emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true, ...(interrupted ? { interrupted: true, assistantText } : {}) });
+    emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true, ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true, assistantText } : {}) });
   } else if (operation === "model") {
     if (state.sendAttempted && !state.completed) throw new Error("Generation is already pending.");
     const evidence = await modelEvidence(true);
@@ -351,7 +381,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       const statusComplete = statuses.some(text => text.trim() === ui.responseCompleteStatusText);
       const regenerateVisible = await role(ui.regenerateButtonExactName).isVisible();
       const completed = texts.length > state.baselineReplyCount && assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-      observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId };
+      observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url() };
       if (completed) { state.completed = true; break; }
       if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
     }
@@ -383,6 +413,18 @@ export function browserScript(options) {
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
       || new Set(options.expectedOwnerTurnIds).size !== options.expectedOwnerTurnIds.length)
       || options.operation !== "continue" && options.expectedOwnerTurnIds !== undefined) throw failure("Continuation requires exact expected native owner identities.");
+  if (options.recovery !== undefined) {
+    const proof = options.recovery;
+    let url;
+    try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
+    if (options.operation !== "continue" || !record(proof) || typeof proof.browserId !== "string" || !proof.browserId
+        || typeof proof.tabId !== "string" || !proof.tabId || proof.tabId !== options.tabId
+        || url?.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/c/") || url.searchParams.get("temporary-chat") !== "true"
+        || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
+        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount <= proof.baselineReplyCount
+        || typeof proof.assistantText !== "string" || !proof.assistantText.trim() || typeof proof.completed !== "boolean"
+        || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
+  }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0,
@@ -403,5 +445,8 @@ export function browserScript(options) {
     config.pluginSelectionButtonName = options.pluginSelectionButtonName ?? options.ui?.pluginSelectionButtonExactName ?? options.pluginName;
   }
   const binding = `routerWeb_${options.bindingId}`;
-  return `${options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};` : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplyTexts.toString()});`;
+  const initialize = options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};`
+    : options.operation === "continue" && options.recovery ? `var ${binding} = typeof ${binding} === "undefined" ? { bindingLost: true } : ${binding};`
+      : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
+  return `${initialize}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplyTexts.toString()});`;
 }

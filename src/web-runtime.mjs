@@ -176,6 +176,10 @@ export function createInAppWebRuntime({
   };
   const emitBrowser = (turn, operation, payload) => {
     const frameToken = randomBytes(24).toString("hex");
+    const conversation = turn.conversation;
+    const recovery = operation === "continue" && conversation.temporaryVerified && conversation.checkpoint && !conversation.uncertainSend
+      && conversation.observation?.assistantText.trim() && conversation.observation.replyCount > conversation.sendBaseline
+      ? { browserId: conversation.browserId, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline, ...conversation.observation } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,
@@ -183,6 +187,7 @@ export function createInAppWebRuntime({
         sessionId: turn.threadId, turnId: turn.turnId, runtimeModule: turn.settings.browser.runtimeModule,
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),
         ...(operation === "continue" ? { expectedOwnerTurnIds: [...turn.conversation.browserOwnerTurnIds] } : {}),
+        ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
@@ -190,7 +195,7 @@ export function createInAppWebRuntime({
     turn.browserStarted = true;
     if (operation === "bootstrap") turn.conversation.browserStarted = true;
     if (operation === "open" || operation === "continue") turn.conversation.browserOwnerTurnIds = [...new Set([...turn.conversation.browserOwnerTurnIds, turn.turnId])];
-    if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; }
+    if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; turn.conversation.observation = undefined; }
     turn.pending = { kind: "browser", operation, frameToken, calls: [call] };
     return webResponse(payload, [call]);
   };
@@ -221,10 +226,15 @@ export function createInAppWebRuntime({
   };
   const advance = async (turn, payload, value) => {
     const operation = value?.operation;
-    if (operation === "bootstrap") return emitBrowser(turn, "open", payload);
+    if (operation === "bootstrap") {
+      if (typeof value.browserId !== "string" || !value.browserId) throw fail("The owned browser identity was not established.");
+      turn.conversation.browserId = value.browserId;
+      return emitBrowser(turn, "open", payload);
+    }
     if (operation === "open" || operation === "continue") {
       if (value.temporary !== true || typeof value.tabId !== "string" || !value.tabId) throw fail("The owned Temporary Chat was not established.");
       turn.conversation.tabId = value.tabId;
+      turn.conversation.temporaryVerified = true;
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
       if (operation === "continue" && turn.interruptedTurnId) {
         if (value.interrupted !== true) throw fail("The interrupted Web generation was not reconciled.");
@@ -242,14 +252,20 @@ export function createInAppWebRuntime({
     }
     if (operation === "send") {
       if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
+      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0) throw fail("The confirmed Send has no verified reply baseline.");
       turn.sendState = "sent";
       turn.conversation.uncertainSend = false;
       turn.conversation.checkpoint = turn.promptTranscript;
+      turn.conversation.sendBaseline = value.baselineReplyCount;
       turn.conversation.assistantText = undefined;
       return emitBrowser(turn, "observe", payload);
     }
     if (operation === "observe") {
       if (value.cancelled) { cancel(turn); throw turn.error; }
+      if (value.tabId !== turn.conversation.tabId || typeof value.url !== "string" || !value.url
+          || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < value.baselineReplyCount
+          || typeof value.assistantText !== "string" || typeof value.completed !== "boolean") throw fail("The browser observation has no verified conversation evidence.");
+      turn.conversation.observation = { url: value.url, replyCount: value.replyCount, assistantText: value.assistantText, completed: value.completed };
       const calls = broker.takeCalls(turn.token);
       if (calls.length) { turn.pending = { kind: "coding", calls }; return webResponse(payload, calls); }
       if (value.completed === true && typeof value.assistantText === "string" && value.assistantText.trim()) {
