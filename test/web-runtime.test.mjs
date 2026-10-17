@@ -869,7 +869,56 @@ test("native V2 preserves an exact pending tail after its retained-user prefix a
   });
 });
 
-test("native V2 refuses to suppress changed or clipped retained-prefix material", async t => {
+test("native V2 preserves rebuilt native context once while deduplicating reordered source and pending-user copies", async t => {
+  for (const mode of ["used", "recompacted", "restarted", "partial assistant", "extra duplicate"]) await t.test(mode, async t => {
+    const h = harness(t), initialUser = structuredClone(h.input()[0]);
+    const message = (role, ...texts) => ({ type: "message", role, content: texts.map(text => ({ type: "input_text", text })) });
+    const developer = message("developer", "Native runtime instructions", "Native tool contract", "<skills_instructions>Current skills</skills_instructions>",
+      "<permissions instructions>Old workspace policy</permissions instructions>", "<collaboration_mode>Default</collaboration_mode>", "Voice settings", "Agent policy", "Task authority");
+    const currentDeveloper = structuredClone(developer); currentDeveloper.content[3].text = "<permissions instructions>Current workspace policy</permissions instructions>";
+    const retainedDeveloper = message("developer", "Unchanged native developer control");
+    const environment = message("user", "# AGENTS.md instructions\n<INSTRUCTIONS>Same repository authority</INSTRUCTIONS>", "<environment_context>Old environment</environment_context>");
+    const currentEnvironment = structuredClone(environment); currentEnvironment.content[1].text = "<environment_context>Current environment</environment_context>";
+    const repeatedUser = message("user", "A repeated original native request");
+    h.input().unshift(developer, retainedDeveloper, environment, repeatedUser, structuredClone(repeatedUser));
+    const { call } = await h.toObserve();
+    const ownedAnswer = "Owned completed Web answer ".padEnd(130, "x");
+    h.browser.ui.texts.push(ownedAnswer); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    if (mode === "partial assistant") final.output[0].content[0].text = ownedAnswer.slice(0, 64);
+    const pendingUser = message("user", "Pending native user must survive exactly once"); h.append(pendingUser);
+    await h.restartRuntime();
+    const compact = () => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+      input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() });
+    let checkpoint = await nativeV2Checkpoint(await compact());
+    assert.deepEqual(decodeCompaction(checkpoint.encrypted_content).checkpoint.retained_tail,
+      mode === "partial assistant" ? [final.output[0], pendingUser] : [pendingUser]);
+    const prefix = [structuredClone(repeatedUser), retainedDeveloper, currentDeveloper, structuredClone(repeatedUser), currentEnvironment,
+      ...(mode === "extra duplicate" ? [structuredClone(repeatedUser)] : []), initialUser, pendingUser];
+    h.input().splice(0, h.input().length, ...prefix, checkpoint);
+    if (mode === "recompacted") {
+      checkpoint = await nativeV2Checkpoint(await compact());
+      h.input().splice(0, h.input().length, ...prefix, checkpoint);
+    }
+    if (mode === "restarted") { await h.restartRuntime(); h.loseKernel(); }
+    h.newTurn(followupId, "First request after native compaction");
+    const observation = await h.toObserve();
+    const normalized = item => ({ role: item.role, content: item.content.map(part => part.text).join("\n") });
+    assert.deepEqual(sentTranscript(h), [normalized(currentDeveloper), normalized(currentEnvironment),
+      ...(mode === "extra duplicate" ? [normalized(repeatedUser)] : []), normalized(pendingUser), { role: "user", content: "First request after native compaction" }]);
+    const privateRecord = readFileSync(h.stateFile, "utf8");
+    assert.equal(privateRecord.includes(currentDeveloper.content[3].text), false);
+    assert.equal(privateRecord.includes(pendingUser.content[0].text), false);
+    h.browser.ui.texts.push("Web completed the post-compaction request"); h.browser.ui.complete = true;
+    const retained = await h.answerBrowser(observation.call), completed = await h.answerBrowser(retained.output[0]); h.append(completed.output[0]);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Next request stays a small delta");
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Next request stays a small delta" }]);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("native V2 forwards changed or clipped retained-prefix material instead of suppressing it", async t => {
   const h = harness(t), { call } = await h.toObserve();
   h.browser.ui.texts.push("Owned answer"); h.browser.ui.complete = true;
   const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
@@ -877,10 +926,9 @@ test("native V2 refuses to suppress changed or clipped retained-prefix material"
     input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() }));
   h.input().splice(0, h.input().length, { role: "user", content: "Unknown or clipped prefix must not disappear" }, checkpoint);
   h.newTurn(followupId, "Preserve all new input");
-  const operations = h.observations.nativeOperations.length;
-  await assert.rejects(h.request(), { code: "web_history_mismatch" });
-  assert.equal(h.observations.nativeOperations.length, operations);
-  assert.equal(h.browser.ui.sends.length, 1);
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Unknown or clipped prefix must not disappear" }, { role: "user", content: "Preserve all new input" }]);
+  assert.equal(h.browser.ui.sends.length, 2);
 });
 
 test("native V2 carries a pending coding result without delivering it until the ordinary request", async t => {
@@ -950,6 +998,59 @@ test("native V2 carries a pending coding result without delivering it until the 
     assert.deepEqual(sent.at(-1), { role: "user", content: "Only this new native request remains" });
   } else assert.deepEqual(sent, [{ role: "user", content: "Only this new native request remains" }]);
   assert.equal(h.browser.ui.sends.length, 2);
+  });
+});
+
+test("native V2 acknowledges actual coding across refreshed context and recompaction without hiding later native work", async t => {
+  for (const mode of ["completed", "restart prefix-form record", "later native answer"]) await t.test(mode, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "recompacted-owned-result.txt" } });
+    let deliveries = 0, settled = false;
+    const complete = h.broker.complete.bind(h.broker);
+    h.broker.complete = (...args) => { deliveries += 1; return complete(...args); };
+    void result.then(() => { settled = true; }, () => {});
+    const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, "Actual owned result behind refreshed native context");
+    h.append(coding, output);
+    const users = nativeV2Users(h.input());
+    const compact = () => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+      input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() });
+    const first = await nativeV2Checkpoint(await compact());
+    const developer = { type: "message", role: "developer", content: [{ type: "input_text", text: "Refreshed native developer authority" }] };
+    const environment = { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>Refreshed current context</environment_context>" }] };
+    h.input().splice(0, h.input().length, ...users, developer, environment, first);
+    const second = await nativeV2Checkpoint(await compact());
+    assert.deepEqual(decodeCompaction(second.encrypted_content).checkpoint.retained_tail, [developer, environment, coding, output]);
+    assert.equal(settled, false); assert.equal(deliveries, 0);
+    h.input().splice(0, h.input().length, ...users, developer, environment, second);
+    const observation = (await h.request()).output[0];
+    assert.deepEqual(await result, { content: [{ type: "text", text: output.output }] });
+    assert.equal(deliveries, 1);
+    const later = [{ role: "user", content: "Genuinely unsent later native request" },
+      { type: "function_call", call_id: "different_native_action", name: "read", arguments: "{}" },
+      { type: "function_call_output", call_id: "different_native_action", output: "Actual different native result" },
+      { role: "assistant", content: "Done." }];
+    if (mode === "later native answer") h.append(...later);
+    h.browser.ui.texts.push("Done. Detailed report from the completed Web action."); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(observation), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    const record = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(record.activeCompaction.acknowledgedTailHashes.length, 2);
+    assert.equal(record.activeCompaction.acknowledgedTailHashes.every(hash => /^[a-f0-9]{64}$/u.test(hash)), true);
+    assert.equal(JSON.stringify(record).includes(output.output), false);
+    if (mode === "restart prefix-form record") { await h.restartRuntime(); h.loseKernel(); }
+    h.newTurn(followupId, "New request after the recompacted coding turn");
+    const next = await h.toObserve(), sent = sentTranscript(h);
+    assert.deepEqual(sent.slice(0, 2), [{ role: "developer", content: developer.content[0].text }, { role: "user", content: environment.content[0].text }]);
+    assert.equal(sent.some(item => item.call_id === coding.call_id), false);
+    if (mode === "later native answer") {
+      assert.deepEqual(sent.slice(2, 2 + later.length), later);
+      assert.deepEqual(sent.at(-1), { role: "user", content: "New request after the recompacted coding turn" });
+    } else assert.deepEqual(sent.slice(2), [{ role: "user", content: "New request after the recompacted coding turn" }]);
+    h.browser.ui.texts.push("Follow-up completed with refreshed context"); h.browser.ui.complete = true;
+    const retained = await h.answerBrowser(next.call), completed = await h.answerBrowser(retained.output[0]); h.append(completed.output[0]);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Later request remains a delta");
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later request remains a delta" }]);
   });
 });
 
