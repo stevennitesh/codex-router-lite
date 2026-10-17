@@ -26,6 +26,7 @@ const currentRead = { type: "namespace", name: "mcp__work", tools: [{ type: "fun
 const search = { type: "tool_search", execution: "client" };
 const metadata = (turn = turnId) => ({ thread_id: threadId, turn_id: turn });
 const headers = (turn = turnId) => ({ "x-codex-turn-metadata": JSON.stringify(metadata(turn)), "x-codex-thread-id": threadId });
+const messageId = index => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
 const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? "tool_search_output" : "function_call_output", call_id: call.call_id,
   ...(call.type === "tool_search_call" ? { tools: output, execution: "client", status: "completed" } : { output }) });
 
@@ -82,7 +83,8 @@ function fakeBrowser() {
           childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
       }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
-      return callback(ui.texts.map(value => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
+      return callback(ui.texts.map((value, index) => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
+        closest: () => ({ getAttribute: () => ui.replyIds ? ui.replyIds[index] : messageId(index) }),
         childNodes: [{ nodeType: 3, textContent: value }] })));
     },
   });
@@ -213,6 +215,78 @@ async function nativeV2Checkpoint(response) {
 
 const nativeV2Users = input => input.filter(item => item.role === "user").map(item => ({ type: "message", role: "user",
   content: typeof item.content === "string" ? [{ type: "input_text", text: item.content }] : item.content }));
+
+test("the native runtime accepts a new reply identity after mounted counts shrink and recovers that exact completed reply", async t => {
+  const h = harness(t);
+  let response = await h.request();
+  while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
+  h.browser.ui.texts = Array(6).fill("Repeated answer");
+  const observe = (await h.answerBrowser(response.output[0])).output[0];
+  h.browser.ui.texts = Array(5).fill("Repeated answer"); h.browser.ui.stop = true;
+  const pendingFrame = await h.executeBrowser(observe);
+  assert.match(pendingFrame, /"replyCount":5/);
+  assert.match(pendingFrame, /"replyId":null/);
+  h.append(observe, outputFor(observe, pendingFrame));
+  const pending = await h.request();
+  assert.equal(JSON.parse(pending.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  h.browser.ui.replyIds = [0, 1, 2, 3, 6].map(messageId); h.browser.ui.complete = true; h.browser.ui.stop = false;
+  const retained = await h.answerBrowser(pending.output[0]);
+  const final = await h.answerBrowser(retained.output[0]);
+  assert.equal(final.output[0].content[0].text, "Repeated answer");
+  h.append(final.output[0]);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.sendBaseline, 6); assert.equal(saved.observation.replyCount, 5);
+  assert.equal(saved.observation.replyId, messageId(6));
+  assert.equal(h.browser.ui.sends.length, 1);
+  await h.restartRuntime(); h.loseKernel();
+  h.newTurn(followupId, "Continue from the identified reply.");
+  await h.toObserve();
+  assert.equal(h.browser.ui.sends.length, 2, "Recovery never resends the completed turn.");
+  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue from the identified reply." }]);
+});
+
+test("an existing successful private mapping without message IDs recovers once by its original URL and prefix proof", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Existing deployed answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.restartRuntime(); h.loseKernel();
+  const legacy = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  delete legacy.sendBaselineReplyIds; delete legacy.observation.replyId;
+  assert.ok(legacy.observation.replyCount > legacy.sendBaseline);
+  writeFileSync(h.stateFile, JSON.stringify(legacy), "utf8");
+  h.newTurn(followupId, "Continue the existing deployed saved chat.");
+  await h.toObserve();
+  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue the existing deployed saved chat." }]);
+  const upgraded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.deepEqual(upgraded.sendBaselineReplyIds, [messageId(0)]);
+});
+
+test("native observation validation rejects old, missing, changed or unpaired reply identity evidence", async t => {
+  for (const [label, change] of [
+    ["old reply", value => ({ ...value, replyId: messageId(0), assistantText: "Old answer", completed: true })],
+    ["missing identity", value => ({ ...value, replyId: undefined, assistantText: "Unpaired answer", completed: true })],
+    ["array identity", value => ({ ...value, replyId: [messageId(1)], assistantText: "Unpaired answer", completed: true })],
+    ["null identity with answer", value => ({ ...value, replyId: null, assistantText: "Unpaired answer", completed: true })],
+    ["changed baseline", value => ({ ...value, baselineReplyIds: [] })],
+    ["duplicate baseline", value => ({ ...value, baselineReplyIds: [messageId(0), messageId(0)] })],
+  ]) await t.test(label, async t => {
+    const h = harness(t);
+    let response = await h.request();
+    while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
+    h.browser.ui.texts.push("Old answer");
+    const observe = (await h.answerBrowser(response.output[0])).output[0];
+    const original = await h.executeBrowser(observe);
+    const frameToken = original.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/u)[1];
+    const mutated = `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: change(parseBrowserOutput(original, frameToken)) })}\nROUTER_WEB_BROWSER_${frameToken}_END`;
+    h.append(observe, outputFor(observe, mutated));
+    await assert.rejects(h.request(), /verified conversation evidence/);
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.equal(h.observations.nativeOperations.includes("retain"), false);
+  });
+});
 
 test("a queued MCP invocation routes after UI-only observation and resolves only from paired native output", async t => {
   const h = harness(t, { toolChoice: "required" });
@@ -422,6 +496,9 @@ test("invalid saved mappings fail before any fresh chat or browser call", async 
     ["foreign thread", value => { value.threadId = followupId; }],
     ["unsafe URL", value => { value.chatUrl = "https://example.com/c/foreign"; }],
     ["lost checkpoint", value => { delete value.checkpoint; }],
+    ["old reply identity", value => { value.sendBaselineReplyIds.push(value.observation.replyId); }],
+    ["duplicate baseline identity", value => { value.sendBaselineReplyIds = [messageId(2), messageId(2)]; }],
+    ["unpaired completed reply", value => { value.observation.replyId = null; }],
   ]) await t.test(label, async t => {
     const h = harness(t), { call } = await h.toObserve();
     h.browser.ui.texts.push("Persisted answer"); h.browser.ui.complete = true;
@@ -467,6 +544,7 @@ test("runtime recovery passes saved evidence and refuses changed session, reply 
   for (const [label, mutate] of [
     ["foreign session", h => { h.browser.agent.browsers.list = async () => [{ type: "iab", id: "same-session-iab", metadata: { codexSessionId: followupId } }]; }],
     ["changed partial", h => { h.browser.ui.texts[0] = "A different assistant reply"; }],
+    ["identical text under different identity", h => { h.browser.ui.replyIds = [messageId(999)]; }],
     ["surviving foreign owner", h => { h.replaceBrowserOwner({ turnId: followupId, state: {} }); }],
   ]) await t.test(label, async t => {
     const h = harness(t);

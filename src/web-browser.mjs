@@ -100,8 +100,9 @@ const defaultUi = {
 
 // Self-contained read-only DOM projection, also usable directly with the public
 // locator.evaluateAll API. Code source excludes the renderer's toolbar and uses
-// logical lines rather than layout-derived wrapping.
-export function readBrowserReplyTexts(elements) {
+// logical lines rather than layout-derived wrapping. The observed message wrapper
+// identity and its text come from the same DOM read.
+export function readBrowserReplies(elements) {
   const codeBlock = node => node.nodeType === 1 && (node.tagName === "PRE" || node.getAttribute("data-markdown-copy") === "code-block");
   const block = node => node.nodeType === 1 && (codeBlock(node) || /^(?:DIV|P|BLOCKQUOTE|H[1-6]|UL|OL|LI|TABLE|TR)$/.test(node.tagName));
   const paragraph = node => codeBlock(node) || node.nodeType === 1 && /^(?:P|BLOCKQUOTE|H[1-6])$/.test(node.tagName);
@@ -131,7 +132,10 @@ export function readBrowserReplyTexts(elements) {
     }
     return text;
   };
-  return Array.from(elements, read);
+  return Array.from(elements, element => ({
+    messageId: element.closest('[data-chatgpt-selection-message-id]')?.getAttribute("data-chatgpt-selection-message-id") ?? null,
+    text: read(element),
+  }));
 }
 
 // This function is serialized into the active native REPL. It uses only public
@@ -152,6 +156,18 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   };
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const replies = (tab = state.tab) => tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
+  const validReplies = values => values.every(value => typeof value.messageId === "string"
+    && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId))
+    && new Set(values.map(value => value.messageId)).size === values.length;
+  const currentReply = values => {
+    if (!validReplies(values) || !Array.isArray(state.baselineReplyIds)) return undefined;
+    const fresh = values.filter(value => !state.baselineReplyIds.includes(value.messageId));
+    const latest = values.at(-1);
+    // Mounted replies can disappear or return as ChatGPT virtualizes history.
+    // Keep the first unambiguous new message identity for the entire Send.
+    if (state.replyId) return latest?.messageId === state.replyId && !state.baselineReplyIds.includes(state.replyId) ? latest : undefined;
+    return fresh.length === 1 && fresh[0] === latest ? latest : undefined;
+  };
   const conversationFull = async () => {
     const outsideMessages = (elements, assistantSelector) => {
       const excluded = `${assistantSelector},[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input`;
@@ -277,9 +293,9 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if ((await composer.innerText()).trim() || await role(ui.sendButtonExactName).isEnabled()) throw new Error("The unsent composer draft was not cleared; continuation cannot replay it.");
   };
   const resetChat = () => {
-    Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, sendAttempted: false, sendClicked: false,
+    Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false, interrupted: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId"]) delete state[key];
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId", "replyId"]) delete state[key];
   };
 
   let recovered = false;
@@ -294,7 +310,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
   }
   if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
-    // A confirmed saved URL and observed reply prefix can recover a lost kernel.
+    // A confirmed saved URL, message identity and reply prefix can recover a lost kernel.
     // A browser/tab ID is only a hint after restart; the exact saved URL and
     // visible reply remain authoritative. Never replace a surviving owner.
     const proof = options.recovery;
@@ -322,12 +338,14 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     const navigate = await tab.url() !== proof.url;
     if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
     const { createHash } = await import("node:crypto");
-    let mountedReplyCount;
+    let recoveredReplyId, recoveredBaselineIds;
     verifyRecoveryTexts = texts => {
-      const text = texts.at(-1);
-      if (!texts.length || typeof text !== "string" || text.length < proof.assistantPrefix.length
+      const latest = texts.at(-1), text = latest?.text;
+      const expectedReplyId = proof.replyId ?? recoveredReplyId;
+      if (!validReplies(texts) || expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string" || text.length < proof.assistantPrefix.length
           || createHash("sha256").update(text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256) return false;
-      mountedReplyCount = texts.length;
+      recoveredReplyId = latest.messageId;
+      recoveredBaselineIds = proof.baselineReplyIds ?? texts.slice(0, -1).map(value => value.messageId);
       return true;
     };
     const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await replies(tab));
@@ -335,6 +353,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url, baselineReplyCount: proof.baselineReplyCount,
+      baselineReplyIds: [...(proof.baselineReplyIds ?? [])], replyId: proof.replyId,
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
     registerActive();
     await tab.markHandoff();
@@ -348,9 +367,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       }
       if (!(await emptyComposer())) throw new Error("The saved chat composer has a draft; recovery cannot overwrite it.");
     }
-    // Reopened long chats may mount only their most recent messages. The verified
-    // latest reply anchors this recovery; the old DOM count cannot be its baseline.
-    state.baselineReplyCount = mountedReplyCount - 1;
+    state.baselineReplyIds = [...recoveredBaselineIds];
+    state.replyId = recoveredReplyId;
     recovered = true;
   }
 
@@ -417,10 +435,9 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
       if (recovered) {
         if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
-        state.baselineReplyCount = texts.length - 1;
         delete state.bindingLost;
       }
-      const assistantText = state.sendConfirmed && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+      const assistantText = state.sendConfirmed ? currentReply(texts)?.text ?? "" : "";
       await state.tab.markHandoff();
       activeOwner(owners, true);
       emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: texts.length, normal: true, assistantText, conversationFull: true,
@@ -439,11 +456,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
     if (recovered) {
       if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
-      state.baselineReplyCount = texts.length - 1;
       delete state.bindingLost;
     }
-    const assistantText = state.sendConfirmed && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+    const assistantText = state.sendConfirmed ? currentReply(texts)?.text ?? "" : "";
+    if (!validReplies(texts)) throw new Error("The retained conversation has missing or ambiguous assistant message identities.");
+    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
     state.baselineReplyCount = texts.length;
+    delete state.replyId;
     state.sendAttempted = false;
     state.sendClicked = false;
     state.sendConfirmed = false;
@@ -508,7 +527,11 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
     const evidence = await modelEvidence(false);
     if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
-    state.baselineReplyCount = (await replies()).length;
+    const baseline = await replies();
+    if (!validReplies(baseline)) throw new Error("The assistant reply baseline has missing or ambiguous message identities; nothing sent.");
+    state.baselineReplyCount = baseline.length;
+    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
+    delete state.replyId;
     state.sendAttempted = true;
     state.sendClicked = false;
     state.sendConfirmed = false;
@@ -546,22 +569,26 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     delete state.unsentDraft;
     delete state.unsentComposerText;
     for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
-    emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false, baselineReplyCount: state.baselineReplyCount, ...evidence });
+    emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
+      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, ...evidence });
   } else if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
       if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
       const texts = await replies();
-      const assistantText = texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+      const reply = currentReply(texts), assistantText = reply?.text ?? "";
+      if (reply) state.replyId = reply.messageId;
       const stopVisible = await role(ui.stopButtonExactName).isVisible();
       const statuses = await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
       const statusComplete = statuses.some(text => text.trim() === ui.responseCompleteStatusText);
       const regenerateVisible = await role(ui.regenerateButtonExactName).isVisible();
-      const completed = texts.length > state.baselineReplyCount && assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
+      const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
       const full = await conversationFull();
       if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-      observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
+      observation = { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
+        baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
+        stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
       if (completed) state.completed = true;
       if (completed || full) break;
       if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
@@ -605,13 +632,19 @@ export function browserScript(options) {
   }
   if (options.recovery !== undefined) {
     const proof = options.recovery;
+    const legacyReply = proof?.replyId === undefined && proof?.baselineReplyIds === undefined;
     let url;
     try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
     if (options.operation !== "continue" || !record(proof) || proof.tabId !== undefined && (typeof proof.tabId !== "string" || !proof.tabId)
         || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
         || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password
         || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
-        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount <= proof.baselineReplyCount
+        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount <= 0
+        || (legacyReply ? proof.replyCount <= proof.baselineReplyCount : !Array.isArray(proof.baselineReplyIds)
+        || proof.baselineReplyIds.some(value => typeof value !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value))
+        || new Set(proof.baselineReplyIds).size !== proof.baselineReplyIds.length
+        || typeof proof.replyId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.replyId)
+        || proof.baselineReplyIds.includes(proof.replyId))
         || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length <= 0
         || typeof proof.assistantPrefix.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(proof.assistantPrefix.sha256) || typeof proof.completed !== "boolean"
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
@@ -642,5 +675,5 @@ export function browserScript(options) {
   const initialize = options.operation === "bootstrap" ? `${binding} ??= {};`
     : options.operation === "continue" && options.recovery ? `${binding} ??= { bindingLost: true };`
       : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
-  return `${initialize}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplyTexts.toString()});`;
+  return `${initialize}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplies.toString()});`;
 }

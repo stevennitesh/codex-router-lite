@@ -26,6 +26,8 @@ const outputTypes = new Set(["function_call_output", "custom_tool_call_output", 
 const internalCall = value => typeof value === "string" && /^call_router_web_[a-f0-9]{32}$/u.test(value);
 const fail = (message, code = "web_runtime_unavailable", status = 409) => Object.assign(new Error(message), { code, status });
 const nonempty = value => typeof value === "string" && value.length > 0;
+const messageIds = values => Array.isArray(values) && values.every(value => typeof value === "string" && uuid.test(value))
+  && new Set(values).size === values.length;
 function savedChatUrl(value) {
   try {
     const url = new URL(value);
@@ -35,6 +37,7 @@ function savedChatUrl(value) {
 
 function validConversation(value, threadId) {
   const last = value?.lastTurn, observed = value?.observation;
+  const legacyObservation = value?.sendBaselineReplyIds === undefined && observed?.replyId === undefined;
   return record(value) && value.version === 1 && value.threadId === threadId
     && typeof value.bindingId === "string" && /^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
     && Array.isArray(value.browserOwnerTurnIds) && value.browserOwnerTurnIds.every(owner => uuid.test(owner))
@@ -44,6 +47,7 @@ function validConversation(value, threadId) {
       || savedChatUrl(value.chatUrl) && Array.isArray(value.checkpoint) && nonempty(value.tabId) && Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0)
     && (value.checkpoint === undefined || Array.isArray(value.checkpoint) && value.checkpoint.every(sha256) && savedChatUrl(value.chatUrl) && value.browserOwnerTurnIds.length > 0)
     && (value.sendBaseline === undefined || Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0)
+    && (value.sendBaselineReplyIds === undefined || messageIds(value.sendBaselineReplyIds))
     && typeof value.uncertainSend === "boolean" && Array.isArray(value.unresolvedCoding)
     && value.unresolvedCoding.every(call => record(call) && nonempty(call.callId) && outputTypes.has(call.outputType))
     && new Set(value.unresolvedCoding.map(call => call.callId)).size === value.unresolvedCoding.length
@@ -59,7 +63,10 @@ function validConversation(value, threadId) {
     && (!value.needsHistory || value.rolloverRequired === true && savedChatUrl(value.chatUrl))
     && (value.previousChatUrls === undefined || Array.isArray(value.previousChatUrls) && value.previousChatUrls.every(savedChatUrl))
     && (observed === undefined || record(observed) && value.checkpoint !== undefined && Number.isSafeInteger(value.sendBaseline)
-      && Number.isSafeInteger(observed.replyCount) && observed.replyCount >= value.sendBaseline && typeof observed.completed === "boolean"
+      && Number.isSafeInteger(observed.replyCount) && observed.replyCount >= 0 && typeof observed.completed === "boolean"
+      && (legacyObservation ? observed.replyCount >= value.sendBaseline : observed.replyId === null && observed.completed === false && observed.assistantPrefix?.length === 0
+        || typeof observed.replyId === "string" && uuid.test(observed.replyId)
+        && messageIds(value.sendBaselineReplyIds) && !value.sendBaselineReplyIds.includes(observed.replyId) && observed.replyCount > 0)
       && record(observed.assistantPrefix) && Number.isSafeInteger(observed.assistantPrefix.length) && observed.assistantPrefix.length >= 0 && observed.assistantPrefix.length <= 1024 && sha256(observed.assistantPrefix.sha256));
 }
 
@@ -194,7 +201,7 @@ export function createInAppWebRuntime({
   const persist = conversation => {
     const value = { version: 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
       browserOwnerTurnIds: [...conversation.browserOwnerTurnIds], tabId: conversation.tabId, chatUrl: conversation.chatUrl,
-      checkpoint: conversation.checkpoint, sendBaseline: conversation.sendBaseline, observation: conversation.observation,
+      checkpoint: conversation.checkpoint, sendBaseline: conversation.sendBaseline, sendBaselineReplyIds: conversation.sendBaselineReplyIds, observation: conversation.observation,
       activeCompaction: conversation.activeCompaction, pendingCompaction: conversation.pendingCompaction,
       needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
@@ -370,9 +377,16 @@ export function createInAppWebRuntime({
   const emitBrowser = async (turn, operation, payload) => {
     const frameToken = randomBytes(24).toString("hex");
     const conversation = turn.conversation;
+    const observed = conversation.observation;
+    const recoveryReply = typeof observed?.replyId === "string" && uuid.test(observed.replyId)
+      && messageIds(conversation.sendBaselineReplyIds) && !conversation.sendBaselineReplyIds.includes(observed.replyId);
+    // Deployed records without message IDs retain their previous exact-URL and
+    // prefix proof. Browser recovery pins the actual DOM ID before continuation.
+    const legacyReply = observed?.replyId === undefined && conversation.sendBaselineReplyIds === undefined && observed?.replyCount > conversation.sendBaseline;
     const recovery = operation === "continue" && !conversation.rolloverRequired && !conversation.needsHistory && conversation.checkpoint && conversation.chatUrl && !conversation.uncertainSend
-      && conversation.observation?.assistantPrefix.length > 0 && conversation.observation.replyCount > conversation.sendBaseline
-      ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline, ...conversation.observation } : undefined;
+      && observed?.assistantPrefix.length > 0 && (recoveryReply || legacyReply)
+      ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline,
+        baselineReplyIds: conversation.sendBaselineReplyIds, ...conversation.observation } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,
@@ -498,7 +512,7 @@ export function createInAppWebRuntime({
     }
     if (operation === "send") {
       if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
-      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0) throw fail("The confirmed Send has no verified reply baseline.");
+      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0 || !messageIds(value.baselineReplyIds)) throw fail("The confirmed Send has no verified reply baseline.");
       if (!savedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
       turn.sendState = "sent";
@@ -510,16 +524,22 @@ export function createInAppWebRuntime({
       turn.conversation.needsHistory = false; turn.conversation.rolloverRequired = false;
       turn.conversation.chatUrl = value.url;
       turn.conversation.sendBaseline = value.baselineReplyCount;
+      turn.conversation.sendBaselineReplyIds = [...value.baselineReplyIds];
+      turn.conversation.observation = undefined;
       turn.conversation.assistantText = undefined;
       return emitBrowser(turn, "observe", payload);
     }
     if (operation === "observe") {
       if (value.cancelled) { cancel(turn); throw turn.error; }
       if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
-          || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < value.baselineReplyCount
-          || typeof value.assistantText !== "string" || typeof value.completed !== "boolean") throw fail("The browser observation has no verified conversation evidence.");
+          || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < 0
+          || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(turn.conversation.sendBaselineReplyIds)
+          || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
+          || (value.replyId === null ? value.assistantText !== "" || value.completed : typeof value.replyId !== "string" || !uuid.test(value.replyId)
+            || value.baselineReplyIds.includes(value.replyId) || value.replyCount === 0
+            || turn.conversation.observation?.replyId && turn.conversation.observation.replyId !== value.replyId)) throw fail("The browser observation has no verified conversation evidence.");
       const prefix = value.assistantText.slice(0, 1024);
-      turn.conversation.observation = { replyCount: value.replyCount,
+      if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyCount: value.replyCount, replyId: value.replyId,
         assistantPrefix: { length: prefix.length, sha256: textDigest(prefix) }, completed: value.completed };
       if (value.conversationFull === true) {
         turn.conversation.rolloverRequired = true;

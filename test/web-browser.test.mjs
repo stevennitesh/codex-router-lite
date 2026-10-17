@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplyTexts } from "../src/web-browser.mjs";
+import { browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplies } from "../src/web-browser.mjs";
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
@@ -12,6 +12,7 @@ const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", p
 const fullConversationText = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
 const offered = parameters => [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", parameters }] }];
+const messageId = index => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
 
 const domText = value => ({ nodeType: 3, textContent: value });
 function domElement(tag, attributes = {}, ...children) {
@@ -51,8 +52,10 @@ const sourceBlock = source => domElement("div", { "data-markdown-copy": "code-bl
 test("reply projection excludes the observed code toolbar while preserving literal code, indentation and blank lines", () => {
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
   const root = domElement("div", {}, domElement("div", {}, sourceBlock(source)));
-  const isolatedReader = runInNewContext(`(${readBrowserReplyTexts.toString()})`);
-  assert.equal(isolatedReader([root])[0], source);
+  const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, root);
+  assert.equal(isolatedReader([root])[0].text, source);
+  assert.equal(isolatedReader([root])[0].messageId, messageId(0));
   assert.equal(root.textContent, `Plain text${source}`, "The read does not mutate the browser DOM.");
 });
 
@@ -62,7 +65,7 @@ test("reply projection preserves paragraph, BR and code boundaries without remov
     domElement("p", {}, domText("Second paragraph"), domElement("br"), domText("continued")),
     sourceBlock("  first\n\n    second"),
     domElement("p", {}, domText("After "), domElement("code", {}, domText("inline")), domText(" code.")));
-  assert.equal(readBrowserReplyTexts([root])[0], "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
+  assert.equal(readBrowserReplies([root])[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
 });
 
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
@@ -73,12 +76,12 @@ test("CodeMirror logical lines preserve empty lines and reject incomplete or amb
     domElement("div", { class: "cm-line" }, domElement("br")));
   const block = (...content) => domElement("div", { "data-markdown-copy": "code-block" },
     domElement("div", { "data-markdown-copy": "exclude" }, domText("Python")), ...content);
-  assert.equal(readBrowserReplyTexts([block(editor)])[0], "  first\n\n    last\n");
+  assert.equal(readBrowserReplies([block(editor)])[0].text, "  first\n\n    last\n");
   for (const invalid of [
     block(domElement("code", {}, domText("one")), domElement("code", {}, domText("two"))),
     block(editor, editor),
     block(domElement("div", { class: "cm-content", "data-language": "python" }, domElement("div", { class: "spacer" }))),
-  ]) assert.throws(() => readBrowserReplyTexts([invalid]), /one complete source/);
+  ]) assert.throws(() => readBrowserReplies([invalid]), /one complete source/);
 });
 
 test("native browser executor preserves the exact declared schema and identity", () => {
@@ -239,7 +242,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
       ui.replyReads += 1;
-      return callback(ui.texts.map(value => typeof value === "string" ? domElement("div", {}, domText(value)) : value));
+      return callback(ui.texts.map((value, index) => {
+        const node = typeof value === "string" ? domElement("div", {}, domText(value)) : value;
+        domElement("div", { "data-chatgpt-selection-message-id": ui.replyIds ? ui.replyIds[index] : messageId(index) }, node);
+        return node;
+      }));
     },
   });
   const tab = { get id() { return ui.tabId; }, url: async () => ui.url ?? "https://chatgpt.com/", goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
@@ -300,7 +307,8 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
   const observed = await f.run("observe", { observeIterations: 1 });
   if (completed) await f.run("retain");
   const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
-    replyCount: observed.replyCount, assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
+    replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+    assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   return { ...f, recovery, text };
 }
 
@@ -891,7 +899,8 @@ test("recovery-eligible continuation preserves its existing owned state across f
   const state = f.getState();
   const continued = await f.run("continue", { turnId: "following-turn", tabId: "owned-tab", runtimeModule: "must-not-import-recovery.mjs",
     recovery: { tabId: "owned-tab", url: observed.url, baselineReplyCount: observed.baselineReplyCount,
-      replyCount: observed.replyCount, assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed } });
+      replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+      assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed } });
   assert.equal(f.getState(), state);
   assert.equal(f.activeTurn().state, state);
   assert.equal(f.activeTurn().turnId, "following-turn");
@@ -899,6 +908,81 @@ test("recovery-eligible continuation preserves its existing owned state across f
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
   assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a new message identity completes after mounted replies shrink below the Send baseline, including repeated answer text", async () => {
+  const f = fixture();
+  await f.ready();
+  f.ui.texts = Array(6).fill("Repeated answer");
+  const sent = await f.run("send", { ...plugin, prompt: "Repeat the answer" });
+  assert.equal(sent.baselineReplyCount, 6);
+  assert.deepEqual(sent.baselineReplyIds, Array.from({ length: 6 }, (_, index) => messageId(index)));
+  f.ui.texts = Array(5).fill("Repeated answer"); f.ui.stop = true;
+  const pending = await f.run("observe", { observeIterations: 1 });
+  assert.deepEqual([pending.replyCount, pending.replyId, pending.assistantText, pending.completed], [5, null, "", false]);
+  f.ui.replyIds = [0, 1, 2, 3, 6].map(messageId); f.ui.stop = false; f.ui.complete = true;
+  const completed = await f.run("observe", { observeIterations: 1 });
+  assert.deepEqual([completed.replyCount, completed.replyId, completed.assistantText, completed.completed], [5, messageId(6), "Repeated answer", true]);
+  await f.run("retain");
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a proven current reply keeps its identity across missing mounts and rejects a replacement with identical text", async () => {
+  const f = fixture(); await f.ready();
+  await f.run("send", { ...plugin, prompt: "Request" });
+  f.ui.texts.push("Same partial text"); f.ui.stop = true;
+  const first = await f.run("observe", { observeIterations: 1 });
+  assert.equal(first.replyId, messageId(0));
+  f.ui.replyIds = [null];
+  assert.equal((await f.run("observe", { observeIterations: 1 })).replyId, null);
+  f.ui.replyIds = [messageId(1)]; f.ui.stop = false; f.ui.complete = true;
+  const replacement = await f.run("observe", { observeIterations: 1 });
+  assert.deepEqual([replacement.replyId, replacement.assistantText, replacement.completed], [null, "", false]);
+  f.ui.replyIds = [messageId(0)];
+  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, true);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a proven reply unmounted before continuation remains old when it remounts after the next Send", async () => {
+  const f = fixture(); await f.ready();
+  await f.run("send", { ...plugin, prompt: "First request" });
+  f.ui.texts.push("Prior completed answer"); f.ui.complete = true;
+  await f.run("observe", { observeIterations: 1 }); await f.run("retain");
+  f.ui.texts = [];
+  await f.run("continue", { turnId: "following-turn" });
+  const sent = await f.run("send", { ...plugin, turnId: "following-turn", prompt: "Next request" });
+  assert.equal(sent.baselineReplyCount, 0);
+  assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
+  f.ui.texts.push("Prior completed answer");
+  const old = await f.run("observe", { turnId: "following-turn", observeIterations: 1 });
+  assert.deepEqual([old.replyId, old.assistantText, old.completed], [null, "", false]);
+  f.ui.texts.push("Current completed answer");
+  const current = await f.run("observe", { turnId: "following-turn", observeIterations: 1 });
+  assert.deepEqual([current.replyId, current.assistantText, current.completed], [messageId(1), "Current completed answer", true]);
+  assert.equal(f.ui.sendClicks, 2);
+});
+
+test("old, missing, duplicate or ambiguous reply identities cannot supply an answer even with completion controls", async () => {
+  for (const ids of [[0, 1, 2], [0, 1, null], [0, 3, 3], [0, 3, 4]]) {
+    const f = fixture(); await f.ready();
+    f.ui.texts = ["Old one", "Old two", "Old three"];
+    await f.run("send", { ...plugin, prompt: "New request" });
+    f.ui.replyIds = ids.map(value => value === null ? null : messageId(value));
+    f.ui.complete = true;
+    const observed = await f.run("observe", { observeIterations: 1 });
+    assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [null, "", false]);
+    await assert.rejects(f.run("retain"), /successfully completed/);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("a missing or duplicate reply identity blocks Send before typing or clicking", async () => {
+  for (const ids of [[messageId(0), messageId(0)], [messageId(0), null]]) {
+    const f = fixture(); await f.ready();
+    f.ui.texts = ["Earlier one", "Earlier two"]; f.ui.replyIds = ids;
+    await assert.rejects(f.run("send", { ...plugin, prompt: "New request" }), /baseline.*identities/);
+    assert.equal(f.ui.typed.length, 0); assert.equal(f.ui.sendClicks, 0);
+  }
 });
 
 test("lost kernel recovery uses the current same-session browser and verifies a raw UTF8 reply prefix with UTF16 length", async () => {
@@ -1036,8 +1120,9 @@ test("a rejected existing saved-URL candidate never becomes the retained owner's
 test("reopening a virtualized saved chat captures its verified latest reply and uses mounted counts for the next Send", async () => {
   const f = fixture({ fastTimers: true });
   await f.ready();
+  f.ui.texts = Array.from({ length: 39 }, (_, index) => `Earlier mounted assistant reply ${index}`);
   await f.run("send", { ...plugin, prompt: "Initial request" });
-  f.ui.texts = Array.from({ length: 40 }, (_, index) => `Earlier mounted assistant reply ${index}`);
+  f.ui.texts.push("First verified assistant reply");
   f.ui.complete = true;
   await f.run("observe", { observeIterations: 1 });
   await f.run("retain");
@@ -1050,12 +1135,14 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   assert.equal(observed.baselineReplyCount, 40);
   assert.equal(observed.replyCount, 41);
   const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
-    replyCount: observed.replyCount, assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
+    replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+    assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   f.loseBinding();
   f.ui.present = false;
   f.ui.onGoto = url => {
     assert.equal(url, recovery.url);
     f.ui.texts = ["Only one preceding reply remains mounted", latest];
+    f.ui.replyIds = [messageId(39), observed.replyId];
   };
   const continued = await f.run("continue", { turnId: "third-turn", tabId: "owned-tab", recovery });
   assert.equal(continued.recovered, true);
@@ -1112,6 +1199,7 @@ test("recovery never overwrites unrelated conversations, drafts, noneditable con
 test("corrupted or changed latest saved replies, active temporary mode and drafts reject recovery without navigation", async () => {
   for (const change of [
     ui => { ui.texts[0] = "Corrupted reply"; },
+    ui => { ui.replyIds = [messageId(999)]; },
     ui => { ui.texts.push("An unexpected extra reply"); },
     ui => { ui.temporary = true; },
     ui => { ui.composerText = "An existing saved-chat draft"; },
@@ -1191,6 +1279,7 @@ test("interrupted recovery revalidates the latest reply after Stop changes the m
   for (const corruptLatest of [false, true]) {
     const f = await recoverableFixture({ completed: false });
     f.ui.texts = ["A preceding reply is initially mounted", f.text];
+    f.ui.replyIds = [messageId(1), f.recovery.replyId];
     f.loseBinding();
     const locator = f.tab.playwright.getByRole;
     f.tab.playwright.getByRole = (kind, options) => {
@@ -1200,6 +1289,7 @@ test("interrupted recovery revalidates the latest reply after Stop changes the m
         result.click = async () => {
           await click();
           f.ui.texts = [corruptLatest ? "Changed latest reply" : f.text];
+          f.ui.replyIds = [f.recovery.replyId];
         };
       }
       return result;
@@ -1501,7 +1591,8 @@ test("script arguments reject unsafe bindings or native identities and unbounded
   }
   assert.throws(() => browserScript({ ...base, operation: "cancel", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
   const recovery = { tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation",
-    baselineReplyCount: 0, replyCount: 1, assistantPrefix: assistantPrefix("Observed partial"), completed: false };
+    baselineReplyCount: 0, baselineReplyIds: [], replyId: messageId(0), replyCount: 1,
+    assistantPrefix: assistantPrefix("Observed partial"), completed: false };
   const continuation = { ...base, operation: "continue", tabId: "owned-tab", runtimeModule: "current-runtime.mjs", expectedOwnerTurnIds: [base.turnId] };
   for (const previousChatUrl of [undefined, "https://chatgpt.com/", "https://elsewhere.test/c/owned-conversation",
     "https://chatgpt.com/c/owned-conversation?temporary-chat=true", "https://chatgpt.com/c/owned-conversation#fragment", "https://user@chatgpt.com/c/owned-conversation"]) {

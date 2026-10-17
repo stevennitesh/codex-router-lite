@@ -102,13 +102,20 @@ attachment with readable compacted history still uses that checkpoint to seed
 its new chat.
 
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
-Codex conversation's browser and checks the previous reply before continuing.
+Codex conversation's browser and checks the previous reply's identity and text
+prefix before continuing. Existing saved records without a message ID retain
+their previous exact URL and reply-prefix check, then acquire the observed ID.
 Tab IDs alone do not identify a chat. Reopening preserves the saved conversation;
 it does not resend its full history or execute historical tool calls again. An
 uncertain Send or unresolved native coding action blocks continuation until its
 actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
+
+During generation, Router identifies a new answer by its rendered message ID.
+Changes to the number of rendered replies do not by themselves prove a new
+answer or lost conversation. Missing, duplicate or previously observed IDs cannot
+establish completion, even when an older reply has the same text.
 
 The site's explicit maximum-conversation-length notice and **Start new chat**
 action permit a successor saved chat. Assistant prose, timeouts and generic
@@ -140,8 +147,9 @@ prevents the runtime from asserting cancellation authority.
 Immediate browser Stop depends on the native host delivering interruption to an
 active browser controller. The default native runtime does not currently
 guarantee that delivery. A restricted cancellation-wrapper trial received the
-Interrupt notification, but native interruption invalidated its browser execution
-before cleanup. The wrapper is not installed by this configuration. Tool revocation and next-turn
+Interrupt notification, but its pending observation failed before it attempted
+cleanup. That trace does not establish whether a fresh cleanup call could run.
+The wrapper is not installed by this configuration. Tool revocation and next-turn
 reconciliation alone do not establish immediate browser cancellation. Stop keeps
 the tab open; explicit close remains separate. Backend errors fail the selected
 route without a model or backend fallback. Offline tests cover the runtime
