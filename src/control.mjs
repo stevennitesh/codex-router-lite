@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync, unlinkSync } from "node:fs";
 
 import { readControlHealth } from "./control-health.mjs";
 import {
@@ -18,12 +19,17 @@ import {
 import { LISTED_MODELS, MODEL_BY_SLUG } from "./routed-models.mjs";
 import { modelPickerSnapshot, setModelVisible, seedWebModelsVisible } from "./model-picker-state.mjs";
 import { runServiceCli } from "./service.mjs";
+import { fileProbeErrorReason, probeRegularFile, readJsonFile } from "./file-probe.mjs";
+import { writePrivateFile } from "./file-security.mjs";
+import { promptForSecret } from "./secret-prompt.mjs";
 import {
+  configureInAppWebBridge,
   connectWebBridge,
   disconnectWebBridge,
   launchWebBridge,
   webBridgeModels,
   webBridgeStatus,
+  WEB_BRIDGE_TUNNEL_KEY_PATH,
 } from "./chatgpt-web.mjs";
 
 const args = process.argv.slice(2);
@@ -44,6 +50,34 @@ function requireCertifiedRoute(slug) {
 
 function print(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function webTunnelKeyStatus() {
+  const observed = probeRegularFile(WEB_BRIDGE_TUNNEL_KEY_PATH);
+  if (observed.status === "missing") return { configured: false, fileStatus: "missing" };
+  if (observed.status !== "present") throw new Error(`Cannot read the protected ChatGPT Web tunnel key (${observed.status}).`);
+  let secret;
+  try { secret = readFileSync(WEB_BRIDGE_TUNNEL_KEY_PATH, "utf8").trim(); }
+  catch (error) { throw new Error(`Cannot read the protected ChatGPT Web tunnel key (${fileProbeErrorReason(error)}).`); }
+  if (/[\u0000-\u001f\u007f]/u.test(secret)) throw new Error("The protected ChatGPT Web tunnel key contains invalid control characters.");
+  return { configured: Boolean(secret), fileStatus: secret ? "present" : "empty" };
+}
+
+function webTunnelKeyCommand(operation) {
+  if (operation === "status") return webTunnelKeyStatus();
+  if (operation === "set") {
+    const secret = promptForSecret("ChatGPT Web tunnel runtime key").trim();
+    if (!secret || /[\u0000-\u001f\u007f]/u.test(secret)) throw new Error("The tunnel runtime key is empty or contains control characters. Nothing was saved.");
+    writePrivateFile(WEB_BRIDGE_TUNNEL_KEY_PATH, `${secret}\n`);
+    return { configured: true, fileStatus: "present", storage: "protected file" };
+  }
+  if (operation === "remove") {
+    let removed = false;
+    try { unlinkSync(WEB_BRIDGE_TUNNEL_KEY_PATH); removed = true; }
+    catch (error) { if (error?.code !== "ENOENT") throw new Error("Cannot remove the protected ChatGPT Web tunnel key."); }
+    return { configured: false, removed };
+  }
+  throw new Error("Usage: control web tunnel-key set|status|remove (set prompts without echo; never supply a key argument)");
 }
 
 async function main() {
@@ -70,6 +104,18 @@ async function main() {
   }
   if (command === "web") {
     if (action === "status") print({ ...webBridgeStatus(), subagentProtocol: readSubagentProtocol() });
+    else if (action === "browser") {
+      if (!value || args.length !== 3) throw new Error("Usage: control web browser <safe-config-json-file>");
+      const config = readJsonFile(value);
+      if (config.status !== "present") throw new Error(`Cannot read the safe in-app Web configuration JSON file (${config.status}).`);
+      const status = await configureInAppWebBridge(config.value);
+      await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
+      print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
+        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex. Web subagents require V1; configuration does not change the protocol." });
+    } else if (action === "tunnel-key") {
+      if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
+      print(webTunnelKeyCommand(value ?? "status"));
+    }
     else if (action === "launch") {
       print({
         ...await launchWebBridge(value),
@@ -83,7 +129,7 @@ async function main() {
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|tunnel-key set|status|remove|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
     return;
   }
   if (command === "subagents") {

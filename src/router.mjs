@@ -1,5 +1,5 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
-import { isWebBridgeModel, requestWebBridge } from "./chatgpt-web.mjs";
+import { closeWebBridge, isWebBridgeModel, requestWebBridge, startWebBridge } from "./chatgpt-web.mjs";
 import { observationFields, requestObservation } from "./request-observation.mjs";
 import { readFileSync } from "node:fs";
 import { createCatalogReader } from "./catalog-reader.mjs";
@@ -3680,6 +3680,9 @@ server.requestTimeout = 0;
 applyKeepAliveTimeouts(server);
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   console.error("[codex-router] listening");
+  void startWebBridge().catch(() => console.error("[codex-router] configured in-app Web MCP tunnel is unavailable; check its protected key and configuration."));
 });
 
-installGracefulShutdown(server, { label: "codex-router" });
+installGracefulShutdown(server, { label: "codex-router", exit: code => {
+  void closeWebBridge().then(() => process.exit(code), () => process.exit(93));
+} });

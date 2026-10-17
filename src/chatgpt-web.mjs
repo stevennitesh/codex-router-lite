@@ -15,6 +15,7 @@ export const WEB_BRIDGE_HOME = path.join(privateRoot, "bridge");
 export const WEB_BRIDGE_CODEX_HOME = path.join(privateRoot, "codex");
 export const WEB_BRIDGE_BROWSER_HOME = path.join(privateRoot, "browser");
 const defaultBaseUrl = "http://127.0.0.1:17841/v1";
+export const WEB_BRIDGE_TUNNEL_KEY_PATH = path.join(STATE_DIR, "chatgpt-web-runtime-key.secret");
 // Exact current routes from codex-chatgpt-web 6.1.9, f137c2f. Backend transport
 // names are NOT serving identities. The browser independently verifies family.
 const definitions = [
@@ -63,27 +64,107 @@ export function buildWebBridgeModels(capabilities, { mode = "full" } = {}) {
     });
 }
 
+function requireFields(value, keys, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).some(key => !keys.includes(key))) {
+    throw new Error(`Invalid ${label}; only the documented safe fields are accepted.`);
+  }
+}
+
+function safeLabel(value, label, maxLength = 512) {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error(`Invalid ${label}; supply the exact nonempty observed value without control characters.`);
+  }
+  return value;
+}
+
+function existingAbsoluteFile(value, extensions, label) {
+  if (typeof value !== "string" || !path.isAbsolute(value) || /[\u0000-\u001f\u007f]/u.test(value)
+      || !extensions.includes(path.extname(value).toLowerCase())) {
+    throw new Error(`Invalid ${label}; supply an absolute path to an existing ${extensions.join(" or ")} file.`);
+  }
+  let observed;
+  try { observed = lstatSync(value); } catch { /* The configuration error below keeps file diagnostics bounded. */ }
+  if (!observed?.isFile() || observed.isSymbolicLink()) throw new Error(`Invalid ${label}; the configured file is missing or is not a regular file.`);
+  return path.normalize(value);
+}
+
+function inAppConfiguration(value) {
+  requireFields(value, ["runtimeModule", "pluginName", "pluginAppId", "pluginSelectionButtonName", "tunnelId", "tunnelClientPath", "capabilities", "mcpPort"], "in-app Web configuration");
+  requireFields(value.capabilities, ["solAvailable", "extraHighAvailable", "proAvailable"], "Web account capabilities");
+  buildWebBridgeModels(value.capabilities);
+  if (typeof value.pluginAppId !== "string" || !/^asdk_app_[a-zA-Z0-9_-]+$/u.test(value.pluginAppId)) {
+    throw new Error("Invalid pluginAppId; supply the observed asdk_app_ identity.");
+  }
+  if (typeof value.tunnelId !== "string" || !/^tunnel_[a-zA-Z0-9_-]+$/u.test(value.tunnelId)) {
+    throw new Error("Invalid tunnelId; supply the observed tunnel_ identity.");
+  }
+  if (value.mcpPort !== undefined && (!Number.isInteger(value.mcpPort) || value.mcpPort < 1 || value.mcpPort > 65_535
+      || [...Object.values(PORTS), Number(new URL(defaultBaseUrl).port)].includes(value.mcpPort))) {
+    throw new Error("Invalid mcpPort; supply a dedicated loopback TCP port separate from Router and the launcher.");
+  }
+  return {
+    capabilities: Object.fromEntries(["solAvailable", "extraHighAvailable", "proAvailable"].map(key => [key, value.capabilities[key]])),
+    browser: {
+      runtimeModule: existingAbsoluteFile(value.runtimeModule, [".mjs", ".js"], "official public browser runtime module"),
+      pluginName: safeLabel(value.pluginName, "pluginName", 128),
+      pluginAppId: value.pluginAppId,
+      pluginSelectionButtonName: safeLabel(value.pluginSelectionButtonName, "pluginSelectionButtonName"),
+    },
+    tunnel: { id: value.tunnelId, executable: existingAbsoluteFile(value.tunnelClientPath, [".exe"], "tunnel client executable") },
+    ...(value.mcpPort === undefined ? {} : { mcpPort: value.mcpPort }),
+  };
+}
+
+function readInAppConfiguration(value) {
+  requireFields(value, ["version", "enabled", "backend", "mode", "baseUrl", "capabilities", "browser", "tunnel", "mcpPort"], "in-app Web settings");
+  requireFields(value.browser, ["runtimeModule", "pluginName", "pluginAppId", "pluginSelectionButtonName"], "in-app browser settings");
+  requireFields(value.tunnel, ["id", "executable"], "in-app tunnel settings");
+  if (value.mode !== "full") throw new Error("The in-app Web backend requires full mode.");
+  return inAppConfiguration({ ...value.browser, capabilities: value.capabilities,
+    tunnelId: value.tunnel.id, tunnelClientPath: value.tunnel.executable, ...(value.mcpPort === undefined ? {} : { mcpPort: value.mcpPort }) });
+}
+
 export function readWebBridgeSettings() {
   const observed = readJsonFile(settingsPath);
-  if (observed.status === "missing") return { version: 1, enabled: false, baseUrl: defaultBaseUrl, models: [] };
+  if (observed.status === "missing") return { version: 1, enabled: false, backend: "launcher", mode: "full", baseUrl: defaultBaseUrl, models: [] };
   const value = observed.value;
   if (observed.status !== "present" || value?.version !== 1 || typeof value.enabled !== "boolean") {
     throw new Error("Cannot read Web bridge settings; existing invalid state is not a disabled bridge.");
   }
   const baseUrl = validateWebBridgeBaseUrl(value.baseUrl);
+  const backend = value.backend === undefined ? "launcher" : value.backend;
+  if (!["launcher", "in-app"].includes(backend)) throw new Error("Unknown Web bridge backend in settings.");
+  const inApp = backend === "in-app" ? readInAppConfiguration(value) : undefined;
   const mode = value.mode ?? "full";
   if (!["full", "browser-only"].includes(mode)) throw new Error("Unknown Web bridge mode in settings.");
-  return { ...value, baseUrl, mode, models: value.capabilities ? buildWebBridgeModels(value.capabilities, { mode }) : [] };
+  const models = value.capabilities ? buildWebBridgeModels(value.capabilities, { mode }) : [];
+  return { ...value, ...inApp, backend, baseUrl, mode,
+    models: backend === "in-app" ? models.filter(model => !model.slug.endsWith("-luna")) : models };
 }
 export function webBridgeModels() {
   const settings = readWebBridgeSettings();
   return settings.enabled ? settings.models : [];
 }
 export function webBridgeStatus() {
-  const { enabled, baseUrl, mode, models, connectedAt, bridgeVersion } = readWebBridgeSettings();
-  return { enabled, baseUrl, mode, localToolsConfigured: enabled && mode === "full", models: models.map(({ slug, displayName, supported_reasoning_levels }) => ({ slug, displayName, efforts: supported_reasoning_levels })),
-    connectedAt, bridgeVersion, browserReadiness: "Run the isolated launcher's browser and MCP verification; listener health alone does not prove login or tool access.",
-    home: WEB_BRIDGE_HOME, codexHome: WEB_BRIDGE_CODEX_HOME };
+  const { enabled, backend, baseUrl, mode, models, connectedAt, bridgeVersion, browser, tunnel, mcpPort } = readWebBridgeSettings();
+  return { enabled, backend, baseUrl, mode, localToolsConfigured: enabled && mode === "full", models: models.map(({ slug, displayName, supported_reasoning_levels }) => ({ slug, displayName, efforts: supported_reasoning_levels })),
+    ...(backend === "in-app" ? {
+      browser, tunnel, ...(mcpPort === undefined ? {} : { mcpPort }),
+      browserReadiness: "Verify ChatGPT sign-in, the exact selected model and the selected MCP connector in the Codex in-app browser; configuration alone does not prove browser or tool readiness.",
+    } : {
+      connectedAt, bridgeVersion, browserReadiness: "Run the isolated launcher's browser and MCP verification; listener health alone does not prove login or tool access.",
+      home: WEB_BRIDGE_HOME, codexHome: WEB_BRIDGE_CODEX_HOME,
+    }) };
+}
+
+export async function configureInAppWebBridge(config) {
+  const safeConfiguration = inAppConfiguration(config);
+  return withCatalogPublicationLock(() => {
+    writePrivateJson(settingsPath, { version: 1, enabled: true, backend: "in-app", mode: "full",
+      baseUrl: validateWebBridgeBaseUrl(defaultBaseUrl), ...safeConfiguration });
+    return webBridgeStatus();
+  });
 }
 
 export async function connectWebBridge(baseUrl = defaultBaseUrl) {
@@ -174,9 +255,18 @@ export async function launchWebBridge(executable) {
     next: "Complete ChatGPT sign-in, Full harness MCP setup, browser smoke test and Verify runtime in the launcher; then run codex web connect and refresh-catalog. Real Codex configuration stays Router-owned." };
 }
 
+let inAppBridge;
+export async function closeWebBridge() { await inAppBridge?.closeInAppWebBridge(); }
+export async function startWebBridge() {
+  const settings = readWebBridgeSettings();
+  if (!settings.enabled || settings.backend !== "in-app") return;
+  inAppBridge ??= await import("./web-runtime.mjs");
+  return inAppBridge.startInAppWebBridge(settings);
+}
+
 export async function requestWebBridge(payload, { compact = false, signal, headers = {} } = {}) {
   const settings = readWebBridgeSettings();
-  if (!settings.enabled) throw Object.assign(new Error("ChatGPT Web bridge is disabled. Connect the isolated launcher first."), { status: 409 });
+  if (!settings.enabled) throw Object.assign(new Error("ChatGPT Web bridge is disabled. Configure an in-app browser backend or connect the isolated launcher first."), { status: 409 });
   const model = settings.models.find(row => row.slug === payload.model);
   if (!model) throw Object.assign(new Error("This exact Web model is not available in the connected account profile."), { status: 400 });
   const effort = payload.reasoning?.effort ?? model.defaultEffort;
@@ -191,8 +281,13 @@ export async function requestWebBridge(payload, { compact = false, signal, heade
   for (const name of ["session_id", "session-id", "x-codex-thread-id", "x-codex-turn-id", "x-codex-parent-thread-id", "x-codex-client-metadata", "x-codex-turn-metadata", "x-codex-session-id"]) {
     if (typeof headers[name] === "string") forwardedHeaders[name] = headers[name];
   }
+  const validatedPayload = { ...payload, reasoning: { ...payload.reasoning, effort } };
+  if (settings.backend === "in-app") {
+    inAppBridge ??= await import("./web-runtime.mjs");
+    return inAppBridge.requestInAppWebBridge(validatedPayload, { compact, signal, headers: forwardedHeaders, settings });
+  }
   return fetch(`${settings.baseUrl}/responses${compact ? "/compact" : ""}`, {
     method: "POST", redirect: "error", signal, headers: forwardedHeaders,
-    body: JSON.stringify({ ...payload, reasoning: { ...payload.reasoning, effort } }),
+    body: JSON.stringify(validatedPayload),
   });
 }
