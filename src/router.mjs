@@ -2402,13 +2402,18 @@ async function handleResponses(request, response, requestUrl) {
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
     markResponsesStream(response, { model: requestedModel });
+    const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
+    // Codex remote compaction V2 uses ordinary Responses with a terminal
+    // trigger. Detect it before Web dispatch as well as native/routed dispatch.
+    const compactV2 = Array.isArray(payload.input) && payload.input.at(-1)?.type === "compaction_trigger";
     if (isWebBridgeModel(requestedModel)) {
       route = { slug: requestedModel, provider: "chatgpt-web" };
       const childEffort = configuredChildEffort(request, route);
       if (childEffort !== undefined) payload = { ...payload, reasoning: { ...payload.reasoning, effort: childEffort } };
       const beforeFetch = Date.now();
       const upstream = await requestWebBridge(payload, {
-        compact: /\/responses\/compact$/.test(requestUrl.pathname),
+        compact: compactV1,
+        compactV2,
         signal: controller.signal,
         headers: request.headers,
       });
@@ -2448,13 +2453,6 @@ async function handleResponses(request, response, requestUrl) {
       return;
     }
     // Anything without a route from here on is native GPT traffic.
-    const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
-    // Codex remote compaction V2 uses the ordinary Responses endpoint with a
-    // terminal trigger. Detect the protocol shape before route dispatch so the
-    // native path can also preserve the full tool results being summarized.
-    const compactV2 =
-      Array.isArray(payload.input) &&
-      payload.input.at(-1)?.type === "compaction_trigger";
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
     if (!compactV1 && !compactV2 && !execution.nestedSwitchyardCallback) {

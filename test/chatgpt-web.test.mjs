@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
+import { decodeCompaction } from "../src/compaction-checkpoint.mjs";
+import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
 
@@ -311,6 +313,85 @@ test("real compact route preserves the bridge's compaction envelope and history"
   assert.deepEqual(await response.json(), result);
   assert.equal(fixture.bridge.requests[0].path, "/v1/responses/compact");
   assert.deepEqual(fixture.bridge.requests[0].payload, payload);
+  assert.equal(fixture.native.requests.length, 0);
+});
+
+test("ordinary Web V2 compaction reaches the actual in-app backend without browser execution or service startup", async t => {
+  const fixture = await routerFixture(t, ({ response }) => json(response, { error: "unexpected launcher request" }, 500));
+  const runtimeModule = path.join(fixture.directory, "inert-browser-runtime.mjs");
+  const executable = path.join(fixture.directory, "inert-tunnel-client.exe");
+  writeFileSync(runtimeModule, 'throw new Error("Compaction must not import the browser runtime.");\n', "utf8");
+  writeFileSync(executable, "Synthetic tunnel path; compaction must never execute it.\n", "utf8");
+  // Startup owns service activation. Flip only this isolated fixture after /live
+  // so this regression observes compaction, independently of startup behavior.
+  saveSettings(fixture.bridge.baseUrl, { directory: fixture.directory, backend: "in-app", mode: "full",
+    browser: { runtimeModule, pluginName: "Router local tools", pluginAppId: "asdk_app_fixture", pluginSelectionButtonName: "Router local tools, Connectors" },
+    tunnel: { id: "tunnel_fixture", executable } });
+  const metadata = JSON.stringify({ thread_id: "22222222-2222-4222-8222-222222222222", turn_id: "33333333-3333-4333-8333-333333333333" });
+  const input = [
+    { role: "user", content: "Keep the fixture requirement unchanged." },
+    { type: "function_call", call_id: "call_compact_fixture", name: "read", arguments: '{"path":"fixture.txt"}' },
+    { type: "function_call_output", call_id: "call_compact_fixture", output: "Actual fixture tool result." },
+    { type: "compaction_trigger" },
+  ];
+  for (const stream of [false, true]) await t.test(stream ? "SSE" : "JSON", async () => {
+    // No executor or tools are declared: an erroneous generation dispatch must
+    // reject at discovery, before cancellation monitoring or MCP/tunnel startup.
+    const response = await fixture.post({ model, input, stream }, "/responses", { "x-codex-turn-metadata": metadata });
+    const wire = await response.text();
+    assert.equal(response.status, 200, wire);
+    let output;
+    if (stream) {
+      assert.match(response.headers.get("content-type"), /text\/event-stream/u);
+      const frames = new SseFrameBuffer(), events = [];
+      let done = 0;
+      for (const frame of frames.write(Buffer.from(wire))) {
+        const fields = sseFrameFields(frame.bytes, frame.atStreamStart);
+        if (fields.data === "[DONE]") { done += 1; continue; }
+        if (!fields.hasData) continue;
+        const event = JSON.parse(fields.data);
+        assert.equal(fields.eventName, event.type);
+        events.push(event);
+      }
+      assert.equal(frames.pendingBytes, 0);
+      assert.equal(done, 1);
+      const items = events.filter(event => event.type === "response.output_item.done").map(event => event.item);
+      const terminal = events.filter(event => event.type === "response.completed");
+      assert.equal(terminal.length, 1);
+      output = terminal[0].response.output;
+      assert.deepEqual(items.filter(item => item.type === "compaction"), output.filter(item => item.type === "compaction"));
+      assert.equal(items.some(item => ["function_call", "custom_tool_call", "tool_search_call"].includes(item.type)), false);
+    } else {
+      assert.match(response.headers.get("content-type"), /application\/json/u);
+      const body = JSON.parse(wire);
+      assert.equal(body.object, "response");
+      assert.equal(body.status, "completed");
+      output = body.output;
+    }
+    const compacted = output.filter(item => item.type === "compaction");
+    assert.equal(compacted.length, 1);
+    assert.equal(typeof compacted[0].encrypted_content, "string");
+    const retained = JSON.stringify(decodeCompaction(compacted[0].encrypted_content));
+    assert.match(retained, /Keep the fixture requirement unchanged/u);
+    assert.match(retained, /Actual fixture tool result/u);
+    assert.equal(output.some(item => ["function_call", "custom_tool_call", "tool_search_call"].includes(item.type)), false);
+    assert.equal(fixture.bridge.requests.length, 0);
+    assert.equal(fixture.native.requests.length, 0);
+    assert.equal(existsSync(path.join(fixture.directory, "web-in-app")), false);
+    assert.equal(existsSync(path.join(fixture.directory, "chatgpt-web-runtime-key.secret")), false);
+  });
+});
+
+test("launcher terminal V2 compaction stays on ordinary responses with its input unchanged", async t => {
+  const fixture = await routerFixture(t, ({ response }) => json(response, { output: [] }));
+  const payload = { model, input: [{ role: "user", content: "Keep launcher ownership" }, { type: "compaction_trigger" }], stream: false };
+  const response = await fixture.post(payload);
+  assert.equal(response.status, 200);
+  await response.arrayBuffer();
+  assert.equal(fixture.bridge.requests.length, 1);
+  assert.equal(fixture.bridge.requests[0].path, "/v1/responses");
+  assert.deepEqual(fixture.bridge.requests[0].payload.input, payload.input);
+  assert.equal(fixture.bridge.requests[0].payload.stream, false);
   assert.equal(fixture.native.requests.length, 0);
 });
 

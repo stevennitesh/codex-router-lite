@@ -236,3 +236,28 @@ test("compaction preserves the undelivered native tail beside its readable check
   assert.deepEqual(output.slice(1), retainedTail);
   assert.deepEqual(input, before);
 });
+
+test("native V2 compaction emits one completed item with an in-band exact tail and survives native ID stripping", async () => {
+  const retainedTail = [{ role: "user", content: "Pending native user" },
+    { type: "function_call", name: "read", call_id: "pending_native", arguments: '{ "path": "literal.txt" }' },
+    { type: "function_call_output", call_id: "pending_native", output: "Actual pending result" }];
+  for (const stream of [true, false]) {
+    const response = webCompactResponse({ model, stream, input: [{ role: "user", content: "History" }] }, { compactV2: true, retainedTail });
+    let output;
+    if (stream) {
+      assert.equal(response.headers.get("content-type"), "text/event-stream");
+      const events = parseSse(await response.text());
+      output = events.filter(event => event.type === "response.output_item.done").map(event => event.item);
+      assert.equal(events.at(-1).type, "response.completed");
+      assert.deepEqual(events.at(-1).response.output, output);
+    } else {
+      const body = await response.json();
+      assert.equal(body.object, "response"); assert.equal(body.status, "completed"); output = body.output;
+    }
+    assert.equal(output.length, 1); assert.equal(output[0].type, "compaction");
+    const nativeRetainedItem = { type: "compaction", encrypted_content: output[0].encrypted_content };
+    const checkpoint = decodeCompaction(nativeRetainedItem.encrypted_content).checkpoint;
+    assert.deepEqual(checkpoint.retained_tail, retainedTail);
+    assert.equal(checkpoint.retained_tail_id, output[0].id);
+  }
+});

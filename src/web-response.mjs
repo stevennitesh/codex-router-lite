@@ -92,6 +92,10 @@ export function webResponse(payload, output, { responseId = id("resp"), createdA
   }
   const response = { id: responseId, object: "response", created_at: createdAt, status: "completed",
     model: payload.model, output: completedOutput(output), usage: null, error: null };
+  return responseEnvelope(payload, response);
+}
+
+function responseEnvelope(payload, response) {
   if (payload.stream !== true) return new Response(json(response), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
   let sequence = 0;
   const wire = [...events(response)].map(event => `event: ${event.type}\ndata: ${json({ ...event, sequence_number: sequence++ })}\n\n`).join("") + "data: [DONE]\n\n";
@@ -101,10 +105,10 @@ export function webResponse(payload, output, { responseId = id("resp"), createdA
 // Local compaction is deliberately lossy. Keep actual Router-extracted source
 // records and their machine-derived outcomes, without inventing a model summary
 // or spending an inference request. Existing checkpoint limits own all excerpts.
-export function webCompactResponse(payload, { retainedTail = [] } = {}) {
+export function webCompactResponse(payload, { retainedTail = [], compactV2 = false } = {}) {
   if (!Array.isArray(payload?.input)) throw Object.assign(new Error("Web compaction requires a native input array."), { code: "invalid_web_compaction", status: 400 });
   if (payload.input.some(item => item?.type === "compaction" && !decodeCompaction(item.encrypted_content))) {
-    throw Object.assign(new Error("Web local compaction cannot read an opaque native checkpoint; use readable V1 history."), { code: "encrypted_v2_unsupported", status: 422 });
+    throw Object.assign(new Error("Web local compaction cannot read an opaque native checkpoint; use Router-readable conversation history."), { code: "encrypted_v2_unsupported", status: 422 });
   }
   const prepared = prepareCompaction(payload.input);
   const recent = prepared.recentTail.map(entry => entry.id).reverse();
@@ -129,8 +133,13 @@ export function webCompactResponse(payload, { retainedTail = [] } = {}) {
   };
   const checkpoint = finalizeCheckpoint(JSON.stringify(selection), prepared);
   // An established Web chat already owns its acknowledged history. Preserve
-  // undelivered native items verbatim beside the local checkpoint so compacting
-  // the caller's transcript cannot discard a new request or actual tool result.
-  return new Response(json({ output: [{ type: "compaction", id: id("cmp"), encrypted_content: encodeCheckpoint(checkpoint) }, ...retainedTail] }),
+  // undelivered native items verbatim. V2 must carry them inside the checkpoint:
+  // its native consumer discards ordinary adjacent output items.
+  const itemId = id("cmp");
+  const item = { type: "compaction", id: itemId, encrypted_content: encodeCheckpoint(checkpoint,
+    compactV2 ? { retainedTail, retainedTailId: itemId } : {}) };
+  if (compactV2) return responseEnvelope({ ...payload, stream: payload.stream !== false }, { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1_000),
+    status: "completed", model: payload.model, output: [item], usage: null, error: null });
+  return new Response(json({ output: [item, ...retainedTail] }),
     { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }

@@ -264,7 +264,7 @@ export async function startWebBridge() {
   return inAppBridge.startInAppWebBridge(settings);
 }
 
-export async function requestWebBridge(payload, { compact = false, signal, headers = {} } = {}) {
+export async function requestWebBridge(payload, { compact = false, compactV2 = false, signal, headers = {} } = {}) {
   const settings = readWebBridgeSettings();
   if (!settings.enabled) throw Object.assign(new Error("ChatGPT Web bridge is disabled. Configure an in-app browser backend or connect the isolated launcher first."), { status: 409 });
   const model = settings.models.find(row => row.slug === payload.model);
@@ -284,7 +284,7 @@ export async function requestWebBridge(payload, { compact = false, signal, heade
   const validatedPayload = { ...payload, reasoning: { ...payload.reasoning, effort } };
   if (settings.backend === "in-app") {
     inAppBridge ??= await import("./web-runtime.mjs");
-    return inAppBridge.requestInAppWebBridge(validatedPayload, { compact, signal, headers: forwardedHeaders, settings });
+    return inAppBridge.requestInAppWebBridge(validatedPayload, { compact: compact || compactV2, compactV2, signal, headers: forwardedHeaders, settings });
   }
   return fetch(`${settings.baseUrl}/responses${compact ? "/compact" : ""}`, {
     method: "POST", redirect: "error", signal, headers: forwardedHeaders,

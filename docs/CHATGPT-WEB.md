@@ -90,11 +90,16 @@ conversation's reasoning context. Codex retains its transcript and tool executio
 records locally; storing or forwarding them does not request Codex inference.
 
 Web-route native compaction selects source excerpts locally, without requesting
-a model summary. For compaction attributed to a known saved conversation,
-Router records the exact boundary and returns genuinely undelivered native items
-beside the checkpoint. Continuing from that window sends those new items rather than
-repeating a summary of history already delivered to ChatGPT. A first attachment
-with readable compacted history still uses that checkpoint to seed its new chat.
+a model summary. Both standalone compaction and native V2 compaction stay local;
+they do not generate a Web reply or request browser tools. This is separate from
+the subagent protocol selector below. For an owned saved conversation, Router
+records the delivery boundary and preserves genuinely undelivered native items.
+V2 carries those exact items inside the readable checkpoint because Codex keeps
+only the compaction output item. New material is never silently excerpted to fit
+that carrier: compaction fails if it cannot fit. Continuing sends the new items
+without repeating a summary of history already delivered to ChatGPT. A first
+attachment with readable compacted history still uses that checkpoint to seed
+its new chat.
 
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
 Codex conversation's browser and checks the previous reply before continuing.

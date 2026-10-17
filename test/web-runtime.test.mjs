@@ -13,6 +13,8 @@ after(() => rmSync(stateDir, { recursive: true, force: true }));
 const { createInAppWebRuntime, collectWebTools, webTurnIdentity } = await import("../src/web-runtime.mjs");
 const { createWebToolBroker } = await import("../src/web-tools.mjs");
 const { parseBrowserOutput } = await import("../src/web-browser.mjs");
+const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs");
+const { decodeCompaction } = await import("../src/compaction-checkpoint.mjs");
 
 const threadId = "00112233-4455-6677-8899-aabbccddeeff";
 const turnId = "11002233-4455-6677-8899-aabbccddeeff";
@@ -192,6 +194,25 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
 }
 
 const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1]);
+
+async function nativeV2Checkpoint(response) {
+  const frames = new SseFrameBuffer(), output = [];
+  let completed = false;
+  for (const frame of frames.write(Buffer.from(await response.text(), "utf8"))) {
+    const fields = sseFrameFields(frame.bytes, frame.atStreamStart);
+    if (!fields.hasData || fields.data === "[DONE]") continue;
+    const event = JSON.parse(fields.data);
+    if (event.type === "response.output_item.done") output.push(event.item);
+    if (event.type === "response.completed") completed = true;
+  }
+  assert.equal(completed, true);
+  assert.equal(output.length, 1); assert.equal(output[0].type, "compaction");
+  // Drop optional outer identity to cover native consumer rewriting.
+  return { type: "compaction", encrypted_content: output[0].encrypted_content };
+}
+
+const nativeV2Users = input => input.filter(item => item.role === "user").map(item => ({ type: "message", role: "user",
+  content: typeof item.content === "string" ? [{ type: "input_text", text: item.content }] : item.content }));
 
 test("a queued MCP invocation routes after UI-only observation and resolves only from paired native output", async t => {
   const h = harness(t, { toolChoice: "required" });
@@ -813,6 +834,145 @@ test("confirmed capacity rejection with no answer or coding action transfers his
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later native delta" }]);
   assert.equal(h.browser.ui.rollovers, 1);
+});
+
+test("native V2 preserves an exact pending tail after its retained-user prefix and outer identity are rewritten", async t => {
+  for (const mode of ["used", "abandoned", "recompacted", "restarted", "second abandoned", "second abandoned after restart"]) await t.test(mode, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Already owned Web answer"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    const tail = [{ role: "user", content: "Unsent native user must arrive exactly once" },
+      { type: "function_call", call_id: "pending_native_tool", name: "read", arguments: '{ "path": "literal `$ 漢.txt" }' },
+      { type: "function_call_output", call_id: "pending_native_tool", output: "Unsent actual native tool result" }];
+    h.append(...tail);
+    const before = h.observations.nativeOperations.length, original = structuredClone(h.input());
+    const compact = () => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+      input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() });
+    const first = await nativeV2Checkpoint(await compact());
+    assert.deepEqual(decodeCompaction(first.encrypted_content).checkpoint.retained_tail, tail);
+    assert.equal(h.observations.nativeOperations.length, before);
+    assert.equal(h.browser.ui.sends.length, 1);
+    if (mode !== "abandoned") h.input().splice(0, h.input().length, ...nativeV2Users(original), first);
+    if (mode === "recompacted" || mode.startsWith("second abandoned")) {
+      const second = await nativeV2Checkpoint(await compact());
+      assert.deepEqual(decodeCompaction(second.encrypted_content).checkpoint.retained_tail, tail);
+      if (mode === "recompacted") h.input().splice(0, h.input().length, ...nativeV2Users(h.input()), second);
+    }
+    if (mode === "restarted" || mode === "second abandoned after restart") { await h.restartRuntime(); h.loseKernel(); }
+    const privateRecord = readFileSync(h.stateFile, "utf8");
+    for (const pending of [tail[0].content, tail[1].arguments, tail[2].output]) assert.equal(privateRecord.includes(pending), false);
+    h.newTurn(followupId, "New native input after V2 compaction");
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [...tail, { role: "user", content: "New native input after V2 compaction" }]);
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("native V2 refuses to suppress changed or clipped retained-prefix material", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Owned answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  const checkpoint = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+    input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() }));
+  h.input().splice(0, h.input().length, { role: "user", content: "Unknown or clipped prefix must not disappear" }, checkpoint);
+  h.newTurn(followupId, "Preserve all new input");
+  const operations = h.observations.nativeOperations.length;
+  await assert.rejects(h.request(), { code: "web_history_mismatch" });
+  assert.equal(h.observations.nativeOperations.length, operations);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("native V2 carries a pending coding result without delivering it until the ordinary request", async t => {
+  for (const mode of ["used", "abandoned", "recompacted", "restarted", "later owned batch", "undelivered native tail", "canceled"]) await t.test(mode, async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "pending-v2.txt" } });
+  let settled = false, deliveries = 0;
+  void result.then(() => { settled = true; }, () => {});
+  const complete = h.broker.complete.bind(h.broker);
+  h.broker.complete = (...args) => { deliveries += 1; return complete(...args); };
+  const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, "Actual result preserved across native V2");
+  h.append(coding, output);
+  const original = structuredClone(h.input()), operations = h.observations.nativeOperations.length;
+  const compact = () => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+    input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() });
+  let checkpoint = await nativeV2Checkpoint(await compact());
+  assert.deepEqual(decodeCompaction(checkpoint.encrypted_content).checkpoint.retained_tail, [coding, output]);
+  assert.equal(settled, false); assert.equal(deliveries, 0);
+  assert.equal(h.observations.nativeOperations.length, operations);
+  if (mode !== "abandoned") h.input().splice(0, h.input().length, ...nativeV2Users(original), checkpoint);
+  if (mode === "recompacted") {
+    checkpoint = await nativeV2Checkpoint(await compact());
+    h.input().splice(0, h.input().length, ...nativeV2Users(h.input()), checkpoint);
+    assert.equal(deliveries, 0);
+  }
+  let observation = await h.request();
+  assert.deepEqual(await result, { content: [{ type: "text", text: output.output }] });
+  assert.equal(deliveries, 1);
+  assert.equal(JSON.parse(observation.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  assert.deepEqual((await h.request()).output, observation.output);
+  assert.equal(deliveries, 1);
+  assert.equal(h.browser.ui.sends.length, 1);
+  if (mode === "later owned batch") {
+    const later = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "later-after-carrier.txt" } });
+    const second = (await h.answerBrowser(observation.output[0])).output[0];
+    h.append(second, outputFor(second, "Later actual result after the carrier"));
+    observation = await h.request(); await later;
+    assert.equal(deliveries, 2);
+  }
+  const unsent = [{ role: "user", content: "New native material not delivered to Web" },
+    { type: "function_call", call_id: "foreign_after_owned", name: "read", arguments: "{}" },
+    { type: "function_call_output", call_id: "foreign_after_owned", output: "Actual foreign native result" }];
+  if (mode === "undelivered native tail") h.append(...unsent);
+  if (mode === "canceled") {
+    h.observations.watchers[0].onCancel();
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).activeCompaction?.acknowledgedTailHashes, undefined);
+  } else {
+    h.browser.ui.texts.push("Completed Web answer after actual native result"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(observation.output[0]), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    const record = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    if (mode !== "abandoned") {
+      assert.equal(record.activeCompaction.acknowledgedTailHashes.length, mode === "later owned batch" ? 4 : 2);
+      assert.equal(JSON.stringify(record).includes(output.output), false);
+    }
+  }
+  if (mode === "restarted") { await h.restartRuntime(); h.loseKernel(); }
+  h.newTurn(followupId, "Only this new native request remains");
+  await h.toObserve();
+  const sent = sentTranscript(h);
+  if (mode === "canceled") {
+    assert.equal(sent.filter(item => item.call_id === coding.call_id).length, 2);
+    assert.deepEqual(sent.at(-1), { role: "user", content: "Only this new native request remains" });
+  } else if (mode === "undelivered native tail") {
+    assert.deepEqual(sent.slice(0, unsent.length), unsent);
+    assert.equal(sent.some(item => item.call_id === coding.call_id), false);
+    assert.deepEqual(sent.at(-1), { role: "user", content: "Only this new native request remains" });
+  } else assert.deepEqual(sent, [{ role: "user", content: "Only this new native request remains" }]);
+  assert.equal(h.browser.ui.sends.length, 2);
+  });
+});
+
+test("native V2 rejects pending browser and discovery controls without retiring their ordinary continuation", async t => {
+  for (const kind of ["browser", "discovery"]) await t.test(kind, async t => {
+    const h = harness(t, kind === "discovery" ? { tools: [search, currentRead] } : {});
+    const call = kind === "browser" ? (await h.toObserve()).call : (await h.request()).output[0];
+    const operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+      input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() }), { code: "web_compaction_control_pending" });
+    assert.equal(h.observations.nativeOperations.length, operations);
+    assert.equal(h.observations.watchers[0].closed, false);
+    if (kind === "browser") {
+      h.browser.ui.texts.push("Ordinary continuation remains authorized"); h.browser.ui.complete = true;
+      const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]);
+      assert.equal(final.output[0].content[0].text, "Ordinary continuation remains authorized");
+    } else {
+      h.append(call, outputFor(call, [nativeJs]));
+      const bootstrap = (await h.request()).output[0];
+      assert.equal(JSON.parse(bootstrap.arguments).title, "ChatGPT Web: bootstrap");
+      assert.equal(h.browser.ui.newTabs, 0);
+    }
+  });
 });
 
 test("full established chats transfer a new native request before continue or Send without replaying old actions", async t => {
