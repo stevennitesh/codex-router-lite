@@ -175,8 +175,8 @@ export function createInAppWebRuntime({
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,
-        sessionId: turn.threadId, runtimeModule: turn.settings.browser.runtimeModule,
         ...turn.settings.browser, ...turn.selection,
+        sessionId: turn.threadId, turnId: turn.turnId, runtimeModule: turn.settings.browser.runtimeModule,
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };

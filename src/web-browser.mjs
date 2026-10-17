@@ -136,6 +136,17 @@ export function readBrowserReplyTexts(elements) {
 async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
+  // Native Interrupt runs in a new JS invocation. Retained tab ownership must
+  // remain available there without looking for tabs by URL or replaying Send.
+  const registerActive = () => {
+    const active = globalThis.routerWebActiveTurns ??= new Map();
+    active.set(options.sessionId, { turnId: options.turnId, state, stopButtonName: ui.stopButtonExactName });
+  };
+  const clearActive = () => {
+    const active = globalThis.routerWebActiveTurns;
+    const current = active?.get(options.sessionId);
+    if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
+  };
   const role = (name, kind = "button") => state.tab.playwright.getByRole(kind, { name, exact: true });
   const replies = () => state.tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
   const temporary = async () => {
@@ -147,7 +158,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     return state.temporaryVerified === true && await role(ui.saveChatButtonName).isVisible();
   };
   const ensureOwned = async () => {
-    if (!state?.browser || !state.tab || !state.tabId || options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
+    if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
     const matches = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
     if (matches.length !== 1) throw new Error("The owned Temporary Chat tab is unavailable; continuation cannot create a replacement.");
     const url = await state.tab.url();
@@ -196,12 +207,15 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     return { ...evidence, effortLabel: await role(ui.modelButtonName).innerText() };
   };
   const stopAndClose = async () => {
+    const current = globalThis.routerWebActiveTurns?.get(options.sessionId);
+    if (current && (current.turnId !== options.turnId || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
     if (await role(ui.stopButtonExactName).isVisible()) {
       await role(ui.stopButtonExactName).click();
       await role(ui.stopButtonExactName).waitFor({ state: "hidden", timeoutMs: 10000 });
     }
     await state.tab.close();
     state.closed = true;
+    clearActive();
     return { tabId: state.tabId, closed: true };
   };
 
@@ -218,10 +232,12 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     return;
   }
   if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
+  if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   if (operation === "open") {
     if (state.tab) throw new Error("This browser binding already owns a tab.");
     state.tab = await state.browser.tabs.new();
     state.tabId = state.tab.id;
+    registerActive();
     await state.tab.goto("https://chatgpt.com/?temporary-chat=true");
     const controls = [role(ui.composerName, "textbox"), role(ui.modelButtonName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
     const openDeadline = Date.now() + 10000;
@@ -243,6 +259,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.sendAttempted = false;
     state.completed = false;
     state.retained = false;
+    registerActive();
     emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true });
   } else if (operation === "model") {
     if (state.sendAttempted && !state.completed) throw new Error("Generation is already pending.");
@@ -304,6 +321,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
     await state.tab.markHandoff();
     state.retained = true;
+    clearActive();
     emit({ retained: true, tabId: state.tabId });
   } else if (operation === "close" || operation === "cancel") emit({ ...(operation === "cancel" ? { cancelled: true } : {}), ...await stopAndClose() });
   else throw new Error("Unsupported browser operation.");
@@ -312,6 +330,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
 export function browserScript(options) {
   if (!record(options) || !["bootstrap", "open", "model", "attach", "send", "observe", "retain", "close", "cancel", "continue"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
+  if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0,

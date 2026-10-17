@@ -6,7 +6,7 @@ import { browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowser
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
-const base = { bindingId, frameToken: token, modelFamily: "GPT-6", power: 0 };
+const base = { bindingId, frameToken: token, sessionId: "current-session", turnId: "first-turn", modelFamily: "GPT-6", power: 0 };
 const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", pluginSelectionButtonName: "Current tools The current tool collection" };
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
 const offered = parameters => [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", parameters }] }];
@@ -96,7 +96,7 @@ test("only one matching nonce frame can become browser data despite SDK diagnost
   assert.throws(() => parseBrowserOutput(JSON.stringify({ routerBrowser: value }), token), /Expected one/);
 });
 
-function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
+function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeContext = {}, sessionId = base.sessionId } = {}) {
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
@@ -180,26 +180,27 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
       new: async () => { ui.newTabs += 1; return tab; } } };
   const agent = { browsers: { list: async () => [
     { type: "iab", id: "foreign", metadata: { codexSessionId: "other-session" } },
-    { type: "iab", id: browser.browserId, metadata: { codexSessionId: "current-session" } },
+    { type: "iab", id: browser.browserId, metadata: { codexSessionId: sessionId } },
   ], get: async id => { assert.equal(id, browser.browserId); return browser; } } };
   let state = { agent };
   const run = async (operation, extra = {}) => {
     let output;
-    const code = browserScript({ ...base, operation, ...extra });
+    const code = browserScript({ ...base, sessionId, operation, ...extra });
     // Run the actual serialized operation with the persistent native binding as
     // a parameter. Its top-level var shares that parameter's binding, as in REPL.
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", "fetch", `${code}\nreturn routerWeb_${bindingId};`);
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", "fetch", "globalThis", `${code}\nreturn routerWeb_${bindingId};`);
     const forbiddenFetch = () => { ui.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
-    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout, forbiddenFetch);
+    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout, forbiddenFetch, nativeContext);
     return parseBrowserOutput(output, token);
   };
   const ready = async () => {
-    await run("bootstrap", { sessionId: "current-session", runtimeModule: "current-runtime.mjs" });
+    await run("bootstrap", { runtimeModule: "current-runtime.mjs" });
     await run("open");
     await run("model");
     await run("attach", plugin);
   };
-  return { ui, run, ready, tab, browser, agent, getState: () => state };
+  return { ui, run, ready, tab, browser, agent, getState: () => state,
+    activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
 }
 
 test("generated bootstrap reads the current session browser and open waits for Temporary Chat controls", async () => {
@@ -208,10 +209,20 @@ test("generated bootstrap reads the current session browser and open waits for T
   assert.equal(boot.browserId, "owned-browser");
   assert.equal(boot.browsers.length, 1);
   assert.equal(f.ui.newTabs, 0);
-  const open = await f.run("open");
+  assert.equal(f.activeTurn(), undefined);
+  await assert.rejects(f.run("open", { sessionId: "foreign-session" }), /another native session/);
+  assert.equal(f.ui.newTabs, 0, "A foreign native session cannot allocate a tab from this binding.");
+  assert.equal(f.activeTurn(), undefined);
+  const goto = f.tab.goto;
+  f.tab.goto = async url => {
+    assert.equal(f.activeTurn()?.state.tab, f.tab, "Native Interrupt can find the owned tab before navigation starts.");
+    await goto(url);
+  };
+  const open = await f.run("open", { ui: { stopButtonExactName: "Stop generating" } });
   assert.deepEqual([open.tabId, open.temporary, open.replyCount], ["owned-tab", true, 0]);
   assert.equal(f.ui.url, "https://chatgpt.com/?temporary-chat=true");
   assert.equal(f.ui.handoffs, 0);
+  assert.deepEqual(f.activeTurn(), { turnId: base.turnId, state: f.getState(), stopButtonName: "Stop generating" });
   await assert.rejects(f.run("open"), /already owns/);
 });
 
@@ -223,6 +234,7 @@ test("open observes deferred hydration of all four controls without opening or n
   f.ui.temporary = false;
   f.ui.temporaryHeadingVisible = false;
   f.ui.onWait = () => {
+    assert.equal(f.activeTurn()?.state.tab, f.tab, "The owned tab is interruptible while its initial controls hydrate.");
     f.ui.composerVisible = f.ui.waitedMs >= 100;
     f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
     f.ui.temporary = f.ui.waitedMs >= 300;
@@ -246,6 +258,7 @@ test("a missing initial control ends open's bounded hydration wait without navig
     assert.equal(f.ui.newTabs, 1);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/?temporary-chat=true"]);
     assert.equal(f.ui.sendClicks, 0);
+    assert.equal(f.activeTurn()?.state.tab, f.tab, "A failed initial wait keeps the created tab available for native Interrupt.");
     await assert.rejects(f.run("open"), /already owns/);
     assert.equal(f.ui.newTabs, 1);
   }
@@ -355,12 +368,22 @@ test("observations require a fresh assistant reply and continuation retains exac
   const result = await f.run("observe", { observeIterations: 1 });
   assert.equal(result.assistantText, "Fresh final answer");
   assert.equal(result.completed, true);
+  assert.equal(f.activeTurn()?.turnId, base.turnId, "Completion remains active until the tab is handed off.");
   await f.run("retain");
   assert.equal(f.ui.handoffs, 1);
-  const next = await f.run("continue", { tabId: "owned-tab" });
+  assert.equal(f.activeTurn(), undefined);
+  const next = await f.run("continue", { tabId: "owned-tab", turnId: "following-turn" });
   assert.equal(next.replyCount, 2);
-  await f.run("send", { ...plugin, prompt: "Following turn" });
-  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
+  assert.deepEqual(f.activeTurn(), { turnId: "following-turn", state: f.getState(), stopButtonName: "Stop" });
+  const active = f.activeTurn();
+  f.ui.stop = true;
+  await assert.rejects(f.run("cancel"), /active.*turn|turn.*active/i);
+  assert.equal(f.ui.stop, true, "A stale turn cannot stop the current generation.");
+  assert.equal(f.ui.closeCount, 0, "A stale turn cannot close the continued turn's tab.");
+  assert.equal(f.activeTurn(), active);
+  f.ui.stop = false;
+  await f.run("send", { ...plugin, prompt: "Following turn", turnId: "following-turn" });
+  assert.equal((await f.run("observe", { observeIterations: 1, turnId: "following-turn" })).completed, false);
   assert.equal(f.ui.newTabs, 1);
 });
 
@@ -385,11 +408,16 @@ test("retained follow-up requires the observed Save chat control and the Tempora
   f.ui.texts.push("Completed first request"); f.ui.complete = true;
   await f.run("observe", { observeIterations: 1 });
   await f.run("retain");
+  assert.equal(f.activeTurn(), undefined);
+  await assert.rejects(f.run("continue", { sessionId: "foreign-session" }), /another native session/);
+  assert.equal(f.activeTurn(), undefined);
   f.ui.saveChat = false;
   await assert.rejects(f.run("continue"), /not ready for continuation/, "A URL flag alone cannot authorize reuse.");
+  assert.equal(f.activeTurn(), undefined, "A rejected continuation cannot make the retained tab active.");
   f.ui.saveChat = true;
   f.ui.url = "https://chatgpt.com/c/owned-conversation";
   await assert.rejects(f.run("continue"), /not ready for continuation/, "An unsaved permanent chat cannot qualify.");
+  assert.equal(f.activeTurn(), undefined);
   f.ui.url = "https://chatgpt.com/c/owned-conversation?temporary-chat=true";
   assert.equal((await f.run("continue")).temporary, true);
   await f.run("send", { ...plugin, prompt: "Verified follow-up" });
@@ -404,8 +432,59 @@ test("a lost retained tab fails continuation without replacing it; cancel stops 
   assert.deepEqual(await f.run("cancel"), { operation: "cancel", cancelled: true, tabId: "owned-tab", closed: true });
   assert.equal(f.ui.stop, false);
   assert.equal(f.ui.closeCount, 1);
+  assert.equal(f.activeTurn(), undefined);
   await assert.rejects(f.run("continue"), /owned Temporary Chat tab is unavailable/);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("failed handoff or tab closure keeps the exact active turn available until cleanup succeeds", async () => {
+  const f = fixture();
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Request" });
+  f.ui.texts.push("Completed request"); f.ui.complete = true;
+  await f.run("observe", { observeIterations: 1 });
+  const active = f.activeTurn();
+  const handoff = f.tab.markHandoff;
+  f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
+  await assert.rejects(f.run("retain"), /Handoff failed/);
+  assert.equal(f.activeTurn(), active);
+  f.tab.markHandoff = handoff;
+  const close = f.tab.close;
+  f.tab.close = async () => { throw new Error("Closure failed"); };
+  await assert.rejects(f.run("close"), /Closure failed/);
+  assert.equal(f.activeTurn(), active);
+  assert.equal(f.getState().closed, undefined);
+  f.tab.close = close;
+  assert.equal((await f.run("close")).closed, true);
+  assert.equal(f.activeTurn(), undefined);
+});
+
+test("cleanup cannot remove a newer binding or another native session's active turn", async () => {
+  const nativeContext = {};
+  const older = fixture({ nativeContext });
+  const newer = fixture({ nativeContext });
+  const otherSession = fixture({ nativeContext, sessionId: "different-session" });
+  await older.ready();
+  await newer.ready();
+  await otherSession.ready();
+  const newest = newer.activeTurn();
+  const unrelated = otherSession.activeTurn();
+  await assert.rejects(newer.run("close", { sessionId: "different-session" }), /another native session/);
+  assert.equal(newer.ui.closeCount, 0);
+  older.ui.stop = true;
+  await assert.rejects(older.run("close"), /active.*turn|turn.*active/i);
+  assert.equal(older.ui.stop, true);
+  assert.equal(older.ui.closeCount, 0);
+  assert.equal(newer.activeTurn(), newest, "An older binding cannot clear a newer binding even when the turn ID matches.");
+  assert.equal(otherSession.activeTurn(), unrelated);
+  await newer.run("close");
+  assert.equal(newer.activeTurn(), undefined);
+  assert.equal(otherSession.activeTurn(), unrelated);
+  await older.run("close");
+  assert.equal(older.ui.closeCount, 1, "An idle owned tab remains explicitly closeable after the active turn ends.");
+  assert.equal(otherSession.activeTurn(), unrelated);
+  await otherSession.run("cancel");
+  assert.equal(otherSession.activeTurn(), undefined);
 });
 
 test("a short UI-only observation returns unfinished generation without network access or another Send", async () => {
@@ -425,7 +504,10 @@ test("a short UI-only observation returns unfinished generation without network 
   assert.equal(f.ui.handoffs, 0);
 });
 
-test("script arguments reject executable binding names and unbounded observation", () => {
+test("script arguments reject unsafe bindings or native identities and unbounded observation", () => {
   for (const binding of ['x;alert(1)', "x.y", "x-y", "x\nvar evil"]) assert.throws(() => browserScript({ ...base, operation: "open", bindingId: binding }), /binding ID/);
   assert.throws(() => browserScript({ ...base, operation: "observe", observeIterations: 100 }), /bounded browser/);
+  for (const name of ["sessionId", "turnId"]) for (const value of [undefined, "", "not an identity", "x".repeat(129)]) {
+    assert.throws(() => browserScript({ ...base, operation: "open", [name]: value }), /session and turn identities/);
+  }
 });
