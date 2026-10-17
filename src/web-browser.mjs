@@ -206,13 +206,21 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     await power.press("Escape");
     return { ...evidence, effortLabel: await role(ui.modelButtonName).innerText() };
   };
-  const stopAndClose = async () => {
+  const activeOwner = (turnIds = [options.turnId], requireActive = false) => {
     const current = globalThis.routerWebActiveTurns?.get(options.sessionId);
-    if (current && (current.turnId !== options.turnId || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
-    if (await role(ui.stopButtonExactName).isVisible()) {
-      await role(ui.stopButtonExactName).click();
-      await role(ui.stopButtonExactName).waitFor({ state: "hidden", timeoutMs: 10000 });
+    if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
+    return current;
+  };
+  const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
+    const current = activeOwner(turnIds, requireActive);
+    const stop = role(current?.stopButtonName ?? ui.stopButtonExactName);
+    if (await stop.isVisible()) {
+      await stop.click();
+      await stop.waitFor({ state: "hidden", timeoutMs: 10000 });
     }
+  };
+  const stopAndClose = async () => {
+    await stopGeneration();
     await state.tab.close();
     state.closed = true;
     clearActive();
@@ -254,13 +262,36 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   }
   await ensureOwned();
   if (operation === "continue") {
-    if (!state.completed || !state.retained || state.closed || !(await temporary()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
-    state.baselineReplyCount = (await replies()).length;
+    const interrupted = options.interruptedTurnId !== undefined;
+    activeOwner(options.expectedOwnerTurnIds, true);
+    if (state.closed || !(await temporary())) throw new Error("The retained conversation is not ready for continuation.");
+    if (interrupted) {
+      await stopGeneration(options.expectedOwnerTurnIds, true);
+      if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
+      if (state.sendAttempted && !state.sendConfirmed) {
+        const composer = role(ui.composerName, "textbox");
+        if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
+            || !state.unsentComposerText.endsWith(state.unsentDraft) || await composer.innerText() !== state.unsentComposerText) throw new Error("The unsent composer draft changed or became an attachment; continuation cannot replay it.");
+        await composer.press("Control+A");
+        await composer.press("Backspace");
+        if ((await composer.innerText()).trim() || await role(ui.sendButtonExactName).isEnabled()) throw new Error("The unsent composer draft was not cleared; continuation cannot replay it.");
+      }
+      state.interrupted = true;
+      state.retained = true;
+    } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
+    const texts = await replies();
+    const assistantText = interrupted && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+    state.baselineReplyCount = texts.length;
     state.sendAttempted = false;
+    state.sendClicked = false;
+    state.sendConfirmed = false;
+    delete state.unsentDraft;
+    delete state.unsentComposerText;
     state.completed = false;
     state.retained = false;
+    state.interrupted = false;
     registerActive();
-    emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true });
+    emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true, ...(interrupted ? { interrupted: true, assistantText } : {}) });
   } else if (operation === "model") {
     if (state.sendAttempted && !state.completed) throw new Error("Generation is already pending.");
     const evidence = await modelEvidence(true);
@@ -283,9 +314,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
     state.baselineReplyCount = (await replies()).length;
     state.sendAttempted = true;
+    state.sendClicked = false;
+    state.sendConfirmed = false;
+    state.unsentDraft = ` ${options.prompt}`;
     const composer = role(ui.composerName, "textbox");
     await composer.press("End");
-    await composer.type(` ${options.prompt}`);
+    await composer.type(state.unsentDraft);
+    state.unsentComposerText = await composer.innerText();
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
     const send = role(ui.sendButtonExactName);
     const sendDeadline = Date.now() + 10000;
@@ -298,8 +333,12 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     }
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
     if (!(await temporary()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned Temporary Chat is no longer idle; nothing sent.");
+    state.sendClicked = true;
     await send.click();
     state.hasSentMessage = true;
+    state.sendConfirmed = true;
+    delete state.unsentDraft;
+    delete state.unsentComposerText;
     emit({ sent: true, tabId: state.tabId, baselineReplyCount: state.baselineReplyCount, ...evidence });
   } else if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
@@ -321,9 +360,17 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
     await state.tab.markHandoff();
     state.retained = true;
-    clearActive();
+    // Retain can execute just before native Stop discards its result. Keep the
+    // exact owner available until a confirmed handoff or explicit tab close.
     emit({ retained: true, tabId: state.tabId });
-  } else if (operation === "close" || operation === "cancel") emit({ ...(operation === "cancel" ? { cancelled: true } : {}), ...await stopAndClose() });
+  } else if (operation === "cancel") {
+    await stopGeneration([options.turnId], true);
+    await state.tab.markHandoff();
+    state.interrupted = true;
+    state.retained = true;
+    state.completed = false;
+    emit({ cancelled: true, interrupted: true, retained: true, tabId: state.tabId });
+  } else if (operation === "close") emit(await stopAndClose());
   else throw new Error("Unsupported browser operation.");
 }
 
@@ -331,6 +378,11 @@ export function browserScript(options) {
   if (!record(options) || !["bootstrap", "open", "model", "attach", "send", "observe", "retain", "close", "cancel", "continue"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
+  if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
+  if (options.operation === "continue" && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
+      || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
+      || new Set(options.expectedOwnerTurnIds).size !== options.expectedOwnerTurnIds.length)
+      || options.operation !== "continue" && options.expectedOwnerTurnIds !== undefined) throw failure("Continuation requires exact expected native owner identities.");
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0,

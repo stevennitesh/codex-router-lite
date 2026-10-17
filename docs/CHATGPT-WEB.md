@@ -79,11 +79,13 @@ observed connector details after an update changes them.
 
 ## Browser turns and tools
 
-The in-app backend binds the current native Codex session to its own Temporary
-Chat tab. It verifies the selected ChatGPT family and Power control, attaches the
-configured connector and sends the request. A continuation must retain that same
-owned tab and session. Missing browser state or an uncertain Send fails the turn;
-Router never creates a replacement conversation to replay it.
+The in-app backend binds each native Codex session to one Temporary Chat tab,
+including across model and effort changes. It verifies the selected ChatGPT
+family and Power control, attaches the configured connector and sends the
+request. Follow-ups send the native history added since the last confirmed Send.
+Readable compaction supplies its explicit checkpoint instead. Missing browser
+state, unexplained history changes or an uncertain Send fail the turn; Router
+never creates a replacement conversation to replay it.
 
 The connector discovers only tools declared and allowed for the current native
 Codex request. It requests a tool by its exact identity, and Router returns that
@@ -93,18 +95,21 @@ browser turn before ChatGPT continues. Private turn tokens and the tunnel runtim
 key are transport state and must not appear in answers or logs.
 
 Native cancellation retires the exact Web turn and revokes further connector tool
-access; cancelled or timed-out tool calls are not replayed. It also invalidates
-the browser binding, so a later native turn rebuilds from readable Codex history.
-Revocation does not undo a tool that native Codex has already started. A missing
-or changed native rollout prevents the runtime from asserting cancellation
-authority.
+access; cancelled or timed-out tool calls are not replayed. It preserves the
+session's browser binding and tab. The next turn reconciles the interrupted
+generation, stops it if necessary, captures its partial reply and continues in
+that same chat. Stale cleanup cannot stop a newer turn. Revocation does not undo
+a tool that native Codex has already started. A missing or changed native rollout
+prevents the runtime from asserting cancellation authority.
 
-Browser cleanup depends on the native host. A retained tab reused for continuation
-can remain open after Stop; immediate termination of its Web generation and tab
-closure are not guaranteed. Tool revocation alone does not establish full browser
-cancellation. Backend errors fail the selected route without a model or backend
-fallback. Offline tests cover the runtime contracts; browser cleanup requires
-separate live verification.
+Immediate browser Stop depends on the native host delivering interruption to an
+active browser controller. The default native runtime does not currently
+guarantee that delivery. A restricted cancellation-wrapper trial is being tested;
+it is not installed by this configuration. Tool revocation and next-turn
+reconciliation alone do not establish immediate browser cancellation. Stop keeps
+the tab open; explicit close remains separate. Backend errors fail the selected
+route without a model or backend fallback. Offline tests cover the runtime
+contracts; immediate Stop requires separate live verification.
 
 The in-app backend currently accepts text input. Media upload is unsupported and
 is rejected. Luna's visible browser family has not been established for this

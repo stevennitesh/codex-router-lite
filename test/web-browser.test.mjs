@@ -101,7 +101,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
     familyText: "GPT-6", familyClicks: 0, saveChat: false, sendEnabled: true, waitedMs: 0,
-    composerVisible: true, modelButtonVisible: true, temporaryHeadingVisible: true, navigations: [], replyReads: 0, fetchCalls: 0 };
+    composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
+    modelButtonVisible: true, temporaryHeadingVisible: true, navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0 };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -143,23 +144,33 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ui.temporary = false;
         ui.saveChat = true;
         ui.url = "https://chatgpt.com/c/owned-conversation?temporary-chat=true";
+        ui.composerText = "";
         if (ui.sendFailure) throw new Error("Send effect uncertain");
       }
-      else if (name === "Stop") ui.stop = false;
+      else if (name === "Stop") { ui.stopClicks += 1; ui.stop = false; }
     },
     async getAttribute(attribute) {
       if (attribute === "aria-valuenow" && ui.missingPower) return null;
       return { "aria-checked": String(ui.checked), "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null;
     },
     async textContent() { return kind === "family-text" ? ui.familyText : name; },
-    async innerText() { return ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
+    async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
       if (name === "Power") {
         if (key === "Escape") ui.menu = false;
         else { ui.powerMoves.push(key); ui.power += (key === "ArrowLeft" ? -1 : 1) * (ui.badPowerStep ? 2 : 1); }
+      } else if (name === "Ask ChatGPT") {
+        if (key === "Control+A") ui.composerSelected = true;
+        if (key === "Backspace" && ui.composerSelected) {
+          ui.composerText = ""; ui.composerSelected = false; ui.chip = false; ui.sendEnabled = false; ui.draftCleared = true;
+        }
       }
     },
-    async type(text) { ui.typed.push(text); if (ui.stripChip) ui.chip = false; },
+    async type(text) {
+      ui.typed.push(text); ui.composerText += text;
+      if (ui.draftCleared) { ui.sendEnabled = true; ui.draftCleared = false; }
+      if (ui.stripChip) ui.chip = false;
+    },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() {
@@ -183,14 +194,17 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     { type: "iab", id: browser.browserId, metadata: { codexSessionId: sessionId } },
   ], get: async id => { assert.equal(id, browser.browserId); return browser; } } };
   let state = { agent };
+  let ownerTurnId;
   const run = async (operation, extra = {}) => {
     let output;
-    const code = browserScript({ ...base, sessionId, operation, ...extra });
+    const options = { ...base, sessionId, operation, ...(operation === "continue" ? { expectedOwnerTurnIds: [ownerTurnId] } : {}), ...extra };
+    const code = browserScript(options);
     // Run the actual serialized operation with the persistent native binding as
     // a parameter. Its top-level var shares that parameter's binding, as in REPL.
     const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", "fetch", "globalThis", `${code}\nreturn routerWeb_${bindingId};`);
     const forbiddenFetch = () => { ui.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
     state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout, forbiddenFetch, nativeContext);
+    if (operation === "open" || operation === "continue") ownerTurnId = options.turnId;
     return parseBrowserOutput(output, token);
   };
   const ready = async () => {
@@ -368,10 +382,10 @@ test("observations require a fresh assistant reply and continuation retains exac
   const result = await f.run("observe", { observeIterations: 1 });
   assert.equal(result.assistantText, "Fresh final answer");
   assert.equal(result.completed, true);
-  assert.equal(f.activeTurn()?.turnId, base.turnId, "Completion remains active until the tab is handed off.");
+  assert.equal(f.activeTurn()?.turnId, base.turnId, "Completion retains the exact owner for the next native handoff.");
   await f.run("retain");
   assert.equal(f.ui.handoffs, 1);
-  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.activeTurn()?.turnId, base.turnId);
   const next = await f.run("continue", { tabId: "owned-tab", turnId: "following-turn" });
   assert.equal(next.replyCount, 2);
   assert.deepEqual(f.activeTurn(), { turnId: "following-turn", state: f.getState(), stopButtonName: "Stop" });
@@ -408,33 +422,155 @@ test("retained follow-up requires the observed Save chat control and the Tempora
   f.ui.texts.push("Completed first request"); f.ui.complete = true;
   await f.run("observe", { observeIterations: 1 });
   await f.run("retain");
-  assert.equal(f.activeTurn(), undefined);
+  const owner = f.activeTurn();
+  assert.equal(owner?.turnId, base.turnId);
   await assert.rejects(f.run("continue", { sessionId: "foreign-session" }), /another native session/);
-  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.activeTurn(), owner);
   f.ui.saveChat = false;
   await assert.rejects(f.run("continue"), /not ready for continuation/, "A URL flag alone cannot authorize reuse.");
-  assert.equal(f.activeTurn(), undefined, "A rejected continuation cannot make the retained tab active.");
+  assert.equal(f.activeTurn(), owner, "A rejected continuation cannot replace the retained owner.");
   f.ui.saveChat = true;
   f.ui.url = "https://chatgpt.com/c/owned-conversation";
   await assert.rejects(f.run("continue"), /not ready for continuation/, "An unsaved permanent chat cannot qualify.");
-  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.activeTurn(), owner);
   f.ui.url = "https://chatgpt.com/c/owned-conversation?temporary-chat=true";
   assert.equal((await f.run("continue")).temporary, true);
   await f.run("send", { ...plugin, prompt: "Verified follow-up" });
   assert.equal(f.ui.sendClicks, 2);
 });
 
-test("a lost retained tab fails continuation without replacing it; cancel stops only the owned tab", async () => {
+test("cancel stops and retains the exact owned tab, and a lost tab fails continuation without replacement", async () => {
   const f = fixture();
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.stop = true;
-  assert.deepEqual(await f.run("cancel"), { operation: "cancel", cancelled: true, tabId: "owned-tab", closed: true });
+  const active = f.activeTurn();
+  assert.deepEqual(await f.run("cancel"), { operation: "cancel", cancelled: true, interrupted: true, retained: true, tabId: "owned-tab" });
   assert.equal(f.ui.stop, false);
-  assert.equal(f.ui.closeCount, 1);
-  assert.equal(f.activeTurn(), undefined);
-  await assert.rejects(f.run("continue"), /owned Temporary Chat tab is unavailable/);
+  assert.equal(f.ui.stopClicks, 1);
+  assert.equal(f.ui.closeCount, 0);
+  assert.equal(f.getState().interrupted, true);
+  assert.equal(f.getState().retained, true);
+  assert.equal(f.activeTurn(), active, "The cancelled owner remains available for the next turn's exact handoff.");
+  f.ui.present = false;
+  await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /owned Temporary Chat tab is unavailable/);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("interrupted continuation stops the preceding native owner and starts a new turn in the same Temporary Chat", async () => {
+  const f = fixture({ texts: ["Earlier answer"] });
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Interrupted request" });
+  f.ui.texts.push("  Partial answer\n");
+  f.ui.stop = true;
+  const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, tabId: "owned-tab" });
+  assert.deepEqual(result, { operation: "continue", tabId: "owned-tab", replyCount: 2, temporary: true, interrupted: true, assistantText: "  Partial answer\n" });
+  assert.equal(f.ui.stopClicks, 1, "Continuation reconciles Stop even when native Interrupt could not finish it.");
+  assert.equal(f.ui.closeCount, 0);
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.sendClicks, 1, "Reconciling an interrupted generation never replays its Send.");
+  assert.equal(f.getState().baselineReplyCount, 2);
+  assert.equal(f.getState().sendAttempted, false);
+  assert.equal(f.getState().interrupted, false);
+  assert.equal(f.activeTurn()?.turnId, "next-turn");
+  f.ui.stop = true;
+  await assert.rejects(f.run("cancel"), /active.*turn|turn.*active/i);
+  await assert.rejects(f.run("close"), /active.*turn|turn.*active/i);
+  assert.equal(f.ui.stop, true, "Cleanup for the preceding turn cannot stop the new generation.");
+  assert.equal(f.ui.stopClicks, 1);
+  f.ui.stop = false;
+  await f.run("send", { ...plugin, prompt: "Follow-up request", turnId: "next-turn" });
+  assert.equal(f.ui.sendClicks, 2);
+  assert.equal(f.ui.newTabs, 1);
+});
+
+test("Stop before Send retains the owned tab and does not attribute an earlier assistant reply to the interrupted turn", async () => {
+  const f = fixture({ texts: ["Earlier answer"] });
+  await f.ready();
+  await f.run("cancel");
+  const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(result.interrupted, true);
+  assert.equal(result.assistantText, "");
+  assert.equal(f.ui.sendClicks, 0);
+  assert.equal(f.ui.stopClicks, 0);
+  assert.equal(f.ui.closeCount, 0);
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.activeTurn()?.turnId, "next-turn");
+});
+
+test("continuation rejects missing, changed or foreign active ownership before stopping or sending", async () => {
+  for (const interrupted of [false, true]) for (const replacement of [undefined, { turnId: "different-turn" }, { turnId: base.turnId, state: {} }]) {
+    const nativeContext = {};
+    const f = fixture({ nativeContext });
+    await f.ready();
+    await f.run("send", { ...plugin, prompt: "Interrupted request" });
+    if (!interrupted) {
+      f.ui.texts.push("Completed request"); f.ui.complete = true;
+      await f.run("observe", { observeIterations: 1 });
+      await f.run("retain");
+    }
+    f.ui.stop = true;
+    if (replacement) nativeContext.routerWebActiveTurns.set(base.sessionId, { ...f.activeTurn(), ...replacement });
+    else nativeContext.routerWebActiveTurns.delete(base.sessionId);
+    await assert.rejects(f.run("continue", { turnId: "next-turn", ...(interrupted ? { interruptedTurnId: base.turnId } : {}) }), /active.*turn|turn.*active/i);
+    assert.equal(f.ui.stop, true);
+    assert.equal(f.ui.stopClicks, 0);
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1);
+    assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("interrupted continuation clears an ordinary unsent draft before the new turn attaches and sends", async () => {
+  const f = fixture({ fastTimers: true });
+  await f.ready();
+  f.ui.sendEnabled = false;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Abandoned draft" }), /nothing sent/);
+  assert.equal(f.ui.composerText, " Abandoned draft");
+  await f.run("cancel");
+  await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(f.ui.composerText, "");
+  assert.equal(f.ui.sendClicks, 0);
+  assert.equal(f.ui.chip, false, "Clearing the owned draft can remove its chip; the normal attach stage restores it.");
+  await f.run("attach", { ...plugin, turnId: "next-turn" });
+  await f.run("send", { ...plugin, prompt: "Current request", turnId: "next-turn" });
+  assert.deepEqual(f.ui.typed, [" Abandoned draft", " Current request"]);
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.closeCount, 0);
+});
+
+test("changed or transformed unsent drafts and uncertain Send cannot be replayed by interrupted continuation", async () => {
+  for (const composerText of ["User changed the draft", "User added a prefix Unsent original", ""]) {
+    const f = fixture({ fastTimers: true });
+    await f.ready();
+    f.ui.sendEnabled = false;
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Unsent original" }), /nothing sent/);
+    f.ui.composerText = composerText;
+    await f.run("cancel");
+    const previous = f.activeTurn();
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /draft changed or became an attachment/);
+    assert.equal(f.ui.composerText, composerText);
+    assert.equal(f.activeTurn(), previous);
+    assert.equal(f.ui.sendClicks, 0);
+    assert.equal(f.ui.newTabs, 1);
+    assert.equal(f.ui.closeCount, 0);
+  }
+  const f = fixture();
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Confirmed first request" });
+  f.ui.texts.push("First answer"); f.ui.complete = true;
+  await f.run("observe", { observeIterations: 1 });
+  await f.run("retain");
+  await f.run("continue", { turnId: "uncertain-turn" });
+  f.ui.sendFailure = true;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Uncertain request", turnId: "uncertain-turn" }), /effect uncertain/);
+  await f.run("cancel", { turnId: "uncertain-turn" });
+  await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: "uncertain-turn" }), /Send is uncertain/);
+  assert.equal(f.activeTurn()?.turnId, "uncertain-turn");
+  assert.equal(f.ui.sendClicks, 2);
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.closeCount, 0);
 });
 
 test("failed handoff or tab closure keeps the exact active turn available until cleanup succeeds", async () => {
@@ -456,6 +592,26 @@ test("failed handoff or tab closure keeps the exact active turn available until 
   assert.equal(f.getState().closed, undefined);
   f.tab.close = close;
   assert.equal((await f.run("close")).closed, true);
+  assert.equal(f.activeTurn(), undefined);
+});
+
+test("failed cancellation handoff keeps the old owner and explicit close remains separate", async () => {
+  const f = fixture();
+  await f.ready();
+  const active = f.activeTurn();
+  const handoff = f.tab.markHandoff;
+  f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
+  f.ui.stop = true;
+  await assert.rejects(f.run("cancel"), /Handoff failed/);
+  assert.equal(f.ui.stop, false);
+  assert.equal(f.activeTurn(), active);
+  assert.equal(f.getState().retained, undefined);
+  assert.equal(f.ui.closeCount, 0);
+  f.tab.markHandoff = handoff;
+  await f.run("cancel");
+  assert.equal(f.activeTurn(), active);
+  assert.equal((await f.run("close")).closed, true);
+  assert.equal(f.ui.closeCount, 1);
   assert.equal(f.activeTurn(), undefined);
 });
 
@@ -484,7 +640,8 @@ test("cleanup cannot remove a newer binding or another native session's active t
   assert.equal(older.ui.closeCount, 1, "An idle owned tab remains explicitly closeable after the active turn ends.");
   assert.equal(otherSession.activeTurn(), unrelated);
   await otherSession.run("cancel");
-  assert.equal(otherSession.activeTurn(), undefined);
+  assert.equal(otherSession.activeTurn(), unrelated);
+  assert.equal(otherSession.ui.closeCount, 0);
 });
 
 test("a short UI-only observation returns unfinished generation without network access or another Send", async () => {
@@ -510,4 +667,12 @@ test("script arguments reject unsafe bindings or native identities and unbounded
   for (const name of ["sessionId", "turnId"]) for (const value of [undefined, "", "not an identity", "x".repeat(129)]) {
     assert.throws(() => browserScript({ ...base, operation: "open", [name]: value }), /session and turn identities/);
   }
+  for (const interruptedTurnId of ["", "not an identity", "x".repeat(129)]) {
+    assert.throws(() => browserScript({ ...base, operation: "continue", interruptedTurnId, expectedOwnerTurnIds: [base.turnId] }), /previous native turn identity/);
+  }
+  assert.throws(() => browserScript({ ...base, operation: "cancel", interruptedTurnId: "previous-turn" }), /previous native turn identity/);
+  for (const expectedOwnerTurnIds of [undefined, [], [""], ["not an identity"], [base.turnId, base.turnId]]) {
+    assert.throws(() => browserScript({ ...base, operation: "continue", expectedOwnerTurnIds }), /expected native owner identities/);
+  }
+  assert.throws(() => browserScript({ ...base, operation: "cancel", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
 });

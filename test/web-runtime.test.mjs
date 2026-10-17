@@ -155,10 +155,14 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
       assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
       return token;
     }, input: () => payload.input,
+    browserOwner: () => globalThis.routerWebActiveTurns?.get(threadId),
     append: (...items) => payload.input.push(...items),
-    newTurn: (turn, userText) => { currentTurn = turn; payload = { ...payload, input: [...payload.input, { role: "user", content: userText }] }; },
+    loseBinding: () => bindings.clear(),
+    newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
+
+const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1]);
 
 test("a queued MCP invocation routes after UI-only observation and resolves only from paired native output", async t => {
   const h = harness(t, { toolChoice: "required" });
@@ -206,17 +210,21 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.deepEqual(replay.output, initial.output);
   const { call } = await h.toObserve();
   assert.equal((await h.request()).output[0].call_id, call.call_id);
+  await assert.rejects(h.request({ reasoning: { effort: "high" } }), /cannot change model or effort/u);
   assert.equal(h.browser.ui.sends.length, 1);
   h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
   const retain = await h.answerBrowser(call);
   const final = await h.answerBrowser(retain.output[0]);
   h.append(final.output[0]);
-  h.newTurn(followupId, "Follow up in this same chat.");
+  h.newTurn(followupId, "Follow up in this same chat.", { model: "chatgpt-web/gpt-5.6-sol", reasoning: { effort: "high" } });
   const { call: nextObserve } = await h.toObserve();
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(new Set(h.observations.bindings).size, 1);
   assert.equal(h.observations.nativeOperations.filter(operation => operation === "continue").length, 1);
   assert.equal(h.browser.ui.sends.length, 2);
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Follow up in this same chat." }]);
+  assert.equal(h.browser.ui.power, 2);
+  assert.equal(h.runtime.status().conversations, 1, "Changing model family and effort retains the native session's chat.");
   const pending = await h.answerBrowser(nextObserve);
   assert.equal(pending.output[0].type, "function_call");
   assert.equal(h.browser.ui.marks, 1, "The previous final cannot complete the follow-up.");
@@ -228,7 +236,7 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.equal(h.observations.watchers.length, 2);
 });
 
-test("native cancellation retires the real broker and rejects late native results in later rounds", async t => {
+test("native cancellation retires the real broker while the next turn retains its chat and historical coding results", async t => {
   const h = harness(t);
   const { call } = await h.toObserve();
   const token = h.token();
@@ -243,12 +251,264 @@ test("native cancellation retires the real broker and rejects late native result
   await assert.rejects(h.request(), { code: "web_turn_cancelled" });
   h.newTurn(followupId, "Resume after cancellation.");
   const restart = (await h.request()).output[0];
-  assert.equal(JSON.parse(restart.arguments).title, "ChatGPT Web: bootstrap");
-  const freshBinding = JSON.parse(restart.arguments).code.match(/\brouterWeb_[A-Za-z0-9_]+\b/)[0];
-  assert.notEqual(freshBinding, h.observations.bindings[0]);
+  assert.equal(JSON.parse(restart.arguments).title, "ChatGPT Web: continue");
+  const retainedBinding = JSON.parse(restart.arguments).code.match(/\brouterWeb_[A-Za-z0-9_]+\b/)[0];
+  assert.equal(retainedBinding, h.observations.bindings[0]);
+  const next = await h.toObserve();
+  assert.notEqual(next.call.call_id, coding.call_id);
+  assert.notEqual(h.token(), token);
+  assert.throws(() => h.broker.list(token), { code: "web_tool_turn_closed" });
+  assert.deepEqual(sentTranscript(h), [
+    { type: "function_call", namespace: coding.namespace, name: coding.name, call_id: coding.call_id, arguments: coding.arguments },
+    { type: "function_call_output", call_id: coding.call_id, output: "too late" },
+    { role: "user", content: "Resume after cancellation." },
+  ]);
   assert.equal(h.browser.ui.marks, 0);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.closes, 0);
+});
+
+test("Stop after browser retention but before its native result retains the existing chat", async t => {
+  const h = harness(t);
+  const { call } = await h.toObserve();
+  h.browser.ui.texts.push("Completed answer whose retention result was interrupted."); h.browser.ui.complete = true;
+  const retain = (await h.answerBrowser(call)).output[0];
+  await h.executeBrowser(retain);
+  h.observations.watchers[0].onCancel();
+  await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  h.newTurn(followupId, "Continue from that retained answer.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue from that retained answer." }]);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.closes, 0);
+  assert.equal(h.browser.ui.marks, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.equal(new Set(h.observations.bindings).size, 1);
+});
+
+test("interrupted native handoffs preserve every exact possible browser owner until a result confirms ownership", async t => {
+  for (const executed of [[false], [true], [false, true, false], [true, false, true]]) await t.test(executed.join(","), async t => {
+    const h = harness(t);
+    const { call } = await h.toObserve();
+    h.browser.ui.texts.push("Completed first answer"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call);
+    h.append((await h.answerBrowser(retain.output[0])).output[0]);
+    const expected = [];
+    for (const [index, didExecute] of executed.entries()) {
+      const attemptId = `${index + 2}2002233-4455-6677-8899-aabbccddeeff`;
+      const content = `Unsent native instruction ${index + 1}.`;
+      expected.push({ role: "user", content });
+      h.newTurn(attemptId, content);
+      const continuation = (await h.request()).output[0];
+      assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
+      if (didExecute) await h.executeBrowser(continuation);
+      h.observations.watchers.at(-1).onCancel();
+      await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+    }
+    expected.push({ role: "user", content: "Send all accumulated native instructions once." });
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", expected.at(-1).content);
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), expected);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.closes, 0);
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(new Set(h.observations.bindings).size, 1);
+
+    // A confirmed handoff collapses the alternatives. An earlier owner can no
+    // longer authorize Stop or another handoff, even in this same binding.
+    h.observations.watchers.at(-1).onCancel();
+    h.browserOwner().turnId = turnId;
+    h.browser.ui.stop = true;
+    h.newTurn("66002233-4455-6677-8899-aabbccddeeff", "A stale previous owner must fail.");
+    const stale = (await h.request()).output[0];
+    await assert.rejects(h.executeBrowser(stale), /active.*turn|turn.*active/iu);
+    assert.equal(h.browser.ui.stop, true);
+    assert.equal(h.browser.ui.sends.length, 2);
+  });
+});
+
+test("Stop before any open emission permits only an idempotent bootstrap in the same binding", async t => {
+  for (const executed of [false, true]) await t.test(String(executed), async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0];
+    const binding = JSON.parse(bootstrap.arguments).code.match(/\brouterWeb_[A-Za-z0-9_]+\b/u)[0];
+    if (executed) await h.executeBrowser(bootstrap);
+    h.observations.watchers[0].onCancel();
+    h.newTurn(followupId, "Continue before any tab could have opened.");
+    const retry = (await h.request()).output[0];
+    assert.equal(JSON.parse(retry.arguments).title, "ChatGPT Web: bootstrap");
+    assert.equal(JSON.parse(retry.arguments).code.match(/\brouterWeb_[A-Za-z0-9_]+\b/u)[0], binding);
+    await h.toObserve();
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.deepEqual(sentTranscript(h), [
+      { role: "user", content: "Read the current file using the declared tools." },
+      { role: "user", content: "Continue before any tab could have opened." },
+    ]);
+  });
+});
+
+test("an emitted open with an interrupted result never creates a replacement tab", async t => {
+  for (const executed of [false, true]) await t.test(String(executed), async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0];
+    const open = (await h.answerBrowser(bootstrap)).output[0];
+    if (executed) await h.executeBrowser(open);
+    h.observations.watchers[0].onCancel();
+    h.newTurn(followupId, "Use the tab from the pending open.");
+    const continuation = (await h.request()).output[0];
+    assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
+    if (executed) await h.toObserve();
+    else await assert.rejects(h.executeBrowser(continuation), /Owned browser binding is unavailable/u);
+    assert.equal(h.browser.ui.newTabs, executed ? 1 : 0);
+    assert.equal(h.browser.ui.sends.length, executed ? 1 : 0);
+    assert.equal(h.browser.ui.closes, 0);
+  });
+});
+
+test("interrupted Send checkpoints accept omitted or partial native assistant history without resending prior input", async t => {
+  for (const [label, partial, nativeAssistant] of [
+    ["omitted", "A stopped Web answer", undefined],
+    ["prefix", "A stopped Web answer", "A stopped"],
+    ["no partial", "", undefined],
+    ["distinct assistant data", "A stopped Web answer", "A different native statement"],
+  ]) await t.test(label, async t => {
+    const h = harness(t);
+    await h.toObserve();
+    if (partial) h.browser.ui.texts.push(partial);
+    h.browser.ui.stop = true;
+    h.observations.watchers[0].onCancel();
+    if (nativeAssistant !== undefined) h.append({ role: "assistant", content: nativeAssistant });
+    h.newTurn(followupId, "Continue from the stopped answer.");
+    await h.toObserve();
+    const expected = [{ role: "user", content: "Continue from the stopped answer." }];
+    if (label === "distinct assistant data") expected.unshift({ role: "assistant", content: nativeAssistant });
+    assert.deepEqual(sentTranscript(h), expected);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.closes, 0);
+    assert.equal(new Set(h.observations.bindings).size, 1);
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.marks, 0);
+  });
+});
+
+test("cancellation before Send preserves unsent native input in the same owned chat", async t => {
+  const h = harness(t);
+  const bootstrap = (await h.request()).output[0];
+  const open = (await h.answerBrowser(bootstrap)).output[0];
+  await h.answerBrowser(open);
+  h.observations.watchers[0].onCancel();
+  h.newTurn(followupId, "Also keep this new instruction.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [
+    { role: "user", content: "Read the current file using the declared tools." },
+    { role: "user", content: "Also keep this new instruction." },
+  ]);
   assert.equal(h.browser.ui.sends.length, 1);
   assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(new Set(h.observations.bindings).size, 1);
+});
+
+test("cancelled coding calls with no result remain historical unknown outcomes and are not re-emitted", async t => {
+  const h = harness(t);
+  const { call } = await h.toObserve();
+  const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+  const pending = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "unknown.txt" } });
+  const rejection = assert.rejects(pending, { code: "web_turn_cancelled" });
+  const coding = (await h.answerBrowser(call)).output[0];
+  h.append(coding);
+  h.observations.watchers[0].onCancel();
+  await rejection;
+  h.newTurn(followupId, "Continue using only confirmed results.");
+  const next = await h.toObserve();
+  assert.notEqual(next.call.call_id, coding.call_id);
+  assert.equal(next.call.namespace, "mcp__node_repl");
+  assert.equal(sentTranscript(h)[0].call_id, coding.call_id);
+  assert.equal(sentTranscript(h).some(item => item.type === "function_call_output"), false);
+  assert.match(h.browser.ui.sends.at(-1), /an unpaired call has an unknown outcome/u);
+  assert.throws(() => h.broker.list(token), { code: "web_tool_turn_closed" });
+});
+
+test("an unconfirmed Send is never replayed after cancellation even if its click took effect", async t => {
+  for (const executed of [false, true]) await t.test(executed ? "click took effect" : "execution unknown", async t => {
+    const h = harness(t);
+    let response = await h.request();
+    while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
+    if (executed) await h.executeBrowser(response.output[0]);
+    h.observations.watchers[0].onCancel();
+    h.newTurn(followupId, "Resume without duplicating the uncertain Send.");
+    const continuation = (await h.request()).output[0];
+    assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
+    await assert.rejects(h.answerBrowser(continuation), { code: "web_send_uncertain" });
+    assert.equal(h.browser.ui.sends.length, executed ? 1 : 0);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.closes, 0);
+  });
+});
+
+test("a lost interrupted binding fails without creating another tab or replaying Send", async t => {
+  const h = harness(t);
+  await h.toObserve();
+  h.observations.watchers[0].onCancel();
+  h.loseBinding();
+  h.newTurn(followupId, "Continue in the same chat.");
+  const continuation = (await h.request()).output[0];
+  assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
+  await assert.rejects(h.executeBrowser(continuation), /binding was lost/u);
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("unexplained native history changes reject instead of sending the whole prior transcript", async t => {
+  const h = harness(t);
+  const previousSearch = { type: "tool_search_call", call_id: "actual_previous_native_search", execution: "client", arguments: { query: "Current native tools" } };
+  h.append(previousSearch, outputFor(previousSearch, [currentRead]));
+  await h.toObserve();
+  h.observations.watchers[0].onCancel();
+  previousSearch.arguments.query = "Substituted earlier native tool query";
+  h.newTurn(followupId, "Continue after changed history.");
+  const continuation = (await h.request()).output[0];
+  await assert.rejects(h.answerBrowser(continuation), { code: "web_history_mismatch" });
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("readable compaction preserves native evidence and current instructions in the retained chat", async t => {
+  const h = harness(t);
+  const { call } = await h.toObserve();
+  const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+  const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0];
+  h.append(coding, outputFor(coding, "Actual file contents retained as native evidence."));
+  const observe = (await h.request()).output[0];
+  assert.deepEqual(await result, { content: [{ type: "text", text: "Actual file contents retained as native evidence." }] });
+  h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(observe);
+  const final = await h.answerBrowser(retain.output[0]);
+  h.append(final.output[0]);
+  const compact = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true });
+  const checkpoint = (await compact.json()).output;
+  h.input().splice(0, h.input().length, ...checkpoint);
+  h.newTurn(followupId, "Continue from the readable checkpoint.", { instructions: "Current native instructions still apply." });
+  await h.toObserve();
+  const history = sentTranscript(h);
+  assert.equal(history[0].role, "developer");
+  assert.match(history[0].content, /Read the current file using the declared tools/u);
+  assert.match(history[0].content, /Actual file contents retained as native evidence/u);
+  assert.match(history[0].content, /lossy continuation checkpoint/u);
+  assert.deepEqual(history.at(-1), { role: "user", content: "Continue from the readable checkpoint." });
+  assert.match(h.browser.ui.sends.at(-1), /Current native instructions still apply/u);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(new Set(h.observations.bindings).size, 1);
+  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
+  h.observations.watchers.at(-1).onCancel();
+  const opaqueTurn = "33002233-4455-6677-8899-aabbccddeeff";
+  h.input().splice(0, h.input().length, { type: "compaction", encrypted_content: "opaque-native-checkpoint" });
+  h.newTurn(opaqueTurn, "An opaque checkpoint remains unsupported.");
+  await assert.rejects(h.request(), { code: "encrypted_v2_unsupported" });
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
 });
 
 test("cancellation during startup stops before service creation or native browser execution", async t => {
