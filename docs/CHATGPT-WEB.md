@@ -92,11 +92,19 @@ shell commands or bypass Codex approvals. Tool results return to the same active
 browser turn before ChatGPT continues. Private turn tokens and the tunnel runtime
 key are transport state and must not appear in answers or logs.
 
-Native cancellation retires the exact Web turn and stops its browser generation;
-cancelled or timed-out tool calls are not replayed. A missing or changed native
-rollout prevents the runtime from asserting cancellation authority. Backend errors
-fail the selected route without a model or backend fallback. Offline tests cover
-these contracts; actual browser and native-tool behavior still needs live proof.
+Native cancellation retires the exact Web turn and revokes further connector tool
+access; cancelled or timed-out tool calls are not replayed. It also invalidates
+the browser binding, so a later native turn rebuilds from readable Codex history.
+Revocation does not undo a tool that native Codex has already started. A missing
+or changed native rollout prevents the runtime from asserting cancellation
+authority.
+
+Browser cleanup depends on the native host. A retained tab reused for continuation
+can remain open after Stop; immediate termination of its Web generation and tab
+closure are not guaranteed. Tool revocation alone does not establish full browser
+cancellation. Backend errors fail the selected route without a model or backend
+fallback. Offline tests cover the runtime contracts; browser cleanup requires
+separate live verification.
 
 The in-app backend currently accepts text input. Media upload is unsupported and
 is rejected. Luna's visible browser family has not been established for this

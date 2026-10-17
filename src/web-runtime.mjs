@@ -138,8 +138,8 @@ export function createInAppWebRuntime({
     if (turn.done || turn.cancelled) return;
     turn.cancelled = true; turn.error = error;
     if (turn.token) broker.cancel(turn.token, error);
-    // Native Interrupt/Stop hooks close this turn's unretained owned browser.
-    // Never retain a tab while generation or any native tool is unresolved.
+    // The native host owns browser cleanup; reused retained tabs can survive Stop.
+    // Revoke tool access here and never reuse an interrupted browser binding.
     turn.conversation.usable = false;
     turn.conversation.activeTurn = undefined;
     void turn.watcher?.close();
