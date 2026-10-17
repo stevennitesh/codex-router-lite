@@ -40,11 +40,19 @@ test("only one matching nonce frame can become browser data despite SDK diagnost
   assert.throws(() => parseBrowserOutput(JSON.stringify({ routerBrowser: value }), token), /Expected one/);
 });
 
-function fixture({ texts = [], currentPower = 3 } = {}) {
+function fixture({ texts = [], currentPower = 3, fastTimers = false } = {}) {
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
-    familyText: "GPT-6", familyClicks: 0, saveChat: false };
+    familyText: "GPT-6", familyClicks: 0, saveChat: false, sendEnabled: true, waitedMs: 0 };
+  let now = 0;
+  const fixtureDate = fastTimers ? { now: () => now } : Date;
+  const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
+    now += milliseconds;
+    ui.waitedMs += milliseconds;
+    ui.onWait?.();
+    callback();
+  } : setTimeout;
   const makeLocator = (kind, name) => ({
     getByRole(role, options) { return makeLocator(role, options.name); },
     locator(selector) { return makeLocator("selector", selector); },
@@ -92,7 +100,7 @@ function fixture({ texts = [], currentPower = 3 } = {}) {
       }
     },
     async type(text) { ui.typed.push(text); if (ui.stripChip) ui.chip = false; },
-    async isEnabled() { return true; },
+    async isEnabled() { return name === "Send" ? ui.sendEnabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() {
       if (name === '[data-markdown-text-style="assistant-message"]') return [...ui.texts];
@@ -116,8 +124,8 @@ function fixture({ texts = [], currentPower = 3 } = {}) {
     const code = browserScript({ ...base, operation, ...extra });
     // Run the actual serialized operation with the persistent native binding as
     // a parameter. Its top-level var shares that parameter's binding, as in REPL.
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, `${code}\nreturn routerWeb_${bindingId};`);
-    state = await execute({ write: value => { output = value; } }, state);
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", `${code}\nreturn routerWeb_${bindingId};`);
+    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout);
     return parseBrowserOutput(output, token);
   };
   const ready = async () => {
@@ -188,6 +196,46 @@ test("typing that removes the required app chip cannot trigger Send", async () =
   f.ui.stripChip = true;
   await assert.rejects(f.run("send", { ...plugin, prompt: "Run current tools" }), /removed the plugin chip/);
   assert.equal(f.ui.sendClicks, 0);
+});
+
+test("a long paste waits for Send readiness and performs one typing action and one actual Send", async () => {
+  const f = fixture({ fastTimers: true });
+  await f.ready();
+  f.ui.sendEnabled = false;
+  f.ui.onWait = () => { if (f.ui.waitedMs >= 300) f.ui.sendEnabled = true; };
+  const prompt = "Full native context\n".repeat(4000);
+  const result = await f.run("send", { ...plugin, prompt });
+  assert.equal(result.sent, true);
+  assert.equal(f.ui.waitedMs, 300);
+  assert.deepEqual(f.ui.typed, [` ${prompt}`]);
+  assert.equal(f.ui.sendClicks, 1);
+  await assert.rejects(f.run("send", { ...plugin, prompt }), /cannot be replayed/);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("permanently disabled Send ends its bounded wait without typing or sending again", async () => {
+  const f = fixture({ fastTimers: true });
+  await f.ready();
+  f.ui.sendEnabled = false;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Paste that never becomes ready" }), /within 10 seconds/);
+  assert.equal(f.ui.waitedMs, 10000);
+  assert.equal(f.ui.typed.length, 1);
+  assert.equal(f.ui.sendClicks, 0);
+  f.ui.sendEnabled = true;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "No automatic retry" }), /cannot be replayed/);
+  assert.equal(f.ui.typed.length, 1);
+});
+
+test("readiness cannot permit Send after the app chip or idle Temporary Chat state changes", async () => {
+  for (const change of [ui => { ui.chip = false; }, ui => { ui.temporary = false; }, ui => { ui.stop = true; }]) {
+    const f = fixture({ fastTimers: true });
+    await f.ready();
+    f.ui.sendEnabled = false;
+    f.ui.onWait = () => { f.ui.sendEnabled = true; change(f.ui); };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Wait for the paste" }), /nothing sent/);
+    assert.equal(f.ui.typed.length, 1);
+    assert.equal(f.ui.sendClicks, 0);
+  }
 });
 
 test("observations require a fresh assistant reply and continuation retains exact tab ownership", async () => {

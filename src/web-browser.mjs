@@ -230,8 +230,18 @@ async function runBrowserOperation(state, options, nodeRepl) {
     await composer.press("End");
     await composer.type(` ${options.prompt}`);
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
-    if (!(await role(ui.sendButtonExactName).isEnabled())) throw new Error("Send is unavailable.");
-    await role(ui.sendButtonExactName).click();
+    const send = role(ui.sendButtonExactName);
+    const sendDeadline = Date.now() + 10000;
+    // Long pastes become an attachment in ChatGPT. Wait for that existing UI
+    // operation to finish without typing again or repeating a Send attempt.
+    while (!(await send.isEnabled())) {
+      const remaining = sendDeadline - Date.now();
+      if (remaining <= 0) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+    }
+    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
+    if (!(await temporary()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned Temporary Chat is no longer idle; nothing sent.");
+    await send.click();
     state.hasSentMessage = true;
     emit({ sent: true, tabId: state.tabId, baselineReplyCount: state.baselineReplyCount, ...evidence });
   } else if (operation === "observe") {
