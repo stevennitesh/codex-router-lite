@@ -96,7 +96,10 @@ test("only one matching nonce frame can become browser data despite SDK diagnost
   assert.throws(() => parseBrowserOutput(JSON.stringify({ routerBrowser: value }), token), /Expected one/);
 });
 
+let fixtureNumber = 0;
 function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeContext = {}, sessionId = base.sessionId } = {}) {
+  const fixtureBindingId = `unit_test_${++fixtureNumber}`;
+  const bindingName = `routerWeb_${fixtureBindingId}`;
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: true, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
@@ -194,16 +197,18 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     { type: "iab", id: browser.browserId, metadata: { codexSessionId: sessionId } },
   ], get: async id => { assert.equal(id, browser.browserId); return browser; } } };
   let state = { agent };
+  nativeContext[bindingName] = state;
   let ownerTurnId;
   const run = async (operation, extra = {}) => {
     let output;
-    const options = { ...base, sessionId, operation, ...(operation === "continue" ? { expectedOwnerTurnIds: [ownerTurnId] } : {}), ...extra };
+    const options = { ...base, bindingId: fixtureBindingId, sessionId, operation, ...(operation === "continue" ? { expectedOwnerTurnIds: [ownerTurnId] } : {}), ...extra };
     const code = browserScript(options);
-    // Run the actual serialized operation with the persistent native binding as
-    // a parameter. Its top-level var shares that parameter's binding, as in REPL.
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", `routerWeb_${bindingId}`, "Date", "setTimeout", "fetch", "globalThis", `${code}\nreturn routerWeb_${bindingId};`);
+    // Each call has a fresh execution scope, like the official REPL's modules.
+    // Only the shared global object carries state; no injected local alias may
+    // hide a generated initializer that shadows a previous call's binding.
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "Date", "setTimeout", "fetch", "globalThis", `${code}\nreturn globalThis.${bindingName};`);
     const forbiddenFetch = () => { ui.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
-    state = await execute({ write: value => { output = value; } }, state, fixtureDate, fixtureTimeout, forbiddenFetch, nativeContext);
+    state = await execute({ write: value => { output = value; } }, fixtureDate, fixtureTimeout, forbiddenFetch, nativeContext);
     if (operation === "open" || operation === "continue") ownerTurnId = options.turnId;
     return parseBrowserOutput(output, token);
   };
@@ -399,6 +404,26 @@ test("observations require a fresh assistant reply and continuation retains exac
   await f.run("send", { ...plugin, prompt: "Following turn", turnId: "following-turn" });
   assert.equal((await f.run("observe", { observeIterations: 1, turnId: "following-turn" })).completed, false);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("recovery-eligible continuation preserves its existing owned state across fresh execution scopes", async () => {
+  const f = fixture();
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Request" });
+  f.ui.texts.push("Observed completed reply"); f.ui.complete = true;
+  const observed = await f.run("observe", { observeIterations: 1 });
+  await f.run("retain");
+  const state = f.getState();
+  const continued = await f.run("continue", { turnId: "following-turn", tabId: "owned-tab", runtimeModule: "must-not-import-recovery.mjs",
+    recovery: { browserId: "owned-browser", tabId: "owned-tab", url: observed.url, baselineReplyCount: observed.baselineReplyCount,
+      replyCount: observed.replyCount, assistantText: observed.assistantText, completed: observed.completed } });
+  assert.equal(f.getState(), state);
+  assert.equal(f.activeTurn().state, state);
+  assert.equal(f.activeTurn().turnId, "following-turn");
+  assert.equal(continued.recovered, undefined, "A present binding must not enter lost-kernel recovery.");
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.navigations.length, 1);
+  assert.equal(f.ui.sendClicks, 1);
 });
 
 test("native observation returns the original projected source whitespace while testing nonempty content separately", async () => {

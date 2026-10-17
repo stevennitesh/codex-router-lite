@@ -444,9 +444,12 @@ export function browserScript(options) {
     if (options.pluginMentionName) config.pluginChipSelector += `[app-mention-name=${css(options.pluginMentionName)}]`;
     config.pluginSelectionButtonName = options.pluginSelectionButtonName ?? options.ui?.pluginSelectionButtonExactName ?? options.pluginName;
   }
-  const binding = `routerWeb_${options.bindingId}`;
-  const initialize = options.operation === "bootstrap" ? `var ${binding} = typeof ${binding} === "undefined" ? {} : ${binding};`
-    : options.operation === "continue" && options.recovery ? `var ${binding} = typeof ${binding} === "undefined" ? { bindingLost: true } : ${binding};`
+  // The official REPL runs each call in a fresh module and omits carried
+  // bindings that the new module redeclares. Store state on its shared global
+  // object instead of shadowing the previous call's variable in an initializer.
+  const binding = `globalThis.routerWeb_${options.bindingId}`;
+  const initialize = options.operation === "bootstrap" ? `${binding} ??= {};`
+    : options.operation === "continue" && options.recovery ? `${binding} ??= { bindingLost: true };`
       : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
   return `${initialize}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplyTexts.toString()});`;
 }

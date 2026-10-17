@@ -111,7 +111,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     },
   });
   t.after(async () => { await runtime.close(); delete globalThis[Symbol.for(key)]; });
-  const bindings = new Map();
+  let nativeContext = {};
   let payload = { model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "low" }, stream: false,
     tools: structuredClone(tools), tool_choice: toolChoice, input: [{ role: "user", content: "Read the current file using the declared tools." }] };
   let currentTurn = turnId;
@@ -129,9 +129,8 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     observations.bindings.push(binding);
     let framed;
     const nativeFetch = () => { observations.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "fetch", binding, `${args.code}\nreturn ${binding};`);
-    const state = await execute({ write: value => { framed = value; } }, nativeFetch, bindings.get(binding));
-    bindings.set(binding, state);
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "fetch", "globalThis", args.code);
+    await execute({ write: value => { framed = value; } }, nativeFetch, nativeContext);
     const token = framed.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/)?.[1];
     const value = parseBrowserOutput(framed, token);
     observations.nativeOperations.push(value.operation);
@@ -157,9 +156,10 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
       assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
       return token;
     }, input: () => payload.input,
-    browserOwner: () => globalThis.routerWebActiveTurns?.get(threadId),
+    browserOwner: () => nativeContext.routerWebActiveTurns?.get(threadId),
+    replaceBrowserOwner: owner => nativeContext.routerWebActiveTurns = new Map([[threadId, owner]]),
     append: (...items) => payload.input.push(...items),
-    loseKernel: () => { bindings.clear(); globalThis.routerWebActiveTurns?.delete(threadId); },
+    loseKernel: () => { nativeContext = {}; },
     newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
@@ -312,7 +312,7 @@ test("lost-state recovery rejects changed browser, tab, URL, reply or active own
     ["changed partial", h => { h.browser.ui.texts[0] = "A different assistant reply"; }],
     ["extra reply", h => { h.browser.ui.texts.push("Unexpected next assistant turn"); }],
     ["permanent chat UI", h => { h.browser.ui.saveChat = false; }],
-    ["surviving foreign owner", () => { globalThis.routerWebActiveTurns.set(threadId, { turnId: followupId, state: {} }); }],
+    ["surviving foreign owner", h => { h.replaceBrowserOwner({ turnId: followupId, state: {} }); }],
   ]) await t.test(label, async t => {
     const h = harness(t);
     const { call } = await h.toObserve();
