@@ -7,6 +7,7 @@
 // `.venv/`), so deleting the artifact invalidates the stamp automatically and
 // no state directory has to stay in sync with the checkout.
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -46,6 +47,26 @@ function repoPath(root, relative) {
 
 const STAMP_NAME = ".codex-router-install.json";
 
+// The SDK's published root export has no shipped index. Probe the ESM entries
+// serving actually imports, including their transitive module initialization.
+const SDK_RUNTIME_IMPORTS = [
+  "@modelcontextprotocol/sdk/server/index.js",
+  "@modelcontextprotocol/sdk/server/streamableHttp.js",
+  "@modelcontextprotocol/sdk/types.js",
+  "@modelcontextprotocol/sdk/validation/ajv-provider.js",
+];
+const ESM_IMPORT_PROBE = `
+  import path from "node:path";
+  import { fileURLToPath } from "node:url";
+  const tree = path.join(process.cwd(), "node_modules");
+  for (const name of process.argv.slice(1)) {
+    const resolved = fileURLToPath(import.meta.resolve(name));
+    const relative = path.relative(tree, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Dependency resolves outside the prepared tree");
+    await import(name);
+  }
+`;
+
 export function verifyNodeDependencies(root = SOURCE_ROOT, expectedRoot = root) {
   for (const name of ["package.json", "package-lock.json"]) {
     const actual = readFile(path.join(root, name));
@@ -70,6 +91,15 @@ export function verifyNodeDependencies(root = SOURCE_ROOT, expectedRoot = root) 
   }
   const require = createRequire(path.join(root, "package.json"));
   for (const name of Object.keys(manifest.dependencies || {})) {
+    if (name === "@modelcontextprotocol/sdk") {
+      try {
+        execFileSync(process.execPath, ["--input-type=module", "--eval", ESM_IMPORT_PROBE, ...SDK_RUNTIME_IMPORTS], {
+          cwd: root, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch { throw new Error(`Node dependency runtime import probe failed: ${name}`); }
+      continue;
+    }
     const resolved = require.resolve(name);
     const relative = path.relative(path.join(root, "node_modules"), resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Node dependency resolves outside the prepared tree: ${name}`);
