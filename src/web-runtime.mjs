@@ -293,7 +293,8 @@ export function createInAppWebRuntime({
     conversations.set(owner.threadId, conversation);
     if (conversation.activeTurn && conversation.activeTurn !== owner.turnId) throw fail("A different native turn owns this Web conversation's compaction.");
     if (conversation.compacting || [...turns.values()].some(turn => turn.conversation === conversation && turn.busy)) throw fail("A native Web request is already advancing this conversation.");
-    if (compactV2 && [...turns.values()].some(turn => turn.conversation === conversation && turn.pending && turn.pending.kind !== "coding")) {
+    if (compactV2 && [...turns.values()].some(turn => turn.conversation === conversation && !turn.done && !turn.cancelled
+        && turn.pending && turn.pending.kind !== "coding")) {
       throw fail("Native V2 compaction cannot discard a pending browser or discovery result; finish that native call first.", "web_compaction_control_pending");
     }
     conversation.compacting = true;

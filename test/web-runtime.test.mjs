@@ -1054,6 +1054,66 @@ test("native V2 acknowledges actual coding across refreshed context and recompac
   });
 });
 
+test("native V2 compacts after a failed open and completed same-chat native turns without retaining stale controls", async t => {
+  const h = harness(t), bootstrap = (await h.request()).output[0];
+  const open = (await h.answerBrowser(bootstrap)).output[0], goto = h.browser.tab.goto;
+  h.browser.tab.goto = async url => { await goto(url); h.browser.ui.normalHome = false; };
+  const failure = await h.executeBrowser(open).then(() => assert.fail("Open must time out before home controls are ready."), error => error);
+  assert.match(failure.message, /Empty normal ChatGPT home controls did not become ready within 10 seconds/u);
+  h.append(open, outputFor(open, { isError: true, content: [{ type: "text", text: failure.message }] }));
+  await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+  assert.equal(h.runtime.status().activeTurns, 0);
+  assert.equal(h.browser.ui.sends.length, 0);
+  assert.equal(h.browser.ui.newTabs, 1);
+  h.browser.tab.goto = goto; h.browser.ui.normalHome = true;
+
+  const completeCodingTurn = async text => {
+    const { call } = await h.toObserve(), token = h.token();
+    const read = h.broker.list(token).find(tool => tool.name === "read");
+    const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "same-chat.txt" } });
+    const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, `Actual native result: ${text}`);
+    h.append(coding, output);
+    const observation = (await h.request()).output[0];
+    assert.deepEqual(await result, { content: [{ type: "text", text: output.output }] });
+    h.browser.ui.texts.push(text); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(observation), final = await h.answerBrowser(retain.output[0]);
+    assert.deepEqual((await h.request()).output, final.output, "Completed native replies remain replayable.");
+    h.append(final.output[0]);
+  };
+  h.newTurn(followupId, "Complete the baseline after home controls recover.");
+  await completeCodingTurn("Completed baseline with an actual native result");
+  const savedUrl = h.browser.ui.url, completedId = "33002233-4455-6677-8899-aabbccddeeff";
+  h.newTurn(completedId, "Continue in the same saved chat.");
+  await completeCodingTurn("Completed continuation with another actual native result");
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue in the same saved chat." }]);
+  assert.equal(h.browser.ui.url, savedUrl);
+  assert.equal(h.runtime.status().activeTurns, 0);
+  const tail = [{ role: "user", content: "Unsent native material after completed coding" },
+    { type: "function_call", call_id: "unsent_after_recovered_open", name: "read", arguments: '{ "path": "literal `$ 漢.txt" }' },
+    { type: "function_call_output", call_id: "unsent_after_recovered_open", output: "Actual native tail remains exact" }];
+  h.append(...tail);
+  const original = structuredClone(h.input()), operations = h.observations.nativeOperations.length, sends = h.browser.ui.sends.length;
+  const checkpoint = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
+    input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers(completedId) }));
+  assert.deepEqual(decodeCompaction(checkpoint.encrypted_content).checkpoint.retained_tail, tail);
+  assert.equal(h.observations.nativeOperations.length, operations);
+  assert.equal(h.browser.ui.sends.length, sends);
+  const developer = { role: "developer", content: "Current native developer authority after compaction" };
+  h.input().splice(0, h.input().length, ...nativeV2Users(original), developer, checkpoint);
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "New request after recovered-open compaction.", { instructions: "Updated native instructions remain authoritative." });
+  const next = await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [developer, ...tail, { role: "user", content: "New request after recovered-open compaction." }]);
+  assert.ok(h.browser.ui.sends.at(-1).includes("Current Codex instructions:\nUpdated native instructions remain authoritative."));
+  assert.equal(h.browser.ui.url, savedUrl);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.closes, 0);
+  h.browser.ui.texts.push("Completed post-compaction request"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(next.call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Later request stays a delta.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later request stays a delta." }]);
+});
+
 test("native V2 rejects pending browser and discovery controls without retiring their ordinary continuation", async t => {
   for (const kind of ["browser", "discovery"]) await t.test(kind, async t => {
     const h = harness(t, kind === "discovery" ? { tools: [search, currentRead] } : {});
