@@ -90,9 +90,12 @@ export function parseBrowserOutput(output, frameToken) {
 const defaultUi = {
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
-  composerName: "Ask ChatGPT", temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat", saveChatButtonName: "Save chat",
+  composerName: "Ask ChatGPT", normalHeadingName: "Ready when you are.", temporaryButtonName: "Temporary chat",
+  temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
   assistantFinalReplySelector: '[data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
   stopButtonExactName: "Stop", responseCompleteStatusText: "Response complete", regenerateButtonExactName: "Regenerate response",
+  conversationFullText: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.",
+  startNewChatButtonName: "Start new chat",
 };
 
 // Self-contained read-only DOM projection, also usable directly with the public
@@ -147,20 +150,59 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     const current = active?.get(options.sessionId);
     if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
   };
-  const role = (name, kind = "button") => state.tab.playwright.getByRole(kind, { name, exact: true });
-  const replies = () => state.tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
-  const temporary = async () => {
-    const url = new URL(await state.tab.url());
-    if (url.origin !== "https://chatgpt.com" || url.searchParams.get("temporary-chat") !== "true") return false;
-    if (!state.hasSentMessage) return await role(ui.temporaryToggleName).isVisible() && await role(ui.temporaryHeadingName, "heading").isVisible();
-    // After Send the Temporary Chat toolbar replaces the initial controls with
-    // Save chat. Its URL alone cannot establish that an owned chat is temporary.
-    return state.temporaryVerified === true && await role(ui.saveChatButtonName).isVisible();
+  const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
+  const replies = (tab = state.tab) => tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
+  const conversationFull = async () => {
+    const outsideMessages = (elements, assistantSelector) => {
+      const excluded = `${assistantSelector},[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input`;
+      return elements.some(element => !element.closest(excluded) && !element.querySelector(excluded));
+    };
+    const [banner, button] = await Promise.all([
+      state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true })
+        .evaluateAll(outsideMessages, ui.assistantFinalReplySelector, { timeoutMs: 1000 }),
+      role(ui.startNewChatButtonName).filter({ visible: true })
+        .evaluateAll(outsideMessages, ui.assistantFinalReplySelector, { timeoutMs: 1000 }),
+    ]);
+    return banner && button;
   };
-  const ensureOwned = async () => {
-    if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
+  const savedUrl = value => {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
+      && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
+  };
+  const temporaryInactive = async (tab = state.tab) => !(await role(ui.temporaryToggleName, "button", tab).isVisible())
+    && !(await role(ui.temporaryHeadingName, "heading", tab).isVisible());
+  const normal = async () => {
+    const value = await state.tab.url();
+    const url = new URL(value);
+    if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat") || !(await temporaryInactive())) return false;
+    return state.hasSentMessage ? savedUrl(value) && value === state.savedUrl : url.pathname === "/";
+  };
+  const emptyComposer = async (tab = state.tab) => {
+    const values = await role(ui.composerName, "textbox", tab).evaluateAll((elements, ownedChipSelector) => {
+      const empty = node => {
+        if (node.nodeType === 3) return !(node.textContent ?? "").trim();
+        if (node.nodeType !== 1) return true;
+        if (ownedChipSelector && node.matches(ownedChipSelector)) return true;
+        if (node.getAttribute("contenteditable") === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
+        return Array.from(node.childNodes).every(empty);
+      };
+      return Array.from(elements, element => element.tagName === "DIV" && element.getAttribute("contenteditable") === "true" && empty(element));
+    }, options.pluginChipSelector, { timeoutMs: 1000 });
+    return values.length === 1 && values[0] === true;
+  };
+  const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
+  const emptyNormalHome = async (tab = state.tab) => {
+    if (!(await normalHomeMode(tab))) return false;
+    const composer = role(ui.composerName, "textbox", tab), model = role(ui.modelButtonName, "button", tab), toggle = role(ui.temporaryButtonName, "button", tab);
+    return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
+      && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
+      && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
+  };
+  const ensureOwned = async (reacquired = false) => {
+    if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || !reacquired && options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
     const matches = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
-    if (matches.length !== 1) throw new Error("The owned Temporary Chat tab is unavailable; continuation cannot create a replacement.");
+    if (matches.length !== 1) throw new Error("The owned saved chat tab is unavailable; continuation cannot replace a live binding.");
     const url = await state.tab.url();
     if (new URL(url).origin !== "https://chatgpt.com") throw new Error("The owned tab left ChatGPT.");
   };
@@ -226,31 +268,89 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     clearActive();
     return { tabId: state.tabId, closed: true };
   };
+  const clearUnsentDraft = async () => {
+    const composer = role(ui.composerName, "textbox");
+    if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
+        || !state.unsentComposerText.endsWith(state.unsentDraft) || await composer.innerText() !== state.unsentComposerText) throw new Error("The unsent composer draft changed or became an attachment; continuation cannot replay it.");
+    await composer.press("Control+A");
+    await composer.press("Backspace");
+    if ((await composer.innerText()).trim() || await role(ui.sendButtonExactName).isEnabled()) throw new Error("The unsent composer draft was not cleared; continuation cannot replay it.");
+  };
+  const resetChat = () => {
+    Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, sendAttempted: false, sendClicked: false,
+      sendConfirmed: false, completed: false, retained: false, interrupted: false });
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId"]) delete state[key];
+  };
 
   let recovered = false;
-  if (operation === "continue" && state.bindingLost) {
-    // Only Router's confirmed Send and subsequent observed reply can recover a
-    // lost JS kernel. Reacquire that exact tab through the public SDK; never open
-    // or navigate a replacement and never replace a surviving active owner.
+  let verifyRecoveryTexts;
+  let recoverMissingTab = false;
+  if (operation === "continue" && options.recovery && !state.bindingLost && !state.needsHistory && !options.needsHistory && state.browser && state.tabId) {
+    if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
+    activeOwner(options.expectedOwnerTurnIds, true);
+    if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
+    const owned = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
+    recoverMissingTab = owned.length === 0;
+    if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
+  }
+  if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
+    // A confirmed saved URL and observed reply prefix can recover a lost kernel.
+    // A browser/tab ID is only a hint after restart; the exact saved URL and
+    // visible reply remain authoritative. Never replace a surviving owner.
     const proof = options.recovery;
-    if (globalThis.routerWebActiveTurns?.has(options.sessionId)) throw new Error("A different native turn owns the active browser recovery.");
+    const requireRecoveryOwnership = () => {
+      if (recoverMissingTab) activeOwner(options.expectedOwnerTurnIds, true);
+      else {
+        const recoveryOwner = globalThis.routerWebActiveTurns?.get(options.sessionId);
+        if (recoveryOwner?.state === state) throw new Error("The preceding saved-chat recovery did not finish verification; continuation remains blocked.");
+        if (recoveryOwner) throw new Error("A different native turn owns the active browser recovery.");
+      }
+    };
+    requireRecoveryOwnership();
     const agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
     const own = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
-    if (own.length !== 1 || own[0].id !== proof.browserId) throw new Error("The observed same-session browser is unavailable for recovery.");
-    const browser = await agent.browsers.get(proof.browserId);
-    if (browser.browserId !== proof.browserId) throw new Error("The observed browser identity changed during recovery.");
-    const matches = (await browser.tabs.list()).filter(tab => tab.id === proof.tabId);
-    if (matches.length !== 1) throw new Error("The observed owned tab is unavailable for recovery.");
-    const tab = await browser.tabs.get(proof.tabId);
-    if (tab.id !== proof.tabId || await tab.url() !== proof.url) throw new Error("The observed owned chat URL changed; recovery cannot navigate it.");
-    Object.assign(state, { agent, browser, tab, tabId: proof.tabId, sessionId: options.sessionId, runtimeModule: options.runtimeModule,
-      temporaryVerified: true, hasSentMessage: true, baselineReplyCount: proof.baselineReplyCount,
+    if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("The same-session browser is unavailable for recovery.");
+    const browser = await agent.browsers.get(own[0].id);
+    if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
+    const tabs = await browser.tabs.list();
+    const hinted = proof.tabId ? tabs.filter(tab => tab.id === proof.tabId) : [];
+    const matches = hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
+    if (matches.length > 1) throw new Error("The saved chat tab is ambiguous; recovery cannot choose a tab.");
+    requireRecoveryOwnership();
+    const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
+    if (!tab?.id || matches.length && tab.id !== matches[0].id) throw new Error("The current tab identity changed during recovery.");
+    const navigate = await tab.url() !== proof.url;
+    if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
+    const { createHash } = await import("node:crypto");
+    let mountedReplyCount;
+    verifyRecoveryTexts = texts => {
+      const text = texts.at(-1);
+      if (!texts.length || typeof text !== "string" || text.length < proof.assistantPrefix.length
+          || createHash("sha256").update(text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256) return false;
+      mountedReplyCount = texts.length;
+      return true;
+    };
+    const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await replies(tab));
+    if (!navigate && (!(await verifiedReply()) || !(await emptyComposer(tab)))) throw new Error("The saved chat reply or composer changed; recovery cannot reuse it.");
+    requireRecoveryOwnership();
+    Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
+      hasSentMessage: true, savedUrl: proof.url, baselineReplyCount: proof.baselineReplyCount,
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
-    if (!(await temporary())) throw new Error("The observed Temporary Chat controls changed; recovery cannot reuse it.");
-    const texts = await replies();
-    if (texts.length !== proof.replyCount || !texts.at(-1)?.startsWith(proof.assistantText)) throw new Error("The observed assistant reply changed; recovery cannot reuse this chat.");
     registerActive();
-    delete state.bindingLost;
+    await tab.markHandoff();
+    if (navigate) {
+      await tab.goto(proof.url);
+      const deadline = Date.now() + 10000;
+      while (!(await verifiedReply())) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error("The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+      }
+      if (!(await emptyComposer())) throw new Error("The saved chat composer has a draft; recovery cannot overwrite it.");
+    }
+    // Reopened long chats may mount only their most recent messages. The verified
+    // latest reply anchors this recovery; the old DOM count cannot be its baseline.
+    state.baselineReplyCount = mountedReplyCount - 1;
     recovered = true;
   }
 
@@ -273,44 +373,76 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.tab = await state.browser.tabs.new();
     state.tabId = state.tab.id;
     registerActive();
-    await state.tab.goto("https://chatgpt.com/?temporary-chat=true");
-    const controls = [role(ui.composerName, "textbox"), role(ui.modelButtonName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
+    await state.tab.goto("https://chatgpt.com/");
     const openDeadline = Date.now() + 10000;
-    while (!(await Promise.all(controls.map(control => control.isVisible()))).every(Boolean)) {
+    while (!(await emptyNormalHome())) {
       const remaining = openDeadline - Date.now();
-      if (remaining <= 0) throw new Error("Temporary Chat controls did not become ready within 10 seconds.");
+      if (remaining <= 0) throw new Error("Empty normal ChatGPT home controls did not become ready within 10 seconds.");
       await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
     }
-    state.temporaryVerified = await temporary();
-    if (!state.temporaryVerified) throw new Error("The initial Temporary Chat state was not verified.");
-    state.baselineReplyCount = (await replies()).length;
+    state.baselineReplyCount = 0;
     await state.tab.markHandoff();
-    emit({ tabId: state.tabId, url: await state.tab.url(), temporary: true, composer: true, modelButton: true, replyCount: state.baselineReplyCount });
+    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, replyCount: state.baselineReplyCount });
     return;
   }
-  await ensureOwned();
+  await ensureOwned(recovered);
   if (operation === "continue") {
     const interrupted = options.interruptedTurnId !== undefined;
     const owners = recovered ? [options.turnId] : options.expectedOwnerTurnIds;
     activeOwner(owners, true);
-    if (state.closed || !(await temporary())) throw new Error("The retained conversation is not ready for continuation.");
+    if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
+    if (options.needsHistory && !state.needsHistory) throw new Error("The pending full-history successor binding is unavailable.");
+    if (state.needsHistory) {
+      if (!state.rolloverAttempted || !state.rolloverFromUrl || state.closed) throw new Error("The pending full-history successor binding is unavailable.");
+      if (interrupted && state.sendAttempted && !state.sendConfirmed) {
+        if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor is not an idle normal home.");
+        await state.tab.markHandoff();
+        activeOwner(owners, true);
+        if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor left its idle normal home; the draft was not cleared.");
+        await clearUnsentDraft();
+      }
+      if (!(await emptyNormalHome())) throw new Error("The pending full-history successor is not a proven empty normal home.");
+      await state.tab.markHandoff();
+      if (!(await emptyNormalHome())) throw new Error("The pending full-history successor left its proven empty normal home.");
+      activeOwner(owners, true);
+      resetChat();
+      registerActive();
+      emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: 0, normal: true, needsHistory: true, assistantText: "", conversationFull: false,
+        ...(interrupted ? { interrupted: true } : {}) });
+      return;
+    }
+    if (state.closed || !(await normal())) throw new Error("The retained conversation is not ready for continuation.");
+    if (await conversationFull()) {
+      const texts = await replies();
+      if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
+      if (recovered) {
+        if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+        state.baselineReplyCount = texts.length - 1;
+        delete state.bindingLost;
+      }
+      const assistantText = state.sendConfirmed && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+      await state.tab.markHandoff();
+      activeOwner(owners, true);
+      emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: texts.length, normal: true, assistantText, conversationFull: true,
+        ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+      return;
+    }
     await state.tab.markHandoff();
     if (interrupted) {
       await stopGeneration(owners, true);
-      if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
-      if (state.sendAttempted && !state.sendConfirmed) {
-        const composer = role(ui.composerName, "textbox");
-        if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
-            || !state.unsentComposerText.endsWith(state.unsentDraft) || await composer.innerText() !== state.unsentComposerText) throw new Error("The unsent composer draft changed or became an attachment; continuation cannot replay it.");
-        await composer.press("Control+A");
-        await composer.press("Backspace");
-        if ((await composer.innerText()).trim() || await role(ui.sendButtonExactName).isEnabled()) throw new Error("The unsent composer draft was not cleared; continuation cannot replay it.");
-      }
+      if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
       state.interrupted = true;
       state.retained = true;
     } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
+    if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
     const texts = await replies();
-    const assistantText = interrupted && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
+    if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
+    if (recovered) {
+      if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+      state.baselineReplyCount = texts.length - 1;
+      delete state.bindingLost;
+    }
+    const assistantText = state.sendConfirmed && texts.length > state.baselineReplyCount ? texts.at(-1) : "";
     state.baselineReplyCount = texts.length;
     state.sendAttempted = false;
     state.sendClicked = false;
@@ -321,7 +453,36 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.retained = false;
     state.interrupted = false;
     registerActive();
-    emit({ tabId: state.tabId, replyCount: state.baselineReplyCount, temporary: true, ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true, assistantText } : {}) });
+    emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: state.baselineReplyCount, normal: true, assistantText, conversationFull: false,
+      ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+  } else if (operation === "rollover") {
+    activeOwner(options.expectedOwnerTurnIds, true);
+    if (state.closed || state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with a closed binding or uncertain Send.");
+    if (state.rolloverAttempted) {
+      if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
+      await state.tab.markHandoff();
+    } else {
+      const ready = async () => state.savedUrl === options.previousChatUrl && await state.tab.url() === options.previousChatUrl
+        && await normal() && await conversationFull() && !(await role(ui.stopButtonExactName).isVisible()) && await emptyComposer();
+      const start = role(ui.startNewChatButtonName).filter({ visible: true });
+      if (!(await ready()) || await start.count() !== 1) throw new Error("Rollover requires the exact owned full saved chat, an idle empty composer and one visible Start new chat button.");
+      await state.tab.markHandoff();
+      if (!(await ready()) || await start.count() !== 1) throw new Error("The full saved chat changed before rollover; nothing clicked.");
+      activeOwner(options.expectedOwnerTurnIds, true);
+      Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
+      await start.click();
+      const deadline = Date.now() + 10000;
+      while (!(await emptyNormalHome())) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error("Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+      }
+    }
+    if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
+    activeOwner(options.expectedOwnerTurnIds, true);
+    resetChat();
+    registerActive();
+    emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
   } else if (operation === "model") {
     if (state.sendAttempted && !state.completed) throw new Error("Generation is already pending.");
     const evidence = await modelEvidence(true);
@@ -339,7 +500,12 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     emit({ attached: true, tabId: state.tabId });
   } else if (operation === "send") {
     if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
-    if (!(await temporary()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned Temporary Chat is not idle.");
+    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
+    if (await conversationFull()) {
+      emit({ sent: false, conversationFull: true, tabId: state.tabId, url: await state.tab.url(), normal: true, baselineReplyCount: (await replies()).length });
+      return;
+    }
+    if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
     const evidence = await modelEvidence(false);
     if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
     state.baselineReplyCount = (await replies()).length;
@@ -362,18 +528,30 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
     }
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
-    if (!(await temporary()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned Temporary Chat is no longer idle; nothing sent.");
+    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+    await state.tab.markHandoff();
     state.sendClicked = true;
     await send.click();
     state.hasSentMessage = true;
+    while (!savedUrl(await state.tab.url())) {
+      const remaining = sendDeadline - Date.now();
+      if (remaining <= 0) throw new Error("The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+    }
+    const confirmedUrl = await state.tab.url();
+    if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
+    state.savedUrl = confirmedUrl;
+    if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
     state.sendConfirmed = true;
     delete state.unsentDraft;
     delete state.unsentComposerText;
-    emit({ sent: true, tabId: state.tabId, baselineReplyCount: state.baselineReplyCount, ...evidence });
+    for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
+    emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false, baselineReplyCount: state.baselineReplyCount, ...evidence });
   } else if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
+      if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
       const texts = await replies();
       const assistantText = texts.length > state.baselineReplyCount ? texts.at(-1) : "";
       const stopVisible = await role(ui.stopButtonExactName).isVisible();
@@ -381,8 +559,11 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       const statusComplete = statuses.some(text => text.trim() === ui.responseCompleteStatusText);
       const regenerateVisible = await role(ui.regenerateButtonExactName).isVisible();
       const completed = texts.length > state.baselineReplyCount && assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-      observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url() };
-      if (completed) { state.completed = true; break; }
+      const full = await conversationFull();
+      if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+      observation = { completed, assistantText, replyCount: texts.length, baselineReplyCount: state.baselineReplyCount, stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
+      if (completed) state.completed = true;
+      if (completed || full) break;
       if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
     }
     emit(observation);
@@ -405,24 +586,34 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
 }
 
 export function browserScript(options) {
-  if (!record(options) || !["bootstrap", "open", "model", "attach", "send", "observe", "retain", "close", "cancel", "continue"].includes(options.operation)) throw failure("Unsupported browser operation.");
+  if (!record(options) || !["bootstrap", "open", "model", "attach", "send", "observe", "retain", "close", "cancel", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
-  if (options.operation === "continue" && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
+  const transfersOwnership = ["continue", "rollover"].includes(options.operation);
+  if (transfersOwnership && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
       || new Set(options.expectedOwnerTurnIds).size !== options.expectedOwnerTurnIds.length)
-      || options.operation !== "continue" && options.expectedOwnerTurnIds !== undefined) throw failure("Continuation requires exact expected native owner identities.");
+      || !transfersOwnership && options.expectedOwnerTurnIds !== undefined) throw failure("Continuation or rollover requires exact expected native owner identities.");
+  if (options.needsHistory !== undefined && (options.operation !== "continue" || typeof options.needsHistory !== "boolean")
+      || options.needsHistory && options.recovery !== undefined) throw failure("A pending full-history successor requires its existing browser binding without recovery.");
+  if (options.operation === "rollover") {
+    let url;
+    try { url = new URL(options.previousChatUrl); } catch { /* Invalid old chat URLs are rejected below. */ }
+    if (typeof options.previousChatUrl !== "string" || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
+        || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password) throw failure("Rollover requires the exact previous saved chat URL.");
+  }
   if (options.recovery !== undefined) {
     const proof = options.recovery;
     let url;
     try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
-    if (options.operation !== "continue" || !record(proof) || typeof proof.browserId !== "string" || !proof.browserId
-        || typeof proof.tabId !== "string" || !proof.tabId || proof.tabId !== options.tabId
-        || url?.origin !== "https://chatgpt.com" || !url.pathname.startsWith("/c/") || url.searchParams.get("temporary-chat") !== "true"
+    if (options.operation !== "continue" || !record(proof) || proof.tabId !== undefined && (typeof proof.tabId !== "string" || !proof.tabId)
+        || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
+        || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password
         || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
         || !Number.isSafeInteger(proof.replyCount) || proof.replyCount <= proof.baselineReplyCount
-        || typeof proof.assistantText !== "string" || !proof.assistantText.trim() || typeof proof.completed !== "boolean"
+        || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length <= 0
+        || typeof proof.assistantPrefix.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(proof.assistantPrefix.sha256) || typeof proof.completed !== "boolean"
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);

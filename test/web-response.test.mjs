@@ -220,3 +220,19 @@ test("compaction stays bounded across repeated replay and refuses unreadable opa
   }
   assert.throws(() => webCompactResponse({ model, input: "cannot silently discard this input" }), { code: "invalid_web_compaction", status: 400 });
 });
+
+test("compaction preserves the undelivered native tail beside its readable checkpoint", async () => {
+  const retainedTail = [
+    { type: "function_call", namespace: "mcp__fixture", name: "read", call_id: "pending_read", arguments: '{"path":"fixture"}' },
+    { type: "function_call_output", call_id: "pending_read", output: '{"exit_code":0,"text":"漢🙂\\nactual result"}' },
+    { type: "custom_tool_call", namespace: "fixture", name: "check", call_id: "pending_check", input: "exact\ninput" },
+    { type: "custom_tool_call_output", call_id: "pending_check", output: "actual\nresult" },
+    { role: "user", content: [{ type: "input_text", text: "Continue using those results." }] },
+  ];
+  const input = [{ role: "user", content: "Already delivered history." }, ...retainedTail];
+  const before = structuredClone(input);
+  const { output } = await webCompactResponse({ model, input }, { retainedTail }).json();
+  assert.ok(decodeCompaction(output[0].encrypted_content));
+  assert.deepEqual(output.slice(1), retainedTail);
+  assert.deepEqual(input, before);
+});

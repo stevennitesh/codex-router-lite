@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -29,10 +29,11 @@ const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? 
 
 function fakeBrowser() {
   const ui = { power: 2, menu: false, chip: false, stop: false, texts: [], complete: false, sends: [], marks: 0, newTabs: 0, closes: 0, present: true, navigations: 0, reacquired: [], stopMarks: [],
-    temporaryControls: true, saveChat: false, url: "https://chatgpt.com/?temporary-chat=true" };
-  const locator = (kind, name) => ({
+    temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map() };
+  const locator = (kind, name, visibleOnly = false) => ({
     getByRole: (childKind, options) => locator(childKind, options.name), locator: selector => locator("selector", selector),
-    filter({ hasText }) {
+    filter({ hasText, visible }) {
+      if (visible !== undefined) return locator(kind, name, visible);
       assert.equal(kind, "selector");
       assert.equal(name, '[role="menuitemradio"]');
       return locator("family-text", hasText);
@@ -42,8 +43,9 @@ function fakeBrowser() {
       if (kind === "menu") return ui.menu;
       if (name === "Stop") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
-      if (name === "Temporary chat" || name === "Turn off temporary chat") return ui.temporaryControls;
-      if (name === "Save chat") return ui.saveChat;
+      if (name === "Temporary chat") return kind === "heading" ? ui.temporaryControls : ui.normalHome;
+      if (name === "Turn off temporary chat") return ui.temporaryControls;
+      if (name === "Ready when you are.") return ui.normalHome;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
     },
@@ -51,32 +53,53 @@ function fakeBrowser() {
       if (name === "Select ChatGPT model") ui.menu = !ui.menu;
       else if (name === "Current Codex Tools Workspace tools") ui.chip = true;
       else if (name === "Stop") { ui.stopMarks.push(ui.marks); ui.stop = false; }
+      else if (name === "Start new chat") {
+        ui.rollovers += 1; ui.chatNumber += 1; ui.full = false; ui.normalHome = true; ui.url = "https://chatgpt.com/";
+        ui.texts = []; ui.composer = ""; ui.chip = false; ui.complete = false;
+      }
       else if (name === "Send") {
         ui.sends.push(ui.composer); ui.composer = ""; ui.complete = false;
-        ui.temporaryControls = false; ui.saveChat = true;
-        ui.url = "https://chatgpt.com/c/owned-conversation?temporary-chat=true";
+        ui.normalHome = false;
+        ui.url = `https://chatgpt.com/c/${ui.chatNumber === 1 ? "owned-conversation" : `successor-${ui.chatNumber}`}`;
+        ui.savedReplies.set(ui.url, ui.texts);
       }
     },
     async getAttribute(attribute) { return { "aria-checked": "true", "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null; },
-    async textContent() { return name; }, async innerText() { return ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
+    async textContent() { return name; }, async innerText() { return name === "Ask ChatGPT" ? ui.composer : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async isEnabled() { return true; },
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async allTextContents() { return name === '[role="status"]' ? (ui.complete ? ["Response complete"] : []) : [...ui.texts]; },
-    async evaluateAll(callback) {
+    async evaluateAll(callback, ownedChipSelector) {
+      if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
+      if (name === "Ask ChatGPT") {
+        const chip = { nodeType: 1, tagName: "SPAN", childNodes: [], getAttribute: key => key === "contenteditable" ? "false" : null,
+          matches: selector => selector.includes("app://asdk_current_tools") };
+        return callback([{ nodeType: 1, tagName: "DIV", getAttribute: key => key === "contenteditable" ? "true" : null, matches: () => false,
+          childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
+      }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
       return callback(ui.texts.map(value => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
         childNodes: [{ nodeType: 3, textContent: value }] })));
     },
   });
-  const tab = { id: "owned-temporary-tab", goto: async url => { ui.navigations += 1; ui.url = url; }, url: async () => ui.url,
-    playwright: { getByRole: (kind, options) => locator(kind, options.name), locator: selector => locator("selector", selector) },
+  const tab = { get id() { return ui.tabId; }, goto: async url => {
+    ui.navigations += 1; ui.url = url; ui.normalHome = url === "https://chatgpt.com/";
+    ui.texts = ui.savedReplies.get(url) ?? []; ui.composer = "";
+  }, url: async () => ui.url,
+    playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
   const browser = { browserId: "same-session-iab", documentation: async () => "Current public browser runtime documentation",
     tabs: { list: async () => ui.present ? [{ id: tab.id, url: await tab.url() }] : [],
       get: async tabId => { ui.reacquired.push(tabId); assert.equal(tabId, tab.id); return tab; },
-      new: async () => { ui.newTabs += 1; return tab; } } };
+      new: async () => {
+        ui.newTabs += 1;
+        if (!ui.present) {
+          ui.tabId = `reopened-saved-tab-${ui.newTabs}`; ui.url = "about:blank"; ui.texts = []; ui.composer = ""; ui.normalHome = false; ui.stop = false;
+        }
+        ui.present = true; return tab;
+      } } };
   const agent = { browsers: { list: async () => [{ type: "iab", id: browser.browserId, metadata: { codexSessionId: threadId } }],
     get: async id => { assert.equal(id, browser.browserId); return browser; } } };
   return { ui, agent, browser, tab };
@@ -89,12 +112,13 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
   const key = `router-web-runtime-test-${++fixtureNumber}`;
   globalThis[Symbol.for(key)] = browser.agent;
   const runtimeModule = `data:text/javascript,${encodeURIComponent(`export async function setupBrowserRuntime(){ return globalThis[Symbol.for(${JSON.stringify(key)})]; }`)}`;
-  const broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
+  let broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
   const observations = { watchers: [], services: [], nativeOperations: [], bindings: [], fetchCalls: 0 };
   const settings = { browser: { runtimeModule, pluginName: "Current Codex Tools", pluginAppId: "asdk_current_tools",
     pluginSelectionButtonName: "Current Codex Tools Workspace tools", observeIterations: 1, observeDelayMs: 0 },
   tunnel: { executable: "test-tunnel", id: "test-owned-tunnel" }, mcpPort: 0 };
-  const runtime = createInAppWebRuntime({ broker, stateDir,
+  const runtimeStateDir = path.join(stateDir, key);
+  const makeRuntime = () => createInAppWebRuntime({ broker, stateDir: runtimeStateDir,
     startMcp: async options => {
       assert.equal(options.broker, broker);
       observations.services.push("mcp");
@@ -110,6 +134,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
       return { ready: Promise.resolve().then(() => { if (cancelDuringWatch) options.onCancel(); }), close: async () => { watcher.closed = true; } };
     },
   });
+  let runtime = makeRuntime();
   t.after(async () => { await runtime.close(); delete globalThis[Symbol.for(key)]; });
   let nativeContext = {};
   let payload = { model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "low" }, stream: false,
@@ -150,7 +175,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     }
     throw new Error("Browser orchestration did not reach observation.");
   };
-  return { runtime, broker, browser, observations, settings, request, executeBrowser, answerBrowser, toObserve,
+  return { get runtime() { return runtime; }, get broker() { return broker; }, browser, observations, settings, request, executeBrowser, answerBrowser, toObserve,
     token: () => {
       const token = browser.ui.sends.at(-1)?.match(/Use turn_token (web_turn_[a-f0-9]{32}) unchanged/u)?.[1];
       assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
@@ -160,6 +185,8 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     replaceBrowserOwner: owner => nativeContext.routerWebActiveTurns = new Map([[threadId, owner]]),
     append: (...items) => payload.input.push(...items),
     loseKernel: () => { nativeContext = {}; },
+    restartRuntime: async () => { await runtime.close(); broker = createWebToolBroker({ invocationTimeoutMs: 5000 }); runtime = makeRuntime(); },
+    stateFile: path.join(runtimeStateDir, "web-in-app", "conversations", `${threadId}.json`),
     newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
@@ -170,7 +197,7 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
   const h = harness(t, { toolChoice: "required" });
   const { call: observe } = await h.toObserve();
   assert.equal(h.browser.ui.sends.length, 1);
-  assert.equal(h.browser.ui.marks, 1);
+  assert.equal(h.browser.ui.marks, 2, "The owned tab is retained at open and immediately before Send.");
   h.browser.ui.stop = true;
   const token = h.token();
   const read = h.broker.list(token).find(tool => tool.name === "read");
@@ -195,11 +222,11 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
   h.browser.ui.complete = true;
   h.browser.ui.stop = false;
   const retain = await h.answerBrowser(afterCoding.output[0]);
-  assert.equal(h.browser.ui.marks, 1);
+  const marksBeforeRetain = h.browser.ui.marks;
   const final = await h.answerBrowser(retain.output[0]);
   assert.equal(final.output[0].type, "message");
   assert.equal(final.output[0].content[0].text, h.browser.ui.texts[0]);
-  assert.equal(h.browser.ui.marks, 2);
+  assert.equal(h.browser.ui.marks, marksBeforeRetain + 1);
   assert.equal(h.observations.watchers[0].closed, true);
   assert.deepEqual(h.observations.nativeOperations, ["bootstrap", "open", "model", "attach", "send", "observe", "observe", "retain"]);
   assert.equal(h.runtime.status().activeTurns, 0);
@@ -228,16 +255,16 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Follow up in this same chat." }]);
   assert.equal(h.browser.ui.power, 2);
   assert.equal(h.runtime.status().conversations, 1, "Changing model family and effort retains the native session's chat.");
-  assert.deepEqual(h.browser.ui.reacquired, ["owned-temporary-tab"]);
+  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
   assert.equal(h.browser.ui.navigations, 1);
   const pending = await h.answerBrowser(nextObserve);
   assert.equal(pending.output[0].type, "function_call");
-  assert.equal(h.browser.ui.marks, 3, "The follow-up is retained before Send without completing its answer.");
+  const marksBeforeRetain = h.browser.ui.marks;
   h.browser.ui.texts.push("Follow-up answer"); h.browser.ui.complete = true;
   const nextRetain = await h.answerBrowser(pending.output[0]);
   const nextFinal = await h.answerBrowser(nextRetain.output[0]);
   assert.equal(nextFinal.output[0].content[0].text, "Follow-up answer");
-  assert.equal(h.browser.ui.marks, 4);
+  assert.equal(h.browser.ui.marks, marksBeforeRetain + 1);
   assert.equal(h.observations.watchers.length, 2);
 });
 
@@ -252,9 +279,12 @@ test("native cancellation retires the real broker while the next turn retains it
   const coding = (await h.answerBrowser(call)).output[0];
   h.observations.watchers[0].onCancel();
   await rejection;
+  const marksBeforeRecovery = h.browser.ui.marks;
   assert.throws(() => h.broker.list(token), { code: "web_tool_turn_closed" });
   h.append(coding, outputFor(coding, "too late"));
   await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  const cancelledCompact = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() });
+  assert.deepEqual((await cancelledCompact.json()).output.slice(1), [coding, outputFor(coding, "too late")], "A canceled tool turn never acknowledges its late actual result as delivered Web history.");
   h.loseKernel();
   h.newTurn(followupId, "Resume after cancellation.");
   const restart = (await h.request()).output[0];
@@ -270,13 +300,121 @@ test("native cancellation retires the real broker while the next turn retains it
     { type: "function_call_output", call_id: coding.call_id, output: "too late" },
     { role: "user", content: "Resume after cancellation." },
   ]);
-  assert.equal(h.browser.ui.marks, 2);
   assert.equal(h.browser.ui.sends.length, 2);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.closes, 0);
-  assert.deepEqual(h.browser.ui.reacquired, ["owned-temporary-tab"]);
+  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
   assert.equal(h.browser.ui.navigations, 1);
-  assert.deepEqual(h.browser.ui.stopMarks, [2], "Recovery renews the current turn's tab retention before Stop.");
+  assert.equal(h.browser.ui.stopMarks.length, 1);
+  assert.ok(h.browser.ui.stopMarks[0] > marksBeforeRecovery, "Recovery renews the current turn's tab retention before Stop.");
+});
+
+test("a private saved-chat mapping survives Router and browser restart with delta history and fresh native tools", async t => {
+  const h = harness(t);
+  const privatePrompt = "Private initial prompt that must not be persisted.";
+  h.append({ role: "user", content: privatePrompt });
+  const { call } = await h.toObserve();
+  const oldToken = h.token(), oldBroker = h.broker;
+  const read = oldBroker.list(oldToken).find(tool => tool.name === "read");
+  const actual = oldBroker.invoke(oldToken, { wireName: read.wireName, arguments: { path: "private-tool-argument.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0];
+  h.append(coding, outputFor(coding, "private actual tool result"));
+  const observe = (await h.request()).output[0];
+  await actual;
+  h.browser.ui.texts.push("Private assistant final answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(observe);
+  const final = await h.answerBrowser(retain.output[0]);
+  h.append(final.output[0]);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.chatUrl, "https://chatgpt.com/c/owned-conversation");
+  assert.ok(saved.checkpoint.every(value => /^[a-f0-9]{64}$/u.test(value)));
+  const persisted = JSON.stringify(saved);
+  for (const secret of [privatePrompt, "private-tool-argument.txt", "private actual tool result", "Private assistant final answer", oldToken]) assert.equal(persisted.includes(secret), false);
+  await h.restartRuntime(); h.loseKernel();
+  h.browser.ui.present = false;
+  h.browser.browser.browserId = "new-current-session-browser";
+  h.newTurn(followupId, "Only new native material follows restart.");
+  await h.toObserve();
+  assert.equal(h.browser.ui.url, saved.chatUrl);
+  assert.equal(h.browser.ui.newTabs, 2, "A closed saved tab is reopened once at its exact persisted URL.");
+  assert.equal(h.browser.ui.navigations, 2);
+  assert.equal(new Set(h.observations.bindings).size, 1);
+  assert.notEqual(h.token(), oldToken);
+  assert.throws(() => oldBroker.list(oldToken), { code: "web_tool_turn_closed" });
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only new native material follows restart." }]);
+  assert.equal(h.browser.ui.sends.at(-1).includes(privatePrompt), false);
+  assert.equal(h.browser.ui.sends.at(-1).includes(oldToken), false);
+  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
+});
+
+test("manually closing the saved tab reopens its URL and preserves delta delivery while the REPL survives", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Latest saved answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  const savedUrl = h.browser.ui.url;
+  h.browser.ui.present = false;
+  h.newTurn(followupId, "Continue the same saved conversation after tab closure.");
+  await h.toObserve();
+  assert.equal(h.browser.ui.url, savedUrl);
+  assert.equal(h.browser.ui.newTabs, 2);
+  assert.equal(h.observations.nativeOperations.filter(operation => operation === "bootstrap").length, 1);
+  assert.equal(new Set(h.observations.bindings).size, 1);
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue the same saved conversation after tab closure." }]);
+});
+
+test("completed native tool acknowledgements stop before genuinely unsent native material", async t => {
+  const h = harness(t), { call } = await h.toObserve(), token = h.token();
+  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const actual = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "already-delivered.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0];
+  h.append(coding, outputFor(coding, "Already delivered actual tool result"));
+  const observe = (await h.request()).output[0]; await actual;
+  h.append({ role: "user", content: "Unsent native material arrived while the Web answer was finishing." });
+  h.browser.ui.texts.push("The completed Web answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  h.newTurn(followupId, "Current follow-up request");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [
+    { role: "user", content: "Unsent native material arrived while the Web answer was finishing." },
+    { role: "assistant", content: "The completed Web answer" },
+    { role: "user", content: "Current follow-up request" },
+  ]);
+});
+
+test("historical unpaired calls are data and do not create owned unresolved-action blocks", async t => {
+  const h = harness(t);
+  const historical = { type: "function_call", call_id: "historical_cancelled_call", name: "read", arguments: "{}" };
+  h.append(historical);
+  const { call } = await h.toObserve();
+  h.browser.ui.texts.push("Historical outcome remains unknown."); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(call);
+  const final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.restartRuntime(); h.loseKernel();
+  h.newTurn(followupId, "Continue without re-executing historical actions.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue without re-executing historical actions." }]);
+  assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("invalid saved mappings fail before any fresh chat or browser call", async t => {
+  for (const [label, mutate] of [
+    ["foreign thread", value => { value.threadId = followupId; }],
+    ["unsafe URL", value => { value.chatUrl = "https://example.com/c/foreign"; }],
+    ["lost checkpoint", value => { delete value.checkpoint; }],
+  ]) await t.test(label, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Persisted answer"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.restartRuntime(); h.loseKernel();
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8")); mutate(saved);
+    writeFileSync(h.stateFile, JSON.stringify(saved), "utf8");
+    h.newTurn(followupId, "Do not replace an invalid mapping.");
+    const before = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: "web_conversation_state" });
+    assert.equal(h.observations.nativeOperations.length, before);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
 });
 
 test("lost JS state rebinds only the observed owned tab and reconciles its newest partial before the next delta", async t => {
@@ -286,32 +424,28 @@ test("lost JS state rebinds only the observed owned tab and reconciles its newes
   h.browser.ui.texts.push("Observed partial"); h.browser.ui.stop = true;
   await h.answerBrowser(call);
   h.observations.watchers[0].onCancel();
+  const marksBeforeRecovery = h.browser.ui.marks;
   h.loseKernel();
   h.browser.ui.texts[0] = "Observed partial continued before Stop";
   h.append({ role: "assistant", content: "Observed partial continued" });
   h.newTurn(followupId, "Continue in this exact observed conversation.");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue in this exact observed conversation." }]);
-  assert.deepEqual(h.browser.ui.reacquired, ["owned-temporary-tab"]);
+  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.navigations, 1);
   assert.equal(h.browser.ui.sends.length, 2);
   assert.equal(new Set(h.observations.bindings).size, 1);
   assert.equal(h.browserOwner().turnId, followupId);
-  assert.deepEqual(h.browser.ui.stopMarks, [2]);
+  assert.equal(h.browser.ui.stopMarks.length, 1);
+  assert.ok(h.browser.ui.stopMarks[0] > marksBeforeRecovery);
   assert.throws(() => h.broker.list(oldToken), { code: "web_tool_turn_closed" });
 });
 
-test("lost-state recovery rejects changed browser, tab, URL, reply or active ownership without Stop or replay", async t => {
+test("runtime recovery passes saved evidence and refuses changed session, reply or active ownership without Stop or replay", async t => {
   for (const [label, mutate] of [
-    ["foreign browser", h => { h.browser.agent.browsers.list = async () => [{ type: "iab", id: "foreign-browser", metadata: { codexSessionId: threadId } }]; }],
     ["foreign session", h => { h.browser.agent.browsers.list = async () => [{ type: "iab", id: "same-session-iab", metadata: { codexSessionId: followupId } }]; }],
-    ["missing tab", h => { h.browser.browser.tabs.list = async () => [{ id: "foreign-tab", url: h.browser.ui.url }]; }],
-    ["different tab handle", h => { h.browser.browser.tabs.get = async () => ({ ...h.browser.tab, id: "foreign-tab" }); }],
-    ["different URL", h => { h.browser.ui.url = "https://chatgpt.com/c/another-conversation?temporary-chat=true"; }],
     ["changed partial", h => { h.browser.ui.texts[0] = "A different assistant reply"; }],
-    ["extra reply", h => { h.browser.ui.texts.push("Unexpected next assistant turn"); }],
-    ["permanent chat UI", h => { h.browser.ui.saveChat = false; }],
     ["surviving foreign owner", h => { h.replaceBrowserOwner({ turnId: followupId, state: {} }); }],
   ]) await t.test(label, async t => {
     const h = harness(t);
@@ -322,10 +456,9 @@ test("lost-state recovery rejects changed browser, tab, URL, reply or active own
     mutate(h);
     h.newTurn(followupId, "Recover only with unchanged observed evidence.");
     const continuation = (await h.request()).output[0];
-    await assert.rejects(h.executeBrowser(continuation), /recovery|observed|active browser/iu);
+    await assert.rejects(h.executeBrowser(continuation), /recovery|saved chat|active browser/iu);
     assert.equal(h.browser.ui.stop, true);
     assert.deepEqual(h.browser.ui.stopMarks, []);
-    assert.equal(h.browser.ui.marks, 1);
     assert.equal(h.browser.ui.newTabs, 1);
     assert.equal(h.browser.ui.navigations, 1);
     assert.equal(h.browser.ui.sends.length, 1);
@@ -345,7 +478,6 @@ test("Stop after browser retention but before its native result retains the exis
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue from that retained answer." }]);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.closes, 0);
-  assert.equal(h.browser.ui.marks, 3);
   assert.equal(h.browser.ui.sends.length, 2);
   assert.equal(new Set(h.observations.bindings).size, 1);
 });
@@ -452,7 +584,6 @@ test("interrupted Send checkpoints accept omitted or partial native assistant hi
     assert.equal(h.browser.ui.closes, 0);
     assert.equal(new Set(h.observations.bindings).size, 1);
     assert.equal(h.browser.ui.sends.length, 2);
-    assert.equal(h.browser.ui.marks, 2);
   });
 });
 
@@ -473,7 +604,7 @@ test("cancellation before Send preserves unsent native input in the same owned c
   assert.equal(new Set(h.observations.bindings).size, 1);
 });
 
-test("cancelled coding calls with no result remain historical unknown outcomes and are not re-emitted", async t => {
+test("owned unresolved coding blocks across restart until a late actual result arrives without re-emitting the action", async t => {
   const h = harness(t);
   const { call } = await h.toObserve();
   const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
@@ -483,14 +614,27 @@ test("cancelled coding calls with no result remain historical unknown outcomes a
   h.append(coding);
   h.observations.watchers[0].onCancel();
   await rejection;
+  const oldBroker = h.broker;
+  await h.restartRuntime();
+  const operationsBefore = h.observations.nativeOperations.length;
+  await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_coding_uncertain" });
   h.newTurn(followupId, "Continue using only confirmed results.");
+  await assert.rejects(h.request(), { code: "web_coding_uncertain" });
+  assert.equal(h.observations.nativeOperations.length, operationsBefore);
+  assert.equal(h.browser.ui.sends.length, 1);
+  h.append({ type: "function_call_output", call_id: coding.call_id });
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "A missing result cannot resolve the action.");
+  await assert.rejects(h.request(), { code: "web_tool_result" });
+  h.input().pop(); h.input().pop();
+  h.append(outputFor(coding, "late actual result"));
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "The late result is now available.");
   const next = await h.toObserve();
   assert.notEqual(next.call.call_id, coding.call_id);
   assert.equal(next.call.namespace, "mcp__node_repl");
   assert.equal(sentTranscript(h)[0].call_id, coding.call_id);
-  assert.equal(sentTranscript(h).some(item => item.type === "function_call_output"), false);
-  assert.match(h.browser.ui.sends.at(-1), /an unpaired call has an unknown outcome/u);
-  assert.throws(() => h.broker.list(token), { code: "web_tool_turn_closed" });
+  assert.deepEqual(sentTranscript(h).find(item => item.type === "function_call_output"), { type: "function_call_output", call_id: coding.call_id, output: "late actual result" });
+  assert.throws(() => oldBroker.list(token), { code: "web_tool_turn_closed" });
+  assert.notEqual(h.token(), token);
 });
 
 test("an unconfirmed Send is never replayed after cancellation even if its click took effect", async t => {
@@ -500,11 +644,12 @@ test("an unconfirmed Send is never replayed after cancellation even if its click
     while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
     if (executed) await h.executeBrowser(response.output[0]);
     h.observations.watchers[0].onCancel();
-    if (lostKernel) h.loseKernel();
+    if (lostKernel) { h.loseKernel(); await h.restartRuntime(); }
+    await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_send_uncertain" });
     h.newTurn(followupId, "Resume without duplicating the uncertain Send.");
-    const continuation = (await h.request()).output[0];
-    assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
-    await assert.rejects(h.answerBrowser(continuation), lostKernel ? /binding was lost/u : { code: "web_send_uncertain" });
+    const before = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.equal(h.observations.nativeOperations.length, before);
     assert.equal(h.browser.ui.sends.length, executed ? 1 : 0);
     assert.equal(h.browser.ui.newTabs, 1);
     assert.equal(h.browser.ui.closes, 0);
@@ -586,6 +731,198 @@ test("readable compaction preserves native evidence and current instructions in 
   h.newTurn(opaqueTurn, "An opaque checkpoint remains unsupported.");
   await assert.rejects(h.request(), { code: "encrypted_v2_unsupported" });
   assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
+});
+
+test("attributed compaction preserves undelivered native items without resending an acknowledged summary", async t => {
+  for (const mode of ["used", "abandoned", "recompacted", "restarted", "second abandoned", "second abandoned after restart", "owned coding"]) await t.test(mode, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    let observe = call;
+    if (mode === "owned coding") {
+      const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+      const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "owned-completed-result.txt" } });
+      const owned = (await h.answerBrowser(observe)).output[0];
+      h.append(owned, outputFor(owned, "Owned actual result already delivered to Web"));
+      observe = (await h.request()).output[0]; await result;
+    }
+    h.browser.ui.texts.push("Already owned Web answer with detailed context"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    const rawTail = [
+      { role: "user", content: "Genuinely unsent user material", id: "native-user-id" },
+      { type: "function_call", call_id: "historical-native-action", name: "read", arguments: "{}", status: "completed" },
+      { type: "function_call_output", call_id: "historical-native-action", output: "Actual native evidence after the delivery checkpoint" },
+      { role: "assistant", content: "Already owned Web answer" },
+    ];
+    h.append(...rawTail);
+    const before = h.observations.nativeOperations.length;
+    const compact = async () => (await (await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() })).json()).output;
+    const original = structuredClone(h.input()), output = await compact();
+    assert.deepEqual(output.slice(1), rawTail);
+    assert.equal(h.observations.nativeOperations.length, before, "Compaction makes no browser or inference call.");
+    assert.equal(h.browser.ui.sends.length, 1);
+    if (mode !== "abandoned") h.input().splice(0, h.input().length, ...output);
+    if (mode === "recompacted") {
+      const repeated = await compact();
+      assert.deepEqual(repeated.slice(1), rawTail);
+      h.input().splice(0, h.input().length, ...repeated);
+    }
+    if (mode.startsWith("second abandoned")) {
+      const abandoned = await compact();
+      assert.notEqual(abandoned[0].id, output[0].id);
+      assert.deepEqual(h.input(), output, "The newer returned compact window was abandoned; the applied window remains current.");
+    }
+    if (mode === "restarted" || mode === "second abandoned after restart") { await h.restartRuntime(); h.loseKernel(); }
+    if (mode === "abandoned") assert.deepEqual(h.input(), original);
+    h.newTurn(followupId, "New request after native compaction", { instructions: "Current changed instructions remain authoritative." });
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [
+      { role: "user", content: rawTail[0].content },
+      { type: "function_call", call_id: rawTail[1].call_id, name: rawTail[1].name, arguments: rawTail[1].arguments },
+      { type: "function_call_output", call_id: rawTail[2].call_id, output: rawTail[2].output },
+      { role: "assistant", content: rawTail[3].content },
+      { role: "user", content: "New request after native compaction" },
+    ]);
+    assert.match(h.browser.ui.sends.at(-1), /Current changed instructions remain authoritative/u);
+    assert.equal(h.browser.ui.sends.at(-1).includes("lossy continuation checkpoint"), false);
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.pendingCompaction, undefined, "Only confirmed Send replaces the delivery checkpoint and consumes the alias.");
+    assert.equal(saved.activeCompaction, undefined);
+  });
+});
+
+test("confirmed capacity rejection with no answer or coding action transfers history once and refreshes native authority", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  const oldToken = h.token(), sourceUrl = h.browser.ui.url;
+  h.browser.ui.full = true;
+  const rollover = (await h.answerBrowser(call)).output[0];
+  assert.equal(JSON.parse(rollover.arguments).title, "ChatGPT Web: rollover");
+  assert.throws(() => h.broker.list(oldToken), { code: "web_tool_turn_closed" });
+  const { call: nextObserve } = await h.toObserve();
+  assert.equal(h.browser.ui.rollovers, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.notEqual(h.token(), oldToken);
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Read the current file using the declared tools." }]);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.chatUrl, "https://chatgpt.com/c/successor-2");
+  assert.deepEqual(saved.previousChatUrls, [sourceUrl]);
+  assert.equal(saved.needsHistory, false);
+  h.browser.ui.texts.push("Successor answer"); h.browser.ui.complete = true;
+  const retain = await h.answerBrowser(nextObserve), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  h.newTurn(followupId, "Later native delta");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later native delta" }]);
+  assert.equal(h.browser.ui.rollovers, 1);
+});
+
+test("full established chats transfer a new native request before continue or Send without replaying old actions", async t => {
+  for (const detection of ["continue", "send"]) await t.test(detection, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Already completed original request"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    h.newTurn(followupId, "A new request belongs in the successor.");
+    if (detection === "continue") h.browser.ui.full = true;
+    else {
+      let response = await h.request();
+      while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
+      h.browser.ui.full = true;
+    }
+    await h.toObserve();
+    assert.equal(h.browser.ui.rollovers, 1);
+    assert.equal(h.browser.ui.sends.length, 2, "The new request is sent once, only after successor verification.");
+    assert.deepEqual(sentTranscript(h), [
+      { role: "user", content: "Read the current file using the declared tools." },
+      { role: "assistant", content: "Already completed original request" },
+      { role: "user", content: "A new request belongs in the successor." },
+    ]);
+  });
+});
+
+test("capacity after an answer or native action never automatically repeats that request", async t => {
+  for (const [assistant, completed, codingAction] of [["Completed before capacity", true, true], ["A partial answer", false, false], ["", false, true]]) await t.test(`${completed ? "complete" : "incomplete"};coding ${codingAction}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    let observe = call;
+    if (codingAction) {
+      const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+      const actual = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual-capacity-action.txt" } });
+      const coding = (await h.answerBrowser(observe)).output[0];
+      h.append(coding, outputFor(coding, "Actual completed native effect"));
+      observe = (await h.request()).output[0]; await actual;
+    }
+    if (assistant) h.browser.ui.texts.push(assistant);
+    h.browser.ui.complete = completed; h.browser.ui.full = true;
+    if (completed) {
+      const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]);
+      assert.equal(final.output[0].content[0].text, assistant); h.append(final.output[0]);
+    } else await assert.rejects(h.answerBrowser(observe), { code: "web_conversation_full" });
+    assert.equal(h.browser.ui.rollovers, 0);
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).rolloverRequired, true);
+    if (completed) {
+      h.newTurn(followupId, "Proceed after the finished result.");
+      await h.toObserve();
+      assert.equal(h.browser.ui.rollovers, 1);
+      assert.equal(sentTranscript(h).filter(item => item.type === "function_call_output").length, 1);
+    }
+  });
+});
+
+test("an interrupted rollover handoff reconciles execution and retains the empty successor's history requirement", async t => {
+  for (const [executed, lostKernel] of [[true, false], [true, true], [false, false]]) await t.test(`executed ${executed};lost kernel ${lostKernel}`, async t => {
+    const h = harness(t), { call } = await h.toObserve(); h.browser.ui.full = true;
+    const rollover = (await h.answerBrowser(call)).output[0];
+    if (executed) await h.executeBrowser(rollover);
+    h.observations.watchers[0].onCancel();
+    if (lostKernel) { await h.restartRuntime(); h.loseKernel(); }
+    h.newTurn(followupId, "Continue after the successor was opened.");
+    if (lostKernel) {
+      const continuation = (await h.request()).output[0];
+      await assert.rejects(h.executeBrowser(continuation), /binding was lost/u);
+      assert.equal(h.browser.ui.sends.length, 1);
+    } else {
+      await h.toObserve();
+      assert.deepEqual(sentTranscript(h), [
+        { role: "user", content: "Read the current file using the declared tools." },
+        { role: "user", content: "Continue after the successor was opened." },
+      ]);
+      assert.equal(h.browser.ui.sends.length, 2);
+    }
+    assert.equal(h.browser.ui.rollovers, 1);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("a queued native tool invocation blocks automatic capacity transfer before any action is emitted", async t => {
+  const h = harness(t), { call } = await h.toObserve(), token = h.token();
+  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const queued = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "must-not-execute.txt" } });
+  const rejected = assert.rejects(queued, { code: "web_tools_pending" });
+  h.browser.ui.full = true;
+  await assert.rejects(h.answerBrowser(call), { code: "web_tools_pending" });
+  await rejected;
+  assert.equal(h.browser.ui.rollovers, 0);
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+});
+
+test("oversized successor history uses one bounded readable excerpt with explicit loss notice", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.append({ role: "user", content: `New unsent instruction ${"large native context ".repeat(30000)}` });
+  h.browser.ui.full = true;
+  await h.answerBrowser(call); await h.toObserve();
+  assert.equal(h.browser.ui.rollovers, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.ok(Buffer.byteLength(h.browser.ui.sends.at(-1), "utf8") < 512 * 1024);
+  assert.match(sentTranscript(h)[0].content, /lossy continuation checkpoint/u);
+  assert.match(sentTranscript(h)[0].content, /New unsent instruction/u);
+});
+
+test("successor capacity cannot create a retry loop in the same native turn", async t => {
+  const h = harness(t), { call } = await h.toObserve(); h.browser.ui.full = true;
+  await h.answerBrowser(call);
+  const { call: successorObserve } = await h.toObserve(); h.browser.ui.full = true;
+  await assert.rejects(h.answerBrowser(successorObserve), { code: "web_conversation_full" });
+  assert.equal(h.browser.ui.rollovers, 1);
   assert.equal(h.browser.ui.sends.length, 2);
 });
 
@@ -682,7 +1019,7 @@ test("mutating a consumed native coding result rejects the next advance before c
   const observed = await h.executeBrowser(observe);
   h.append(observe, outputFor(observe, observed));
   await assert.rejects(h.request(), error => error.code === "web_tool_result" && error.status === 400);
-  assert.equal(h.browser.ui.marks, 1);
+  assert.equal(h.observations.nativeOperations.includes("retain"), false);
   assert.equal(h.observations.watchers[0].closed, true);
 });
 
@@ -706,6 +1043,23 @@ test("tunnel startup failure closes acquired services and the native cancellatio
   assert.equal(h.observations.watchers[0].closed, true);
   assert.equal(h.browser.ui.newTabs, 0);
   assert.equal(h.runtime.status().activeTurns, 0);
+});
+
+test("a failed private checkpoint write still closes and awaits owned services", async () => {
+  const failedState = path.join(stateDir, "failed-checkpoint");
+  const closed = [];
+  const runtime = createInAppWebRuntime({ stateDir: failedState,
+    startMcp: async () => ({ url: "http://127.0.0.1:40123/mcp", status: () => ({ healthy: true }), close: async () => { closed.push("mcp"); } }),
+    startTunnel: async () => {
+      mkdirSync(path.join(failedState, "web-in-app", "conversations", `${threadId}.json`), { recursive: true });
+      return { ready: Promise.resolve(), status: () => ({ healthy: true }), close: async () => { await Promise.resolve(); closed.push("tunnel"); } };
+    },
+    watchCancellation: () => ({ ready: Promise.resolve(), close: async () => {} }),
+  });
+  await assert.rejects(runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "low" }, tools: [nativeJs], input: "Current native input" },
+    { headers: headers(), settings: { browser: { runtimeModule: "data:text/javascript,export{}" }, tunnel: { executable: "test", id: "test" } } }));
+  await assert.rejects(runtime.close());
+  assert.deepEqual(closed, ["tunnel", "mcp"]);
 });
 
 test("shutdown aborts pending tunnel startup and releases services before returning", async t => {

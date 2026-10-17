@@ -79,15 +79,42 @@ observed connector details after an update changes them.
 
 ## Browser turns and tools
 
-The in-app backend binds each native Codex session to one Temporary Chat tab,
-including across model and effort changes. It verifies the selected ChatGPT
-family and Power control, attaches the configured connector and sends the
-request. Follow-ups send the native history added since the last confirmed Send.
-Readable compaction supplies its explicit checkpoint instead. After a native
-JavaScript reset, Router can reconnect to the exact saved tab when its observed
-browser, chat URL and reply evidence still match. A missing or changed tab,
-insufficient recovery evidence, unexplained history changes or an uncertain Send
-fail the turn; Router never creates a replacement conversation to replay it.
+The in-app backend binds each native Codex conversation to one normal saved
+ChatGPT chat, including across model and effort changes. Router stores the
+conversation's chat URL and context checkpoint in its private local state. The
+coding conversation remains in the signed-in ChatGPT account's history until
+removed there. It verifies the selected ChatGPT family and Power control,
+attaches the configured connector and sends the request. Follow-ups send the
+native history added since the last confirmed Send. ChatGPT owns the saved
+conversation's reasoning context. Codex retains its transcript and tool execution
+records locally; storing or forwarding them does not request Codex inference.
+
+Web-route native compaction selects source excerpts locally, without requesting
+a model summary. For compaction attributed to a known saved conversation,
+Router records the exact boundary and returns genuinely undelivered native items
+beside the checkpoint. Continuing from that window sends those new items rather than
+repeating a summary of history already delivered to ChatGPT. A first attachment
+with readable compacted history still uses that checkpoint to seed its new chat.
+
+If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
+Codex conversation's browser and checks the previous reply before continuing.
+Tab IDs alone do not identify a chat. Reopening preserves the saved conversation;
+it does not resend its full history or execute historical tool calls again. An
+uncertain Send or unresolved native coding action blocks continuation until its
+actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
+a user draft, missing ownership, unreadable history or inconsistent reply
+evidence fails explicitly rather than silently starting a replacement chat.
+
+The site's explicit maximum-conversation-length notice and **Start new chat**
+action permit a successor saved chat. Assistant prose, timeouts and generic
+errors do not. Router transfers current readable Codex context once, retains the
+previous saved chat URL and continues the same native conversation with fresh
+tool authority. If the old chat already answered or ran tools, Router preserves
+that work and defers transfer to the next native user turn. An incomplete answer
+or uncertain action fails explicitly rather than replaying the request. A bounded
+checkpoint cannot guarantee retention of every older detail; its loss notices
+remain part of the handoff. A successor that also reports full fails rather than
+creating an unbounded chain of chats.
 
 The connector discovers only tools declared and allowed for the current native
 Codex request. It requests a tool by its exact identity, and Router returns that
