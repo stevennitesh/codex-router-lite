@@ -1,6 +1,6 @@
 {
   "date": "2026-10-18",
-  "status": "native-stop-verified-router-recovery-fixed-live-continuation-pending",
+  "status": "live-stop-and-same-tab-continuation-verified",
   "goal": "Native Stop cancels ChatGPT Web generation while retaining the same saved conversation and browser tab, without the external Web launcher or a browser-driving model.",
   "cause": {
     "localHookDispatch": "The local hook dispatcher discarded canonical metadata already built by core.",
@@ -86,8 +86,8 @@
     "safeLocalReceipt": "The trial may record a bounded local receipt containing only native turn identity, status flags, stage and timing; no URL, prompt, raw error, or capability payload.",
     "desktopActivated": true,
     "immediateStopVerified": true,
-    "coldBrowserSetupWithinThreeSecondsVerified": true,
-    "next": "Deploy the verified Router recovery fix and verify continuation in the retained saved chat after a zero-text interruption. Actual Desktop native-tool sandbox enforcement remains a separate verification gate.",
+    "freshControllerSetupWithinThreeSecondsVerified": true,
+    "next": "The recorded native candidate and chat-scoped hook trial passed Stop and same-tab continuation. Wider hook rollout and actual Desktop native-tool sandbox enforcement remain separate gates.",
     "activeCandidateSha256": "42f964bacd72bfe9ff08889e9cfdad5ba7e99435b0c5e55d448808aff3fef9ba",
     "hooksTrustedAndEnabled": true,
     "liveStop": {
@@ -104,12 +104,12 @@
       "scope": "One actual Codex Stop during a Web primary-model turn, without the external launcher or a browser-driving model. The hook acquired a fresh official controller because the interrupted tool VM had lost its globals."
     },
     "postStopContinuation": {
-      "verified": false,
+      "verified": true,
       "failure": "Active native browser binding was lost.",
       "beforeSend": true,
       "codingCalls": 0,
       "cause": "The stopped generation had no observed answer text or reply ID. Router required a reply prefix before it would reattach its browser controller, and a failed pre-Send attempt replaced the prior interrupted delivery provenance.",
-      "repairStatus": "Recovery candidate passed 143 Web runtime tests, an independent source review, and full Router validation. Deployment and live continuation pending. No ledger edits, prompt replay, replacement chat, or navigation used.",
+      "repairStatus": "Deployed and live continuation verified. No ledger edits, prompt replay, replacement chat, or navigation used.",
       "repair": "Use the existing confirmed delivery checkpoint and reply baseline to reattach only the exact retained tab and saved URL. A failed pre-Send attempt may remain lastTurn.unsent without discarding that checkpoint. Empty composer, reply identity, current ownership, uncertain Send, and unresolved coding checks remain enforced.",
       "sourceSha256": {
         "src/web-runtime.mjs": "7530ce77df4220c8257668c29195f858607b411339143dc0d6ab82fd90940e49",
@@ -135,6 +135,32 @@
         "durationMs": 274918,
         "currentCodexCatalogModels": 17,
         "catalogCompatibilityPassed": true
+      },
+      "deployment": {
+        "routerCommit": "c14dfdb525a4093f3af8c0c662c0d4e128ba26f5",
+        "accepted": true,
+        "checks": "Full Router and Switchyard health, process and scheduled-task identity, install manifest, installed hashes, provenance, catalog, Doctor, protected endpoints, and clean candidate passed.",
+        "drain": "Normal deployment deferred after 90 seconds with one active request. The user then explicitly approved interruption, and the guarded replacement completed successfully with rollback retained."
+      },
+      "liveContinuation": {
+        "nativeOutcome": "completed",
+        "durationMs": 13434,
+        "browserCalls": 8,
+        "codingCalls": 0,
+        "sameSavedConversationUrl": true,
+        "sameTab": true,
+        "sameBinding": true,
+        "retainedTabRecoveryObserved": true,
+        "webSends": 1,
+        "oldSessionMarkerRecalledWithoutResupply": true,
+        "longGuideRequestReplayed": false,
+        "newChatOrRollover": false,
+        "ledgerProtected": true,
+        "uncertainSend": false,
+        "unresolvedCodingCalls": 0,
+        "canonicalHookMetadataObserved": true,
+        "externalLauncherUsed": false,
+        "additionalModelDrivingBrowser": false
       }
     },
     "liveReadOnlyPreflight": {

@@ -177,9 +177,10 @@ sandbox and native tools before relying on it. Recheck the source pin and deskto
 compatibility after a Codex update. A successful source build does not establish
 live browser cancellation. The October 18 candidate and trusted trial hook did
 cancel a real Web generation while retaining its saved chat and tab, with a
-1.18-second hook execution. Same-tab continuation after an interruption before
-any answer text appeared exposed a separate Router recovery defect. The recovery
-fix passed source verification and awaits deployment and live continuation proof.
+1.18-second hook execution. The deployed Router recovery fix then completed a
+new turn in the same saved chat and tab after that zero-text interruption. The
+model recalled the original session marker without resupply; Router sent only
+new input. This hook trial remains restricted to the disposable verification chat.
 See the [candidate verification and remaining limits](history/2026-10-18-native-hook-context.json).
 
 No cancellation wrapper is installed. Tool revocation and next-turn reconciliation
