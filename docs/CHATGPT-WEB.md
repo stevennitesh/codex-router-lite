@@ -183,10 +183,16 @@ cancel a real Web generation while retaining its saved chat and tab, with a
 new turn in the same saved chat and tab after that zero-text interruption. The
 model recalled the original session marker without resupply; Router sent only
 new input. That trial was restricted to the disposable verification chat. Its
-user-level replacement is installed and trusted; normal-restart and generalized
-live Stop verification remain pending. Standalone sandbox checks passed from the
-durable installed directory; the separate Web native-tool sandbox attempt was
-blocked by hosted connector discovery returning HTTP 429.
+user-level replacement is installed and trusted. A normal Codex restart selected
+the durable candidate automatically; actual Stop cancelled Web generation while
+keeping the tab open, and the next turn completed in the same saved chat and tab.
+This live check used GPT-6 Sol Instant (Web); focused tests cover separate ordinary
+conversations. Standalone sandbox checks passed from the durable installed
+directory. The separate Web native-tool sandbox attempt remains blocked by hosted
+connector discovery returning HTTP 429 before any native command. Local tunnel
+readiness, matching hosted settings, tool permissions, and the two gateway tools
+were verified; the hosted failure's cause remains unknown. A delay recognizing
+the rendered connector-error reply also remains unresolved.
 See the [candidate verification and remaining limits](history/2026-10-18-native-hook-context.json).
 
 To install the accepted native build and a user-level Stop hook for ordinary Web

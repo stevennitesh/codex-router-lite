@@ -1,6 +1,6 @@
 {
   "date": "2026-10-18",
-  "status": "ordinary-web-stop-rollout-in-progress",
+  "status": "ordinary-web-stop-verified-after-normal-restart-web-sandbox-blocked",
   "goal": "Native Stop cancels ChatGPT Web generation while retaining the same saved conversation and browser tab, without the external Web launcher or a browser-driving model.",
   "cause": {
     "localHookDispatch": "The local hook dispatcher discarded canonical metadata already built by core.",
@@ -204,27 +204,72 @@
       "independentReview": "F1 corrected supported query-bearing saved URLs; no actionable findings remain in the frozen successor.",
       "installed": true,
       "trusted": true,
-      "liveVerified": false,
+      "liveVerified": true,
       "nativeHookHash": "sha256:bbcb9c4b2dff3c0686d30a97cc178d51f8bbb9adba4d957cbeb8ba07286826e5",
-      "supersededProjectTrialsDisabled": true
+      "supersededProjectTrialsDisabled": true,
+      "liveScope": "One actual ordinary Web primary-model chat using GPT-6 Sol Instant (Web), low effort; separate focused regressions cover independent peer conversations and native/non-Web no-ops. Other Web routes were not individually live tested."
     },
     "persistence": {
       "source": "src/web-stop-install.mjs",
       "mechanism": "Durable verified native files under Router state, supported per-user CODEX_CLI_PATH, and one merged user-level Interrupt hook. Official binaries and unrelated hooks remain owned by their original installers.",
       "installed": true,
-      "normalRestartVerified": false,
+      "normalRestartVerified": true,
       "review": "WSI-1 fixed by publishing the protected original baseline before activation. Independent successor review found no actionable findings. The CLI relative-path and inherited PowerShell 7 module-path corrections were also reviewed.",
       "installerSha256": "dfe60eacc8126786070baeb17e1049e3ac6f2fb217fb043889b5cce642d9d995",
       "liveInstall": "Accepted build and four valid signed official companions verified, staged privately, and read back. Per-user CODEX_CLI_PATH matches the staged executable; no ownership conflicts. Environment-change broadcast succeeded.",
       "humanTrust": "Native hooks/list confirms the exact user-level hook enabled and trusted, both old project trials disabled, and no hook warnings or errors.",
-      "durablePathStartup": "initialize, configRequirements/read, config/read, and hooks/list passed with the current profile; exit zero and no stderr. Normal Desktop restart remains unverified."
+      "durablePathStartup": "initialize, configRequirements/read, config/read, and hooks/list passed with the current profile; exit zero and no stderr. Normal Desktop restart remains unverified.",
+      "normalRestart": {
+        "method": "User fully quit Codex and reopened it normally, without the one-shot startup helper.",
+        "durableCandidateAppServerDescendant": true,
+        "activeBinaryHashMatchesAccepted": true,
+        "activePathMatchesUserSetting": true,
+        "candidateCreatedAtUtc": "2026-10-18T08:30:20.2138080Z",
+        "globalHookStillTrustedAndEnabled": true,
+        "supersededProjectTrialsStillDisabled": true,
+        "nativeHookDiscoveryWarnings": 0,
+        "nativeHookDiscoveryErrors": 0,
+        "routerDoctor": {
+          "passed": 15,
+          "warnings": 0,
+          "failed": 0
+        }
+      }
     },
     "activeDesktopSandbox": {
       "verified": false,
       "nativeCommandCalls": 0,
       "result": "The actual Web primary-model turn reported NOT VERIFIED: MCP SSE discovery received HTTP 429 from openai.org. No probe command or coding action ran.",
       "completion": "The turn completed after 428424 ms. Its reply projection was temporarily ambiguous (six mounted replies, no verified current ID), then became unambiguous (five replies and the actual 364-character error answer). No identity guard was relaxed.",
-      "localTransportDiagnostic": "One owned diagnostic MCP session passed initialize, initialized notification, tools/list, SSE GET and session DELETE. One live tunnel client had correct ancestry and listener ownership. No tools/call or credential access; hosted transport remains unverified."
+      "localTransportDiagnostic": "One owned diagnostic MCP session passed initialize, initialized notification, tools/list, SSE GET and session DELETE. One live tunnel client had correct ancestry and listener ownership. No tools/call or credential access; hosted transport remains unverified.",
+      "retry": {
+        "verified": false,
+        "nativeOutcome": "interrupted-after-rendered-error",
+        "durationMs": 180145,
+        "webSends": 1,
+        "nativeCodingCalls": 0,
+        "jsonReceiptObtained": false,
+        "userScreenshotConfirms": "ChatGPT finished with NATIVE_SANDBOX_PROOF: NOT VERIFIED and MCP SSE probe HTTP 429 from openai.org. It explicitly reported zero native commands and no file modifications.",
+        "cleanup": "User stopped the stalled native turn and left the saved tab open. The checked empty outside-workspace fixture was then removed."
+      },
+      "currentDiagnostics": {
+        "officialTunnelDoctorExitCode": 0,
+        "daemonHealthzHttp": 200,
+        "daemonReadyzHttp": 200,
+        "daemonDetailedHealthHttp": 200,
+        "daemonDetailedReady": true,
+        "hostedTunnelMatchesConfigured": true,
+        "hostedConnectorMatchesConfigured": true,
+        "connectorPermission": "Allow all tools",
+        "expectedGatewayToolsPresent": [
+          "codex_tools_list",
+          "codex_tool_call"
+        ],
+        "settingsChanged": false,
+        "keysReset": false,
+        "hosted429CauseEstablished": false
+      },
+      "completionDelay": "A second screenshot confirms ChatGPT rendered its connector error while native Codex continued polling without a verified current reply. The user ended the retry. The exact reply-identity ambiguity remains unresolved; no identity guard or success criterion was weakened."
     },
     "verification": {
       "fullSuite": {
@@ -260,7 +305,48 @@
       "outsideDenial": "UnauthorizedAccessException, HRESULT 0x80070005",
       "independentLoopbackNonceExchange": true,
       "ownedFixturesAndChildrenCleaned": true
-    }
+    },
+    "persistentLiveStop": {
+      "nativeOutcome": "interrupted",
+      "nativeTurnAborted": true,
+      "userConfirmation": "ChatGPT stopped; same tab stayed open.",
+      "browserCalls": 59,
+      "codingCalls": 0,
+      "webSends": 1,
+      "activeStopVisibleBeforeInterruption": true,
+      "externalLauncherUsed": false,
+      "additionalModelDrivingBrowser": false,
+      "nativeHookReceiptRetained": false,
+      "receiptLimit": "Native hook lifecycle notifications are transient and deliberately excluded from normal rollout persistence. This proof records TurnAborted, the user-observed effect, the configured trusted global handler and disabled old trials; it does not recover a hook warning receipt or measure cancellation latency."
+    },
+    "postRestartContinuation": {
+      "nativeOutcome": "completed",
+      "durationMs": 24345,
+      "sameSavedConversation": true,
+      "originalMarkerRecalledWithoutUserResupply": true,
+      "codingCalls": 0
+    },
+    "postPersistentStopContinuation": {
+      "nativeOutcome": "completed",
+      "durationMs": 15027,
+      "webSends": 1,
+      "browserCalls": 12,
+      "codingCalls": 0,
+      "sameSavedConversationUrl": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "originalMarkerRecalledWithoutUserResupply": true,
+      "ledgerProtected": true,
+      "uncertainSend": false,
+      "lastTurnCompleted": true,
+      "externalLauncherUsed": false,
+      "additionalModelDrivingBrowser": false
+    },
+    "remaining": [
+      "Actual Web-to-native command sandbox dispatch is unverified because hosted MCP discovery returns HTTP 429 before any coding call. Local readiness and settings checks do not establish the hosted failure cause.",
+      "The observed delay recognizing the completed connector-error reply remains unresolved.",
+      "No supported patch-free Stop alternative was found in the inspected official builds; future Codex updates require renewed source/build compatibility review."
+    ]
   },
   "startupTrial": {
     "attemptedAt": "2026-10-18T06:31:52Z",
