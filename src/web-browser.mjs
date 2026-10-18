@@ -272,9 +272,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
     const current = activeOwner(turnIds, requireActive);
     const stop = role(current?.stopButtonName ?? ui.stopButtonExactName);
-    if (await stop.isVisible()) {
+    const visible = await stop.isVisible();
+    activeOwner(turnIds, requireActive);
+    if (visible) {
       await stop.click();
+      activeOwner(turnIds, requireActive);
       await stop.waitFor({ state: "hidden", timeoutMs: 10000 });
+      activeOwner(turnIds, requireActive);
     }
   };
   const stopAndClose = async () => {
@@ -307,6 +311,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
     const owned = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
     recoverMissingTab = owned.length === 0;
+    if (recoverMissingTab && options.recovery.retainedTabOnly) throw new Error("The exact retained saved chat tab is unavailable; recovery cannot replace it.");
     if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
   }
   if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
@@ -323,26 +328,46 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       }
     };
     requireRecoveryOwnership();
-    const agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
+    const runtime = await import(options.runtimeModule);
+    requireRecoveryOwnership();
+    const agent = await runtime.setupBrowserRuntime();
+    requireRecoveryOwnership();
     const own = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
+    requireRecoveryOwnership();
     if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("The same-session browser is unavailable for recovery.");
     const browser = await agent.browsers.get(own[0].id);
+    requireRecoveryOwnership();
     if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
     const tabs = await browser.tabs.list();
+    requireRecoveryOwnership();
     const hinted = proof.tabId ? tabs.filter(tab => tab.id === proof.tabId) : [];
-    const matches = hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
+    const matches = proof.retainedTabOnly ? hinted : hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
+    if (proof.retainedTabOnly && (matches.length !== 1 || matches[0].url !== proof.url)) throw new Error("The exact retained saved chat tab or URL changed; recovery cannot replace it.");
     if (matches.length > 1) throw new Error("The saved chat tab is ambiguous; recovery cannot choose a tab.");
     requireRecoveryOwnership();
     const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
+    requireRecoveryOwnership();
     if (!tab?.id || matches.length && tab.id !== matches[0].id) throw new Error("The current tab identity changed during recovery.");
     const navigate = await tab.url() !== proof.url;
+    requireRecoveryOwnership();
+    if (proof.retainedTabOnly && navigate) throw new Error("The exact retained saved chat URL changed during recovery.");
     if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
     const { createHash } = await import("node:crypto");
+    requireRecoveryOwnership();
     let recoveredReplyId, recoveredBaselineIds;
     verifyRecoveryTexts = texts => {
       const latest = texts.at(-1), text = latest?.text;
       const expectedReplyId = proof.replyId ?? recoveredReplyId;
-      if (!validReplies(texts) || expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string" || text.length < proof.assistantPrefix.length
+      if (!validReplies(texts)) return false;
+      if (proof.retainedTabOnly) {
+        const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId));
+        if (fresh.length > 1 || fresh.length === 1 && fresh[0] !== latest || expectedReplyId && (fresh.length !== 1 || latest?.messageId !== expectedReplyId)) return false;
+        if (!fresh.length) {
+          recoveredBaselineIds = proof.baselineReplyIds;
+          return proof.assistantPrefix.length === 0;
+        }
+      }
+      if (expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string" || text.length < proof.assistantPrefix.length
           || createHash("sha256").update(text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256) return false;
       recoveredReplyId = latest.messageId;
       recoveredBaselineIds = proof.baselineReplyIds ?? texts.slice(0, -1).map(value => value.messageId);
@@ -460,6 +485,9 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     }
     const assistantText = state.sendConfirmed ? currentReply(texts)?.text ?? "" : "";
     if (!validReplies(texts)) throw new Error("The retained conversation has missing or ambiguous assistant message identities.");
+    const continuationUrl = await state.tab.url();
+    if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
+    activeOwner(owners, true);
     state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
     state.baselineReplyCount = texts.length;
     delete state.replyId;
@@ -472,7 +500,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.retained = false;
     state.interrupted = false;
     registerActive();
-    emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: state.baselineReplyCount, normal: true, assistantText, conversationFull: false,
+    emit({ tabId: state.tabId, url: continuationUrl, replyCount: state.baselineReplyCount, normal: true, assistantText, conversationFull: false,
       ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
   } else if (operation === "rollover") {
     activeOwner(options.expectedOwnerTurnIds, true);
@@ -633,19 +661,24 @@ export function browserScript(options) {
   if (options.recovery !== undefined) {
     const proof = options.recovery;
     const legacyReply = proof?.replyId === undefined && proof?.baselineReplyIds === undefined;
+    const retainedTabOnly = proof?.retainedTabOnly === true;
+    const validBaselineIds = Array.isArray(proof?.baselineReplyIds)
+      && proof.baselineReplyIds.every(value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value))
+      && new Set(proof.baselineReplyIds).size === proof.baselineReplyIds.length;
+    const validReplyId = typeof proof?.replyId === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.replyId)
+      && validBaselineIds && !proof.baselineReplyIds.includes(proof.replyId);
     let url;
     try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
     if (options.operation !== "continue" || !record(proof) || proof.tabId !== undefined && (typeof proof.tabId !== "string" || !proof.tabId)
         || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
         || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password
         || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
-        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount <= 0
-        || (legacyReply ? proof.replyCount <= proof.baselineReplyCount : !Array.isArray(proof.baselineReplyIds)
-        || proof.baselineReplyIds.some(value => typeof value !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value))
-        || new Set(proof.baselineReplyIds).size !== proof.baselineReplyIds.length
-        || typeof proof.replyId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.replyId)
-        || proof.baselineReplyIds.includes(proof.replyId))
-        || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length <= 0
+        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount < (retainedTabOnly ? 0 : 1)
+        || (retainedTabOnly ? !options.interruptedTurnId || !proof.tabId || proof.tabId !== options.tabId || !validBaselineIds
+          || proof.completed !== false || proof.replyId !== null && !validReplyId
+          : legacyReply ? proof.replyCount <= proof.baselineReplyCount : !validReplyId)
+        || proof.retainedTabOnly !== undefined && !retainedTabOnly
+        || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length < (retainedTabOnly ? 0 : 1)
         || typeof proof.assistantPrefix.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(proof.assistantPrefix.sha256) || typeof proof.completed !== "boolean"
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
   }

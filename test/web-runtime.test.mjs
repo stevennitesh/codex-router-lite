@@ -755,20 +755,151 @@ test("an unconfirmed Send is never replayed after cancellation even if its click
   });
 });
 
-test("a lost interrupted binding without a successful observed reply fails without replacement or Send", async t => {
-  const h = harness(t);
-  await h.toObserve();
+async function stopBeforeRenderedReply(h, { observed = true, emptyReply = false } = {}) {
+  let response = await h.request();
+  while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
+  h.browser.ui.texts = ["Earlier reply", "Another earlier reply"];
+  const observe = (await h.answerBrowser(response.output[0])).output[0];
+  h.browser.ui.stop = true;
+  if (emptyReply) h.browser.ui.texts.push("");
+  if (observed) await h.answerBrowser(observe);
   h.observations.watchers[0].onCancel();
   h.loseKernel();
-  h.newTurn(followupId, "Continue in the same chat.");
-  const continuation = (await h.request()).output[0];
-  assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
-  await assert.rejects(h.executeBrowser(continuation), /binding was lost/u);
-  assert.equal(h.browser.ui.sends.length, 1);
-  assert.equal(h.browser.ui.newTabs, 1);
+}
+
+test("a confirmed interrupted Send without observed text recovers its exact retained tab and sends only new native history", async t => {
+  for (const kind of ["no observation", "zero fresh replies", "one latest fresh reply", "known empty reply"]) await t.test(kind, async t => {
+    const h = harness(t);
+    await stopBeforeRenderedReply(h, { observed: kind !== "no observation", emptyReply: kind === "known empty reply" });
+    if (kind === "one latest fresh reply") h.browser.ui.texts.push("An answer rendered after Stop.");
+    await h.restartRuntime();
+    const priorCheckpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
+    h.newTurn(followupId, "Continue in the same chat.");
+    const continuation = (await h.request()).output[0];
+    const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(pending.lastTurn.sendState, "unsent");
+    assert.deepEqual(pending.checkpoint, priorCheckpoint);
+    const result = await h.executeBrowser(continuation);
+    assert.match(result, /"recovered":true/u); assert.match(result, /"interrupted":true/u);
+    h.append(continuation, outputFor(continuation, result));
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue in the same chat." }]);
+    assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
+    assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
+    assert.equal(h.browser.ui.sends.length, 2); assert.equal(h.browser.ui.stopMarks.length, 1);
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  });
 });
 
-test("a lost binding after unacknowledged open cannot recover or open a replacement", async t => {
+test("retained-tab recovery rejects changed tabs, ambiguous replies and drafts before Stop or Send", async t => {
+  for (const [label, mutate, emptyReply] of [
+    ["missing exact tab", h => { h.browser.ui.present = false; }],
+    ["different tab at the same URL", h => { h.browser.ui.tabId = "another-tab"; }],
+    ["changed saved URL", h => { h.browser.ui.url = "https://chatgpt.com/c/another-chat"; }],
+    ["duplicate identity", h => { h.browser.ui.replyIds = [messageId(0), messageId(0)]; }],
+    ["missing identity", h => { h.browser.ui.replyIds = [messageId(0), null]; }],
+    ["multiple fresh identities", h => { h.browser.ui.texts.push("First new reply", "Second new reply"); }],
+    ["fresh identity is not latest", h => { h.browser.ui.replyIds = [messageId(2), messageId(1)]; }],
+    ["composer draft", h => { h.browser.ui.composer = "Keep this unsent draft."; }],
+    ["known empty reply changed identity", h => { h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)]; }, true],
+  ]) await t.test(label, async t => {
+    const h = harness(t);
+    await stopBeforeRenderedReply(h, { emptyReply }); mutate(h);
+    h.newTurn(followupId, "Continue only in the retained chat.");
+    const continuation = (await h.request()).output[0];
+    await assert.rejects(h.executeBrowser(continuation), /retained saved chat|saved chat reply or composer/iu);
+    assert.equal(h.browser.ui.stop, true); assert.deepEqual(h.browser.ui.stopMarks, []);
+    assert.equal(h.browser.ui.sends.length, 1); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
+  });
+});
+
+test("retained-tab recovery rechecks ownership across SDK discovery, Stop visibility and final reply reads", async t => {
+  for (const boundary of ["browser discovery", "tab acquisition", "Stop visibility", "final reply read"]) await t.test(boundary, async t => {
+    const h = harness(t); await stopBeforeRenderedReply(h);
+    const foreign = { turnId: "99002233-4455-6677-8899-aabbccddeeff", state: {} };
+    const replace = () => h.replaceBrowserOwner(foreign);
+    if (boundary === "browser discovery") {
+      const list = h.browser.agent.browsers.list;
+      h.browser.agent.browsers.list = async () => { const value = await list(); replace(); return value; };
+    } else if (boundary === "tab acquisition") {
+      const get = h.browser.browser.tabs.get;
+      h.browser.browser.tabs.get = async tabId => { const value = await get(tabId); replace(); return value; };
+    } else if (boundary === "Stop visibility") {
+      const getByRole = h.browser.tab.playwright.getByRole;
+      h.browser.tab.playwright.getByRole = (kind, options) => {
+        const control = getByRole(kind, options), visible = control.isVisible;
+        if (options.name === "Stop") control.isVisible = async () => { const value = await visible(); replace(); return value; };
+        return control;
+      };
+    } else {
+      const locator = h.browser.tab.playwright.locator;
+      let reads = 0;
+      h.browser.tab.playwright.locator = selector => {
+        const control = locator(selector), evaluate = control.evaluateAll;
+        if (selector === '[data-markdown-text-style="assistant-message"]') control.evaluateAll = async (...args) => {
+          const value = await evaluate(...args); if (++reads === 2) replace(); return value;
+        };
+        return control;
+      };
+    }
+    h.newTurn(followupId, "A newer owner must win.");
+    const continuation = (await h.request()).output[0];
+    await assert.rejects(h.executeBrowser(continuation), /different native turn/iu);
+    assert.equal(h.browserOwner(), foreign);
+    assert.equal(h.browser.ui.sends.length, 1); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
+    if (boundary !== "final reply read") assert.deepEqual(h.browser.ui.stopMarks, []);
+  });
+});
+
+test("retained-tab recovery can discover one reply during Stop but cannot substitute its first fresh identity", async t => {
+  for (const replaceReply of [false, true]) await t.test(replaceReply ? "fresh identity changed" : "first reply appears during Stop", async t => {
+    const h = harness(t); await stopBeforeRenderedReply(h);
+    if (replaceReply) h.browser.ui.texts.push("The first unobserved reply");
+    const getByRole = h.browser.tab.playwright.getByRole;
+    h.browser.tab.playwright.getByRole = (kind, options) => {
+      const control = getByRole(kind, options), click = control.click;
+      if (options.name === "Stop") control.click = async () => {
+        await click();
+        if (replaceReply) h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)];
+        else h.browser.ui.texts.push("The first reply rendered while Stop was reconciled");
+      };
+      return control;
+    };
+    h.newTurn(followupId, "Continue only after identifying the stopped reply.");
+    const continuation = (await h.request()).output[0];
+    if (replaceReply) await assert.rejects(h.executeBrowser(continuation), /latest reply changed/iu);
+    else {
+      const output = await h.executeBrowser(continuation); h.append(continuation, outputFor(continuation, output));
+      await h.toObserve();
+      assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue only after identifying the stopped reply." }]);
+    }
+    assert.equal(h.browser.ui.sends.length, replaceReply ? 1 : 2);
+    assert.equal(h.browser.ui.stopMarks.length, 1); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
+  });
+});
+
+test("failed pre-Send recovery preserves its confirmed checkpoint across an unsent retry and restart", async t => {
+  const h = harness(t); await stopBeforeRenderedReply(h);
+  const checkpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
+  h.browser.ui.composer = "A draft temporarily blocks recovery.";
+  h.newTurn(followupId, "First new native instruction.");
+  const continuation = (await h.request()).output[0];
+  const failure = await h.executeBrowser(continuation).then(() => assert.fail("The draft must block recovery."), error => error);
+  h.append(continuation, outputFor(continuation, { isError: true, content: [{ type: "text", text: failure.message }] }));
+  await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+  await h.restartRuntime();
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.lastTurn.turnId, followupId); assert.equal(saved.lastTurn.sendState, "unsent");
+  assert.deepEqual(saved.checkpoint, checkpoint); assert.equal(saved.uncertainSend, false);
+  assert.equal(saved.interruptedTurnId, undefined); assert.equal(saved.interruptedSendState, undefined);
+  h.browser.ui.composer = "";
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Second new native instruction.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "First new native instruction." }, { role: "user", content: "Second new native instruction." }]);
+  assert.equal(h.browser.ui.sends.length, 2); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
+});
+
+test("an interrupted unsent turn without a confirmed checkpoint cannot recover or open a replacement", async t => {
   const h = harness(t);
   const bootstrap = (await h.request()).output[0];
   const open = (await h.answerBrowser(bootstrap)).output[0];

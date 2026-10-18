@@ -1,0 +1,1251 @@
+--- a/codex-rs/core/src/hook_runtime.rs
++++ b/codex-rs/core/src/hook_runtime.rs
+@@ -64,6 +64,7 @@
+ use crate::environment_selection::TurnEnvironmentSnapshot;
+ use crate::event_mapping::parse_turn_item;
+ use crate::guardian::GuardianReviewContext;
++use crate::hook_mcp_executor::StepHookMcpExecutor;
+ use crate::session::TurnInput;
+ use crate::session::session::Session;
+ use crate::session::step_context::StepContext;
+@@ -318,7 +319,13 @@
+         tool_input,
+         tool_response,
+     };
+-    let hooks = sess.hooks();
++    let hooks = sess
++        .hooks()
++        .with_mcp_executor(Arc::new(StepHookMcpExecutor::new(
++            sess.thread_id(),
++            build_request_metadata(Some(step_context), turn_context),
++            Some(step_context),
++        )));
+     let preview_runs = hooks.preview_post_tool_use(&request);
+     emit_hook_started_events(sess, turn_context, preview_runs).await;
+ 
+@@ -515,13 +522,20 @@
+         .map(executor_hook_sources_for_step)
+         .unwrap_or_default();
+     let has_executor_hooks = !executor_hook_sources.is_empty();
+-    let hooks = sess.hooks().with_executor_hooks(executor_hook_sources);
++    let request_metadata = build_request_metadata(last_known_step_context.as_deref(), turn_context);
++    let hooks = sess
++        .hooks()
++        .with_executor_hooks(executor_hook_sources)
++        .with_mcp_executor(Arc::new(StepHookMcpExecutor::new(
++            sess.thread_id(),
++            request_metadata.clone(),
++            last_known_step_context.as_deref(),
++        )));
+     let preview_runs = hooks.preview_interrupt();
+     if preview_runs.is_empty() && !has_executor_hooks {
+         return;
+     }
+ 
+-    let request_metadata = build_request_metadata(last_known_step_context.as_deref(), turn_context);
+     let request = InterruptRequest {
+         session_id: sess.session_id().into(),
+         turn_id: turn_context.sub_id.clone(),
+--- a/codex-rs/core/src/hook_mcp_executor.rs
++++ b/codex-rs/core/src/hook_mcp_executor.rs
+@@ -3,11 +3,21 @@
+ use anyhow::bail;
+ use codex_hooks::HookMcpCall;
+ use codex_hooks::HookMcpExecutor;
++use codex_mcp::MCP_SANDBOX_LAUNCHER_META_KEY;
++use codex_mcp::MCP_SANDBOX_STATE_CAPABILITY;
++use codex_mcp::MCP_SANDBOX_STATE_META_CAPABILITY;
++use codex_mcp::McpBinding;
+ use codex_mcp::McpRuntime;
+ use codex_protocol::ThreadId;
++use codex_utils_absolute_path::AbsolutePathBuf;
+ use futures::FutureExt;
+ use futures::future::BoxFuture;
++use serde_json::Map;
+ use serde_json::Value;
++
++use crate::environment_selection::TurnEnvironmentSnapshot;
++use crate::mcp_tool_call::mcp_sandbox_state;
++use crate::session::step_context::StepContext;
+ 
+ pub(crate) struct CoreHookMcpExecutor {
+     pub(crate) runtime: Arc<McpRuntime>,
+@@ -36,22 +46,104 @@
+                     /*wait_for_server*/ false,
+                 )
+                 .await?;
+-            let text = result
+-                .content
+-                .iter()
+-                .filter_map(|content| {
+-                    (content.get("type").and_then(Value::as_str) == Some("text"))
+-                        .then(|| content.get("text").and_then(Value::as_str))
+-                        .flatten()
+-                })
+-                .collect::<Vec<_>>()
+-                .join("\n");
+-            if result.is_error == Some(true) {
+-                bail!("MCP tool returned an error: {text}");
+-            }
+-
+-            Ok(text)
++            hook_result_text(result)
+         }
+         .boxed()
+     }
+ }
++
++/// One hook dispatch retains its actual step even after the task is cancelled
++/// or a newer MCP runtime configuration is published.
++pub(crate) struct StepHookMcpExecutor {
++    thread_id: ThreadId,
++    request_metadata: Map<String, Value>,
++    context: Option<StepHookMcpContext>,
++}
++
++struct StepHookMcpContext {
++    mcp: Arc<McpBinding>,
++    environments: TurnEnvironmentSnapshot,
++    fallback_cwd: AbsolutePathBuf,
++}
++
++impl StepHookMcpExecutor {
++    pub(crate) fn new(
++        thread_id: ThreadId,
++        request_metadata: Map<String, Value>,
++        step_context: Option<&StepContext>,
++    ) -> Self {
++        Self {
++            thread_id,
++            request_metadata,
++            context: step_context.map(|step_context| StepHookMcpContext {
++                mcp: Arc::clone(&step_context.mcp),
++                environments: step_context.environments.clone(),
++                #[allow(deprecated)]
++                fallback_cwd: step_context.turn.cwd.clone(),
++            }),
++        }
++    }
++}
++
++impl HookMcpExecutor for StepHookMcpExecutor {
++    fn execute(&self, call: HookMcpCall) -> BoxFuture<'_, anyhow::Result<String>> {
++        async move {
++            let Some(context) = &self.context else {
++                bail!("MCP hook has no originating step binding");
++            };
++            let prepared = context.mcp.prepare_hook_call(
++                &call.server,
++                &call.tool,
++                call.environment_id.as_deref(),
++            )?;
++            let mut metadata = call.metadata.unwrap_or_default();
++            // Only the host's canonical metadata may identify this invocation.
++            metadata.remove(crate::X_CODEX_TURN_METADATA_HEADER);
++            // Sandbox authority also comes exclusively from the retained binding.
++            metadata.remove(MCP_SANDBOX_STATE_CAPABILITY);
++            metadata.remove(MCP_SANDBOX_STATE_META_CAPABILITY);
++            metadata.remove(MCP_SANDBOX_LAUNCHER_META_KEY);
++            metadata.extend(self.request_metadata.clone());
++            metadata.insert(
++                "threadId".to_string(),
++                Value::String(self.thread_id.to_string()),
++            );
++            let result = prepared
++                .call_with_preparation(call.timeout, || async {
++                    let mut meta = Some(Value::Object(metadata));
++                    if prepared.server_supports_sandbox_state_meta_capability()
++                        && let Some(state) = mcp_sandbox_state(
++                            prepared.config(),
++                            prepared.permission_profile(),
++                            prepared.server_environment_id(),
++                            &context.environments,
++                            &context.fallback_cwd,
++                        )
++                    {
++                        prepared.augment_sandbox_metadata(&mut meta, state).await?;
++                    }
++                    Ok((Some(Value::Object(call.input)), meta))
++                })
++                .await?;
++            hook_result_text(result)
++        }
++        .boxed()
++    }
++}
++
++fn hook_result_text(result: codex_protocol::mcp::CallToolResult) -> anyhow::Result<String> {
++    let text = result
++        .content
++        .iter()
++        .filter_map(|content| {
++            (content.get("type").and_then(Value::as_str) == Some("text"))
++                .then(|| content.get("text").and_then(Value::as_str))
++                .flatten()
++        })
++        .collect::<Vec<_>>()
++        .join("\n");
++    if result.is_error == Some(true) {
++        bail!("MCP tool returned an error: {text}");
++    }
++    Ok(text)
++}
+--- a/codex-rs/core/src/mcp_tool_call.rs
++++ b/codex-rs/core/src/mcp_tool_call.rs
+@@ -6,6 +6,7 @@
+ use crate::config::edit::ConfigEdit;
+ use crate::config::edit::ConfigEditsBuilder;
+ use crate::connectors;
++use crate::environment_selection::TurnEnvironmentSnapshot;
+ use crate::guardian::GuardianApprovalRequest;
+ use crate::guardian::GuardianMcpAnnotations;
+ use crate::guardian::GuardianReviewContext;
+@@ -863,42 +864,58 @@
+         return Ok(meta);
+     }
+ 
+-    let server_environment_id = prepared_call.server_environment_id();
+-    let Some(sandbox_cwd) = prepared_call
+-        .config()
++    #[allow(deprecated)]
++    let fallback_cwd = &step_context.turn.cwd;
++    let Some(state) = mcp_sandbox_state(
++        prepared_call.config(),
++        prepared_call.permission_profile(),
++        prepared_call.server_environment_id(),
++        &step_context.environments,
++        fallback_cwd,
++    ) else {
++        return Ok(meta);
++    };
++    prepared_call
++        .augment_sandbox_metadata(&mut meta, state)
++        .await?;
++
++    Ok(meta)
++}
++
++/// Derive both model and hook sandbox context from their originating binding and environments.
++pub(crate) fn mcp_sandbox_state(
++    config: &codex_mcp::McpConfig,
++    permission_profile: &PermissionProfile,
++    environment_id: &str,
++    environments: &TurnEnvironmentSnapshot,
++    fallback_cwd: &AbsolutePathBuf,
++) -> Option<SandboxState> {
++    let sandbox_cwd = config
+         .environment_cwds
+-        .get(server_environment_id)
++        .get(environment_id)
+         .cloned()
+-        .or_else(|| sandbox_cwd_for_mcp_server(step_context, server_environment_id))
+-    else {
+-        return Ok(meta);
+-    };
++        .or_else(|| sandbox_cwd_for_mcp_server(environments, fallback_cwd, environment_id))?;
+     // TODO(anp): Build this metadata from the server's captured
+     // TurnEnvironment::sandbox_context instead of the runtime-wide Landlock value.
+-    prepared_call
+-        .augment_sandbox_metadata(
+-            &mut meta,
+-            SandboxState {
+-                permission_profile: prepared_call.permission_profile().clone(),
+-                codex_linux_sandbox_exe: prepared_call.config().codex_linux_sandbox_exe.clone(),
+-                sandbox_cwd,
+-                use_legacy_landlock: prepared_call.config().use_legacy_landlock,
+-                use_mxc: prepared_call
+-                    .config()
+-                    .environment_use_mxc
+-                    .get(server_environment_id)
+-                    .copied()
+-                    .unwrap_or(false),
+-            },
+-        )
+-        .await?;
+-
+-    Ok(meta)
+-}
+-
+-fn sandbox_cwd_for_mcp_server(step_context: &StepContext, environment_id: &str) -> Option<PathUri> {
+-    if let Some(environment) = step_context
+-        .environments
++    Some(SandboxState {
++        permission_profile: permission_profile.clone(),
++        codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
++        sandbox_cwd,
++        use_legacy_landlock: config.use_legacy_landlock,
++        use_mxc: config
++            .environment_use_mxc
++            .get(environment_id)
++            .copied()
++            .unwrap_or(false),
++    })
++}
++
++fn sandbox_cwd_for_mcp_server(
++    environments: &TurnEnvironmentSnapshot,
++    fallback_cwd: &AbsolutePathBuf,
++    environment_id: &str,
++) -> Option<PathUri> {
++    if let Some(environment) = environments
+         .turn_environments()
+         .find(|environment| environment.selection.environment_id == environment_id)
+     {
+@@ -906,8 +923,7 @@
+     }
+ 
+     if environment_id == codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID {
+-        #[allow(deprecated)]
+-        return Some(PathUri::from_abs_path(&step_context.turn.cwd));
++        return Some(PathUri::from_abs_path(fallback_cwd));
+     }
+ 
+     None
+--- a/codex-rs/core/src/mcp_tool_call_tests.rs
++++ b/codex-rs/core/src/mcp_tool_call_tests.rs
+@@ -1331,7 +1331,8 @@
+         )));
+ 
+     let step_context = StepContext::for_test(Arc::new(turn_context));
+-    let sandbox_cwd = sandbox_cwd_for_mcp_server(&step_context, "remote");
++    let sandbox_cwd =
++        sandbox_cwd_for_mcp_server(&step_context.environments, &step_context.turn.cwd, "remote");
+ 
+     assert_eq!(sandbox_cwd, Some(secondary_cwd));
+     Ok(())
+@@ -1342,7 +1343,8 @@
+     let (_, turn_context) = make_session_and_context().await;
+ 
+     let step_context = StepContext::for_test(Arc::new(turn_context));
+-    let sandbox_cwd = sandbox_cwd_for_mcp_server(&step_context, "remote");
++    let sandbox_cwd =
++        sandbox_cwd_for_mcp_server(&step_context.environments, &step_context.turn.cwd, "remote");
+ 
+     assert_eq!(sandbox_cwd, None);
+     Ok(())
+--- a/codex-rs/codex-mcp/src/binding.rs
++++ b/codex-rs/codex-mcp/src/binding.rs
+@@ -98,6 +98,33 @@
+             .cloned()
+     }
+ 
++    /// Bind a configured hook to this step's ready client and server policy.
++    /// Hooks may call tools hidden from the model or omitted from tools/list.
++    pub fn prepare_hook_call(
++        &self,
++        server: &str,
++        tool: &str,
++        environment_id: Option<&str>,
++    ) -> Result<PreparedHookMcpCall> {
++        let server_metadata =
++            self.connections
++                .hook_server_metadata(server, tool, environment_id)?;
++        let client = self.clients.client(server).ok_or_else(|| {
++            anyhow::anyhow!("MCP server '{server}' was not ready for the originating step")
++        })?;
++        self.config
++            .permission_profile_for_server(server)
++            .ok_or_else(|| anyhow::anyhow!("MCP server '{server}' has no permission authority"))?;
++        Ok(PreparedHookMcpCall {
++            _connections: Arc::clone(&self.connections),
++            client,
++            config: Arc::clone(&self.config),
++            server_name: server.to_string(),
++            tool_name: tool.to_string(),
++            server_metadata,
++        })
++    }
++
+     pub fn has_servers(&self) -> bool {
+         self.connections.has_servers()
+     }
+@@ -164,6 +191,96 @@
+             .field("tools", &self.tools)
+             .field("prepared_call_count", &self.calls.len())
+             .finish_non_exhaustive()
++    }
++}
++
++/// A configured hook's exact ready client and permission authority.
++/// Unlike model calls, hooks do not receive host-owned entitlement authority.
++pub struct PreparedHookMcpCall {
++    // Keep server connections alive even when the originating binding is dropped.
++    _connections: Arc<McpConnectionSet>,
++    client: Arc<ManagedClient>,
++    config: Arc<McpConfig>,
++    server_name: String,
++    tool_name: String,
++    server_metadata: McpServerMetadata,
++}
++
++impl PreparedHookMcpCall {
++    pub fn config(&self) -> &McpConfig {
++        &self.config
++    }
++
++    pub fn permission_profile(&self) -> &PermissionProfile {
++        let Some(permission_profile) = self.config.permission_profile_for_server(&self.server_name)
++        else {
++            unreachable!("prepared hook calls retain their immutable permission authority");
++        };
++        permission_profile
++    }
++
++    pub fn server_environment_id(&self) -> &str {
++        &self.server_metadata.environment_id
++    }
++
++    /// Capabilities come from the same initialized client that executes this hook.
++    pub fn server_supports_sandbox_state_meta_capability(&self) -> bool {
++        self.client.server_supports_sandbox_state_meta_capability
++    }
++
++    pub async fn augment_sandbox_metadata(
++        &self,
++        meta: &mut Option<JsonValue>,
++        state: crate::SandboxState,
++    ) -> Result<()> {
++        crate::sandbox_metadata::augment_metadata(
++            meta,
++            state,
++            sandbox_codex_executable(
++                &self.config,
++                &self.server_name,
++                self.server_environment_id(),
++            )
++            .await,
++        )
++    }
++
++    /// Preparation and dispatch share the more restrictive server/hook deadline.
++    pub async fn call_with_preparation<F, Fut>(
++        &self,
++        requested_timeout: Duration,
++        prepare: F,
++    ) -> Result<CallToolResult>
++    where
++        F: FnOnce() -> Fut,
++        Fut: Future<Output = Result<(Option<JsonValue>, Option<JsonValue>)>>,
++    {
++        let timeout = self
++            .client
++            .tool_timeout
++            .map_or(requested_timeout, |timeout| timeout.min(requested_timeout));
++        tokio::time::timeout(timeout, async {
++            if self.client.client.is_closed().await {
++                anyhow::bail!("MCP server '{}' is not connected", self.server_name);
++            }
++            let (arguments, mut meta) = prepare().await?;
++            if let Some(JsonValue::Object(meta)) = meta.as_mut() {
++                meta.remove(crate::trusted_access::ENTITLEMENT_CONTEXT_KEY);
++            }
++            self.client
++                .client
++                .call_tool(self.tool_name.clone(), arguments, meta, Some(timeout))
++                .await
++                .map(call_tool_result_from_rmcp)
++                .with_context(|| {
++                    format!(
++                        "tool call failed for `{}/{}`",
++                        self.server_name, self.tool_name
++                    )
++                })
++        })
++        .await
++        .map_err(|_| anyhow::anyhow!("timed out awaiting tools/call after {timeout:.0?}"))?
+     }
+ }
+ 
+@@ -277,31 +394,12 @@
+     /// loopback) or remote executor does not establish a shared filesystem.
+     /// Capability probes are cached process-wide by absolute executable path.
+     pub async fn sandbox_codex_executable(&self) -> Option<AbsolutePathBuf> {
+-        let server = self
+-            .config
+-            .mcp_server_catalog
+-            .server(&self.server_name)?
+-            .config();
+-        if self.server_environment_id() != codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID
+-            || !server.is_local_environment()
+-            || !matches!(
+-                server.transport,
+-                codex_config::McpServerTransportConfig::Stdio { .. }
+-            )
+-        {
+-            return None;
+-        }
+-
+-        // Require a literal absolute path before the constructor can expand `~`.
+-        let executable = self
+-            .config
+-            .codex_self_exe
+-            .as_deref()
+-            .filter(|path| path.is_absolute() && path.to_str().is_some())?;
+-        let executable = AbsolutePathBuf::from_absolute_path_checked(executable).ok()?;
+-        crate::sandbox_executable::supports_sandbox_state(&executable)
+-            .await
+-            .then_some(executable)
++        sandbox_codex_executable(
++            &self.config,
++            &self.server_name,
++            self.server_environment_id(),
++        )
++        .await
+     }
+ 
+     pub fn server_name(&self) -> &str {
+@@ -442,6 +540,33 @@
+     }
+ }
+ 
++async fn sandbox_codex_executable(
++    config: &McpConfig,
++    server_name: &str,
++    environment_id: &str,
++) -> Option<AbsolutePathBuf> {
++    let server = config.mcp_server_catalog.server(server_name)?.config();
++    if environment_id != codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID
++        || !server.is_local_environment()
++        || !matches!(
++            server.transport,
++            codex_config::McpServerTransportConfig::Stdio { .. }
++        )
++    {
++        return None;
++    }
++
++    // Require a literal absolute path before the constructor can expand `~`.
++    let executable = config
++        .codex_self_exe
++        .as_deref()
++        .filter(|path| path.is_absolute() && path.to_str().is_some())?;
++    let executable = AbsolutePathBuf::from_absolute_path_checked(executable).ok()?;
++    crate::sandbox_executable::supports_sandbox_state(&executable)
++        .await
++        .then_some(executable)
++}
++
+ pub(crate) fn call_tool_result_from_rmcp(result: rmcp::model::CallToolResult) -> CallToolResult {
+     let content = result
+         .content
+--- a/codex-rs/codex-mcp/src/binding_tests.rs
++++ b/codex-rs/codex-mcp/src/binding_tests.rs
+@@ -3,6 +3,7 @@
+ use std::sync::Arc;
+ use std::sync::atomic::AtomicBool;
+ use std::sync::atomic::Ordering;
++use std::time::Duration;
+ 
+ use codex_config::AppToolApproval;
+ use codex_config::Constrained;
+@@ -21,6 +22,7 @@
+ use tokio::sync::Notify;
+ 
+ use super::McpBinding;
++use super::PreparedHookMcpCall;
+ use super::PreparedMcpCall;
+ use crate::binding_clients::McpBindingClients;
+ use crate::client_tool_catalog::ClientToolCatalog;
+@@ -412,6 +414,53 @@
+ }
+ 
+ #[tokio::test]
++async fn hook_preparation_obeys_the_shorter_server_or_hook_deadline() {
++    let step = test_step(
++        "old",
++        AppToolApproval::Prompt,
++        /*supports_sandbox_state_meta*/ true,
++    )
++    .await;
++    let model_call = step
++        .step
++        .prepare_call(SERVER_NAME, TOOL_NAME)
++        .expect("prepared model call supplies the same initialized client authority");
++    for (server_timeout, hook_timeout) in [
++        (Duration::from_millis(20), Duration::from_secs(5)),
++        (Duration::from_secs(5), Duration::from_millis(20)),
++    ] {
++        let mut client = model_call.client.as_ref().clone();
++        client.tool_timeout = Some(server_timeout);
++        let prepared = PreparedHookMcpCall {
++            _connections: Arc::clone(&model_call.connections),
++            client: Arc::new(client),
++            config: Arc::clone(&model_call.config),
++            server_name: SERVER_NAME.to_owned(),
++            tool_name: TOOL_NAME.to_owned(),
++            server_metadata: model_call.server_metadata.clone(),
++        };
++        let preparation_started = AtomicBool::new(false);
++        let error = tokio::time::timeout(
++            Duration::from_secs(1),
++            prepared.call_with_preparation(hook_timeout, || async {
++                preparation_started.store(true, Ordering::SeqCst);
++                // Launcher probing, OAuth, or another preparation dependency
++                // cannot keep Interrupt alive past its configured deadline.
++                std::future::pending().await
++            }),
++        )
++        .await
++        .expect("the shorter deadline must include preparation, before tools/call")
++        .expect_err("unfinished preparation must time out");
++        assert!(preparation_started.load(Ordering::SeqCst));
++        assert!(
++            error.to_string().contains("timed out awaiting tools/call"),
++            "unexpected preparation error: {error:#}"
++        );
++    }
++}
++
++#[tokio::test]
+ async fn sandbox_executable_requires_local_stdio_and_a_full_cli() -> anyhow::Result<()> {
+     #[cfg(unix)]
+     use std::os::unix::ffi::OsStrExt;
+--- a/codex-rs/codex-mcp/src/connection_manager.rs
++++ b/codex-rs/codex-mcp/src/connection_manager.rs
+@@ -988,6 +988,32 @@
+         }
+     }
+ 
++    /// Validate a hook against this connection set's captured server policy.
++    /// The caller supplies the ready client retained by its originating binding.
++    pub(crate) fn hook_server_metadata(
++        &self,
++        server: &str,
++        tool: &str,
++        environment_id: Option<&str>,
++    ) -> Result<McpServerMetadata> {
++        let view = self
++            .servers
++            .get(server)
++            .ok_or_else(|| anyhow!("unknown MCP server '{server}'"))?;
++        if let Some(environment_id) = environment_id
++            && view.metadata.environment_id != environment_id
++        {
++            bail!(
++                "MCP server `{server}` is running in environment `{}`, expected `{environment_id}`",
++                view.metadata.environment_id
++            );
++        }
++        if !view.tool_filter.allows(tool) {
++            bail!("tool '{tool}' is disabled for MCP server '{server}'");
++        }
++        Ok(view.metadata.clone())
++    }
++
+     /// Invoke the tool indicated by the (server, tool) pair.
+     #[allow(clippy::too_many_arguments)]
+     pub async fn call_tool(
+--- a/codex-rs/codex-mcp/src/lib.rs
++++ b/codex-rs/codex-mcp/src/lib.rs
+@@ -1,4 +1,5 @@
+ pub use binding::McpBinding;
++pub use binding::PreparedHookMcpCall;
+ pub use binding::PreparedMcpCall;
+ pub use client_capabilities::client_mcp_extensions;
+ pub use client_tool_catalog::CodexAppsToolSnapshot;
+--- a/codex-rs/hooks/src/registry.rs
++++ b/codex-rs/hooks/src/registry.rs
+@@ -115,6 +115,13 @@
+         hooks
+     }
+ 
++    /// Bind one dispatch to its originating host context without changing session hooks.
++    pub fn with_mcp_executor(&self, mcp_executor: Arc<dyn HookMcpExecutor>) -> Self {
++        let mut hooks = self.clone();
++        hooks.engine.mcp_executor = mcp_executor;
++        hooks
++    }
++
+     fn from_config(
+         config: HooksConfig,
+         mcp_executor: Arc<dyn HookMcpExecutor>,
+--- a/codex-rs/hooks/src/engine/dispatcher.rs
++++ b/codex-rs/hooks/src/engine/dispatcher.rs
+@@ -144,8 +144,7 @@
+         let input_json = input_json.clone();
+         let turn_id = turn_id.clone();
+         pending.push(async move {
+-            let result =
+-                execute_handler(engine, &handler, &input_json, cwd, /*metadata*/ None).await;
++            let result = execute_handler(engine, &handler, &input_json, cwd, metadata).await;
+             (configured_order, parse(&handler, result, turn_id))
+         });
+     }
+--- a/codex-rs/hooks/src/engine/mod_tests.rs
++++ b/codex-rs/hooks/src/engine/mod_tests.rs
+@@ -2392,6 +2392,7 @@
+ async fn executor_stop_hooks_run_unless_regular_hooks_block_without_stopping() {
+     let (mut engine, calls, request, expected_executor_call, _source) =
+         executor_stop_hook_fixture();
++    let request_metadata = request.request_metadata.clone();
+ 
+     assert_eq!(engine.preview_stop(&request), Vec::new());
+     let outcome = engine.run_stop(request.clone()).await;
+@@ -2431,7 +2432,7 @@
+                 server: "security".to_string(),
+                 tool: "check".to_string(),
+                 environment_id: None,
+-                metadata: None,
++                metadata: request_metadata.clone(),
+                 input: Default::default(),
+                 timeout: Duration::from_secs(30),
+             },
+@@ -2468,7 +2469,7 @@
+                 server: "security".to_string(),
+                 tool: "check".to_string(),
+                 environment_id: None,
+-                metadata: None,
++                metadata: request_metadata.clone(),
+                 input: Default::default(),
+                 timeout: Duration::from_secs(30),
+             },
+@@ -2476,7 +2477,7 @@
+                 server: "security".to_string(),
+                 tool: "check".to_string(),
+                 environment_id: None,
+-                metadata: None,
++                metadata: request_metadata.clone(),
+                 input: Default::default(),
+                 timeout: Duration::from_secs(30),
+             },
+@@ -2484,7 +2485,7 @@
+                 server: "security".to_string(),
+                 tool: "terminate".to_string(),
+                 environment_id: None,
+-                metadata: None,
++                metadata: request_metadata,
+                 input: Default::default(),
+                 timeout: Duration::from_secs(30),
+             },
+@@ -2617,7 +2618,7 @@
+             server: "security".to_string(),
+             tool: "check".to_string(),
+             environment_id: None,
+-            metadata: None,
++            metadata: request.request_metadata.clone(),
+             input: Default::default(),
+             timeout: Duration::from_secs(5),
+         };
+@@ -2850,6 +2851,15 @@
+         }),
+         Arc::new(executor),
+     );
++    let request_metadata = Some(serde_json::Map::from_iter([(
++        "x-codex-turn-metadata".to_string(),
++        serde_json::json!({
++            "session_id": "session-1",
++            "thread_id": "thread-1",
++            "turn_id": "turn-1",
++            "model": "gpt-test",
++        }),
++    )]));
+     let outcome = engine
+         .run_interrupt(InterruptRequest {
+             session_id: ThreadId::new(),
+@@ -2858,7 +2868,7 @@
+             transcript_path: None,
+             model: "gpt-test".to_string(),
+             permission_mode: "default".to_string(),
+-            request_metadata: None,
++            request_metadata: request_metadata.clone(),
+         })
+         .await;
+ 
+@@ -2881,7 +2891,7 @@
+             server: "security".to_string(),
+             tool: "notify".to_string(),
+             environment_id: None,
+-            metadata: None,
++            metadata: request_metadata,
+             input: serde_json::from_value(serde_json::json!({
+                 "event": "Interrupt",
+                 "turn_id": "turn-1",
+--- a/codex-rs/core/tests/suite/mod.rs
++++ b/codex-rs/core/tests/suite/mod.rs
+@@ -121,6 +121,7 @@
+ mod hooks_executor;
+ #[cfg(not(target_os = "windows"))]
+ mod hooks_mcp;
++mod hooks_mcp_context;
+ mod hooks_plugin_policy_refresh;
+ mod image_rollout;
+ mod injected_models_cache;
+--- /dev/null
++++ b/codex-rs/core/tests/suite/hooks_mcp_context.rs
+@@ -0,0 +1,476 @@
++use std::collections::HashMap;
++use std::fs;
++use std::path::Path;
++use std::time::Duration;
++
++use anyhow::Context;
++use anyhow::Result;
++use codex_core::ConfigRefreshOutcome;
++use codex_core::TurnInputRequest;
++use codex_mcp::MCP_SANDBOX_LAUNCHER_META_KEY;
++use codex_mcp::MCP_SANDBOX_STATE_CAPABILITY;
++use codex_mcp::MCP_SANDBOX_STATE_META_CAPABILITY;
++use codex_mcp::SandboxState;
++use codex_protocol::models::PermissionProfile;
++use codex_protocol::protocol::AskForApproval;
++use codex_protocol::protocol::EventMsg;
++use codex_protocol::protocol::HookEventName;
++use codex_protocol::protocol::HookRunStatus;
++use codex_protocol::protocol::Op;
++use codex_protocol::protocol::ThreadSettingsOverrides;
++use codex_protocol::protocol::TurnAbortReason;
++use codex_protocol::user_input::UserInput;
++use codex_utils_path_uri::PathUri;
++use core_test_support::hooks::trust_discovered_hooks;
++use core_test_support::responses::ev_assistant_message;
++use core_test_support::responses::ev_completed;
++use core_test_support::responses::ev_function_call_with_namespace;
++use core_test_support::responses::ev_response_created;
++use core_test_support::responses::mount_response_sequence;
++use core_test_support::responses::mount_sse_sequence;
++use core_test_support::responses::sse;
++use core_test_support::responses::sse_response;
++use core_test_support::responses::start_mock_server;
++use core_test_support::skip_if_no_network;
++use core_test_support::test_codex::TestCodex;
++use core_test_support::test_codex::test_codex;
++use core_test_support::test_codex::turn_permission_fields;
++use core_test_support::wait_for_event_match;
++use core_test_support::wait_for_mcp_server;
++use pretty_assertions::assert_eq;
++use serde_json::Value;
++use serde_json::json;
++use test_case::test_case;
++use wiremock::Mock;
++use wiremock::MockServer;
++use wiremock::Request;
++use wiremock::ResponseTemplate;
++use wiremock::matchers::method;
++use wiremock::matchers::path;
++
++const RMCP_SERVER: &str = "rmcp";
++const RMCP_PREFIXED_NAMESPACE: &str = "mcp__rmcp";
++
++async fn mount_hook_context_mcp_server(
++    server: &MockServer,
++    endpoint: &str,
++    supports_sandbox_state: bool,
++) {
++    Mock::given(method("POST"))
++        .and(path(endpoint))
++        .respond_with(move |request: &Request| {
++            let request: Value = serde_json::from_slice(&request.body).expect("valid MCP request");
++            let result = match request["method"].as_str() {
++                Some("initialize") => {
++                    let mut capabilities = json!({ "tools": {} });
++                    if supports_sandbox_state {
++                        capabilities["experimental"] = json!({ "codex/sandbox-state": {} });
++                    }
++                    json!({
++                        "protocolVersion": request["params"]["protocolVersion"],
++                        "capabilities": capabilities,
++                        "serverInfo": { "name": RMCP_SERVER, "version": "1.0.0" },
++                    })
++                }
++                Some("notifications/initialized") => return ResponseTemplate::new(202),
++                Some("tools/list") => json!({ "tools": [
++                    {
++                        "name": "read_context",
++                        "inputSchema": { "type": "object" },
++                        "annotations": { "readOnlyHint": true },
++                    },
++                    {
++                        "name": "cleanup",
++                        "inputSchema": { "type": "object" },
++                        "_meta": { "ui": { "visibility": [] } },
++                    },
++                ] }),
++                Some("tools/call") => json!({
++                    "content": [{ "type": "text", "text": "{}" }],
++                }),
++                other => panic!("unexpected MCP method: {other:?}"),
++            };
++            ResponseTemplate::new(200).set_body_json(json!({
++                "jsonrpc": "2.0",
++                "id": request["id"],
++                "result": result,
++            }))
++        })
++        .mount(server)
++        .await;
++}
++
++fn write_context_mcp_hook(home: &Path, event_name: &str) -> Result<()> {
++    let hooks = json!({
++        "hooks": {
++            event_name: [{
++                "matcher": (event_name == "PostToolUse").then_some("mcp__rmcp__read_context"),
++                "hooks": [{
++                    "type": "mcp_tool",
++                    "server": RMCP_SERVER,
++                    "tool": "cleanup",
++                    "input": { "event": "${hook_event_name}" },
++                    "timeout": 20,
++                }],
++            }],
++        },
++    });
++    fs::write(home.join("hooks.json"), hooks.to_string()).context("write context MCP hook")
++}
++
++async fn context_mcp_calls(server: &MockServer, endpoint: &str) -> Result<Vec<Value>> {
++    Ok(server
++        .received_requests()
++        .await
++        .context("MCP server should record requests")?
++        .into_iter()
++        .filter(|request| request.url.path() == endpoint)
++        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
++        .filter(|request| request["method"] == "tools/call")
++        .collect())
++}
++
++fn assert_hook_matches_model_mcp_context(
++    test: &TestCodex,
++    response_request: &Value,
++    ordinary_call: &Value,
++    hook_call: &Value,
++    supports_sandbox_state: bool,
++) -> Result<()> {
++    let ordinary_meta = ordinary_call["params"]["_meta"]
++        .as_object()
++        .context("ordinary MCP call metadata")?;
++    let hook_meta = hook_call["params"]["_meta"]
++        .as_object()
++        .context("hook MCP call metadata")?;
++    assert_eq!(ordinary_meta["callId"], "read-context");
++    assert!(hook_meta.get("callId").is_none());
++    assert!(hook_meta.get("itemId").is_none());
++    // A hook is a fresh RPC without the originating model item's UI bookkeeping.
++    let ordinary_progress = ordinary_meta
++        .get("progressToken")
++        .context("ordinary MCP call progress token")?;
++    let hook_progress = hook_meta
++        .get("progressToken")
++        .context("hook MCP call progress token")?;
++    assert_ne!(ordinary_progress, hook_progress);
++
++    let response_metadata: Value = serde_json::from_str(
++        response_request["client_metadata"]["x-codex-turn-metadata"]
++            .as_str()
++            .context("model request turn metadata")?,
++    )?;
++    let turn_metadata = &hook_meta["x-codex-turn-metadata"];
++    assert_eq!(turn_metadata, &ordinary_meta["x-codex-turn-metadata"]);
++    // Responses adds request/window/history fields; MCP carries the same canonical
++    // execution metadata with its own native version, without that UI bookkeeping.
++    let mut expected_turn_metadata = response_metadata
++        .as_object()
++        .context("model request turn metadata object")?
++        .clone();
++    for field in [
++        "installation_id",
++        "agent_name",
++        "window_id",
++        "window_number",
++        "context_window_id",
++        "request_kind",
++        "history_initialization",
++        "history_ingest_requested",
++        "analytics_enabled",
++        "parent_turn_id",
++        "root_turn_id",
++        "tool_namespaces_info",
++    ] {
++        expected_turn_metadata.remove(field);
++    }
++    expected_turn_metadata.insert(
++        "codex_version".to_string(),
++        json!(env!("CARGO_PKG_VERSION")),
++    );
++    assert_eq!(turn_metadata, &Value::Object(expected_turn_metadata));
++    for field in ["session_id", "thread_id", "turn_id", "model"] {
++        assert!(
++            turn_metadata[field]
++                .as_str()
++                .is_some_and(|value| !value.is_empty()),
++            "MCP metadata must include {field}",
++        );
++        assert_eq!(turn_metadata[field], response_metadata[field]);
++    }
++    assert_eq!(
++        hook_meta["threadId"],
++        test.session_configured.thread_id.to_string()
++    );
++    assert_eq!(hook_meta["threadId"], ordinary_meta["threadId"]);
++    assert!(hook_meta.get("openai/entitlementContext").is_none());
++    // HTTP servers have no verified local sandbox launcher.
++    assert!(hook_meta.get(MCP_SANDBOX_LAUNCHER_META_KEY).is_none());
++    if supports_sandbox_state {
++        let expected_state = serde_json::to_value(SandboxState {
++            permission_profile: PermissionProfile::read_only(),
++            codex_linux_sandbox_exe: test.config.codex_linux_sandbox_exe.clone(),
++            sandbox_cwd: PathUri::from_abs_path(&test.config.cwd),
++            use_legacy_landlock: false,
++            use_mxc: false,
++        })?;
++        for key in [
++            MCP_SANDBOX_STATE_CAPABILITY,
++            MCP_SANDBOX_STATE_META_CAPABILITY,
++        ] {
++            assert_eq!(hook_meta[key], ordinary_meta[key]);
++            assert_eq!(hook_meta[key], expected_state);
++        }
++    } else {
++        for key in [
++            MCP_SANDBOX_STATE_CAPABILITY,
++            MCP_SANDBOX_STATE_META_CAPABILITY,
++        ] {
++            assert!(hook_meta.get(key).is_none());
++            assert!(ordinary_meta.get(key).is_none());
++        }
++    }
++    Ok(())
++}
++
++#[test_case(true; "advertised sandbox state")]
++#[test_case(false; "unadvertised sandbox state")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn local_post_tool_use_hook_preserves_model_mcp_context(
++    supports_sandbox_state: bool,
++) -> Result<()> {
++    skip_if_no_network!(Ok(()));
++
++    let server = start_mock_server().await;
++    mount_hook_context_mcp_server(&server, "/hook-context", supports_sandbox_state).await;
++    let responses = mount_sse_sequence(
++        &server,
++        vec![
++            sse(vec![
++                ev_response_created("read-context-response"),
++                ev_function_call_with_namespace(
++                    "read-context",
++                    RMCP_PREFIXED_NAMESPACE,
++                    "read_context",
++                    "{}",
++                ),
++                ev_completed("read-context-response"),
++            ]),
++            sse(vec![
++                ev_assistant_message("done", "done"),
++                ev_completed("done"),
++            ]),
++        ],
++    )
++    .await;
++    let mcp_url = format!("{}/hook-context", server.uri());
++    let test = test_codex()
++        .with_pre_build_hook(|home| {
++            write_context_mcp_hook(home, "PostToolUse").expect("write PostToolUse MCP hook");
++        })
++        .with_config(move |config| {
++            trust_discovered_hooks(config);
++            config
++                .mcp_servers
++                .set(HashMap::from([(
++                    RMCP_SERVER.to_string(),
++                    serde_json::from_value(json!({ "url": mcp_url }))
++                        .expect("context MCP server config"),
++                )]))
++                .expect("configure context MCP server");
++        })
++        .build(&server)
++        .await?;
++    wait_for_mcp_server(&test.codex, RMCP_SERVER).await?;
++    test.submit_turn_with_permission_profile("read context", PermissionProfile::read_only())
++        .await?;
++
++    let calls = context_mcp_calls(&server, "/hook-context").await?;
++    assert_eq!(calls.len(), 2);
++    assert_eq!(calls[0]["params"]["name"], "read_context");
++    assert_eq!(calls[1]["params"]["name"], "cleanup");
++    assert_eq!(
++        calls[1]["params"]["arguments"],
++        json!({ "event": "PostToolUse" })
++    );
++    let requests = responses.requests();
++    assert_eq!(requests.len(), 2);
++    assert!(
++        requests[0]
++            .tool_by_name(RMCP_PREFIXED_NAMESPACE, "cleanup")
++            .is_none(),
++        "hook cleanup must remain hidden from the model",
++    );
++    assert_hook_matches_model_mcp_context(
++        &test,
++        &requests[0].body_json(),
++        &calls[0],
++        &calls[1],
++        supports_sandbox_state,
++    )?;
++    Ok(())
++}
++
++#[test_case(true; "captured enabled tool remains callable")]
++#[test_case(false; "captured disabled tool remains denied")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn local_interrupt_hook_keeps_originating_mcp_client_and_policy(
++    cleanup_initially_enabled: bool,
++) -> Result<()> {
++    skip_if_no_network!(Ok(()));
++
++    let server = start_mock_server().await;
++    mount_hook_context_mcp_server(&server, "/originating-context", true).await;
++    mount_hook_context_mcp_server(&server, "/replacement-context", false).await;
++    let responses = mount_response_sequence(
++        &server,
++        vec![
++            sse_response(sse(vec![
++                ev_response_created("read-context-response"),
++                ev_function_call_with_namespace(
++                    "read-context",
++                    RMCP_PREFIXED_NAMESPACE,
++                    "read_context",
++                    "{}",
++                ),
++                ev_completed("read-context-response"),
++            ])),
++            sse_response(sse(vec![ev_completed("waiting-response")]))
++                .set_delay(Duration::from_secs(60)),
++        ],
++    )
++    .await;
++    let mcp_url = format!("{}/originating-context", server.uri());
++    let test = test_codex()
++        .with_pre_build_hook(|home| {
++            write_context_mcp_hook(home, "Interrupt").expect("write Interrupt MCP hook");
++        })
++        .with_config(move |config| {
++            trust_discovered_hooks(config);
++            config
++                .mcp_servers
++                .set(HashMap::from([(
++                    RMCP_SERVER.to_string(),
++                    serde_json::from_value(json!({
++                        "url": mcp_url,
++                        "disabled_tools": if cleanup_initially_enabled { vec![] } else { vec!["cleanup"] },
++                    }))
++                    .expect("originating MCP server config"),
++                )]))
++                .expect("configure originating MCP server");
++        })
++        .build(&server)
++        .await?;
++    wait_for_mcp_server(&test.codex, RMCP_SERVER).await?;
++    let (sandbox_policy, permission_profile) =
++        turn_permission_fields(PermissionProfile::read_only(), test.config.cwd.as_path());
++    test.codex
++        .start_or_steer_turn(
++            TurnInputRequest::user_input(vec![UserInput::Text {
++                text: "read context, then wait".to_string(),
++                text_elements: Vec::new(),
++            }])
++            .with_thread_settings(ThreadSettingsOverrides {
++                approval_policy: Some(AskForApproval::Never),
++                sandbox_policy: Some(sandbox_policy),
++                permission_profile,
++                ..Default::default()
++            }),
++        )
++        .await?;
++    tokio::time::timeout(Duration::from_secs(10), async {
++        while responses.requests().len() != 2 {
++            tokio::task::yield_now().await;
++        }
++    })
++    .await
++    .context("ordinary MCP call must finish before config replacement")?;
++
++    let current_config = test.codex.config().await;
++    let mut replacement_config = (*current_config).clone();
++    replacement_config.mcp_servers.set(HashMap::from([(
++        RMCP_SERVER.to_string(),
++        serde_json::from_value(json!({
++            "url": format!("{}/replacement-context", server.uri()),
++            "disabled_tools": if cleanup_initially_enabled { vec!["cleanup"] } else { vec![] },
++        }))?,
++    )]))?;
++    assert_eq!(
++        test.codex
++            .refresh_mcp_config(current_config, replacement_config)
++            .await,
++        ConfigRefreshOutcome::Published,
++    );
++    // Publishing and using the replacement removes any race with background prewarm.
++    test.codex
++        .call_mcp_tool("rmcp", "read_context", Some(json!({})), None)
++        .await?;
++    assert_eq!(
++        context_mcp_calls(&server, "/replacement-context")
++            .await?
++            .len(),
++        1
++    );
++
++    let completed = tokio::time::timeout(Duration::from_secs(3), async {
++        test.codex.submit(Op::Interrupt).await?;
++        let completed = wait_for_event_match(&test.codex, |event| match event {
++            EventMsg::HookCompleted(completed)
++                if completed.run.event_name == HookEventName::Interrupt =>
++            {
++                Some(completed.clone())
++            }
++            EventMsg::TurnAborted(_) => panic!("Interrupt cleanup must precede TurnAborted"),
++            _ => None,
++        })
++        .await;
++        let aborted = wait_for_event_match(&test.codex, |event| match event {
++            EventMsg::TurnAborted(aborted) => Some(aborted.clone()),
++            _ => None,
++        })
++        .await;
++        assert_eq!(aborted.reason, TurnAbortReason::Interrupted);
++        Ok::<_, anyhow::Error>(completed)
++    })
++    .await
++    .context("Interrupt cleanup and TurnAborted must complete within three seconds")??;
++
++    let originating_calls = context_mcp_calls(&server, "/originating-context").await?;
++    let replacement_calls = context_mcp_calls(&server, "/replacement-context").await?;
++    assert_eq!(
++        replacement_calls.len(),
++        1,
++        "cleanup must not use the replacement client"
++    );
++    if cleanup_initially_enabled {
++        assert_eq!(completed.run.status, HookRunStatus::Completed);
++        assert_eq!(originating_calls.len(), 2);
++        assert_eq!(originating_calls[1]["params"]["name"], "cleanup");
++        assert_eq!(
++            originating_calls[1]["params"]["arguments"],
++            json!({ "event": "Interrupt" })
++        );
++        assert_hook_matches_model_mcp_context(
++            &test,
++            &responses.requests()[0].body_json(),
++            &originating_calls[0],
++            &originating_calls[1],
++            true,
++        )?;
++    } else {
++        assert_eq!(completed.run.status, HookRunStatus::Failed);
++        assert_eq!(
++            originating_calls.len(),
++            1,
++            "captured tool filters must still apply"
++        );
++        assert!(
++            completed
++                .run
++                .entries
++                .iter()
++                .any(|entry| entry.text.contains("disabled"))
++        );
++    }
++    Ok(())
++}

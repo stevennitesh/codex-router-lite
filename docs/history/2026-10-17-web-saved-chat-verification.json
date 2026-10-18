@@ -181,6 +181,53 @@
       "immediateStopVerified": false
     }
   },
+  "nativeInterruptHookInvestigation": {
+    "testedRouterCommit": "a7618bbe830f671b8e6ba1941b07f3d64e4472fc",
+    "configuredOfficialBrowserRuntimeVersion": "26.1013.40934",
+    "inlineNativeHookDispatchVerified": true,
+    "decodedPromptHookCanaryReachedActualWebRequest": true,
+    "ownedBrowserTrial": {
+      "events": ["PostToolUse", "Interrupt"],
+      "exactDisposableChatOnly": true,
+      "offlineGuardChecksPassed": 46,
+      "independentSourceReviewRemainingFindings": 0,
+      "postToolHookRanInCorrectNativeChat": true,
+      "hookMetadataKeys": ["threadId"],
+      "retainedRegistryPassedMapCheck": false,
+      "followingModelOperationError": "Active native browser binding was lost.",
+      "webSends": 0,
+      "codingToolCalls": 0,
+      "stopClicks": 0,
+      "tabsClosed": 0,
+      "bothHandlersDisabledByUser": true
+    },
+    "publicApiBoundary": {
+      "ordinaryNativeMcpCallsIncludeTurnAndSandboxMetadata": true,
+      "localHookExecutorAddsOnlyThreadId": true,
+      "browserDiscoveryRequiresNativeSessionAndTurnMetadata": true,
+      "publicSetupAcceptsExplicitHookContext": false,
+      "exactBindingLossResetMechanismProven": false,
+      "nativeContextSupportNeededForThisHookApproach": true
+    },
+    "continuationAfterDisablingTrial": {
+      "completedAt": "2026-10-18T04:47:28.245Z",
+      "nativeOutcome": "completed",
+      "durationMs": 11603,
+      "sameSavedChatUrlBindingAndTab": true,
+      "browserBindingRecovered": true,
+      "tabReopened": false,
+      "originalMarkerRecalledWithoutResupply": true,
+      "newReplyIdentityObserved": true,
+      "webSendCount": 1,
+      "codingToolCalls": 0,
+      "uncertainSend": false,
+      "unresolvedCodingCalls": 0,
+      "externalLauncherUsed": false,
+      "additionalModelDrivingBrowser": false
+    },
+    "immediateStopVerified": false,
+    "bundledRuntimeModified": false
+  },
   "limits": [
     "These live observations apply to the named Instant Web route and installed identities; they do not certify every Web model or effort.",
     "The manual closure is user-attested. The native trace independently records recovery, a changed tab identity, the same saved URL and a fresh paired tool result.",

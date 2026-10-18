@@ -146,14 +146,48 @@ prevents the runtime from asserting cancellation authority.
 
 Immediate browser Stop depends on the native host delivering interruption to an
 active browser controller. The default native runtime does not currently
-guarantee that delivery. A restricted cancellation-wrapper trial received the
-Interrupt notification, but its pending observation failed before it attempted
-cleanup. That trace does not establish whether a fresh cleanup call could run.
-The wrapper is not installed by this configuration. Tool revocation and next-turn
-reconciliation alone do not establish immediate browser cancellation. Stop keeps
-the tab open; explicit close remains separate. Backend errors fail the selected
-route without a model or backend fallback. Offline tests cover the runtime
-contracts; immediate Stop requires separate live verification.
+guarantee that delivery. The October 17 MCP hook trial executed in the correct
+native chat but could not access its retained browser state; the next ordinary
+browser operation then lost its binding before Send. Both trial hooks are
+disabled, and continuation in the same saved chat and tab was verified afterward.
+
+The configured official browser API requires native session-and-turn metadata
+for browser discovery. Ordinary tool calls receive that metadata; the local hook
+executor supplies only the thread ID, and the public browser setup API has no
+option to supply the missing context. Using this API from an Interrupt hook
+therefore requires native hook-context support. The exact cause of the trial's
+lost binding remains unproved. See the [dated verification evidence](history/2026-10-17-web-saved-chat-verification.json).
+
+The optional [native source patch](../maintenance/codex-hook-context.patch) is
+pinned to OpenAI Codex commit `4ebc485ca321243727539187169425fcf972f2c4`
+(`0.163.0-alpha.10.2`). It forwards local hook metadata and retains the originating
+MCP client and sandbox policy for PostToolUse and Interrupt. Apply it from the
+matching Codex checkout root and build with its pinned Rust toolchain. A release
+archive may need its local workspace versions normalized in `Cargo.lock`; external
+dependency entries must remain unchanged before locked builds and tests.
+
+For this Windows source pin, migration SQL must use the CRLF bytes embedded by
+the installed Windows build. The release archive uses LF; its checksums fail
+against the existing database. Verify build-input checksums against read-only
+migration metadata before activation. Preserve stored checksums and validation.
+
+A native candidate can be selected for one desktop launch with `CODEX_CLI_PATH`.
+That override changes Windows registered-core integration, so verify the effective
+sandbox and native tools before relying on it. Recheck the source pin and desktop
+compatibility after a Codex update. A successful source build does not establish
+live browser cancellation. The October 18 candidate and trusted trial hook did
+cancel a real Web generation while retaining its saved chat and tab, with a
+1.18-second hook execution. Same-tab continuation after an interruption before
+any answer text appeared exposed a separate Router recovery defect. The recovery
+fix passed source verification and awaits deployment and live continuation proof.
+See the [candidate verification and remaining limits](history/2026-10-18-native-hook-context.json).
+
+No cancellation wrapper is installed. Tool revocation and next-turn reconciliation
+alone do not establish immediate browser cancellation. Stop keeps the tab open;
+explicit close remains separate. Backend errors fail the selected route without
+a model or backend fallback. Offline tests cover the runtime contracts; immediate
+Stop requires separate live verification for the selected native runtime and
+hook definitions; the October 18 result covers the recorded candidate and trial.
 
 The in-app backend currently accepts text input. Media upload is unsupported and
 is rejected. Luna's visible browser family has not been established for this

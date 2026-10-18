@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Native hook context repair candidate and verification limits, 2026-10-18](2026-10-18-native-hook-context.json)
+
 - [Live Web compaction, efficient continuation and closed-tab recovery, 2026-10-17](2026-10-17-web-saved-chat-verification.json)
 
 - [Windows app compatibility and complete upstream review, 2026-10-17](2026-10-17-app-compatibility-review.json)

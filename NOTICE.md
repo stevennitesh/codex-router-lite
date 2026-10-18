@@ -21,6 +21,17 @@ Switchyard is licensed under the Apache License, Version 2.0; a copy is included
 in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt). The patch-specific notice
 is in [config/switchyard/patches/README.md](config/switchyard/patches/README.md).
 
+## OpenAI Codex
+
+`maintenance/codex-hook-context.patch` modifies
+[OpenAI Codex](https://github.com/openai/codex), source commit
+`4ebc485ca321243727539187169425fcf972f2c4`
+(`rust-v0.163.0-alpha.10.2`). The changes preserve native MCP hook turn metadata
+and the originating client and sandbox context, and add regression tests.
+OpenAI Codex is licensed under the Apache License, Version 2.0; a copy is included
+in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
+The modifications are by the Codex Router Lite contributors.
+
 ## Independence
 
 This project is independent and is not endorsed by OpenAI, OpenRouter,

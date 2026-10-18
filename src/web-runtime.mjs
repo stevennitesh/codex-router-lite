@@ -383,10 +383,17 @@ export function createInAppWebRuntime({
     // Deployed records without message IDs retain their previous exact-URL and
     // prefix proof. Browser recovery pins the actual DOM ID before continuation.
     const legacyReply = observed?.replyId === undefined && conversation.sendBaselineReplyIds === undefined && observed?.replyCount > conversation.sendBaseline;
+    // The checkpoint proves prior delivery. An interrupted unsent retry has not
+    // superseded it, even when lastTurn no longer identifies the original Send.
+    const retainedTabOnly = turn.interruptedTurnId && ["sent", "unsent"].includes(turn.interruptedSendState) && conversation.tabId
+      && messageIds(conversation.sendBaselineReplyIds) && !conversation.unresolvedCoding.size
+      && (!observed || observed.assistantPrefix.length === 0 && (observed.replyId === null || recoveryReply));
     const recovery = operation === "continue" && !conversation.rolloverRequired && !conversation.needsHistory && conversation.checkpoint && conversation.chatUrl && !conversation.uncertainSend
-      && observed?.assistantPrefix.length > 0 && (recoveryReply || legacyReply)
+      && (retainedTabOnly || observed?.assistantPrefix.length > 0 && (recoveryReply || legacyReply))
       ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline,
-        baselineReplyIds: conversation.sendBaselineReplyIds, ...conversation.observation } : undefined;
+        baselineReplyIds: conversation.sendBaselineReplyIds,
+        ...(observed ?? { replyCount: conversation.sendBaseline, replyId: null, assistantPrefix: { length: 0, sha256: textDigest("") }, completed: false }),
+        ...(retainedTabOnly ? { retainedTabOnly: true } : {}) } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,

@@ -1,0 +1,179 @@
+{
+  "date": "2026-10-18",
+  "status": "native-stop-verified-router-recovery-fixed-live-continuation-pending",
+  "goal": "Native Stop cancels ChatGPT Web generation while retaining the same saved conversation and browser tab, without the external Web launcher or a browser-driving model.",
+  "cause": {
+    "localHookDispatch": "The local hook dispatcher discarded canonical metadata already built by core.",
+    "clientOwnership": "Hook execution also needed the originating MCP binding and policy instead of the latest connection manager.",
+    "previousTrial": "The installed runtime supplied threadId without the browser API's required canonical turn metadata. The exact cause of the prior lost browser binding remains unproved."
+  },
+  "candidate": {
+    "upstreamVersion": "0.163.0-alpha.10.2",
+    "upstreamCommit": "4ebc485ca321243727539187169425fcf972f2c4",
+    "upstreamRelease": "https://github.com/openai/codex/releases/tag/rust-v0.163.0-alpha.10.2",
+    "sourceIdentity": "The exact source commit was present in the signed installed CLI; regular archive files were verified before editing.",
+    "sourceArchiveSha256": "ac3639684097278a3ff4c7583ea9a73da735f1719e03a57715f2b058b2ebe591",
+    "patch": "maintenance/codex-hook-context.patch",
+    "patchSha256": "91c0430fb08916aba6d4f7c4544044b6d0af67cbfa0d5f6744f142c387e138d5",
+    "binarySha256": "42f964bacd72bfe9ff08889e9cfdad5ba7e99435b0c5e55d448808aff3fef9ba",
+    "binarySignature": "Unsigned local dev-small build; not an official OpenAI binary.",
+    "build": "Rust 1.95.0, x86_64-pc-windows-msvc, locked external dependencies. Local workspace versions normalized in Cargo.lock. All 77 SQL build inputs normalized to CRLF with unchanged normalized text: 69 independently match existing Windows migration checksums; eight thread-history files follow the same convention and have focused migration tests, without an existing-metadata comparison.",
+    "officialCliPreservedSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "companions": "Four current official companions staged byte-identically; each has a Valid OpenAI signature.",
+    "behavior": "Forward canonical metadata, retain the originating step's MCP binding and sandbox policy for PostToolUse and Interrupt, preserve filters and permission checks, and bound preparation plus dispatch by the effective timeout.",
+    "initialLfBinarySha256": "52b0bf69116175725f799e3350636dfd49ad8c100e710460d6f6595ae4b13eee"
+  },
+  "verification": {
+    "independentSourceReview": "No actionable findings against the final patch and source manifest.",
+    "codexHooks": {
+      "passed": 177,
+      "failed": 0,
+      "ignored": 0
+    },
+    "codexMcp": {
+      "passed": 265,
+      "failed": 0,
+      "ignored": 0
+    },
+    "windowsCorePostToolUse": {
+      "passed": 2,
+      "failed": 0
+    },
+    "windowsCoreInterrupt": {
+      "passed": 2,
+      "failed": 0
+    },
+    "environment": "Core integration tests use upstream CI RUST_MIN_STACK=8388608. Hook command fixtures use a process-only python3 adapter to the existing Python 3.12.12. The full MCP suite uses the real staged CLI.",
+    "coverage": "The Windows cases compare canonical native/model context, sandbox advertisement, captured client and enabled/disabled tool policy, and completion of Interrupt hooks before TurnAborted.",
+    "testLimits": "Existing Unix-gated core suites were not represented as Windows passes. Zero-selected runs and failed prerequisite runs were not accepted as success. The full core suite and a temporary fault check of the hook Rust implementation were not run; the separate SQL checksum negative control is recorded below.",
+    "protocol": {
+      "officialAndCandidateVersion": "0.163.0-alpha.10.2",
+      "experimentalSchemaFilesEach": 452,
+      "canonicalSchemaMismatches": 0,
+      "isolatedInitializeHandshake": "Passed for official and candidate with no thread, model, browser, tools, or user configuration operations."
+    },
+    "configuredWindowsSandbox": {
+      "executed": false,
+      "reason": "The configured elevated backend's non-registered path always refreshes setup and rewrites the user-home .sandbox-bin DACL. No no-refresh dispatch guard was found. A restricted-token fallback would test a different backend.",
+      "effects": "No sandbox setup, account, UAC, ACL, or marker-write probe was performed."
+    },
+    "controllerPolicyCases": {
+      "passed": 90,
+      "liveProof": false
+    },
+    "launchHelper": "Independent review and hash/process-inspection validation passed. It waits for the actual signed ChatGPT.exe inside the Codex package, uses child-only CODEX_CLI_PATH, and confirms a new descendant candidate process. It does not kill processes or modify official binaries or persistent environment settings.",
+    "windowsSqlBuild": {
+      "normalizedFiles": 77,
+      "sourceTextPreserved": true,
+      "hookPatchAndSourceHashesPreserved": true,
+      "focusedStateTestsPassed": 8,
+      "focusedStateTestsFailed": 0,
+      "explicitStateCrateRecompilation": true,
+      "schemasEach": 452,
+      "canonicalSchemaMismatches": 0,
+      "isolatedInitialize": "Passed for rebuilt candidate and official CLI.",
+      "independentlyMatchedExistingMigrationChecksums": 69,
+      "threadHistoryFilesTextVerified": 8,
+      "existingThreadHistoryMetadataCompared": false
+    }
+  },
+  "trial": {
+    "preparedHooksInstalled": true,
+    "previousDefinitionsBackedUp": true,
+    "nativeReviewAndTrustRequired": true,
+    "scope": "One existing disposable verification chat; preflight is read-only, Interrupt checks exact current turn and saved-tab ownership before Stop, and never closes or replaces the tab.",
+    "hookConfigSha256": "7d9a585d949aeb382a6b3b0327b9610c9a01dd795608c7d1187eb63827bb713f",
+    "safeLocalReceipt": "The trial may record a bounded local receipt containing only native turn identity, status flags, stage and timing; no URL, prompt, raw error, or capability payload.",
+    "desktopActivated": true,
+    "immediateStopVerified": true,
+    "coldBrowserSetupWithinThreeSecondsVerified": true,
+    "next": "Deploy the verified Router recovery fix and verify continuation in the retained saved chat after a zero-text interruption. Actual Desktop native-tool sandbox enforcement remains a separate verification gate.",
+    "activeCandidateSha256": "42f964bacd72bfe9ff08889e9cfdad5ba7e99435b0c5e55d448808aff3fef9ba",
+    "hooksTrustedAndEnabled": true,
+    "liveStop": {
+      "nativeTurnAborted": true,
+      "canonicalMetadataVerified": true,
+      "freshController": true,
+      "exactSavedTabOwnershipVerified": true,
+      "stopVisibleBeforeClick": true,
+      "stopHiddenAfterClick": true,
+      "tabRetained": true,
+      "elapsedMs": 1179,
+      "codingCalls": 0,
+      "humanConfirmation": "ChatGPT stopped; same tab stayed open.",
+      "scope": "One actual Codex Stop during a Web primary-model turn, without the external launcher or a browser-driving model. The hook acquired a fresh official controller because the interrupted tool VM had lost its globals."
+    },
+    "postStopContinuation": {
+      "verified": false,
+      "failure": "Active native browser binding was lost.",
+      "beforeSend": true,
+      "codingCalls": 0,
+      "cause": "The stopped generation had no observed answer text or reply ID. Router required a reply prefix before it would reattach its browser controller, and a failed pre-Send attempt replaced the prior interrupted delivery provenance.",
+      "repairStatus": "Recovery candidate passed 143 Web runtime tests, an independent source review, and full Router validation. Deployment and live continuation pending. No ledger edits, prompt replay, replacement chat, or navigation used.",
+      "repair": "Use the existing confirmed delivery checkpoint and reply baseline to reattach only the exact retained tab and saved URL. A failed pre-Send attempt may remain lastTurn.unsent without discarding that checkpoint. Empty composer, reply identity, current ownership, uncertain Send, and unresolved coding checks remain enforced.",
+      "sourceSha256": {
+        "src/web-runtime.mjs": "7530ce77df4220c8257668c29195f858607b411339143dc0d6ab82fd90940e49",
+        "src/web-browser.mjs": "847756d76fe491785f0a864b7cb516638ba174a5842ddea5095f387ee700e617",
+        "test/web-runtime.test.mjs": "1e7f5cad3720ac3574f7f6fadcded925f177d2093e1c9c166f256bad5c985a56"
+      },
+      "focusedTestsPassed": 143,
+      "independentReview": "No actionable findings; frozen candidate identities rechecked and 30 focused tests passed.",
+      "faultCheck": "An in-memory change allowing a different tab at the same URL was rejected by the exact-tab regression. Source files were unchanged.",
+      "initialFullRouterValidation": {
+        "command": "npm run verify:codex",
+        "passed": 1179,
+        "failed": 2,
+        "skipped": 0,
+        "failureDetails": "The general routing fixture could not bind its loopback port and exited before behavior assertions. The stress fixture's teardown reported four empty-request JSON parse errors; its streamed argument assertions passed. Both cases passed together in isolation. A shared loopback port collision is the inferred linkage, not a recorded process-ownership proof.",
+        "next": "Normal full verification rerun passed."
+      },
+      "fullRouterValidation": {
+        "command": "npm run verify:codex",
+        "passed": 1181,
+        "failed": 0,
+        "skipped": 0,
+        "durationMs": 274918,
+        "currentCodexCatalogModels": 17,
+        "catalogCompatibilityPassed": true
+      }
+    },
+    "liveReadOnlyPreflight": {
+      "completed": true,
+      "metadataVerified": true,
+      "browserReadinessVerified": true,
+      "activeGenerationStopVisible": true,
+      "codingCalls": 0,
+      "additionalContextObserved": true,
+      "savedConversationUrlHashPreserved": true,
+      "note": "One ordinary Web primary-model turn completed without a browser-driving model or external launcher. Initial pre-send state_unavailable was followed by successful current-controller checks."
+    }
+  },
+  "startupTrial": {
+    "attemptedAt": "2026-10-18T06:31:52Z",
+    "desktopExecutableStarted": true,
+    "nativeInitializationSucceeded": false,
+    "modal": "Organization settings could not be loaded",
+    "desktopDiagnostic": "phase=policy-read, reason=process; the generic dialog did not establish a network failure.",
+    "nativeDiagnostic": "failed to initialize sqlite state runtime",
+    "comparison": "Official and candidate pass exact startup initialize/configRequirements/read/config/read with a fresh profile. With existing state, official passes and the initial candidate exits before initialize.",
+    "cause": "The release source archive contains LF SQL. The installed Windows binary embeds CRLF SQL; SQLx SHA384 checksums differ despite equivalent SQL text.",
+    "metadataProof": {
+      "databaseFamilies": 5,
+      "appliedMigrations": 69,
+      "sourceVersionsMatch": true,
+      "lfChecksumMatches": 0,
+      "crlfChecksumMatches": 69,
+      "scope": "Only migration metadata queried through read-only connections; no chat rows selected or stored checksums edited."
+    },
+    "syntheticReproduction": "A fresh source-schema fixture passed under the LF candidate, then failed with the same initialization error after only its migration metadata was replaced with the public CRLF-source checksums.",
+    "repair": "Normalize only candidate SQL build inputs to verified Windows CRLF bytes, preserve normalized text, rebuild, and recheck exact startup settings before requesting another desktop restart. Retain checksum validation and existing state.",
+    "repairVerified": true,
+    "repairedCandidateProof": {
+      "syntheticWindowsChecksumFixture": "Passed all three startup RPCs.",
+      "invalidChecksumControl": "A one-byte checksum fault in the disposable fixture was rejected before initialize; restoring the checksum restored startup.",
+      "existingProfile": "Rebuilt candidate passed initialize, configRequirements/read, and config/read in 968 ms, exit 0, no stderr.",
+      "storedMetadataReadback": "All original 69 Windows migration checksums and versions remained intact across five existing database families.",
+      "desktopTrial": "Corrected candidate activated; native browser context preflight and actual Stop passed. Same-tab continuation after a zero-text interruption exposed a separate Router recovery defect."
+    }
+  }
+}
