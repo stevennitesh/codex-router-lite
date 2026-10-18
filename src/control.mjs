@@ -27,6 +27,7 @@ import {
   connectWebBridge,
   disconnectWebBridge,
   launchWebBridge,
+  readWebBridgeSettings,
   webBridgeModels,
   webBridgeStatus,
   WEB_BRIDGE_TUNNEL_KEY_PATH,
@@ -115,6 +116,16 @@ async function main() {
     } else if (action === "tunnel-key") {
       if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
       print(webTunnelKeyCommand(value ?? "status"));
+    } else if (action === "stop") {
+      const operation = value ?? "status";
+      const { installWebStop, webStopStatus, removeWebStop } = await import("./web-stop-install.mjs");
+      if (operation === "status" && args.length <= 3) print(await webStopStatus());
+      else if (operation === "remove" && args.length === 3) print(await removeWebStop());
+      else if (operation === "install" && extra && args.length === 4) {
+        const settings = readWebBridgeSettings();
+        if (!settings.enabled || settings.backend !== "in-app") throw new Error("Persistent Web Stop requires the configured in-app browser backend.");
+        print(await installWebStop({ candidateManifestPath: path.resolve(extra), runtimeModule: settings.browser.runtimeModule }));
+      } else throw new Error("Usage: control web stop status|install <native-build-manifest-json>|remove");
     }
     else if (action === "launch") {
       print({
@@ -129,7 +140,7 @@ async function main() {
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|tunnel-key set|status|remove|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|stop status|install <native-build-manifest-json>|remove|tunnel-key set|status|remove|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
     return;
   }
   if (command === "subagents") {

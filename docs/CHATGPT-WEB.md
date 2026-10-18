@@ -155,7 +155,9 @@ The configured official browser API requires native session-and-turn metadata
 for browser discovery. Ordinary tool calls receive that metadata; the local hook
 executor supplies only the thread ID, and the public browser setup API has no
 option to supply the missing context. Using this API from an Interrupt hook
-therefore requires native hook-context support. The exact cause of the trial's
+therefore requires native hook-context support. The inspected official stable,
+prerelease and main sources still lack it; no supported unpatched alternative
+was established. The exact cause of the earlier trial's
 lost binding remains unproved. See the [dated verification evidence](history/2026-10-17-web-saved-chat-verification.json).
 
 The optional [native source patch](../maintenance/codex-hook-context.patch) is
@@ -180,8 +182,48 @@ cancel a real Web generation while retaining its saved chat and tab, with a
 1.18-second hook execution. The deployed Router recovery fix then completed a
 new turn in the same saved chat and tab after that zero-text interruption. The
 model recalled the original session marker without resupply; Router sent only
-new input. This hook trial remains restricted to the disposable verification chat.
+new input. That trial was restricted to the disposable verification chat. Its
+user-level replacement is installed and trusted; normal-restart and generalized
+live Stop verification remain pending. Standalone sandbox checks passed from the
+durable installed directory; the separate Web native-tool sandbox attempt was
+blocked by hosted connector discovery returning HTTP 429.
 See the [candidate verification and remaining limits](history/2026-10-18-native-hook-context.json).
+
+To install the accepted native build and a user-level Stop hook for ordinary Web
+conversations, supply its explicit local build manifest:
+
+```powershell
+.\model-router.ps1 codex web stop install .\generated\native-hook-context-fix\candidate-build-manifest.json
+.\model-router.ps1 codex web stop status
+```
+
+The installer verifies the accepted native executable and four official signed
+companions, copies them into durable Router state, and sets the current user's
+`CODEX_CLI_PATH`. It merges one Interrupt handler into the user's `hooks.json` and
+preserves unrelated hooks. Review and trust **Stopping owned ChatGPT Web
+generation** in Codex Settings → Hooks, then fully quit and reopen Codex normally.
+No external Web launcher or special restart script is required after installation.
+Verify the active executable and Stop after reopening; installing configuration
+alone does not establish either result. Codex updates require renewed native
+compatibility and accepted-build verification.
+
+The hook uses the actual interrupted thread and turn plus its protected Router
+ledger. It acts only on that conversation's exact saved chat and tab, keeps the
+tab open, and ignores conversations without a matching unfinished Web turn.
+It does not enable Interrupt hooks for Web subagents. The original one-chat trial
+must be disabled when the user-level replacement is trusted, to avoid duplicate
+handlers in that project.
+
+To remove this optional integration before disabling or uninstalling Router:
+
+```powershell
+.\model-router.ps1 codex web stop remove
+```
+
+Removal restores the saved original user launch setting and removes only the
+owned hook. It refuses conflicting external changes. Verified staged executables
+remain available to an already running process; reopen Codex to use the restored
+setting.
 
 No cancellation wrapper is installed. Tool revocation and next-turn reconciliation
 alone do not establish immediate browser cancellation. Stop keeps the tab open;

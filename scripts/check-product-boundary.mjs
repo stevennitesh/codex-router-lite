@@ -38,6 +38,9 @@ const retainedWebRuntime = [
   "src/web-mcp.mjs",
   "src/web-browser.mjs",
   "src/web-turn-cancellation.mjs",
+  "src/web-stop-hook.mjs",
+  "src/web-stop-install.mjs",
+  "src/web-stop-env.ps1",
 ];
 const forbiddenPaths = [
   /^\.github\/workflows\/release\.yml$/u,

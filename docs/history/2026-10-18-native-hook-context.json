@@ -1,6 +1,6 @@
 {
   "date": "2026-10-18",
-  "status": "live-stop-and-same-tab-continuation-verified",
+  "status": "ordinary-web-stop-rollout-in-progress",
   "goal": "Native Stop cancels ChatGPT Web generation while retaining the same saved conversation and browser tab, without the external Web launcher or a browser-driving model.",
   "cause": {
     "localHookDispatch": "The local hook dispatcher discarded canonical metadata already built by core.",
@@ -53,9 +53,17 @@
       "isolatedInitializeHandshake": "Passed for official and candidate with no thread, model, browser, tools, or user configuration operations."
     },
     "configuredWindowsSandbox": {
-      "executed": false,
-      "reason": "The configured elevated backend's non-registered path always refreshes setup and rewrites the user-home .sandbox-bin DACL. No no-refresh dispatch guard was found. A restricted-token fallback would test a different backend.",
-      "effects": "No sandbox setup, account, UAC, ACL, or marker-write probe was performed."
+      "executed": true,
+      "scope": "Standalone no-model native app-server command/exec, with actual configured and managed policy; active Desktop/Web broker dispatch is separate.",
+      "policy": "workspace-write, Windows elevated backend, network enabled",
+      "officialAndCandidatePassed": true,
+      "workspaceCreateReadUpdateDelete": true,
+      "outsideSiblingWriteDenied": true,
+      "outsideDenial": "UnauthorizedAccessException, HRESULT 0x80070005",
+      "loopbackNonceIndependentlyVerified": true,
+      "ownedFixturesAndChildrenCleaned": true,
+      "effects": "Ordinary official sandbox preparation was authorized for this verification. No manual ACL, sandbox account, policy, registered-core, or active Desktop changes were made.",
+      "initialLimit": "Before sandbox verification was requested, the setup refresh was withheld because it reapplies user-home .sandbox-bin permissions."
     },
     "controllerPolicyCases": {
       "passed": 90,
@@ -172,6 +180,86 @@
       "additionalContextObserved": true,
       "savedConversationUrlHashPreserved": true,
       "note": "One ordinary Web primary-model turn completed without a browser-driving model or external launcher. Initial pre-send state_unavailable was followed by successful current-controller checks."
+    }
+  },
+  "rollout": {
+    "scope": "All ordinary peer/main Web-model conversations. The user explicitly excluded Web subagents; native Interrupt dispatch remains unchanged for them.",
+    "unpatchedFeasibility": {
+      "supportedAlternativeFound": false,
+      "installedSourceCommit": "4ebc485ca321243727539187169425fcf972f2c4",
+      "officialStable": "rust-v0.163.0 / 83086188ae0614bd882818ff1aa23f3194962012",
+      "officialPrerelease": "rust-v0.164.0-alpha.3 / bd43893f3db678fcb7124296905a65b2dfa9dac0",
+      "officialMain": "8c076942cb70fba8e5c4732c23f1faabc4aed484",
+      "cause": "All inspected official sources discard local hook metadata and use the latest MCP connection with only threadId. The official browser SDK requires canonical native session/turn context. Its public API has no cancellation-listener or context-injection contract.",
+      "priorAlternatives": "The native MCP cancellation probe reset the JavaScript kernel and lost timers/state; the prior wrapper did not stop Web generation. Bundled executor cleanup targets are a fixed official allowlist, not a user JavaScript hook registration API.",
+      "sourceReferences": [
+        "https://github.com/openai/codex/blob/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/hooks/src/engine/dispatcher.rs#L145-L149",
+        "https://github.com/openai/codex/blob/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/hook_mcp_executor.rs#L19-L40"
+      ]
+    },
+    "genericHook": {
+      "source": "src/web-stop-hook.mjs",
+      "sourceSha256": "b79b3fbb884f471e78d0dcbaa70bab56293deaa04affa8d812fe28a19bf1a3ec",
+      "focusedTestsPassed": 22,
+      "independentReview": "F1 corrected supported query-bearing saved URLs; no actionable findings remain in the frozen successor.",
+      "installed": true,
+      "trusted": true,
+      "liveVerified": false,
+      "nativeHookHash": "sha256:bbcb9c4b2dff3c0686d30a97cc178d51f8bbb9adba4d957cbeb8ba07286826e5",
+      "supersededProjectTrialsDisabled": true
+    },
+    "persistence": {
+      "source": "src/web-stop-install.mjs",
+      "mechanism": "Durable verified native files under Router state, supported per-user CODEX_CLI_PATH, and one merged user-level Interrupt hook. Official binaries and unrelated hooks remain owned by their original installers.",
+      "installed": true,
+      "normalRestartVerified": false,
+      "review": "WSI-1 fixed by publishing the protected original baseline before activation. Independent successor review found no actionable findings. The CLI relative-path and inherited PowerShell 7 module-path corrections were also reviewed.",
+      "installerSha256": "dfe60eacc8126786070baeb17e1049e3ac6f2fb217fb043889b5cce642d9d995",
+      "liveInstall": "Accepted build and four valid signed official companions verified, staged privately, and read back. Per-user CODEX_CLI_PATH matches the staged executable; no ownership conflicts. Environment-change broadcast succeeded.",
+      "humanTrust": "Native hooks/list confirms the exact user-level hook enabled and trusted, both old project trials disabled, and no hook warnings or errors.",
+      "durablePathStartup": "initialize, configRequirements/read, config/read, and hooks/list passed with the current profile; exit zero and no stderr. Normal Desktop restart remains unverified."
+    },
+    "activeDesktopSandbox": {
+      "verified": false,
+      "nativeCommandCalls": 0,
+      "result": "The actual Web primary-model turn reported NOT VERIFIED: MCP SSE discovery received HTTP 429 from openai.org. No probe command or coding action ran.",
+      "completion": "The turn completed after 428424 ms. Its reply projection was temporarily ambiguous (six mounted replies, no verified current ID), then became unambiguous (five replies and the actual 364-character error answer). No identity guard was relaxed.",
+      "localTransportDiagnostic": "One owned diagnostic MCP session passed initialize, initialized notification, tools/list, SSE GET and session DELETE. One live tunnel client had correct ancestry and listener ownership. No tools/call or credential access; hosted transport remains unverified."
+    },
+    "verification": {
+      "fullSuite": {
+        "command": "npm run verify:codex",
+        "passed": 1232,
+        "failed": 0,
+        "skipped": 0,
+        "durationMs": 270765,
+        "catalogModels": 17,
+        "catalogCompatibilityPassed": true,
+        "scope": "Full suite before the two small CLI and child environment corrections."
+      },
+      "successorChecks": {
+        "commands": [
+          "npm run check",
+          "node --test test/web-stop-hook.test.mjs test/web-stop-install.test.mjs"
+        ],
+        "passed": 51,
+        "failed": 0,
+        "skipped": 0,
+        "liveInstallAndStatusPassed": true
+      },
+      "testValueReview": "Kept regressions for exact ownership, peer conversations, uncertainty, deadlines, rollback and original-setting restoration. No temporary source-edit confirmation tests were added."
+    },
+    "durablePathSandbox": {
+      "verified": true,
+      "scope": "Standalone no-model native app-server command/exec from the actual installed directory, not active Desktop Web broker dispatch.",
+      "configuredPolicy": "workspace-write, elevated Windows backend, network enabled",
+      "officialAndCandidatePassed": true,
+      "acceptedCandidateAndActualCompanionsVerified": true,
+      "workspaceCreateReadUpdateDelete": true,
+      "outsideWriteDenied": true,
+      "outsideDenial": "UnauthorizedAccessException, HRESULT 0x80070005",
+      "independentLoopbackNonceExchange": true,
+      "ownedFixturesAndChildrenCleaned": true
     }
   },
   "startupTrial": {
