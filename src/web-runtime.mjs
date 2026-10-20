@@ -192,6 +192,7 @@ export function createInAppWebRuntime({
   broker = createWebToolBroker({ invocationTimeoutMs: 10 * 60_000 }),
   startMcp = startWebMcp, startTunnel = startWebTunnel, watchCancellation = watchWebTurnCancellation,
   stateDir = STATE_DIR, keyPath = WEB_BRIDGE_TUNNEL_KEY_PATH,
+  writeState = writePrivateJsonAsync, stateIsProtected = privateFileIsProtected,
 } = {}) {
   const turns = new Map(), conversations = new Map(), tokenOwners = new Map(), internalCalls = new Set();
   const compactions = new Set();
@@ -209,7 +210,7 @@ export function createInAppWebRuntime({
     const serialized = JSON.stringify(value);
     if (serialized === conversation.persistedValue) return conversation.writeTail ?? Promise.resolve();
     conversation.persistedValue = serialized;
-    const write = (conversation.writeTail ?? Promise.resolve()).catch(() => {}).then(() => writePrivateJsonAsync(conversationPath(conversation.threadId), value));
+    const write = (conversation.writeTail ?? Promise.resolve()).catch(() => {}).then(() => writeState(conversationPath(conversation.threadId), value));
     conversation.writeTail = write;
     // A cancellation callback cannot await. Its caller and shutdown still drain
     // this same ordered write, and no consequential call is returned before it.
@@ -219,7 +220,7 @@ export function createInAppWebRuntime({
   const loadConversation = threadId => {
     const filePath = conversationPath(threadId), stored = readJsonFile(filePath);
     if (stored.status === "missing") return undefined;
-    if (stored.status !== "present" || !privateFileIsProtected(filePath) || !validConversation(stored.value, threadId)) {
+    if (stored.status !== "present" || !stateIsProtected(filePath) || !validConversation(stored.value, threadId)) {
       throw fail("The saved Web conversation record is unreadable or invalid; refusing to create another chat.", "web_conversation_state");
     }
     const value = stored.value;

@@ -15,6 +15,7 @@ const messages = {
   web_tunnel_start_failed: "ChatGPT Web tunnel could not start.",
   web_tunnel_exited: "ChatGPT Web tunnel exited.",
   web_tunnel_not_ready: "ChatGPT Web tunnel did not become ready.",
+  web_tunnel_auth_rejected: "ChatGPT Web tunnel authentication was rejected. Replace its protected runtime key or grant its principal Tunnels Read and Use, then restart Router.",
   web_tunnel_cancelled: "ChatGPT Web tunnel was stopped.",
   web_tunnel_stop_failed: "ChatGPT Web tunnel shutdown could not be verified.",
   web_tunnel_cleanup_failed: "ChatGPT Web tunnel private state could not be removed.",
@@ -34,6 +35,26 @@ function localUrl(value, { mcp = false } = {}) {
     throw failure("web_tunnel_invalid_config");
   }
   return url;
+}
+
+async function readPollHealth(response) {
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  const chunks = [];
+  let bytes = 0;
+  // Official v0.0.16 component health is bounded to 24 KiB. Keep the
+  // passive snapshot local: never retain or expose arbitrary daemon details.
+  for await (const chunk of response.body) {
+    bytes += chunk.byteLength;
+    if (bytes > 24 * 1024) throw failure("web_tunnel_not_ready");
+    chunks.push(chunk);
+  }
+  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+  const failures = value?.details?.consecutive_failures;
+  return value?.schema_version === 1 && value.component === "control-plane" && value.limited === false
+    && Number.isSafeInteger(failures) && failures >= 0 ? value : undefined;
 }
 
 /** Own the official foreground tunnel daemon for the Router generation. */
@@ -170,15 +191,28 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
       const health = await fetch(new URL("/healthz", base), options);
       await health.body?.cancel();
       if (closing || childClosed) return;
-      healthy = health.ok;
-      isReady = false;
-      if (healthy) {
-        const result = await fetch(new URL("/readyz", base), { ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]) });
-        await result.body?.cancel();
-        if (closing || childClosed) return;
-        isReady = result.ok;
-        if (isReady) settleReady();
+      if (!health.ok) { healthy = false; isReady = false; return; }
+      const result = await fetch(new URL("/readyz", base), { ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]) });
+      await result.body?.cancel();
+      if (closing || childClosed) return;
+      if (!result.ok) { healthy = true; isReady = false; return; }
+      // /readyz gates local startup only; it can pass while every hosted
+      // poll is rejected. Require the daemon's own completed poll evidence.
+      const poll = await readPollHealth(await fetch(new URL("/health/control-plane", base), {
+        ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]),
+      }));
+      if (closing || childClosed) return;
+      const details = poll?.details;
+      if (poll?.status === "degraded" && details.consecutive_failures > 0
+          && details.failure_category === "http_error" && [401, 403].includes(details.http_status)) {
+        fail("web_tunnel_auth_rejected");
+        return;
       }
+      const successful = typeof details?.last_success === "string" ? Date.parse(details.last_success) : NaN;
+      healthy = poll?.status === "ok" && details.consecutive_failures === 0
+        && ["idle", "polling", "backpressured"].includes(poll.state) && Number.isFinite(successful) && successful > 0;
+      isReady = healthy;
+      if (isReady) settleReady();
     } catch {
       healthy = false;
       isReady = false;

@@ -41,6 +41,10 @@ const retainedWebRuntime = [
   "src/web-stop-hook.mjs",
   "src/web-stop-install.mjs",
   "src/web-stop-env.ps1",
+  "src/web-stop-adapter.mjs",
+  "src/web-stop-adapter-install.mjs",
+  "src/web-stop-adapter-env.ps1",
+  "src/web-stop-adapter-entry.cs",
 ];
 const forbiddenPaths = [
   /^\.github\/workflows\/release\.yml$/u,

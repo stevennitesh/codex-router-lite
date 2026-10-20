@@ -352,6 +352,23 @@ test("unconfirmed hidden Stop never claims cancellation or repeats its click", a
   assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
 });
 
+test("hidden-wait and visibility-read failures identify the failed operation without exposing errors", async () => {
+  for (const failedOperation of ["hidden", "visible"]) {
+    const f = fixture(); let visibilityReads = 0;
+    f.model.onCall = name => {
+      if (name === "visible") visibilityReads++;
+      if (name === failedOperation && (name !== "visible" || visibilityReads === 2))
+        throw new Error("private browser details");
+    };
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
+    assert.equal(result.stage, failedOperation === "hidden" ? "stop_wait_hidden" : "stop_readback_visibility");
+    assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+    assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
+    assert(!JSON.stringify(result).includes("private browser details"));
+  }
+});
+
 test("idle Stop with zero matches retains its tab without claiming cancellation", async () => {
   const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
   const result = await f.run();

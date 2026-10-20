@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Unmodified-CLI adapter Stop and same-chat continuation after all-ordinary restart, 2026-10-19](2026-10-19-web-stop-adapter-verification.json)
+
 - [Native hook context repair candidate and verification limits, 2026-10-18](2026-10-18-native-hook-context.json)
 
 - [Live Web compaction, efficient continuation and closed-tab recovery, 2026-10-17](2026-10-17-web-saved-chat-verification.json)

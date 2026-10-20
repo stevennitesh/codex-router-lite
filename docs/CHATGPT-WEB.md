@@ -62,7 +62,9 @@ the model picker:
 
 The key is stored in Router state as the owner-only
 `chatgpt-web-runtime-key.secret` file. `set` never accepts a key argument or echoes
-the value. Inspect or remove it with:
+the value. The key needs Tunnels Read and Use permission in the tunnel's Platform
+organization. After replacing a key for a running tunnel, restart Router so its
+owned tunnel client loads the replacement. Inspect or remove it with:
 
 ```powershell
 .\model-router.ps1 codex web tunnel-key status
@@ -76,6 +78,12 @@ MCP listener and official tunnel client when an enabled in-app configuration is
 loaded at startup, or on its first Web request after configuration. It uses a
 private tunnel configuration and owns their cleanup. Reconfigure paths and
 observed connector details after an update changes them.
+
+Tunnel readiness requires a successful hosted control-plane poll. The client's
+local `/readyz` response alone does not establish authenticated polling. Rejected
+poll credentials fail with `web_tunnel_auth_rejected`; replace the protected key
+or correct its Tunnels permissions, then restart Router. Other polling failures
+leave the tunnel unready rather than permitting a tool-dependent Web turn.
 
 ## Browser turns and tools
 
@@ -144,23 +152,63 @@ stop a newer turn. Revocation does not undo
 a tool that native Codex has already started. A missing or changed native rollout
 prevents the runtime from asserting cancellation authority.
 
-Immediate browser Stop depends on the native host delivering interruption to an
-active browser controller. The default native runtime does not currently
-guarantee that delivery. The October 17 MCP hook trial executed in the correct
-native chat but could not access its retained browser state; the next ordinary
-browser operation then lost its binding before Send. Both trial hooks are
-disabled, and continuation in the same saved chat and tab was verified afterward.
+Immediate browser Stop needs both the interrupted conversation's native context
+and enough time to confirm that its exact Stop button disappeared. Ordinary tool
+calls receive canonical session/turn metadata and sandbox authority; a stock local
+Interrupt hook supplies only the thread ID. A direct browser hook therefore cannot
+recover that context by itself. The earlier direct-hook failure is recorded in
+the [dated verification evidence](history/2026-10-17-web-saved-chat-verification.json).
 
-The configured official browser API requires native session-and-turn metadata
-for browser discovery. Ordinary tool calls receive that metadata; the local hook
-executor supplies only the thread ID, and the public browser setup API has no
-option to supply the missing context. Using this API from an Interrupt hook
-therefore requires native hook-context support. The inspected official stable,
-prerelease and main sources still lack it; no supported unpatched alternative
-was established. The exact cause of the earlier trial's
-lost binding remains unproved. See the [dated verification evidence](history/2026-10-17-web-saved-chat-verification.json).
+The optional Router MCP adapter retains the actual originating browser operation's
+metadata for fixed cleanup in the same official Node REPL child. It preserves
+opaque sandbox and launcher values and refuses conflicting observed authority;
+it does not infer newer host policy from the hook. A separately trusted user
+Interrupt hook calls the adapter's own callback with a three-second timeout.
+Bundled one-second callbacks keep their original messages and cancellation scope.
+Cleanup waits for the active short browser observation to finish. A terminal
+observation error releases that wait only for the already accepted matching
+cleanup; the original error still reaches Codex. A timeout, cancellation of the
+cleanup itself, or changed authority prevents further browser actions.
+Stop must still read back hidden generation controls and retain the exact saved
+tab before reporting success. A partial cleanup remains an explicit failure.
 
-The optional [native source patch](../maintenance/codex-hook-context.patch) is
+The unmodified official CLI adapter path has
+[dated Stop and same-chat continuation evidence](history/2026-10-19-web-stop-adapter-verification.json).
+The record covers the all-ordinary configuration after a normal Codex restart,
+with the same saved chat, tab and binding retained. Its live check used one
+Instant Web primary route; it does not individually certify every Web model.
+
+To install the adapter, supply a local manifest identifying the signed official
+CLI, Node and Node REPL executables, their hashes and signer identity, the browser
+runtime module, and the existing MCP SDK package. `threadIds` restricts a trial;
+`null` enables ordinary Web conversations. The adapter excludes subagent metadata.
+
+```powershell
+.\model-router.ps1 codex web stop install-adapter .\adapter-build-manifest.json
+.\model-router.ps1 codex web stop adapter-status
+```
+
+The installer stages its code and launcher in private durable Router state and
+records the original User `CODEX_CLI_PATH` and `CODEX_NODE_REPL_PATH` selections
+before changing either. It preserves the native-patch installation and unrelated
+hooks. Review and trust **Stopping ChatGPT Web generation through Router adapter**
+in Codex Settings → Hooks. Disable the native-patch handler **Stopping owned
+ChatGPT Web generation** while using the adapter, then fully quit and reopen
+Codex normally. No external Web launcher or special startup script is needed.
+Verify actual Stop and same-chat continuation after restart; configuration and
+offline tests alone do not establish live cancellation.
+
+```powershell
+.\model-router.ps1 codex web stop adapter-rollback
+```
+
+Rollback restores only still-owned launch selections and removes only the owned
+adapter hook, preserving foreign edits and the staged files. If the original
+setup used the native-patch handler, re-enable its unchanged trusted definition,
+then fully quit and reopen Codex. A Codex update needs a fresh compatibility check
+for the selected official executables and browser runtime.
+
+A separate optional [native source-patch alternative](../maintenance/codex-hook-context.patch) is
 pinned to OpenAI Codex commit `4ebc485ca321243727539187169425fcf972f2c4`
 (`0.163.0-alpha.10.2`). It forwards local hook metadata and retains the originating
 MCP client and sandbox policy for PostToolUse and Interrupt. Apply it from the
@@ -177,29 +225,18 @@ A native candidate can be selected for one desktop launch with `CODEX_CLI_PATH`.
 That override changes Windows registered-core integration, so verify the effective
 sandbox and native tools before relying on it. Recheck the source pin and desktop
 compatibility after a Codex update. A successful source build does not establish
-live browser cancellation. The October 18 candidate and trusted trial hook did
-cancel a real Web generation while retaining its saved chat and tab, with a
-1.18-second hook execution. The deployed Router recovery fix then completed a
-new turn in the same saved chat and tab after that zero-text interruption. The
-model recalled the original session marker without resupply; Router sent only
-new input. That trial was restricted to the disposable verification chat. Its
-user-level replacement is installed and trusted. A normal Codex restart selected
-the durable candidate automatically; actual Stop cancelled Web generation while
-keeping the tab open, and the next turn completed in the same saved chat and tab.
-This live check used GPT-6 Sol Instant (Web); focused tests cover separate ordinary
-conversations. Standalone sandbox checks passed from the durable installed
-directory. The separate Web native-tool sandbox attempt remains blocked by hosted
-connector discovery returning HTTP 429 before any native command. Local tunnel
-readiness, matching hosted settings, tool permissions, and the two gateway tools
-were verified; the hosted failure's cause remains unknown. A delay recognizing
-the rendered connector-error reply also remains unresolved.
-See the [candidate verification and remaining limits](history/2026-10-18-native-hook-context.json).
+live browser cancellation. The
+[dated native-patch evidence](history/2026-10-18-native-hook-context.json) preserves
+its normal-restart Stop and same-chat continuation checks, recovery repair,
+native-tool sandbox limits, and original launch-setting rollback context.
+Those observations concern the patched native candidate; the adapter evidence
+above concerns the unmodified official CLI.
 
 To install the accepted native build and a user-level Stop hook for ordinary Web
 conversations, supply its explicit local build manifest:
 
 ```powershell
-.\model-router.ps1 codex web stop install .\generated\native-hook-context-fix\candidate-build-manifest.json
+.\model-router.ps1 codex web stop install .\accepted-native-build-manifest.json
 .\model-router.ps1 codex web stop status
 ```
 
@@ -231,12 +268,13 @@ owned hook. It refuses conflicting external changes. Verified staged executables
 remain available to an already running process; reopen Codex to use the restored
 setting.
 
-No cancellation wrapper is installed. Tool revocation and next-turn reconciliation
-alone do not establish immediate browser cancellation. Stop keeps the tab open;
+Tool revocation and next-turn reconciliation alone do not establish immediate
+browser cancellation. Stop keeps the tab open;
 explicit close remains separate. Backend errors fail the selected route without
 a model or backend fallback. Offline tests cover the runtime contracts; immediate
 Stop requires separate live verification for the selected native runtime and
-hook definitions; the October 18 result covers the recorded candidate and trial.
+hook definitions. The dated adapter and native-patch records each apply only to
+their recorded runtime and scope.
 
 The in-app backend currently accepts text input. Media upload is unsupported and
 is rejected. Luna's visible browser family has not been established for this

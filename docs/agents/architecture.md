@@ -183,6 +183,11 @@ current installed-Codex catalog check once. CI uses `npm run verify` because it
 does not have an installed Codex. An explicit executable and `--catalog <path>`
 remain available when checking a specific build or installed catalog.
 
+The full test command limits concurrent test files to four to avoid flooding
+Windows with PowerShell helpers. Runtime unit fixtures inject ordinary synthetic
+state storage; focused storage integration and file-security tests retain real
+protected writes and permission checks. Production storage defaults are unchanged.
+
 CI runs both supported Node versions for runtime candidates. For changes limited
 to known Markdown documents and historical or route proof records,
 `scripts/verification-scope.mjs` selects `npm run verify:evidence`: source checks

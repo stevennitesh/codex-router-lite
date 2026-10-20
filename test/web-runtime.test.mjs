@@ -15,6 +15,17 @@ const { createWebToolBroker } = await import("../src/web-tools.mjs");
 const { parseBrowserOutput } = await import("../src/web-browser.mjs");
 const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs");
 const { decodeCompaction } = await import("../src/compaction-checkpoint.mjs");
+const { privateFileIsProtected } = await import("../src/file-security.mjs");
+
+// Runtime policy tests retain real JSON persistence and restart reads. Windows
+// ACL behavior is exercised separately below with the runtime's secure defaults.
+const syntheticStorage = {
+  async writeState(target, value) {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `${JSON.stringify(value)}\n`, "utf8");
+  },
+  stateIsProtected: () => true,
+};
 
 const threadId = "00112233-4455-6677-8899-aabbccddeeff";
 const turnId = "11002233-4455-6677-8899-aabbccddeeff";
@@ -111,7 +122,7 @@ function fakeBrowser() {
 
 let fixtureNumber = 0;
 function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", cancelDuringWatch = false,
-  tunnelReadiness = () => Promise.resolve() } = {}) {
+  tunnelReadiness = () => Promise.resolve(), storage = syntheticStorage } = {}) {
   const browser = fakeBrowser();
   const key = `router-web-runtime-test-${++fixtureNumber}`;
   globalThis[Symbol.for(key)] = browser.agent;
@@ -122,7 +133,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     pluginSelectionButtonName: "Current Codex Tools Workspace tools", observeIterations: 1, observeDelayMs: 0 },
   tunnel: { executable: "test-tunnel", id: "test-owned-tunnel" }, mcpPort: 0 };
   const runtimeStateDir = path.join(stateDir, key);
-  const makeRuntime = () => createInAppWebRuntime({ broker, stateDir: runtimeStateDir,
+  const makeRuntime = () => createInAppWebRuntime({ broker, stateDir: runtimeStateDir, ...storage,
     startMcp: async options => {
       assert.equal(options.broker, broker);
       observations.services.push("mcp");
@@ -215,6 +226,66 @@ async function nativeV2Checkpoint(response) {
 
 const nativeV2Users = input => input.filter(item => item.role === "user").map(item => ({ type: "message", role: "user",
   content: typeof item.content === "string" ? [{ type: "input_text", text: item.content }] : item.content }));
+
+test("checkpoint writes finish before native actions and a cancelled turn's successor persists in order", async t => {
+  let started, release;
+  const writeStarted = new Promise(resolve => { started = resolve; });
+  const writeAllowed = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const writes = [];
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    writes.push(structuredClone(value));
+    if (writes.length === 1) { started(); await writeAllowed; }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  let firstSettled = false, nextSettled = false;
+  const first = h.request().finally(() => { firstSettled = true; });
+  const rejected = assert.rejects(first, { code: "web_turn_cancelled" });
+  await writeStarted;
+  assert.equal(firstSettled, false, "Native work cannot be returned before its checkpoint reaches disk.");
+  h.observations.watchers[0].onCancel();
+  h.newTurn(followupId, "Continue after the pending checkpoint is durable.");
+  const next = h.request().finally(() => { nextSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(nextSettled, false);
+  assert.equal(writes.length, 1, "The successor cannot overtake the cancelled turn's write.");
+  release();
+  await rejected;
+  await next;
+  assert.deepEqual(writes.map(value => value.lastTurn.turnId), [turnId, followupId]);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).lastTurn.turnId, followupId);
+});
+
+test("default conversation storage protects its checkpoint and reloads the same binding after restart", async t => {
+  const h = harness(t, { storage: {} });
+  const first = (await h.request()).output[0];
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(privateFileIsProtected(h.stateFile), true);
+  assert.equal(saved.threadId, threadId);
+  assert.equal(saved.lastTurn.turnId, turnId);
+  assert.ok(JSON.parse(first.arguments).code.includes(saved.bindingId));
+  await h.restartRuntime();
+  h.newTurn(followupId, "Recover the protected conversation binding.");
+  const next = (await h.request()).output[0];
+  const reloaded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(reloaded.bindingId, saved.bindingId);
+  assert.equal(reloaded.lastTurn.turnId, followupId);
+  assert.ok(JSON.parse(next.arguments).code.includes(saved.bindingId));
+  assert.equal(privateFileIsProtected(h.stateFile), true);
+  assert.equal(h.browser.ui.newTabs, 0);
+});
+
+test("default conversation storage rejects an unprotected record before native browser work", async t => {
+  // Only the fixture writer is synthetic; loading uses the real ACL predicate.
+  const h = harness(t, { storage: { writeState: syntheticStorage.writeState } });
+  await h.request();
+  assert.equal(privateFileIsProtected(h.stateFile), false);
+  await h.restartRuntime();
+  h.newTurn(followupId, "Refuse this unprotected saved record.");
+  await assert.rejects(h.request(), { code: "web_conversation_state" });
+  assert.equal(h.browser.ui.newTabs, 0);
+  assert.equal(h.observations.watchers.length, 1, "An unsafe record cannot acquire a new native turn.");
+});
 
 test("the native runtime accepts a new reply identity after mounted counts shrink and recovers that exact completed reply", async t => {
   const h = harness(t);

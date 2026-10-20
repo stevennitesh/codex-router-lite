@@ -191,10 +191,11 @@ async function stopOwnedWebTurn() {
       await stop.click({ timeoutMs: 350 });
       diagnostic.stopClicked = true;
       assertCurrent();
-      stage = "stop_hidden";
+      stage = "stop_wait_hidden";
       assertCurrent(600);
       await stop.waitFor({ state: "hidden", timeoutMs: 500 });
       assertCurrent();
+      stage = "stop_readback_visibility";
       const afterVisible = await stop.isVisible();
       assertCurrent();
       if (afterVisible !== false) deny("stop_confirmation_failed");

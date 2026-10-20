@@ -13,6 +13,17 @@ import { startWebTunnel } from "../src/web-tunnel.mjs";
 const secret = "synthetic_runtime_key_not_for_public_output";
 const serverUrl = `http://127.0.0.1:17845/${"a".repeat(64)}/mcp`;
 const scalar = (config, name) => JSON.parse(new RegExp(`^\\s+${name}: (".*")$`, "mu").exec(config)[1]);
+const pollingHealth = (details = {}, fields = {}) => ({
+  schema_version: 1, component: "control-plane", status: "ok", state: "polling", limited: false,
+  details: { last_success: "2026-10-19T20:00:00Z", consecutive_failures: 0, ...details }, ...fields,
+});
+const waitFor = async predicate => {
+  const deadline = performance.now() + 10_000;
+  while (!predicate()) {
+    assert.ok(performance.now() < deadline, "Timed out waiting for the tunnel state.");
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+};
 
 class Child extends EventEmitter {
   pid = 10420;
@@ -38,9 +49,14 @@ async function fixture(t) {
   const keyPath = path.join(root, "runtime-key.secret");
   writeFileSync(keyPath, `${secret}\n`, { mode: 0o600 });
   const requests = [], observed = {};
-  let healthStatus = 200, readyStatus = 200, tunnel;
+  let healthStatus = 200, readyStatus = 200, pollHealth = pollingHealth(), pollStatus = 200, tunnel;
   const server = createServer((request, response) => {
     requests.push(request.url);
+    if (request.url === "/health/control-plane") {
+      response.writeHead(pollStatus, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(pollHealth));
+      return;
+    }
     response.writeHead(request.url === "/healthz" ? healthStatus : readyStatus);
     response.end("health body is never retained");
   });
@@ -67,11 +83,12 @@ async function fixture(t) {
   const options = { executable: process.execPath, tunnelId: "tunnel_native_codex", keyPath, serverUrl, stateDir, spawnImpl };
   return { root, stateDir, keyPath, requests, observed, child, options,
     setHealth: (health, readiness) => { healthStatus = health; readyStatus = readiness; },
+    setPolling: (value, status = 200) => { pollHealth = value; pollStatus = status; },
     async start(extra = {}) { tunnel = await startWebTunnel({ ...options, ...extra }); return tunnel; },
   };
 }
 
-test("official client receives protected YAML references and real loopback health establishes readiness", { timeout: 25_000 }, async t => {
+test("official client receives protected YAML references and observed successful polling establishes readiness", { timeout: 25_000 }, async t => {
   const f = await fixture(t);
   const tunnel = await f.start();
   await tunnel.ready;
@@ -88,7 +105,7 @@ test("official client receives protected YAML references and real loopback healt
   assert.equal(JSON.stringify(f.observed.args).includes(secret), false);
   assert.equal(JSON.stringify(tunnel.status()).includes(serverUrl), false);
   if (process.platform === "win32") assert.equal(privateFileIsProtected(f.observed.configFile), true);
-  assert.deepEqual(f.requests.slice(0, 2), ["/healthz", "/readyz"]);
+  assert.deepEqual(f.requests.slice(0, 3), ["/healthz", "/readyz", "/health/control-plane"]);
   assert.deepEqual(tunnel.status(), { state: "ready", running: true, healthy: true, ready: true, pid: f.child.pid });
   const firstClose = tunnel.close();
   assert.equal(tunnel.close(), firstClose);
@@ -132,7 +149,8 @@ test("the owner waits for an actual child process to close before removing its p
     // Even unsafe vendor diagnostics must remain outside Router output.
     console.error(scalar("url"));
     console.error(fs.readFileSync(scalar("api_key").slice(5), "utf8"));
-    const server = http.createServer((request, response) => response.end("ready"));
+    const server = http.createServer((request, response) => response.end(request.url === "/health/control-plane"
+      ? JSON.stringify(${JSON.stringify(pollingHealth())}) : "ready"));
     server.listen(0, "127.0.0.1", () => fs.writeFileSync(scalar("url_file"), "http://127.0.0.1:" + server.address().port));
   `;
   const tunnel = await f.start({ spawnImpl: (executable, args, options) => {
@@ -168,6 +186,97 @@ test("liveness alone cannot resolve readiness and shutdown cancels the outstandi
   await tunnel.close();
   await rejected;
   assert.deepEqual(readdirSync(f.stateDir), []);
+});
+
+test("a rejected runtime key fails readiness despite passing local probes and cleans owned private state", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  f.setPolling(pollingHealth({ last_success: undefined, consecutive_failures: 201, failure_category: "http_error", http_status: 401 },
+    { status: "degraded", state: "backoff", reason_code: "http_error", last_error: `untrusted ${secret} ${serverUrl}` }));
+  const tunnel = await f.start();
+  await assert.rejects(tunnel.ready, error => {
+    assert.equal(error.code, "web_tunnel_auth_rejected");
+    assert.match(error.message, /runtime key|Tunnels.*Use/u);
+    assert.equal(error.message.includes(secret), false);
+    assert.equal(error.message.includes(serverUrl), false);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  await tunnel.close();
+  assert.deepEqual(f.requests, ["/healthz", "/readyz", "/health/control-plane"]);
+  assert.deepEqual(tunnel.status(), { state: "failed", running: false, healthy: false, ready: false, pid: f.child.pid, error: "web_tunnel_auth_rejected" });
+  assert.deepEqual(f.child.kills, ["SIGTERM"]);
+  assert.deepEqual(readdirSync(f.stateDir), []);
+  assert.equal(readFileSync(f.keyPath, "utf8"), `${secret}\n`);
+});
+
+test("local readiness waits for the first successful poll and keeps a long poll or local backpressure ready", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  f.setPolling(pollingHealth({ last_success: undefined }, { status: "unknown" }));
+  const tunnel = await f.start();
+  let resolved = false;
+  void tunnel.ready.then(() => { resolved = true; }, () => {});
+  await waitFor(() => f.requests.includes("/readyz"));
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(resolved, false);
+  assert.equal(tunnel.status().ready, false);
+  f.setPolling(pollingHealth());
+  await tunnel.ready;
+  assert.equal(tunnel.status().ready, true);
+  const count = f.requests.length;
+  f.setPolling(pollingHealth({}, { state: "backpressured" }));
+  await waitFor(() => f.requests.length > count + 2);
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(tunnel.status().ready, true);
+});
+
+test("a later poll authorization failure revokes readiness and stops the owned daemon", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const tunnel = await f.start();
+  await tunnel.ready;
+  f.setPolling(pollingHealth({ consecutive_failures: 1, failure_category: "http_error", http_status: 403 },
+    { status: "degraded", state: "backoff" }));
+  await waitFor(() => tunnel.status().state === "failed");
+  await tunnel.close();
+  assert.equal(tunnel.status().error, "web_tunnel_auth_rejected");
+  assert.equal(tunnel.status().ready, false);
+  assert.equal(tunnel.status().healthy, false);
+  assert.deepEqual(readdirSync(f.stateDir), []);
+});
+
+test("a failed poll revokes current readiness until a subsequent successful poll", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const tunnel = await f.start();
+  await tunnel.ready;
+  f.setPolling(pollingHealth({ consecutive_failures: 1, failure_category: "http_error", http_status: 503 },
+    { status: "degraded", state: "backoff" }));
+  await waitFor(() => tunnel.status().healthy === false);
+  assert.equal(tunnel.status().ready, false);
+  assert.equal(tunnel.status().running, true);
+  f.setPolling(pollingHealth({}, { state: "idle" }));
+  await waitFor(() => tunnel.status().ready);
+  assert.equal(tunnel.status().healthy, true);
+  assert.deepEqual(f.child.kills, []);
+});
+
+test("unavailable or unsupported poll diagnostics cannot establish readiness", { timeout: 25_000 }, async t => {
+  for (const [snapshot, status] of [[pollingHealth(), 404], [pollingHealth({}, { schema_version: 2 }), 200],
+    [pollingHealth({ last_success: "not a timestamp" }), 200], [pollingHealth({}, { component: "mcp" }), 200],
+    [pollingHealth({}, { oversized: "x".repeat(25 * 1024) }), 200]]) {
+    await t.test(`schema ${snapshot.schema_version}, component ${snapshot.component}, HTTP ${status}, bytes ${JSON.stringify(snapshot).length}`, async t => {
+      const f = await fixture(t);
+      f.setPolling(snapshot, status);
+      const tunnel = await f.start();
+      let resolved = false;
+      void tunnel.ready.then(() => { resolved = true; }, () => {});
+      await waitFor(() => f.requests.includes("/readyz"));
+      await new Promise(resolve => setTimeout(resolve, 25));
+      assert.equal(resolved, false);
+      assert.equal(tunnel.status().ready, false);
+      const rejected = assert.rejects(tunnel.ready, { code: "web_tunnel_cancelled" });
+      await tunnel.close();
+      await rejected;
+    });
+  }
 });
 
 test("signal cancellation stops the owned child, removes private files, and preserves the key", { timeout: 25_000 }, async t => {

@@ -118,6 +118,17 @@ async function main() {
       print(webTunnelKeyCommand(value ?? "status"));
     } else if (action === "stop") {
       const operation = value ?? "status";
+      if (["install-adapter", "adapter-status", "adapter-rollback"].includes(operation)) {
+        const { installWebStopAdapter, webStopAdapterStatus, rollbackWebStopAdapter } = await import("./web-stop-adapter-install.mjs");
+        if (operation === "adapter-status" && args.length === 3) print(await webStopAdapterStatus());
+        else if (operation === "adapter-rollback" && args.length === 3) print(await rollbackWebStopAdapter());
+        else if (operation === "install-adapter" && extra && args.length === 4) {
+          const settings = readWebBridgeSettings();
+          if (!settings.enabled || settings.backend !== "in-app") throw new Error("Persistent Web Stop requires the configured in-app browser backend.");
+          print(await installWebStopAdapter({ manifestPath: path.resolve(extra) }));
+        } else throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
+        return;
+      }
       const { installWebStop, webStopStatus, removeWebStop } = await import("./web-stop-install.mjs");
       if (operation === "status" && args.length <= 3) print(await webStopStatus());
       else if (operation === "remove" && args.length === 3) print(await removeWebStop());

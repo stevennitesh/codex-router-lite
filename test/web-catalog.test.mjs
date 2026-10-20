@@ -113,7 +113,21 @@ async function command(f, script, args = []) {
   return JSON.parse(stdout);
 }
 
-test("connecting Web exposes models without switching protocol; V1 roles, hiding and disconnect follow publication", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
+function catalog(f) {
+  return JSON.parse(readFileSync(path.join(f.state, "merged-models.json"), "utf8")).models;
+}
+
+function webRoles(f) {
+  return readdirSync(path.join(f.home, "agents")).filter(file => file.startsWith("router-model-chatgpt-web-"));
+}
+
+function seedConnectedWeb(f, baseUrl) {
+  json(path.join(f.state, "chatgpt-web.json"), { version: 1, enabled: true, baseUrl, capabilities });
+  const visible = [...LISTED_MODELS, ...buildWebBridgeModels(capabilities)].map(model => model.slug);
+  json(path.join(f.state, "model-picker.json"), { version: 1, hidden: [], visible, seeded: visible });
+}
+
+async function bridgeFixture(t) {
   const f = fixture(t);
   const requests = [];
   const server = http.createServer((request, response) => {
@@ -125,39 +139,57 @@ test("connecting Web exposes models without switching protocol; V1 roles, hiding
   t.after(() => new Promise(resolve => server.close(resolve)));
   const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
   json(path.join(f.bridge, "config.json"), { version: 3, mode: "full", browserInteractionMode: "automatic", host: "127.0.0.1", port: server.address().port, ...capabilities });
+  return { ...f, baseUrl, requests };
+}
+
+test("connecting Web after watcher publication exposes models without switching protocol or sending credentials", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
+  const f = await bridgeFixture(t);
   // A watcher can observe the newly enabled bridge after its settings write
   // and before the CLI records initial picker choices. It must not turn that
   // connection's explicit opt-in into a durable hidden default.
-  json(path.join(f.state, "chatgpt-web.json"), { version: 1, enabled: true, baseUrl, capabilities });
+  json(path.join(f.state, "chatgpt-web.json"), { version: 1, enabled: true, baseUrl: f.baseUrl, capabilities });
   await command(f, "catalog.mjs");
   const beforeConfig = readFileSync(path.join(f.home, "config.toml"), "utf8");
-  const connected = await command(f, "control.mjs", ["web", "connect", baseUrl]);
+  const connected = await command(f, "control.mjs", ["web", "connect", f.baseUrl]);
   assert.equal(connected.enabled, true);
   assert.equal(connected.subagentProtocol, "v2");
   assert.equal(readFileSync(path.join(f.home, "config.toml"), "utf8"), beforeConfig);
-  assert.deepEqual(requests, [{ path: "/healthz", auth: undefined }]);
+  assert.deepEqual(f.requests, [{ path: "/healthz", auth: undefined }]);
   const web = buildWebBridgeModels(capabilities);
-  const catalog = () => JSON.parse(readFileSync(path.join(f.state, "merged-models.json"), "utf8")).models;
-  const webRoles = () => readdirSync(path.join(f.home, "agents")).filter(file => file.startsWith("router-model-chatgpt-web-"));
   await command(f, "catalog.mjs");
-  assert.equal(catalog().filter(model => model.slug.startsWith("chatgpt-web/") && model.visibility === "list").length, web.length);
-  assert.deepEqual(webRoles(), []);
+  assert.equal(catalog(f).filter(model => model.slug.startsWith("chatgpt-web/") && model.visibility === "list").length, web.length);
+  assert.deepEqual(webRoles(f), []);
+});
+
+test("V1 Web roles follow picker choices across reconnect and V2 restores native collaboration", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
+  const f = await bridgeFixture(t);
+  // Start already connected; the preceding case proves initial opt-in through
+  // the CLI. This case retains each control-to-publication handoff it checks.
+  seedConnectedWeb(f, f.baseUrl);
+  const web = buildWebBridgeModels(capabilities);
   const v1 = await command(f, "control.mjs", ["subagents", "protocol", "v1"]);
   assert.equal(v1.protocol, "v1"); assert.equal(v1.newConversationRequired, true);
   await command(f, "catalog.mjs");
-  assert.ok(catalog().every(model => model.multi_agent_version === "v1"));
-  assert.equal(webRoles().length, web.length);
+  assert.ok(catalog(f).every(model => model.multi_agent_version === "v1"));
+  assert.equal(webRoles(f).length, web.length);
   await command(f, "control.mjs", ["picker", "hide", web[0].slug]);
-  await command(f, "control.mjs", ["web", "connect", baseUrl]);
+  await command(f, "control.mjs", ["web", "connect", f.baseUrl]);
   await command(f, "catalog.mjs");
-  assert.equal(catalog().find(model => model.slug === web[0].slug).visibility, "hide", "reconnect preserves earlier picker choices");
-  assert.equal(webRoles().length, web.length - 1);
+  assert.equal(catalog(f).find(model => model.slug === web[0].slug).visibility, "hide", "reconnect preserves earlier picker choices");
+  assert.equal(webRoles(f).length, web.length - 1);
   await command(f, "control.mjs", ["subagents", "protocol", "v2"]);
   await command(f, "catalog.mjs");
-  assert.deepEqual(webRoles(), []);
-  assert.ok(catalog().some(model => model.slug === native.slug && model.multi_agent_version === "v2"));
+  assert.deepEqual(webRoles(f), []);
+  assert.ok(catalog(f).some(model => model.slug === native.slug && model.multi_agent_version === "v2"));
+});
+
+test("disconnecting Web removes published models and preserves the Codex configuration", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
+  const f = fixture(t);
+  seedConnectedWeb(f, "http://127.0.0.1:17841/v1");
+  await command(f, "catalog.mjs");
+  assert.ok(catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
   await command(f, "control.mjs", ["web", "disconnect"]);
   await command(f, "catalog.mjs");
-  assert.ok(!catalog().some(model => model.slug.startsWith("chatgpt-web/")));
+  assert.ok(!catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
   assert.ok(existsSync(path.join(f.home, "config.toml")));
 });
