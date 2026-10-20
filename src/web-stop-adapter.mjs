@@ -237,7 +237,7 @@ export class AdapterBridge {
       observationIntervalMs, observationWaitMs });
     this.cache = null; this.epoch = 0; this.pending = new Map(); this.injected = new Map(); this.hooks = new Map();
     this.initializeIds = new Set(); this.closed = false; this.authorityDisabled = false; this.graceDeadline = undefined;
-    this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.turnSandbox = undefined; this.currentAuthority = undefined;
+    this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.currentAuthority = undefined;
     this.cleanupGroup = null; this.builtinWait = null;
     this.builtinTerminals = new Map();
     this.observationChildren = new Map();
@@ -343,10 +343,8 @@ export class AdapterBridge {
         this.currentThread = guard.identity.threadId;
         this.currentTurn = guard.identity.turnId;
         this.currentAuthority = snapshot({ meta: retainedMetadata(params._meta), aliasSessionId: params._meta.sessionId });
-        this.turnSandbox = snapshot(guard.sandbox);
       }
-      if (!isDeepStrictEqual(this.turnSandbox, guard.sandbox)
-          || !isDeepStrictEqual(authorityView(this.currentAuthority.meta), authorityView(params._meta))) {
+      if (!isDeepStrictEqual(authorityView(this.currentAuthority.meta), authorityView(params._meta))) {
         this.authorityDisabled = true; this.invalidate('authority_replaced');
       }
       if (guard.observation && !overlapping && !this.authorityDisabled && this.pending.size === 0) {
@@ -384,7 +382,7 @@ export class AdapterBridge {
     return this.child.send(message);
   }
   cacheAuthority(guard, nativeMeta, delivery) {
-    this.cache = snapshot({ identity: guard.identity, sandbox: guard.sandbox,
+    this.cache = snapshot({ identity: guard.identity,
       nativeMeta, aliasSessionId: nativeMeta.sessionId, generation: this.generation,
       ...(delivery ? { delivery } : {}) });
     this.event('authority_cached', { threadId: guard.identity.threadId, turnId: guard.identity.turnId,
@@ -758,8 +756,6 @@ export function readConfig(filename) {
   if (actual !== value.serverSha256 || realpathSync(value.server).toLowerCase() !== resolve(value.server).toLowerCase()) throw new Error('child_identity_refused');
   const sdk = JSON.parse(readFileSync(value.sdkPackageJson, 'utf8'));
   if (sdk.name !== '@modelcontextprotocol/sdk') throw new Error('sdk_identity_refused');
-  const sample = value.threadIds?.[0] ?? '00000000-0000-0000-0000-000000000000';
-  stopCode(value, { threadId: sample, turnId: sample, sessionId: sample });
   return snapshot(value);
 }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import test from "node:test";
 
+import { collectWebTools } from "../src/web-runtime.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
 
 const fn = (name, extra = {}) => ({ type: "function", name, description: `${name} tool`, parameters: { type: "object", properties: {} }, ...extra });
@@ -16,9 +17,7 @@ test("MCP invocation waits for actual native Codex output and retains namespaced
   const broker = createWebToolBroker();
   const original = [{ type: "namespace", name: "mcp__files", tools: [fn("read", { inputSchema: { type: "object", properties: { path: { type: "string" } } }, parameters: undefined })] }];
   const before = structuredClone(original);
-  const registration = register(broker, original);
-  const { token } = registration;
-  assert.match(registration.instructions, new RegExp(token, "u"));
+  const { token } = register(broker, original);
   const tools = broker.list(token);
   assert.equal(tools[0].wireName, "mcp__files__read");
   assert.deepEqual(tools[0].parameters, original[0].tools[0].inputSchema);
@@ -36,7 +35,7 @@ test("MCP invocation waits for actual native Codex output and retains namespaced
   assert.deepEqual(JSON.parse(call.arguments), { path: "actual.txt" });
   assert.equal(finish(broker, token), false);
   assert.deepEqual(broker.takeCalls(token), [call]);
-  assert.deepEqual(broker.complete(token, [output(call, "file contents")]), { completed: 1 });
+  broker.complete(token, [output(call, "file contents")]);
   assert.deepEqual(await result, { content: [{ type: "text", text: "file contents" }] });
   assert.deepEqual(original, before);
   assert.equal(finish(broker, token), true);
@@ -66,17 +65,32 @@ test("function, namespaced custom exec, and search retain distinct native call s
   assert.equal(finish(broker, token), true);
 });
 
-test("declarations with delimiter collisions cannot redirect a call to another native tool", async () => {
+test("collected declarations retain wire names, native schemas, and call identity across namespace, kind, and discovery collisions", async () => {
   const broker = createWebToolBroker();
-  const { token } = register(broker, [fn("a__b"), { type: "namespace", name: "a", tools: [fn("b")] }, custom("a__b")]);
+  const parameters = { anyOf: [{ type: "object", properties: { count: { type: "integer", enum: ["1"] } } }] };
+  const collected = collectWebTools({ tools: [
+    fn("a__b", { parameters }), { type: "namespace", name: "a", tools: [fn("b")] },
+    fn("tool_search"), search, { type: "namespace", name: "a", tools: [custom("b")] },
+    fn("codex_custom_tool_search"), custom("tool_search"), custom("a__b"),
+  ] });
+  assert.equal(collected.filter(tool => tool.type === "namespace" && tool.name === "a").length, 1);
+  const { token } = register(broker, collected);
   const tools = broker.list(token);
-  assert.equal(new Set(tools.map(tool => tool.wireName)).size, 3);
+  assert.deepEqual(tools.map(tool => tool.wireName), [
+    "a__b_6d90aa992468", "a__b_20826aea0401", "a__b", "tool_search", "codex_tool_search_1",
+    "codex_custom_tool_search", "codex_custom_tool_search_1", "codex_custom_a__b",
+  ]);
+  assert.deepEqual(tools[0].parameters, parameters);
+  assert.deepEqual(tools[2].format, custom("b").format);
   const results = tools.map(tool => broker.invoke(token, { wireName: tool.wireName, ...(tool.kind === "custom" ? { input: "raw" } : {}) }));
   const items = broker.takeCalls(token);
   assert.deepEqual(items.map(item => [item.type, item.name, item.namespace]), [
-    ["function_call", "a__b", undefined], ["function_call", "b", "a"], ["custom_tool_call", "a__b", undefined],
+    ["function_call", "a__b", undefined], ["function_call", "b", "a"], ["custom_tool_call", "b", "a"],
+    ["function_call", "tool_search", undefined], ["tool_search_call", undefined, undefined],
+    ["function_call", "codex_custom_tool_search", undefined], ["custom_tool_call", "tool_search", undefined],
+    ["custom_tool_call", "a__b", undefined],
   ]);
-  broker.complete(token, items.map(item => output(item, "ok")));
+  broker.complete(token, items.map(item => output(item, item.type === "tool_search_call" ? [] : "ok")));
   await Promise.all(results);
   finish(broker, token);
 });

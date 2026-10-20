@@ -119,6 +119,9 @@ Exact names rank first, followed by name prefixes, name substrings and descripti
 matches. Omit the query for the full catalog. Focused results retain each selected
 tool's complete current schema or custom grammar; discovery does not grant tool
 authorization. Prefer a focused query for the tool needed by the current action.
+Web registration shares collision-safe wire naming with the provider relay while
+retaining original native schemas and grammars. It does not run provider schema
+translation to derive those identities.
 It requests a tool by its exact identity, and Router returns that
 request to native Codex for execution and approval. Router itself does not run
 shell commands or bypass Codex approvals. Tool results return to the same active

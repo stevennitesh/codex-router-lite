@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { bridgeCustomTools, buildNamespaceLookups, flattenNamespaceTools } from "./namespace-relay.mjs";
-import { webMcpDiscoveryGuidance, webMcpQueryLimit } from "./web-mcp-contract.mjs";
+import { nativeToolWireNames } from "./namespace-relay.mjs";
+import { webMcpQueryLimit } from "./web-mcp-contract.mjs";
 import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
 
 const hostedTools = new Set(["web_search", "web_search_preview", "image_generation"]);
@@ -50,20 +50,9 @@ function declarations(tools) {
 
 function registry(tools, names) {
   const native = declarations(tools);
-  // Reuse the existing exact namespace/collision maps, without applying its
-  // provider schema repairs or response-policy rewrites to native declarations.
-  const flat = flattenNamespaceTools(structuredClone(tools), { aliasCollisions: true });
-  const custom = bridgeCustomTools(flat.tools, [], flat.namespaces, undefined, [], { bridgeAll: true });
-  const lookups = buildNamespaceLookups(flat.namespaces);
   const result = new Map();
-  for (const tool of custom.tools) {
-    if (tool?.type !== "function") continue;
-    const suggested = tool.name;
-    let entry;
-    const customIdentity = lookups.customTools?.get(suggested);
-    if (customIdentity) entry = native.get(webToolIdentity({ ...customIdentity, kind: "custom" }));
-    else if (lookups.toolSearch?.providerName === suggested) entry = native.get(webToolIdentity({ name: "tool_search", kind: "tool_search" }));
-    else entry = native.get(webToolIdentity({ ...(lookups.flatToNative.get(suggested) ?? { name: suggested }), kind: "function" }));
+  for (const { wireName: suggested, ...identity } of nativeToolWireNames(tools)) {
+    const entry = native.get(webToolIdentity(identity));
     if (!entry) throw failure("Web tool declaration could not retain its native identity.");
     const key = webToolIdentity(entry);
     let wireName = names.byIdentity.get(key);
@@ -317,7 +306,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       turns.set(token, { owner, names, tools: definitions, declarations: structuredClone(tools), policy,
         calls: new Map(), callsMade: 0, revision: 0, activity: 0, waiters: new Set() });
       owners.set(owner, token);
-      return { token, instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. ${webMcpDiscoveryGuidance} Never expose the token in your answer.` };
+      return { token };
     },
     list, update, takeCalls, beginActivity, revision, waitForChange,
     async invoke(token, payload, { signal } = {}) {
@@ -369,7 +358,6 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
         pending.cleanup();
         pending.resolve(result);
       }
-      return { completed: completions.length };
     },
     beginCompletion(token) {
       const turn = turns.get(token);

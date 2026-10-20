@@ -220,6 +220,12 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     payload.input.push(call, outputFor(call, output));
     return request();
   };
+  const completeAnswer = async (call, answer) => {
+    browser.ui.texts.push(answer); browser.ui.complete = true;
+    const retained = await answerBrowser(call), final = await answerBrowser(retained.output[0]);
+    assert.equal(final.output[0].content[0].text, answer);
+    payload.input.push(final.output[0]);
+  };
   const toObserve = async () => {
     let response = await request();
     for (let round = 0; round < 8; round += 1) {
@@ -229,7 +235,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     }
     throw new Error("Browser orchestration did not reach observation.");
   };
-  return { get runtime() { return runtime; }, get broker() { return broker; }, browser, observations, settings, request, executeBrowser, answerBrowser, toObserve,
+  return { get runtime() { return runtime; }, get broker() { return broker; }, browser, observations, settings, request, executeBrowser, answerBrowser, completeAnswer, toObserve,
     token: () => {
       const token = browser.ui.sends.at(-1)?.match(/Use turn_token (web_turn_[a-f0-9]{32}) unchanged/u)?.[1];
       assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
@@ -287,9 +293,8 @@ test("the emitted observation carries its exact live broker revision through ada
 });
 
 test("checkpoint writes finish before native actions and a cancelled turn's successor persists in order", async t => {
-  let started, release;
-  const writeStarted = new Promise(resolve => { started = resolve; });
-  const writeAllowed = new Promise(resolve => { release = resolve; });
+  const { promise: writeStarted, resolve: started } = Promise.withResolvers();
+  const { promise: writeAllowed, resolve: release } = Promise.withResolvers();
   t.after(() => release());
   const writes = [];
   const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
@@ -413,9 +418,7 @@ test("fragmented message DOM reaches native completion with all prose and code a
 
 test("native continuation identity failure exposes bounded structural evidence before another Send", async t => {
   const h = harness(t), { call } = await h.toObserve();
-  h.browser.ui.texts.push("Completed reply"); h.browser.ui.complete = true;
-  const retained = await h.answerBrowser(call), final = await h.answerBrowser(retained.output[0]);
-  h.append(final.output[0]);
+  await h.completeAnswer(call, "Completed reply");
   const secret = "PRIVATE_TOKEN_path_https://private.invalid/value";
   h.browser.ui.replyElements = Array.from({ length: 10 }, () => domElement("private-secret-tag", { class: secret }, domText(secret)));
   h.newTurn(followupId, "Continue only with valid identity evidence.");
@@ -438,8 +441,7 @@ test("native continuation identity failure exposes bounded structural evidence b
 test("unsupported saved mappings fail before browser effects and preserve the original private record", async t => {
   for (const field of ["sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted"]) await t.test(field, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    h.browser.ui.texts.push("Existing deployed answer"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(call, "Existing deployed answer");
     await h.restartRuntime(); h.loseKernel();
     const legacy = JSON.parse(readFileSync(h.stateFile, "utf8"));
     delete legacy[field];
@@ -694,11 +696,7 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   assert.match(revision, /^[a-f0-9]{64}$/u);
   assert.ok(h.browser.ui.sends[0].includes(`Current Codex instructions:\n${instructions}`));
   const firstToken = h.token();
-  const complete = async (call, answer) => {
-    h.browser.ui.texts.push(answer); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
-  };
-  await complete(observe, "Original task completed");
+  await h.completeAnswer(observe, "Original task completed");
   h.newTurn(followupId, "Exact continuation Δ");
   ({ call: observe } = await h.toObserve());
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Exact continuation Δ" }]);
@@ -709,7 +707,7 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   assert.equal(followupPrompt.includes("Current Codex instructions:"), false);
   assert.notEqual(h.token(), firstToken);
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, revision);
-  await complete(observe, "Continuation completed");
+  await h.completeAnswer(observe, "Continuation completed");
   const revised = `${instructions}\n`;
   h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Use the revised instructions.", { instructions: revised });
   ({ call: observe } = await h.toObserve());
@@ -718,7 +716,7 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${revised}`));
   assert.match(h.browser.ui.sends.at(-1), /supersede all earlier Codex instructions/u);
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Use the revised instructions." }]);
-  await complete(observe, "Revised task completed");
+  await h.completeAnswer(observe, "Revised task completed");
   h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Proceed without the previous instructions.", { instructions: undefined });
   await h.toObserve();
   assert.notEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, nextRevision);
@@ -731,8 +729,7 @@ test("restart reuses confirmed instruction delivery while a legacy record seeds 
   for (const legacy of [false, true]) await t.test(`legacy ${legacy}`, async t => {
     const instructions = "Keep current repository authority across restart.";
     const h = harness(t, { instructions }), { call } = await h.toObserve();
-    h.browser.ui.texts.push("Saved answer"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(call, "Saved answer");
     await h.restartRuntime(); h.loseKernel();
     if (legacy) {
       const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
@@ -753,14 +750,10 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
     const instructions = "Confirmed authority A.";
     const h = harness(t, { instructions }), { call } = await h.toObserve();
     const original = JSON.parse(readFileSync(h.stateFile, "utf8"));
-    const complete = async (observe, answer) => {
-      h.browser.ui.texts.push(answer); h.browser.ui.complete = true;
-      const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
-    };
-    await complete(call, "Answer under A");
+    await h.completeAnswer(call, "Answer under A");
     h.newTurn(followupId, "Use authority B.", { instructions: "Later authority B." });
     const { call: later } = await h.toObserve();
-    await complete(later, "Answer under B");
+    await h.completeAnswer(later, "Answer under B");
     await h.restartRuntime(); h.loseKernel();
     const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.notEqual(saved.generationTurnKey, original.generationTurnKey);
@@ -784,8 +777,7 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
 
 test("an unconfirmed revised-instruction Send retains the prior delivery revision and blocks replay", async t => {
   const h = harness(t, { instructions: "Original confirmed authority." }), { call } = await h.toObserve();
-  h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(call, "First answer");
   const revision = JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256;
   h.newTurn(followupId, "Use revised authority.", { instructions: "Revised authority awaiting delivery." });
   const continuation = (await h.request()).output[0], send = (await h.answerBrowser(continuation)).output[0];
@@ -809,10 +801,7 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.equal((await h.request()).output[0].call_id, call.call_id);
   await assert.rejects(h.request({ model: "chatgpt-web/gpt-6-sol", reasoning: { effort: "high" } }), /cannot change model or effort/u);
   assert.equal(h.browser.ui.sends.length, 1);
-  h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call);
-  const final = await h.answerBrowser(retain.output[0]);
-  h.append(final.output[0]);
+  await h.completeAnswer(call, "First answer");
   h.loseKernel();
   h.newTurn(followupId, "Follow up in this same chat.", { model: "chatgpt-web/gpt-5.6-sol", reasoning: { effort: "high" } });
   const { call: nextObserve } = await h.toObserve();
@@ -889,10 +878,7 @@ test("a private saved-chat mapping survives Router and browser restart with delt
   h.append(coding, outputFor(coding, "private actual tool result"));
   const observe = (await h.request()).output[0];
   await actual;
-  h.browser.ui.texts.push("Private assistant final answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(observe);
-  const final = await h.answerBrowser(retain.output[0]);
-  h.append(final.output[0]);
+  await h.completeAnswer(observe, "Private assistant final answer");
   const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(saved.chatUrl, "https://chatgpt.com/c/owned-conversation");
   assert.ok(saved.checkpoint.every(value => /^[a-f0-9]{64}$/u.test(value)));
@@ -917,8 +903,7 @@ test("a private saved-chat mapping survives Router and browser restart with delt
 
 test("manually closing the saved tab reopens its URL and preserves delta delivery while the REPL survives", async t => {
   const h = harness(t), { call } = await h.toObserve();
-  h.browser.ui.texts.push("Latest saved answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(call, "Latest saved answer");
   const savedUrl = h.browser.ui.url;
   h.browser.ui.present = false;
   h.newTurn(followupId, "Continue the same saved conversation after tab closure.");
@@ -938,8 +923,7 @@ test("completed native tool acknowledgements stop before genuinely unsent native
   h.append(coding, outputFor(coding, "Already delivered actual tool result"));
   const observe = (await h.request()).output[0]; await actual;
   h.append({ role: "user", content: "Unsent native material arrived while the Web answer was finishing." });
-  h.browser.ui.texts.push("The completed Web answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(observe, "The completed Web answer");
   h.newTurn(followupId, "Current follow-up request");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [
@@ -954,9 +938,7 @@ test("historical unpaired calls are data and do not create owned unresolved-acti
   const historical = { type: "function_call", call_id: "historical_cancelled_call", name: "read", arguments: "{}" };
   h.append(historical);
   const { call } = await h.toObserve();
-  h.browser.ui.texts.push("Historical outcome remains unknown."); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call);
-  const final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(call, "Historical outcome remains unknown.");
   await h.restartRuntime(); h.loseKernel();
   h.newTurn(followupId, "Continue without re-executing historical actions.");
   await h.toObserve();
@@ -986,8 +968,7 @@ test("invalid saved mappings fail before any fresh chat or browser call", async 
     ["unpaired completed reply", value => { value.observation.replyId = null; }],
   ]) await t.test(label, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    h.browser.ui.texts.push("Persisted answer"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(call, "Persisted answer");
     await h.restartRuntime(); h.loseKernel();
     const saved = JSON.parse(readFileSync(h.stateFile, "utf8")); mutate(saved);
     writeFileSync(h.stateFile, JSON.stringify(saved), "utf8");
@@ -1045,8 +1026,7 @@ test("an interrupted anchored generation can advance from an observed partial to
 
 test("a completed generation keeps its exact final reply proof across a failed pre-Send successor", async t => {
   const h = harness(t), { call } = await h.toObserve();
-  h.browser.ui.texts.push("A completed native final."); h.browser.ui.complete = true;
-  const retained = await h.answerBrowser(call), final = await h.answerBrowser(retained.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(call, "A completed native final.");
   h.newTurn(followupId, "A successor blocked before Send.");
   const continuation = (await h.request()).output[0];
   h.browser.ui.composer = "Keep this draft.";
@@ -1106,9 +1086,7 @@ test("interrupted native handoffs preserve every exact possible browser owner un
   for (const executed of [[false], [true], [false, true, false], [true, false, true]]) await t.test(executed.join(","), async t => {
     const h = harness(t);
     const { call } = await h.toObserve();
-    h.browser.ui.texts.push("Completed first answer"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call);
-    h.append((await h.answerBrowser(retain.output[0])).output[0]);
+    await h.completeAnswer(call, "Completed first answer");
     const expected = [];
     for (const [index, didExecute] of executed.entries()) {
       const attemptId = `${index + 2}2002233-4455-6677-8899-aabbccddeeff`;
@@ -1488,10 +1466,7 @@ test("readable compaction preserves native evidence and current instructions in 
   h.append(coding, outputFor(coding, "Actual file contents retained as native evidence."));
   const observe = (await h.request()).output[0];
   assert.deepEqual(await result, { content: [{ type: "text", text: "Actual file contents retained as native evidence." }] });
-  h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(observe);
-  const final = await h.answerBrowser(retain.output[0]);
-  h.append(final.output[0]);
+  await h.completeAnswer(observe, "First answer");
   const compact = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true });
   const checkpoint = (await compact.json()).output;
   h.input().splice(0, h.input().length, ...checkpoint);
@@ -1527,8 +1502,7 @@ test("attributed compaction preserves undelivered native items without resending
       h.append(owned, outputFor(owned, "Owned actual result already delivered to Web"));
       observe = (await h.request()).output[0]; await result;
     }
-    h.browser.ui.texts.push("Already owned Web answer with detailed context"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(observe), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(observe, "Already owned Web answer with detailed context");
     const rawTail = [
       { role: "user", content: "Genuinely unsent user material", id: "native-user-id" },
       { type: "function_call", call_id: "historical-native-action", name: "read", arguments: "{}", status: "completed" },
@@ -1591,8 +1565,7 @@ test("confirmed capacity rejection with no answer or coding action transfers his
   assert.equal(saved.chatUrl, "https://chatgpt.com/c/successor-2");
   assert.deepEqual(saved.previousChatUrls, [sourceUrl]);
   assert.equal(saved.needsHistory, false);
-  h.browser.ui.texts.push("Successor answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(nextObserve), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(nextObserve, "Successor answer");
   h.newTurn(followupId, "Later native delta");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later native delta" }]);
@@ -1604,8 +1577,7 @@ test("native V2 preserves an exact pending tail after its retained-user prefix a
   for (const mode of ["used", "abandoned", "recompacted", "restarted", "second abandoned", "second abandoned after restart"]) await t.test(mode, async t => {
     const instructions = "Current native authority survives exact V2 compaction.";
     const h = harness(t, { instructions }), { call } = await h.toObserve();
-    h.browser.ui.texts.push("Already owned Web answer"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(call, "Already owned Web answer");
     const tail = [{ role: "user", content: "Unsent native user must arrive exactly once" },
       { type: "function_call", call_id: "pending_native_tool", name: "read", arguments: '{ "path": "literal `$ 漢.txt" }' },
       { type: "function_call_output", call_id: "pending_native_tool", output: "Unsent actual native tool result" }];
@@ -1675,8 +1647,7 @@ test("native V2 preserves rebuilt native context once while deduplicating reorde
     const privateRecord = readFileSync(h.stateFile, "utf8");
     assert.equal(privateRecord.includes(currentDeveloper.content[3].text), false);
     assert.equal(privateRecord.includes(pendingUser.content[0].text), false);
-    h.browser.ui.texts.push("Web completed the post-compaction request"); h.browser.ui.complete = true;
-    const retained = await h.answerBrowser(observation.call), completed = await h.answerBrowser(retained.output[0]); h.append(completed.output[0]);
+    await h.completeAnswer(observation.call, "Web completed the post-compaction request");
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Next request stays a small delta");
     await h.toObserve();
     assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Next request stays a small delta" }]);
@@ -1686,8 +1657,7 @@ test("native V2 preserves rebuilt native context once while deduplicating reorde
 
 test("native V2 forwards changed or clipped retained-prefix material instead of suppressing it", async t => {
   const h = harness(t), { call } = await h.toObserve();
-  h.browser.ui.texts.push("Owned answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(call, "Owned answer");
   const checkpoint = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true,
     input: [...h.input(), { type: "compaction_trigger" }] }, { compactV2: true, headers: headers() }));
   h.input().splice(0, h.input().length, { role: "user", content: "Unknown or clipped prefix must not disappear" }, checkpoint);
@@ -1743,8 +1713,7 @@ test("native V2 carries a pending coding result without delivering it until the 
     h.observations.watchers[0].onCancel();
     assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).activeCompaction?.acknowledgedTailHashes, undefined);
   } else {
-    h.browser.ui.texts.push("Completed Web answer after actual native result"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(observation.output[0]), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(observation.output[0], "Completed Web answer after actual native result");
     const record = JSON.parse(readFileSync(h.stateFile, "utf8"));
     if (mode !== "abandoned") {
       assert.equal(record.activeCompaction.acknowledgedTailHashes.length, mode === "later owned batch" ? 4 : 2);
@@ -1797,8 +1766,7 @@ test("native V2 acknowledges actual coding across refreshed context and recompac
       { type: "function_call_output", call_id: "different_native_action", output: "Actual different native result" },
       { role: "assistant", content: "Done." }];
     if (mode === "later native answer") h.append(...later);
-    h.browser.ui.texts.push("Done. Detailed report from the completed Web action."); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(observation), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(observation, "Done. Detailed report from the completed Web action.");
     const record = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(record.activeCompaction.acknowledgedTailHashes.length, 2);
     assert.equal(record.activeCompaction.acknowledgedTailHashes.every(hash => /^[a-f0-9]{64}$/u.test(hash)), true);
@@ -1812,8 +1780,7 @@ test("native V2 acknowledges actual coding across refreshed context and recompac
       assert.deepEqual(sent.slice(2, 2 + later.length), later);
       assert.deepEqual(sent.at(-1), { role: "user", content: "New request after the recompacted coding turn" });
     } else assert.deepEqual(sent.slice(2), [{ role: "user", content: "New request after the recompacted coding turn" }]);
-    h.browser.ui.texts.push("Follow-up completed with refreshed context"); h.browser.ui.complete = true;
-    const retained = await h.answerBrowser(next.call), completed = await h.answerBrowser(retained.output[0]); h.append(completed.output[0]);
+    await h.completeAnswer(next.call, "Follow-up completed with refreshed context");
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Later request remains a delta");
     await h.toObserve();
     assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later request remains a delta" }]);
@@ -1873,8 +1840,7 @@ test("native V2 compacts after a failed open and completed same-chat native turn
   assert.equal(h.browser.ui.url, savedUrl);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.closes, 0);
-  h.browser.ui.texts.push("Completed post-compaction request"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(next.call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+  await h.completeAnswer(next.call, "Completed post-compaction request");
   h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Later request stays a delta.");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later request stays a delta." }]);
@@ -1905,8 +1871,7 @@ test("native V2 rejects pending browser and discovery controls without retiring 
 test("full established chats transfer a new native request before continue or Send without replaying old actions", async t => {
   for (const detection of ["continue", "send"]) await t.test(detection, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    h.browser.ui.texts.push("Already completed original request"); h.browser.ui.complete = true;
-    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.completeAnswer(call, "Already completed original request");
     h.newTurn(followupId, "A new request belongs in the successor.");
     if (detection === "continue") h.browser.ui.full = true;
     else {
@@ -2036,10 +2001,7 @@ test("browser executor discovery uses actual client search results and preserves
   assert.equal(bootstrap.name, "js");
   const { call } = await h.toObserve();
   assert.deepEqual(h.broker.list(h.token()).find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
-  h.browser.ui.texts.push("Discovered current native tools."); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call);
-  const final = await h.answerBrowser(retain.output[0]);
-  h.append(final.output[0]);
+  await h.completeAnswer(call, "Discovered current native tools.");
   h.newTurn(followupId, "Use the same discovered native tools in this turn.");
   // The follow-up still declares only client search and the read tool. Its
   // paired native search history must recover the executor without invention.
@@ -2150,8 +2112,7 @@ test("a failed private checkpoint write still closes and awaits owned services",
 });
 
 test("shutdown aborts pending tunnel startup and releases services before returning", async t => {
-  let started;
-  const tunnelStarted = new Promise(resolve => { started = resolve; });
+  const { promise: tunnelStarted, resolve: started } = Promise.withResolvers();
   const h = harness(t, { tunnelReadiness: ({ signal }) => new Promise((resolve, reject) => {
     signal.addEventListener("abort", () => reject(new DOMException("Owned tunnel startup stopped.", "AbortError")), { once: true });
     started();

@@ -29,8 +29,8 @@ export function validateAdapterConfig(value) {
 }
 
 export const STOP_STAGES = Object.freeze(['scope', 'ledger', 'metadata', 'public_setup', 'browser_inventory', 'public_browser',
-  'tab_inventory', 'public_tab', 'tab_url', 'generation_proof', 'stop_visibility', 'mutation_url', 'stop_click',
-  'stop_readback_visibility', 'handoff_url', 'handoff', 'complete']);
+  'tab_inventory', 'public_tab', 'generation_proof', 'stop_visibility', 'mutation_url', 'stop_click',
+  'stop_readback_visibility', 'handoff', 'complete']);
 export const STOP_CODES = Object.freeze(['metadata_missing', 'metadata_mismatch', 'ledger_invalid', 'ledger_changed', 'ledger_unreadable',
   'registry_invalid', 'owner_mismatch', 'owner_changed', 'state_unavailable', 'controller_invalid', 'browser_ambiguous',
   'browser_mismatch', 'tab_ambiguous', 'tab_mismatch', 'tab_url_mismatch', 'generation_mismatch', 'stop_confirmation_failed', 'budget_exhausted',

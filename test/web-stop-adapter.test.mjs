@@ -324,8 +324,8 @@ test('uncertain, malformed, foreign and failed Send terminals never authorize St
 });
 
 test('cancelling pending Send cannot acquire authority from its late successful frame', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const source = ordinary(TURN, 'send');
   let produced;
   const f = await protocolFixture(t, async params => { entered(); await terminal; produced = sendResult(params); return produced; });
@@ -344,8 +344,8 @@ test('cancelling pending Send cannot acquire authority from its late successful 
 });
 
 test('a Send frame cannot acquire authority after an intervening native policy change', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const source = ordinary(TURN, 'send');
   const f = await protocolFixture(t, async params => {
     if (params.arguments.code === source.arguments.code) { entered(); await terminal; return sendResult(params); }
@@ -381,8 +381,7 @@ test('one actual MCP observation spans short private child reads and returns onl
 });
 
 test('broker activity wakes the outstanding observation before another child read is scheduled', async t => {
-  let first;
-  const seen = new Promise(resolve => { first = resolve; });
+  const { promise: seen, resolve: first } = Promise.withResolvers();
   const f = await waitingFixture(t, params => { first(); return observationResult(params); }, { observationIntervalMs: 1000 });
   const chatgpt = new Client({ name: 'chatgpt-tool-fixture', version: 'fixture' });
   await chatgpt.connect(new StreamableHTTPClientTransport(new URL(f.service.url)));
@@ -454,9 +453,9 @@ test('a read begun just before renewal can finish across that boundary without r
 });
 
 test('Stop during the last read headroom still waits for its actual terminal within the original cleanup budget', async t => {
-  let clock = 1000, reads = 0, entered, release;
-  const activeRead = new Promise(resolve => { entered = resolve; });
-  const terminal = new Promise(resolve => { release = resolve; });
+  let clock = 1000, reads = 0;
+  const { promise: activeRead, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await waitingFixture(t, async params => {
     if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
     reads += 1;
@@ -480,9 +479,8 @@ test('Stop during the last read headroom still waits for its actual terminal wit
 });
 
 test('a true last-child error remains intact when broker closure wakes its held request first', async t => {
-  let entered, release;
-  const activeRead = new Promise(resolve => { entered = resolve; });
-  const terminal = new Promise(resolve => { release = resolve; });
+  const { promise: activeRead, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const nativeError = { isError: true, content: [{ type: 'text', text: 'actual native execution failure' }] };
   const f = await waitingFixture(t, async () => { entered(); await terminal; return nativeError; });
   const answer = f.client.callTool(f.source); await activeRead;
@@ -516,9 +514,8 @@ test('a failed protected broker channel ends the native request with an explicit
 
 test('Stop freezes repeated observation between reads and during a real active child invocation', async t => {
   for (const activeChild of [false, true]) await t.test(activeChild ? 'active child' : 'idle interval', async subtest => {
-    let first, release;
-    const seen = new Promise(resolve => { first = resolve; });
-    const gate = new Promise(resolve => { release = resolve; });
+    const { promise: seen, resolve: first } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await waitingFixture(subtest, async params => {
       if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
       first(); if (activeChild) await gate;
@@ -542,8 +539,7 @@ test('Stop freezes repeated observation between reads and during a real active c
 });
 
 test('changed authority retires an idle wait and cannot authorize Stop or later repeated reads', async t => {
-  let first;
-  const seen = new Promise(resolve => { first = resolve; });
+  const { promise: seen, resolve: first } = Promise.withResolvers();
   const f = await waitingFixture(t, params => {
     if (!readBrowserProgram(params.arguments.code)) return ordinaryResult;
     first(); return observationResult(params);
@@ -557,8 +553,7 @@ test('changed authority retires an idle wait and cannot authorize Stop or later 
 });
 
 test('an unsettled private observation forwards cancellation to its actual child ID once grace expires', async t => {
-  let first;
-  const seen = new Promise(resolve => { first = resolve; });
+  const { promise: seen, resolve: first } = Promise.withResolvers();
   const f = await waitingFixture(t, async (params, extra) => {
     first();
     await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true }));
@@ -579,8 +574,7 @@ test('an unsettled private observation forwards cancellation to its actual child
 
 test('a closed broker turn and lost browser ownership wake immediately without a successful final answer', async t => {
   for (const kind of ['closed broker', 'lost browser ownership']) await t.test(kind, async subtest => {
-    let first;
-    const seen = new Promise(resolve => { first = resolve; });
+    const { promise: seen, resolve: first } = Promise.withResolvers();
     const f = await waitingFixture(subtest, params => {
       first(); return observationResult(params, kind === 'lost browser ownership' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {});
     }, { observationIntervalMs: 1000 });
@@ -617,9 +611,8 @@ test('cold owned callback reports refusal while a cold builtin forwards without 
 
 test('either callback arrival order gives cleanup exclusively to the owned callback', async t => {
   for (const builtinFirst of [false, true]) await t.test(builtinFirst ? 'builtin first' : 'owned first', async subtest => {
-    let entered, release;
-    const started = new Promise(resolve => { entered = resolve; });
-    const gate = new Promise(resolve => { release = resolve; });
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
       if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await gate; return success(); }
       return ordinaryResult;
@@ -640,9 +633,8 @@ test('either callback arrival order gives cleanup exclusively to the owned callb
 
 test('builtin cancellation never aborts the separately owned cleanup, for either arrival order', async t => {
   for (const builtinFirst of [false, true]) await t.test(builtinFirst ? 'builtin first' : 'owned first', async subtest => {
-    let entered, release;
-    const started = new Promise(resolve => { entered = resolve; });
-    const gate = new Promise(resolve => { release = resolve; });
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
       if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await gate; return success(); }
       return ordinaryResult;
@@ -674,8 +666,9 @@ test('builtin coalescing expiry alone never starts Stop and preserves a later tr
 
 test('late owned cleanup waits for a forwarded builtin actual terminal, including terminal errors', async t => {
   for (const rpcError of [false, true]) await t.test(rpcError ? 'RPC error' : 'tool result', async subtest => {
-    let entered, release, builtinRunning = false;
-    const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+    let builtinRunning = false;
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
       if (params.name === 'turn_ended') {
         builtinRunning = true; entered(); await terminal; builtinRunning = false;
@@ -708,8 +701,8 @@ test('late owned cleanup cannot cross a new ordinary turn after builtin coalesci
 
 test('deadline or owner cancellation while awaiting a forwarded builtin cannot authorize Stop', async t => {
   for (const cancelOwner of [false, true]) await t.test(cancelOwner ? 'owner cancellation' : 'shared deadline', async subtest => {
-    let entered, release;
-    const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
       if (params.name === 'turn_ended') { entered(); await terminal; }
       return ordinaryResult;
@@ -731,9 +724,10 @@ test('deadline or owner cancellation while awaiting a forwarded builtin cannot a
 });
 
 test('all released builtins form the barrier before a backpressured first request is sent', async t => {
-  let blocked, unblock, secondEntered, releaseSecond;
-  const transportBlocked = new Promise(resolve => { blocked = resolve; }), transportGate = new Promise(resolve => { unblock = resolve; });
-  const secondStarted = new Promise(resolve => { secondEntered = resolve; }), secondTerminal = new Promise(resolve => { releaseSecond = resolve; });
+  const { promise: transportBlocked, resolve: blocked } = Promise.withResolvers();
+  const { promise: transportGate, resolve: unblock } = Promise.withResolvers();
+  const { promise: secondStarted, resolve: secondEntered } = Promise.withResolvers();
+  const { promise: secondTerminal, resolve: releaseSecond } = Promise.withResolvers();
   let builtinCount = 0;
   const f = await protocolFixture(t, async params => {
     if (params.name === 'turn_ended' && ++builtinCount === 2) { secondEntered(); await secondTerminal; }
@@ -780,11 +774,10 @@ test('the successful receipt preserves composer-restored evidence through the or
 
 test('transport backpressure cannot forward a builtin cancellation before its original request', async t => {
   for (const blockedTransport of ['owned_reply', 'builtin_request']) await t.test(blockedTransport, async subtest => {
-    let stopEntered, releaseStop, transportEntered, releaseTransport;
-    const started = new Promise(resolve => { stopEntered = resolve; });
-    const stopGate = new Promise(resolve => { releaseStop = resolve; });
-    const transportBlocked = new Promise(resolve => { transportEntered = resolve; });
-    const transportGate = new Promise(resolve => { releaseTransport = resolve; });
+    const { promise: started, resolve: stopEntered } = Promise.withResolvers();
+    const { promise: stopGate, resolve: releaseStop } = Promise.withResolvers();
+    const { promise: transportBlocked, resolve: transportEntered } = Promise.withResolvers();
+    const { promise: transportGate, resolve: releaseTransport } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
       if (params.arguments?.code?.includes('stopOwnedWebTurn')) { stopEntered(); await stopGate; return success(); }
       return ordinaryResult;
@@ -837,8 +830,8 @@ test('ordinary calls carrying callId remain ordinary even with lifecycle names a
 });
 
 test('owner cancellation cancels only injected Stop and preserves queued builtin message and cancellation', async t => {
-  let entered, clock = 1000;
-  const started = new Promise(resolve => { entered = resolve; });
+  let clock = 1000;
+  const { promise: started, resolve: entered } = Promise.withResolvers();
   const f = await protocolFixture(t, async (params, extra) => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
       entered(); await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true })); return success();
@@ -874,8 +867,8 @@ test('owner cancellation cancels only injected Stop and preserves queued builtin
 });
 
 test('duplicate owned and builtin callbacks share one attempt without replacing originals', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: gate, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await gate; return success(); }
     return ordinaryResult;
@@ -973,8 +966,7 @@ test('stale, forged and conflicting owned callbacks never reach the official chi
 });
 
 test('unqualified ordinary cancellation reaches the official child immediately without Stop', async t => {
-  let entered;
-  const started = new Promise(resolve => { entered = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
   const f = await protocolFixture(t, async (params, extra) => {
     entered(); await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true })); return ordinaryResult;
   });
@@ -986,8 +978,8 @@ test('unqualified ordinary cancellation reaches the official child immediately w
 
 test('observation cancellation can settle before owned cleanup; no callback expires the original cancellation once', async t => {
   for (const useOwned of [true, false]) await t.test(useOwned ? 'owned cleanup' : 'no callback', async subtest => {
-    let entered, release;
-    const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async (params, extra) => {
       if (params.arguments?.code === ordinary().arguments.code) {
         entered(); if (useOwned) await gate;
@@ -1006,8 +998,9 @@ test('observation cancellation can settle before owned cleanup; no callback expi
 
 test('a terminal observation error releases owned cleanup without changing the original error or overlapping JS', async t => {
   for (const rpcError of [false, true]) await t.test(rpcError ? 'RPC error' : 'tool error', async subtest => {
-    let entered, release, running = true;
-    const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    let running = true;
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const source = ordinary(), errorResult = { isError: true, content: [{ type: 'text', text: 'Synthetic interrupted observation' }] };
     const f = await protocolFixture(subtest, async params => {
       if (params.arguments?.code === source.arguments.code) {
@@ -1052,9 +1045,10 @@ test('a terminal observation error releases owned cleanup without changing the o
 
 test('a real child return after 500 ms releases one Stop within the original shared callback deadline', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
-  let entered, release, cleanupEntered, running = true;
-  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
-  const cleanupStarted = new Promise(resolve => { cleanupEntered = resolve; });
+  let running = true;
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: gate, resolve: release } = Promise.withResolvers();
+  const { promise: cleanupStarted, resolve: cleanupEntered } = Promise.withResolvers();
   const source = ordinary();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code === source.arguments.code) { entered(); await gate; running = false; return ordinaryResult; }
@@ -1115,8 +1109,8 @@ test('a failed observation outside owned cleanup revokes cached authority', asyn
 
 test('a terminal observation error cannot revive cleanup after owner cancellation or authority replacement', async t => {
   for (const replaceAuthority of [false, true]) await t.test(replaceAuthority ? 'authority replacement' : 'owner cancellation', async subtest => {
-    let entered, release;
-    const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
     const source = ordinary(), errorResult = { isError: true, content: [{ type: 'text', text: 'Synthetic interrupted observation' }] };
     const f = await protocolFixture(subtest, async params => {
       if (params.arguments?.code === source.arguments.code) { entered(); await gate; return errorResult; }
@@ -1143,8 +1137,8 @@ test('a terminal observation error cannot revive cleanup after owner cancellatio
 });
 
 test('owner cancellation releases the child-terminal wait before the child returns and preserves its late actual result', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: gate, resolve: release } = Promise.withResolvers();
   const source = ordinary(), errorResult = { isError: true, content: [{ type: 'text', text: 'Synthetic interrupted observation' }] };
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code === source.arguments.code) { entered(); await gate; return errorResult; }
@@ -1218,8 +1212,7 @@ test('native Stop failures distinguish RPC rejection and tool errors without ret
 });
 
 test('overlapping ordinary JS cancels injected cleanup and prevents late success', async t => {
-  let entered;
-  const started = new Promise(resolve => { entered = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
   const f = await protocolFixture(t, async (params, extra) => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
       entered(); await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true })); return success();
@@ -1242,8 +1235,7 @@ test('conflicting ordinary authority after a forwarded builtin prevents later re
 });
 
 test('unsettled observation refuses cleanup and releases the original native cancellation', async t => {
-  let entered;
-  const started = new Promise(resolve => { entered = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
   const f = await protocolFixture(t, async (params, extra) => {
     if (params.arguments?.code === ordinary().arguments.code) {
       entered(); await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true }));
@@ -1281,8 +1273,9 @@ test('Stop accepts an actual terminal after its execution allowance within the o
 });
 
 test('callback deadline reports missing acknowledgement and passively consumes a late terminal without new authority', async t => {
-  let entered, release, stopCalls = 0;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  let stopCalls = 0;
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
       if (++stopCalls === 1) { entered(); await terminal; }
@@ -1335,8 +1328,9 @@ test('callback deadline reports missing acknowledgement and passively consumes a
 });
 
 test('a terminal received after the deadline cannot gain authority from a delayed local timer', async t => {
-  let entered, release, clock = 1000;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  let clock = 1000;
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
     return ordinaryResult;
@@ -1352,8 +1346,8 @@ test('a terminal received after the deadline cannot gain authority from a delaye
 });
 
 test('late native errors keep sanitized failure evidence without changing the completed hook result', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
     return ordinaryResult;
@@ -1377,8 +1371,8 @@ test('late native errors keep sanitized failure evidence without changing the co
 });
 
 test('actual child closure releases passive cleanup ownership without interpreting a terminal', async t => {
-  let entered, release;
-  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
     return ordinaryResult;

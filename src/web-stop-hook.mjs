@@ -97,14 +97,17 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     let agent, browser, tab, browserId;
     const tabId = ledger.tabId, savedUrl = config.delivery?.url ?? ledger.chatUrl,
       generationTurnKey = config.delivery?.generationTurnKey ?? ledger.generationTurnKey;
-    if (!absent) {
+    const assertBinding = (ownerCode, stateCode = ownerCode) => {
       if (!record(active) || !record(state) || active.state !== state || active.turnId !== nativeTurn
-          || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread) deny("owner_mismatch");
+          || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread) deny(ownerCode);
       if (state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
-          || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule) deny("state_unavailable");
+          || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule) deny(stateCode);
+      if (state.tabId !== tabId || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey) deny(ownerCode);
+    };
+    if (!absent) {
+      assertBinding("owner_mismatch", "state_unavailable");
       ({ agent, browser, tab } = state);
       browserId = browser?.browserId;
-      if (state.tabId !== tabId || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey) deny("owner_mismatch");
     }
     // Installation owns the single native Interrupt definition. This guard
     // prevents reentrant hooks in one VM; it never changes ordinary owners or
@@ -122,12 +125,11 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       if (globalThis.routerWebActiveTurns !== registry) deny("owner_changed");
       if (absent) {
         if (registry?.get(nativeThread) !== undefined || globalThis[key] !== undefined) deny("owner_changed");
-      } else if (registry.get(nativeThread) !== active || globalThis[key] !== state || active.state !== state
-          || active.turnId !== nativeTurn || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread
-          || state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
-          || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule
-          || state.agent !== agent || state.browser !== browser || state.tab !== tab
-          || state.tabId !== tabId || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey) deny("owner_changed");
+      } else {
+        if (registry.get(nativeThread) !== active || globalThis[key] !== state
+            || state.agent !== agent || state.browser !== browser || state.tab !== tab) deny("owner_changed");
+        assertBinding("owner_changed");
+      }
       if (browser !== undefined && browser?.browserId !== browserId || tab !== undefined && tab?.id !== tabId) deny("owner_changed");
       if (tuple(readLedger()) !== ledgerTuple) deny("ledger_changed");
       budget(reserve);
@@ -166,7 +168,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       tab = await browser.tabs.get(tabId);
       assertCurrent();
     }
-    if (tab?.id !== tabId || typeof tab?.url !== "function" || typeof tab?.playwright?.getByRole !== "function"
+    if (tab?.id !== tabId || typeof tab?.playwright?.getByRole !== "function"
         || typeof tab?.playwright?.locator !== "function"
         || typeof tab?.markHandoff !== "function") deny("tab_mismatch");
     // The installed public runtime supports XPath selectors. Keep the latest
