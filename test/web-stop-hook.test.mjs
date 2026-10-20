@@ -81,8 +81,9 @@ function fixture() {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  const run = async ({ thread = model.owner, turn = model.turn, event = model.event } = {}) => {
-    const source = handler.input.code.replaceAll("${session_id}", thread).replaceAll("${turn_id}", turn)
+  const run = async ({ thread = model.owner, turn = model.turn, event = model.event, budgetMs } = {}) => {
+    const input = budgetMs === undefined ? handler.input : createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs }).hooks.Interrupt[0].hooks[0].input;
+    const source = input.code.replaceAll("${session_id}", thread).replaceAll("${turn_id}", turn)
       .replaceAll("${hook_event_name}", event).replaceAll("import(", "__publicImport(");
     const count = outputs.length;
     await new vm.Script(`(async () => { ${source} })()`).runInContext(context, { timeout: 1000 });
@@ -126,8 +127,24 @@ test("generator emits one bounded Interrupt handler and preserves native substit
   assert.equal(handler.timeout, 3); assert.equal(handler.input.timeout_ms, 2700);
   for (const value of ["${session_id}", "${turn_id}", "${hook_event_name}"]) assert(handler.input.code.includes(value));
   assert.deepEqual(createWebStopHookConfig({ stateDir, runtimeModule }), config);
+  assert.deepEqual(createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs: 2400 }), config);
+  for (const budgetMs of [0, -1, 2401, 2250.5, "2250", NaN])
+    assert.throws(() => createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs }), /budget/u);
   for (const changes of [{ stateDir: "relative" }, { runtimeModule: "relative" }, { stateDir: stateDir + "${session_id}" }])
     assert.throws(() => createWebStopHookConfig({ stateDir, runtimeModule, ...changes }), /validated absolute path/u);
+});
+
+test("the remaining callback budget preserves the pre-click reserve and bounds confirmation and handoff", async () => {
+  const f = fixture(); f.model.onCall = name => { if (name === "visible") f.model.now = 1251; };
+  const blocked = await f.run({ budgetMs: 2250 });
+  assert.equal(blocked.code, "budget_exhausted"); assert.deepEqual(mutations(f), []);
+  const g = fixture(); g.first.keepVisible = true;
+  const expired = await g.run({ budgetMs: 1200 });
+  assert.equal(expired.outcome, "blocked"); assert.equal(expired.stopClicked, true);
+  assert.equal(expired.stopHidden, false); assert.equal(expired.retained, false);
+  assert(expired.elapsedMs <= 1200); assert.equal(clicked(g).length, 1);
+  assert(!g.calls.some(call => call.name === "handoff"));
+  const h = fixture(); stopped(await h.run({ budgetMs: 2250 }));
 });
 
 test("two main/peer Web conversations Stop only their own saved tabs, retaining ordinary owners", async () => {

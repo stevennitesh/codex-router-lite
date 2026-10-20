@@ -803,13 +803,9 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   await ensureOwned();
   if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
-    let observation;
-    for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
-      observation = await observeGeneration();
-      state.completed = observation.completed;
-      if (observation.completed || observation.conversationFull) break;
-      if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
-    }
+    // Return after one page read so native Interrupt and queued tools can run.
+    const observation = await observeGeneration();
+    state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
@@ -875,13 +871,8 @@ export function browserScript(options) {
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
-    modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0,
-    // Short UI-only rounds return to Router promptly so it can relay MCP calls.
-    // Native browser JavaScript does not need access to Router's loopback server.
-    observeIterations: options.observeIterations ?? 2, observeDelayMs: options.observeDelayMs ?? 500 };
-  if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()
-      || !Number.isInteger(config.observeIterations) || config.observeIterations < 1 || config.observeIterations > 20
-      || !Number.isInteger(config.observeDelayMs) || config.observeDelayMs < 0 || config.observeDelayMs > 1000) throw failure("Invalid bounded browser selection or observation arguments.");
+    modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
+  if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
   for (const value of Object.values(config.ui)) if (typeof value !== "string" || !value || value.length > 512) throw failure("Invalid observed browser control name.");

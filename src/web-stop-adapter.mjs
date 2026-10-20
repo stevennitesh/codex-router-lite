@@ -71,10 +71,7 @@ export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
     if (config.bindingId !== match[1] || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
         || config.runtimeModule !== runtimeModule || normalize(browserScript(config)) !== code
         || config.ui.stopButtonExactName !== 'Stop') return null;
-    const shortObserve = config.operation === 'observe' && Number.isInteger(config.observeIterations)
-      && config.observeIterations >= 1 && config.observeIterations <= 2 && Number.isInteger(config.observeDelayMs)
-      && config.observeDelayMs >= 0 && config.observeDelayMs <= 500;
-    return { identity, sandbox, config, shortObserve };
+    return { identity, sandbox, config, observation: config.operation === 'observe' };
   } catch { return null; }
 }
 
@@ -111,10 +108,10 @@ export function cleanupMetadata(hook, cached, generation) {
   return cleanupDecision(hook, cached, generation).meta;
 }
 
-export function stopCode(stopConfig, identity) {
+export function stopCode(stopConfig, identity, budgetMs = 2400) {
   if (!threadAllowed(identity?.threadId, stopConfig.threadIds ?? null)
       || !uuid(identity.turnId) || !uuid(identity.sessionId)) throw new Error('identity_refused');
-  const template = createWebStopHookConfig(stopConfig).hooks.Interrupt[0].hooks[0].input.code;
+  const template = createWebStopHookConfig(stopConfig, { budgetMs }).hooks.Interrupt[0].hooks[0].input.code;
   let code = template;
   for (const [placeholder, value] of [['${session_id}', identity.threadId], ['${turn_id}', identity.turnId], ['${hook_event_name}', 'Interrupt']]) {
     if (code.split(placeholder).length !== 2) throw new Error('template_refused');
@@ -175,11 +172,11 @@ export function readStopResult(result) {
 // adapter registration and host-owned canonical metadata, not the tool name.
 export class AdapterBridge {
   constructor({ outer, child, stopConfig, generation = randomUUID(), receipt = () => {}, now = Date.now,
-    graceMs = 2850, settleMs = 300, cleanupMs = 2500, builtinWaitMs = 150 }) {
-    if (!uuid(generation) || graceMs < 1 || graceMs > 2850 || settleMs < 0 || settleMs > 300
+    graceMs = 2850, cleanupMs = 2500, builtinWaitMs = 150 }) {
+    if (!uuid(generation) || graceMs < 1 || graceMs > 2850
         || cleanupMs < 1 || cleanupMs > 2500 || builtinWaitMs < 1 || builtinWaitMs > 300
         || !validThreadIds(stopConfig.threadIds ?? null)) throw new Error('bounds_refused');
-    Object.assign(this, { outer, child, stopConfig: snapshot(stopConfig), generation, receipt, now, graceMs, settleMs, cleanupMs, builtinWaitMs });
+    Object.assign(this, { outer, child, stopConfig: snapshot(stopConfig), generation, receipt, now, graceMs, cleanupMs, builtinWaitMs });
     this.cache = null; this.epoch = 0; this.pending = new Map(); this.injected = new Map(); this.hooks = new Map();
     this.initializeIds = new Set(); this.closed = false; this.authorityDisabled = false; this.graceDeadline = undefined;
     this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.turnSandbox = undefined; this.currentAuthority = undefined;
@@ -204,14 +201,15 @@ export class AdapterBridge {
     this.outer.onclose = this.child.onclose = () => { void this.close().catch(() => {}); };
     await this.child.start(); await this.outer.start();
   }
-  invalidate(code) {
+  invalidate(code, flags = {}) {
     this.epoch += 1; this.cache = null; this.graceDeadline = undefined;
+    this.cleanupGroup?.abort();
     for (const [id, pending] of this.pending) {
       if (pending.deferred) { pending.deferred = false; this.retirePending(id, false); this.sendDetached(pending.cancel); }
     }
     for (const injected of this.injected.values()) injected.cancel();
     if (this.builtinWait) void this.releaseBuiltinWait(this.builtinWait, code).catch(() => this.fail());
-    this.event(code);
+    this.event(code, flags);
   }
   async fromOuter(message) {
     if (this.closed) return;
@@ -225,12 +223,13 @@ export class AdapterBridge {
       if (pending?.qualified && observationAuthority === pending.cache && this.pending.size === 1) {
         if (!pending.cancel) {
           pending.cancel = message; pending.deferred = true; pending.cancelAt = this.now(); this.graceDeadline = pending.cancelAt + this.graceMs;
+          pending.interruptedAt ??= pending.cancelAt;
           pending.timer = setTimeout(() => {
             if (!pending.deferred) return;
             pending.deferred = false; this.retirePending(message.params.requestId, false);
-            this.invalidate('cancel_grace_expired'); this.sendDetached(message);
+            this.invalidate('cancel_grace_expired', { childTerminalObserved: false, elapsedMs: Math.max(0, this.now() - pending.cancelAt) }); this.sendDetached(message);
           }, this.graceMs);
-          this.event('short_observe_cancel_deferred');
+          this.event('observation_cancel_deferred');
         }
         return;
       }
@@ -262,7 +261,7 @@ export class AdapterBridge {
     }
     const guard = qualifyBrowserCall(params, this.stopConfig.runtimeModule, this.stopConfig.threadIds ?? null);
     const overlapping = this.pending.size > 0 || [...this.hooks.values()].some(entry => !entry.group.retired) || this.injected.size > 0;
-    if (overlapping || !guard?.shortObserve) this.invalidate('scope_invalidated');
+    if (overlapping || !guard?.observation) this.invalidate('scope_invalidated');
     if (guard && this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) this.invalidate('retired_turn_refused');
     else if (guard) {
       if (this.currentThread !== guard.identity.threadId || this.currentTurn !== guard.identity.turnId) {
@@ -281,7 +280,7 @@ export class AdapterBridge {
           || !isDeepStrictEqual(authorityView(this.currentAuthority.meta), authorityView(params._meta))) {
         this.authorityDisabled = true; this.invalidate('authority_replaced');
       }
-      if (guard.shortObserve && !overlapping && !this.authorityDisabled && this.pending.size === 0) {
+      if (guard.observation && !overlapping && !this.authorityDisabled && this.pending.size === 0) {
         this.cache = snapshot({ identity: guard.identity, sandbox: guard.sandbox,
           nativeMeta: params._meta, aliasSessionId: params._meta.sessionId, generation: this.generation });
         this.event('authority_cached', { threadId: guard.identity.threadId, turnId: guard.identity.turnId,
@@ -289,7 +288,7 @@ export class AdapterBridge {
       }
     }
     let settle;
-    const pending = { qualified: Boolean(guard?.shortObserve && this.cache && this.pending.size === 0), cache: this.cache,
+    const pending = { qualified: Boolean(guard?.observation && this.cache && this.pending.size === 0), cache: this.cache,
       settled: new Promise(resolvePromise => { settle = resolvePromise; }), settle };
     // Assignment after creation keeps the resolver distinct from Promise.resolve.
     pending.settle = settle;
@@ -303,6 +302,13 @@ export class AdapterBridge {
     const pending = this.pending.get(message.id);
     if (pending && !message.method) {
       const group = this.cleanupGroup;
+      if (pending.interruptedAt !== undefined) this.event('interrupted_observation_terminal', {
+        elapsedMs: Math.max(0, this.now() - pending.interruptedAt),
+        ...(pending.cleanupStartedAt !== undefined ? { callbackElapsedMs: Math.max(0, this.now() - pending.cleanupStartedAt) } : {}),
+        childTerminalObserved: true, rpcError: own(message, 'error'), toolError: message.result?.isError === true,
+        resultSucceeded: own(message, 'result') && message.result?.isError !== true,
+        cleanupActive: group?.pending === pending && !group.retired && !group.aborted,
+      });
       const ownedObservation = pending.qualified && group?.pending === pending && group.authority === pending.cache
         && !group.aborted && group.epoch === this.epoch
         && this.currentThread === group.authority.identity.threadId && this.currentTurn === group.authority.identity.turnId;
@@ -397,11 +403,13 @@ export class AdapterBridge {
     }
     const pending = [...this.pending.values()][0];
     const startedAt = this.now(), deadline = Math.min(startedAt + this.graceMs, this.graceDeadline ?? Infinity);
-    let finish;
+    let finish, abortWait;
     const group = { authority: cached, meta: decision.meta, epoch: this.epoch, startedAt, deadline, pending, entries: [], aborted: false,
       done: new Promise(resolvePromise => { finish = resolvePromise; }), finish,
-      abort: () => { group.aborted = true; for (const value of this.injected.values()) value.cancel(); } };
+      abortedWait: new Promise(resolvePromise => { abortWait = resolvePromise; }),
+      abort: () => { group.aborted = true; abortWait(false); for (const value of this.injected.values()) value.cancel(); } };
     group.finish = finish;
+    if (pending) { pending.interruptedAt ??= startedAt; pending.cleanupStartedAt = startedAt; }
     // Consume the originating operation before awaiting anything. No later
     // observation of this native turn may reacquire it, even after refusal.
     this.cache = null; this.retiredTurns.add(turnKey(cached.identity.threadId, cached.identity.turnId)); this.authorityDisabled = true;
@@ -451,16 +459,24 @@ export class AdapterBridge {
       && this.currentThread === cached.identity.threadId && this.currentTurn === cached.identity.turnId && this.cleanupGroup === group;
     let proof = { ok: false, code: 'cleanup_cancelled' };
     try {
-      if (pending && !await this.waitFor(pending.settled, Math.min(this.settleMs, Math.max(0, deadline - this.now())))) {
+      // Only the actual child's result/error ends observation execution. Native
+      // outer cancellation and local timeout retirement never prove it ended.
+      if (pending && !await this.waitFor(Promise.race([pending.settled, group.abortedWait]), Math.max(0, deadline - this.now()))) {
+        if (!current()) return;
         proof = { ok: false, code: 'observe_not_settled' };
+        this.event('observation_terminal_unavailable', { childTerminalObserved: false, elapsedMs: Math.max(0, this.now() - group.startedAt) });
         this.invalidate('observe_not_settled'); return;
       }
-      if (!current() || deadline - this.now() < this.cleanupMs) {
+      const timeoutMs = Math.floor(Math.min(this.cleanupMs, deadline - this.now()));
+      // Preserve the existing 100 ms transport margin. Child observation and
+      // cleanup consume one callback deadline; neither acquires a fresh budget.
+      const budgetMs = timeoutMs - 100;
+      if (!current() || budgetMs < 1) {
         proof = { ok: false, code: 'stop_budget_refused' }; this.event('stop_budget_refused'); return;
       }
-      const code = stopCode(this.stopConfig, cached.identity);
-      const response = await this.inject({ name: 'js', arguments: { code, timeout_ms: this.cleanupMs,
-        title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, Math.min(this.cleanupMs, deadline - this.now()));
+      const code = stopCode(this.stopConfig, cached.identity, budgetMs);
+      const response = await this.inject({ name: 'js', arguments: { code, timeout_ms: timeoutMs,
+        title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, Math.min(timeoutMs, Math.max(0, deadline - this.now())));
       if (!current() || this.now() > deadline) { this.event('stop_result_stale'); return; }
       proof = response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
       this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', proof.ok

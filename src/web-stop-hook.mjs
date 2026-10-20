@@ -9,7 +9,7 @@ async function stopOwnedWebTurn() {
   const nativeTurn = '__NATIVE_TURN__';
   const nativeEvent = '__NATIVE_EVENT__';
   const config = '__CONFIG__';
-  const started = Date.now(), deadline = started + 2400;
+  const started = Date.now(), deadline = started + '__BUDGET_MS__';
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const uuid = value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value);
   const nonempty = value => typeof value === "string" && value.length > 0;
@@ -246,7 +246,8 @@ async function stopOwnedWebTurn() {
 }
 
 /** Pure generator. Inputs must be the validated, trusted installed configuration. */
-export function createWebStopHookConfig({ stateDir, runtimeModule }) {
+export function createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs = 2400 } = {}) {
+  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 2400) throw new Error("Web Stop budget must be within 1..2400 ms.");
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
     if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0") || value.includes("${")) {
       throw new Error(`Web Stop ${name} must be a validated absolute path.`);
@@ -255,6 +256,7 @@ export function createWebStopHookConfig({ stateDir, runtimeModule }) {
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
     runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href };
   const code = `await (${stopOwnedWebTurn.toString()
+    .replace("'__BUDGET_MS__'", String(budgetMs))
     .replace("'__NATIVE_SESSION__'", "'${session_id}'")
     .replace("'__NATIVE_TURN__'", "'${turn_id}'")
     .replace("'__NATIVE_EVENT__'", "'${hook_event_name}'")

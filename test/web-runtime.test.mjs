@@ -169,7 +169,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
   let broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
   const observations = { watchers: [], services: [], nativeOperations: [], bindings: [], fetchCalls: 0 };
   const settings = { browser: { runtimeModule, pluginName: "Current Codex Tools", pluginAppId: "asdk_current_tools",
-    pluginSelectionButtonName: "Current Codex Tools Workspace tools", observeIterations: 1, observeDelayMs: 0 },
+    pluginSelectionButtonName: "Current Codex Tools Workspace tools" },
   tunnel: { executable: "test-tunnel", id: "test-owned-tunnel" }, mcpPort: 0 };
   const runtimeStateDir = path.join(stateDir, key);
   const makeRuntime = () => createInAppWebRuntime({ broker, stateDir: runtimeStateDir, ...storage,

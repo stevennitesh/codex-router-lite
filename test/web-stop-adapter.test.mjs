@@ -29,7 +29,7 @@ function canonical(turn = TURN) {
 }
 function ordinary(turn = TURN, operation = 'observe') {
   const config = { bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD, turnId: turn, operation,
-    frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule, observeIterations: 1, observeDelayMs: 0,
+    frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule,
     ...(operation === 'send' ? { prompt: 'synthetic send fixture' } : {}) };
   const sandbox = { futureOpaque: ['private opaque value', { retained: true }], permissionProfile: { opaque: true } };
   return { name: 'js', arguments: { code: browserScript(config), timeout_ms: 30000 }, _meta: {
@@ -61,14 +61,11 @@ const success = (overrides = {}) => ({ content: [{ type: 'text', text: JSON.stri
   outcome: 'cancelled', stage: 'complete', freshController: false, stopClicked: true, stopHidden: true, retained: true, elapsedMs: 25, ...overrides }) }) }] });
 const ordinaryResult = { content: [{ type: 'text', text: '{}' }] };
 
-test('actual generated ordinary code qualifies while marker/lookalike/long observations do not gain cancellation grace', () => {
+test('only actual generated observation code gains cancellation grace', () => {
   const call = ordinary();
-  assert.equal(qualifyBrowserCall(call, STOP_CONFIG.runtimeModule)?.shortObserve, true);
+  assert.equal(qualifyBrowserCall(call, STOP_CONFIG.runtimeModule)?.observation, true);
   assert.equal(qualifyBrowserCall({ ...call, arguments: { ...call.arguments, code: call.arguments.code + '\n// changed' } }, STOP_CONFIG.runtimeModule), null);
-  const long = ordinary();
-  long.arguments.code = browserScript({ bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD, turnId: TURN,
-    operation: 'observe', frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule, observeIterations: 3, observeDelayMs: 500 });
-  assert.equal(qualifyBrowserCall(long, STOP_CONFIG.runtimeModule)?.shortObserve, false);
+  assert.equal(qualifyBrowserCall(ordinary(TURN, 'retain'), STOP_CONFIG.runtimeModule)?.observation, false);
   assert.equal(qualifyBrowserCall(call, 'E:\\other-runtime.mjs'), null);
 });
 
@@ -78,7 +75,7 @@ test('compact observe and retain qualify only with the exact generated runner an
     assert.ok(Buffer.byteLength(code, 'utf8') < 22000);
     const qualified = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule);
     assert.equal(qualified?.config.operation, operation);
-    assert.equal(qualified?.shortObserve, operation === 'observe');
+    assert.equal(qualified?.observation, operation === 'observe');
     for (const tampered of [
       code.replace('await ensureOwned();', 'await Promise.resolve();'),
       code.replace('current.state !== state', 'false'),
@@ -487,7 +484,7 @@ test('unqualified ordinary cancellation reaches the official child immediately w
   assert.equal(await pending, 'cancelled'); assert.equal(f.cancellations.length, 1); assert.equal(f.calls.length, 1);
 });
 
-test('short-observe cancellation can settle before owned cleanup; no callback expires the original cancellation once', async t => {
+test('observation cancellation can settle before owned cleanup; no callback expires the original cancellation once', async t => {
   for (const useOwned of [true, false]) await t.test(useOwned ? 'owned cleanup' : 'no callback', async subtest => {
     let entered, release;
     const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
@@ -546,13 +543,63 @@ test('a terminal observation error releases owned cleanup without changing the o
     assert.deepEqual(f.calls.filter(params => params.name === 'turn_ended'), [builtin(), builtin(), builtin()]);
     assert.equal(f.receipts.filter(entry => entry.code === 'stop_confirmed').length, 1);
     assert.equal(f.receipts.some(entry => entry.code === 'observe_not_settled'), false);
+    const terminal = f.receipts.find(entry => entry.code === 'interrupted_observation_terminal');
+    assert.equal(terminal.childTerminalObserved, true); assert.equal(terminal.cleanupActive, true);
+    assert.equal(terminal.rpcError, rpcError); assert.equal(terminal.toolError, !rpcError);
+    assert.equal(terminal.resultSucceeded, false);
   });
+});
+
+test('a real child return after 500 ms releases one Stop within the original shared callback deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let entered, release, cleanupEntered, running = true;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const cleanupStarted = new Promise(resolve => { cleanupEntered = resolve; });
+  const source = ordinary();
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code === source.arguments.code) { entered(); await gate; running = false; return ordinaryResult; }
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { assert.equal(running, false); return success(); }
+    return ordinaryResult;
+  });
+  t.after(release);
+  const receipt = f.bridge.receipt;
+  f.bridge.receipt = entry => { receipt(entry); if (entry.code === 'cleanup_authority_consumed') cleanupEntered(); };
+  const control = new AbortController();
+  const observation = f.client.callTool(source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await started; control.abort();
+  assert.equal(await observation, 'cancelled');
+  assert.ok(f.receipts.some(entry => entry.code === 'observation_cancel_deferred'));
+  t.mock.timers.tick(200);
+  const owned = f.client.callTool(hook()), original = f.client.callTool(builtin());
+  await cleanupStarted;
+  t.mock.timers.tick(500);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 1, 'The outer cancellation and 500 elapsed ms do not end the child invocation.');
+  assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
+  release();
+  assert.equal((await owned).isError, undefined); await original;
+  const injected = f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].arguments.timeout_ms, 2150);
+  assert.match(injected[0].arguments.code, /deadline = started \+ 2050;/u);
+  assert.deepEqual(injected[0]._meta, retainedMetadata(source._meta));
+  const terminal = f.receipts.find(entry => entry.code === 'interrupted_observation_terminal');
+  assert.deepEqual({ elapsedMs: terminal.elapsedMs, callbackElapsedMs: terminal.callbackElapsedMs,
+    childTerminalObserved: terminal.childTerminalObserved, rpcError: terminal.rpcError, toolError: terminal.toolError }, {
+    elapsedMs: 700, callbackElapsedMs: 500, childTerminalObserved: true, rpcError: false, toolError: false });
+  assert.equal(terminal.resultSucceeded, true);
+  assert.equal(f.receipts.filter(entry => entry.code === 'stop_confirmed').length, 1);
+  assert(Date.now() <= 3850, 'The original 2850 ms deadline is never renewed.');
+  const sourceWire = f.forwardedInner.find(message => message.params?.arguments?.code === source.arguments.code);
+  assert.deepEqual(f.forwardedOuter.filter(message => message.id === sourceWire.id && !message.method).map(message => message.result), [ordinaryResult]);
+  assert.deepEqual(f.calls.filter(params => params.name === 'turn_ended'), [builtin()]);
 });
 
 test('a failed observation outside owned cleanup revokes cached authority', async t => {
   const errorResult = { isError: true, content: [{ type: 'text', text: 'Synthetic observation failure' }] };
   const f = await protocolFixture(t, () => errorResult);
   assert.deepEqual(await f.client.callTool(ordinary()), errorResult);
+  assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
   assert.equal((await f.client.callTool(hook())).isError, true);
   assert.deepEqual(f.calls, [ordinary()]);
   assert.ok(f.receipts.some(entry => entry.code === 'ordinary_js_failed'));
@@ -585,6 +632,36 @@ test('a terminal observation error cannot revive cleanup after owner cancellatio
     assert.equal(f.calls.some(params => params.arguments?.code?.includes('stopOwnedWebTurn')), false);
     assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
   });
+});
+
+test('owner cancellation releases the child-terminal wait before the child returns and preserves its late actual result', async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const source = ordinary(), errorResult = { isError: true, content: [{ type: 'text', text: 'Synthetic interrupted observation' }] };
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code === source.arguments.code) { entered(); await gate; return errorResult; }
+    return ordinaryResult;
+  });
+  t.after(release);
+  const observation = f.client.callTool(source); await started;
+  const control = new AbortController();
+  const owned = f.client.callTool(hook(), undefined, { signal: control.signal }).catch(() => 'cancelled');
+  const original = f.client.callTool(builtin());
+  await delay(0); control.abort();
+  assert.equal(await owned, 'cancelled');
+  assert.deepEqual(await original, ordinaryResult, 'The builtin is released without waiting for a child result.');
+  assert.deepEqual(f.calls, [source, builtin()]);
+  assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
+  release(); assert.deepEqual(await observation, errorResult);
+  assert.deepEqual(f.calls, [source, builtin()]);
+  const terminal = f.receipts.find(entry => entry.code === 'interrupted_observation_terminal');
+  assert.equal(terminal.childTerminalObserved, true); assert.equal(terminal.cleanupActive, false);
+  assert.equal(terminal.toolError, true); assert.equal(terminal.resultSucceeded, false);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  const diagnostic = JSON.stringify(terminal);
+  for (const secret of [APPROVED_THREAD, TURN, 'Synthetic interrupted observation', 'private opaque value']) assert.equal(diagnostic.includes(secret), false);
+  const sourceWire = f.forwardedInner.find(message => message.params?.arguments?.code === source.arguments.code);
+  assert.deepEqual(f.forwardedOuter.filter(message => message.id === sourceWire.id && !message.method).map(message => message.result), [errorResult]);
 });
 
 test('blocked Stop exposes only validated progress; errors or malformed proof cannot become success', async t => {
@@ -634,13 +711,18 @@ test('unsettled observation refuses cleanup and releases the original native can
       entered(); await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true }));
     }
     return ordinaryResult;
-  }, { settleMs: 10 });
+  }, { graceMs: 40 });
   const control = new AbortController();
   const pending = f.client.callTool(ordinary(), undefined, { signal: control.signal }).catch(() => 'cancelled');
   await started; control.abort(); await delay(0);
   assert.equal((await f.client.callTool(hook())).isError, true); await pending; await delay(0);
   assert.equal(f.cancellations.length, 1); assert.equal(f.calls.length, 1);
-  assert.ok(f.receipts.some(entry => entry.code === 'observe_not_settled'));
+  assert.ok(f.receipts.some(entry => entry.code === 'observe_not_settled' || entry.code === 'cancel_grace_expired'));
+  assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
+  const sourceWire = f.forwardedInner.find(message => message.params?.arguments?.code === ordinary().arguments.code);
+  assert.equal(f.forwardedInner.filter(message => message.method === 'notifications/cancelled' && message.params.requestId === sourceWire.id).length, 1);
+  const expired = f.receipts.find(entry => ['cancel_grace_expired', 'observation_terminal_unavailable'].includes(entry.code));
+  assert.equal(expired.childTerminalObserved, false);
 });
 
 test('cleanup deadline cancels the injected request once and cannot accept a late success', async t => {
@@ -649,7 +731,7 @@ test('cleanup deadline cancels the injected request once and cannot accept a lat
       await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true })); return success();
     }
     return ordinaryResult;
-  }, { graceMs: 100, cleanupMs: 40 });
+  }, { graceMs: 250, cleanupMs: 150 });
   await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true); await delay(0);
   assert.equal(f.cancellations.length, 1); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
 });

@@ -398,7 +398,7 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
   f.ui.texts.push(text);
   f.ui.complete = completed;
   f.ui.stop = !completed;
-  const observed = await f.run("observe", { observeIterations: 1 });
+  const observed = await f.run("observe");
   if (completed) await f.run("retain");
   const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
     replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
@@ -737,7 +737,7 @@ test("full-chat detection requires both exact visible site controls outside assi
     await f.ready();
     await f.run("send", { ...plugin, prompt: "Check site evidence" });
     change(f.ui);
-    assert.equal((await f.run("observe", { observeIterations: 1 })).conversationFull, false);
+    assert.equal((await f.run("observe")).conversationFull, false);
     assert.equal(f.ui.sendClicks, 1);
     assert.equal(f.ui.newTabs, 1);
     assert.equal(f.ui.navigations.length, 1);
@@ -1051,13 +1051,13 @@ test("observations require a fresh assistant reply and continuation retains exac
   assert.equal(f.ui.normalHeadingVisible, false, "The initial home heading disappears after Send.");
   assert.equal(f.ui.url, "https://chatgpt.com/c/owned-conversation");
   f.ui.complete = true;
-  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
+  assert.equal((await f.run("observe")).completed, false);
   await assert.rejects(f.run("retain"), /successfully completed/);
   f.ui.texts.push("Fresh final answer");
   f.ui.stop = true;
-  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
+  assert.equal((await f.run("observe")).completed, false);
   f.ui.stop = false;
-  const result = await f.run("observe", { observeIterations: 1 });
+  const result = await f.run("observe");
   assert.equal(result.assistantText, "Fresh final answer");
   assert.equal(result.completed, true);
   assert.equal(f.activeTurn()?.turnId, base.turnId, "Completion retains the exact owner for the next native handoff.");
@@ -1076,7 +1076,7 @@ test("observations require a fresh assistant reply and continuation retains exac
   assert.equal(f.activeTurn(), active);
   f.ui.stop = false;
   await f.run("send", { ...plugin, prompt: "Following turn", turnId: "following-turn" });
-  assert.equal((await f.run("observe", { observeIterations: 1, turnId: "following-turn" })).completed, false);
+  assert.equal((await f.run("observe", { turnId: "following-turn" })).completed, false);
   assert.equal(f.ui.newTabs, 1);
 });
 
@@ -1085,7 +1085,7 @@ test("recovery-eligible continuation preserves its existing owned state across f
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Observed completed reply"); f.ui.complete = true;
-  const observed = await f.run("observe", { observeIterations: 1 });
+  const observed = await f.run("observe");
   await f.run("retain");
   const state = f.getState();
   const continued = await f.run("continue", { turnId: "following-turn", tabId: "owned-tab", runtimeModule: "must-not-import-recovery.mjs",
@@ -1109,10 +1109,10 @@ test("a new message identity completes after mounted replies shrink below the Se
   assert.equal(sent.baselineReplyCount, 6);
   assert.deepEqual(sent.baselineReplyIds, Array.from({ length: 6 }, (_, index) => messageId(index)));
   f.ui.texts = Array(5).fill("Repeated answer"); f.ui.stop = true;
-  const pending = await f.run("observe", { observeIterations: 1 });
+  const pending = await f.run("observe");
   assert.deepEqual([pending.replyCount, pending.replyId, pending.assistantText, pending.completed], [5, null, "", false]);
   f.ui.replyIds = [0, 1, 2, 3, 6].map(messageId); f.ui.stop = false; f.ui.complete = true;
-  const completed = await f.run("observe", { observeIterations: 1 });
+  const completed = await f.run("observe");
   assert.deepEqual([completed.replyCount, completed.replyId, completed.assistantText, completed.completed], [5, messageId(6), "Repeated answer", true]);
   await f.run("retain");
   assert.equal(f.ui.sendClicks, 1);
@@ -1131,7 +1131,7 @@ test("fragmented markdown in one message completes once with the full prose and 
     domElement("div", {}, sourceBlock(source)), domElement("div", {}, domElement("p", {}, domText("After.")))];
   domElement("div", { "data-chatgpt-selection-message-id": messageId(1) }, ...fragments);
   f.ui.replyElements.push(...fragments); f.ui.complete = true;
-  const observed = await f.run("observe", { observeIterations: 1 });
+  const observed = await f.run("observe");
   assert.deepEqual([observed.replyCount, observed.replyId, observed.completed], [2, messageId(1), true]);
   assert.equal(observed.assistantText, `Before.\n\n${source}\n\nAfter.`);
   assert.equal(observed.replyUnavailableReason, undefined);
@@ -1154,7 +1154,7 @@ test("orphan markdown widgets before and after saved messages do not enter the S
   const sent = await f.run("send", { ...plugin, prompt: "Read the actual message" });
   assert.equal(sent.baselineReplyCount, 1);
   f.ui.texts.push("The exact final answer."); f.ui.complete = true;
-  const observed = await f.run("observe", { observeIterations: 1 });
+  const observed = await f.run("observe");
   assert.deepEqual([observed.completed, observed.replyCount, observed.assistantText], [true, 2, "The exact final answer."]);
   await f.run("retain");
   const continued = await f.run("continue", { turnId: "next-turn" });
@@ -1167,16 +1167,16 @@ test("one Send permits a later assistant message identity while retaining all ge
   const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Same partial text"); f.ui.stop = true;
-  const first = await f.run("observe", { observeIterations: 1 });
+  const first = await f.run("observe");
   assert.equal(first.replyId, messageId(0));
   f.ui.replyIds = [null];
-  assert.equal((await f.run("observe", { observeIterations: 1 })).replyId, null);
+  assert.equal((await f.run("observe")).replyId, null);
   f.ui.replyIds = [messageId(1)]; f.ui.stop = false; f.ui.complete = true;
-  const replacement = await f.run("observe", { observeIterations: 1 });
+  const replacement = await f.run("observe");
   assert.deepEqual([replacement.replyId, replacement.assistantText, replacement.completed], [messageId(1), "Same partial text", true]);
   assert.deepEqual(replacement.generationReplyIds, [messageId(0), messageId(1)]);
   f.ui.replyIds = [messageId(0)];
-  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, true);
+  assert.equal((await f.run("observe")).completed, true);
   assert.equal(f.ui.sendClicks, 1);
 });
 
@@ -1188,7 +1188,7 @@ test("one prompt-owned generation spans commentary, multiple tools and a differe
   const firstStatus = domElement('div', { 'data-streaming-response-status': 'true' });
   f.ui.messageRoot = domElement('main', {}, observedTurn(key, 'Request', [commentary, firstStatus], { complete: false }));
   f.ui.stop = true;
-  const beforeTool = await f.run('observe', { observeIterations: 1 });
+  const beforeTool = await f.run('observe');
   assert.deepEqual([beforeTool.replyId, beforeTool.assistantText, beforeTool.completed], [messageId(20), '', false]);
   const middle = assistantMessage(21, 'The measured result is 4.');
   const secondStatus = domElement('div', { 'data-streaming-response-status': 'true' });
@@ -1196,7 +1196,7 @@ test("one prompt-owned generation spans commentary, multiple tools and a differe
   const reasoning = domElement('div', { 'data-testid': 'cot-v5-summary' }, assistantMessage(23, 'Private reasoning is not the answer.'));
   f.ui.messageRoot = domElement('main', {}, observedTurn(key, 'Request', [commentary, firstStatus, middle, secondStatus, final, reasoning]));
   f.ui.stop = false; f.ui.complete = true;
-  const completed = await f.run('observe', { observeIterations: 1 });
+  const completed = await f.run('observe');
   assert.deepEqual([completed.replyId, completed.assistantText, completed.completed], [messageId(22), 'Verified final result: 4.', true]);
   assert.deepEqual(completed.generationReplyIds, [20, 21, 22, 23].map(messageId));
   const retained = await f.run('retain');
@@ -1214,7 +1214,7 @@ test("the first status boundary preserves an answer chunk between later tool sta
     assistantMessage(21, 'Answer between two tool calls.'), domElement('div', { 'data-streaming-response-status': 'true' }),
   ]));
   f.ui.complete = true;
-  const observed = await f.run('observe', { observeIterations: 1 });
+  const observed = await f.run('observe');
   assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [messageId(21), 'Answer between two tool calls.', true]);
 });
 
@@ -1224,7 +1224,7 @@ test("an unseen old reply remount cannot become a current answer and old control
   f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Old request', [assistantMessage(99, 'Old answer remounted')]),
     observedTurn(sent.generationTurnKey, 'Current unique request', [], { complete: false }));
   f.ui.complete = true;
-  const observed = await f.run('observe', { observeIterations: 1 });
+  const observed = await f.run('observe');
   assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.statusComplete], [null, '', false, false]);
   assert.equal(observed.replyUnavailableReason, 'no-new-message');
   assert.deepEqual(observed.generationReplyIds, []);
@@ -1237,7 +1237,7 @@ test("a duplicate generation key or a later foreign turn cannot supply the final
     f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(10, 'Owned answer')]),
       observedTurn(duplicate ? sent.generationTurnKey : messageId(701), 'Different request', [assistantMessage(11, 'Other answer')]));
     f.ui.complete = true;
-    const observed = await f.run('observe', { observeIterations: 1 });
+    const observed = await f.run('observe');
     assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [null, '', false]);
     assert.equal(observed.replyUnavailableReason, duplicate ? 'duplicate-generation-turn' : 'generation-turn-not-latest');
   }
@@ -1257,9 +1257,9 @@ test("completion requires the owned action after the answer and retain reads the
   const sent = await f.run('send', { ...plugin, prompt: 'Request' });
   f.ui.complete = true;
   f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer')], { actionFirst: true }));
-  assert.equal((await f.run('observe', { observeIterations: 1 })).completed, false);
+  assert.equal((await f.run('observe')).completed, false);
   f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer')]));
-  assert.equal((await f.run('observe', { observeIterations: 1 })).completed, true);
+  assert.equal((await f.run('observe')).completed, true);
   f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer'), assistantMessage(21, 'New final answer')]));
   const retained = await f.run('retain');
   assert.deepEqual([retained.replyId, retained.assistantText, retained.completed], [messageId(21), 'New final answer', true]);
@@ -1274,7 +1274,7 @@ test("interrupted anchored recovery stops the exact tab and accepts a later fina
     const partial = assistantMessage(21, 'Partial final');
     f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [commentary, status, partial], { complete: false }));
     f.ui.stop = true;
-    const observed = await f.run('observe', { observeIterations: 1 });
+    const observed = await f.run('observe');
     const recovery = { tabId: observed.tabId, url: observed.url, baselineReplyCount: observed.baselineReplyCount,
       baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
       generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
@@ -1297,17 +1297,17 @@ test("a proven reply unmounted before continuation remains old when it remounts 
   const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "First request" });
   f.ui.texts.push("Prior completed answer"); f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 }); await f.run("retain");
+  await f.run("observe"); await f.run("retain");
   f.ui.texts = [];
   await f.run("continue", { turnId: "following-turn" });
   const sent = await f.run("send", { ...plugin, turnId: "following-turn", prompt: "Next request" });
   assert.equal(sent.baselineReplyCount, 0);
   assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
   f.ui.texts.push("Prior completed answer");
-  const old = await f.run("observe", { turnId: "following-turn", observeIterations: 1 });
+  const old = await f.run("observe", { turnId: "following-turn" });
   assert.deepEqual([old.replyId, old.assistantText, old.completed], [null, "", false]);
   f.ui.texts.push("Current completed answer");
-  const current = await f.run("observe", { turnId: "following-turn", observeIterations: 1 });
+  const current = await f.run("observe", { turnId: "following-turn" });
   assert.deepEqual([current.replyId, current.assistantText, current.completed], [messageId(1), "Current completed answer", true]);
   assert.equal(f.ui.sendClicks, 2);
 });
@@ -1323,7 +1323,7 @@ test("old, missing, duplicate or ambiguous reply identities cannot supply an ans
     await f.run("send", { ...plugin, prompt: "New request" });
     f.ui.replyIds = ids.map(value => typeof value === "number" ? messageId(value) : value);
     f.ui.complete = true;
-    const observed = await f.run("observe", { observeIterations: 1 });
+    const observed = await f.run("observe");
     assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [null, "", false]);
     assert.equal(observed.replyUnavailableReason, reason);
     await assert.rejects(f.run("retain"), /successfully completed/);
@@ -1506,13 +1506,13 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   await f.run("send", { ...plugin, prompt: "Initial request" });
   f.ui.texts.push("First verified assistant reply");
   f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 });
+  await f.run("observe");
   await f.run("retain");
   await f.run("continue", { turnId: "second-turn" });
   await f.run("send", { ...plugin, prompt: "Latest request", turnId: "second-turn" });
   const latest = "Latest verified 🔧 assistant reply\n";
   f.ui.texts.push(latest);
-  const observed = await f.run("observe", { observeIterations: 1, turnId: "second-turn" });
+  const observed = await f.run("observe", { turnId: "second-turn" });
   await f.run("retain", { turnId: "second-turn" });
   assert.equal(observed.baselineReplyCount, 40);
   assert.equal(observed.replyCount, 41);
@@ -1698,9 +1698,9 @@ test("native observation returns the original projected source whitespace while 
   const source = "  first\n\n    last\n";
   f.ui.texts.push(domElement("div", {}, sourceBlock(" \n")));
   f.ui.complete = true;
-  assert.equal((await f.run("observe", { observeIterations: 1 })).completed, false);
+  assert.equal((await f.run("observe")).completed, false);
   f.ui.texts[0] = domElement("div", {}, sourceBlock(source));
-  const result = await f.run("observe", { observeIterations: 1 });
+  const result = await f.run("observe");
   assert.equal(result.completed, true);
   assert.equal(result.assistantText, source);
 });
@@ -1710,7 +1710,7 @@ test("retained follow-up requires the exact saved URL and absence of Temporary C
   await f.ready();
   await f.run("send", { ...plugin, prompt: "First request" });
   f.ui.texts.push("Completed first request"); f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 });
+  await f.run("observe");
   await f.run("retain");
   const owner = f.activeTurn();
   assert.equal(owner?.turnId, base.turnId);
@@ -1825,7 +1825,7 @@ test("continuation rejects missing, changed or foreign active ownership before s
     await f.run("send", { ...plugin, prompt: "Interrupted request" });
     if (!interrupted) {
       f.ui.texts.push("Completed request"); f.ui.complete = true;
-      await f.run("observe", { observeIterations: 1 });
+      await f.run("observe");
       await f.run("retain");
     }
     f.ui.stop = true;
@@ -1878,7 +1878,7 @@ test("changed or transformed unsent drafts and uncertain Send cannot be replayed
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Confirmed first request" });
   f.ui.texts.push("First answer"); f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 });
+  await f.run("observe");
   await f.run("retain");
   await f.run("continue", { turnId: "uncertain-turn" });
   f.ui.sendFailure = true;
@@ -1896,7 +1896,7 @@ test("failed handoff or tab closure keeps the exact active turn available until 
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Completed request"); f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 });
+  await f.run("observe");
   const active = f.activeTurn();
   const handoff = f.tab.markHandoff;
   f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
@@ -1962,17 +1962,17 @@ test("cleanup cannot remove a newer binding or another native session's active t
   assert.equal(otherSession.ui.closeCount, 0);
 });
 
-test("a short UI-only observation returns unfinished generation without network access or another Send", async () => {
+test("a visual observation returns the current generation without an artificial pause or another Send", async () => {
   const f = fixture({ fastTimers: true });
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Call the current tools" });
   f.ui.stop = true;
-  const before = f.ui.replyReads;
+  const before = f.ui.replyReads, waitedBefore = f.ui.waitedMs;
   const pending = await f.run("observe");
   assert.equal(pending.completed, false);
   assert.equal(pending.stopVisible, true);
-  assert.equal(f.ui.replyReads - before, 2);
-  assert.equal(f.ui.waitedMs, 500);
+  assert.equal(f.ui.replyReads - before, 1);
+  assert.equal(f.ui.waitedMs - waitedBefore, 0);
   assert.equal(f.ui.fetchCalls, 0);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);
@@ -2002,10 +2002,10 @@ test("compact observation and retention require the exact session, tab catalog a
     await f.ready();
     await f.run("send", { ...plugin, prompt: "Owned request" });
     f.ui.texts.push("Completed answer"); f.ui.complete = true;
-    await f.run("observe", { observeIterations: 1 });
+    await f.run("observe");
     const reads = f.ui.replyReads, handoffs = f.ui.handoffs;
     const extra = change(f) ?? {};
-    await assert.rejects(f.run(operation, { observeIterations: 1, ...extra }), reason);
+    await assert.rejects(f.run(operation, { ...extra }), reason);
     assert.equal(f.ui.replyReads, reads);
     assert.equal(f.ui.handoffs, handoffs);
     assert.equal(f.ui.sendClicks, 1);
@@ -2017,7 +2017,7 @@ test("retention cannot claim success when another turn takes ownership during ha
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Owned request" });
   f.ui.texts.push("Completed answer"); f.ui.complete = true;
-  await f.run("observe", { observeIterations: 1 });
+  await f.run("observe");
   const owner = f.activeTurn(), handoff = f.tab.markHandoff;
   f.tab.markHandoff = async () => { await handoff(); owner.turnId = "newer-turn"; };
   await assert.rejects(f.run("retain"), /different native turn owns/u);
@@ -2026,9 +2026,8 @@ test("retention cannot claim success when another turn takes ownership during ha
   assert.notEqual(f.getState().retained, true);
 });
 
-test("script arguments reject unsafe bindings or native identities and unbounded observation", () => {
+test("script arguments reject unsafe bindings or native identities", () => {
   for (const binding of ['x;alert(1)', "x.y", "x-y", "x\nvar evil"]) assert.throws(() => browserScript({ ...base, operation: "open", bindingId: binding }), /binding ID/);
-  assert.throws(() => browserScript({ ...base, operation: "observe", observeIterations: 100 }), /bounded browser/);
   for (const name of ["sessionId", "turnId"]) for (const value of [undefined, "", "not an identity", "x".repeat(129)]) {
     assert.throws(() => browserScript({ ...base, operation: "open", [name]: value }), /session and turn identities/);
   }

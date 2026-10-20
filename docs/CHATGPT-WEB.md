@@ -130,7 +130,9 @@ answer. Missing or ambiguous turn/message identities fail explicitly.
 
 Polling and final retention carry only the observation code they need, sharing
 the same ownership and reply checks as the full browser operations. The separate
-final retention check and Interrupt hook remain in place.
+final retention check and Interrupt hook remain in place. Each observation reads
+the current page once and returns control immediately; it does not pause between
+batched page reads.
 
 Native tool requests are delivered independently of final-answer readability.
 Completion requires an idle owned browser turn, an answer after the latest tool
@@ -178,7 +180,9 @@ opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
 Interrupt hook calls the adapter's own callback with a three-second timeout.
 Bundled one-second callbacks keep their original messages and cancellation scope.
-Cleanup waits for the active short browser observation to finish. A terminal
+Cleanup waits for the active browser call's actual terminal callback, sharing
+the existing three-second deadline with Stop and its readback. The remaining
+allowance bounds both the injected call and its browser operations. A terminal
 observation error releases that wait only for the already accepted matching
 cleanup; the original error still reaches Codex. A timeout, cancellation of the
 cleanup itself, or changed authority prevents further browser actions.
