@@ -260,5 +260,82 @@
       "Measurements compare equivalent synthetic calls and UTF-8 bytes, not model tokens or end-to-end latency. Live response times and observation counts depend on the page and model.",
       "Live proof covers one ordinary Instant Web conversation at low effort. Other Web routes and subagents were not individually certified."
     ]
+  },
+  "nativeToolDebugFollowup": {
+    "verifiedAt": "2026-10-20T03:29:12.866Z",
+    "status": "file-edit-and-default-sandbox-verified-in-separate-scoped-turns",
+    "deployedSourceCommit": "0b9f65c12041a4797ec0e81f2aad8631f570ed9d",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "productionCodeChanged": false,
+    "officialCliHashUnchanged": true,
+    "runtimePatchUsed": false,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingNativeWorkflow": false,
+    "readOnlyBrowserDiagnosisPerformedSeparately": true,
+    "sandboxOrApprovalSettingsChanged": false,
+    "comparison": {
+      "historicalFiveCallSandboxProofRecheckedAgainstPairedOutputsAndDisk": true,
+      "historicalProbeUsedProcessExecutionPolicyBypass": true,
+      "sameModelAndConfiguredNativeSandboxApprovalPolicy": true,
+      "brokerAndMcpSourceUnchanged": true,
+      "freshDiscoveryAndCorrectCurrentTokenInvocationIndependentlyObserved": true,
+      "hostedRefusalHadNoNativeCodingCall": true,
+      "hostedSpecificRejectionCodeRetained": false,
+      "delegationPresenceAloneExplainsFailure": false
+    },
+    "fileEdit": {
+      "genuineTypedNativeUserRequest": true,
+      "pairedNativeReadPatchReadback": true,
+      "firstLinePreserved": true,
+      "expectedEditedContentVerified": true,
+      "sandboxPermissions": "use_default",
+      "permissionEscalationUsed": false
+    },
+    "powerShellProbeFailure": {
+      "probeAttemptedOnce": true,
+      "exitCode": 1,
+      "receiptCreated": false,
+      "observedError": "AuthorizationManager check failed.",
+      "observedCategory": "SecurityError",
+      "processExecutionPolicyOverrideUsed": false,
+      "harmlessLoaderControlFailedInDefaultSandbox": true,
+      "identicalLoaderControlPassedInNormalUserContext": true,
+      "executionPolicyRegistryReadDeniedInDefaultSandboxControl": true,
+      "nativeFilesystemDenialProvedByThisFailure": false
+    },
+    "independentNodeSandbox": {
+      "primaryWebModelRequestedNativeExecution": true,
+      "delegatedRequestSucceeded": true,
+      "probeExecutedOnce": true,
+      "pairedSuccessfulNativeCalls": 2,
+      "actualProbeAndReceiptReadMatchedDisk": true,
+      "workspaceCrud": true,
+      "outsideWriteAttempted": true,
+      "outsideWriteDenied": true,
+      "outsideErrorCode": "EPERM",
+      "unexpectedOutsideCreate": false,
+      "sameExecutableNormalUserWriteReadControlPassed": true,
+      "loopbackNetworkStatus": 200,
+      "executionPolicyOverrideUsed": false,
+      "sandboxPermissions": "use_default",
+      "permissionEscalationUsed": false
+    },
+    "cleanup": {
+      "ownedEmptyOutsideDirectoriesRemoved": 2,
+      "nativeReceiptsPreserved": true,
+      "rollbackPreserved": true
+    },
+    "verification": {
+      "productionTestsRerun": false,
+      "reason": "Production source and dependencies unchanged; fresh native integration results and controlled fixture checks establish this scope.",
+      "currentNodeProbeSyntaxCheckPassed": true,
+      "newCurrentFiveStepSingleTurnChainClaimed": false
+    },
+    "limits": [
+      "The precise earlier hosted safety rejection remains unconfirmed: actual discovery and a valid invocation were retained, but its persisted tool text was empty and no explicit server rejection code was exposed. A subsequent directly typed file workflow and delegated Node sandbox request both succeeded without policy changes.",
+      "File editing and the fresh sandbox measurement completed in separate scoped turns. The failed child-PowerShell attempt was retained and not rerun; a new current five-action single-turn success is not claimed.",
+      "Sandbox proof covers the disposable workspace files, one prepared host-writable sibling directory and expected loopback access. It is not a general filesystem, network-isolation or other-model certification."
+    ]
   }
 }

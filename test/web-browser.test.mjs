@@ -179,7 +179,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, startNewChatClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: false, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
-    familyText: "GPT-6", familyClicks: 0, sendEnabled: true, waitedMs: 0, actions: [],
+    familyText: "GPT-6", familyClicks: 0, familyExpanded: false, familyExpansionClicks: 0, clippedFamilyClicks: 0, familySwitches: 0,
+    sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
@@ -219,6 +220,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async isVisible() {
       if (name === "Select ChatGPT model" && kind === "menu") return ui.menu;
       if (name === "Select ChatGPT model" && kind === "button") return ui.modelButtonVisible;
+      if (name === "Select model" && kind === "menuitem") return ui.menu && !ui.familyExpanded;
+      if (name === "Power" && kind === "menuitem") return ui.menu && !ui.familyExpanded;
       if (name === "Ask ChatGPT" && kind === "textbox") return ui.composerVisible;
       if (name === "Stop" || name === "Stop generating") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
@@ -230,8 +233,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return true;
     },
     async click() {
-      if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.onModel?.(); }
-      else if (kind === "family-text") { ui.familyClicks += 1; ui.checked = true; ui.menu = false; }
+      if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.familyExpanded = false; ui.onModel?.(); }
+      else if (name === "Select model" && kind === "menuitem") {
+        assert.equal(ui.menu && !ui.familyExpanded, true);
+        ui.actions.push("expand-models"); ui.familyExpansionClicks += 1; ui.familyExpanded = true;
+      }
+      else if (kind === "family-text") {
+        if (!ui.familyExpanded) { ui.clippedFamilyClicks += 1; ui.power = 2; }
+        else {
+          ui.actions.push("select-family"); ui.familyClicks += 1;
+          if (!ui.checked) { ui.familySwitches += 1; ui.power = 2; }
+          ui.checked = true; ui.familyExpanded = false;
+        }
+      }
       else if (name === plugin.pluginSelectionButtonName) { ui.actions.push("attach"); ui.chip = true; ui.attachedName = name; ui.onAttach?.(); }
       else if (name === "Send") {
         ui.actions.push("send");
@@ -257,6 +271,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
     },
     async getAttribute(attribute) {
+      if (name === '[role="slider"]') assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is read from the visible Power view.');
       if (attribute === "aria-valuenow" && ui.missingPower) return null;
       return { "aria-checked": String(ui.checked), "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null;
     },
@@ -264,6 +279,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
       if (name === "Power") {
+        assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is operated in the visible Power view.');
         if (key === "Escape") ui.menu = false;
         else { ui.powerMoves.push(key); ui.power += (key === "ArrowLeft" ? -1 : 1) * (ui.badPowerStep ? 2 : 1); }
       } else if (name === "Ask ChatGPT") {
@@ -542,7 +558,11 @@ test("prepared Send attaches before one current model verification and moves Pow
   await f.run("send", { ...plugin, prompt: "Use the exact requested model" });
   assert.equal(f.ui.power, 0);
   assert.deepEqual(f.ui.powerMoves, Array(4).fill("ArrowLeft"));
-  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
+  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "expand-models", "select-family", "send"]);
+  assert.equal(f.ui.familyExpansionClicks, 1);
+  assert.equal(f.ui.familyClicks, 1, 'The already-selected row returns to Power.');
+  assert.equal(f.ui.familySwitches, 0);
+  assert.equal(f.ui.clippedFamilyClicks, 0);
   assert.equal(f.ui.sendClicks, 1);
   for (const [change, reason] of [[ui => { ui.badPowerStep = true; }, /exactly one step/], [ui => { ui.missingPower = true; }, /attributes are unavailable/]]) {
     const invalid = fixture({ currentPower: 4 });
@@ -570,6 +590,22 @@ test("an unnamed radio option is selected by visible family text and similar fam
   assert.equal(invalid.ui.sendClicks, 0);
 });
 
+test("collapsed-present family rows are expanded before switching to GPT-5.6 Sol Instant", async () => {
+  const f = fixture({ currentPower: 0 }); await f.ready();
+  f.ui.familyText = 'GPT-5.6 Sol'; f.ui.checked = false;
+  const hiddenRow = f.tab.playwright.getByRole('menu', { name: 'Select ChatGPT model', exact: true })
+    .locator('[role="menuitemradio"]').filter({ hasText: 'GPT-5.6 Sol' });
+  assert.equal(await hiddenRow.count(), 1, 'Collapsed rows are still present in the DOM.');
+  const sent = await f.run('send', { ...plugin, prompt: 'Use GPT-5.6 Sol Instant', modelFamily: 'GPT-5.6 Sol', power: 0 });
+  assert.deepEqual([sent.familyChecked, sent.familyText, sent.powerValue], [true, 'GPT-5.6 Sol', 0]);
+  assert.equal(f.ui.familyExpansionClicks, 1);
+  assert.equal(f.ui.familyClicks, 1);
+  assert.equal(f.ui.familySwitches, 1);
+  assert.equal(f.ui.clippedFamilyClicks, 0);
+  assert.deepEqual(f.ui.powerMoves, ['ArrowLeft', 'ArrowLeft'], 'A family switch defaults Power to 2 before the requested Instant setting.');
+  assert.equal(f.ui.sendClicks, 1);
+});
+
 test("prepared Send skips an existing exact connector chip and ignores cached model and connector state", async () => {
   const f = fixture({ currentPower: 4 });
   await f.ready();
@@ -577,7 +613,7 @@ test("prepared Send skips an existing exact connector chip and ignores cached mo
   Object.assign(f.getState(), { model: { family: "GPT-6", power: 0 }, pluginAppId: "asdk_old_tools" });
   f.ui.onType = () => { f.ui.power = 3; };
   await f.run("send", { ...plugin, prompt: "Recheck after preparation" });
-  assert.deepEqual(f.ui.actions, ["model-menu", "send"]);
+  assert.deepEqual(f.ui.actions, ["model-menu", "expand-models", "select-family", "send"]);
   assert.equal(f.ui.attachedName, null);
   assert.equal(f.ui.power, 0);
   assert.deepEqual(f.ui.powerMoves, Array(3).fill("ArrowLeft"));

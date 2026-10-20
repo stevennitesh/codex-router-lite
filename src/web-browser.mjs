@@ -362,17 +362,16 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     // The current picker renders the family as generic text inside an unnamed
     // radio menu item. Match its observed DOM text, then verify the full text.
     const familyLocator = () => menu.locator('[role="menuitemradio"]').filter({ hasText: options.modelFamily });
+    const expand = menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true });
+    // Collapsed family rows remain in the DOM, but their clipped hit targets
+    // overlap Power. Open the actual list before any family click.
+    if (await expand.isVisible()) await expand.click();
     let family = familyLocator();
-    if (await family.count() === 0 && await menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true }).isVisible()) {
-      await menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true }).click();
-    }
     if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    if (await family.getAttribute("aria-checked") !== "true") {
-      await family.click();
-      if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
-      family = familyLocator();
-      if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    }
+    // Clicking an already-selected row also returns the expanded list to Power.
+    await family.click();
+    family = familyLocator();
+    if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
     const slider = menu.locator(ui.powerSliderSelector);
     const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
     const readPower = async attribute => {

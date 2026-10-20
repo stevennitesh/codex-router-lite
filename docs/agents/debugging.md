@@ -129,6 +129,16 @@ unaffected route for shared changes. Follow [verification](architecture.md#verif
 State what was reproduced, the repaired owner, and remaining uncertainty. Store
 dated investigation evidence separately from the maintained behavior guide.
 
+For a child Windows PowerShell `AuthorizationManager check failed` error, first
+distinguish script loading from execution of the probe body. The sandbox can deny
+registry reads used by PowerShell's execution-policy check. Compare a harmless
+one-line script in the default sandbox and normal user context; an absent receipt
+does not prove that an outside write was denied. Record any `-ExecutionPolicy`
+flag separately from native sandbox permissions. An already installed Node
+runtime can test filesystem boundaries without adding PowerShell script loading
+as a precondition. The [native-tool verification follow-up](../history/2026-10-19-web-stop-adapter-verification.json)
+retains the observed failure, controls and independent passing receipt.
+
 ## Git reads in a partial clone
 
 In a partial clone, `git log`, `git show`, and `git diff` can fetch missing
