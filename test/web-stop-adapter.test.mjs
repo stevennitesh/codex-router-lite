@@ -61,7 +61,8 @@ function cached(params = ordinary()) {
   return { ...qualified, nativeMeta: clone(params._meta), aliasSessionId: params._meta.sessionId, generation: GENERATION };
 }
 const success = (overrides = {}) => ({ content: [{ type: 'text', text: JSON.stringify({ systemMessage: 'ROUTER_WEB_STOP ' + JSON.stringify({
-  outcome: 'cancelled', stage: 'complete', freshController: false, stopClicked: true, stopHidden: true, retained: true, elapsedMs: 25, ...overrides }) }) }] });
+  outcome: 'cancelled', stage: 'complete', freshController: false, clickAttempted: true, clickError: false,
+  stopClicked: true, stopHidden: true, generationInactive: true, retained: true, elapsedMs: 25, ...overrides }) }) }] });
 const ordinaryResult = { content: [{ type: 'text', text: '{}' }] };
 
 test('only actual generated observation code gains cancellation grace', () => {
@@ -185,19 +186,31 @@ test('Stop generation rejects invalid and injected identities at the adapter bou
 
 test('bounded actual native output envelope distinguishes explicit success, no-scope, malformed and nested errors', () => {
   assert.equal(readStopResult(success()).ok, true);
-  assert.equal(readStopResult(success({ outcome: 'already_idle', stopClicked: false, stopHidden: false })).ok, true);
+  assert.equal(readStopResult(success({ outcome: 'already_idle', clickAttempted: false, stopClicked: false })).ok, true);
   assert.equal(readStopResult({ ...success(), isError: true }).ok, false);
   assert.equal(readStopResult({ content: [{ type: 'text', text: JSON.stringify({ isError: true, result: success() }) }] }).ok, false);
   assert.equal(readStopResult({ content: [{ type: 'text', text: '{}' }] }).ok, false);
   assert.equal(readStopResult(success({ outcome: 'blocked', stage: 'metadata', code: 'metadata_mismatch' })).ok, false);
   assert.equal(readStopResult(success({ stopHidden: false })).ok, false);
+  assert.equal(readStopResult(success({ generationInactive: false })).ok, false);
+  assert.equal(readStopResult(success({ clickAttempted: false })).ok, false);
+  assert.equal(readStopResult(success({ clickError: true })).ok, false);
+  assert.equal(readStopResult(success({ outcome: 'already_idle', stopClicked: false, clickError: true })).ok, true);
+  assert.equal(readStopResult(success({ outcome: 'already_idle', stopClicked: false })).ok, false);
+  const missingInactive = success();
+  const envelope = JSON.parse(missingInactive.content[0].text), proof = JSON.parse(envelope.systemMessage.slice(16));
+  delete proof.generationInactive;
+  envelope.systemMessage = 'ROUTER_WEB_STOP ' + JSON.stringify(proof);
+  missingInactive.content[0].text = JSON.stringify(envelope);
+  assert.equal(readStopResult(missingInactive).ok, false);
   assert.equal(readStopResult(success({ elapsedMs: 3001 })).ok, false);
   assert.equal(readStopResult(success({ rawPayload: 'must refuse' })).ok, false);
 });
 
 test('validated blocked proof retains bounded stage and progress without acquiring success', () => {
   const proof = { outcome: 'blocked', stage: 'stop_readback_visibility', freshController: true,
-    stopClicked: true, stopHidden: false, retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
+    clickAttempted: true, clickError: false, stopClicked: true, stopHidden: false, generationInactive: true,
+    retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
   for (const stage of ['stop_click', 'stop_readback_visibility', 'handoff']) {
     assert.deepEqual(readStopResult(success({ ...proof, stage })), { ok: false, ...proof, stage });
   }
@@ -230,7 +243,7 @@ async function protocolFixture(t, toolHandler, options = {}) {
   const client = new Client({ name: 'codex_fixture', version: 'fixture' });
   await client.connect(clientWire);
   t.after(async () => { await bridge.close(); await client.close(); await official.close(); });
-  return { client, bridge, calls, cancellations, receipts, declarations, forwardedOuter, forwardedInner };
+  return { client, bridge, calls, cancellations, receipts, declarations, forwardedOuter, forwardedInner, serverWire };
 }
 
 async function waitingFixture(t, toolHandler, options = {}) {
@@ -251,6 +264,83 @@ function observationResult(params, fields = {}) {
     operation: 'observe', normal: true, completed: false, stopVisible: true, statusComplete: false, ...fields,
   } }) + config.frameEnd }] };
 }
+function sendResult(params, fields = {}) {
+  const config = readBrowserProgram(params.arguments.code);
+  return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
+    operation: 'send', sent: true, normal: true, tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
+    generationTurnKey: GENERATION, ...fields,
+  } }) + config.frameEnd }] };
+}
+
+test('a confirmed Send terminal authorizes Stop before observation with only its exact delivery facts', async t => {
+  const source = ordinary(TURN, 'send');
+  const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : sendResult(params));
+  await f.client.callTool(source);
+  const delivery = { bindingId: 'fixtureBinding', tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat', generationTurnKey: GENERATION };
+  assert.deepEqual(f.bridge.cache.delivery, delivery);
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  assert.equal(f.calls.length, 2, 'Stop does not replay Send or require another observation.');
+  assert.equal(f.calls[1].arguments.code, stopCode(STOP_CONFIG, cached(source).identity, f.calls[1].arguments.timeout_ms - 100, delivery));
+  assert.deepEqual(f.calls[1]._meta, retainedMetadata(source._meta));
+});
+
+test('uncertain, malformed, foreign and failed Send terminals never authorize Stop', async t => {
+  for (const branch of ['unconfirmed', 'abnormal', 'unsaved chat', 'malformed', 'foreign nonce', 'foreign tab', 'invalid generation', 'tool error', 'RPC error']) {
+    await t.test(branch, async subtest => {
+      const source = ordinary(TURN, 'send');
+      if (branch === 'foreign tab') source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code), tabId: 'expected-tab' });
+      const f = await protocolFixture(subtest, params => {
+        if (branch === 'RPC error') throw new McpError(-32603, 'synthetic Send error');
+        const value = branch === 'malformed' ? ordinaryResult : sendResult(params,
+          branch === 'unconfirmed' ? { sent: false } : branch === 'abnormal' ? { normal: false }
+            : branch === 'unsaved chat' ? { url: 'https://chatgpt.com/' }
+              : branch === 'invalid generation' ? { generationTurnKey: 'unproven' } : {});
+        if (branch === 'foreign nonce') value.content[0].text = value.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
+        if (branch === 'tool error') value.isError = true;
+        return value;
+      });
+      await f.client.callTool(source).catch(() => {});
+      assert.equal((await f.client.callTool(hook())).isError, true);
+      assert.deepEqual(f.calls, [source]);
+      assert.equal(f.receipts.some(entry => entry.code === 'authority_cached'), false);
+    });
+  }
+});
+
+test('cancelling pending Send cannot acquire authority from its late successful frame', async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const source = ordinary(TURN, 'send');
+  let produced;
+  const f = await protocolFixture(t, async params => { entered(); await terminal; produced = sendResult(params); return produced; });
+  const control = new AbortController();
+  const sending = f.client.callTool(source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await started; control.abort(); assert.equal(await sending, 'cancelled');
+  release(); await delay(0);
+  // The SDK fixture suppresses its handler's result after cancellation; the
+  // official child can send one. Deliver the actual produced frame on its wire.
+  const wire = f.forwardedInner.find(message => message.params?.arguments?.code === source.arguments.code);
+  await f.serverWire.send({ jsonrpc: '2.0', id: wire.id, result: produced }); await delay(0);
+  assert.equal((await f.client.callTool(hook())).isError, true);
+  assert.deepEqual(f.calls, [source]);
+  assert.equal(f.cancellations.length, 1);
+  assert.equal(f.receipts.some(entry => entry.code === 'authority_cached'), false);
+});
+
+test('a Send frame cannot acquire authority after an intervening native policy change', async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const source = ordinary(TURN, 'send');
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments.code === source.arguments.code) { entered(); await terminal; return sendResult(params); }
+    return ordinaryResult;
+  });
+  const sending = f.client.callTool(source); await started;
+  const conflicting = withAuthority(ordinary(), 'changed policy'); conflicting.arguments.code = 'void 0';
+  await f.client.callTool(conflicting); release(); await sending;
+  assert.equal((await f.client.callTool(hook())).isError, true);
+  assert.equal(f.receipts.some(entry => entry.code === 'authority_cached'), false);
+});
 
 test('one actual MCP observation spans short private child reads and returns only the completed snapshot', async t => {
   let reads = 0;
@@ -558,12 +648,106 @@ test('builtin cancellation never aborts the separately owned cleanup, for either
   });
 });
 
-test('builtin without owned callback expires its short wait and cannot authorize a late Stop', async t => {
-  const f = await protocolFixture(t, () => ordinaryResult, { builtinWaitMs: 10 });
+test('builtin coalescing expiry alone never starts Stop and preserves a later trusted callback', async t => {
+  const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : ordinaryResult, { builtinWaitMs: 10 });
   await f.client.callTool(ordinary()); await f.client.callTool(builtin());
   assert.deepEqual(f.calls, [ordinary(), builtin()]);
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
+});
+
+test('late owned cleanup waits for a forwarded builtin actual terminal, including terminal errors', async t => {
+  for (const rpcError of [false, true]) await t.test(rpcError ? 'RPC error' : 'tool result', async subtest => {
+    let entered, release, builtinRunning = false;
+    const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+    const f = await protocolFixture(subtest, async params => {
+      if (params.name === 'turn_ended') {
+        builtinRunning = true; entered(); await terminal; builtinRunning = false;
+        if (rpcError) throw new McpError(-32603, 'synthetic builtin terminal error');
+        return ordinaryResult;
+      }
+      if (params.arguments?.code?.includes('stopOwnedWebTurn')) { assert.equal(builtinRunning, false); return success(); }
+      return ordinaryResult;
+    }, { builtinWaitMs: 10 });
+    await f.client.callTool(ordinary());
+    const original = f.client.callTool(builtin()).catch(() => 'actual terminal error'); await started;
+    const owned = f.client.callTool(hook()); await delay(15);
+    assert.equal(f.calls.length, 2, 'Forwarding a callback is not its terminal response.');
+    release();
+    assert.equal((await owned).isError, undefined);
+    assert.deepEqual(await original, rpcError ? 'actual terminal error' : ordinaryResult);
+    assert.equal(f.receipts.filter(entry => entry.code === 'stop_confirmed').length, 1);
+    assert.equal(f.receipts.some(entry => entry.code === 'builtin_terminal_observed'), true);
+  });
+});
+
+test('late owned cleanup cannot cross a new ordinary turn after builtin coalescing expires', async t => {
+  const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : ordinaryResult, { builtinWaitMs: 10 });
+  await f.client.callTool(ordinary()); await f.client.callTool(builtin());
+  await f.client.callTool(ordinary(TURN2));
   assert.equal((await f.client.callTool(hook())).isError, true);
-  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  assert.equal((await f.client.callTool(hook(TURN2))).isError, undefined);
+  assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
+});
+
+test('deadline or owner cancellation while awaiting a forwarded builtin cannot authorize Stop', async t => {
+  for (const cancelOwner of [false, true]) await t.test(cancelOwner ? 'owner cancellation' : 'shared deadline', async subtest => {
+    let entered, release;
+    const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+    const f = await protocolFixture(subtest, async params => {
+      if (params.name === 'turn_ended') { entered(); await terminal; }
+      return ordinaryResult;
+    }, { builtinWaitMs: 5, graceMs: 40, cleanupMs: 10 });
+    await f.client.callTool(ordinary());
+    const original = f.client.callTool(builtin()); await started;
+    const control = new AbortController();
+    const owned = f.client.callTool(hook(), undefined, { signal: control.signal }).catch(() => 'cancelled');
+    if (cancelOwner) { await delay(0); control.abort(); }
+    const proof = await owned;
+    assert.equal(cancelOwner ? proof : proof.isError, cancelOwner ? 'cancelled' : true);
+    await delay(0);
+    assert.equal(f.calls.length, 2);
+    assert.equal(f.cancellations.length, 0, 'Owned cleanup cannot cancel an original builtin.');
+    release(); assert.deepEqual(await original, ordinaryResult);
+    assert.equal((await f.client.callTool(hook())).isError, true, 'A late builtin terminal cannot revive consumed cleanup.');
+    assert.equal(f.calls.some(params => params.arguments?.code?.includes('stopOwnedWebTurn')), false);
+  });
+});
+
+test('all released builtins form the barrier before a backpressured first request is sent', async t => {
+  let blocked, unblock, secondEntered, releaseSecond;
+  const transportBlocked = new Promise(resolve => { blocked = resolve; }), transportGate = new Promise(resolve => { unblock = resolve; });
+  const secondStarted = new Promise(resolve => { secondEntered = resolve; }), secondTerminal = new Promise(resolve => { releaseSecond = resolve; });
+  let builtinCount = 0;
+  const f = await protocolFixture(t, async params => {
+    if (params.name === 'turn_ended' && ++builtinCount === 2) { secondEntered(); await secondTerminal; }
+    return params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : ordinaryResult;
+  }, { builtinWaitMs: 10 });
+  const send = f.bridge.child.send.bind(f.bridge.child);
+  let first = true;
+  f.bridge.child.send = async message => {
+    if (message.params?.name === 'turn_ended' && first) { first = false; blocked(); await transportGate; }
+    return send(message);
+  };
+  await f.client.callTool(ordinary());
+  const originals = [f.client.callTool(builtin()), f.client.callTool(builtin())];
+  await transportBlocked;
+  const owned = f.client.callTool(hook()); await delay(0);
+  unblock(); await secondStarted; await delay(0);
+  assert.equal(f.calls.length, 3, 'The first actual terminal cannot release cleanup ahead of the second builtin.');
+  releaseSecond();
+  assert.equal((await owned).isError, undefined); await Promise.all(originals);
+  assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
+});
+
+test('an inactive generation after a rejected click keeps the uncertainty in the successful receipt', async t => {
+  const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn')
+    ? success({ outcome: 'already_idle', stopClicked: false, clickError: true }) : ordinaryResult);
+  await f.client.callTool(ordinary());
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  const receipt = f.receipts.find(entry => entry.code === 'stop_confirmed');
+  assert.equal(receipt.clickAttempted, true); assert.equal(receipt.clickError, true);
+  assert.equal(receipt.stopClicked, false); assert.equal(receipt.generationInactive, true); assert.equal(receipt.stopHidden, true);
 });
 
 test('transport backpressure cannot forward a builtin cancellation before its original request', async t => {
@@ -950,7 +1134,8 @@ test('owner cancellation releases the child-terminal wait before the child retur
 test('blocked Stop exposes only validated progress; errors or malformed proof cannot become success', async t => {
   for (const branch of ['blocked', 'malformed', 'native_error']) await t.test(branch, async subtest => {
     const progress = { outcome: 'blocked', stage: 'handoff', freshController: true,
-      stopClicked: true, stopHidden: true, retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
+      clickAttempted: true, clickError: false, stopClicked: true, stopHidden: true, generationInactive: true,
+      retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
     const result = success({ ...progress, ...(branch === 'malformed' ? { privatePayload: 'secret output' } : {}) });
     if (branch === 'native_error') result.isError = true;
     const f = await protocolFixture(subtest, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? result : ordinaryResult);
@@ -1006,10 +1191,11 @@ test('overlapping ordinary JS cancels injected cleanup and prevents late success
   assert.equal(f.cancellations.length, 1); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
 });
 
-test('forwarding a waiting builtin after generic JS prevents later reacquisition of its old authority', async t => {
+test('conflicting ordinary authority after a forwarded builtin prevents later reacquisition', async t => {
   const f = await protocolFixture(t, () => ordinaryResult);
   await f.client.callTool(ordinary()); const original = f.client.callTool(builtin()); await delay(0);
-  await f.client.callTool({ name: 'js', arguments: { code: 'ordinary invalidation' } }); await original;
+  const conflicting = withAuthority(ordinary(), 'changed policy'); conflicting.arguments.code = 'ordinary invalidation';
+  await f.client.callTool(conflicting); await original;
   await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true);
   assert.equal(f.calls.some(params => params.arguments?.code?.includes('stopOwnedWebTurn')), false);
 });

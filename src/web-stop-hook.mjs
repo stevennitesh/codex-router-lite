@@ -17,7 +17,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
   const budget = (reserve = 0) => { if (deadline - Date.now() < reserve) deny("budget_exhausted"); };
   let inScope = false, stage = "scope", outcome = "blocked", code;
   let guards, guard, key, registry, active, state;
-  const diagnostic = { freshController: false, stopClicked: false, stopHidden: false, retained: false };
+  const diagnostic = { freshController: false, clickAttempted: false, clickError: false,
+    stopClicked: false, stopHidden: false, generationInactive: false, retained: false };
   try {
     // A native route (or an older Web turn in the same native conversation) has
     // no current confirmed Web delivery in this exact UUID-derived file.
@@ -42,22 +43,32 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       if (initial && (!record(value) || value.threadId !== nativeThread || !record(last)
           || last.turnId !== nativeTurn || last.completed === true)) return;
       if (initial) inScope = true;
+      const delivery = config.delivery;
+      const deliveryMatches = delivery && value?.bindingId === delivery.bindingId && value?.tabId === delivery.tabId;
+      const confirmed = value?.uncertainSend === false && last?.sendState === "sent"
+        && normalUrl(value?.chatUrl) && uuid(value?.generationTurnKey);
+      // A qualified native Send result can arrive before Router consumes it.
+      // Its exact delivery proof grants Stop only; the uncertain ledger stays
+      // unchanged and continues to block ordinary replay and continuation.
+      const deliveredUncertain = deliveryMatches && value?.uncertainSend === true && last?.sendState === "uncertain";
       // Only the fields which authorize Stop are needed. History, compaction,
       // and reply-recovery schemas remain owned by the ordinary Web runtime.
       if (!record(value) || value.version !== 1 || value.threadId !== nativeThread
           || typeof value.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
           || !Array.isArray(value.browserOwnerTurnIds) || !value.browserOwnerTurnIds.every(uuid)
           || new Set(value.browserOwnerTurnIds).size !== value.browserOwnerTurnIds.length
-          || !value.browserOwnerTurnIds.includes(nativeTurn) || !nonempty(value.tabId) || !normalUrl(value.chatUrl)
-          || value.uncertainSend !== false || !record(last) || last.turnId !== nativeTurn
-          || last.sendState !== "sent" || last.completed !== false) deny("ledger_invalid");
+          || !value.browserOwnerTurnIds.includes(nativeTurn) || !nonempty(value.tabId)
+          || !record(last) || last.turnId !== nativeTurn || last.completed !== false
+          || !confirmed && !deliveredUncertain
+          || delivery && (!deliveryMatches || confirmed
+            && (value.chatUrl !== delivery.url || value.generationTurnKey !== delivery.generationTurnKey))) deny("ledger_invalid");
       return value;
     };
     stage = "ledger";
     const ledger = readLedger(true);
     if (!ledger) return;
     const tuple = value => JSON.stringify([value.version, value.threadId, value.bindingId,
-      value.browserOwnerTurnIds, value.tabId, value.chatUrl, value.uncertainSend,
+      value.browserOwnerTurnIds, value.tabId, value.chatUrl, value.generationTurnKey, value.uncertainSend,
       value.lastTurn.turnId, value.lastTurn.sendState, value.lastTurn.completed]);
     const ledgerTuple = tuple(ledger);
     key = "routerWeb_" + ledger.bindingId;
@@ -84,7 +95,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // them or manufacture an ordinary Router binding for a fresh controller.
     const absent = active === undefined && state === undefined;
     let agent, browser, tab, browserId;
-    const tabId = ledger.tabId, savedUrl = ledger.chatUrl;
+    const tabId = ledger.tabId, savedUrl = config.delivery?.url ?? ledger.chatUrl,
+      generationTurnKey = config.delivery?.generationTurnKey ?? ledger.generationTurnKey;
     if (!absent) {
       if (!record(active) || !record(state) || active.state !== state || active.turnId !== nativeTurn
           || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread) deny("owner_mismatch");
@@ -92,7 +104,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule) deny("state_unavailable");
       ({ agent, browser, tab } = state);
       browserId = browser?.browserId;
-      if (state.tabId !== tabId || state.savedUrl !== savedUrl) deny("owner_mismatch");
+      if (state.tabId !== tabId || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey) deny("owner_mismatch");
     }
     // Installation owns the single native Interrupt definition. This guard
     // prevents reentrant hooks in one VM; it never changes ordinary owners or
@@ -115,7 +127,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           || state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
           || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule
           || state.agent !== agent || state.browser !== browser || state.tab !== tab
-          || state.tabId !== tabId || state.savedUrl !== savedUrl) deny("owner_changed");
+          || state.tabId !== tabId || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey) deny("owner_changed");
       if (browser !== undefined && browser?.browserId !== browserId || tab !== undefined && tab?.id !== tabId) deny("owner_changed");
       if (tuple(readLedger()) !== ledgerTuple) deny("ledger_changed");
       budget(reserve);
@@ -155,71 +167,98 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       assertCurrent();
     }
     if (tab?.id !== tabId || typeof tab?.url !== "function" || typeof tab?.playwright?.getByRole !== "function"
+        || typeof tab?.playwright?.locator !== "function"
         || typeof tab?.markHandoff !== "function") deny("tab_mismatch");
-    stage = "tab_url";
-    const url = await tab.url();
-    assertCurrent();
-    if (url !== savedUrl) deny("tab_url_mismatch");
-    stage = "stop_visibility";
-    const stop = tab.playwright.getByRole("button", { name: config.stopButtonExactName, exact: true });
-    const count = await stop.count();
-    assertCurrent();
-    if (!Number.isInteger(count) || count < 0 || count > 1) deny("stop_confirmation_failed");
-    const visible = await stop.isVisible();
-    assertCurrent();
-    if (typeof visible !== "boolean" || visible && count !== 1) deny("stop_confirmation_failed");
-    stage = "mutation_url";
-    const beforeClickUrl = await tab.url();
-    assertCurrent(visible ? 1000 : 200);
-    if (beforeClickUrl !== savedUrl) deny("tab_url_mismatch");
-    if (visible) {
-      const handoffReserve = 200;
-      stage = "stop_click";
-      assertCurrent(1000);
-      await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - handoffReserve) });
-      diagnostic.stopClicked = true;
-      assertCurrent();
-      stage = "stop_readback_visibility";
-      // Stop acknowledgement can outlive a separate short locator wait. Observe
-      // it within this cleanup's original budget, leaving time for retention.
-      // Only a successful visible read is pending; SDK errors remain failures.
-      const confirmUrl = async () => {
-        assertCurrent(handoffReserve);
-        const currentUrl = await tab.url();
-        assertCurrent(handoffReserve);
-        if (currentUrl !== savedUrl) deny("tab_url_mismatch");
-      };
-      for (;;) {
-        await confirmUrl();
-        assertCurrent(handoffReserve);
-        const afterVisible = await stop.isVisible();
-        assertCurrent(handoffReserve);
-        await confirmUrl();
-        assertCurrent(handoffReserve);
-        if (afterVisible === false) { diagnostic.stopHidden = true; break; }
-        if (afterVisible !== true) deny("stop_confirmation_failed");
-        const delayMs = Math.min(100, deadline - Date.now() - handoffReserve);
-        if (delayMs <= 0) deny("stop_confirmation_failed");
-        assertCurrent(handoffReserve + delayMs);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-        assertCurrent(handoffReserve);
-      }
-    }
-    stage = "handoff_url";
-    assertCurrent(100);
-    const handoffUrl = await tab.url();
-    assertCurrent(100);
-    if (handoffUrl !== savedUrl) deny("tab_url_mismatch");
+    // The installed public runtime supports XPath selectors. Keep the latest
+    // generation condition inside the semantic action locator so a successor
+    // appearing after our read cannot make the action resolve its Stop button.
+    // Native pointer dispatch still has its own selector-to-input boundary.
+    const ownedTurn = `//*[@${config.ui.turnKeyAttribute}='${generationTurnKey}']`;
+    const latestTurn = `(//*[@${config.ui.turnKeyAttribute}])[last()][@${config.ui.turnKeyAttribute}='${generationTurnKey}']`;
+    const stop = tab.playwright.locator(`xpath=//body[count(${ownedTurn})=1 and ${latestTurn}]`)
+      .getByRole("button", { name: config.stopButtonExactName, exact: true });
+    const snapshot = tab.playwright.locator("body").or(stop);
+    const inspectGeneration = async (reserve = 0) => {
+      assertCurrent(reserve);
+      const timeoutMs = Math.min(1000, Math.floor(deadline - Date.now() - reserve));
+      if (timeoutMs < 1) deny("budget_exhausted");
+      const view = await snapshot.evaluateAll((elements, { ui, generationTurnKey }) => {
+          const bodies = elements.filter(element => element.tagName === "BODY");
+          if (bodies.length !== 1) return null;
+          const body = bodies[0], document = body.ownerDocument;
+          if (document?.body !== body) return null;
+          const turns = Array.from(document.querySelectorAll(ui.turnSelector));
+          const matching = turns.filter(element => element.getAttribute(ui.turnKeyAttribute) === generationTurnKey);
+          const states = matching.length === 1 ? matching[0].querySelectorAll(ui.turnStateSelector) : [];
+          const controls = elements.filter(element => element !== body);
+          const visible = controls.some(element => {
+            const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+          });
+          // URL, logical turn state and semantic control matches belong to this
+          // one synchronous DOM read, with no later URL RPC reopening the gap.
+          return { url: document.URL, matchingCount: matching.length,
+            latestTurnKey: turns.at(-1)?.getAttribute(ui.turnKeyAttribute) ?? null,
+            stopCount: controls.length, stopVisible: visible,
+            complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
+        }, { ui: config.ui, generationTurnKey }, { timeoutMs });
+      assertCurrent(reserve);
+      if (view?.url !== savedUrl) deny("tab_url_mismatch");
+      if (!record(view) || view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey
+          || typeof view.complete !== "boolean") deny("generation_mismatch");
+      const count = view.stopCount, visible = view.stopVisible;
+      if (!Number.isInteger(count) || count < 0 || count > 1 || typeof visible !== "boolean"
+          || visible && count !== 1) deny("stop_confirmation_failed");
+      diagnostic.stopHidden = !visible;
+      // A missing control can be a rendering gap. Only the site's existing
+      // complete turn state plus hidden Stop establishes an inactive generation.
+      diagnostic.generationInactive = view.complete && !visible;
+      return { visible, inactive: diagnostic.generationInactive };
+    };
+    stage = "generation_proof";
+    await inspectGeneration(200);
     stage = "handoff";
     assertCurrent(100);
     await tab.markHandoff();
     assertCurrent();
     if (!absent) {
-      if (visible) state.completed = false;
+      state.completed = false;
       state.retained = true;
     }
     diagnostic.retained = true;
-    outcome = visible ? "cancelled" : "already_idle";
+    // Retention is independent of action acknowledgement. Recheck the exact
+    // generation after handoff before considering the one semantic Stop click.
+    stage = "mutation_url";
+    let observation = await inspectGeneration(200);
+    for (;;) {
+      if (observation.inactive) break;
+      if (!diagnostic.clickAttempted && observation.visible) {
+        stage = "stop_click";
+        assertCurrent(1000);
+        diagnostic.clickAttempted = true;
+        try {
+          await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - 200) });
+          diagnostic.stopClicked = true;
+        } catch {
+          // The public locator may reject after input took effect or natural
+          // completion removed its target. Never repeat an uncertain click.
+          diagnostic.clickError = true;
+        }
+        assertCurrent(100);
+        stage = "stop_readback_visibility";
+        observation = await inspectGeneration(100);
+        if (diagnostic.clickError && !observation.inactive) deny("browser_operation_failed");
+        continue;
+      }
+      const delayMs = Math.min(100, deadline - Date.now() - 101);
+      if (delayMs <= 0) deny("stop_confirmation_failed");
+      assertCurrent(100 + delayMs);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      assertCurrent(100);
+      stage = diagnostic.clickAttempted ? "stop_readback_visibility" : "stop_visibility";
+      observation = await inspectGeneration(100);
+    }
+    outcome = diagnostic.stopClicked ? "cancelled" : "already_idle";
     stage = "complete";
   } catch (error) {
     code = codes.has(error?.stopCode) ? error.stopCode : "browser_operation_failed";
@@ -233,14 +272,25 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
 }
 
 /** Pure generator. The adapter owns validation of the originating native identity. */
-export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = 2400 } = {}) {
+export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = 2400, delivery } = {}) {
   if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 2400) throw new Error("Web Stop budget must be within 1..2400 ms.");
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
     if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
       throw new Error(`Web Stop ${name} must be a validated absolute path.`);
     }
   }
+  if (delivery !== undefined && (delivery === null || typeof delivery !== "object" || Array.isArray(delivery)
+      || Object.keys(delivery).length !== 4 || !["bindingId", "tabId", "url", "generationTurnKey"].every(name => Object.hasOwn(delivery, name))
+      || typeof delivery.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(delivery.bindingId)
+      || typeof delivery.tabId !== "string" || !delivery.tabId || !isSavedChatUrl(delivery.url)
+      || typeof delivery.generationTurnKey !== "string"
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(delivery.generationTurnKey))) {
+    throw new Error("Web Stop delivery requires exact confirmed browser facts.");
+  }
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
-    runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName };
+    runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName,
+    ...(delivery === undefined ? {} : { delivery }),
+    ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
+      .map(name => [name, browserDom[name]])) };
   return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)});`;
 }

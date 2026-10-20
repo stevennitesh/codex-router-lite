@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { readBrowserProgram, parseBrowserOutput } from './web-browser.mjs';
+import { readBrowserProgram, parseBrowserOutput, isSavedChatUrl } from './web-browser.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
 import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 
@@ -113,10 +113,10 @@ export function cleanupDecision(hook, cached, generation) {
   return { reason: 'retained_originating_authority', meta: retainedMetadata(cached.nativeMeta) };
 }
 
-export function stopCode(stopConfig, identity, budgetMs = 2400) {
+export function stopCode(stopConfig, identity, budgetMs = 2400, delivery) {
   if (!threadAllowed(identity?.threadId, stopConfig.threadIds ?? null)
       || !uuid(identity.turnId) || !uuid(identity.sessionId)) throw new Error('identity_refused');
-  return createWebStopCode(stopConfig, identity, { budgetMs });
+  return createWebStopCode(stopConfig, identity, { budgetMs, ...(delivery ? { delivery } : {}) });
 }
 
 // Parse the actual native text envelope, including {systemMessage: ...}. No raw
@@ -145,15 +145,17 @@ export function readStopResult(result) {
   };
   if (!visit(result)) return fail('malformed_result');
   if (!record(proof)) return fail('no_stop_proof');
-  const allowed = ['outcome', 'stage', 'freshController', 'stopClicked', 'stopHidden', 'retained', 'code', 'elapsedMs'];
+  const flags = ['freshController', 'clickAttempted', 'clickError', 'stopClicked', 'stopHidden', 'generationInactive', 'retained'];
+  const allowed = ['outcome', 'stage', ...flags, 'code', 'elapsedMs'];
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
-      || !STOP_STAGES.includes(proof.stage) || ['freshController', 'stopClicked', 'stopHidden', 'retained'].some(key => typeof proof[key] !== 'boolean')
+      || !STOP_STAGES.includes(proof.stage) || flags.some(key => typeof proof[key] !== 'boolean')
       || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > 3000
       || proof.code !== undefined && !STOP_CODES.includes(proof.code)) return fail('malformed_proof');
   if (proof.outcome === 'blocked') return { ok: false, ...proof, code: proof.code ?? 'blocked' };
-  if (proof.stage !== 'complete' || proof.retained !== true || own(proof, 'code')
-      || proof.outcome === 'cancelled' && (!proof.stopClicked || !proof.stopHidden)
-      || proof.outcome === 'already_idle' && (proof.stopClicked || proof.stopHidden)) return fail('incomplete_proof');
+  if (proof.stage !== 'complete' || !proof.retained || !proof.stopHidden || !proof.generationInactive || own(proof, 'code')
+      || proof.clickError && !proof.clickAttempted
+      || proof.outcome === 'cancelled' && (!proof.stopClicked || !proof.clickAttempted || proof.clickError)
+      || proof.outcome === 'already_idle' && (proof.stopClicked || proof.clickAttempted !== proof.clickError)) return fail('incomplete_proof');
   return { ok: true, ...proof };
 }
 
@@ -223,6 +225,7 @@ export class AdapterBridge {
     this.initializeIds = new Set(); this.closed = false; this.authorityDisabled = false; this.graceDeadline = undefined;
     this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.turnSandbox = undefined; this.currentAuthority = undefined;
     this.cleanupGroup = null; this.builtinWait = null;
+    this.builtinTerminals = new Map();
     this.observationChildren = new Map();
   }
   event(code, flags = {}) {
@@ -333,15 +336,17 @@ export class AdapterBridge {
         this.authorityDisabled = true; this.invalidate('authority_replaced');
       }
       if (guard.observation && !overlapping && !this.authorityDisabled && this.pending.size === 0) {
-        this.cache = snapshot({ identity: guard.identity, sandbox: guard.sandbox,
-          nativeMeta: params._meta, aliasSessionId: params._meta.sessionId, generation: this.generation });
-        this.event('authority_cached', { threadId: guard.identity.threadId, turnId: guard.identity.turnId,
-          authorityDigest: digest(guard.sandbox), canonicalDigest: digest(guard.identity.canonical) });
+        const delivery = this.cache?.delivery;
+        this.cacheAuthority(guard, params._meta, delivery?.bindingId === guard.config.bindingId ? delivery : undefined);
       }
     }
     let settle;
     const pending = { qualified: Boolean(guard?.observation && this.cache && this.pending.size === 0), cache: this.cache,
       settled: new Promise(resolvePromise => { settle = resolvePromise; }), settle };
+    if (guard?.config.operation === 'send' && !overlapping && !this.authorityDisabled
+        && !this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) {
+      pending.send = { guard, nativeMeta: snapshot(params._meta), epoch: this.epoch };
+    }
     // Assignment after creation keeps the resolver distinct from Promise.resolve.
     pending.settle = settle;
     this.pending.set(message.id, pending);
@@ -363,6 +368,13 @@ export class AdapterBridge {
       return this.readObservation(pending);
     }
     return this.child.send(message);
+  }
+  cacheAuthority(guard, nativeMeta, delivery) {
+    this.cache = snapshot({ identity: guard.identity, sandbox: guard.sandbox,
+      nativeMeta, aliasSessionId: nativeMeta.sessionId, generation: this.generation,
+      ...(delivery ? { delivery } : {}) });
+    this.event('authority_cached', { threadId: guard.identity.threadId, turnId: guard.identity.turnId,
+      authorityDigest: digest(guard.sandbox), canonicalDigest: digest(guard.identity.canonical) });
   }
   async waitForBroker(pending) {
     const state = pending.wait;
@@ -410,6 +422,11 @@ export class AdapterBridge {
     if (this.closed) return;
     const internal = this.injected.get(message.id);
     if (internal && !message.method) { this.injected.delete(message.id); internal.finish(message); return; }
+    const builtin = this.builtinTerminals.get(message.id);
+    if (builtin && !message.method) {
+      this.builtinTerminals.delete(message.id); builtin.settle(true);
+      this.event('builtin_terminal_observed', { rpcError: own(message, 'error'), toolError: message.result?.isError === true });
+    }
     const observation = this.observationChildren.get(message.id);
     if (observation && !message.method) {
       this.observationChildren.delete(message.id);
@@ -430,6 +447,20 @@ export class AdapterBridge {
       const ownedObservation = pending.qualified && group?.pending === pending && group.authority === pending.cache
         && !group.aborted && group.epoch === this.epoch
         && this.currentThread === group.authority.identity.threadId && this.currentTurn === group.authority.identity.turnId;
+      const sent = pending.send;
+      if (sent && !message.error && message.result?.isError !== true && sent.epoch === this.epoch
+          && !this.authorityDisabled && this.pending.size === 1 && !this.cleanupGroup && this.injected.size === 0
+          && this.currentThread === sent.guard.identity.threadId && this.currentTurn === sent.guard.identity.turnId
+          && isDeepStrictEqual(authorityView(this.currentAuthority.meta), authorityView(sent.nativeMeta))) {
+        let value;
+        try { value = parseBrowserOutput(message.result, sent.guard.config.frameToken); } catch { /* An unconfirmed Send grants no cleanup authority. */ }
+        if (value?.operation === 'send' && value.sent === true && value.normal === true && isSavedChatUrl(value.url)
+            && typeof value.tabId === 'string' && value.tabId.length > 0 && uuid(value.generationTurnKey)
+            && (!sent.guard.config.tabId || value.tabId === sent.guard.config.tabId)) {
+          this.cacheAuthority(sent.guard, sent.nativeMeta, { bindingId: sent.guard.config.bindingId,
+            tabId: value.tabId, url: value.url, generationTurnKey: value.generationTurnKey });
+        }
+      }
       // A real terminal error also ends the ordinary invocation. Only its
       // already accepted cleanup may retain authority; local cancellation or
       // timeout retirement never proves execution ended. Forward the error intact.
@@ -567,20 +598,26 @@ export class AdapterBridge {
     } });
   }
   async forwardBuiltin(entry) {
+    this.trackBuiltinTerminal(entry);
     await this.child.send(entry.message);
     entry.forwarded = true;
     if (entry.cancel) await this.child.send(entry.cancel);
     this.hooks.delete(entry.message.id);
   }
+  trackBuiltinTerminal(entry) {
+    if (entry.terminal) return;
+    let settle;
+    entry.terminal = { authority: entry.group.authority,
+      settled: new Promise(resolvePromise => { settle = resolvePromise; }) };
+    entry.terminal.settle = settle;
+    this.builtinTerminals.set(entry.message.id, entry.terminal);
+  }
   async releaseBuiltinWait(waiting, reason) {
     if (this.builtinWait !== waiting) return;
     this.builtinWait = null; clearTimeout(waiting.timer);
-    // Once the real lifecycle callback reaches the official child, this old
-    // originating authority cannot authorize a later injected operation.
-    const identity = waiting.authority.identity;
-    this.retiredTurns.add(turnKey(identity.threadId, identity.turnId));
-    if (this.cache === waiting.authority) this.cache = null;
-    if (this.currentThread === identity.threadId && this.currentTurn === identity.turnId) this.authorityDisabled = true;
+    // Coalescing changes latency only. A late trusted callback keeps its actual
+    // originating authority, but must await every released native callback.
+    for (const entry of waiting.entries) this.trackBuiltinTerminal(entry);
     this.event('builtin_forwarded_without_owned_callback', { reason });
     try { for (const entry of waiting.entries) await this.forwardBuiltin(entry); }
     finally { waiting.finish(); }
@@ -599,6 +636,16 @@ export class AdapterBridge {
         this.event('observation_terminal_unavailable', { childTerminalObserved: false, elapsedMs: Math.max(0, this.now() - group.startedAt) });
         this.invalidate('observe_not_settled'); return;
       }
+      const builtins = [...this.builtinTerminals.values()].filter(value => value.authority.generation === cached.generation
+        && value.authority.identity.threadId === cached.identity.threadId && value.authority.identity.turnId === cached.identity.turnId);
+      if (builtins.length && !await this.waitFor(Promise.race([
+        Promise.all(builtins.map(value => value.settled)).then(values => values.every(Boolean)), group.abortedWait,
+      ]), Math.max(0, deadline - this.now()))) {
+        if (!current()) return;
+        proof = { ok: false, code: 'builtin_not_settled' };
+        this.event('builtin_terminal_unavailable', { childTerminalObserved: false });
+        this.invalidate('builtin_not_settled'); return;
+      }
       const timeoutMs = Math.floor(Math.min(this.cleanupMs, deadline - this.now()));
       // Preserve the existing 100 ms transport margin. Child observation and
       // cleanup consume one callback deadline; neither acquires a fresh budget.
@@ -606,16 +653,18 @@ export class AdapterBridge {
       if (!current() || budgetMs < 1) {
         proof = { ok: false, code: 'stop_budget_refused' }; this.event('stop_budget_refused'); return;
       }
-      const code = stopCode(this.stopConfig, cached.identity, budgetMs);
+      const code = stopCode(this.stopConfig, cached.identity, budgetMs, cached.delivery);
       const response = await this.inject({ name: 'js', arguments: { code, timeout_ms: timeoutMs,
         title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, Math.min(timeoutMs, Math.max(0, deadline - this.now())));
       if (!current() || this.now() > deadline) { this.event('stop_result_stale'); return; }
       proof = response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
       this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', proof.ok
-        ? { stopClicked: proof.stopClicked, stopHidden: proof.stopHidden, retained: proof.retained }
+        ? { clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
+          stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained }
         : { resultCode: proof.code, ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}), ...(proof.outcome === 'blocked' ? {
           outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
-          stopClicked: proof.stopClicked, stopHidden: proof.stopHidden, retained: proof.retained, elapsedMs: proof.elapsedMs,
+          clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
+          stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained, elapsedMs: proof.elapsedMs,
         } : {}) });
     } finally {
       // Only the explicit callback owns this result. Original bundled messages
@@ -654,6 +703,7 @@ export class AdapterBridge {
     this.closed = true; this.invalidate('bridge_closed');
     await Promise.allSettled([this.outer.close(), this.child.close()]);
     this.observationChildren.clear();
+    this.builtinTerminals.clear();
   }
 }
 

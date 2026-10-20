@@ -27,36 +27,77 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
   const ledgerPath = thread => path.join(stateDir, "web-in-app", "conversations", `${thread}.json`);
   context.routerWebActiveTurns = new Map();
   const add = (thread, turn) => {
-    const surface = { thread, turn, visible: true, stopCount: 1, tabId: `tab-${thread}`, browserId: `browser-${thread}`,
+    const surface = { thread, turn, visible: true, complete: false, stopCount: 1,
+      generationTurnKey: id(Number(thread.slice(-12)) + 200), tabId: `tab-${thread}`, browserId: `browser-${thread}`,
       url: `https://chatgpt.com/c/${id(Number(thread.slice(-12)) + 100)}` };
     surface.inventoryUrl = surface.url;
-    const stop = { count: async () => { touch("count", thread); return surface.stopCount; },
-      isVisible: async () => { touch("visible", thread); return surface.visible; },
-      click: async options => {
+    const matchesGuard = () => {
+      const keys = surface.turnKeys ?? [surface.generationTurnKey];
+      return keys.filter(key => key === stop.guardGeneration).length === 1 && keys.at(-1) === stop.guardGeneration;
+    };
+    const stop = { click: async options => {
         assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
+        touch("click_request", thread);
+        if (!matchesGuard()) throw new Error("No element matched the guarded Stop selector");
         surface.clickTimeoutMs = options.timeoutMs; touch("click", thread);
         if (surface.pauseClick) await surface.pauseClick;
         const acknowledgementMs = surface.clickAcknowledgementMs ?? 0;
         model.now += Math.min(acknowledgementMs, options.timeoutMs);
-        if (!surface.keepVisible) surface.visible = false;
-        if (acknowledgementMs > options.timeoutMs) throw new Error('Timed out running CDP command "Input.dispatchMouseEvent"');
-        if (surface.clickError) throw surface.clickError;
+        if (!surface.keepVisible) { surface.visible = false; surface.complete = !surface.keepGenerating; }
+        if (acknowledgementMs > options.timeoutMs || surface.clickError) {
+          model.now += surface.errorDiagnosticsMs ?? 0;
+          throw surface.clickError ?? new Error('Timed out running CDP command "Input.dispatchMouseEvent"');
+        }
       } };
     const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
       markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
-      playwright: { getByRole: (role, options) => { assert.equal(role, "button"); assert.equal(options.name, "Stop");
-        assert.equal(options.exact, true); touch("locator", thread); return stop; }, locator: forbidden } };
+      playwright: { getByRole: forbidden,
+        locator: selector => {
+          if (selector !== "body") {
+            const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
+            assert.equal(selector, `xpath=//body[count(//*[@data-turn-key='${key}'])=1 and (//*[@data-turn-key])[last()][@data-turn-key='${key}']]`);
+            stop.guardGeneration = key;
+            return { getByRole: (role, options) => {
+              assert.equal(role, "button"); assert.equal(options.name, "Stop"); assert.equal(options.exact, true);
+              touch("locator", thread); return stop;
+            } };
+          }
+          return { or: other => { assert.equal(other, stop); return { evaluateAll: async (reader, args, options) => {
+            assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 1000);
+            touch("generation", thread);
+            if (surface.generationReadError) throw surface.generationReadError;
+            touch("visible", thread);
+            const turns = (surface.turnKeys ?? [surface.generationTurnKey]).map(turnKey => ({
+              getAttribute: name => { assert.equal(name, 'data-turn-key'); return turnKey; },
+              querySelectorAll: name => {
+                assert.equal(name, '[data-talvt-turn-state]');
+                return Array.from({ length: surface.stateCount ?? 1 }, () => ({ getAttribute: attribute => {
+                  assert.equal(attribute, 'data-talvt-turn-state'); return surface.turnState ?? (surface.complete ? 'complete' : 'running');
+                } }));
+              },
+            }));
+            const body = { tagName: "BODY" };
+            body.ownerDocument = { body, URL: surface.url, defaultView: {
+              getComputedStyle: () => ({ visibility: surface.visibilityStyle ?? "visible" }),
+            }, querySelectorAll: name => { assert.equal(name, '[data-turn-key]'); return turns; } };
+            const controls = matchesGuard() ? Array.from({ length: surface.stopCount }, () => ({
+              tagName: "BUTTON", getBoundingClientRect: () => ({ width: surface.visible ? 32 : 0, height: surface.visible ? 32 : 0 }),
+            })) : [];
+            return reader([body, ...controls], args);
+          } }; } };
+        } } };
     const browser = { browserId: surface.browserId, tabs: {
       list: async () => { touch("tabs", thread); return surface.tabs ?? [{ id: surface.tabId, url: surface.inventoryUrl }]; },
       get: async tabId => { assert.equal(tabId, surface.tabId); touch("get_tab", thread); return tab; }, new: forbidden } };
     const state = { agent: undefined, browser, tab, tabId: surface.tabId, savedUrl: surface.url, sessionId: thread,
       runtimeModule, hasSentMessage: true, sendAttempted: true, sendClicked: true, sendConfirmed: true,
-      bindingLost: false, completed: false, retained: false };
+      generationTurnKey: surface.generationTurnKey, bindingLost: false, completed: false, retained: false };
     const active = { turnId: turn, state, stopButtonName: "Stop" };
     const bindingId = `binding_${thread.replaceAll("-", "")}`;
     const key = "routerWeb_" + bindingId;
     const ledger = { version: 1, threadId: thread, bindingId, browserOwnerTurnIds: [turn], tabId: surface.tabId,
-      chatUrl: surface.url, uncertainSend: false, lastTurn: { turnId: turn, sendState: "sent", completed: false } };
+      chatUrl: surface.url, generationTurnKey: surface.generationTurnKey,
+      uncertainSend: false, lastTurn: { turnId: turn, sendState: "sent", completed: false } };
     model.ledgers.set(ledgerPath(thread), ledger);
     model.surfaces.set(thread, Object.assign(surface, { tab, browser, state, active, key, ledger }));
     context.routerWebActiveTurns.set(thread, active);
@@ -89,8 +130,9 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  const run = async ({ thread = model.owner, turn = model.turn, budgetMs } = {}) => {
-    const source = stopCode(stopConfig, { threadId: thread, turnId: turn, sessionId: id(99) }, budgetMs)
+  const run = async ({ thread = model.owner, turn = model.turn, budgetMs, delivery } = {}) => {
+    const identity = { threadId: thread, turnId: turn, sessionId: id(99) };
+    const source = stopCode(stopConfig, identity, budgetMs, delivery)
       .replaceAll("import(", "__publicImport(");
     const count = outputs.length;
     await new vm.Script(`(async () => { ${source} })()`).runInContext(context, { timeout: 1000 });
@@ -111,7 +153,10 @@ const clicked = f => f.calls.filter(call => call.name === "click");
 function stopped(result) {
   assert.equal(result.outcome, "cancelled", JSON.stringify(result));
   assert.equal(result.stopClicked, true);
+  assert.equal(result.clickAttempted, true);
+  assert.equal(result.clickError, false);
   assert.equal(result.stopHidden, true);
+  assert.equal(result.generationInactive, true);
   assert.equal(result.retained, true);
 }
 async function blocked(change, expectedCode) {
@@ -141,16 +186,17 @@ test("the adapter's generated Stop program preserves escaped paths as data", asy
   assert.equal(clicked(f).length, 1);
 });
 
-test("the remaining callback budget preserves the pre-click reserve and bounds confirmation and handoff", async () => {
+test("the remaining callback budget bounds Stop while preserving the earlier verified retention", async () => {
   const f = fixture(); f.model.onCall = name => { if (name === "visible") f.model.now = 1251; };
   const blocked = await f.run({ budgetMs: 2250 });
-  assert.equal(blocked.code, "budget_exhausted"); assert.deepEqual(mutations(f), []);
+  assert.equal(blocked.code, "budget_exhausted"); assert.equal(clicked(f).length, 0);
+  assert.equal(blocked.retained, true);
   const g = fixture(); g.first.keepVisible = true;
   const expired = await g.run({ budgetMs: 1200 });
   assert.equal(expired.outcome, "blocked"); assert.equal(expired.stopClicked, true);
-  assert.equal(expired.stopHidden, false); assert.equal(expired.retained, false);
+  assert.equal(expired.stopHidden, false); assert.equal(expired.retained, true);
   assert(expired.elapsedMs <= 1200); assert.equal(clicked(g).length, 1);
-  assert(!g.calls.some(call => call.name === "handoff"));
+  assert.deepEqual(mutations(g).map(call => call.name), ["handoff", "click"]);
   const h = fixture(); stopped(await h.run({ budgetMs: 2250 }));
 });
 
@@ -162,37 +208,39 @@ test("a 600 ms click acknowledgement after setup succeeds within the reduced ori
   assert.equal(result.elapsedMs, 900);
   assert(f.first.clickTimeoutMs >= 600 && f.first.clickTimeoutMs <= 1200);
   assert.equal(clicked(f).length, 1);
-  assert.deepEqual(mutations(f).map(call => call.name), ["click", "handoff"]);
-  assert.equal(f.calls.filter(call => call.name === "visible").length, 2);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 3);
 });
 
-test("a click acknowledgement beyond the remaining allowance fails once before readback or handoff", async () => {
+test("a rejected click acknowledgement permits owned inactive readback without claiming its effect", async () => {
   const f = fixture();
   f.model.onCall = name => { if (name === "tabs") f.model.now += 300; };
   f.first.clickAcknowledgementMs = 1300;
   const result = await f.run({ budgetMs: 1500 });
-  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
-  assert.equal(result.stage, "stop_click");
-  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(result.outcome, "already_idle"); assert.equal(result.code, undefined);
+  assert.equal(result.clickAttempted, true); assert.equal(result.clickError, true);
+  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, true); assert.equal(result.retained, true);
+  assert.equal(result.generationInactive, true);
   assert.equal(result.elapsedMs, 300 + f.first.clickTimeoutMs);
   assert(result.elapsedMs <= 1500);
   assert.equal(clicked(f).length, 1);
-  assert.equal(f.calls.filter(call => call.name === "visible").length, 1);
-  assert(!f.calls.some(call => call.name === "handoff"));
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 3);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
 });
 
-test("a click effect followed by a genuine SDK rejection remains a failure without replay", async () => {
+test("a click effect followed by SDK rejection retains and verifies inactivity without claiming acknowledgement", async () => {
   const f = fixture();
   f.first.clickAcknowledgementMs = 100;
   f.first.clickError = new Error("private actual CDP failure");
   const result = await f.run();
   assert.equal(f.first.visible, false, "The page effect does not prove that the click acknowledged successfully.");
-  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
-  assert.equal(result.stage, "stop_click");
-  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(result.outcome, "already_idle"); assert.equal(result.code, undefined);
+  assert.equal(result.clickAttempted, true); assert.equal(result.clickError, true);
+  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, true); assert.equal(result.retained, true);
+  assert.equal(result.generationInactive, true);
   assert.equal(clicked(f).length, 1);
-  assert.equal(f.calls.filter(call => call.name === "visible").length, 1);
-  assert(!f.calls.some(call => call.name === "handoff"));
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 3);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
   assert(!JSON.stringify(result).includes("private actual CDP failure"));
 });
 
@@ -252,7 +300,7 @@ test("peer registry changes during an await do not revoke this conversation's ow
 test("fresh VM after lost globals uses persisted exact identity; duplicate completed Stop stays idle", async () => {
   const f = fixture(); f.fresh(f.first); stopped(await f.run());
   // Reconstruct the VM, retaining only ledger bytes and the public UI outcome.
-  const g = fixture(); g.model.ledgers = f.model.ledgers; g.first.visible = f.first.visible;
+  const g = fixture(); g.model.ledgers = f.model.ledgers; g.first.visible = f.first.visible; g.first.complete = f.first.complete;
   delete g.context.routerWebActiveTurns; delete g.context[g.first.key]; delete g.context[g.second.key];
   assert.notEqual(g.context, f.context);
   const result = await g.run();
@@ -341,7 +389,6 @@ test("exact saved URL, recorded tab ID and same-session unique browser are all r
     f => { f.first.url = f.second.url; },
     f => { f.first.tab.id = f.second.tab.id; },
     f => { f.first.stopCount = 2; },
-    f => { f.first.stopCount = 0; },
   ]) await blocked(change);
 });
 
@@ -383,23 +430,25 @@ test("metadata, target owner, binding, browser, tab, URL and ledger changes acro
   ]) await blocked(f => { f.model.onCall = name => { if (name === "tabs") change(f); }; });
 });
 
-test("fresh setup ownership changes and final pre-click URL changes prevent Stop", async () => {
+test("fresh setup ownership changes and a changed URL in the coherent proof prevent Stop", async () => {
   await blocked(f => { f.fresh(f.first); f.model.onCall = name => {
     if (name === "setup") f.context.routerWebActiveTurns.set(f.first.thread, f.first.active);
   }; }, "owner_changed");
-  await blocked(f => { let urls = 0; f.model.onCall = name => {
-    if (name === "url" && ++urls === 2) f.first.url = f.second.url;
+  await blocked(f => { f.model.onCall = name => {
+    if (name === "generation") f.first.url = f.second.url;
   }; }, "tab_url_mismatch");
 });
 
-test("late owner change after Stop prevents handoff and does not mark stale state retained", async () => {
+test("late owner change after Stop preserves earlier retention and prevents later browser work", async () => {
   const f = fixture(); f.model.onCall = name => {
     if (name === "click") f.context.routerWebActiveTurns.set(f.first.thread, { ...f.first.active });
   };
   const result = await f.run();
-  assert.equal(result.outcome, "blocked"); assert.equal(result.stopClicked, true); assert.equal(result.retained, false);
-  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
-  assert.equal(f.first.state.retained, false);
+  assert.equal(result.outcome, "blocked"); assert.equal(result.stopClicked, true); assert.equal(result.retained, true);
+  assert.equal(clicked(f).length, 1);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+  assert.equal(f.first.state.retained, true);
+  assert.equal(f.calls.at(-1).name, "click");
 });
 
 test("late owner change during handoff does not mutate stale retained flags", async () => {
@@ -414,12 +463,12 @@ test("late owner change during handoff does not mutate stale retained flags", as
 test("Stop acknowledgement after 500ms confirms the same tab with one click within the original budget", async () => {
   const f = fixture(); f.first.keepVisible = true;
   const tab = f.first.state.tab;
-  f.model.onCall = name => { if (name === "wait" && f.model.now >= 700) f.first.visible = false; };
+  f.model.onCall = name => { if (name === "wait" && f.model.now >= 700) { f.first.visible = false; f.first.complete = true; } };
   const result = await f.run(); stopped(result);
   assert(result.elapsedMs >= 700 && result.elapsedMs < 2400);
   assert.equal(clicked(f).length, 1);
   assert.equal(f.first.state.tab, tab);
-  assert.deepEqual(mutations(f).map(call => call.name), ["click", "handoff"]);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
   assert(f.calls.filter(call => call.name === "visible").length > 2);
 });
 
@@ -427,9 +476,9 @@ test("persistently visible Stop exhausts confirmation without claiming cancellat
   const f = fixture(); f.first.keepVisible = true;
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
-  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
   assert(result.elapsedMs > 500 && result.elapsedMs < 2400);
-  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
+  assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
 
 test("authority and saved URL changes during confirmation reads or delays prevent further Stop polling or retention", async () => {
@@ -438,7 +487,7 @@ test("authority and saved URL changes during confirmation reads or delays preven
     let visibilityReads = 0, changedAt;
     f.model.onCall = name => {
       if (name === "visible") visibilityReads++;
-      if (changedAt !== undefined || name !== boundary || name === "visible" && visibilityReads !== 2) return;
+      if (changedAt !== undefined || name !== boundary || name === "visible" && visibilityReads !== 3) return;
       if (change === "metadata") f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].turn_id = f.second.turn;
       if (change === "owner") f.context.routerWebActiveTurns.set(f.first.thread, { ...f.first.active });
       if (change === "ledger") f.first.ledger.lastTurn.completed = true;
@@ -448,37 +497,37 @@ test("authority and saved URL changes during confirmation reads or delays preven
     const result = await f.run();
     assert.equal(result.outcome, "blocked");
     assert.equal(result.code, { metadata: "metadata_mismatch", owner: "owner_changed", ledger: "ledger_invalid", url: "tab_url_mismatch" }[change]);
-    assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
-    assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
-    assert(!f.calls.slice(changedAt).some(call => ["visible", "click", "handoff", "wait"].includes(call.name)));
+    assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+    assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
+    assert(!f.calls.slice(changedAt).some(call => ["click", "handoff", "wait"].includes(call.name)));
   }
 });
 
 test("a confirmation visibility-read error fails closed without retrying or exposing browser details", async () => {
   const f = fixture(); let visibilityReads = 0;
   f.model.onCall = name => {
-    if (name === "visible" && ++visibilityReads === 2) throw new Error("private browser details");
+    if (name === "visible" && ++visibilityReads === 3) throw new Error("private browser details");
   };
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
   assert.equal(result.stage, "stop_readback_visibility");
-  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
-  assert.equal(visibilityReads, 2); assert.equal(clicked(f).length, 1);
-  assert(!f.calls.some(call => ["handoff", "wait"].includes(call.name)));
+  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+  assert.equal(visibilityReads, 3); assert.equal(clicked(f).length, 1);
+  assert(!f.calls.some(call => call.name === "wait"));
   assert(!JSON.stringify(result).includes("private browser details"));
 });
 
 test("a late hidden read cannot claim success after the cleanup deadline", async () => {
   const f = fixture(); let visibilityReads = 0;
-  f.model.onCall = name => { if (name === "visible" && ++visibilityReads === 2) f.model.now = 2401; };
+  f.model.onCall = name => { if (name === "visible" && ++visibilityReads === 3) f.model.now = 2401; };
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "budget_exhausted");
-  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
-  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
+  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+  assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
 
 test("idle Stop with zero matches retains its tab without claiming cancellation", async () => {
-  const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
+  const f = fixture(); f.first.visible = false; f.first.stopCount = 0; f.first.complete = true;
   const result = await f.run();
   assert.equal(result.outcome, "already_idle"); assert.equal(result.stopClicked, false); assert.equal(result.retained, true);
   assert.equal(f.first.state.retained, true); assert.equal(clicked(f).length, 0);
@@ -501,10 +550,12 @@ test("budget exhaustion during setup or before mutation prohibits later effects"
     if (stage === "setup") f.fresh(f.first);
     f.model.onCall = name => { if (name === stage) f.model.now = 2401; };
   }, "budget_exhausted");
-  await blocked(f => { f.model.onCall = name => { if (name === "visible") f.model.now = 1401; }; }, "budget_exhausted");
+  const retained = fixture(); retained.model.onCall = name => { if (name === "visible") retained.model.now = 1401; };
+  const beforeClick = await retained.run();
+  assert.equal(beforeClick.code, "budget_exhausted"); assert.equal(beforeClick.retained, true); assert.equal(clicked(retained).length, 0);
   const f = fixture(); f.model.onCall = name => { if (name === "click") f.model.now = 2401; };
-  const result = await f.run(); assert.equal(result.code, "budget_exhausted"); assert.equal(result.retained, false);
-  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
+  const result = await f.run(); assert.equal(result.code, "budget_exhausted"); assert.equal(result.retained, true);
+  assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
 
 test("ledger file replacement, symlink and opaque browser errors fail safely without private diagnostics", async () => {
@@ -515,4 +566,178 @@ test("ledger file replacement, symlink and opaque browser errors fail safely wit
   assert.equal(await g.run(), undefined); assert.deepEqual(mutations(g), []);
   await blocked(h => { h.agent.browsers.list = async () => { throw new Error("private prompt or path must never be printed"); }; },
     "browser_operation_failed");
+});
+
+test("hidden Stop while the owned generation is running never establishes idle", async () => {
+  const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+  assert.equal(result.stopHidden, true); assert.equal(result.generationInactive, false);
+  assert.equal(result.clickAttempted, false); assert.equal(result.clickError, false);
+  assert.equal(result.retained, true); assert.equal(clicked(f).length, 0);
+});
+
+test("a transiently missing Stop can appear before the single semantic click", async () => {
+  const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
+  f.model.onCall = name => {
+    if (name === "wait") { f.first.visible = true; f.first.stopCount = 1; }
+  };
+  stopped(await f.run());
+  assert.equal(clicked(f).length, 1);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+});
+
+test("the saved generation must be unique and latest before any tab effect", async () => {
+  for (const turnKeys of [[], [id(500)], [id(201), id(201)], [id(201), id(500)]]) {
+    await blocked(f => { f.first.turnKeys = turnKeys; }, "generation_mismatch");
+  }
+  for (const change of [
+    f => { delete f.first.ledger.generationTurnKey; },
+    f => { f.first.ledger.generationTurnKey = "invalid"; },
+    f => { f.first.state.generationTurnKey = id(500); },
+  ]) await blocked(change);
+});
+
+test("generation identity changes in the ledger or binding revoke authority across awaits", async () => {
+  await blocked(f => { f.model.onCall = name => {
+    if (name === "tabs") f.first.ledger.generationTurnKey = id(500);
+  }; }, "ledger_changed");
+  await blocked(f => { f.model.onCall = name => {
+    if (name === "generation") f.first.state.generationTurnKey = id(500);
+  }; }, "owner_changed");
+});
+
+test("a successor appearing during handoff or semantic action resolution is never clicked", async () => {
+  for (const boundary of ["handoff", "click_request"]) {
+    const f = fixture(); f.model.onCall = name => {
+      if (name === boundary) f.first.turnKeys = [f.first.generationTurnKey, id(500)];
+    };
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "generation_mismatch");
+    assert.equal(result.retained, true);
+    assert.equal(clicked(f).length, 0); assert.equal(result.stopClicked, false);
+    assert.equal(result.clickAttempted, boundary === "click_request");
+    assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
+  }
+});
+
+test("pre-click and final inactive proofs do not reopen a successor insertion window through a URL RPC", async () => {
+  for (const phase of ["before-click", "final-readback"]) {
+    const f = fixture(); let gapOpened = false;
+    const url = f.first.tab.url;
+    f.first.tab.url = async () => {
+      const proofReads = f.calls.filter(call => call.name === "generation").length;
+      if (phase === "before-click" ? proofReads >= 2 && !f.first.complete : f.first.complete) {
+        gapOpened = true;
+        f.first.turnKeys = [f.first.generationTurnKey, id(500)];
+      }
+      return url();
+    };
+    stopped(await f.run());
+    assert.equal(gapOpened, false);
+    assert(!f.calls.some(call => call.name === "url"), "URL and generation evidence come from one DOM read");
+    assert.equal(clicked(f).length, 1);
+  }
+});
+
+test("natural completion during a rejected click reports verified idle with explicit action uncertainty", async () => {
+  const f = fixture(); f.first.keepVisible = true;
+  f.first.clickError = new Error("The requested Stop target disappeared");
+  f.model.onCall = name => {
+    if (name === "click") { f.first.visible = false; f.first.complete = true; }
+  };
+  const result = await f.run();
+  assert.equal(result.outcome, "already_idle"); assert.equal(result.clickAttempted, true);
+  assert.equal(result.clickError, true); assert.equal(result.stopClicked, false);
+  assert.equal(result.generationInactive, true); assert.equal(result.stopHidden, true); assert.equal(result.retained, true);
+  assert.equal(clicked(f).length, 1);
+});
+
+test("a genuine rejected click with a still-running generation stays blocked and is not retried", async () => {
+  const f = fixture(); f.first.keepVisible = true; f.first.clickError = new Error("private dispatch failure");
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
+  assert.equal(result.clickAttempted, true); assert.equal(result.clickError, true); assert.equal(result.stopClicked, false);
+  assert.equal(result.generationInactive, false); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "wait"));
+});
+
+test("a locator rejection whose diagnostics outlive the deadline cannot start readback or lose earlier retention", async () => {
+  const f = fixture(); f.first.clickError = new Error("private dispatch failure"); f.first.errorDiagnosticsMs = 2500;
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "budget_exhausted");
+  assert.equal(result.clickAttempted, true); assert.equal(result.clickError, true); assert.equal(result.stopClicked, false);
+  assert.equal(result.generationInactive, false); assert.equal(result.retained, true);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 2); assert.equal(clicked(f).length, 1);
+});
+
+test("an unreadable rendered generation fails before tab effects without exposing its details", async () => {
+  const f = await blocked(g => { g.first.generationReadError = new Error("private rendered content"); }, "browser_operation_failed");
+  assert(!JSON.stringify(f.outputs).includes("private rendered content"));
+});
+
+test("acknowledged Stop and hidden controls still require a positively complete owned generation", async () => {
+  for (const change of [
+    f => { f.first.keepGenerating = true; },
+    f => { f.first.turnState = "stopped"; },
+    f => { f.first.stateCount = 0; },
+    f => { f.first.stateCount = 2; },
+  ]) {
+    const f = fixture(); change(f);
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.stopClicked, true);
+    assert.equal(result.stopHidden, true); assert.equal(result.generationInactive, false); assert.equal(result.retained, true);
+    assert.equal(clicked(f).length, 1);
+  }
+});
+
+const deliveryFor = f => ({ bindingId: f.first.ledger.bindingId, tabId: f.first.tabId,
+  url: f.first.url, generationTurnKey: f.first.generationTurnKey });
+const makeUncertainLedger = f => {
+  f.first.ledger.uncertainSend = true; f.first.ledger.lastTurn.sendState = "uncertain";
+};
+
+test("only exact confirmed Send delivery can cancel before Router consumes its result", async () => {
+  for (const fresh of [false, true]) for (const previous of [false, true]) {
+    const f = fixture(), delivery = deliveryFor(f); makeUncertainLedger(f);
+    if (previous) { f.first.ledger.chatUrl = f.second.url; f.first.ledger.generationTurnKey = id(500); }
+    else { delete f.first.ledger.chatUrl; delete f.first.ledger.generationTurnKey; }
+    if (fresh) f.fresh(f.first);
+    const before = JSON.stringify(f.first.ledger);
+    stopped(await f.run({ delivery }));
+    assert.equal(JSON.stringify(f.first.ledger), before, "Stop never settles the replay ledger itself");
+  }
+  await blocked(f => { makeUncertainLedger(f); delete f.first.ledger.generationTurnKey; }, "ledger_invalid");
+});
+
+test("delivery facts cannot bypass a conflicting binding, tab, browser generation or completed owner", async () => {
+  for (const fresh of [false, true]) for (const change of [
+    delivery => { delivery.bindingId = "differentBinding"; },
+    delivery => { delivery.tabId = "different-tab"; },
+    delivery => { delivery.url = `https://chatgpt.com/c/${id(500)}`; },
+    delivery => { delivery.generationTurnKey = id(500); },
+  ]) {
+    const f = fixture(), delivery = deliveryFor(f); makeUncertainLedger(f); change(delivery);
+    if (fresh) f.fresh(f.first);
+    const result = await f.run({ delivery });
+    assert.equal(result.outcome, "blocked"); assert.deepEqual(mutations(f), []);
+  }
+  const f = fixture(), delivery = deliveryFor(f); makeUncertainLedger(f); f.first.ledger.lastTurn.completed = true;
+  assert.equal(await f.run({ delivery }), undefined); assert.deepEqual(mutations(f), []);
+});
+
+test("an effective delivery target still fences every raw ledger change", async () => {
+  const f = fixture(), delivery = deliveryFor(f); makeUncertainLedger(f);
+  f.model.onCall = name => { if (name === "tabs") f.first.ledger.generationTurnKey = id(500); };
+  const result = await f.run({ delivery });
+  assert.equal(result.code, "ledger_changed"); assert.deepEqual(mutations(f), []);
+});
+
+test("the Stop generator accepts only the exact confirmed-delivery schema", () => {
+  const f = fixture(), identity = { threadId: f.first.thread, turnId: f.first.turn, sessionId: id(99) };
+  for (const delivery of [null, [], {}, { ...deliveryFor(f), extra: true },
+    { ...deliveryFor(f), bindingId: "../bad" }, { ...deliveryFor(f), tabId: "" },
+    { ...deliveryFor(f), url: "https://chatgpt.com/" }, { ...deliveryFor(f), generationTurnKey: "bad" }]) {
+    assert.throws(() => createWebStopCode({ stateDir, runtimeModule }, identity, { delivery }), /exact confirmed browser facts/u);
+  }
 });

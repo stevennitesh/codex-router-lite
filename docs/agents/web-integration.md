@@ -151,19 +151,39 @@ metadata for fixed cleanup in the same official Node REPL child. It preserves
 opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
 Interrupt hook calls the adapter's own callback with a three-second timeout.
-Bundled one-second callbacks keep their original messages and cancellation scope.
-Cleanup waits for the active browser call's actual terminal callback, sharing
-the existing three-second deadline with Stop and its readback. The remaining
-allowance bounds both the injected call and its browser operations. A terminal
-observation error releases that wait only for the already accepted matching
-cleanup; the original error still reaches Codex. A timeout, cancellation of the
-cleanup itself, or changed authority prevents further browser actions.
-Stop must still read back hidden generation controls and retain the exact saved
-tab before reporting success. Click acknowledgement and visibility checks use the
-remaining cleanup budget, reserving time for retention. A separate short click
-limit also shortens the native CDP dispatch deadline and can detach its debugger
-before cleanup's deadline. Stop is clicked once; a rejected click remains an
-explicit partial failure and is never replayed.
+Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
+keep their original messages and cancellation scope; their arrival or forwarding
+does not expire the originating authority before the trusted callback arrives.
+Cleanup waits for actual terminal responses from any already forwarded bundled
+callbacks and active browser call before admitting another native operation.
+All of this work shares the trusted callback's existing deadline. A timeout,
+cancellation of cleanup itself, or changed authority prevents further actions.
+
+A verified native Send result arms cleanup before the first observation. Its
+exact saved URL, tab and generation key can prove the cancellation target while
+Router has yet to consume that result. This does not rewrite the delivery ledger
+or clear an uncertain Send for context replay. An unconfirmed Send never supplies
+cleanup authority and is never repeated.
+
+Stop verifies that the exact owned generation is unique and latest, marks its
+saved tab for handoff, then attempts the semantic Stop click at most once. Its
+locator includes that generation condition when the browser resolves the action.
+URL, generation state and Stop visibility come from one synchronous DOM read,
+so a later URL request cannot make a stale snapshot appear current. A
+hidden or temporarily missing button alone does not prove inactivity. Success
+requires the same generation's explicit complete state and hidden Stop control.
+If the click rejects after settling, cleanup can still read that state; an
+observed inactive generation is reported with its action error preserved, rather
+than pretending the click acknowledged or repeating it. Retention acknowledgement
+and actual tab survival are separate evidence; live checks confirm survival.
+
+Browser work and readback use the remaining native execution budget. Some public
+SDK operations have no per-call timeout, and failed clicks can perform additional
+SDK diagnostics before rejecting. A request that does not settle within the host
+deadline remains unconfirmed; cleanup does not race it with another UI action.
+The public browser API cannot make the generation predicate atomic with native
+pointer dispatch; a concurrent manual replacement during that final input boundary
+remains a platform limitation rather than a guarantee supplied by Router.
 
 An unconfirmed native cleanup records whether the child returned an RPC error,
 a tool error, an invalid result, or no response. Diagnostics retain only numeric
