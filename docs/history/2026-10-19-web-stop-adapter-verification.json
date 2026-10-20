@@ -500,7 +500,7 @@
     }
   },
   "browserEfficiencyImplementation": {
-    "recordedAt": "2026-10-20T04:56:15.102Z",
+    "recordedAt": "2026-10-20T05:04:36.371Z",
     "status": "implemented-offline-checked-matched-activation-and-live-proof-pending",
     "baselineSourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
     "changes": [
@@ -646,7 +646,28 @@
       "existingInterruptHookDefinitionChanged": false,
       "nativeRuntimePatchRequired": false,
       "externalLauncherRequired": false,
-      "liveToolAndStopAndSameChatProofPending": true
+      "liveToolAndStopAndSameChatProofPending": true,
+      "firstGuardedDeployment": {
+        "candidateSourceCommit": "e6440a2d49c42af7fb137db2b3dbfcf0ce27b43c",
+        "accepted": false,
+        "exactPreviousSourceAndSwitchyardRestored": true,
+        "restoredSourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+        "managedAdapterChanged": false,
+        "cause": "The account catalog reports a different tool_mode for Astra from the other Switchyard targets. Production correctly omits the incompatible optional route; the installed catalog checker dereferenced the omitted Switchyard entry.",
+        "productionRouteAgreementAndOmissionPolicyPreserved": true,
+        "checkerCorrection": {
+          "owner": "scripts/check-codex-catalog-compat.mjs",
+          "productionPolicyChanged": false,
+          "installedModeVerifiesExpectedOmission": true,
+          "installedAndParsedIncorrectAdvertisementStillRejected": true,
+          "unrelatedMissingRoutesStillRejected": true,
+          "compatibleSwitchyardAssertionsAndDefaultStrictnessPreserved": true,
+          "focusedTestsPassed": 20,
+          "realBundledCheckPassedModels": 17,
+          "realInstalledCheckPassedModels": 23,
+          "installedCheckReportsSwitchyardSafelyOmitted": true
+        }
+      }
     },
     "rollback": {
       "sourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
