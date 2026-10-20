@@ -72,6 +72,23 @@ test('actual generated ordinary code qualifies while marker/lookalike/long obser
   assert.equal(qualifyBrowserCall(call, 'E:\\other-runtime.mjs'), null);
 });
 
+test('compact observe and retain qualify only with the exact generated runner and shared browser view', () => {
+  for (const operation of ['observe', 'retain']) {
+    const call = ordinary(TURN, operation), code = call.arguments.code;
+    assert.ok(Buffer.byteLength(code, 'utf8') < 22000);
+    const qualified = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule);
+    assert.equal(qualified?.config.operation, operation);
+    assert.equal(qualified?.shortObserve, operation === 'observe');
+    for (const tampered of [
+      code.replace('await ensureOwned();', 'await Promise.resolve();'),
+      code.replace('current.state !== state', 'false'),
+    ]) {
+      assert.notEqual(tampered, code);
+      assert.equal(qualifyBrowserCall({ ...call, arguments: { ...call.arguments, code: tampered } }, STOP_CONFIG.runtimeModule), null);
+    }
+  }
+});
+
 test('strict native identities permit canonical session affinity to differ from thread and reject contradictory aliases', () => {
   const meta = ordinary()._meta;
   assert.equal(readIdentity(meta).sessionId, SESSION);

@@ -528,7 +528,7 @@ export function createInAppWebRuntime({
       turn.conversation.needsHistory = true;
       turn.conversation.interruptedTurnId = undefined; turn.conversation.interruptedSendState = undefined;
       await preparePrompt(turn, payload);
-      return emitBrowser(turn, "model", payload);
+      return emitBrowser(turn, "send", payload);
     }
     if (operation === "open" || operation === "continue") {
       if (operation === "continue" && value.needsHistory === true && turn.conversation.rolloverRequired && value.url === "https://chatgpt.com/") turn.conversation.needsHistory = true;
@@ -545,11 +545,6 @@ export function createInAppWebRuntime({
       turn.conversation.interruptedTurnId = undefined;
       turn.conversation.interruptedSendState = undefined;
       await preparePrompt(turn, payload);
-      return emitBrowser(turn, "model", payload);
-    }
-    if (operation === "model") return emitBrowser(turn, "attach", payload);
-    if (operation === "attach") {
-      if (value.attached !== true) throw fail("The native tools connector is not attached.");
       return emitBrowser(turn, "send", payload);
     }
     if (operation === "send") {

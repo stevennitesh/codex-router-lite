@@ -91,8 +91,10 @@ The in-app backend binds each native Codex conversation to one normal saved
 ChatGPT chat, including across model and effort changes. Router stores the
 conversation's chat URL and context checkpoint in its private local state. The
 coding conversation remains in the signed-in ChatGPT account's history until
-removed there. It verifies the selected ChatGPT family and Power control,
-attaches the configured connector and sends the request. Follow-ups send the
+removed there. One native browser operation attaches the configured connector
+when needed, selects and verifies the requested ChatGPT family and Power, then
+sends the request. Selection is checked against the current page on every turn.
+Follow-ups send the
 native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
 records locally; storing or forwarding them does not request Codex inference.
@@ -125,6 +127,10 @@ commentary, tool activity and several assistant messages. Router reads the lates
 answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
 answer. Missing or ambiguous turn/message identities fail explicitly.
+
+Polling and final retention carry only the observation code they need, sharing
+the same ownership and reply checks as the full browser operations. The separate
+final retention check and Interrupt hook remain in place.
 
 Native tool requests are delivered independently of final-answer readability.
 Completion requires an idle owned browser turn, an answer after the latest tool

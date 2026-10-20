@@ -216,20 +216,8 @@ export function readBrowserReplies(elements, options) {
 
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-async function runBrowserOperation(state, options, nodeRepl, replyReader) {
-  const { operation, ui } = options;
-  const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
-  // Native Interrupt runs in a new JS invocation. Retained tab ownership must
-  // remain available there without looking for tabs by URL or replaying Send.
-  const registerActive = () => {
-    const active = globalThis.routerWebActiveTurns ??= new Map();
-    active.set(options.sessionId, { turnId: options.turnId, state, stopButtonName: ui.stopButtonExactName });
-  };
-  const clearActive = () => {
-    const active = globalThis.routerWebActiveTurns;
-    const current = active?.get(options.sessionId);
-    if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
-  };
+function createBrowserView(state, options, replyReader) {
+  const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const snapshot = (tab = state.tab, generationMarker) => tab.playwright.locator(`[data-turn-key],${ui.assistantFinalReplySelector}`)
     .evaluateAll(replyReader, { snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
@@ -290,6 +278,62 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat") || !(await temporaryInactive())) return false;
     return state.hasSentMessage ? savedUrl(value) && value === state.savedUrl : url.pathname === "/";
   };
+  const ensureOwned = async (reacquired = false) => {
+    if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || !reacquired && options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
+    const matches = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
+    if (matches.length !== 1) throw new Error("The owned saved chat tab is unavailable; continuation cannot replace a live binding.");
+    const url = await state.tab.url();
+    if (new URL(url).origin !== "https://chatgpt.com") throw new Error("The owned tab left ChatGPT.");
+  };
+  const activeOwner = (turnIds = [options.turnId], requireActive = false) => {
+    const current = globalThis.routerWebActiveTurns?.get(options.sessionId);
+    if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
+    return current;
+  };
+  const observeGeneration = async () => {
+    activeOwner([options.turnId], true);
+    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+    const view = await snapshot(), texts = view.replies;
+    const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
+    const current = state.generationTurnKey && (anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey)
+      ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
+    const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
+    if (reply) state.replyId = reply.messageId;
+    const stopVisible = await role(ui.stopButtonExactName).isVisible();
+    const generation = state.generationTurnKey ? state.tab.playwright.locator(`[data-turn-key="${state.generationTurnKey}"]`) : null;
+    const statuses = generation ? [] : await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
+    const statusComplete = generation ? anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete
+      : statuses.some(text => text.trim() === ui.responseCompleteStatusText);
+    const regenerateVisible = generation ? Boolean(reply?.completionActionAfter) && await generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
+      : await role(ui.regenerateButtonExactName).isVisible();
+    const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
+    const full = await conversationFull();
+    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+    activeOwner([options.turnId], true);
+    return { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
+      ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
+      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
+      generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
+      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
+  };
+  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
+}
+
+async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFactory) {
+  const { operation, ui } = options;
+  const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
+  const { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner } = viewFactory(state, options, replyReader);
+  // Native Interrupt runs in a new JS invocation. Retained tab ownership must
+  // remain available there without looking for tabs by URL or replaying Send.
+  const registerActive = () => {
+    const active = globalThis.routerWebActiveTurns ??= new Map();
+    active.set(options.sessionId, { turnId: options.turnId, state, stopButtonName: ui.stopButtonExactName });
+  };
+  const clearActive = () => {
+    const active = globalThis.routerWebActiveTurns;
+    const current = active?.get(options.sessionId);
+    if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
+  };
   const emptyComposer = async (tab = state.tab) => {
     const values = await role(ui.composerName, "textbox", tab).evaluateAll((elements, ownedChipSelector) => {
       const empty = node => {
@@ -311,15 +355,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
       && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
   };
-  const ensureOwned = async (reacquired = false) => {
-    if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || !reacquired && options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
-    const matches = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
-    if (matches.length !== 1) throw new Error("The owned saved chat tab is unavailable; continuation cannot replace a live binding.");
-    const url = await state.tab.url();
-    if (new URL(url).origin !== "https://chatgpt.com") throw new Error("The owned tab left ChatGPT.");
-  };
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
-  const modelEvidence = async select => {
+  const selectModel = async () => {
     const menu = role(ui.modelMenuName, "menu");
     if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
     // The current picker renders the family as generic text inside an unnamed
@@ -330,7 +367,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       await menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true }).click();
     }
     if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    if (select && await family.getAttribute("aria-checked") !== "true") {
+    if (await family.getAttribute("aria-checked") !== "true") {
       await family.click();
       if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
       family = familyLocator();
@@ -347,7 +384,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     const minimum = await readPower("aria-valuemin");
     const maximum = await readPower("aria-valuemax");
     if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
-    if (select) for (let move = 0; value !== options.power && move < 4; move += 1) {
+    for (let move = 0; value !== options.power && move < 4; move += 1) {
       const direction = value > options.power ? -1 : 1;
       await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
       const after = await readPower("aria-valuenow");
@@ -359,11 +396,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!evidence.familyChecked || evidence.familyText?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
     await power.press("Escape");
     return { ...evidence, effortLabel: await role(ui.modelButtonName).innerText() };
-  };
-  const activeOwner = (turnIds = [options.turnId], requireActive = false) => {
-    const current = globalThis.routerWebActiveTurns?.get(options.sessionId);
-    if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
-    return current;
   };
   const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
     const current = activeOwner(turnIds, requireActive);
@@ -401,33 +433,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   const resetChat = () => {
     Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false, interrupted: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
-  };
-  const observeGeneration = async () => {
-    activeOwner([options.turnId], true);
-    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-    const view = await snapshot(), texts = view.replies;
-    const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
-    const current = state.generationTurnKey && (anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey)
-      ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
-    const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
-    if (reply) state.replyId = reply.messageId;
-    const stopVisible = await role(ui.stopButtonExactName).isVisible();
-    const generation = state.generationTurnKey ? state.tab.playwright.locator(`[data-turn-key="${state.generationTurnKey}"]`) : null;
-    const statuses = generation ? [] : await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
-    const statusComplete = generation ? anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete
-      : statuses.some(text => text.trim() === ui.responseCompleteStatusText);
-    const regenerateVisible = generation ? Boolean(reply?.completionActionAfter) && await generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
-      : await role(ui.regenerateButtonExactName).isVisible();
-    const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-    const full = await conversationFull();
-    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-    activeOwner([options.turnId], true);
-    return { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
-      ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
-      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
-      generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
-      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
   };
 
   let recovered = false;
@@ -672,21 +678,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     resetChat();
     registerActive();
     emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
-  } else if (operation === "model") {
-    if (state.sendAttempted && !state.completed) throw new Error("Generation is already pending.");
-    const evidence = await modelEvidence(true);
-    state.model = { family: options.modelFamily, power: options.power };
-    emit(evidence);
-  } else if (operation === "attach") {
-    if (!(await chip().isVisible())) {
-      await role(ui.addButtonName).click();
-      const selection = role(options.pluginSelectionButtonName);
-      if (await selection.count() !== 1) throw new Error("The configured plugin button is unavailable or ambiguous.");
-      await selection.click();
-    }
-    if (!(await chip().isVisible())) throw new Error("The configured plugin chip was not attached.");
-    state.pluginAppId = options.pluginAppId;
-    emit({ attached: true, tabId: state.tabId });
   } else if (operation === "send") {
     if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
@@ -695,8 +686,17 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       return;
     }
     if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
-    const evidence = await modelEvidence(false);
-    if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
+    if (options.pluginAppId) {
+      if (!(await chip().isVisible())) {
+        await role(ui.addButtonName).click();
+        const selection = role(options.pluginSelectionButtonName);
+        if (await selection.count() !== 1) throw new Error("The configured plugin button is unavailable or ambiguous.");
+        await selection.click();
+      }
+      if (!(await chip().isVisible())) throw new Error("The configured plugin chip was not attached.");
+    }
+    if (!(await emptyComposer())) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
+    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
     const beforeSend = await snapshot(), baseline = beforeSend.replies;
     if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
     state.baselineReplyCount = baseline.length;
@@ -736,6 +736,9 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     state.unsentComposerText = await composer.innerText();
     if (state.unsentComposerText !== settledComposerText + generationMarker) throw new Error("The composer generation marker changed or was transformed; nothing sent.");
     await waitForSend();
+    // Attachment and paste can alter the picker. Select and verify the exact
+    // requested family and Power once, using the current DOM before Send.
+    const evidence = await selectModel();
     if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
@@ -780,7 +783,25 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
     emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
       baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey, ...evidence });
-  } else if (operation === "observe") {
+  } else if (operation === "cancel") {
+    await stopGeneration([options.turnId], true);
+    await state.tab.markHandoff();
+    state.interrupted = true;
+    state.retained = true;
+    state.completed = false;
+    emit({ cancelled: true, interrupted: true, retained: true, tabId: state.tabId });
+  } else if (operation === "close") emit(await stopAndClose());
+  else throw new Error("Unsupported browser operation.");
+}
+
+async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory) {
+  const { operation } = options;
+  const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
+  const { ensureOwned, activeOwner, observeGeneration } = viewFactory(state, options, replyReader);
+  if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
+  if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
+  await ensureOwned();
+  if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
@@ -801,19 +822,11 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     // Retain can execute just before native Stop discards its result. Keep the
     // exact owner available until a confirmed handoff or explicit tab close.
     emit({ retained: true, ...observation });
-  } else if (operation === "cancel") {
-    await stopGeneration([options.turnId], true);
-    await state.tab.markHandoff();
-    state.interrupted = true;
-    state.retained = true;
-    state.completed = false;
-    emit({ cancelled: true, interrupted: true, retained: true, tabId: state.tabId });
-  } else if (operation === "close") emit(await stopAndClose());
-  else throw new Error("Unsupported browser operation.");
+  } else throw new Error("Unsupported browser observation operation.");
 }
 
 export function browserScript(options) {
-  if (!record(options) || !["bootstrap", "open", "model", "attach", "send", "observe", "retain", "close", "cancel", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
+  if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "close", "cancel", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
@@ -872,7 +885,7 @@ export function browserScript(options) {
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
   for (const value of Object.values(config.ui)) if (typeof value !== "string" || !value || value.length > 512) throw failure("Invalid observed browser control name.");
-  if (options.pluginAppId !== undefined || options.operation === "attach") {
+  if (options.pluginAppId !== undefined) {
     if (typeof options.pluginName !== "string" || !options.pluginName || typeof options.pluginAppId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(options.pluginAppId)) throw failure("Attachment requires the configured plugin name and app identity.");
     const css = value => '"' + String(value).replace(/[^A-Za-z0-9 _:/.-]/g, char => `\\${char.codePointAt(0).toString(16)} `) + '"';
     config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
@@ -886,5 +899,6 @@ export function browserScript(options) {
   const initialize = options.operation === "bootstrap" ? `${binding} ??= {};`
     : options.operation === "continue" && options.recovery ? `${binding} ??= { bindingLost: true };`
       : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
-  return `${initialize}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplies.toString()});`;
+  const runner = ["observe", "retain"].includes(options.operation) ? runBrowserObservation : runBrowserOperation;
+  return `${initialize}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplies.toString()}, ${createBrowserView.toString()});`;
 }

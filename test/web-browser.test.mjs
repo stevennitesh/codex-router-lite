@@ -179,7 +179,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   const ui = { texts: [...texts], power: currentPower, checked: true, menu: false, chip: false, stop: false,
     complete: false, attachedName: null, typed: [], sendClicks: 0, startNewChatClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: false, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
-    familyText: "GPT-6", familyClicks: 0, sendEnabled: true, waitedMs: 0,
+    familyText: "GPT-6", familyClicks: 0, sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
@@ -214,7 +214,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async count() {
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
-      return kind === "family-text" ? Number(ui.familyText.includes(name)) : name === plugin.pluginSelectionButtonName ? 1 : 0;
+      return kind === "family-text" ? Number(ui.familyText.includes(name)) : name === plugin.pluginSelectionButtonName ? ui.selectionCount ?? 1 : 0;
     },
     async isVisible() {
       if (name === "Select ChatGPT model" && kind === "menu") return ui.menu;
@@ -230,10 +230,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return true;
     },
     async click() {
-      if (name === "Select ChatGPT model") ui.menu = !ui.menu;
+      if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.onModel?.(); }
       else if (kind === "family-text") { ui.familyClicks += 1; ui.checked = true; ui.menu = false; }
-      else if (name === plugin.pluginSelectionButtonName) { ui.chip = true; ui.attachedName = name; }
+      else if (name === plugin.pluginSelectionButtonName) { ui.actions.push("attach"); ui.chip = true; ui.attachedName = name; ui.onAttach?.(); }
       else if (name === "Send") {
+        ui.actions.push("send");
         ui.sendClicks += 1;
         ui.normalHeadingVisible = false;
         if (!ui.deferSavedUrl) ui.url = "https://chatgpt.com/c/owned-conversation";
@@ -384,10 +385,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   };
   const ready = async () => {
     await run("bootstrap", { runtimeModule: "current-runtime.mjs" });
-    await run("open");
-    await run("model");
-    await run("attach", plugin);
-  };
+    await run("open");  };
   return { ui, run, ready, tab, browser, agent, runtimeModule, getState: () => nativeContext[bindingName],
     loseBinding({ preserveOwner = false } = {}) { delete nativeContext[bindingName]; if (!preserveOwner) nativeContext.routerWebActiveTurns?.delete(sessionId); },
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
@@ -518,16 +516,21 @@ test("initial normal home verification cannot accept a draft, a disabled tempora
   }
 });
 
-test("exact family selection moves Power one step at a time and verifies each step", async () => {
+test("prepared Send attaches before one current model verification and moves Power exactly one step at a time", async () => {
   const f = fixture({ currentPower: 4 });
   await f.ready();
+  await f.run("send", { ...plugin, prompt: "Use the exact requested model" });
   assert.equal(f.ui.power, 0);
   assert.deepEqual(f.ui.powerMoves, Array(4).fill("ArrowLeft"));
-  f.ui.badPowerStep = true;
-  await assert.rejects(f.run("model", { power: 2 }), /exactly one step/);
-  f.ui.missingPower = true;
-  await assert.rejects(f.run("model"), /attributes are unavailable/);
-  assert.equal(f.ui.sendClicks, 0);
+  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
+  assert.equal(f.ui.sendClicks, 1);
+  for (const [change, reason] of [[ui => { ui.badPowerStep = true; }, /exactly one step/], [ui => { ui.missingPower = true; }, /attributes are unavailable/]]) {
+    const invalid = fixture({ currentPower: 4 });
+    await invalid.ready();
+    change(invalid.ui);
+    await assert.rejects(invalid.run("send", { ...plugin, prompt: "Invalid observed model" }), reason);
+    assert.equal(invalid.ui.sendClicks, 0);
+  }
 });
 
 test("an unnamed radio option is selected by visible family text and similar family text is rejected before selection", async () => {
@@ -535,13 +538,60 @@ test("an unnamed radio option is selected by visible family text and similar fam
   f.ui.checked = false;
   assert.equal(await f.tab.playwright.getByRole("menuitemradio", { name: "GPT-6", exact: true }).count(), 0);
   await f.ready();
+  await f.run("send", { ...plugin, prompt: "Select the exact observed family" });
   assert.equal(f.ui.checked, true);
   assert.equal(f.ui.familyClicks, 1);
-  f.ui.familyText = "GPT-6.1";
-  f.ui.checked = false;
-  await assert.rejects(f.run("model"), /one exact observed model family/);
-  assert.equal(f.ui.familyClicks, 1, "A substring match cannot select a different family.");
-  assert.equal(f.ui.sendClicks, 0);
+  const invalid = fixture({ currentPower: 0 });
+  await invalid.ready();
+  invalid.ui.familyText = "GPT-6.1";
+  invalid.ui.checked = false;
+  await assert.rejects(invalid.run("send", { ...plugin, prompt: "Reject a similar family" }), /one exact observed model family/);
+  assert.equal(invalid.ui.familyClicks, 0, "A substring match cannot select a different family.");
+  assert.equal(invalid.ui.sendClicks, 0);
+});
+
+test("prepared Send skips an existing exact connector chip and ignores cached model and connector state", async () => {
+  const f = fixture({ currentPower: 4 });
+  await f.ready();
+  f.ui.chip = true;
+  Object.assign(f.getState(), { model: { family: "GPT-6", power: 0 }, pluginAppId: "asdk_old_tools" });
+  f.ui.onType = () => { f.ui.power = 3; };
+  await f.run("send", { ...plugin, prompt: "Recheck after preparation" });
+  assert.deepEqual(f.ui.actions, ["model-menu", "send"]);
+  assert.equal(f.ui.attachedName, null);
+  assert.equal(f.ui.power, 0);
+  assert.deepEqual(f.ui.powerMoves, Array(3).fill("ArrowLeft"));
+});
+
+test("connector attachment failures or a changed draft prevent model selection, typing and Send", async () => {
+  for (const [change, reason] of [
+    [ui => { ui.selectionCount = 0; }, /unavailable or ambiguous/],
+    [ui => { ui.selectionCount = 2; }, /unavailable or ambiguous/],
+    [ui => { ui.onAttach = () => { ui.chip = false; }; }, /was not attached/],
+    [ui => { ui.onAttach = () => { ui.composerText = "A changed draft"; }; }, /changed the composer draft/],
+    [ui => { ui.onAttach = () => { ui.url = "https://chatgpt.com/c/unrelated"; }; }, /no longer idle/],
+    [ui => { ui.onAttach = () => { ui.stop = true; }; }, /no longer idle/],
+  ]) {
+    const f = fixture();
+    await f.ready();
+    change(f.ui);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Prepare safely" }), reason);
+    assert.equal(f.ui.actions.includes("model-menu"), false);
+    assert.equal(f.ui.typed.length, 0);
+    assert.equal(f.ui.sendClicks, 0);
+  }
+});
+
+test("model selection cannot bypass the final draft, chip or normal idle chat checks", async () => {
+  for (const change of [ui => { ui.composerText += " User edit"; }, ui => { ui.chip = false; },
+    ui => { ui.temporary = true; }, ui => { ui.stop = true; }, ui => { ui.url = "https://chatgpt.com/c/unrelated"; }]) {
+    const f = fixture();
+    await f.ready();
+    f.ui.onModel = () => change(f.ui);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Prepare safely" }), /nothing sent/);
+    assert.equal(f.ui.sendClicks, 0);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
+  }
 });
 
 test("sending preserves the plugin chip, treats prompt as data, and refuses uncertain replay", async () => {
@@ -799,10 +849,7 @@ test("guarded rollover clicks once in the same owned tab and keeps full history 
     expectedOwnerTurnIds: [base.turnId, "next-turn"] });
   assert.equal(continued.needsHistory, true);
   assert.equal(continued.replyCount, 0);
-  assert.equal(continued.assistantText, "");
-  await f.run("model", { turnId: "following-turn" });
-  await f.run("attach", { ...plugin, turnId: "following-turn" });
-  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
+  assert.equal(continued.assistantText, "");  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
   const sent = await f.run("send", { ...plugin, prompt: "Complete readable native history", turnId: "following-turn" });
   assert.equal(sent.baselineReplyCount, 0);
   for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) assert.equal(f.getState()[key], undefined);
@@ -890,10 +937,7 @@ test("pending full-history continuation reconciles only its exact owned unsent d
   for (const changeDraft of [false, true]) {
     const f = await recoverableFixture();
     showFullConversation(f.ui);
-    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
-    await f.run("model", { turnId: "next-turn" });
-    await f.run("attach", { ...plugin, turnId: "next-turn" });
-    f.ui.sendEnabled = false;
+    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });    f.ui.sendEnabled = false;
     await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /nothing sent/);
     await f.run("cancel", { turnId: "next-turn" });
     if (changeDraft) f.ui.composerText = "Changed user draft";
@@ -918,10 +962,7 @@ test("pending-history draft reconciliation cannot clear a draft after the tab le
   for (const change of [ui => { ui.url = "https://chatgpt.com/c/unrelated-conversation"; }, ui => { ui.temporary = true; }]) {
     const f = await recoverableFixture();
     showFullConversation(f.ui);
-    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
-    await f.run("model", { turnId: "next-turn" });
-    await f.run("attach", { ...plugin, turnId: "next-turn" });
-    f.ui.sendEnabled = false;
+    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });    f.ui.sendEnabled = false;
     await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /nothing sent/);
     const draft = f.ui.composerText;
     change(f.ui);
@@ -949,10 +990,7 @@ test("a changed active owner during rollover retention cannot click or reclaim t
 test("uncertain first successor Send preserves history markers and blocks continuation", async () => {
   const f = await recoverableFixture();
   showFullConversation(f.ui);
-  await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
-  await f.run("model", { turnId: "next-turn" });
-  await f.run("attach", { ...plugin, turnId: "next-turn" });
-  f.ui.sendFailure = true;
+  await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });  f.ui.sendFailure = true;
   f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
   await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /effect uncertain/);
   await assert.rejects(f.run("continue", { turnId: "following-turn", needsHistory: true, interruptedTurnId: "next-turn" }), /preceding Send is uncertain/);
@@ -1492,10 +1530,7 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   assert.equal(continued.recovered, true);
   assert.equal(continued.replyCount, 2);
   assert.equal(continued.assistantText, latest, "The latest saved reply remains available for native delta history despite a smaller mounted list.");
-  assert.equal(f.ui.sendClicks, 2, "Recovery does not replay either prior Send.");
-  await f.run("model", { turnId: "third-turn" });
-  await f.run("attach", { ...plugin, turnId: "third-turn" });
-  const sent = await f.run("send", { ...plugin, prompt: "New delta only", turnId: "third-turn" });
+  assert.equal(f.ui.sendClicks, 2, "Recovery does not replay either prior Send.");  const sent = await f.run("send", { ...plugin, prompt: "New delta only", turnId: "third-turn" });
   assert.equal(sent.baselineReplyCount, 2, "A new Send establishes its own current mounted count.");
   assert.equal(f.ui.sendClicks, 3);
   assert.equal(f.ui.newTabs, 2);
@@ -1815,8 +1850,7 @@ test("interrupted continuation clears an ordinary unsent draft before the new tu
   await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
   assert.equal(f.ui.composerText, "");
   assert.equal(f.ui.sendClicks, 0);
-  assert.equal(f.ui.chip, false, "Clearing the owned draft can remove its chip; the normal attach stage restores it.");
-  await f.run("attach", { ...plugin, turnId: "next-turn" });
+  assert.equal(f.ui.chip, false, "Clearing the owned draft can remove its chip; prepared Send restores it.");
   await f.run("send", { ...plugin, prompt: "Current request", turnId: "next-turn" });
   assert.deepEqual(f.ui.typed, [" Abandoned draft", " Current request", "\nRouter generation: next-turn"]);
   assert.equal(f.ui.sendClicks, 1);
@@ -1943,6 +1977,53 @@ test("a short UI-only observation returns unfinished generation without network 
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.handoffs, 2);
+});
+
+test("observation and retention keep their serialized native browser payload below 22 KB", () => {
+  const sendBytes = Buffer.byteLength(browserScript({ ...base, operation: "send", prompt: "Request" }), "utf8");
+  for (const operation of ["observe", "retain"]) {
+    const bytes = Buffer.byteLength(browserScript({ ...base, operation }), "utf8");
+    assert.ok(bytes < 22000, `${operation} payload is ${bytes} bytes`);
+    assert.ok(bytes < sendBytes / 2, `${operation} must omit the full mutation runner`);
+  }
+});
+
+test("compact observation and retention require the exact session, tab catalog and active owner", async () => {
+  const cases = [
+    [() => ({ sessionId: "another-session" }), /another native session/u],
+    [() => ({ tabId: "another-tab" }), /Owned browser binding is unavailable/u],
+    [f => { f.ui.present = false; }, /owned saved chat tab is unavailable/u],
+    [f => { f.browser.tabs.list = async () => [{ id: f.tab.id }, { id: f.tab.id }]; }, /owned saved chat tab is unavailable/u],
+    [f => { f.ui.url = "https://elsewhere.test/"; }, /owned tab left ChatGPT/u],
+    [f => { f.activeTurn().turnId = "newer-turn"; }, /different native turn owns/u],
+  ];
+  for (const operation of ["observe", "retain"]) for (const [change, reason] of cases) {
+    const f = fixture({ fastTimers: true });
+    await f.ready();
+    await f.run("send", { ...plugin, prompt: "Owned request" });
+    f.ui.texts.push("Completed answer"); f.ui.complete = true;
+    await f.run("observe", { observeIterations: 1 });
+    const reads = f.ui.replyReads, handoffs = f.ui.handoffs;
+    const extra = change(f) ?? {};
+    await assert.rejects(f.run(operation, { observeIterations: 1, ...extra }), reason);
+    assert.equal(f.ui.replyReads, reads);
+    assert.equal(f.ui.handoffs, handoffs);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("retention cannot claim success when another turn takes ownership during handoff", async () => {
+  const f = fixture({ fastTimers: true });
+  await f.ready();
+  await f.run("send", { ...plugin, prompt: "Owned request" });
+  f.ui.texts.push("Completed answer"); f.ui.complete = true;
+  await f.run("observe", { observeIterations: 1 });
+  const owner = f.activeTurn(), handoff = f.tab.markHandoff;
+  f.tab.markHandoff = async () => { await handoff(); owner.turnId = "newer-turn"; };
+  await assert.rejects(f.run("retain"), /different native turn owns/u);
+  assert.equal(f.activeTurn(), owner);
+  assert.equal(owner.turnId, "newer-turn");
+  assert.notEqual(f.getState().retained, true);
 });
 
 test("script arguments reject unsafe bindings or native identities and unbounded observation", () => {

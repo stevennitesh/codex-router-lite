@@ -497,7 +497,7 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
   assert.equal(final.output[0].content[0].text, h.browser.ui.texts[0]);
   assert.equal(h.browser.ui.marks, marksBeforeRetain + 1);
   assert.equal(h.observations.watchers[0].closed, true);
-  assert.deepEqual(h.observations.nativeOperations, ["bootstrap", "open", "model", "attach", "send", "observe", "observe", "retain"]);
+  assert.deepEqual(h.observations.nativeOperations, ["bootstrap", "open", "send", "observe", "observe", "retain"]);
   assert.equal(h.runtime.status().activeTurns, 0);
 });
 
@@ -1056,11 +1056,11 @@ test("interrupted Send checkpoints accept omitted or partial native assistant hi
   });
 });
 
-test("cancellation before Send preserves unsent native input in the same owned chat", async t => {
+test("cancellation before Send emission preserves unsent native input in the same owned chat", async t => {
   const h = harness(t);
   const bootstrap = (await h.request()).output[0];
   const open = (await h.answerBrowser(bootstrap)).output[0];
-  await h.answerBrowser(open);
+  await h.executeBrowser(open);
   h.observations.watchers[0].onCancel();
   h.newTurn(followupId, "Also keep this new instruction.");
   await h.toObserve();
@@ -1859,7 +1859,7 @@ test("browser executor discovery uses actual client search results and preserves
   // paired native search history must recover the executor without invention.
   await h.toObserve();
   assert.equal(h.browser.ui.newTabs, 1);
-  assert.equal(h.observations.nativeOperations.at(-4), "continue");
+  assert.equal(h.observations.nativeOperations.at(-2), "continue");
   assert.deepEqual(h.broker.list(h.token()).find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
 });
 
