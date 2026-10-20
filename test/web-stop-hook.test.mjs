@@ -18,6 +18,11 @@ function fixture() {
   const model = { now: 0, owner: id(1), turn: id(11), event: "Interrupt", surfaces: new Map(), ledgers: new Map() };
   const context = vm.createContext({ Map, URL, Date: { now: () => model.now } });
   const touch = (name, thread) => { calls.push({ name, thread }); model.onCall?.(name, thread); };
+  context.setTimeout = (callback, milliseconds) => {
+    model.now += milliseconds;
+    touch("wait", model.owner);
+    callback();
+  };
   const forbidden = () => { touch("FORBIDDEN"); throw new Error("A forbidden effect ran"); };
   const ledgerPath = thread => path.join(stateDir, "web-in-app", "conversations", `${thread}.json`);
   context.routerWebActiveTurns = new Map();
@@ -28,8 +33,7 @@ function fixture() {
     const stop = { count: async () => { touch("count", thread); return surface.stopCount; },
       isVisible: async () => { touch("visible", thread); return surface.visible; },
       click: async options => { assert.equal(options.timeoutMs, 350); touch("click", thread);
-        if (surface.pauseClick) await surface.pauseClick; if (!surface.keepVisible) surface.visible = false; },
-      waitFor: async options => { assert.equal(options.state, "hidden"); assert.equal(options.timeoutMs, 500); touch("hidden", thread); } };
+        if (surface.pauseClick) await surface.pauseClick; if (!surface.keepVisible) surface.visible = false; } };
     const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
       markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
       playwright: { getByRole: (role, options) => { assert.equal(role, "button"); assert.equal(options.name, "Stop");
@@ -344,29 +348,70 @@ test("late owner change during handoff does not mutate stale retained flags", as
   assert.equal(f.first.state.retained, false); assert.equal(f.first.state.interrupted, false);
 });
 
-test("unconfirmed hidden Stop never claims cancellation or repeats its click", async () => {
+test("Stop acknowledgement after 500ms confirms the same tab with one click within the original budget", async () => {
+  const f = fixture(); f.first.keepVisible = true;
+  const tab = f.first.state.tab;
+  f.model.onCall = name => { if (name === "wait" && f.model.now >= 700) f.first.visible = false; };
+  const result = await f.run(); stopped(result);
+  assert(result.elapsedMs >= 700 && result.elapsedMs < 2400);
+  assert.equal(clicked(f).length, 1);
+  assert.equal(f.first.state.tab, tab);
+  assert.deepEqual(mutations(f).map(call => call.name), ["click", "handoff"]);
+  assert(f.calls.filter(call => call.name === "visible").length > 2);
+});
+
+test("persistently visible Stop exhausts confirmation without claiming cancellation or repeating its click", async () => {
   const f = fixture(); f.first.keepVisible = true;
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
   assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert(result.elapsedMs > 500 && result.elapsedMs < 2400);
   assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
 });
 
-test("hidden-wait and visibility-read failures identify the failed operation without exposing errors", async () => {
-  for (const failedOperation of ["hidden", "visible"]) {
-    const f = fixture(); let visibilityReads = 0;
+test("authority and saved URL changes during confirmation reads or delays prevent further Stop polling or retention", async () => {
+  for (const boundary of ["visible", "wait"]) for (const change of ["metadata", "owner", "ledger", "url"]) {
+    const f = fixture(); f.first.keepVisible = true;
+    let visibilityReads = 0, changedAt;
     f.model.onCall = name => {
       if (name === "visible") visibilityReads++;
-      if (name === failedOperation && (name !== "visible" || visibilityReads === 2))
-        throw new Error("private browser details");
+      if (changedAt !== undefined || name !== boundary || name === "visible" && visibilityReads !== 2) return;
+      if (change === "metadata") f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].turn_id = f.second.turn;
+      if (change === "owner") f.context.routerWebActiveTurns.set(f.first.thread, { ...f.first.active });
+      if (change === "ledger") f.first.ledger.lastTurn.completed = true;
+      if (change === "url") f.first.url = f.second.url;
+      changedAt = f.calls.length;
     };
     const result = await f.run();
-    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
-    assert.equal(result.stage, failedOperation === "hidden" ? "stop_wait_hidden" : "stop_readback_visibility");
+    assert.equal(result.outcome, "blocked");
+    assert.equal(result.code, { metadata: "metadata_mismatch", owner: "owner_changed", ledger: "ledger_invalid", url: "tab_url_mismatch" }[change]);
     assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
     assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
-    assert(!JSON.stringify(result).includes("private browser details"));
+    assert(!f.calls.slice(changedAt).some(call => ["visible", "click", "handoff", "wait"].includes(call.name)));
   }
+});
+
+test("a confirmation visibility-read error fails closed without retrying or exposing browser details", async () => {
+  const f = fixture(); let visibilityReads = 0;
+  f.model.onCall = name => {
+    if (name === "visible" && ++visibilityReads === 2) throw new Error("private browser details");
+  };
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
+  assert.equal(result.stage, "stop_readback_visibility");
+  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(visibilityReads, 2); assert.equal(clicked(f).length, 1);
+  assert(!f.calls.some(call => ["handoff", "wait"].includes(call.name)));
+  assert(!JSON.stringify(result).includes("private browser details"));
+});
+
+test("a late hidden read cannot claim success after the cleanup deadline", async () => {
+  const f = fixture(); let visibilityReads = 0;
+  f.model.onCall = name => { if (name === "visible" && ++visibilityReads === 2) f.model.now = 2401; };
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "budget_exhausted");
+  assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
 });
 
 test("idle Stop with zero matches retains its tab without claiming cancellation", async () => {

@@ -177,7 +177,9 @@ observation error releases that wait only for the already accepted matching
 cleanup; the original error still reaches Codex. A timeout, cancellation of the
 cleanup itself, or changed authority prevents further browser actions.
 Stop must still read back hidden generation controls and retain the exact saved
-tab before reporting success. A partial cleanup remains an explicit failure.
+tab before reporting success. Visibility checks use the remaining cleanup budget;
+they do not impose a separate half-second acknowledgement limit or click Stop
+again. A partial cleanup remains an explicit failure.
 
 The unmodified official CLI adapter path has
 [dated Stop and same-chat continuation evidence](history/2026-10-19-web-stop-adapter-verification.json).
@@ -206,10 +208,11 @@ Verify actual Stop and same-chat continuation after restart; configuration and
 offline tests alone do not establish live cancellation.
 
 The managed adapter contains an immutable browser-code snapshot and recognizes
-only exact Router browser operations. After changing `src/web-browser.mjs`, run
-the supported adapter installer from the matching Router source and fully quit
-and reopen Codex. The managed hook definition remains unchanged. Preserve a
-matching Router source and adapter generation for rollback; rolling back launch
+only exact Router browser operations. After changing `src/web-browser.mjs` or the
+Stop cleanup in `src/web-stop-hook.mjs`, run the supported adapter installer from
+the matching Router source and fully quit and reopen Codex. The managed hook
+definition remains unchanged. Preserve a matching Router source and adapter
+generation for rollback; rolling back launch
 selections alone restores the original installation baseline.
 
 ```powershell

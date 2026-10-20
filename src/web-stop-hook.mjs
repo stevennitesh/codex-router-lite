@@ -191,17 +191,35 @@ async function stopOwnedWebTurn() {
       await stop.click({ timeoutMs: 350 });
       diagnostic.stopClicked = true;
       assertCurrent();
-      stage = "stop_wait_hidden";
-      assertCurrent(600);
-      await stop.waitFor({ state: "hidden", timeoutMs: 500 });
-      assertCurrent();
       stage = "stop_readback_visibility";
-      const afterVisible = await stop.isVisible();
-      assertCurrent();
-      if (afterVisible !== false) deny("stop_confirmation_failed");
-      diagnostic.stopHidden = true;
+      // Stop acknowledgement can outlive a separate short locator wait. Observe
+      // it within this cleanup's original budget, leaving time for retention.
+      // Only a successful visible read is pending; SDK errors remain failures.
+      const handoffReserve = 200;
+      const confirmUrl = async () => {
+        assertCurrent(handoffReserve);
+        const currentUrl = await tab.url();
+        assertCurrent(handoffReserve);
+        if (currentUrl !== savedUrl) deny("tab_url_mismatch");
+      };
+      for (;;) {
+        await confirmUrl();
+        assertCurrent(handoffReserve);
+        const afterVisible = await stop.isVisible();
+        assertCurrent(handoffReserve);
+        await confirmUrl();
+        assertCurrent(handoffReserve);
+        if (afterVisible === false) { diagnostic.stopHidden = true; break; }
+        if (afterVisible !== true) deny("stop_confirmation_failed");
+        const delayMs = Math.min(100, deadline - Date.now() - handoffReserve);
+        if (delayMs <= 0) deny("stop_confirmation_failed");
+        assertCurrent(handoffReserve + delayMs);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        assertCurrent(handoffReserve);
+      }
     }
     stage = "handoff_url";
+    assertCurrent(100);
     const handoffUrl = await tab.url();
     assertCurrent(100);
     if (handoffUrl !== savedUrl) deny("tab_url_mismatch");
