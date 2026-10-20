@@ -331,9 +331,9 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     const url = await state.tab.url();
     if (!(await normal(url))) throw new Error("The observed conversation left its normal saved URL.");
     activeOwner([options.turnId], true);
-    return { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
+    return { completed, assistantText, replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
-      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
+      baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full };
   };
@@ -412,11 +412,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       if (after !== value + direction) throw new Error("Power did not move exactly one step.");
       value = after;
     }
-    const evidence = { familyChecked: await family.getAttribute(ui.checkedAttribute) === "true", familyText: await family.textContent(),
-      powerValue: value, powerMinimum: minimum, powerMaximum: maximum };
-    if (!evidence.familyChecked || evidence.familyText?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
+    if (await family.getAttribute(ui.checkedAttribute) !== "true" || (await family.textContent())?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
     await power.press("Escape");
-    return { ...evidence, effortLabel: await role(ui.modelButtonName).innerText() };
   };
   const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
     const current = activeOwner(turnIds, requireActive);
@@ -445,8 +442,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if ((await composer.innerText()).trim() || await role(ui.sendButtonExactName).isEnabled()) throw new Error("The unsent composer draft was not cleared; continuation cannot replay it.");
   };
   const resetChat = () => {
-    Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
-      sendConfirmed: false, completed: false, retained: false, interrupted: false });
+    Object.assign(state, { hasSentMessage: false, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
+      sendConfirmed: false, completed: false, retained: false });
     for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
   };
 
@@ -532,7 +529,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (!navigate && (!(await verifiedReply()) || !(await emptyComposer(tab)))) throw new Error("The saved chat reply or composer changed; recovery cannot reuse it.");
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
-      hasSentMessage: true, savedUrl: proof.url, baselineReplyCount: proof.baselineReplyCount,
+      hasSentMessage: true, savedUrl: proof.url,
       baselineReplyIds: [...proof.baselineReplyIds], replyId: proof.replyId,
       generationTurnKey: proof.generationTurnKey, generationReplyIds: [...proof.generationReplyIds],
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
@@ -562,7 +559,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     state.browser ??= await state.agent.browsers.get(own[0].id);
     state.sessionId = options.sessionId;
     state.runtimeModule = options.runtimeModule;
-    emit({ browserId: state.browser.browserId, browsers: own, documentation: await state.browser.documentation() });
+    emit({});
     return;
   }
   if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
@@ -574,9 +571,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     registerActive();
     await state.tab.goto("https://chatgpt.com/");
     await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
-    state.baselineReplyCount = 0;
     await state.tab.markHandoff();
-    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, replyCount: state.baselineReplyCount });
+    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true });
     return;
   }
   await ensureOwned(recovered);
@@ -601,7 +597,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       activeOwner(owners, true);
       resetChat();
       registerActive();
-      emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: 0, normal: true, needsHistory: true, assistantText: "", conversationFull: false,
+      emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, needsHistory: true, assistantText: "", conversationFull: false,
         ...(interrupted ? { interrupted: true } : {}) });
       return;
     }
@@ -616,7 +612,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
       await state.tab.markHandoff();
       activeOwner(owners, true);
-      emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: texts.length, normal: true, assistantText, conversationFull: true,
+      emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, assistantText, conversationFull: true,
         ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
       return;
     }
@@ -624,7 +620,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (interrupted) {
       await stopGeneration(owners, true);
       if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
-      state.interrupted = true;
       state.retained = true;
     } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
     if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
@@ -640,7 +635,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
     activeOwner(owners, true);
     state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
-    state.baselineReplyCount = texts.length;
     delete state.replyId;
     delete state.generationTurnKey;
     delete state.generationReplyIds;
@@ -651,9 +645,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     delete state.unsentComposerText;
     state.completed = false;
     state.retained = false;
-    state.interrupted = false;
     registerActive();
-    emit({ tabId: state.tabId, url: continuationUrl, replyCount: state.baselineReplyCount, normal: true, assistantText, conversationFull: false,
+    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
       ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
   } else if (operation === "rollover") {
     activeOwner(options.expectedOwnerTurnIds, true);
@@ -682,7 +675,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
     if (await conversationFull()) {
-      emit({ sent: false, conversationFull: true, tabId: state.tabId, url: await state.tab.url(), normal: true, baselineReplyCount: (await replies()).length });
+      emit({ sent: false, conversationFull: true, tabId: state.tabId, url: await state.tab.url(), normal: true });
       return;
     }
     if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
@@ -699,7 +692,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
     const beforeSend = await snapshot(), baseline = beforeSend.replies;
     if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
-    state.baselineReplyCount = baseline.length;
     state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
     delete state.replyId;
     delete state.generationTurnKey;
@@ -732,7 +724,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     await waitForSend();
     // Attachment and paste can alter the picker. Select and verify the exact
     // requested family and Power once, using the current DOM before Send.
-    const evidence = await selectModel();
+    await selectModel();
     if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
@@ -770,7 +762,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     delete state.unsentComposerText;
     for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
     emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
-      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey, ...evidence });
+      baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
   } else throw new Error("Unsupported browser operation.");
 }
 
@@ -837,8 +829,6 @@ export function browserScript(options) {
         && (proof.replyId === null || proof.generationReplyIds.includes(proof.replyId));
     if (options.operation !== "continue" || !record(proof) || typeof proof.tabId !== "string" || !proof.tabId
         || !isSavedChatUrl(proof.url)
-        || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
-        || !Number.isSafeInteger(proof.replyCount) || proof.replyCount < (retainedTabOnly ? 0 : 1)
         || (retainedTabOnly ? !options.interruptedTurnId || !proof.tabId || proof.tabId !== options.tabId || !validBaselineIds
           || proof.completed !== false || proof.replyId !== null && !validReplyId
           : !validReplyId)

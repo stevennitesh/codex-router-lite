@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -11,7 +12,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { browserHelperVersion, browserScript, readBrowserProgram } from '../src/web-browser.mjs';
-import { createWebStopCode } from '../src/web-stop-hook.mjs';
 import { createWebToolBroker } from '../src/web-tools.mjs';
 import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
@@ -176,11 +176,11 @@ test('any own hook callId excludes ordinary tool calls from lifecycle interpreta
   }
 });
 
-test('Stop generator replaces only three validated native literal identities', () => {
-  const template = createWebStopCode(STOP_CONFIG);
-  const output = stopCode(STOP_CONFIG, cached().identity);
-  assert.equal(output, template.replace('${session_id}', APPROVED_THREAD).replace('${turn_id}', TURN).replace('${hook_event_name}', 'Interrupt'));
-  assert.throws(() => stopCode(STOP_CONFIG, { threadId: APPROVED_THREAD, turnId: "';evil()//", sessionId: SESSION }));
+test('Stop generation rejects invalid and injected identities at the adapter boundary', () => {
+  const identity = cached().identity;
+  for (const field of ['threadId', 'turnId', 'sessionId']) for (const value of ["';evil()//", '${session_id}', '../../other', '', null])
+    assert.throws(() => stopCode(STOP_CONFIG, { ...identity, [field]: value }), /identity_refused/u);
+  assert.throws(() => stopCode({ ...STOP_CONFIG, threadIds: [SESSION] }, identity), /identity_refused/u);
 });
 
 test('bounded actual native output envelope distinguishes explicit success, no-scope, malformed and nested errors', () => {
@@ -856,7 +856,15 @@ test('a real child return after 500 ms releases one Stop within the original sha
   const injected = f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
   assert.equal(injected.length, 1);
   assert.equal(injected[0].arguments.timeout_ms, 2150);
-  assert.match(injected[0].arguments.code, /deadline = started \+ 2050;/u);
+  for (const elapsedMs of [2050, 2051]) {
+    let started = false, readLedger = false;
+    const context = vm.createContext({ Date: { now: () => { if (!started) { started = true; return 0; } return elapsedMs; } },
+      nodeRepl: { write: value => assert.deepEqual(JSON.parse(value), {}) },
+      __publicImport: async () => ({ lstatSync: () => { readLedger = true; throw Object.assign(new Error(), { code: 'ENOENT' }); } }) });
+    const program = injected[0].arguments.code.replaceAll('import(', '__publicImport(');
+    await new vm.Script(`(async () => { ${program} })()`).runInContext(context, { timeout: 1000 });
+    assert.equal(readLedger, elapsedMs === 2050, 'The generated cleanup uses only its 2050 ms remaining browser budget.');
+  }
   assert.deepEqual(injected[0]._meta, retainedMetadata(source._meta));
   const terminal = f.receipts.find(entry => entry.code === 'interrupted_observation_terminal');
   assert.deepEqual({ elapsedMs: terminal.elapsedMs, callbackElapsedMs: terminal.callbackElapsedMs,

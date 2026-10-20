@@ -33,6 +33,7 @@ test("Web catalog preserves bridge identity and effort without borrowing native-
     assert.equal(row.display_name, expected.display_name);
     assert.deepEqual(row.supported_reasoning_levels, expected.supported_reasoning_levels);
     assert.equal(row.default_reasoning_level, expected.default_reasoning_level);
+    assert.deepEqual(row.input_modalities, ["text"]);
     assert.equal(row.multi_agent_version, "v1");
     assert.equal(row.shell_type, "unified_exec", "installed schema remains parseable");
     assert.equal(row.supports_reasoning_effort_updates, false);
@@ -145,7 +146,11 @@ test("configuring Web after watcher publication exposes models without switching
   assert.equal(readFileSync(path.join(f.home, "config.toml"), "utf8"), beforeConfig);
   const web = buildWebBridgeModels(capabilities);
   await command(f, "catalog.mjs");
-  assert.equal(catalog(f).filter(model => model.slug.startsWith("chatgpt-web/") && model.visibility === "list").length, web.length);
+  const published = catalog(f);
+  const publishedWeb = published.filter(model => model.slug.startsWith("chatgpt-web/") && model.visibility === "list");
+  assert.equal(publishedWeb.length, web.length);
+  for (const model of publishedWeb) assert.deepEqual(model.input_modalities, ["text"]);
+  assert.deepEqual(published.find(model => model.slug === native.slug).input_modalities, ["text", "image"]);
   assert.deepEqual(webRoles(f), []);
 });
 

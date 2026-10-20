@@ -186,10 +186,15 @@ export function createInAppWebRuntime({
   let services, servicePromise, serviceSettings, closing = false;
   const conversationPath = threadId => path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`);
   const persist = conversation => {
+    // Retain counts for the supported rollback reader's v1 record schema.
+    // Runtime ownership uses the exact identities; mounted browser counts are irrelevant.
     const value = { version: 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
       browserOwnerTurnIds: [...conversation.browserOwnerTurnIds], tabId: conversation.tabId, chatUrl: conversation.chatUrl,
-      checkpoint: conversation.checkpoint, sendBaseline: conversation.sendBaseline, sendBaselineReplyIds: conversation.sendBaselineReplyIds,
-      generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds, generationCompleted: conversation.generationCompleted, observation: conversation.observation,
+      checkpoint: conversation.checkpoint, sendBaseline: conversation.checkpoint === undefined ? undefined : conversation.sendBaselineReplyIds.length,
+      sendBaselineReplyIds: conversation.sendBaselineReplyIds,
+      generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds, generationCompleted: conversation.generationCompleted,
+      observation: conversation.observation && { ...conversation.observation,
+        replyCount: conversation.sendBaselineReplyIds.length + conversation.generationReplyIds.length },
       activeCompaction: conversation.activeCompaction, pendingCompaction: conversation.pendingCompaction,
       needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
@@ -210,7 +215,12 @@ export function createInAppWebRuntime({
     if (stored.status !== "present" || !stateIsProtected(filePath) || !validConversation(stored.value, threadId)) {
       throw fail("The saved Web conversation record is unreadable or invalid; refusing to create another chat.", "web_conversation_state");
     }
-    const value = stored.value;
+    const value = { ...stored.value };
+    delete value.sendBaseline;
+    if (value.observation) {
+      const { replyId, assistantPrefix, completed } = value.observation;
+      value.observation = { replyId, assistantPrefix, completed };
+    }
     return { ...value, browserStarted: true, persistedValue: JSON.stringify(value), unresolvedCoding: new Map(value.unresolvedCoding.map(call => [call.callId, call.outputType])),
       ...(!value.lastTurn.completed && value.browserOwnerTurnIds.length ? { interruptedTurnId: value.lastTurn.turnId, interruptedSendState: value.lastTurn.sendState } : {}) };
   };
@@ -368,10 +378,10 @@ export function createInAppWebRuntime({
       && (!observed || observed.assistantPrefix.length === 0 && (observed.replyId === null || recoveryReply));
     const recovery = operation === "continue" && !conversation.rolloverRequired && !conversation.needsHistory && conversation.checkpoint && conversation.chatUrl && !conversation.uncertainSend
       && (retainedTabOnly || observed?.assistantPrefix.length > 0 && recoveryReply)
-      ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline,
+      ? { url: conversation.chatUrl, tabId: conversation.tabId,
         baselineReplyIds: conversation.sendBaselineReplyIds,
         generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds,
-        ...(observed ?? { replyCount: conversation.sendBaseline, replyId: null, assistantPrefix: { length: 0, sha256: textDigest("") }, completed: false }),
+        replyId: observed?.replyId ?? null, assistantPrefix: observed?.assistantPrefix ?? { length: 0, sha256: textDigest("") },
         completed: conversation.generationCompleted && observed?.completed === true,
         ...(retainedTabOnly ? { retainedTabOnly: true } : {}) } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
@@ -463,18 +473,17 @@ export function createInAppWebRuntime({
       throw fail("The saved Web generation is no longer uniquely owned and latest. Its chat is retained; queued native actions will not be delivered or replayed.", "web_generation_ownership");
     }
     if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
-        || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < 0
         || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(turn.conversation.sendBaselineReplyIds)
         || turn.conversation.generationTurnKey !== undefined && value.generationTurnKey !== turn.conversation.generationTurnKey
         || !messageIds(value.generationReplyIds) || value.generationReplyIds.some(replyId => value.baselineReplyIds.includes(replyId))
         || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
         || (value.replyId === null ? value.assistantText !== "" || value.completed && !nonempty(value.replyUnavailableReason) : typeof value.replyId !== "string" || !uuid.test(value.replyId)
-          || value.baselineReplyIds.includes(value.replyId) || value.replyCount === 0
+          || value.baselineReplyIds.includes(value.replyId)
           || !value.generationReplyIds.includes(value.replyId))) throw fail("The browser observation has no verified conversation evidence.");
     turn.conversation.generationReplyIds = [...value.generationReplyIds];
     turn.lastBrowserAnswer = { replyId: value.replyId, text: value.assistantText };
     const prefix = value.assistantText.slice(0, 1024);
-    if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyCount: value.replyCount, replyId: value.replyId,
+    if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyId: value.replyId,
       assistantPrefix: { length: prefix.length, sha256: textDigest(prefix) }, completed: value.completed && value.replyId !== null };
   };
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
@@ -517,7 +526,7 @@ export function createInAppWebRuntime({
     }
     if (operation === "send") {
       if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
-      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0 || !messageIds(value.baselineReplyIds)
+      if (!messageIds(value.baselineReplyIds)
           || !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
       if (!isSavedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
@@ -529,7 +538,6 @@ export function createInAppWebRuntime({
       if (turn.conversation.needsHistory) turn.conversation.previousChatUrls = [...(turn.conversation.previousChatUrls ?? []), turn.conversation.chatUrl];
       turn.conversation.needsHistory = false; turn.conversation.rolloverRequired = false;
       turn.conversation.chatUrl = value.url;
-      turn.conversation.sendBaseline = value.baselineReplyCount;
       turn.conversation.sendBaselineReplyIds = [...value.baselineReplyIds];
       turn.conversation.generationTurnKey = value.generationTurnKey;
       turn.conversation.generationReplyIds = [];

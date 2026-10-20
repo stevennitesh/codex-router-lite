@@ -1263,7 +1263,7 @@ export function buildMergedCatalog(
       reasoningLevels: model.supported_reasoning_levels,
       contextWindow: model.context_window,
       autoCompact: model.auto_compact_token_limit,
-      inputModalities: model.input_modalities || ["text", "image"],
+      inputModalities: model.input_modalities || ["text"],
       priority: webPriority++,
       multiAgentVersion: "v1",
     });

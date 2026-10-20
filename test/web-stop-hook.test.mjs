@@ -5,16 +5,17 @@ import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
+import { stopCode } from "../src/web-stop-adapter.mjs";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stateDir = path.resolve("generated/web-stop-rollout-20261018/hook/test-state");
 const runtimeModule = path.resolve("generated/web-stop-rollout-20261018/hook/public-browser-runtime.mjs");
-const code = createWebStopCode({ stateDir, runtimeModule });
 const marker = "ROUTER_WEB_STOP ";
 
-function fixture() {
+function fixture(stopConfig = { stateDir, runtimeModule }) {
+  const { stateDir, runtimeModule } = stopConfig;
   const calls = [], outputs = [];
-  const model = { now: 0, owner: id(1), turn: id(11), event: "Interrupt", surfaces: new Map(), ledgers: new Map() };
+  const model = { now: 0, owner: id(1), turn: id(11), surfaces: new Map(), ledgers: new Map() };
   const context = vm.createContext({ Map, URL, Date: { now: () => model.now } });
   const touch = (name, thread) => { calls.push({ name, thread }); model.onCall?.(name, thread); };
   context.setTimeout = (callback, milliseconds) => {
@@ -42,7 +43,7 @@ function fixture() {
       get: async tabId => { assert.equal(tabId, surface.tabId); touch("get_tab", thread); return tab; }, new: forbidden } };
     const state = { agent: undefined, browser, tab, tabId: surface.tabId, savedUrl: surface.url, sessionId: thread,
       runtimeModule, hasSentMessage: true, sendAttempted: true, sendClicked: true, sendConfirmed: true,
-      bindingLost: false, completed: false, interrupted: false, retained: false };
+      bindingLost: false, completed: false, retained: false };
     const active = { turnId: turn, state, stopButtonName: "Stop" };
     const bindingId = `binding_${thread.replaceAll("-", "")}`;
     const key = "routerWeb_" + bindingId;
@@ -80,10 +81,9 @@ function fixture() {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  const run = async ({ thread = model.owner, turn = model.turn, event = model.event, budgetMs } = {}) => {
-    const template = budgetMs === undefined ? code : createWebStopCode({ stateDir, runtimeModule }, { budgetMs });
-    const source = template.replaceAll("${session_id}", thread).replaceAll("${turn_id}", turn)
-      .replaceAll("${hook_event_name}", event).replaceAll("import(", "__publicImport(");
+  const run = async ({ thread = model.owner, turn = model.turn, budgetMs } = {}) => {
+    const source = stopCode(stopConfig, { threadId: thread, turnId: turn, sessionId: id(99) }, budgetMs)
+      .replaceAll("import(", "__publicImport(");
     const count = outputs.length;
     await new vm.Script(`(async () => { ${source} })()`).runInContext(context, { timeout: 1000 });
     assert(outputs.length >= count + 1);
@@ -114,17 +114,23 @@ async function blocked(change, expectedCode) {
   if (expectedCode) assert.equal(result.code, expectedCode);
   assert.deepEqual(mutations(f), []);
   assert.equal(f.first.state.retained, false);
-  assert.equal(f.first.state.interrupted, false);
   return f;
 }
 
-test("Stop code generator preserves validated native substitution fields and bounds its budget", () => {
-  for (const value of ["${session_id}", "${turn_id}", "${hook_event_name}"]) assert(code.includes(value));
-  assert.equal(createWebStopCode({ stateDir, runtimeModule }, { budgetMs: 2400 }), code);
+test("Stop code generator bounds its budget and requires absolute configuration paths", () => {
+  const identity = { threadId: id(1), turnId: id(11), sessionId: id(99) };
   for (const budgetMs of [0, -1, 2401, 2250.5, "2250", NaN])
-    assert.throws(() => createWebStopCode({ stateDir, runtimeModule }, { budgetMs }), /budget/u);
-  for (const changes of [{ stateDir: "relative" }, { runtimeModule: "relative" }, { stateDir: stateDir + "${session_id}" }])
-    assert.throws(() => createWebStopCode({ stateDir, runtimeModule, ...changes }), /validated absolute path/u);
+    assert.throws(() => createWebStopCode({ stateDir, runtimeModule }, identity, { budgetMs }), /budget/u);
+  for (const changes of [{ stateDir: "relative" }, { runtimeModule: "relative" }, { stateDir: stateDir + "\0" }])
+    assert.throws(() => createWebStopCode({ stateDir, runtimeModule, ...changes }, identity), /validated absolute path/u);
+});
+
+test("the adapter's generated Stop program preserves escaped paths as data", async () => {
+  const suffix = '\'"; globalThis.injected = true; //${session_id}';
+  const f = fixture({ stateDir: stateDir + suffix, runtimeModule: runtimeModule + suffix });
+  stopped(await f.run());
+  assert.equal(f.context.injected, undefined);
+  assert.equal(clicked(f).length, 1);
 });
 
 test("the remaining callback budget preserves the pre-click reserve and bounds confirmation and handoff", async () => {
@@ -144,8 +150,7 @@ test("two main/peer Web conversations Stop only their own saved tabs, retaining 
   const f = fixture();
   stopped(await f.run());
   assert.deepEqual(clicked(f).map(call => call.thread), [f.first.thread]);
-  assert.equal(f.first.state.interrupted, true); assert.equal(f.first.state.retained, true);
-  assert.equal(f.second.state.interrupted, false); assert.equal(f.second.visible, true);
+  assert.equal(f.first.state.retained, true); assert.equal(f.second.visible, true);
   f.model.owner = f.second.thread; f.model.turn = f.second.turn;
   f.context.nodeRepl.requestMeta = f.metadata();
   stopped(await f.run());
@@ -206,13 +211,11 @@ test("fresh VM after lost globals uses persisted exact identity; duplicate compl
   assert(g.calls.some(call => call.name === "setup"));
 });
 
-test("current native model, stale ledger, finished Web turn, invalid scope and missing ledger do nothing", async () => {
+test("current native model, stale ledger, finished Web turn and missing ledger do nothing", async () => {
   for (const change of [
     f => { f.model.turn = id(1000); f.context.nodeRepl.requestMeta = f.metadata(); },
     f => { f.first.ledger.lastTurn.turnId = id(1001); },
     f => { f.first.ledger.lastTurn.completed = true; },
-    f => { f.model.owner = "../../other"; },
-    f => { f.model.event = "PostToolUse"; },
     f => { f.model.ledgers.delete(f.ledgerPath(f.first.thread)); },
   ]) {
     const f = fixture(); change(f); assert.equal(await f.run(), undefined);
@@ -228,6 +231,7 @@ test("missing or mismatching canonical metadata never reaches browser controller
     f => { f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].thread_id = f.second.thread; },
     f => { f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].turn_id = f.second.turn; },
     f => { f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].session_id = "forged"; },
+    f => { f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].session_id = id(98); },
     f => { f.context.nodeRepl.requestMeta["x-codex-turn-metadata"] = "{broken"; },
   ]) {
     const f = await blocked(change); assert(!f.calls.some(call => ["setup", "browsers"].includes(call.name)));
@@ -345,7 +349,7 @@ test("late owner change after Stop prevents handoff and does not mark stale stat
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.stopClicked, true); assert.equal(result.retained, false);
   assert.equal(clicked(f).length, 1); assert(!f.calls.some(call => call.name === "handoff"));
-  assert.equal(f.first.state.retained, false); assert.equal(f.first.state.interrupted, false);
+  assert.equal(f.first.state.retained, false);
 });
 
 test("late owner change during handoff does not mutate stale retained flags", async () => {
@@ -354,7 +358,7 @@ test("late owner change during handoff does not mutate stale retained flags", as
   };
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.retained, false);
-  assert.equal(f.first.state.retained, false); assert.equal(f.first.state.interrupted, false);
+  assert.equal(f.first.state.retained, false);
 });
 
 test("Stop acknowledgement after 500ms confirms the same tab with one click within the original budget", async () => {
@@ -427,7 +431,7 @@ test("idle Stop with zero matches retains its tab without claiming cancellation"
   const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
   const result = await f.run();
   assert.equal(result.outcome, "already_idle"); assert.equal(result.stopClicked, false); assert.equal(result.retained, true);
-  assert.equal(f.first.state.interrupted, false); assert.equal(f.first.state.retained, true); assert.equal(clicked(f).length, 0);
+  assert.equal(f.first.state.retained, true); assert.equal(clicked(f).length, 0);
 });
 
 test("an overlapping same-VM Interrupt cannot click twice and releases only its own guard", async () => {

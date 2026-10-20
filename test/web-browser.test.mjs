@@ -226,7 +226,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     ui.onWait?.();
     callback();
   } : setTimeout;
-  const siteIndicator = ({ text, scope = "site", visible = true }, kind) => {
+  const siteIndicator = ({ text, scope = "site" }, kind) => {
     if (scope === "assistant-ancestor") return domElement("div", {}, domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(text)));
     if (scope === "composer-ancestor") return domElement("div", {}, domElement("div", { contenteditable: "true" }, domText(text)));
     const node = domElement(kind === "button" ? "button" : "div", {}, domText(text));
@@ -234,7 +234,6 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     if (scope === "user") domElement("div", { "data-message-author-role": "user" }, node);
     if (scope === "user-article") domElement("article", {}, node);
     if (scope === "composer") domElement("div", { contenteditable: "true" }, node);
-    node.fixtureVisible = visible;
     return node;
   };
   const makeLocator = (kind, name, visibleOnly = false) => ({
@@ -331,10 +330,6 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
-    async allTextContents() {
-      if (name === '[role="status"]') return ui.complete ? ["Response complete"] : [];
-      throw new Error("Unobserved selector");
-    },
     async evaluateAll(callback, argument) {
       if (kind === "text") {
         const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
@@ -398,7 +393,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       assert.equal(options.exact, true); return makeLocator("text", text);
     }, locator: name => makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
-  const browser = { browserId: "owned-browser", documentation: async () => "Current public browser docs",
+  const browser = { browserId: "owned-browser",
     tabs: { list: async () => [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])],
       get: async id => { assert.equal(id, tab.id); return tab; },
       new: async () => {
@@ -448,8 +443,8 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
   f.ui.stop = !completed;
   const observed = await f.run("observe");
   if (completed) await f.run("retain");
-  const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
-    replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+  const recovery = { url: observed.url, tabId: observed.tabId,
+    baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
     generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   return { ...f, recovery, text };
@@ -467,8 +462,8 @@ async function interruptedBeforeReplyFixture() {
   f.ui.stop = true;
   const observed = await f.run("observe");
   assert.deepEqual([observed.assistantText, observed.replyId, observed.generationReplyIds], ["", null, []]);
-  const recovery = { tabId: observed.tabId, url: observed.url, baselineReplyCount: observed.baselineReplyCount,
-    baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
+  const recovery = { tabId: observed.tabId, url: observed.url,
+    baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
     generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: false, retainedTabOnly: true };
   // Starting state after native Interrupt has already stopped this generation.
@@ -545,9 +540,8 @@ test("anchored projection reads only the owned body and completion metadata whil
 
 test("generated bootstrap reads the current session browser and opens a verified empty normal home", async () => {
   const f = fixture();
-  const boot = await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
-  assert.equal(boot.browserId, "owned-browser");
-  assert.equal(boot.browsers.length, 1);
+  await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
+  assert.equal(f.getState().browser, f.browser);
   assert.equal(f.ui.newTabs, 0);
   assert.equal(f.activeTurn(), undefined);
   await assert.rejects(f.run("open", { sessionId: "foreign-session" }), /another native session/);
@@ -559,7 +553,7 @@ test("generated bootstrap reads the current session browser and opens a verified
     await goto(url);
   };
   const open = await f.run("open", { ui: { stopButtonExactName: "Stop generating" } });
-  assert.deepEqual([open.tabId, open.normal, open.replyCount], ["owned-tab", true, 0]);
+  assert.deepEqual([open.tabId, open.normal], ["owned-tab", true]);
   assert.equal(f.ui.url, "https://chatgpt.com/");
   assert.equal(f.ui.handoffs, 1);
   assert.deepEqual(f.activeTurn(), { turnId: base.turnId, state: f.getState(), stopButtonName: "Stop generating" });
@@ -662,8 +656,8 @@ test("collapsed-present family rows are expanded before switching to GPT-5.6 Sol
   const hiddenRow = f.tab.playwright.getByRole('menu', { name: 'Select ChatGPT model', exact: true })
     .locator('[role="menuitemradio"]').filter({ hasText: 'GPT-5.6 Sol' });
   assert.equal(await hiddenRow.count(), 1, 'Collapsed rows are still present in the DOM.');
-  const sent = await f.run('send', { ...plugin, prompt: 'Use GPT-5.6 Sol Instant', modelFamily: 'GPT-5.6 Sol', power: 0 });
-  assert.deepEqual([sent.familyChecked, sent.familyText, sent.powerValue], [true, 'GPT-5.6 Sol', 0]);
+  await f.run('send', { ...plugin, prompt: 'Use GPT-5.6 Sol Instant', modelFamily: 'GPT-5.6 Sol', power: 0 });
+  assert.deepEqual([f.ui.checked, f.ui.familyText, f.ui.power], [true, 'GPT-5.6 Sol', 0]);
   assert.equal(f.ui.familyExpansionClicks, 1);
   assert.equal(f.ui.familyClicks, 1);
   assert.equal(f.ui.familySwitches, 1);
@@ -674,8 +668,8 @@ test("collapsed-present family rows are expanded before switching to GPT-5.6 Sol
 
 test("an exact current family and Power send without family selection or Power movement", async () => {
   const f = fixture({ currentPower: 0 }); await f.ready();
-  const sent = await f.run("send", { ...plugin, prompt: "Keep the current selection" });
-  assert.deepEqual([sent.familyChecked, sent.familyText, sent.powerValue], [true, "GPT-6", 0]);
+  await f.run("send", { ...plugin, prompt: "Keep the current selection" });
+  assert.deepEqual([f.ui.checked, f.ui.familyText, f.ui.power], [true, "GPT-6", 0]);
   assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
   assert.deepEqual(f.ui.powerMoves, []);
   assert.equal(f.ui.clippedFamilyClicks, 0);
@@ -936,7 +930,6 @@ test("full-chat continuation emits metadata while preserving the exact previous 
   const continued = await f.run("continue", { turnId: "next-turn" });
   assert.equal(continued.conversationFull, true);
   assert.equal(continued.assistantText, f.text);
-  assert.equal(continued.replyCount, 1);
   assert.equal(continued.url, f.recovery.url);
   assert.equal(f.activeTurn(), owner);
   assert.deepEqual(f.getState(), state);
@@ -971,7 +964,7 @@ test("a full-chat Send precheck returns sent false before typing, clicking or ch
   const typed = [...f.ui.typed];
   const result = await f.run("send", { ...plugin, prompt: "A new delta", turnId: "next-turn" });
   assert.deepEqual(result, { operation: "send", sent: false, conversationFull: true, normal: true,
-    tabId: "owned-tab", url: f.recovery.url, baselineReplyCount: 1 });
+    tabId: "owned-tab", url: f.recovery.url });
   assert.deepEqual(f.ui.typed, typed);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
@@ -1024,18 +1017,17 @@ test("guarded rollover clicks once in the same owned tab and keeps full history 
   assert.deepEqual(rolled, { operation: "rollover", rolledOver: true, needsHistory: true, previousChatUrl: f.recovery.url,
     tabId: "owned-tab", url: "https://chatgpt.com/", normal: true });
   assert.equal(f.getState(), original);
-  assert.equal(f.getState().baselineReplyCount, 0);
+  assert.deepEqual(f.getState().baselineReplyIds, []);
   assert.equal(f.getState().savedUrl, undefined);
   assert.equal(f.getState().sendAttempted, false);
   assert.equal(f.activeTurn().turnId, "next-turn");
   const continued = await f.run("continue", { turnId: "following-turn", interruptedTurnId: "next-turn",
     expectedOwnerTurnIds: [base.turnId, "next-turn"] });
   assert.equal(continued.needsHistory, true);
-  assert.equal(continued.replyCount, 0);
   assert.equal(continued.assistantText, "");
   f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
   const sent = await f.run("send", { ...plugin, prompt: "Complete readable native history", turnId: "following-turn" });
-  assert.equal(sent.baselineReplyCount, 0);
+  assert.deepEqual(sent.baselineReplyIds, []);
   for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) assert.equal(f.getState()[key], undefined);
   assert.equal(f.ui.startNewChatClicks, 1);
   assert.equal(f.ui.sendClicks, 2);
@@ -1251,7 +1243,6 @@ test("observations require a fresh assistant reply and continuation retains exac
   assert.equal(f.ui.handoffs, 3);
   assert.equal(f.activeTurn()?.turnId, base.turnId);
   const next = await f.run("continue", { tabId: "owned-tab", turnId: "following-turn" });
-  assert.equal(next.replyCount, 2);
   assert.equal(next.assistantText, "Fresh final answer", "Completed continuation supplies the visible reply for native delta history.");
   assert.deepEqual(f.activeTurn(), { turnId: "following-turn", state: f.getState(), stopButtonName: "Stop" });
   const active = f.activeTurn();
@@ -1275,8 +1266,8 @@ test("recovery-eligible continuation preserves its existing owned state across f
   await f.run("retain");
   const state = f.getState();
   const continued = await f.run("continue", { turnId: "following-turn", tabId: "owned-tab", runtimeModule: "must-not-import-recovery.mjs",
-    recovery: { tabId: "owned-tab", url: observed.url, baselineReplyCount: observed.baselineReplyCount,
-      replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+    recovery: { tabId: "owned-tab", url: observed.url,
+      baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
       generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed } });
   assert.equal(f.getState(), state);
@@ -1293,14 +1284,13 @@ test("a new message identity completes after mounted replies shrink below the Se
   await f.ready();
   f.ui.texts = Array(6).fill("Repeated answer");
   const sent = await f.run("send", { ...plugin, prompt: "Repeat the answer" });
-  assert.equal(sent.baselineReplyCount, 6);
   assert.deepEqual(sent.baselineReplyIds, Array.from({ length: 6 }, (_, index) => messageId(index)));
   f.ui.texts = Array(5).fill("Repeated answer"); f.ui.stop = true;
   const pending = await f.run("observe");
-  assert.deepEqual([pending.replyCount, pending.replyId, pending.assistantText, pending.completed], [5, null, "", false]);
+  assert.deepEqual([pending.replyId, pending.assistantText, pending.completed], [null, "", false]);
   f.ui.replyIds = [0, 1, 2, 3, 6].map(messageId); f.ui.stop = false; f.ui.complete = true;
   const completed = await f.run("observe");
-  assert.deepEqual([completed.replyCount, completed.replyId, completed.assistantText, completed.completed], [5, messageId(6), "Repeated answer", true]);
+  assert.deepEqual([completed.replyId, completed.assistantText, completed.completed], [messageId(6), "Repeated answer", true]);
   await f.run("retain");
   assert.equal(f.ui.sendClicks, 1);
 });
@@ -1311,7 +1301,6 @@ test("fragmented markdown in one message completes once with the full prose and 
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, ...earlier);
   f.ui.replyElements = [...earlier];
   const sent = await f.run("send", { ...plugin, prompt: "Return prose and code" });
-  assert.equal(sent.baselineReplyCount, 1);
   assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
   const source = "  first\n\n    last\n";
   const fragments = [domElement("div", {}, domElement("p", {}, domText("Before."))),
@@ -1319,7 +1308,7 @@ test("fragmented markdown in one message completes once with the full prose and 
   domElement("div", { "data-chatgpt-selection-message-id": messageId(1) }, ...fragments);
   f.ui.replyElements.push(...fragments); f.ui.complete = true;
   const observed = await f.run("observe");
-  assert.deepEqual([observed.replyCount, observed.replyId, observed.completed], [2, messageId(1), true]);
+  assert.deepEqual([observed.replyId, observed.completed], [messageId(1), true]);
   assert.equal(observed.assistantText, `Before.\n\n${source}\n\nAfter.`);
   assert.equal(observed.replyUnavailableReason, undefined);
   await f.run("retain");
@@ -1339,10 +1328,10 @@ test("orphan markdown widgets before and after saved messages do not enter the S
   f.ui.orphanMarkdownBefore = [widget("Tool widget before the message")];
   f.ui.orphanMarkdownAfter = [widget("Tool widget after the message")];
   const sent = await f.run("send", { ...plugin, prompt: "Read the actual message" });
-  assert.equal(sent.baselineReplyCount, 1);
+  assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
   f.ui.texts.push("The exact final answer."); f.ui.complete = true;
   const observed = await f.run("observe");
-  assert.deepEqual([observed.completed, observed.replyCount, observed.assistantText], [true, 2, "The exact final answer."]);
+  assert.deepEqual([observed.completed, observed.replyId, observed.assistantText], [true, messageId(1), "The exact final answer."]);
   await f.run("retain");
   const continued = await f.run("continue", { turnId: "next-turn" });
   assert.equal(continued.assistantText, "The exact final answer.");
@@ -1480,8 +1469,8 @@ test("interrupted anchored recovery stops the exact tab and accepts a later fina
     f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [commentary, status, partial], { complete: false }));
     f.ui.stop = true;
     const observed = await f.run('observe');
-    const recovery = { tabId: observed.tabId, url: observed.url, baselineReplyCount: observed.baselineReplyCount,
-      baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
+    const recovery = { tabId: observed.tabId, url: observed.url,
+      baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
       generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
       assistantPrefix: assistantPrefix(observed.assistantText), completed: false, ...(retainedTabOnly ? { retainedTabOnly: true } : {}) };
     f.loseBinding();
@@ -1627,7 +1616,6 @@ test("a proven reply unmounted before continuation remains old when it remounts 
   f.ui.texts = [];
   await f.run("continue", { turnId: "following-turn" });
   const sent = await f.run("send", { ...plugin, turnId: "following-turn", prompt: "Next request" });
-  assert.equal(sent.baselineReplyCount, 0);
   assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
   f.ui.texts.push("Prior completed answer");
   const old = await f.run("observe", { turnId: "following-turn" });
@@ -1821,7 +1809,7 @@ test("a rejected existing saved-URL candidate never becomes the retained owner's
   }
 });
 
-test("reopening a virtualized saved chat captures its verified latest reply and uses mounted counts for the next Send", async () => {
+test("reopening a virtualized saved chat captures its verified latest reply and preserves prior identities for the next Send", async () => {
   const f = fixture({ fastTimers: true });
   await f.ready();
   f.ui.texts = Array.from({ length: 39 }, (_, index) => `Earlier mounted assistant reply ${index}`);
@@ -1836,10 +1824,10 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   f.ui.texts.push(latest);
   const observed = await f.run("observe", { turnId: "second-turn" });
   await f.run("retain", { turnId: "second-turn" });
-  assert.equal(observed.baselineReplyCount, 40);
-  assert.equal(observed.replyCount, 41);
-  const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
-    replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+  assert.deepEqual(observed.baselineReplyIds, Array.from({ length: 40 }, (_, index) => messageId(index)));
+  assert.equal(observed.replyId, messageId(40));
+  const recovery = { url: observed.url, tabId: observed.tabId,
+    baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
     generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   f.loseBinding();
@@ -1851,11 +1839,10 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   };
   const continued = await f.run("continue", { turnId: "third-turn", tabId: "owned-tab", recovery });
   assert.equal(continued.recovered, true);
-  assert.equal(continued.replyCount, 2);
   assert.equal(continued.assistantText, latest, "The latest saved reply remains available for native delta history despite a smaller mounted list.");
   assert.equal(f.ui.sendClicks, 2, "Recovery does not replay either prior Send.");
   const sent = await f.run("send", { ...plugin, prompt: "New delta only", turnId: "third-turn" });
-  assert.equal(sent.baselineReplyCount, 2, "A new Send establishes its own current mounted count.");
+  assert.deepEqual(sent.baselineReplyIds, Array.from({ length: 41 }, (_, index) => messageId(index)), "A new Send preserves prior proven identities after virtualization.");
   assert.equal(f.ui.sendClicks, 3);
   assert.equal(f.ui.newTabs, 2);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", recovery.url]);
@@ -2005,7 +1992,6 @@ test("interrupted recovery revalidates the latest reply after Stop changes the m
     }
     else {
       const continued = await continuation;
-      assert.equal(continued.replyCount, 1);
       assert.equal(continued.assistantText, f.text, "A proven latest reply survives count shrink during Stop.");
       assert.equal(continued.recovered, true);
     }
@@ -2101,14 +2087,13 @@ test("interrupted continuation stops the preceding native owner and starts a new
   f.ui.texts.push("  Partial answer\n");
   f.ui.stop = true;
   const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, tabId: "owned-tab" });
-  assert.deepEqual(result, { operation: "continue", tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation", replyCount: 2, normal: true, conversationFull: false, interrupted: true, assistantText: "  Partial answer\n" });
+  assert.deepEqual(result, { operation: "continue", tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation", normal: true, conversationFull: false, interrupted: true, assistantText: "  Partial answer\n" });
   assert.equal(f.ui.stopClicks, 1, "Continuation reconciles Stop even when native Interrupt could not finish it.");
   assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.sendClicks, 1, "Reconciling an interrupted generation never replays its Send.");
-  assert.equal(f.getState().baselineReplyCount, 2);
+  assert.deepEqual(f.getState().baselineReplyIds, [messageId(0), messageId(1)]);
   assert.equal(f.getState().sendAttempted, false);
-  assert.equal(f.getState().interrupted, false);
   assert.equal(f.activeTurn()?.turnId, "next-turn");
   f.ui.stop = true;
   await assert.rejects(f.run("continue", { turnId: "stale-turn", interruptedTurnId: base.turnId, expectedOwnerTurnIds: [base.turnId] }), /active.*turn|turn.*active/i);
@@ -2380,7 +2365,7 @@ test("script arguments reject unsafe bindings or native identities", () => {
   }
   assert.throws(() => browserScript({ ...base, operation: "observe", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
   const recovery = { tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation",
-    baselineReplyCount: 0, baselineReplyIds: [], replyId: messageId(0), replyCount: 1,
+    baselineReplyIds: [], replyId: messageId(0),
     generationTurnKey: messageId(100), generationReplyIds: [messageId(0)],
     assistantPrefix: assistantPrefix("Observed partial"), completed: false };
   const continuation = { ...base, operation: "continue", tabId: "owned-tab", runtimeModule: "current-runtime.mjs", expectedOwnerTurnIds: [base.turnId] };
@@ -2389,7 +2374,7 @@ test("script arguments reject unsafe bindings or native identities", () => {
     assert.throws(() => browserScript({ ...base, operation: "rollover", previousChatUrl, expectedOwnerTurnIds: [base.turnId] }), /exact previous saved chat URL/);
   }
   for (const change of [{ url: "https://chatgpt.com/" }, { url: "https://elsewhere.test/c/owned" },
-    { url: "https://chatgpt.com/c/owned-conversation?temporary-chat=true" }, { tabId: "" }, { baselineReplyCount: -1 }, { replyCount: 0 },
+    { url: "https://chatgpt.com/c/owned-conversation?temporary-chat=true" }, { tabId: "" },
     { assistantPrefix: { sha256: "bad", length: 1 } }, { assistantPrefix: { ...recovery.assistantPrefix, length: 0 } }, { completed: undefined }]) {
     assert.throws(() => browserScript({ ...continuation, recovery: { ...recovery, ...change } }), /confirmed owned chat and observed assistant reply/u);
   }

@@ -116,13 +116,7 @@ export function cleanupDecision(hook, cached, generation) {
 export function stopCode(stopConfig, identity, budgetMs = 2400) {
   if (!threadAllowed(identity?.threadId, stopConfig.threadIds ?? null)
       || !uuid(identity.turnId) || !uuid(identity.sessionId)) throw new Error('identity_refused');
-  const template = createWebStopCode(stopConfig, { budgetMs });
-  let code = template;
-  for (const [placeholder, value] of [['${session_id}', identity.threadId], ['${turn_id}', identity.turnId], ['${hook_event_name}', 'Interrupt']]) {
-    if (code.split(placeholder).length !== 2) throw new Error('template_refused');
-    code = code.replace(placeholder, value);
-  }
-  return code;
+  return createWebStopCode(stopConfig, identity, { budgetMs });
 }
 
 // Parse the actual native text envelope, including {systemMessage: ...}. No raw

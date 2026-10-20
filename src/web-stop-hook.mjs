@@ -6,17 +6,13 @@ import { STOP_CODES } from "./web-stop-contract.mjs";
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
 // and runtimeModule; Router's atomic ledger writer preserves its private ACL.
-async function stopOwnedWebTurn() {
-  const nativeThread = '__NATIVE_SESSION__';
-  const nativeTurn = '__NATIVE_TURN__';
-  const nativeEvent = '__NATIVE_EVENT__';
-  const config = '__CONFIG__';
-  const started = Date.now(), deadline = started + '__BUDGET_MS__';
+async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes) {
+  const { threadId: nativeThread, turnId: nativeTurn, sessionId: nativeSession } = identity;
+  const started = Date.now(), deadline = started + budgetMs;
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const uuid = value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value);
   const nonempty = value => typeof value === "string" && value.length > 0;
-  const normalUrl = '__SAVED_CHAT_URL__';
-  const codes = new Set('__STOP_CODES__');
+  const codes = new Set(stopCodes);
   const deny = code => { throw Object.assign(new Error(), { stopCode: code }); };
   const budget = (reserve = 0) => { if (deadline - Date.now() < reserve) deny("budget_exhausted"); };
   let inScope = false, stage = "scope", outcome = "blocked", code;
@@ -25,7 +21,6 @@ async function stopOwnedWebTurn() {
   try {
     // A native route (or an older Web turn in the same native conversation) has
     // no current confirmed Web delivery in this exact UUID-derived file.
-    if (nativeEvent !== "Interrupt" || !uuid(nativeThread) || !uuid(nativeTurn)) return;
     const recordPath = config.ledgerDirectory + nativeThread + ".json";
     const fs = await import("node:fs");
     const readLedger = (initial = false) => {
@@ -74,7 +69,7 @@ async function stopOwnedWebTurn() {
         ? JSON.parse(meta["x-codex-turn-metadata"]) : meta["x-codex-turn-metadata"]; }
       catch { deny("metadata_mismatch"); }
       if (meta.threadId !== nativeThread || !record(canonical) || canonical.thread_id !== nativeThread
-          || canonical.turn_id !== nativeTurn || !uuid(canonical.session_id)) deny("metadata_mismatch");
+          || canonical.turn_id !== nativeTurn || canonical.session_id !== nativeSession) deny("metadata_mismatch");
       // Canonical session_id is cache affinity and need not equal thread_id.
       return JSON.stringify([meta.threadId, canonical.thread_id, canonical.turn_id, canonical.session_id]);
     };
@@ -220,7 +215,7 @@ async function stopOwnedWebTurn() {
     await tab.markHandoff();
     assertCurrent();
     if (!absent) {
-      if (visible) { state.interrupted = true; state.completed = false; }
+      if (visible) state.completed = false;
       state.retained = true;
     }
     diagnostic.retained = true;
@@ -237,22 +232,15 @@ async function stopOwnedWebTurn() {
   }
 }
 
-/** Pure generator. Inputs must be the validated, trusted installed configuration. */
-export function createWebStopCode({ stateDir, runtimeModule }, { budgetMs = 2400 } = {}) {
+/** Pure generator. The adapter owns validation of the originating native identity. */
+export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = 2400 } = {}) {
   if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 2400) throw new Error("Web Stop budget must be within 1..2400 ms.");
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
-    if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0") || value.includes("${")) {
+    if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
       throw new Error(`Web Stop ${name} must be a validated absolute path.`);
     }
   }
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
     runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName };
-  return `await (${stopOwnedWebTurn.toString()
-    .replace("'__BUDGET_MS__'", String(budgetMs))
-    .replace("'__NATIVE_SESSION__'", "'${session_id}'")
-    .replace("'__NATIVE_TURN__'", "'${turn_id}'")
-    .replace("'__NATIVE_EVENT__'", "'${hook_event_name}'")
-    .replace("'__SAVED_CHAT_URL__'", isSavedChatUrl.toString())
-    .replace("'__STOP_CODES__'", JSON.stringify(STOP_CODES))
-    .replace("'__CONFIG__'", JSON.stringify(config))})();`;
+  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)});`;
 }

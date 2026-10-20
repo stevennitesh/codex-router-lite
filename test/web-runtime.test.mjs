@@ -90,7 +90,6 @@ function fakeBrowser() {
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
-    async allTextContents() { return name === '[role="status"]' ? (ui.complete ? ["Response complete"] : []) : [...ui.texts]; },
     async evaluateAll(callback, ownedChipSelector) {
       if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
       if (name === "Ask ChatGPT") {
@@ -142,7 +141,7 @@ function fakeBrowser() {
   }, url: async () => ui.url,
     playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
-  const browser = { browserId: "same-session-iab", documentation: async () => "Current public browser runtime documentation",
+  const browser = { browserId: "same-session-iab",
     tabs: { list: async () => ui.present ? [{ id: tab.id, url: await tab.url() }] : [],
       get: async tabId => { ui.reacquired.push(tabId); assert.equal(tabId, tab.id); return tab; },
       new: async () => {
@@ -355,7 +354,6 @@ test("the native runtime accepts a new reply identity after mounted counts shrin
   const observe = (await h.answerBrowser(response.output[0])).output[0];
   h.browser.ui.texts = Array(5).fill("Repeated answer"); h.browser.ui.stop = true;
   const pendingFrame = await h.executeBrowser(observe);
-  assert.match(pendingFrame, /"replyCount":5/);
   assert.match(pendingFrame, /"replyId":null/);
   h.append(observe, outputFor(observe, pendingFrame));
   const pending = await h.request();
@@ -366,7 +364,9 @@ test("the native runtime accepts a new reply identity after mounted counts shrin
   assert.equal(final.output[0].content[0].text, "Repeated answer");
   h.append(final.output[0]);
   const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
-  assert.equal(saved.sendBaseline, 6); assert.equal(saved.observation.replyCount, 5);
+  assert.deepEqual(saved.sendBaselineReplyIds, Array.from({ length: 6 }, (_, index) => messageId(index)));
+  assert.equal(saved.sendBaseline, 6);
+  assert.equal(saved.observation.replyCount, 7, "The rollback reader gets valid identity-derived counts despite fewer mounted replies.");
   assert.equal(saved.observation.replyId, messageId(6));
   assert.equal(h.browser.ui.sends.length, 1);
   await h.restartRuntime(); h.loseKernel();
@@ -392,7 +392,7 @@ test("fragmented message DOM reaches native completion with all prose and code a
   const expected = `Before code.\n\n${source}\n\nAfter code.`;
   assert.equal(observed.completed, true);
   assert.equal(observed.assistantText, expected);
-  assert.equal(observed.replyCount, 1);
+  assert.equal(observed.replyId, messageId(0));
   h.append(call, outputFor(call, frame));
   const retained = await h.request();
   assert.equal(JSON.parse(retained.output[0].arguments).title, "ChatGPT Web: retain");

@@ -112,7 +112,7 @@
     "The 897 ms narrow-trial and 917 ms all-ordinary measurements cover adapter cleanup callbacks, not end-to-end latency from the user's Stop gesture.",
     "No native coding command ran in this Stop trial; it does not establish Web-to-native command sandbox enforcement or resolve the earlier hosted connector HTTP 429.",
     "Earlier failed disposable adapters and the separate patched-native candidate remain historical evidence. This result does not retroactively validate those attempts.",
-    "The separate native-patch installation and its rollback evidence are preserved in 2026-10-18-native-hook-context.json."
+    "The superseded native-patch installation and its rollback evidence remain available at https://github.com/stevennitesh/codex-router-lite/blob/c44baa1c56fb9716ebbe9bc9cabe16053fe48deb/docs/history/2026-10-18-native-hook-context.json."
   ],
   "generationContractFollowup": {
     "status": "native-tools-sandbox-stop-and-continuation-verified",

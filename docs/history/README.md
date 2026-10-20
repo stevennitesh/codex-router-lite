@@ -8,13 +8,13 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 - [Unmodified-CLI adapter Stop and same-chat continuation after all-ordinary restart, 2026-10-19](2026-10-19-web-stop-adapter-verification.json)
 
-- [Native hook context repair candidate and verification limits, 2026-10-18](2026-10-18-native-hook-context.json)
+- [Superseded native hook context repair candidate and verification limits, 2026-10-18](https://github.com/stevennitesh/codex-router-lite/blob/c44baa1c56fb9716ebbe9bc9cabe16053fe48deb/docs/history/2026-10-18-native-hook-context.json)
 
 - [Live Web compaction, efficient continuation and closed-tab recovery, 2026-10-17](2026-10-17-web-saved-chat-verification.json)
 
 - [Windows app compatibility and complete upstream review, 2026-10-17](2026-10-17-app-compatibility-review.json)
 
-- [ChatGPT Web deployment, independent launcher and live native conversations, 2026-10-16](2026-10-16-web-bridge-release.json)
+- [Superseded ChatGPT Web deployment, independent launcher and live native conversations, 2026-10-16](https://github.com/stevennitesh/codex-router-lite/blob/c44baa1c56fb9716ebbe9bc9cabe16053fe48deb/docs/history/2026-10-16-web-bridge-release.json)
 
 - [Deployed Router update and six-route certification, 2026-10-13](2026-10-13-deployed-certification.json)
 
