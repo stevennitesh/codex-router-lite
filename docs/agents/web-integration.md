@@ -177,8 +177,10 @@ observed inactive generation is reported with its action error preserved, rather
 than pretending the click acknowledged or repeating it. Retention acknowledgement
 and actual tab survival are separate evidence; live checks confirm survival.
 
-Browser work and readback use the remaining native execution budget. Some public
-SDK operations have no per-call timeout, and failed clicks can perform additional
+Browser work and readback use the remaining native execution budget.
+Read admission reserves time for follow-up work; accepting a completed read uses
+the actual deadline and rechecks authority, without charging that reserve again.
+Some public SDK operations have no per-call timeout, and failed clicks can perform additional
 SDK diagnostics before rejecting. A request that does not settle within the host
 deadline remains unconfirmed; cleanup does not race it with another UI action.
 The public browser API cannot make the generation predicate atomic with native

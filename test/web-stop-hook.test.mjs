@@ -83,7 +83,9 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
             const controls = matchesGuard() ? Array.from({ length: surface.stopCount }, () => ({
               tagName: "BUTTON", getBoundingClientRect: () => ({ width: surface.visible ? 32 : 0, height: surface.visible ? 32 : 0 }),
             })) : [];
-            return reader([body, ...controls], args);
+            const view = reader([body, ...controls], args);
+            touch("generation_return", thread);
+            return view;
           } }; } };
         } } };
     const browser = { browserId: surface.browserId, tabs: {
@@ -198,6 +200,54 @@ test("the remaining callback budget bounds Stop while preserving the earlier ver
   assert(expired.elapsedMs <= 1200); assert.equal(clicked(g).length, 1);
   assert.deepEqual(mutations(g).map(call => call.name), ["handoff", "click"]);
   const h = fixture(); stopped(await h.run({ budgetMs: 2250 }));
+});
+
+test("final owned inactivity proof arriving inside the last reserve is accepted before the actual deadline", async () => {
+  for (const returnedAt of [2304, 2399]) {
+    const f = fixture();
+    f.model.onCall = name => {
+      // Page evaluation may be quick while its native RPC reply takes longer.
+      if (name === "generation_return" && clicked(f).length) f.model.now = returnedAt;
+    };
+    const result = await f.run(); stopped(result);
+    assert.equal(result.elapsedMs, returnedAt);
+    assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+  }
+});
+
+test("a completed Stop read returning after the actual deadline cannot establish success", async () => {
+  const f = fixture();
+  f.model.onCall = name => { if (name === "generation_return" && clicked(f).length) f.model.now = 2401; };
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "budget_exhausted");
+  assert.equal(result.generationInactive, false); assert.equal(result.retained, true);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+});
+
+test("a late hidden control still requires positive generation inactivity", async () => {
+  const f = fixture(); f.first.keepGenerating = true;
+  f.model.onCall = name => { if (name === "generation_return" && clicked(f).length) f.model.now = 2304; };
+  const result = await f.run();
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+  assert.equal(result.stopHidden, true); assert.equal(result.generationInactive, false);
+  assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+});
+
+test("a late positive read still rejects changed native authority, owner or ledger", async () => {
+  for (const [change, code] of [
+    [f => { f.context.nodeRepl.requestMeta = f.metadata(f.model.owner, id(13)); }, "metadata_mismatch"],
+    [f => { f.context.routerWebActiveTurns.set(f.model.owner, { ...f.first.active }); }, "owner_changed"],
+    [f => { f.first.ledger.bindingId = "changed_binding"; }, "ledger_changed"],
+  ]) {
+    const f = fixture();
+    f.model.onCall = name => {
+      if (name === "generation_return" && clicked(f).length) { f.model.now = 2304; change(f); }
+    };
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, code);
+    assert.equal(result.generationInactive, false);
+    assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
+  }
 });
 
 test("a 600 ms click acknowledgement after setup succeeds within the reduced original cleanup budget", async () => {

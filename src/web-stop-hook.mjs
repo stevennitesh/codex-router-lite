@@ -202,7 +202,9 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
             stopCount: controls.length, stopVisible: visible,
             complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
         }, { ui: config.ui, generationTurnKey }, { timeoutMs });
-      assertCurrent(reserve);
+      // Reserve admits the read; accepting its result needs only the actual
+      // deadline. Any later operation reserves its own remaining budget.
+      assertCurrent();
       if (view?.url !== savedUrl) deny("tab_url_mismatch");
       if (!record(view) || view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey
           || typeof view.complete !== "boolean") deny("generation_mismatch");
