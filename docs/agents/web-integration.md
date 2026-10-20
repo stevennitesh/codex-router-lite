@@ -72,7 +72,10 @@ With the Router MCP adapter installed, one pending native observation call spans
 those short reads. A protected loopback notification wakes it on broker activity;
 browser completion, capacity errors and observation failures also return it. The
 adapter spaces its internal reads rather than repeatedly emitting visible wait
-calls. Its safety deadline renews the outer wait within Codex's call timeout.
+calls. The renewal deadline stops scheduling new reads; an already dispatched
+read keeps a separate execution allowance within Codex's call timeout. Shrinking
+that read's execution budget to the remaining renewal interval can time out a
+normal read and reset the native REPL kernel. Renewal waits for its actual result.
 Stop prevents further reads and waits for an in-flight read's actual terminal
 callback before the existing cleanup. The separate final retention check, broker
 revision fences, protected durable writes and Interrupt hook remain.

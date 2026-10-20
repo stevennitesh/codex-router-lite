@@ -26,6 +26,8 @@ const threadAllowed = (threadId, threadIds) => uuid(threadId) && (threadIds === 
 const turnKey = (threadId, turnId) => `${threadId}:${turnId}`;
 const OBSERVATION_INTERVAL_MS = 500;
 const OBSERVATION_WAIT_MS = 25_000;
+const OBSERVATION_FINISH_GRACE_MS = 4000;
+const OBSERVATION_TRANSPORT_MARGIN_MS = 1000;
 
 function observationWait(config) {
   const wait = config.observationWait;
@@ -304,8 +306,14 @@ export class AdapterBridge {
     this.pending.set(message.id, pending);
     if (pending.qualified && guard.config.observationWait) {
       const wait = observationWait(guard.config);
+      const startedAt = this.now();
       pending.wait = { ...wait, outerId: message.id, message: snapshot(message), config: guard.config,
-        startedAt: this.now(), deadlineAt: this.now() + this.observationWaitMs,
+        startedAt, deadlineAt: startedAt + this.observationWaitMs,
+        // Renewal stops scheduling; it must not truncate a normal last read to
+        // a few milliseconds and reset the official REPL's resident kernel.
+        // Existing work gets the remaining host headroom, never a fresh budget.
+        executionDeadlineAt: startedAt + Math.min(this.observationWaitMs + OBSERVATION_FINISH_GRACE_MS,
+          Math.max(1, (message.params.arguments.timeout_ms ?? 30_000) - OBSERVATION_TRANSPORT_MARGIN_MS)),
         readCount: 0, active: false, reason: null, last: null, abort: new AbortController() };
       const state = pending.wait;
       state.deadline = setTimeout(() => this.wakeObservation(pending, 'deadline'), this.observationWaitMs);
@@ -334,13 +342,14 @@ export class AdapterBridge {
   async readObservation(pending) {
     const state = pending.wait;
     if (state.finished || state.active || state.reason && state.last) return;
+    if (state.last && this.now() >= state.deadlineAt) return this.wakeObservation(pending, 'deadline');
     let settle;
     pending.settled = new Promise(resolvePromise => { settle = resolvePromise; }); pending.settle = settle;
     state.active = true; state.childId = `router_observe_${randomUUID()}`; state.readCount += 1;
     this.observationChildren.set(state.childId, pending);
     const args = state.message.params.arguments;
     const params = Number.isSafeInteger(args.timeout_ms) ? { ...state.message.params, arguments: { ...args,
-      timeout_ms: Math.min(args.timeout_ms, Math.max(1, state.deadlineAt - this.now())) } } : state.message.params;
+      timeout_ms: Math.min(args.timeout_ms, Math.max(1, state.executionDeadlineAt - this.now())) } } : state.message.params;
     await this.child.send({ ...state.message, id: state.childId, params });
   }
   async finishObservation(pending) {
@@ -351,7 +360,8 @@ export class AdapterBridge {
     this.retirePending(state.outerId, true);
     this.event('observation_wait_finished', { readCount: state.readCount, wakeReason: state.reason,
       elapsedMs: Math.max(0, this.now() - state.startedAt) });
-    return this.outer.send(['broker_error', 'broker_closed'].includes(state.reason)
+    const childFailed = own(state.last, 'error') || state.last.result?.isError === true;
+    return this.outer.send(!childFailed && ['broker_error', 'broker_closed'].includes(state.reason)
       ? { jsonrpc: '2.0', id: state.outerId, error: { code: -32603, message: 'Router browser observation channel is unavailable.' } }
       : { ...state.last, id: state.outerId });
   }
@@ -390,6 +400,7 @@ export class AdapterBridge {
         if (value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true
             || value.statusComplete === true && value.stopVisible === false || value.normal !== true
             || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) pending.wait.reason ??= 'browser_ready';
+        if (this.now() >= pending.wait.deadlineAt) pending.wait.reason ??= 'deadline';
         if (group?.pending === pending || pending.deferred) pending.wait.reason ??= 'cancelled';
         if (pending.wait.reason) await this.finishObservation(pending);
         else pending.wait.timer = setTimeout(() => { void this.readObservation(pending).catch(() => this.fail()); }, this.observationIntervalMs);

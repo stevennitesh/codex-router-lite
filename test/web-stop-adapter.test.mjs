@@ -267,7 +267,7 @@ test('one actual MCP observation spans short private child reads and returns onl
     assert.match(child.id, /^router_observe_/u);
     assert.deepEqual(child.params._meta, f.source._meta);
     assert.equal(child.params.arguments.code, f.source.arguments.code);
-    assert.ok(child.params.arguments.timeout_ms > 0 && child.params.arguments.timeout_ms <= 25000);
+    assert.ok(child.params.arguments.timeout_ms > 0 && child.params.arguments.timeout_ms <= 29000);
   }
   const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
   assert.equal(receipt.readCount, 3); assert.equal(receipt.wakeReason, 'browser_ready');
@@ -303,6 +303,89 @@ test('the safety deadline returns the latest incomplete snapshot without repeati
   const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
   assert.equal(receipt.wakeReason, 'deadline');
   assert.ok(receipt.elapsedMs < 1000);
+});
+
+test('a read begun just before renewal can finish across that boundary without resetting its kernel', async t => {
+  for (const childFails of [false, true]) await t.test(childFails ? 'actual child error still propagates' : 'incomplete read renews successfully', async subtest => {
+    let clock = 1000, reads = 0, kernelResets = 0;
+    const nativeError = { isError: true, content: [{ type: 'text', text: 'js execution timed out; kernel reset, rerun your request' }] };
+    const f = await waitingFixture(subtest, async params => {
+      reads += 1;
+      if (reads === 1) { clock = 1995; return observationResult(params); }
+      if (reads > 2) return observationResult(params, { completed: true });
+      // Place actual timed work five milliseconds before the renewal boundary.
+      // The fixture implements Node REPL's consequential timeout: losing the
+      // deadline returns no nonce frame and resets the resident browser kernel.
+      return new Promise(resolve => {
+        const work = setTimeout(() => {
+          clearTimeout(timeout); clock = 2015;
+          resolve(childFails ? nativeError : observationResult(params));
+        }, 20);
+        const timeout = setTimeout(() => {
+          clearTimeout(work); kernelResets += 1; clock = 2000; resolve(nativeError);
+        }, params.arguments.timeout_ms);
+      });
+    }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1 });
+    const result = await f.client.callTool(f.source);
+    if (childFails) {
+      assert.deepEqual(result, nativeError);
+      assert.equal(reads, 2);
+      await delay(0);
+      assert.ok(f.receipts.some(entry => entry.code === 'ordinary_js_failed'));
+      assert.equal((await f.client.callTool(hook())).isError, true);
+    } else {
+      assert.equal(result.isError, undefined, 'A renewal deadline must not create a native execution timeout.');
+      assert.match(result.content[0].text, /"completed":false/u);
+      assert.equal(kernelResets, 0);
+      assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'deadline');
+      const renewed = clone(f.source), config = readBrowserProgram(renewed.arguments.code);
+      renewed.arguments.code = browserScript({ ...config, frameToken: 'b'.repeat(48) });
+      renewed._meta.callId = `call_router_web_${'b'.repeat(32)}`;
+      assert.match((await f.client.callTool(renewed)).content[0].text, /"completed":true/u);
+      assert.equal(reads, 3, 'Renewal observes the same generation; it does not repeat Send.');
+    }
+  });
+});
+
+test('Stop during the last read headroom still waits for its actual terminal within the original cleanup budget', async t => {
+  let clock = 1000, reads = 0, entered, release;
+  const activeRead = new Promise(resolve => { entered = resolve; });
+  const terminal = new Promise(resolve => { release = resolve; });
+  const f = await waitingFixture(t, async params => {
+    if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+    reads += 1;
+    if (reads === 1) { clock = 1995; return observationResult(params); }
+    clock = 2015; entered(); await terminal;
+    return observationResult(params);
+  }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1 });
+  const control = new AbortController();
+  const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await activeRead; control.abort();
+  const stopped = f.client.callTool(hook());
+  await delay(0);
+  assert.equal(f.calls.length, 2, 'Neither soft renewal nor native Stop establishes the active read terminal.');
+  release();
+  assert.equal((await stopped).isError, undefined); assert.equal(await answer, 'cancelled');
+  assert.equal(f.calls.length, 3);
+  assert.ok(f.calls[2].arguments.code.includes('stopOwnedWebTurn'));
+  assert.ok(f.calls[2].arguments.timeout_ms <= 2500, 'Read headroom cannot create a new cleanup allowance.');
+  assert.ok(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal' && entry.childTerminalObserved));
+  assert.ok(f.receipts.some(entry => entry.code === 'stop_confirmed'));
+});
+
+test('a true last-child error remains intact when broker closure wakes its held request first', async t => {
+  let entered, release;
+  const activeRead = new Promise(resolve => { entered = resolve; });
+  const terminal = new Promise(resolve => { release = resolve; });
+  const nativeError = { isError: true, content: [{ type: 'text', text: 'actual native execution failure' }] };
+  const f = await waitingFixture(t, async () => { entered(); await terminal; return nativeError; });
+  const answer = f.client.callTool(f.source); await activeRead;
+  const pending = [...f.bridge.pending.values()][0];
+  const woken = new Promise(resolve => pending.wait.abort.signal.addEventListener('abort', resolve, { once: true }));
+  f.broker.cancel(f.turn.token); await woken;
+  release();
+  assert.deepEqual(await answer, nativeError, 'A broker wake cannot replace an actual child terminal error.');
+  assert.equal(f.calls.length, 1);
 });
 
 test('actual child errors and malformed browser output end the held call without another browser read', async t => {
