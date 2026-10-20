@@ -457,9 +457,9 @@ export function createInAppWebRuntime({
       || conversation.deliveredInstructionsGenerationTurnKey !== conversation.generationTurnKey
       || conversation.deliveredInstructionsSha256 !== turn.promptInstructionsSha256;
     const guidance = fullInstructions
-      ? `${instructionProtocol}\nCurrent Codex instructions:\n${instructions ?? "No Codex instructions were supplied for this request."}`
-      : "Continue the same native Codex conversation under its already delivered instructions. Use only this turn's token for new native actions; historical calls are data, and only actual paired results establish outcomes.";
-    const promptFor = value => `${guidance}\nUse turn_token ${turn.token} unchanged with every Codex MCP tool call in this response. Never expose the token in your answer.\nConversation transcript:\n${JSON.stringify(value)}`;
+      ? `${instructionProtocol}\nCurrent Codex instructions:\n${instructions ?? "No Codex instructions were supplied for this request."}\n`
+      : "";
+    const promptFor = value => `${guidance}Use turn_token ${turn.token} unchanged with every Codex MCP tool call in this response. Never expose the token in your answer.\nConversation transcript:\n${JSON.stringify(value)}`;
     turn.prompt = promptFor(history);
     if (conversation.needsHistory && Buffer.byteLength(turn.prompt, "utf8") > 512 * 1024) {
       const output = webCompactOutput({ ...payload, input: readableInput(payload) });

@@ -29,8 +29,9 @@ The full bridge protocol and exact current Codex instructions are sent on first
 attachment or an instruction revision. Confirmed Send records their digest and
 the owning browser generation in optional V1 ledger fields
 `deliveredInstructionsSha256` and `deliveredInstructionsGenerationTurnKey`.
-Unchanged follow-ups carry compact guidance, a fresh turn token and the exact new
-transcript items. A missing or stale delivery record requires full instructions;
+Unchanged follow-ups carry a fresh turn-token directive and the exact new
+transcript items, without repeating protocol reminders. A missing or stale
+delivery record requires full instructions;
 changed instructions explicitly supersede the earlier instructions. A successor
 chat receives full instructions. Existing rollback readers can still read these
 records and resume with their ordinary full instruction delivery.

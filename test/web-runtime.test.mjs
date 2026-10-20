@@ -702,8 +702,11 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   h.newTurn(followupId, "Exact continuation Δ");
   ({ call: observe } = await h.toObserve());
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Exact continuation Δ" }]);
-  assert.equal(h.browser.ui.sends.at(-1).includes(instructions), false);
-  assert.equal(h.browser.ui.sends.at(-1).includes("Current Codex instructions:"), false);
+  const followupPrompt = h.browser.ui.sends.at(-1);
+  assert.equal(followupPrompt.trimStart().match(/^Use turn_token (web_turn_[a-f0-9]{32}) /u)?.[1], h.token(),
+    "An unchanged continuation begins with its fresh tool authority, without repeated guidance.");
+  assert.equal(followupPrompt.includes(instructions), false);
+  assert.equal(followupPrompt.includes("Current Codex instructions:"), false);
   assert.notEqual(h.token(), firstToken);
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, revision);
   await complete(observe, "Continuation completed");
