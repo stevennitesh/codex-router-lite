@@ -94,9 +94,12 @@ function fakeBrowser() {
           childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
       }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
-      return callback(ui.replyElements ?? ui.texts.map((value, index) => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
-        closest: () => ({ getAttribute: () => ui.replyIds ? ui.replyIds[index] : messageId(index) }),
-        childNodes: [{ nodeType: 3, textContent: value }] })));
+      return callback(ui.replyElements ?? ui.texts.map((value, index) => {
+        const wrapper = { nodeType: 1, tagName: "DIV", closest: () => null,
+          getAttribute: name => name === "data-chatgpt-selection-message-id" ? ui.replyIds ? ui.replyIds[index] : messageId(index) : null };
+        return { nodeType: 1, tagName: "DIV", getAttribute: () => null, parentElement: wrapper,
+          closest: () => wrapper, childNodes: [{ nodeType: 3, textContent: value }] };
+      }));
     },
   });
   const tab = { get id() { return ui.tabId; }, goto: async url => {
@@ -352,6 +355,32 @@ test("fragmented message DOM reaches native completion with all prose and code a
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.closes, 0);
   assert.equal(new Set(h.observations.bindings).size, 1);
+});
+
+test("native continuation identity failure exposes bounded structural evidence before another Send", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Completed reply"); h.browser.ui.complete = true;
+  const retained = await h.answerBrowser(call), final = await h.answerBrowser(retained.output[0]);
+  h.append(final.output[0]);
+  const secret = "PRIVATE_TOKEN_path_https://private.invalid/value";
+  h.browser.ui.replyElements = Array.from({ length: 10 }, () => ({ nodeType: 1, tagName: "PRIVATE_SECRET_TAG",
+    getAttribute: name => name === "class" ? secret : null, closest: () => null,
+    childNodes: [{ nodeType: 3, textContent: secret }] }));
+  h.newTurn(followupId, "Continue only with valid identity evidence.");
+  const continuation = (await h.request()).output[0];
+  assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
+  await assert.rejects(h.executeBrowser(continuation), error => {
+    const diagnostic = JSON.parse(error.message.split(" ROUTER_WEB_REPLY_IDENTITY_DIAGNOSTIC ")[1]);
+    assert.equal(diagnostic.reason, "missing-wrapper");
+    assert.equal(diagnostic.missingWrapperCount, 10);
+    assert.equal(diagnostic.sampledRows[0].ancestors[0].tag, "other");
+    assert.ok(error.message.length < 4096);
+    assert.doesNotMatch(error.message, /PRIVATE_|private\.invalid|00000000-0000-4000/u);
+    return true;
+  });
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browserOwner().turnId, turnId);
 });
 
 test("an existing successful private mapping without message IDs recovers once by its original URL and prefix proof", async t => {

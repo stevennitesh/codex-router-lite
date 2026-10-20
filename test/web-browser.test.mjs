@@ -85,10 +85,57 @@ test("reply projection joins one wrapper's markdown fragments in DOM order witho
 test("reply projection preserves distinct wrappers with duplicate IDs and separate fragments without wrappers", () => {
   const selected = ["First", "Second", "Missing one", "Missing two"].map(text => domElement("div", {}, domText(text)));
   for (const node of selected.slice(0, 2)) domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, node);
-  assert.deepEqual(readBrowserReplies(selected), [
+  assert.deepEqual(readBrowserReplies(selected).map(({ messageId, text }) => ({ messageId, text })), [
     { messageId: messageId(0), text: "First" }, { messageId: messageId(0), text: "Second" },
     { messageId: null, text: "Missing one" }, { messageId: null, text: "Missing two" },
   ]);
+});
+
+test("invalid identity diagnostics bound structure and redact custom names, attribute values, reply IDs and text", () => {
+  const privateValue = "PRIVATE_TOKEN_path_https://private.invalid/value";
+  const elements = Array.from({ length: 30 }, () => {
+    const element = domElement("private-secret-tag", { class: privateValue, id: privateValue, "data-testid": privateValue,
+      "data-private-secret-attribute": privateValue }, domText(privateValue));
+    let root = element;
+    for (let depth = 0; depth < 9; depth += 1) root = domElement("div", { class: privateValue, role: privateValue }, root);
+    return element;
+  });
+  const replies = readBrowserReplies(elements), diagnostic = replies[0].identityDiagnostic;
+  assert.equal(diagnostic.reason, "missing-wrapper");
+  assert.equal(diagnostic.selectedElementCount, 30);
+  assert.equal(diagnostic.messageCount, 30);
+  assert.equal(diagnostic.missingWrapperCount, 30);
+  assert.equal(diagnostic.omittedRowCount, 28);
+  assert.equal(diagnostic.sampledRows.length, 2);
+  assert.equal(diagnostic.sampledRows[0].ancestors.length, 6);
+  assert.equal(diagnostic.sampledRows[0].ancestors[0].tag, "other");
+  assert.deepEqual(diagnostic.sampledRows[0].ancestors[0].attributes, ["data-testid", "class", "id"]);
+  const serialized = JSON.stringify(diagnostic);
+  assert.ok(serialized.length < 3500);
+  assert.doesNotMatch(serialized, /PRIVATE_TOKEN|private-secret|private\.invalid/u);
+  assert.equal(replies.filter(reply => reply.identityDiagnostic).length, 1);
+  const valid = domElement("div", {}, domText(privateValue));
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, valid);
+  assert.deepEqual(readBrowserReplies([valid]), [{ messageId: messageId(0), text: privateValue }]);
+});
+
+test("duplicate diagnostics distinguish wrapper containment and shared ancestor objects without exposing marker values", () => {
+  const secret = "PRIVATE_MARKER_VALUE";
+  const selected = Array.from({ length: 4 }, () => domElement("div", {}, domText(secret)));
+  const wrappers = selected.map((element, index) => domElement("div", { "data-chatgpt-selection-message-id": messageId(Math.floor(index / 2)) }, element));
+  const firstSearch = domElement("div", { "data-content-search-unit-key": secret }, wrappers[0]);
+  const secondSearch = domElement("div", { "data-content-search-unit-key": secret }, wrappers[1]);
+  const nested = domElement("div", { "data-content-search-unit-key": secret }, wrappers[2]);
+  wrappers[2].childNodes.push(wrappers[3]); wrappers[3].parentElement = wrappers[2];
+  domElement("section", { "data-talvt-turn-state": secret }, firstSearch, secondSearch, nested);
+  const diagnostic = readBrowserReplies(selected)[0].identityDiagnostic;
+  assert.deepEqual([diagnostic.duplicateIdCount, diagnostic.duplicateWrapperCount, diagnostic.missingWrapperCount], [2, 4, 0]);
+  assert.deepEqual(diagnostic.duplicatePairs, [
+    { rows: [0, 1], containment: [0, 0], turnAncestorClasses: [1, 1], searchUnitAncestorClasses: [1, 2] },
+    { rows: [2, 3], containment: [1, 0], turnAncestorClasses: [1, 1], searchUnitAncestorClasses: [3, 3] },
+  ]);
+  const serialized = JSON.stringify(diagnostic);
+  assert.doesNotMatch(serialized, /PRIVATE_MARKER_VALUE|00000000-0000-4000/u);
 });
 
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
@@ -1034,6 +1081,33 @@ test("a missing or duplicate reply identity blocks Send before typing or clickin
     f.ui.texts = ["Earlier one", "Earlier two"]; f.ui.replyIds = ids;
     await assert.rejects(f.run("send", { ...plugin, prompt: "New request" }), /baseline.*identities/);
     assert.equal(f.ui.typed.length, 0); assert.equal(f.ui.sendClicks, 0);
+  }
+});
+
+test("continuation reports one sanitized bounded identity diagnostic before another Send", async () => {
+  for (const kind of ["missing-wrapper", "invalid-wrapper-id", "duplicate-wrapper-id"]) {
+    const f = await recoverableFixture();
+    const secret = "PRIVATE_TOKEN_path_https://private.invalid/value";
+    const elements = Array.from({ length: 20 }, () => domElement("div", { "data-testid": secret }, domText(secret)));
+    if (kind !== "missing-wrapper") for (const element of elements) domElement("div", {
+      "data-chatgpt-selection-message-id": kind === "invalid-wrapper-id" ? secret : messageId(99), class: secret,
+    }, element);
+    f.ui.replyElements = elements;
+    const owner = f.activeTurn();
+    await assert.rejects(f.run("continue", { turnId: "next-turn" }), error => {
+      const marker = " ROUTER_WEB_REPLY_IDENTITY_DIAGNOSTIC ";
+      assert.match(error.message, /^The retained conversation has missing or ambiguous assistant message identities\./u);
+      const diagnostic = JSON.parse(error.message.split(marker)[1]);
+      assert.equal(diagnostic.reason, kind);
+      assert.equal(diagnostic.messageCount, 20);
+      assert.equal(diagnostic[kind === "missing-wrapper" ? "missingWrapperCount" : kind === "invalid-wrapper-id" ? "invalidWrapperIdCount" : "duplicateWrapperCount"], 20);
+      assert.ok(error.message.length < 4096);
+      assert.doesNotMatch(error.message, /PRIVATE_TOKEN|private\.invalid|00000000-0000-4000/u);
+      return true;
+    });
+    assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1);
   }
 });
 

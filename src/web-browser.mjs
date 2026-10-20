@@ -143,12 +143,79 @@ export function readBrowserReplies(elements) {
     while (ancestor && !(selected.has(ancestor) && ancestor.closest(wrapperSelector) === wrapper)) ancestor = ancestor.parentElement;
     if (ancestor) continue; // Its selected ancestor already includes this text.
     const key = wrapper ?? element;
-    if (!messages.has(key)) messages.set(key, { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" });
+    if (!messages.has(key)) messages.set(key, { wrapper, element, fragmentCount: 0,
+      reply: { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" } });
     const message = messages.get(key), text = read(element);
-    if (message.text && text) message.text += "\n\n";
-    message.text += text;
+    if (message.reply.text && text) message.reply.text += "\n\n";
+    message.reply.text += text;
+    message.fragmentCount += 1;
   }
-  return [...messages.values()];
+  const groups = [...messages.values()], replies = groups.map(group => group.reply);
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
+  const identities = new Map(), reasons = groups.map(group => !group.wrapper ? "missing-wrapper"
+    : typeof group.reply.messageId !== "string" || !uuid.test(group.reply.messageId) ? "invalid-wrapper-id" : null);
+  for (let index = 0; index < groups.length; index += 1) {
+    if (reasons[index]) continue;
+    const id = replies[index].messageId;
+    if (!identities.has(id)) identities.set(id, []);
+    identities.get(id).push(index);
+  }
+  const duplicates = [...identities.values()].filter(indices => indices.length > 1);
+  for (const indices of duplicates) for (const index of indices) reasons[index] = "duplicate-wrapper-id";
+  const invalid = reasons.flatMap((reason, index) => reason ? [index] : []);
+  if (!invalid.length) return replies;
+  // Only fixed structural names and transient numeric classes leave this DOM
+  // read. Attribute values, custom names, reply IDs and text are never diagnostics.
+  const tags = new Set(["DIV", "P", "SPAN", "ARTICLE", "SECTION", "MAIN", "ASIDE", "DETAILS", "SUMMARY", "PRE", "CODE",
+    "BUTTON", "UL", "OL", "LI", "TABLE", "TR", "TD", "H1", "H2", "H3", "H4", "H5", "H6", "BODY", "HTML"]);
+  const attributes = ["data-chatgpt-selection-message-id", "data-talvt-turn-state", "data-content-search-unit-key",
+    "data-markdown-text-style", "data-markdown-copy", "data-message-author-role", "data-testid", "role", "class", "id", "aria-hidden", "contenteditable"];
+  const ancestors = element => {
+    const result = [];
+    for (let current = element; current && result.length < 6; current = current.parentElement) result.push({
+      tag: tags.has(current.tagName) ? current.tagName : "other",
+      attributes: attributes.filter(name => current.getAttribute(name) !== null).slice(0, 4),
+    });
+    return result;
+  };
+  const classes = [new Map(), new Map()];
+  const ancestorClass = (wrapper, selector, map) => {
+    const ancestor = wrapper.closest(selector);
+    if (!ancestor) return null;
+    if (!map.has(ancestor)) map.set(ancestor, map.size + 1);
+    return map.get(ancestor);
+  };
+  const contains = (parent, child) => {
+    for (let current = child.parentElement; current; current = current.parentElement) if (current === parent) return 1;
+    return 0;
+  };
+  const duplicatePairs = [];
+  for (const indices of duplicates) for (const index of indices.slice(1)) {
+    if (duplicatePairs.length === 2) break;
+    const rows = [indices[0], index], wrappers = rows.map(row => groups[row].wrapper);
+    duplicatePairs.push({ rows, containment: [contains(wrappers[0], wrappers[1]), contains(wrappers[1], wrappers[0])],
+      turnAncestorClasses: wrappers.map(wrapper => ancestorClass(wrapper, '[data-talvt-turn-state]', classes[0])),
+      searchUnitAncestorClasses: wrappers.map(wrapper => ancestorClass(wrapper, '[data-content-search-unit-key]', classes[1])) });
+  }
+  const distinctReasons = new Set(invalid.map(index => reasons[index]));
+  const diagnostic = { reason: distinctReasons.size === 1 ? reasons[invalid[0]] : "mixed-invalid-identities",
+    selectedElementCount: elements.length, messageCount: groups.length,
+    missingWrapperCount: reasons.filter(reason => reason === "missing-wrapper").length,
+    invalidWrapperIdCount: reasons.filter(reason => reason === "invalid-wrapper-id").length,
+    duplicateWrapperCount: reasons.filter(reason => reason === "duplicate-wrapper-id").length,
+    duplicateIdCount: duplicates.length,
+    sampledRows: invalid.slice(0, 2).map(index => ({ row: index, reason: reasons[index], fragmentCount: groups[index].fragmentCount,
+      ancestors: ancestors(groups[index].element) })), duplicatePairs,
+    omittedRowCount: Math.max(0, invalid.length - 2),
+    omittedDuplicatePairCount: duplicates.reduce((count, indices) => count + indices.length - 1, 0) - duplicatePairs.length };
+  // Drop whole structural samples rather than slicing JSON or risking an
+  // unbounded native error. All emitted strings are fixed ASCII literals.
+  if (JSON.stringify(diagnostic).length > 3500) {
+    diagnostic.sampledRows = [];
+    diagnostic.omittedRowCount = invalid.length;
+  }
+  replies[invalid[0]].identityDiagnostic = diagnostic;
+  return replies;
 }
 
 // This function is serialized into the active native REPL. It uses only public
@@ -173,6 +240,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
       : new Set(values.map(value => value.messageId)).size !== values.length ? "duplicate-message-identity" : undefined;
   const validReplies = values => replyIdentityIssue(values) === undefined;
+  const identityError = (message, values) => new Error(`${message} ROUTER_WEB_REPLY_IDENTITY_DIAGNOSTIC ${JSON.stringify(
+    values.find(value => value.identityDiagnostic)?.identityDiagnostic ?? { reason: replyIdentityIssue(values), messageCount: values.length })}`);
   const currentReply = values => {
     const issue = replyIdentityIssue(values);
     if (issue) return { replyUnavailableReason: issue };
@@ -503,7 +572,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       delete state.bindingLost;
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
-    if (!validReplies(texts)) throw new Error("The retained conversation has missing or ambiguous assistant message identities.");
+    if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
     const continuationUrl = await state.tab.url();
     if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
     activeOwner(owners, true);
@@ -575,7 +644,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     const evidence = await modelEvidence(false);
     if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
     const baseline = await replies();
-    if (!validReplies(baseline)) throw new Error("The assistant reply baseline has missing or ambiguous message identities; nothing sent.");
+    if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
     state.baselineReplyCount = baseline.length;
     state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
     delete state.replyId;
