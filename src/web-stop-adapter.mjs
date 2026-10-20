@@ -146,11 +146,15 @@ export function readStopResult(result) {
   if (!visit(result)) return fail('malformed_result');
   if (!record(proof)) return fail('no_stop_proof');
   const flags = ['freshController', 'clickAttempted', 'clickError', 'stopClicked', 'stopHidden', 'generationInactive', 'retained'];
-  const allowed = ['outcome', 'stage', ...flags, 'code', 'elapsedMs'];
+  const allowed = ['outcome', 'stage', ...flags, 'inactivityEvidence', 'code', 'elapsedMs'];
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
       || !STOP_STAGES.includes(proof.stage) || flags.some(key => typeof proof[key] !== 'boolean')
+      || !['none', 'turn_complete', 'composer_restored'].includes(proof.inactivityEvidence)
       || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > 3000
       || proof.code !== undefined && !STOP_CODES.includes(proof.code)) return fail('malformed_proof');
+  if (proof.generationInactive !== (proof.inactivityEvidence !== 'none')
+      || proof.inactivityEvidence !== 'none' && !proof.stopHidden
+      || proof.inactivityEvidence === 'composer_restored' && (!proof.clickAttempted || !proof.stopClicked || proof.clickError)) return fail('incomplete_proof');
   if (proof.outcome === 'blocked') return { ok: false, ...proof, code: proof.code ?? 'blocked' };
   if (proof.stage !== 'complete' || !proof.retained || !proof.stopHidden || !proof.generationInactive || own(proof, 'code')
       || proof.clickError && !proof.clickAttempted
@@ -212,7 +216,8 @@ function stopReceipt(proof, response) {
     ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}),
     ...(proof.outcome ? { outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
       clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
-      stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained, elapsedMs: proof.elapsedMs } : {}) };
+      stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, inactivityEvidence: proof.inactivityEvidence,
+      retained: proof.retained, elapsedMs: proof.elapsedMs } : {}) };
 }
 
 // SDK transports are deliberately bridged below their Client/Server handlers:

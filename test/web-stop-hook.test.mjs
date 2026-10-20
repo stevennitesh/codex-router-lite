@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
-import { stopCode } from "../src/web-stop-adapter.mjs";
+import { readStopResult, stopCode } from "../src/web-stop-adapter.mjs";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stateDir = path.resolve("generated/web-stop-rollout-20261018/hook/test-state");
@@ -44,26 +44,34 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
         const acknowledgementMs = surface.clickAcknowledgementMs ?? 0;
         model.now += Math.min(acknowledgementMs, options.timeoutMs);
         if (!surface.keepVisible) { surface.visible = false; surface.complete = !surface.keepGenerating; }
+        if (surface.idleAfterClick) surface.idleVisible = true;
         if (acknowledgementMs > options.timeoutMs || surface.clickError) {
           model.now += surface.errorDiagnosticsMs ?? 0;
           throw surface.clickError ?? new Error('Timed out running CDP command "Input.dispatchMouseEvent"');
         }
       } };
-    const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
-      markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
-      playwright: { getByRole: forbidden,
-        locator: selector => {
-          if (selector !== "body") {
-            const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
-            assert.equal(selector, `xpath=//body[count(//*[@data-turn-key='${key}'])=1 and (//*[@data-turn-key])[last()][@data-turn-key='${key}']]`);
-            stop.guardGeneration = key;
-            return { getByRole: (role, options) => {
-              assert.equal(role, "button"); assert.equal(options.name, "Stop"); assert.equal(options.exact, true);
-              touch("locator", thread); return stop;
-            } };
-          }
-          return { or: other => { assert.equal(other, stop); return { evaluateAll: async (reader, args, options) => {
-            assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 1000);
+    const idle = {};
+    const union = parts => ({
+      or: other => union([...parts, other]),
+      waitFor: async options => {
+        assert.equal(options.state, "visible");
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
+        touch("readiness_wait", thread);
+        const delayMs = surface.readinessDelayMs ?? 0;
+        model.now += Math.min(delayMs, options.timeoutMs);
+        model.now += surface.readinessTerminalMs ?? 0;
+        const complete = (surface.stateCount ?? 1) === 1 && (surface.turnState ?? (surface.complete ? 'complete' : 'running')) === 'complete';
+        const ready = matchesGuard() && (complete && !surface.visible || parts.includes(stop) && surface.visible
+          || parts.some(part => typeof part === "string" && part.includes("Start Voice")) && surface.idleVisible && !surface.visible);
+        if (!ready || delayMs > options.timeoutMs) {
+          model.now += Math.max(0, options.timeoutMs - delayMs);
+          throw new Error("Readiness was not observed");
+        }
+      },
+      evaluateAll: async (reader, args, options) => {
+            assert(parts.includes("body") && parts.includes(stop) && parts.includes(idle));
+            assert(Number.isInteger(options.timeoutMs) && options.timeoutMs >= 200 && options.timeoutMs <= 1000);
+            surface.readTimeouts ??= []; surface.readTimeouts.push(options.timeoutMs);
             touch("generation", thread);
             if (surface.generationReadError) throw surface.generationReadError;
             touch("visible", thread);
@@ -78,15 +86,33 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
             }));
             const body = { tagName: "BODY" };
             body.ownerDocument = { body, URL: surface.url, defaultView: {
-              getComputedStyle: () => ({ visibility: surface.visibilityStyle ?? "visible" }),
+              getComputedStyle: element => ({ visibility: element.visibilityStyle ?? surface.visibilityStyle ?? "visible" }),
             }, querySelectorAll: name => { assert.equal(name, '[data-turn-key]'); return turns; } };
-            const controls = matchesGuard() ? Array.from({ length: surface.stopCount }, () => ({
-              tagName: "BUTTON", getBoundingClientRect: () => ({ width: surface.visible ? 32 : 0, height: surface.visible ? 32 : 0 }),
-            })) : [];
+            const button = (name, visible, visibilityStyle) => ({ tagName: "BUTTON", visibilityStyle,
+              getAttribute: attribute => attribute === "aria-label" ? name === "Stop" ? surface.stopAriaLabel ?? name : name
+                : attribute === "aria-labelledby" && name === "Stop" ? surface.stopLabelledBy ?? null : null,
+              getBoundingClientRect: () => ({ width: visible ? 32 : 0, height: visible ? 32 : 0 }) });
+            const controls = matchesGuard() ? [
+              ...Array.from({ length: surface.stopCount }, () => button("Stop", surface.visible)),
+              ...Array.from({ length: surface.idleCount ?? (surface.idleVisible ? 1 : 0) }, () => button("Start Voice", surface.idleVisible, surface.idleVisibilityStyle)),
+            ] : [];
             const view = reader([body, ...controls], args);
             touch("generation_return", thread);
             return view;
-          } }; } };
+          },
+    });
+    const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
+      markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
+      playwright: { getByRole: forbidden,
+        locator: selector => {
+          if (selector === "body" || selector.startsWith("xpath=(")) return union([selector]);
+          const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
+          assert.equal(selector, `xpath=//body[count(//*[@data-turn-key='${key}'])=1 and (//*[@data-turn-key])[last()][@data-turn-key='${key}']]`);
+          stop.guardGeneration = key;
+          return { getByRole: (role, options) => {
+            assert.equal(role, "button"); assert(["Stop", "Start Voice"].includes(options.name)); assert.equal(options.exact, true);
+            touch("locator", thread); return options.name === "Stop" ? stop : idle;
+          } };
         } } };
     const browser = { browserId: surface.browserId, tabs: {
       list: async () => { touch("tabs", thread); return surface.tabs ?? [{ id: surface.tabId, url: surface.inventoryUrl }]; },
@@ -510,16 +536,18 @@ test("late owner change during handoff does not mutate stale retained flags", as
   assert.equal(f.first.state.retained, false);
 });
 
-test("Stop acknowledgement after 500ms confirms the same tab with one click within the original budget", async () => {
+test("one readiness wait confirms delayed Stop completion in the same tab within the original budget", async () => {
   const f = fixture(); f.first.keepVisible = true;
   const tab = f.first.state.tab;
-  f.model.onCall = name => { if (name === "wait" && f.model.now >= 700) { f.first.visible = false; f.first.complete = true; } };
+  f.first.readinessDelayMs = 700;
+  f.model.onCall = name => { if (name === "readiness_wait") { f.first.visible = false; f.first.complete = true; } };
   const result = await f.run(); stopped(result);
   assert(result.elapsedMs >= 700 && result.elapsedMs < 2400);
   assert.equal(clicked(f).length, 1);
   assert.equal(f.first.state.tab, tab);
   assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
-  assert(f.calls.filter(call => call.name === "visible").length > 2);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 3);
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
 });
 
 test("persistently visible Stop exhausts confirmation without claiming cancellation or repeating its click", async () => {
@@ -531,8 +559,8 @@ test("persistently visible Stop exhausts confirmation without claiming cancellat
   assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
 
-test("authority and saved URL changes during confirmation reads or delays prevent further Stop polling or retention", async () => {
-  for (const boundary of ["visible", "wait"]) for (const change of ["metadata", "owner", "ledger", "url"]) {
+test("authority and saved URL changes during confirmation reads or readiness prevent later effects", async () => {
+  for (const boundary of ["visible", "readiness_wait"]) for (const change of ["metadata", "owner", "ledger", "url"]) {
     const f = fixture(); f.first.keepVisible = true;
     let visibilityReads = 0, changedAt;
     f.model.onCall = name => {
@@ -549,7 +577,7 @@ test("authority and saved URL changes during confirmation reads or delays preven
     assert.equal(result.code, { metadata: "metadata_mismatch", owner: "owner_changed", ledger: "ledger_invalid", url: "tab_url_mismatch" }[change]);
     assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
     assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
-    assert(!f.calls.slice(changedAt).some(call => ["click", "handoff", "wait"].includes(call.name)));
+    assert(!f.calls.slice(changedAt).some(call => ["click", "handoff", "readiness_wait"].includes(call.name)));
   }
 });
 
@@ -630,7 +658,7 @@ test("hidden Stop while the owned generation is running never establishes idle",
 test("a transiently missing Stop can appear before the single semantic click", async () => {
   const f = fixture(); f.first.visible = false; f.first.stopCount = 0;
   f.model.onCall = name => {
-    if (name === "wait") { f.first.visible = true; f.first.stopCount = 1; }
+    if (name === "readiness_wait" && !clicked(f).length) { f.first.visible = true; f.first.stopCount = 1; }
   };
   stopped(await f.run());
   assert.equal(clicked(f).length, 1);
@@ -726,7 +754,7 @@ test("an unreadable rendered generation fails before tab effects without exposin
   assert(!JSON.stringify(f.outputs).includes("private rendered content"));
 });
 
-test("acknowledged Stop and hidden controls still require a positively complete owned generation", async () => {
+test("acknowledged Stop and hidden controls without restored composer still require explicit completion", async () => {
   for (const change of [
     f => { f.first.keepGenerating = true; },
     f => { f.first.turnState = "stopped"; },
@@ -739,6 +767,119 @@ test("acknowledged Stop and hidden controls still require a positively complete 
     assert.equal(result.stopHidden, true); assert.equal(result.generationInactive, false); assert.equal(result.retained, true);
     assert.equal(clicked(f).length, 1);
   }
+});
+
+test("acknowledged Stop can prove restored composer while the owned turn completion state is delayed", async () => {
+  const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true; f.first.readinessDelayMs = 600;
+  const result = await f.run(); stopped(result);
+  assert.equal(f.first.complete, false);
+  assert.equal(result.inactivityEvidence, "composer_restored");
+  assert.equal(result.elapsedMs, 600);
+  assert.equal(clicked(f).length, 1);
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "generation").length, 3);
+  const parsed = readStopResult({ content: [{ type: "text", text: JSON.stringify(f.outputs.at(-1)) }] });
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.inactivityEvidence, "composer_restored", "The adapter accepts the actual generated hook envelope.");
+});
+
+test("only a newly restored unique visible idle control after acknowledged Stop proves inactivity", async () => {
+  for (const change of [
+    f => { f.first.idleVisible = true; },
+    f => { f.model.onCall = name => { if (name === "handoff") f.first.idleVisible = true; }; },
+    f => { f.first.idleCount = 2; },
+    f => { f.first.idleVisibilityStyle = "hidden"; },
+    f => { f.first.keepVisible = true; },
+  ]) {
+    const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true; change(f);
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+    assert.equal(result.inactivityEvidence, "none"); assert.equal(result.generationInactive, false);
+    assert.equal(result.stopClicked, true); assert.equal(clicked(f).length, 1);
+    assert.equal(f.calls.filter(call => call.name === "generation").length, 3);
+  }
+});
+
+test("idle control cannot establish inactivity without a click or after a click error", async () => {
+  const idle = fixture(); idle.first.visible = false; idle.first.stopCount = 0; idle.first.idleVisible = true;
+  const withoutClick = await idle.run();
+  assert.equal(withoutClick.code, "stop_confirmation_failed");
+  assert.equal(withoutClick.inactivityEvidence, "none"); assert.equal(withoutClick.generationInactive, false);
+  assert.equal(clicked(idle).length, 0);
+  const error = fixture(); error.first.keepGenerating = true; error.first.idleAfterClick = true;
+  error.first.clickError = new Error("private click uncertainty");
+  const rejected = await error.run();
+  assert.equal(rejected.code, "browser_operation_failed"); assert.equal(rejected.clickError, true);
+  assert.equal(rejected.inactivityEvidence, "none"); assert.equal(rejected.generationInactive, false);
+  assert.equal(clicked(error).length, 1);
+  assert.equal(error.calls.filter(call => call.name === "readiness_wait").length, 0);
+});
+
+test("a readiness match is scheduling only and cannot replace the final coherent composer proof", async () => {
+  const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+  f.model.onCall = name => { if (name === "generation" && clicked(f).length) f.first.idleVisible = false; };
+  const result = await f.run();
+  assert.equal(result.code, "stop_confirmation_failed"); assert.equal(result.inactivityEvidence, "none");
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
+  assert.equal(clicked(f).length, 1);
+});
+
+test("overridden direct labels cannot reclassify a semantic Stop control as restored composer", async () => {
+  const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
+  f.model.onCall = name => {
+    if (name === "click") { f.first.stopAriaLabel = "Start Voice"; f.first.stopLabelledBy = "actual-stop-label"; }
+  };
+  const result = await f.run();
+  assert.equal(result.code, "stop_confirmation_failed"); assert.equal(result.inactivityEvidence, "none");
+  assert.equal(result.generationInactive, false); assert.equal(result.stopHidden, false);
+  assert.equal(clicked(f).length, 1);
+});
+
+test("the restored composer proof rejects changed URL, generation, native authority and owner", async () => {
+  for (const [change, code] of [
+    [f => { f.first.url = f.second.url; }, "tab_url_mismatch"],
+    [f => { f.first.turnKeys = [f.first.generationTurnKey, id(500)]; }, "generation_mismatch"],
+    [f => { f.context.nodeRepl.requestMeta = f.metadata(f.model.owner, id(13)); }, "metadata_mismatch"],
+    [f => { f.context.routerWebActiveTurns.set(f.model.owner, { ...f.first.active }); }, "owner_changed"],
+  ]) {
+    const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+    f.model.onCall = name => { if (name === "generation" && clicked(f).length) change(f); };
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, code);
+    assert.equal(result.generationInactive, false); assert.equal(result.inactivityEvidence, "none");
+    assert.equal(clicked(f).length, 1); assert.equal(result.retained, true);
+  }
+});
+
+test("insufficient read allowance after acknowledged click blocks without dispatching a microbudget read", async () => {
+  const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+  f.model.onCall = name => { if (name === "click") f.model.now = 2201; };
+  const result = await f.run();
+  assert.equal(result.code, "budget_exhausted"); assert.equal(result.stopClicked, true);
+  assert.equal(result.inactivityEvidence, "none"); assert.equal(result.generationInactive, false);
+  assert.equal(f.calls.filter(call => call.name === "generation").length, 2);
+  assert(f.first.readTimeouts.every(timeout => timeout >= 200));
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 0);
+});
+
+test("a settled composer uses the remaining final read when there is no scheduling headroom", async () => {
+  for (const acknowledgedAt of [2100, 2190, 2200]) {
+    const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+    f.model.onCall = name => { if (name === "click") f.model.now = acknowledgedAt; };
+    const result = await f.run(); stopped(result);
+    assert.equal(result.inactivityEvidence, "composer_restored");
+    assert.equal(result.elapsedMs, acknowledgedAt);
+    assert.equal(f.calls.filter(call => call.name === "generation").length, 3);
+    assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 0);
+  }
+});
+
+test("a failed scheduling wait can still accept the final explicit complete proof within the same budget", async () => {
+  const f = fixture(); f.first.readinessDelayMs = 2500; f.first.readinessTerminalMs = 50;
+  const result = await f.run(); stopped(result);
+  assert.equal(result.inactivityEvidence, "turn_complete"); assert.equal(result.elapsedMs, 2150);
+  assert.equal(f.calls.filter(call => call.name === "generation").length, 3);
+  assert.equal(clicked(f).length, 1);
 });
 
 const deliveryFor = f => ({ bindingId: f.first.ledger.bindingId, tabId: f.first.tabId,

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { browserDom, isSavedChatUrl } from "./web-browser.mjs";
+import { browserDom, browserIdleButtonExactName, isSavedChatUrl } from "./web-browser.mjs";
 import { STOP_CODES } from "./web-stop-contract.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
@@ -18,7 +18,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
   let inScope = false, stage = "scope", outcome = "blocked", code;
   let guards, guard, key, registry, active, state;
   const diagnostic = { freshController: false, clickAttempted: false, clickError: false,
-    stopClicked: false, stopHidden: false, generationInactive: false, retained: false };
+    stopClicked: false, stopHidden: false, generationInactive: false, inactivityEvidence: "none", retained: false };
   try {
     // A native route (or an older Web turn in the same native conversation) has
     // no current confirmed Web delivery in this exact UUID-derived file.
@@ -175,14 +175,27 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // Native pointer dispatch still has its own selector-to-input boundary.
     const ownedTurn = `//*[@${config.ui.turnKeyAttribute}='${generationTurnKey}']`;
     const latestTurn = `(//*[@${config.ui.turnKeyAttribute}])[last()][@${config.ui.turnKeyAttribute}='${generationTurnKey}']`;
-    const stop = tab.playwright.locator(`xpath=//body[count(${ownedTurn})=1 and ${latestTurn}]`)
-      .getByRole("button", { name: config.stopButtonExactName, exact: true });
-    const snapshot = tab.playwright.locator("body").or(stop);
+    const generationGuard = `count(${ownedTurn})=1 and ${latestTurn}`;
+    const guardedBody = tab.playwright.locator(`xpath=//body[${generationGuard}]`);
+    const stop = guardedBody.getByRole("button", { name: config.stopButtonExactName, exact: true });
+    const idle = guardedBody.getByRole("button", { name: config.idleButtonExactName, exact: true });
+    const snapshot = tab.playwright.locator("body").or(stop).or(idle);
+    const completeState = `count(${ownedTurn}//*[@${config.ui.turnStateAttribute}])=1 and ${ownedTurn}//*[@${config.ui.turnStateAttribute}='${config.ui.completeTurnState}']`;
+    // A wait only schedules the final read. The semantic locator union in that
+    // read proves controls, URL and the unique latest generation together.
+    const ready = allowIdle => {
+      const stopAbsent = `not(//body//*[self::button or @role='button'][@aria-label='${config.stopButtonExactName}'])`;
+      const completeBody = `//body[${generationGuard} and ${stopAbsent} and ${completeState}]`;
+      const idleButton = `//body[${generationGuard} and ${stopAbsent} and not(${completeState})]//*[self::button or @role='button'][@aria-label='${config.idleButtonExactName}' and not(@aria-labelledby)]`;
+      return tab.playwright.locator(`xpath=(${completeBody}${allowIdle ? ` | ${idleButton}` : ""})[last()]`);
+    };
+    const readAllowanceMs = 200;
+    let allowComposerRestored = false;
     const inspectGeneration = async (reserve = 0) => {
       assertCurrent(reserve);
       const timeoutMs = Math.min(1000, Math.floor(deadline - Date.now() - reserve));
-      if (timeoutMs < 1) deny("budget_exhausted");
-      const view = await snapshot.evaluateAll((elements, { ui, generationTurnKey }) => {
+      if (timeoutMs < readAllowanceMs) deny("budget_exhausted");
+      const view = await snapshot.evaluateAll((elements, { ui, generationTurnKey, stopName, idleName }) => {
           const bodies = elements.filter(element => element.tagName === "BODY");
           if (bodies.length !== 1) return null;
           const body = bodies[0], document = body.ownerDocument;
@@ -191,17 +204,26 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           const matching = turns.filter(element => element.getAttribute(ui.turnKeyAttribute) === generationTurnKey);
           const states = matching.length === 1 ? matching[0].querySelectorAll(ui.turnStateSelector) : [];
           const controls = elements.filter(element => element !== body);
-          const visible = controls.some(element => {
+          // The semantic locator union selects these controls. Only canonical
+          // direct labels can identify which match supplied each element;
+          // alternate accessible-name markup fails closed rather than being
+          // reclassified from text that may not be its accessible name.
+          const name = element => element.getAttribute("aria-labelledby") ? null : element.getAttribute("aria-label");
+          const stops = controls.filter(element => name(element) === stopName);
+          const idles = controls.filter(element => name(element) === idleName);
+          const visible = element => {
             const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
             return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
-          });
+          };
           // URL, logical turn state and semantic control matches belong to this
           // one synchronous DOM read, with no later URL RPC reopening the gap.
           return { url: document.URL, matchingCount: matching.length,
             latestTurnKey: turns.at(-1)?.getAttribute(ui.turnKeyAttribute) ?? null,
-            stopCount: controls.length, stopVisible: visible,
+            stopCount: stops.length, stopVisible: stops.some(visible),
+            idleCount: idles.length, idleVisibleCount: idles.filter(visible).length,
+            controlsRecognized: stops.length + idles.length === controls.length,
             complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
-        }, { ui: config.ui, generationTurnKey }, { timeoutMs });
+        }, { ui: config.ui, generationTurnKey, stopName: config.stopButtonExactName, idleName: config.idleButtonExactName }, { timeoutMs });
       // Reserve admits the read; accepting its result needs only the actual
       // deadline. Any later operation reserves its own remaining budget.
       assertCurrent();
@@ -210,12 +232,29 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           || typeof view.complete !== "boolean") deny("generation_mismatch");
       const count = view.stopCount, visible = view.stopVisible;
       if (!Number.isInteger(count) || count < 0 || count > 1 || typeof visible !== "boolean"
-          || visible && count !== 1) deny("stop_confirmation_failed");
+          || visible && count !== 1 || view.controlsRecognized !== true
+          || !Number.isInteger(view.idleCount) || view.idleCount < 0
+          || !Number.isInteger(view.idleVisibleCount) || view.idleVisibleCount < 0
+          || view.idleVisibleCount > view.idleCount) deny("stop_confirmation_failed");
       diagnostic.stopHidden = !visible;
-      // A missing control can be a rendering gap. Only the site's existing
-      // complete turn state plus hidden Stop establishes an inactive generation.
-      diagnostic.generationInactive = view.complete && !visible;
-      return { visible, inactive: diagnostic.generationInactive };
+      diagnostic.inactivityEvidence = !visible && view.complete ? "turn_complete"
+        : !visible && allowComposerRestored && view.idleCount === 1 && view.idleVisibleCount === 1 ? "composer_restored" : "none";
+      diagnostic.generationInactive = diagnostic.inactivityEvidence !== "none";
+      return { visible, idleCount: view.idleCount, inactive: diagnostic.generationInactive };
+    };
+    const waitForReadiness = async locator => {
+      // Leave transport/check headroom beyond the minimum read allowance. A
+      // timeout's actual terminal reply need not arrive on its nominal tick.
+      const readReserveMs = readAllowanceMs + 100;
+      assertCurrent(readAllowanceMs);
+      const timeoutMs = Math.floor(deadline - Date.now() - readReserveMs);
+      // Waiting is optional when the remaining budget can admit only the
+      // decisive read. Do not reject an already settled page for lack of time
+      // reserved exclusively for scheduling it.
+      if (timeoutMs < 1) return;
+      try { await locator.waitFor({ state: "visible", timeoutMs }); }
+      catch { /* A rejected or timed-out wait is never inactivity proof. */ }
+      assertCurrent(readAllowanceMs);
     };
     stage = "generation_proof";
     await inspectGeneration(200);
@@ -232,11 +271,16 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // generation after handoff before considering the one semantic Stop click.
     stage = "mutation_url";
     let observation = await inspectGeneration(200);
-    for (;;) {
-      if (observation.inactive) break;
-      if (!diagnostic.clickAttempted && observation.visible) {
+    if (!observation.inactive && !observation.visible) {
+      stage = "stop_visibility";
+      await waitForReadiness(ready(false).or(stop));
+      observation = await inspectGeneration();
+    }
+    if (!observation.inactive) {
+      if (observation.visible) {
         stage = "stop_click";
         assertCurrent(1000);
+        const composerAbsentBeforeClick = observation.idleCount === 0;
         diagnostic.clickAttempted = true;
         try {
           await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - 200) });
@@ -246,19 +290,14 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           // completion removed its target. Never repeat an uncertain click.
           diagnostic.clickError = true;
         }
-        assertCurrent(100);
+        assertCurrent(readAllowanceMs);
         stage = "stop_readback_visibility";
-        observation = await inspectGeneration(100);
+        allowComposerRestored = diagnostic.stopClicked && !diagnostic.clickError && composerAbsentBeforeClick;
+        if (!diagnostic.clickError) await waitForReadiness(ready(allowComposerRestored));
+        observation = await inspectGeneration();
         if (diagnostic.clickError && !observation.inactive) deny("browser_operation_failed");
-        continue;
       }
-      const delayMs = Math.min(100, deadline - Date.now() - 101);
-      if (delayMs <= 0) deny("stop_confirmation_failed");
-      assertCurrent(100 + delayMs);
-      await new Promise(resolve => setTimeout(resolve, delayMs));
-      assertCurrent(100);
-      stage = diagnostic.clickAttempted ? "stop_readback_visibility" : "stop_visibility";
-      observation = await inspectGeneration(100);
+      if (!observation.inactive) deny("stop_confirmation_failed");
     }
     outcome = diagnostic.stopClicked ? "cancelled" : "already_idle";
     stage = "complete";
@@ -291,6 +330,7 @@ export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnI
   }
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
     runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName,
+    idleButtonExactName: browserIdleButtonExactName,
     ...(delivery === undefined ? {} : { delivery }),
     ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
       .map(name => [name, browserDom[name]])) };

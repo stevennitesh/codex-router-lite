@@ -105,6 +105,9 @@ export function parseBrowserOutput(output, frameToken) {
   return found[0];
 }
 
+// Stop-only composer evidence must not change the retained observation helper.
+export const browserIdleButtonExactName = "Start Voice";
+
 export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",

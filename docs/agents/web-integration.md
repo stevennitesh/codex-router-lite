@@ -172,10 +172,17 @@ locator includes that generation condition when the browser resolves the action.
 URL, generation state and Stop visibility come from one synchronous DOM read,
 so a later URL request cannot make a stale snapshot appear current. A
 hidden or temporarily missing button alone does not prove inactivity. Success
-requires the same generation's explicit complete state and hidden Stop control.
-If the click rejects after settling, cleanup can still read that state; an
-observed inactive generation is reported with its action error preserved, rather
-than pretending the click acknowledged or repeating it. Retention acknowledgement
+requires hidden Stop plus either the same generation's explicit complete state,
+or an observed composer transition after an acknowledged click: the exact
+**Start Voice** control was absent immediately before the click and is uniquely
+visible afterward. The second path proves that ChatGPT returned its composer to
+idle; it does not assert a completed answer or remote transport closure. A click
+error or a no-click observation still requires the explicit complete state.
+Readiness uses a bounded locator wait followed by a coherent ownership and state
+read, without repeated sleep/read calls. The wait itself never grants success.
+If the click rejects after settling, cleanup can still read the complete state;
+an observed inactive generation is reported with its action error preserved,
+rather than pretending the click acknowledged or repeating it. Retention acknowledgement
 and actual tab survival are separate evidence; live checks confirm survival.
 
 Browser work and readback use the remaining native execution budget.

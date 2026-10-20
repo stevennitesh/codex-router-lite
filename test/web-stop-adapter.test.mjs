@@ -62,7 +62,8 @@ function cached(params = ordinary()) {
 }
 const success = (overrides = {}) => ({ content: [{ type: 'text', text: JSON.stringify({ systemMessage: 'ROUTER_WEB_STOP ' + JSON.stringify({
   outcome: 'cancelled', stage: 'complete', freshController: false, clickAttempted: true, clickError: false,
-  stopClicked: true, stopHidden: true, generationInactive: true, retained: true, elapsedMs: 25, ...overrides }) }) }] });
+  stopClicked: true, stopHidden: true, generationInactive: true, inactivityEvidence: 'turn_complete',
+  retained: true, elapsedMs: 25, ...overrides }) }) }] });
 const ordinaryResult = { content: [{ type: 'text', text: '{}' }] };
 
 test('only actual generated observation code gains cancellation grace', () => {
@@ -209,13 +210,28 @@ test('bounded actual native output envelope distinguishes explicit success, no-s
 
 test('validated blocked proof retains bounded stage and progress without acquiring success', () => {
   const proof = { outcome: 'blocked', stage: 'stop_readback_visibility', freshController: true,
-    clickAttempted: true, clickError: false, stopClicked: true, stopHidden: false, generationInactive: true,
+    clickAttempted: true, clickError: false, stopClicked: true, stopHidden: false, generationInactive: false, inactivityEvidence: 'none',
     retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
   for (const stage of ['stop_click', 'stop_readback_visibility', 'handoff']) {
     assert.deepEqual(readStopResult(success({ ...proof, stage })), { ok: false, ...proof, stage });
   }
   assert.deepEqual(readStopResult(success({ ...proof, stage: 'private unknown stage' })), { ok: false, code: 'malformed_proof' });
   assert.deepEqual(readStopResult(success({ ...proof, elapsedMs: 3001 })), { ok: false, code: 'malformed_proof' });
+});
+
+test('inactivity evidence is required, discriminated and consistent with acknowledged click authority', () => {
+  assert.equal(readStopResult(success({ inactivityEvidence: 'composer_restored' })).ok, true);
+  for (const overrides of [
+    { inactivityEvidence: undefined }, { inactivityEvidence: 'private invented evidence' },
+    { inactivityEvidence: 'none' }, { inactivityEvidence: 'turn_complete', generationInactive: false },
+    { inactivityEvidence: 'composer_restored', stopHidden: false },
+    { inactivityEvidence: 'composer_restored', outcome: 'already_idle', stopClicked: false, clickAttempted: false },
+    { inactivityEvidence: 'composer_restored', outcome: 'already_idle', stopClicked: false, clickError: true },
+    { inactivityEvidence: 'composer_restored', outcome: 'blocked', stopClicked: false },
+  ]) assert.equal(readStopResult(success(overrides)).ok, false);
+  const blocked = readStopResult(success({ outcome: 'blocked', stage: 'stop_readback_visibility',
+    generationInactive: false, inactivityEvidence: 'none', code: 'stop_confirmation_failed' }));
+  assert.equal(blocked.ok, false); assert.equal(blocked.inactivityEvidence, 'none');
 });
 
 async function protocolFixture(t, toolHandler, options = {}) {
@@ -748,6 +764,18 @@ test('an inactive generation after a rejected click keeps the uncertainty in the
   const receipt = f.receipts.find(entry => entry.code === 'stop_confirmed');
   assert.equal(receipt.clickAttempted, true); assert.equal(receipt.clickError, true);
   assert.equal(receipt.stopClicked, false); assert.equal(receipt.generationInactive, true); assert.equal(receipt.stopHidden, true);
+  assert.equal(receipt.inactivityEvidence, 'turn_complete');
+});
+
+test('the successful receipt preserves composer-restored evidence through the ordinary adapter hook path', async t => {
+  const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn')
+    ? success({ inactivityEvidence: 'composer_restored' }) : ordinaryResult);
+  await f.client.callTool(ordinary());
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  const receipt = f.receipts.find(entry => entry.code === 'stop_confirmed');
+  assert.equal(receipt.inactivityEvidence, 'composer_restored');
+  assert.equal(receipt.generationInactive, true); assert.equal(receipt.stopClicked, true);
+  assert.equal(receipt.clickAttempted, true); assert.equal(receipt.clickError, false);
 });
 
 test('transport backpressure cannot forward a builtin cancellation before its original request', async t => {
@@ -1147,7 +1175,7 @@ test('owner cancellation releases the child-terminal wait before the child retur
 test('blocked Stop exposes only validated progress; errors or malformed proof cannot become success', async t => {
   for (const branch of ['blocked', 'malformed', 'native_error']) await t.test(branch, async subtest => {
     const progress = { outcome: 'blocked', stage: 'handoff', freshController: true,
-      clickAttempted: true, clickError: false, stopClicked: true, stopHidden: true, generationInactive: true,
+      clickAttempted: true, clickError: false, stopClicked: true, stopHidden: true, generationInactive: true, inactivityEvidence: 'turn_complete',
       retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
     const result = success({ ...progress, ...(branch === 'malformed' ? { privatePayload: 'secret output' } : {}) });
     if (branch === 'native_error') result.isError = true;
