@@ -181,5 +181,84 @@
       "This live proof covers the named Instant Web primary route. Other models and Web subagents were not individually certified."
     ]
   },
-  "privacy": "Raw saved-chat URLs, native thread and turn identifiers, turn tokens, private prompts, tool payloads, credentials and private filesystem paths are omitted."
+  "privacy": "Raw saved-chat URLs, native thread and turn identifiers, turn tokens, private prompts, tool payloads, credentials and private filesystem paths are omitted.",
+  "browserEfficiencyFollowup": {
+    "verifiedAt": "2026-10-20T02:46:12.505Z",
+    "status": "native-command-stop-and-continuation-verified-with-file-workflow-limit",
+    "deployedSourceCommit": "0b9f65c12041a4797ec0e81f2aad8631f570ed9d",
+    "managedGeneration": "cd27a496cd6e99bdde2679f16b4f5ceb527d2145ee86055e048373f94df70cf6",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "officialCliUnmodified": true,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingBrowser": false,
+    "trustedHookDefinitionUnchanged": true,
+    "ordinaryChatsEnabled": true,
+    "normalRestartLoadedAdapter": true,
+    "recoveryDeploymentNeededAnotherRestart": false,
+    "installedQualifierAcceptedExactObservationPrograms": true,
+    "implementation": {
+      "connectorModelAndSendCombined": true,
+      "compactObservationAndRetentionPrograms": true,
+      "observationReadsCurrentPageOnce": true,
+      "artificialObservationBatchSleepRemoved": true,
+      "stopUsesNativeInterruptAndActualCleanupReadback": true,
+      "pendingObservationUsesActualChildTerminalWithinExistingDeadline": true,
+      "savedGenerationRecoversLostTabBeforeReadableAnswer": true,
+      "recoveryRechecksOwnershipAndTabAfterHandoff": true
+    },
+    "matchedSyntheticMeasurement": {
+      "scenario": "identical synthetic saved-chat follow-up, three observations, fixed control arguments and prompt",
+      "browserCallsBefore": 8,
+      "browserCallsAfter": 6,
+      "argumentBytesBefore": 417723,
+      "argumentBytesAfter": 185389,
+      "argumentReductionPercent": 55.62,
+      "endToEndLatencyImprovementMeasured": false
+    },
+    "nativeCommand": {
+      "pairedSuccessfulCalls": 1,
+      "exitCode": 0,
+      "constantOutputVerified": true,
+      "extraCodingCalls": 0,
+      "fullFileReadPatchReadbackWorkflowVerified": false
+    },
+    "automaticStop": {
+      "nativeTurnInterrupted": true,
+      "completedBeforeInterrupt": false,
+      "stopClicked": true,
+      "stopHidden": true,
+      "tabRetained": true,
+      "callbackToConfirmedMs": 1222,
+      "userObservedStoppedAndSameTab": true,
+      "pendingChildAtInterrupt": false,
+      "pendingChildSettlementLiveScenarioExercised": false
+    },
+    "continuation": {
+      "completed": true,
+      "durationMs": 15854,
+      "originalMarkerRecalledWithoutResupply": true,
+      "sameSavedChatUrlTabAndBinding": true,
+      "webSends": 1,
+      "codingCalls": 0,
+      "uncertainSend": false
+    },
+    "localVerification": {
+      "initialOptimizationFullSuitePassed": 1382,
+      "callbackCorrectionAffectedTestsPassed": 400,
+      "finalRecoveryBrowserTestsPassed": 99,
+      "finalRecoveryRuntimeTestsPassed": 169,
+      "sourceChecksPassed": true,
+      "currentCatalogModelsParsed": 17,
+      "scope": "Unchanged full-suite evidence reused; each later correction reran affected checks."
+    },
+    "workingRollbackPairRetained": true,
+    "limits": [
+      "The earlier Web assistant reported a safety block before its file operation. That action was not retried; the current constant-output command does not verify the full file workflow or recertify the sandbox.",
+      "An initial Stop arrived after natural completion and was excluded from cancellation proof. The successful repeat stopped an active generation between observations; pending-child settlement has focused transport tests but was not exercised by that live Stop.",
+      "Stable answer text was not projected during the stopped generation. Actual anchored generation and Stop-control state supplied readiness; the automatic click, hidden-control readback and user observation established cancellation.",
+      "Measurements compare equivalent synthetic calls and UTF-8 bytes, not model tokens or end-to-end latency. Live response times and observation counts depend on the page and model.",
+      "Live proof covers one ordinary Instant Web conversation at low effort. Other Web routes and subagents were not individually certified."
+    ]
+  }
 }
