@@ -105,7 +105,7 @@ test("actual broker-produced function/custom/search calls survive SSE and existi
     : { type: item.type === "custom_tool_call" ? "custom_tool_call_output" : "function_call_output", call_id: item.call_id, output: "native result" });
   broker.complete(token, outputs);
   await Promise.all(pending);
-  assert.equal(broker.finish(token), true);
+  assert.equal(broker.finish(token, broker.beginCompletion(token)), true);
 });
 
 test("SSE deltas reconstruct each completed native field and final text without changing namespaces", async () => {

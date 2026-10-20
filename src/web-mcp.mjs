@@ -39,7 +39,7 @@ function reject(response, status) {
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
 export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel } = {}) {
-  if (!broker || !["list", "invoke", "cancel"].every(name => typeof broker[name] === "function")) {
+  if (!broker || !["list", "invoke", "cancel", "beginActivity"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
@@ -66,7 +66,11 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
       const validate = validators.get(name);
       if (!validate || !validate(args).valid) throw new McpError(ErrorCode.InvalidParams, "Unknown MCP tool or invalid arguments.");
       const token = args.turn_token;
+      let release;
       try {
+        // Hold the accepted turn through the whole handler, including discovery
+        // and the async continuation after native output resolved the call.
+        release = broker.beginActivity(token);
         if (name === "codex_tools_list") {
           const descriptors = broker.list(token);
           return { content: [{ type: "text", text: JSON.stringify({ tools: descriptors }) }], structuredContent: { tools: descriptors } };
@@ -90,6 +94,8 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         // Broker errors can contain native payloads. Return a fixed failure
         // envelope; full execution results pass through only on the success path.
         return { isError: true, content: [{ type: "text", text: "Codex tool request failed or the turn is closed. Do not retry a cancelled or timed-out turn." }] };
+      } finally {
+        release?.();
       }
     });
     const transport = new StreamableHTTPServerTransport({

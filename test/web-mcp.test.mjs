@@ -9,6 +9,7 @@ import { createWebToolBroker } from "../src/web-tools.mjs";
 
 const fn = name => ({ type: "function", name, description: "Native tool", parameters: { type: "object", properties: {} } });
 const register = (broker, turnId, tools = [fn("read")]) => broker.register({ threadId: "native-thread", turnId, tools });
+const finish = (broker, token) => broker.finish(token, broker.beginCompletion(token));
 const call = (client, turn, wireName, args = {}) => client.callTool({ name: "codex_tool_call", arguments: { turn_token: turn.token, wire_name: wireName, ...args } });
 
 async function fixture(t, options = {}) {
@@ -54,7 +55,7 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   // Only the actual native caller may supply the output that resolves MCP.
   broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual native result" }]);
   assert.deepEqual((await result).content, [{ type: "text", text: "actual native result" }]);
-  assert.equal(broker.finish(turn.token), true);
+  assert.equal(finish(broker, turn.token), true);
   assert.equal(service.status().pending, 0);
 });
 
@@ -80,8 +81,8 @@ test("concurrent ChatGPT sessions retain exact turn identity and raw custom inpu
   broker.complete(first.token, [{ type: "function_call_output", call_id: nativeOne.call_id, output: "one" }]);
   assert.equal((await resultOne).content[0].text, "one");
   assert.equal((await resultTwo).content[0].text, "two");
-  assert.equal(broker.finish(first.token), true);
-  assert.equal(broker.finish(second.token), true);
+  assert.equal(finish(broker, first.token), true);
+  assert.equal(finish(broker, second.token), true);
 });
 
 test("SDK cancellation retires only its native turn and notifies the generation owner", { timeout: 10_000 }, async t => {
@@ -147,6 +148,72 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   assert.equal(undeclared.isError, true);
   assert.deepEqual(broker.takeCalls(turn.token), []);
   assert.equal(service.status().pending, 0);
-  assert.equal(broker.finish(turn.token), true);
+  assert.equal(finish(broker, turn.token), true);
   assert.equal((await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } })).isError, true);
+});
+
+test("SDK discovery holds activity and invalidates an earlier completion observation", { timeout: 10_000 }, async t => {
+  const { broker, connect } = await fixture(t);
+  const turn = register(broker, "discovery-fence");
+  const { client } = await connect();
+  const before = broker.beginCompletion(turn.token);
+  const list = broker.list;
+  let observed = false;
+  broker.list = token => {
+    observed = true;
+    assert.equal(broker.beginCompletion(token), undefined);
+    assert.equal(broker.finish(token, before), false);
+    return list(token);
+  };
+  const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+  assert.equal(observed, true);
+  assert.deepEqual(discovered.structuredContent.tools, turn.tools);
+  const after = broker.beginCompletion(turn.token);
+  assert.equal(typeof after, "number");
+  assert.notEqual(after, before);
+  assert.equal(broker.finish(turn.token, before), false);
+  assert.equal(broker.finish(turn.token, after), true);
+  assert.equal((await call(client, turn, "read")).isError, true);
+  assert.throws(() => broker.takeCalls(turn.token), { code: "web_tool_turn_closed" });
+});
+
+test("SDK invocation keeps completion fenced until its handler returns the actual native result", { timeout: 10_000 }, async t => {
+  const { broker, service, connect } = await fixture(t);
+  const turn = register(broker, "settlement-fence");
+  const { client } = await connect();
+  const before = broker.beginCompletion(turn.token);
+  let entered, release;
+  const settling = new Promise(resolve => { entered = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  const invoke = broker.invoke;
+  broker.invoke = async (...args) => {
+    const result = await invoke(...args);
+    entered();
+    await held;
+    return result;
+  };
+  const waiting = broker.waitForCalls(turn.token);
+  const result = call(client, turn, "read", { arguments: { marker: "paired result" } });
+  try {
+    const [native] = await waiting;
+    assert.equal(broker.beginCompletion(turn.token), undefined);
+    assert.equal(broker.finish(turn.token, before), false);
+    broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual paired native result" }]);
+    await settling;
+    assert.deepEqual(broker.takeCalls(turn.token), []);
+    assert.equal(service.status().pending, 1);
+    assert.equal(broker.beginCompletion(turn.token), undefined);
+    assert.equal(broker.finish(turn.token, before), false);
+  } finally {
+    release();
+  }
+  assert.deepEqual((await result).content, [{ type: "text", text: "actual paired native result" }]);
+  assert.equal(service.status().pending, 0);
+  const after = broker.beginCompletion(turn.token);
+  assert.equal(typeof after, "number");
+  assert.notEqual(after, before);
+  assert.equal(broker.finish(turn.token, before), false);
+  assert.equal(broker.finish(turn.token, after), true);
+  assert.equal((await call(client, turn, "read")).isError, true);
 });

@@ -43,7 +43,7 @@ const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? 
 
 function fakeBrowser() {
   const ui = { power: 2, menu: false, chip: false, stop: false, texts: [], complete: false, sends: [], marks: 0, newTabs: 0, closes: 0, present: true, navigations: 0, reacquired: [], stopMarks: [],
-    temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map() };
+    temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map(), turns: [], savedTurns: new Map() };
   const locator = (kind, name, visibleOnly = false) => ({
     getByRole: (childKind, options) => locator(childKind, options.name), locator: selector => locator("selector", selector),
     filter({ hasText, visible }) {
@@ -69,13 +69,17 @@ function fakeBrowser() {
       else if (name === "Stop") { ui.stopMarks.push(ui.marks); ui.stop = false; }
       else if (name === "Start new chat") {
         ui.rollovers += 1; ui.chatNumber += 1; ui.full = false; ui.normalHome = true; ui.url = "https://chatgpt.com/";
-        ui.texts = []; ui.composer = ""; ui.chip = false; ui.complete = false;
+        ui.texts = []; ui.turns = []; ui.composer = ""; ui.chip = false; ui.complete = false;
       }
       else if (name === "Send") {
+        const baselineIds = ui.replyElements?.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
+          ?? ui.texts.map((_, index) => ui.replyIds?.[index] ?? messageId(index));
+        ui.turns.push({ key: messageId(10000 + ui.sends.length), prompt: ui.composer, baselineIds });
         ui.sends.push(ui.composer); ui.composer = ""; ui.complete = false;
         ui.normalHome = false;
         ui.url = `https://chatgpt.com/c/${ui.chatNumber === 1 ? "owned-conversation" : `successor-${ui.chatNumber}`}`;
         ui.savedReplies.set(ui.url, ui.texts);
+        ui.savedTurns.set(ui.url, ui.turns);
       }
     },
     async getAttribute(attribute) { return { "aria-checked": "true", "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null; },
@@ -93,18 +97,50 @@ function fakeBrowser() {
         return callback([{ nodeType: 1, tagName: "DIV", getAttribute: key => key === "contenteditable" ? "true" : null, matches: () => false,
           childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
       }
-      assert.equal(name, '[data-markdown-text-style="assistant-message"]');
-      return callback(ui.replyElements ?? ui.texts.map((value, index) => {
-        const wrapper = { nodeType: 1, tagName: "DIV", closest: () => null,
+      assert.equal(name, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]');
+      const roots = ui.turns.map((turn, index) => {
+        const action = { getAttribute: () => "Regenerate response", closest: () => null };
+        const root = { nodeType: 1, tagName: "DIV", textContent: turn.prompt, fixtureMarkdown: [],
+          getAttribute: key => key === "data-turn-key" ? turn.key : null,
+          matches: selector => selector === '[data-turn-key]', querySelector: () => null,
+          querySelectorAll: selector => selector === '[data-talvt-turn-state]' ? [{ getAttribute: () => index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" }]
+            : selector === '[aria-label]' ? [action]
+              : selector === '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"],[data-streaming-response-status],[aria-label]'
+                ? [...root.fixtureMarkdown, action] : [] };
+        return root;
+      });
+      const elements = ui.replyElements ?? ui.texts.map((value, index) => {
+        const wrapper = { nodeType: 1, tagName: "DIV",
           getAttribute: name => name === "data-chatgpt-selection-message-id" ? ui.replyIds ? ui.replyIds[index] : messageId(index) : null };
         return { nodeType: 1, tagName: "DIV", getAttribute: () => null, parentElement: wrapper,
           closest: () => wrapper, childNodes: [{ nodeType: 3, textContent: value }] };
-      }));
+      });
+      for (const [index, element] of elements.entries()) {
+        const wrapper = element.fixtureWrapper ?? element.closest('[data-chatgpt-selection-message-id]');
+        element.fixtureWrapper = wrapper;
+        const replyId = wrapper?.getAttribute('data-chatgpt-selection-message-id');
+        const ownerIndex = ui.turns.findLastIndex(turn => !turn.baselineIds.includes(replyId));
+        let turn = roots[ownerIndex];
+        if (ui.replyTurnKeys?.[index]) {
+          const key = ui.replyTurnKeys[index];
+          turn = roots.find(root => root.getAttribute('data-turn-key') === key);
+          if (!turn) {
+            turn = { getAttribute: () => key, textContent: "Another generation", matches: selector => selector === '[data-turn-key]', querySelector: () => null, querySelectorAll: () => [] };
+            roots.push(turn);
+          }
+        }
+        if (wrapper) wrapper.closest = selector => selector === '[data-turn-key]' ? turn : null;
+        turn?.fixtureMarkdown?.push(element);
+        element.matches = selector => selector !== '[data-turn-key]';
+        element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
+      }
+      return callback([...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])], ownedChipSelector);
     },
   });
   const tab = { get id() { return ui.tabId; }, goto: async url => {
     ui.navigations += 1; ui.url = url; ui.normalHome = url === "https://chatgpt.com/";
     ui.texts = ui.savedReplies.get(url) ?? []; ui.composer = "";
+    ui.turns = ui.savedTurns.get(url) ?? [];
   }, url: async () => ui.url,
     playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
@@ -209,7 +245,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
   };
 }
 
-const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1]);
+const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1].split("\nRouter generation: ")[0]);
 
 async function nativeV2Checkpoint(response) {
   const frames = new SseFrameBuffer(), output = [];
@@ -373,7 +409,7 @@ test("native continuation identity failure exposes bounded structural evidence b
     const diagnostic = JSON.parse(error.message.split(" ROUTER_WEB_REPLY_IDENTITY_DIAGNOSTIC ")[1]);
     assert.equal(diagnostic.reason, "missing-wrapper");
     assert.equal(diagnostic.missingWrapperCount, 10);
-    assert.equal(diagnostic.sampledRows[0].ancestors[0].tag, "other");
+    assert.equal(diagnostic.messageCount, 10);
     assert.ok(error.message.length < 4096);
     assert.doesNotMatch(error.message, /PRIVATE_|private\.invalid|00000000-0000-4000/u);
     return true;
@@ -390,6 +426,7 @@ test("an existing successful private mapping without message IDs recovers once b
   await h.restartRuntime(); h.loseKernel();
   const legacy = JSON.parse(readFileSync(h.stateFile, "utf8"));
   delete legacy.sendBaselineReplyIds; delete legacy.observation.replyId;
+  delete legacy.generationTurnKey; delete legacy.generationReplyIds; delete legacy.generationCompleted;
   assert.ok(legacy.observation.replyCount > legacy.sendBaseline);
   writeFileSync(h.stateFile, JSON.stringify(legacy), "utf8");
   h.newTurn(followupId, "Continue the existing deployed saved chat.");
@@ -461,6 +498,166 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
   assert.equal(h.browser.ui.marks, marksBeforeRetain + 1);
   assert.equal(h.observations.watchers[0].closed, true);
   assert.deepEqual(h.observations.nativeOperations, ["bootstrap", "open", "model", "attach", "send", "observe", "observe", "retain"]);
+  assert.equal(h.runtime.status().activeTurns, 0);
+});
+
+test("one Send carries commentary, actual native execution and a final answer under a new message identity", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("I will inspect the requested file."); h.browser.ui.stop = true;
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0];
+  assert.equal(coding.namespace, "mcp__work");
+  h.append(coding, outputFor(coding, "ACTUAL_FILE_CONTENT"));
+  const afterCoding = (await h.request()).output[0]; await actual;
+  h.browser.ui.stop = false; h.browser.ui.complete = true;
+  const oldCommentary = await h.answerBrowser(afterCoding);
+  assert.equal(JSON.parse(oldCommentary.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  h.browser.ui.texts.push("The actual file contains ACTUAL_FILE_CONTENT.");
+  const retained = await h.answerBrowser(oldCommentary.output[0]);
+  const final = await h.answerBrowser(retained.output[0]);
+  assert.equal(final.output[0].content[0].text, "The actual file contains ACTUAL_FILE_CONTENT.");
+  assert.equal(h.browser.ui.sends.length, 1);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.deepEqual(saved.generationReplyIds, [messageId(0), messageId(1)]);
+  assert.equal(saved.observation.replyId, messageId(1));
+});
+
+test("orphan connector widgets cannot block native calls or become the answer through the runtime browser handoff", async t => {
+  const h = harness(t);
+  const widget = text => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
+    matches: selector => selector === '[data-markdown-text-style="assistant-message"]', closest: () => null,
+    childNodes: [{ nodeType: 3, textContent: text }] });
+  h.browser.ui.orphanMarkdownBefore = [widget("A connector widget before the saved messages")];
+  h.browser.ui.orphanMarkdownAfter = [widget("A connector widget after the saved messages")];
+  const { call } = await h.toObserve();
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "widget-safe.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0];
+  assert.equal(coding.namespace, "mcp__work");
+  h.append(coding, outputFor(coding, "WIDGET_SAFE_OUTPUT"));
+  const observe = (await h.request()).output[0]; await actual;
+  h.browser.ui.texts.push("The native result is WIDGET_SAFE_OUTPUT."); h.browser.ui.complete = true;
+  const retained = await h.answerBrowser(observe);
+  const final = await h.answerBrowser(retained.output[0]);
+  assert.equal(final.output[0].content[0].text, "The native result is WIDGET_SAFE_OUTPUT.");
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("lost generation ownership aborts queued MCP work before native delivery or a final answer", async t => {
+  for (const reason of ["generation-turn-not-latest", "duplicate-generation-turn", "generation-message-not-latest"]) await t.test(reason, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("A message outside the owned generation."); h.browser.ui.replyTurnKeys = [messageId(999)];
+    h.browser.ui.complete = true;
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-execute.txt" } });
+    const aborted = assert.rejects(actual, { code: "web_generation_ownership" });
+    const frame = await h.executeBrowser(call);
+    const frameToken = frame.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/u)[1];
+    const observed = parseBrowserOutput(frame, frameToken);
+    assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest", "The actual browser projection detects the foreign latest generation.");
+    const reported = reason === observed.replyUnavailableReason ? frame
+      : `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: { ...observed, replyUnavailableReason: reason } })}\nROUTER_WEB_BROWSER_${frameToken}_END`;
+    h.append(call, outputFor(call, reported));
+    await assert.rejects(h.request(), { code: "web_generation_ownership" });
+    await aborted;
+    await assert.rejects(h.request(), { code: "web_generation_ownership" });
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    assert.equal(h.observations.nativeOperations.includes("retain"), false);
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.equal(h.browser.ui.closes, 0);
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.deepEqual(saved.unresolvedCoding, []);
+    assert.equal(saved.lastTurn.completed, false);
+  });
+});
+
+test("MCP activity between the browser read and final delivery forces a fresh answer after its native result", async t => {
+  for (const boundary of ["snapshot", "retention"]) await t.test(boundary, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("An answer before late native work."); h.browser.ui.complete = true;
+    let pending = call;
+    if (boundary === "retention") pending = (await h.answerBrowser(call)).output[0];
+    const frame = await h.executeBrowser(pending);
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "late.txt" } });
+    h.append(pending, outputFor(pending, frame));
+    const coding = (await h.request()).output[0];
+    assert.equal(coding.namespace, "mcp__work");
+    h.append(coding, outputFor(coding, "LATE_ACTUAL_RESULT"));
+    const observe = (await h.request()).output[0]; await actual;
+    const unchanged = await h.answerBrowser(observe);
+    assert.equal(JSON.parse(unchanged.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+    h.browser.ui.texts.push("Final answer using LATE_ACTUAL_RESULT.");
+    const retained = await h.answerBrowser(unchanged.output[0]);
+    const final = await h.answerBrowser(retained.output[0]);
+    assert.equal(final.output[0].content[0].text, "Final answer using LATE_ACTUAL_RESULT.");
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("discovery activity during an otherwise completed DOM read invalidates its completion fence", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("A complete answer."); h.browser.ui.complete = true;
+  const frame = await h.executeBrowser(call);
+  const release = h.broker.beginActivity(h.token()); release();
+  h.append(call, outputFor(call, frame));
+  const refresh = await h.request();
+  assert.equal(JSON.parse(refresh.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  const retained = await h.answerBrowser(refresh.output[0]);
+  const final = await h.answerBrowser(retained.output[0]);
+  assert.equal(final.output[0].content[0].text, "A complete answer.");
+});
+
+test("completed pages fail promptly when unreadable or missing a post-tool final and retain actual outcomes", async t => {
+  for (const withTool of [false, true]) await t.test(withTool ? "missing post-tool final" : "unreadable answer", async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    let observe = call;
+    if (withTool) {
+      h.browser.ui.texts.push("I will read the file."); h.browser.ui.stop = true;
+      const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+      const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "read-once.txt" } });
+      const coding = (await h.answerBrowser(observe)).output[0];
+      h.append(coding, outputFor(coding, "KNOWN_NATIVE_OUTPUT"));
+      observe = (await h.request()).output[0]; await actual;
+    } else h.browser.ui.texts.push("");
+    h.browser.ui.complete = true; h.browser.ui.stop = false;
+    for (let index = 0; index < 2; index += 1) observe = (await h.answerBrowser(observe)).output[0];
+    await assert.rejects(h.answerBrowser(observe), { code: withTool ? "web_post_tool_answer_missing" : "web_answer_unreadable" });
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.lastTurn.completed, false);
+    assert.deepEqual(saved.unresolvedCoding, []);
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.closes, 0);
+    assert.equal(h.observations.nativeOperations.includes("retain"), false);
+    if (withTool) assert.equal(h.input().filter(item => item.output === "KNOWN_NATIVE_OUTPUT").length, 1);
+  });
+});
+
+test("new native activity resets the bounded completed-but-unreadable wait", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.complete = true;
+  let observe = call;
+  for (let index = 0; index < 2; index += 1) observe = (await h.answerBrowser(observe)).output[0];
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "once.txt" } });
+  const coding = (await h.answerBrowser(observe)).output[0];
+  assert.equal(coding.namespace, "mcp__work");
+  h.append(coding, outputFor(coding, "READ_ONCE_RESULT"));
+  observe = (await h.request()).output[0]; await actual;
+  for (let index = 0; index < 2; index += 1) observe = (await h.answerBrowser(observe)).output[0];
+  await assert.rejects(h.answerBrowser(observe), { code: "web_answer_unreadable" });
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.input().filter(item => item.output === "READ_ONCE_RESULT").length, 1);
+});
+
+test("a final answer cannot bypass the required native tool policy", async t => {
+  const h = harness(t, { toolChoice: "required" }), { call } = await h.toObserve();
+  h.browser.ui.texts.push("An answer without actual native execution."); h.browser.ui.complete = true;
+  const retain = (await h.answerBrowser(call)).output[0];
+  await assert.rejects(h.answerBrowser(retain), { code: "web_tool_required" });
+  assert.equal(h.browser.ui.sends.length, 1);
   assert.equal(h.runtime.status().activeTurns, 0);
 });
 
@@ -677,11 +874,47 @@ test("lost JS state rebinds only the observed owned tab and reconciles its newes
   assert.throws(() => h.broker.list(oldToken), { code: "web_tool_turn_closed" });
 });
 
+test("an interrupted anchored generation can advance from an observed partial to its later owned answer", async t => {
+  for (const mounted of [true, false]) await t.test(mounted ? "partial remains mounted" : "partial was unmounted", async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Known partial answer"); h.browser.ui.stop = true;
+    await h.answerBrowser(call);
+    h.observations.watchers[0].onCancel(); h.loseKernel();
+    if (mounted) h.browser.ui.texts.push("Later final answer from that same generation.");
+    else { h.browser.ui.texts = ["Later final answer from that same generation."]; h.browser.ui.replyIds = [messageId(1)]; }
+    await h.restartRuntime();
+    h.newTurn(followupId, "Continue after the prior generation.");
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue after the prior generation." }]);
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.stopMarks.length, 1);
+  });
+});
+
+test("a completed generation keeps its exact final reply proof across a failed pre-Send successor", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("A completed native final."); h.browser.ui.complete = true;
+  const retained = await h.answerBrowser(call), final = await h.answerBrowser(retained.output[0]); h.append(final.output[0]);
+  h.newTurn(followupId, "A successor blocked before Send.");
+  const continuation = (await h.request()).output[0];
+  h.browser.ui.composer = "Keep this draft.";
+  await assert.rejects(h.executeBrowser(continuation), /composer has a draft/);
+  h.observations.watchers.at(-1).onCancel();
+  await h.restartRuntime(); h.loseKernel();
+  h.browser.ui.composer = ""; h.browser.ui.replyIds = [messageId(999)];
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Retry the new work.");
+  const retry = (await h.request()).output[0];
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).generationCompleted, true);
+  await assert.rejects(h.executeBrowser(retry), /saved chat reply or composer changed/);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
 test("runtime recovery passes saved evidence and refuses changed session, reply or active ownership without Stop or replay", async t => {
   for (const [label, mutate] of [
     ["foreign session", h => { h.browser.agent.browsers.list = async () => [{ type: "iab", id: "same-session-iab", metadata: { codexSessionId: followupId } }]; }],
     ["changed partial", h => { h.browser.ui.texts[0] = "A different assistant reply"; }],
-    ["identical text under different identity", h => { h.browser.ui.replyIds = [messageId(999)]; }],
+    ["identical text under foreign generation identity", h => { h.browser.ui.replyIds = [messageId(999)]; h.browser.ui.replyTurnKeys = [messageId(998)]; }],
     ["surviving foreign owner", h => { h.replaceBrowserOwner({ turnId: followupId, state: {} }); }],
   ]) await t.test(label, async t => {
     const h = harness(t);
@@ -905,10 +1138,12 @@ async function stopBeforeRenderedReply(h, { observed = true, emptyReply = false 
 }
 
 test("a confirmed interrupted Send without observed text recovers its exact retained tab and sends only new native history", async t => {
-  for (const kind of ["no observation", "zero fresh replies", "one latest fresh reply", "known empty reply"]) await t.test(kind, async t => {
+  for (const kind of ["no observation", "zero fresh replies", "one latest fresh reply", "multiple owned replies", "known empty reply", "empty reply progressed identity"]) await t.test(kind, async t => {
     const h = harness(t);
-    await stopBeforeRenderedReply(h, { observed: kind !== "no observation", emptyReply: kind === "known empty reply" });
+    await stopBeforeRenderedReply(h, { observed: kind !== "no observation", emptyReply: kind.includes("empty reply") });
     if (kind === "one latest fresh reply") h.browser.ui.texts.push("An answer rendered after Stop.");
+    if (kind === "multiple owned replies") h.browser.ui.texts.push("An owned commentary.", "An owned final answer.");
+    if (kind === "empty reply progressed identity") h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)];
     await h.restartRuntime();
     const priorCheckpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
     h.newTurn(followupId, "Continue in the same chat.");
@@ -935,10 +1170,9 @@ test("retained-tab recovery rejects changed tabs, ambiguous replies and drafts b
     ["changed saved URL", h => { h.browser.ui.url = "https://chatgpt.com/c/another-chat"; }],
     ["duplicate identity", h => { h.browser.ui.replyIds = [messageId(0), messageId(0)]; }],
     ["missing identity", h => { h.browser.ui.replyIds = [messageId(0), null]; }],
-    ["multiple fresh identities", h => { h.browser.ui.texts.push("First new reply", "Second new reply"); }],
+    ["foreign generation identity", h => { h.browser.ui.texts.push("A foreign reply"); h.browser.ui.replyTurnKeys = [null, null, messageId(999)]; }],
     ["fresh identity is not latest", h => { h.browser.ui.replyIds = [messageId(2), messageId(1)]; }],
     ["composer draft", h => { h.browser.ui.composer = "Keep this unsent draft."; }],
-    ["known empty reply changed identity", h => { h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)]; }, true],
   ]) await t.test(label, async t => {
     const h = harness(t);
     await stopBeforeRenderedReply(h, { emptyReply }); mutate(h);
@@ -973,7 +1207,7 @@ test("retained-tab recovery rechecks ownership across SDK discovery, Stop visibi
       let reads = 0;
       h.browser.tab.playwright.locator = selector => {
         const control = locator(selector), evaluate = control.evaluateAll;
-        if (selector === '[data-markdown-text-style="assistant-message"]') control.evaluateAll = async (...args) => {
+        if (selector === '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]') control.evaluateAll = async (...args) => {
           const value = await evaluate(...args); if (++reads === 2) replace(); return value;
         };
         return control;
@@ -988,8 +1222,8 @@ test("retained-tab recovery rechecks ownership across SDK discovery, Stop visibi
   });
 });
 
-test("retained-tab recovery can discover one reply during Stop but cannot substitute its first fresh identity", async t => {
-  for (const replaceReply of [false, true]) await t.test(replaceReply ? "fresh identity changed" : "first reply appears during Stop", async t => {
+test("retained-tab recovery can discover owned replies during Stop but cannot cross a generation boundary", async t => {
+  for (const replaceReply of [false, true]) await t.test(replaceReply ? "foreign generation appeared" : "first reply appears during Stop", async t => {
     const h = harness(t); await stopBeforeRenderedReply(h);
     if (replaceReply) h.browser.ui.texts.push("The first unobserved reply");
     const getByRole = h.browser.tab.playwright.getByRole;
@@ -997,7 +1231,7 @@ test("retained-tab recovery can discover one reply during Stop but cannot substi
       const control = getByRole(kind, options), click = control.click;
       if (options.name === "Stop") control.click = async () => {
         await click();
-        if (replaceReply) h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)];
+        if (replaceReply) { h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)]; h.browser.ui.replyTurnKeys = [null, null, messageId(998)]; }
         else h.browser.ui.texts.push("The first reply rendered while Stop was reconciled");
       };
       return control;

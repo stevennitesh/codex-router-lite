@@ -187,8 +187,24 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     if (!turn) throw failure("Web tool turn is invalid or already closed.", "web_tool_turn_closed", 409);
     return turn;
   };
-  const rememberClosed = (token, state) => {
-    closed.set(token, state);
+  const change = turn => { turn.revision += 1; };
+  const beginActivity = token => {
+    const turn = active(token);
+    turn.activity += 1;
+    change(turn);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      // A cancelled request may settle after its turn was retired. Its lease
+      // cannot mutate a replacement turn or make the old capability live again.
+      if (turns.get(token) !== turn) return;
+      turn.activity -= 1;
+      change(turn);
+    };
+  };
+  const rememberClosed = (token, turn, state) => {
+    closed.set(token, { state, revision: turn.revision });
     if (closed.size > 64) closed.delete(closed.keys().next().value);
   };
   const terminate = (token, state, reason) => {
@@ -196,7 +212,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     if (!turn) return false;
     turns.delete(token);
     owners.delete(turn.owner);
-    rememberClosed(token, state);
+    rememberClosed(token, turn, state);
     for (const pending of turn.calls.values()) {
       pending.cleanup();
       pending.reject(reason);
@@ -212,7 +228,10 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     const turn = active(token);
     const delivered = [...turn.calls.values()].filter(call => call.delivered);
     const batch = delivered.length ? delivered : [...turn.calls.values()];
-    for (const call of batch) call.delivered = true;
+    for (const call of batch) {
+      if (!call.delivered) change(turn);
+      call.delivered = true;
+    }
     return batch.map(call => structuredClone(call.item));
   };
   const notify = (token, turn) => {
@@ -237,6 +256,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     turn.names = nextNames;
     turn.tools = next;
     turn.policy = policy;
+    change(turn);
     return list(token);
   };
   return {
@@ -250,31 +270,37 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const definitions = registry(tools, names);
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
-      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, waiters: new Set() });
+      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, waiters: new Set(), revision: 0, activity: 0 });
       owners.set(owner, token);
       return { token, tools: list(token), instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. Discover current tools before invoking their exact wireName. Native Codex performs tool execution and approvals. Never expose the token in your answer.` };
     },
-    list, update, takeCalls,
+    list, update, takeCalls, beginActivity,
     async invoke(token, payload, { signal } = {}) {
-      const turn = active(token);
-      if (!record(payload)) throw failure("Invalid Web tool invocation.");
-      const tool = turn.tools.get(payload.wireName);
-      if (!tool || !turn.policy.allowed.has(payload.wireName)) throw failure("Web tool is not declared and allowed in this turn.");
-      if (signal?.aborted) {
-        const error = signal.reason instanceof Error ? signal.reason : new DOMException("Web tool invocation cancelled.", "AbortError");
-        terminate(token, "cancelled", error);
-        throw error;
+      const release = beginActivity(token);
+      try {
+        const turn = active(token);
+        if (!record(payload)) throw failure("Invalid Web tool invocation.");
+        const tool = turn.tools.get(payload.wireName);
+        if (!tool || !turn.policy.allowed.has(payload.wireName)) throw failure("Web tool is not declared and allowed in this turn.");
+        if (signal?.aborted) {
+          const error = signal.reason instanceof Error ? signal.reason : new DOMException("Web tool invocation cancelled.", "AbortError");
+          terminate(token, "cancelled", error);
+          throw error;
+        }
+        const item = nativeCall(tool, payload);
+        return await new Promise((resolve, reject) => {
+          const abort = () => terminate(token, "cancelled", signal.reason instanceof Error ? signal.reason : new DOMException("Web tool invocation cancelled.", "AbortError"));
+          const timer = setTimeout(() => terminate(token, "cancelled", failure("Native Codex tool did not return before the MCP deadline; execution or approval may already have occurred. Do not retry this turn.", "web_tool_timeout", 504)), invocationTimeoutMs);
+          const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+          turn.calls.set(item.call_id, { item, kind: tool.kind, delivered: false, resolve, reject, cleanup });
+          turn.callsMade += 1;
+          change(turn);
+          signal?.addEventListener("abort", abort, { once: true });
+          notify(token, turn);
+        });
+      } finally {
+        release();
       }
-      const item = nativeCall(tool, payload);
-      return new Promise((resolve, reject) => {
-        const abort = () => terminate(token, "cancelled", signal.reason instanceof Error ? signal.reason : new DOMException("Web tool invocation cancelled.", "AbortError"));
-        const timer = setTimeout(() => terminate(token, "cancelled", failure("Native Codex tool did not return before the MCP deadline; execution or approval may already have occurred. Do not retry this turn.", "web_tool_timeout", 504)), invocationTimeoutMs);
-        const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
-        turn.calls.set(item.call_id, { item, kind: tool.kind, delivered: false, resolve, reject, cleanup });
-        turn.callsMade += 1;
-        signal?.addEventListener("abort", abort, { once: true });
-        notify(token, turn);
-      });
     },
     waitForCalls(token, { signal } = {}) {
       const turn = active(token);
@@ -306,16 +332,23 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       // Validate the complete batch before resolving any MCP caller.
       for (const { pending, output, result } of completions) {
         turn.calls.delete(output.call_id);
+        change(turn);
         pending.cleanup();
         pending.resolve(result);
       }
       notify(token, turn);
       return { completed: completions.length };
     },
-    finish(token) {
-      if (closed.get(token) === "finished") return true;
-      const turn = active(token);
-      if (turn.calls.size || (turn.policy.required && !turn.callsMade)) return false;
+    beginCompletion(token) {
+      const turn = turns.get(token);
+      return turn && !turn.calls.size && !turn.activity ? turn.revision : undefined;
+    },
+    finish(token, revision) {
+      const retired = closed.get(token);
+      if (retired?.state === "finished" && retired.revision === revision) return true;
+      const turn = turns.get(token);
+      if (!turn || revision === undefined || turn.revision !== revision || turn.calls.size || turn.activity
+        || (turn.policy.required && !turn.callsMade)) return false;
       return terminate(token, "finished");
     },
     cancel(token, reason = new DOMException("Web tool turn cancelled.", "AbortError")) {

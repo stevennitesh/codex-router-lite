@@ -120,10 +120,17 @@ actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
 
-During generation, Router identifies a new answer by its rendered message ID.
-Changes to the number of rendered replies do not by themselves prove a new
-answer or lost conversation. Missing, duplicate or previously observed IDs cannot
-establish completion, even when an older reply has the same text.
+Each confirmed Send owns one rendered logical turn. That turn can contain
+commentary, tool activity and several assistant messages. Router reads the latest
+answer within that turn; it does not bind the whole generation to its first
+assistant message. Older turns and embedded tool widgets cannot establish a new
+answer. Missing or ambiguous turn/message identities fail explicitly.
+
+Native tool requests are delivered independently of final-answer readability.
+Completion requires an idle owned browser turn, an answer after the latest tool
+boundary, and unchanged broker activity across the completion read and final
+delivery. A completed page with unreadable output or no post-tool answer ends
+with a bounded error instead of waiting for the general generation deadline.
 
 The site's explicit maximum-conversation-length notice and **Start new chat**
 action permit a successor saved chat. Assistant prose, timeouts and generic
@@ -197,6 +204,13 @@ ChatGPT Web generation** while using the adapter, then fully quit and reopen
 Codex normally. No external Web launcher or special startup script is needed.
 Verify actual Stop and same-chat continuation after restart; configuration and
 offline tests alone do not establish live cancellation.
+
+The managed adapter contains an immutable browser-code snapshot and recognizes
+only exact Router browser operations. After changing `src/web-browser.mjs`, run
+the supported adapter installer from the matching Router source and fully quit
+and reopen Codex. The managed hook definition remains unchanged. Preserve a
+matching Router source and adapter generation for rollback; rolling back launch
+selections alone restores the original installation baseline.
 
 ```powershell
 .\model-router.ps1 codex web stop adapter-rollback

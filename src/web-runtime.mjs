@@ -48,6 +48,10 @@ function validConversation(value, threadId) {
     && (value.checkpoint === undefined || Array.isArray(value.checkpoint) && value.checkpoint.every(sha256) && savedChatUrl(value.chatUrl) && value.browserOwnerTurnIds.length > 0)
     && (value.sendBaseline === undefined || Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0)
     && (value.sendBaselineReplyIds === undefined || messageIds(value.sendBaselineReplyIds))
+    && (value.generationTurnKey === undefined || uuid.test(value.generationTurnKey) && value.checkpoint !== undefined)
+    && (value.generationCompleted === undefined || typeof value.generationCompleted === "boolean" && value.checkpoint !== undefined)
+    && (value.generationReplyIds === undefined || messageIds(value.generationReplyIds) && value.checkpoint !== undefined
+      && messageIds(value.sendBaselineReplyIds) && value.generationReplyIds.every(replyId => !value.sendBaselineReplyIds.includes(replyId)))
     && typeof value.uncertainSend === "boolean" && Array.isArray(value.unresolvedCoding)
     && value.unresolvedCoding.every(call => record(call) && nonempty(call.callId) && outputTypes.has(call.outputType))
     && new Set(value.unresolvedCoding.map(call => call.callId)).size === value.unresolvedCoding.length
@@ -67,6 +71,7 @@ function validConversation(value, threadId) {
       && (legacyObservation ? observed.replyCount >= value.sendBaseline : observed.replyId === null && observed.completed === false && observed.assistantPrefix?.length === 0
         || typeof observed.replyId === "string" && uuid.test(observed.replyId)
         && messageIds(value.sendBaselineReplyIds) && !value.sendBaselineReplyIds.includes(observed.replyId) && observed.replyCount > 0)
+      && (value.generationReplyIds === undefined || observed.replyId === null || value.generationReplyIds.includes(observed.replyId))
       && record(observed.assistantPrefix) && Number.isSafeInteger(observed.assistantPrefix.length) && observed.assistantPrefix.length >= 0 && observed.assistantPrefix.length <= 1024 && sha256(observed.assistantPrefix.sha256));
 }
 
@@ -202,7 +207,8 @@ export function createInAppWebRuntime({
   const persist = conversation => {
     const value = { version: 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
       browserOwnerTurnIds: [...conversation.browserOwnerTurnIds], tabId: conversation.tabId, chatUrl: conversation.chatUrl,
-      checkpoint: conversation.checkpoint, sendBaseline: conversation.sendBaseline, sendBaselineReplyIds: conversation.sendBaselineReplyIds, observation: conversation.observation,
+      checkpoint: conversation.checkpoint, sendBaseline: conversation.sendBaseline, sendBaselineReplyIds: conversation.sendBaselineReplyIds,
+      generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds, generationCompleted: conversation.generationCompleted, observation: conversation.observation,
       activeCompaction: conversation.activeCompaction, pendingCompaction: conversation.pendingCompaction,
       needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
@@ -393,7 +399,9 @@ export function createInAppWebRuntime({
       && (retainedTabOnly || observed?.assistantPrefix.length > 0 && (recoveryReply || legacyReply))
       ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline,
         baselineReplyIds: conversation.sendBaselineReplyIds,
+        generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds,
         ...(observed ?? { replyCount: conversation.sendBaseline, replyId: null, assistantPrefix: { length: 0, sha256: textDigest("") }, completed: false }),
+        completed: (conversation.generationCompleted ?? (conversation.generationTurnKey ? conversation.lastTurn.completed : observed?.completed === true)) && observed?.completed === true,
         ...(retainedTabOnly ? { retainedTabOnly: true } : {}) } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
@@ -416,10 +424,16 @@ export function createInAppWebRuntime({
     conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
     turn.pending = { kind: "browser", operation, frameToken, calls: [call] };
     await persist(conversation);
+    if (operation === "observe") turn.pending.completionRevision = broker.beginCompletion(turn.token);
     return webResponse(payload, [call]);
   };
   const emitCoding = async (turn, calls, payload) => {
     turn.codingEmitted = true;
+    // The answer visible before native execution is commentary or an earlier
+    // answer. Resolving the MCP promise cannot make that same text a final.
+    turn.preToolAnswer = turn.lastBrowserAnswer ?? { replyId: null, text: "" };
+    turn.completedAnswerAttempts = 0;
+    turn.finalText = undefined; turn.finalRevision = undefined;
     for (const call of calls) turn.conversation.unresolvedCoding.set(call.call_id, call.type === "tool_search_call" ? "tool_search_output"
       : call.type === "custom_tool_call" ? "custom_tool_call_output" : "function_call_output");
     turn.pending = { kind: "coding", calls };
@@ -474,7 +488,27 @@ export function createInAppWebRuntime({
     conversation.rolloverRequired = true;
     return emitBrowser(turn, "rollover", payload);
   };
-  const advance = async (turn, payload, value) => {
+  const acceptObservation = (turn, value) => {
+    if (["duplicate-generation-turn", "generation-turn-not-latest", "generation-message-not-latest"].includes(value.replyUnavailableReason)) {
+      throw fail("The saved Web generation is no longer uniquely owned and latest. Its chat is retained; queued native actions will not be delivered or replayed.", "web_generation_ownership");
+    }
+    if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
+        || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < 0
+        || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(turn.conversation.sendBaselineReplyIds)
+        || turn.conversation.generationTurnKey !== undefined && value.generationTurnKey !== turn.conversation.generationTurnKey
+        || !messageIds(value.generationReplyIds) || value.generationReplyIds.some(replyId => value.baselineReplyIds.includes(replyId))
+        || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
+        || (value.replyId === null ? value.assistantText !== "" || value.completed && !nonempty(value.replyUnavailableReason) : typeof value.replyId !== "string" || !uuid.test(value.replyId)
+          || value.baselineReplyIds.includes(value.replyId) || value.replyCount === 0
+          || !value.generationReplyIds.includes(value.replyId))) throw fail("The browser observation has no verified conversation evidence.");
+    turn.conversation.generationReplyIds = [...value.generationReplyIds];
+    turn.lastBrowserAnswer = { replyId: value.replyId, text: value.assistantText };
+    const prefix = value.assistantText.slice(0, 1024);
+    if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyCount: value.replyCount, replyId: value.replyId,
+      assistantPrefix: { length: prefix.length, sha256: textDigest(prefix) }, completed: value.completed && value.replyId !== null };
+  };
+  const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
+  const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
     if (operation === "bootstrap") {
       if (typeof value.browserId !== "string" || !value.browserId) throw fail("The owned browser identity was not established.");
@@ -520,7 +554,8 @@ export function createInAppWebRuntime({
     }
     if (operation === "send") {
       if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
-      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0 || !messageIds(value.baselineReplyIds)) throw fail("The confirmed Send has no verified reply baseline.");
+      if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0 || !messageIds(value.baselineReplyIds)
+          || !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
       if (!savedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
       turn.sendState = "sent";
@@ -533,22 +568,16 @@ export function createInAppWebRuntime({
       turn.conversation.chatUrl = value.url;
       turn.conversation.sendBaseline = value.baselineReplyCount;
       turn.conversation.sendBaselineReplyIds = [...value.baselineReplyIds];
+      turn.conversation.generationTurnKey = value.generationTurnKey;
+      turn.conversation.generationReplyIds = [];
+      turn.conversation.generationCompleted = false;
       turn.conversation.observation = undefined;
       turn.conversation.assistantText = undefined;
       return emitBrowser(turn, "observe", payload);
     }
     if (operation === "observe") {
       if (value.cancelled) { cancel(turn); throw turn.error; }
-      if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
-          || value.baselineReplyCount !== turn.conversation.sendBaseline || !Number.isSafeInteger(value.replyCount) || value.replyCount < 0
-          || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(turn.conversation.sendBaselineReplyIds)
-          || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
-          || (value.replyId === null ? value.assistantText !== "" || value.completed : typeof value.replyId !== "string" || !uuid.test(value.replyId)
-            || value.baselineReplyIds.includes(value.replyId) || value.replyCount === 0
-            || turn.conversation.observation?.replyId && turn.conversation.observation.replyId !== value.replyId)) throw fail("The browser observation has no verified conversation evidence.");
-      const prefix = value.assistantText.slice(0, 1024);
-      if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyCount: value.replyCount, replyId: value.replyId,
-        assistantPrefix: { length: prefix.length, sha256: textDigest(prefix) }, completed: value.completed };
+      acceptObservation(turn, value);
       if (value.conversationFull === true) {
         turn.conversation.rolloverRequired = true;
         if (!value.assistantText.trim() && !turn.codingEmitted) return startRollover(turn, payload, value);
@@ -560,8 +589,12 @@ export function createInAppWebRuntime({
       }
       const calls = broker.takeCalls(turn.token);
       if (calls.length) return emitCoding(turn, calls, payload);
-      if (value.completed === true && typeof value.assistantText === "string" && value.assistantText.trim()) {
-        if (!broker.finish(turn.token)) throw fail("ChatGPT completed without the required native tool result.", "web_tool_required");
+      const completionRevision = broker.beginCompletion(turn.token);
+      // A completion snapshot is meaningful only across a quiet broker interval.
+      // A tool call or discovery request racing its DOM read requires a new read.
+      const quietSnapshot = completionRevision !== undefined && pending.completionRevision === completionRevision;
+      const freshAnswer = freshPostToolAnswer(turn, value);
+      if (value.completed === true && quietSnapshot && value.assistantText.trim() && freshAnswer) {
         const current = transcript(payload, internalCalls), checkpoint = turn.conversation.checkpoint;
         compactTail(turn.conversation, readableInput(payload, internalCalls), turn.deliveredCoding);
         if (checkpoint.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) {
@@ -570,17 +603,42 @@ export function createInAppWebRuntime({
           if (acknowledged > checkpoint.length) turn.conversation.checkpoint = current.slice(0, acknowledged).map(digest);
         }
         turn.finalText = value.assistantText;
+        turn.finalRevision = completionRevision;
         turn.conversation.assistantText = value.assistantText;
         return emitBrowser(turn, "retain", payload);
       }
+      // A structurally complete owned turn can lack a readable answer. Its
+      // idle state still needs a bounded failure, rather than a generation wait.
+      const idleCompleted = value.completed === true || value.statusComplete === true && value.stopVisible === false;
+      if (idleCompleted && quietSnapshot) {
+        turn.completedAnswerAttempts = (turn.completedAnswerAttempts ?? 0) + 1;
+        if (turn.completedAnswerAttempts >= 3) {
+          await persist(turn.conversation);
+          throw fail(value.assistantText.trim()
+            ? "ChatGPT completed without a fresh answer after the actual native tool results. The saved chat and tool outcomes remain available; Send will not be repeated."
+            : "ChatGPT completed, but its answer could not be read from the owned saved chat. The chat and actual tool outcomes remain available; Send will not be repeated.",
+          value.assistantText.trim() ? "web_post_tool_answer_missing" : "web_answer_unreadable");
+        }
+      } else turn.completedAnswerAttempts = 0;
       if (Date.now() - turn.startedAt > 30 * 60_000) throw fail("ChatGPT did not finish within the Web turn deadline.", "web_turn_timeout", 504);
       return emitBrowser(turn, "observe", payload);
     }
     if (operation === "retain") {
       if (value.retained !== true) throw fail("The completed Web conversation could not be retained.");
+      acceptObservation(turn, value);
+      if (!value.completed || !value.assistantText.trim() || !freshPostToolAnswer(turn, value)) return emitBrowser(turn, "observe", payload);
+      if (!broker.finish(turn.token, turn.finalRevision)) {
+        if (broker.beginCompletion(turn.token) === turn.finalRevision) throw fail("ChatGPT completed without the required native tool result.", "web_tool_required");
+        turn.finalText = undefined; turn.finalRevision = undefined;
+        const calls = broker.takeCalls(turn.token);
+        return calls.length ? emitCoding(turn, calls, payload) : emitBrowser(turn, "observe", payload);
+      }
+      turn.finalText = value.assistantText;
+      turn.conversation.assistantText = value.assistantText;
       turn.done = true; turn.pending = undefined;
       await turn.watcher.close();
       turn.conversation.activeTurn = undefined;
+      turn.conversation.generationCompleted = true;
       turn.conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: true };
       await persist(turn.conversation);
       turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.toolInstructions = undefined; turn.tools = []; turn.discovered = []; turn.processed.clear(); turn.deliveredCoding?.clear();
@@ -697,7 +755,7 @@ export function createInAppWebRuntime({
               const value = parseBrowserOutput(outputs[0].output, pending.frameToken);
               if (value.operation !== pending.operation) throw fail("Native browser output belongs to another stage.");
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
-              response = await advance(turn, payload, value);
+              response = await advance(turn, payload, value, pending);
             } else if (pending.kind === "discovery") {
               if (outputs[0].type !== "tool_search_output" || !Array.isArray(outputs[0].tools)) throw fail("Browser discovery did not return current native declarations.");
               turn.discovered.push(...outputs[0].tools);

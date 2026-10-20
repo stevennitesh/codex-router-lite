@@ -7,6 +7,7 @@ const fn = (name, extra = {}) => ({ type: "function", name, description: `${name
 const custom = name => ({ type: "custom", name, description: "Raw patch", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } });
 const search = { type: "tool_search", execution: "client" };
 const register = (broker, tools, extra = {}) => broker.register({ threadId: "thread", turnId: "turn", tools, ...extra });
+const finish = (broker, token) => broker.finish(token, broker.beginCompletion(token));
 const output = (call, value, extra = {}) => ({ type: call.type === "custom_tool_call" ? "custom_tool_call_output" : call.type === "tool_search_call" ? "tool_search_output" : "function_call_output",
   call_id: call.call_id, ...(call.type === "tool_search_call" ? { tools: value, execution: "client", status: "completed" } : { output: value }), ...extra });
 
@@ -30,13 +31,12 @@ test("MCP invocation waits for actual native Codex output and retains namespaced
   assert.equal(call.name, "read");
   assert.equal(call.namespace, "mcp__files");
   assert.deepEqual(JSON.parse(call.arguments), { path: "actual.txt" });
-  assert.equal(broker.finish(token), false);
+  assert.equal(finish(broker, token), false);
   assert.deepEqual(broker.takeCalls(token), [call]);
   assert.deepEqual(broker.complete(token, [output(call, "file contents")]), { completed: 1 });
   assert.deepEqual(await result, { content: [{ type: "text", text: "file contents" }] });
   assert.deepEqual(original, before);
-  assert.equal(broker.finish(token), true);
-  assert.equal(broker.finish(token), true);
+  assert.equal(finish(broker, token), true);
   await assert.rejects(broker.invoke(token, { wireName: tools[0].wireName }), { code: "web_tool_turn_closed" });
 });
 
@@ -59,7 +59,7 @@ test("function, namespaced custom exec, and search retain distinct native call s
   broker.complete(token, items.map(item => output(item, item.type === "tool_search_call" ? [fn("new_tool")] : "ok")));
   const results = await Promise.all(calls);
   assert.deepEqual(results[2].structuredContent.tools, [fn("new_tool")]);
-  assert.equal(broker.finish(token), true);
+  assert.equal(finish(broker, token), true);
 });
 
 test("declarations with delimiter collisions cannot redirect a call to another native tool", async () => {
@@ -73,7 +73,7 @@ test("declarations with delimiter collisions cannot redirect a call to another n
   ]);
   broker.complete(token, items.map(item => output(item, "ok")));
   await Promise.all(results);
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("invalid, duplicate, partial, or wrong-kind output cannot partially settle a batch", async () => {
@@ -96,7 +96,7 @@ test("invalid, duplicate, partial, or wrong-kind output cannot partially settle 
   broker.complete(token, items.map(item => output(item, "ok")));
   await Promise.all([first, second]);
   assert.throws(() => broker.complete(token, [output(items[0], "late duplicate")]));
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("a delivered batch is stable while a later MCP call queues for the next native round", async () => {
@@ -112,7 +112,7 @@ test("a delivered batch is stable while a later MCP call queues for the next nat
   assert.notEqual(two.call_id, one.call_id);
   broker.complete(token, [output(two, "two")]);
   await second;
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("only current declarations authorize dynamic discovery and wire identities stay stable", async () => {
@@ -135,24 +135,24 @@ test("only current declarations authorize dynamic discovery and wire identities 
   const [actual] = broker.takeCalls(token);
   broker.complete(token, [output(actual, "discovered result")]);
   await next;
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("tool choice blocks unauthorized tools and required choices prevent a no-tool final", async () => {
   const broker = createWebToolBroker();
   const { token, tools } = register(broker, [fn("read"), fn("write")], { toolChoice: { type: "function", name: "read" } });
   assert.deepEqual(tools.map(tool => tool.name), ["read"]);
-  assert.equal(broker.finish(token), false);
+  assert.equal(finish(broker, token), false);
   await assert.rejects(broker.invoke(token, { wireName: "write" }), /not declared and allowed/);
   const result = broker.invoke(token, { wireName: "read" });
   const [call] = broker.takeCalls(token);
   broker.complete(token, [output(call, "ok")]);
   await result;
-  assert.equal(broker.finish(token), true);
+  assert.equal(finish(broker, token), true);
   const none = register(broker, [fn("read")], { toolChoice: "none" });
   assert.deepEqual(none.tools, []);
   await assert.rejects(broker.invoke(none.token, { wireName: "read" }));
-  broker.finish(none.token);
+  finish(broker, none.token);
   assert.throws(() => register(broker, [], { toolChoice: "required" }), { code: "unsupported_tool_choice" });
   assert.throws(() => register(broker, [fn("read")], { toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
 });
@@ -163,7 +163,7 @@ test("allowed_tools resolves exact namespaces and excludes sibling tools", async
   const { token, tools } = register(broker, declarations, { toolChoice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "read", namespace: "two" }] } });
   assert.deepEqual(tools.map(tool => tool.namespace), ["two"]);
   await assert.rejects(broker.invoke(token, { wireName: "one__read" }));
-  broker.finish(token);
+  finish(broker, token);
   assert.throws(() => register(broker, declarations, { toolChoice: { type: "function", name: "read" } }), { code: "unsupported_tool_choice" });
 });
 
@@ -180,7 +180,7 @@ test("normal tool errors and multimodal native outputs return through MCP withou
     { type: "text", text: "operation denied" }, { type: "image", data: "YWJj", mimeType: "image/png" },
     { type: "image", data: "ZGVm", mimeType: "image/jpeg" },
   ], structuredContent: { changed: false }, isError: true, _meta: { detail: "approval rejected" } });
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("cancellation revokes pending and queued calls while other turns continue", async () => {
@@ -199,12 +199,12 @@ test("cancellation revokes pending and queued calls while other turns continue",
   assert.throws(() => broker.complete(first.token, [output(delivered, "late")]), { code: "web_tool_turn_closed" });
   const replacement = register(broker, [fn("read")]);
   assert.notEqual(replacement.token, first.token);
-  broker.finish(replacement.token);
+  finish(broker, replacement.token);
   const live = broker.invoke(other.token, { wireName: "read" });
   const [call] = broker.takeCalls(other.token);
   broker.complete(other.token, [output(call, "other result")]);
   await live;
-  broker.finish(other.token);
+  finish(broker, other.token);
 });
 
 test("MCP cancellation or timeout retires the whole capability without late dispatch", async () => {
@@ -237,7 +237,7 @@ test("an aborted observer only detaches its wait and does not cancel the browser
   const [call] = await broker.waitForCalls(token);
   broker.complete(token, [output(call, "resumed")]);
   await result;
-  broker.finish(token);
+  finish(broker, token);
 });
 
 test("invalid invocation shapes cannot queue tools, and tool lists are isolated snapshots", async () => {
@@ -253,5 +253,70 @@ test("invalid invocation shapes cannot queue tools, and tool lists are isolated 
   ]) await assert.rejects(broker.invoke(token, payload));
   assert.deepEqual(broker.takeCalls(token), []);
   assert.throws(() => register(broker, [fn("read")]), { code: "web_tool_turn_active" });
-  broker.finish(token);
+  finish(broker, token);
+});
+
+test("completion fences reject activity that starts and settles during a browser observation", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [fn("read")]);
+  const before = broker.beginCompletion(token);
+  assert.equal(typeof before, "number");
+  assert.equal(broker.finish(token), false);
+  const release = broker.beginActivity(token);
+  assert.equal(broker.beginCompletion(token), undefined);
+  assert.equal(broker.finish(token, before), false);
+  release();
+  release();
+  const after = broker.beginCompletion(token);
+  assert.equal(typeof after, "number");
+  assert.notEqual(after, before);
+  assert.equal(broker.finish(token, before), false);
+
+  // Even a rejected direct invocation is new turn activity. It must not make
+  // an older browser observation safe merely because no native call queued.
+  await assert.rejects(broker.invoke(token, { wireName: "undeclared" }), /not declared and allowed/);
+  assert.deepEqual(broker.takeCalls(token), []);
+  assert.notEqual(broker.beginCompletion(token), after);
+  assert.equal(broker.finish(token, after), false);
+  const current = broker.beginCompletion(token);
+  assert.equal(broker.finish(token, current), true);
+  assert.equal(broker.beginCompletion(token), undefined);
+  assert.throws(() => broker.beginActivity(token), { code: "web_tool_turn_closed" });
+  await assert.rejects(broker.invoke(token, { wireName: "read" }), { code: "web_tool_turn_closed" });
+  assert.equal(broker.finish(token, current), true);
+  assert.equal(broker.finish(token, current + 1), false);
+  assert.equal(broker.finish(token), false);
+});
+
+test("native output does not make a completion fence available before invocation settlement", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [fn("read")]);
+  const before = broker.beginCompletion(token);
+  const result = broker.invoke(token, { wireName: "read", arguments: { marker: "exact native call" } });
+  assert.equal(broker.beginCompletion(token), undefined);
+  assert.equal(broker.finish(token, before), false);
+  const [call] = broker.takeCalls(token);
+  broker.complete(token, [output(call, "actual native output")]);
+  assert.deepEqual(broker.takeCalls(token), []);
+  assert.equal(broker.beginCompletion(token), undefined);
+  assert.equal(broker.finish(token, before), false);
+  assert.deepEqual(await result, { content: [{ type: "text", text: "actual native output" }] });
+  assert.equal(broker.finish(token, before), false);
+  assert.equal(finish(broker, token), true);
+});
+
+test("declaration changes invalidate completion and retired activity cannot affect a replacement", () => {
+  const broker = createWebToolBroker();
+  const first = register(broker, [fn("read")]);
+  const before = broker.beginCompletion(first.token);
+  broker.update(first.token, { tools: [fn("write")] });
+  assert.equal(broker.finish(first.token, before), false);
+  const release = broker.beginActivity(first.token);
+  broker.cancel(first.token);
+  const replacement = register(broker, [fn("read")]);
+  const current = broker.beginCompletion(replacement.token);
+  release();
+  assert.equal(broker.beginCompletion(replacement.token), current);
+  assert.equal(broker.finish(first.token, before), false);
+  assert.equal(broker.finish(replacement.token, current), true);
 });

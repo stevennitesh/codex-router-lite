@@ -13,22 +13,31 @@ const fullConversationText = "You've reached the maximum length for this convers
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
 const offered = parameters => [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", parameters }] }];
 const messageId = index => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+const broadReplySelector = '[data-markdown-text-style="assistant-message"]';
+const scopedReplySelector = `[data-chatgpt-selection-message-id] ${broadReplySelector}`;
 
 const domText = value => ({ nodeType: 3, textContent: value });
 function domElement(tag, attributes = {}, ...children) {
   const node = { nodeType: 1, tagName: tag.toUpperCase(), childNodes: children, children: children.filter(child => child.nodeType === 1),
     getAttribute: name => attributes[name] ?? null,
+    setAttribute: (name, value) => { attributes[name] = value; },
     matches(selector) {
       return selector.split(/\s*,\s*/u).some(part => {
+        const parts = part.trim().split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/u);
+        if (parts.length > 1) {
+          const last = parts.pop();
+          return this.matches(last) && Boolean(this.parentElement?.closest(parts.join(" ")));
+        }
         const requiredTag = part.match(/^[A-Za-z][A-Za-z0-9-]*/u)?.[0];
-        const requiredAttributes = Array.from(part.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/gu));
+        const requiredAttributes = Array.from(part.matchAll(/\[([\w-]+)(?:(\^?=)"([^"]*)")?\]/gu));
         return Boolean(requiredTag || requiredAttributes.length) && (!requiredTag || requiredTag.toUpperCase() === this.tagName)
-          && requiredAttributes.every(match => match[2] === undefined ? attributes[match[1]] !== undefined : attributes[match[1]] === match[2]);
+          && requiredAttributes.every(match => match[2] === undefined ? attributes[match[1]] !== undefined
+            : match[2] === "^=" ? attributes[match[1]]?.startsWith(match[3]) : attributes[match[1]] === match[3]);
       });
     },
     closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector) ?? null; },
     classList: { contains: name => (attributes.class ?? "").split(/\s+/).includes(name) },
-    get textContent() { return children.map(child => child.textContent).join(""); },
+    get textContent() { return this.childNodes.map(child => child.textContent).join(""); },
     querySelectorAll(selector) {
       const found = [];
       const visit = candidate => {
@@ -38,7 +47,7 @@ function domElement(tag, attributes = {}, ...children) {
             : candidate.matches(selector)) found.push(candidate);
         candidate.childNodes.forEach(visit);
       };
-      children.forEach(visit);
+      this.childNodes.forEach(visit);
       return found;
     },
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; } };
@@ -91,7 +100,7 @@ test("reply projection preserves distinct wrappers with duplicate IDs and separa
   ]);
 });
 
-test("invalid identity diagnostics bound structure and redact custom names, attribute values, reply IDs and text", () => {
+test("invalid identity diagnostics contain only a fixed reason and integer counts without private DOM data", () => {
   const privateValue = "PRIVATE_TOKEN_path_https://private.invalid/value";
   const elements = Array.from({ length: 30 }, () => {
     const element = domElement("private-secret-tag", { class: privateValue, id: privateValue, "data-testid": privateValue,
@@ -105,37 +114,14 @@ test("invalid identity diagnostics bound structure and redact custom names, attr
   assert.equal(diagnostic.selectedElementCount, 30);
   assert.equal(diagnostic.messageCount, 30);
   assert.equal(diagnostic.missingWrapperCount, 30);
-  assert.equal(diagnostic.omittedRowCount, 28);
-  assert.equal(diagnostic.sampledRows.length, 2);
-  assert.equal(diagnostic.sampledRows[0].ancestors.length, 6);
-  assert.equal(diagnostic.sampledRows[0].ancestors[0].tag, "other");
-  assert.deepEqual(diagnostic.sampledRows[0].ancestors[0].attributes, ["data-testid", "class", "id"]);
+  for (const [name, value] of Object.entries(diagnostic)) if (name !== "reason") assert.equal(Number.isSafeInteger(value), true);
   const serialized = JSON.stringify(diagnostic);
-  assert.ok(serialized.length < 3500);
+  assert.ok(serialized.length < 512);
   assert.doesNotMatch(serialized, /PRIVATE_TOKEN|private-secret|private\.invalid/u);
   assert.equal(replies.filter(reply => reply.identityDiagnostic).length, 1);
   const valid = domElement("div", {}, domText(privateValue));
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, valid);
   assert.deepEqual(readBrowserReplies([valid]), [{ messageId: messageId(0), text: privateValue }]);
-});
-
-test("duplicate diagnostics distinguish wrapper containment and shared ancestor objects without exposing marker values", () => {
-  const secret = "PRIVATE_MARKER_VALUE";
-  const selected = Array.from({ length: 4 }, () => domElement("div", {}, domText(secret)));
-  const wrappers = selected.map((element, index) => domElement("div", { "data-chatgpt-selection-message-id": messageId(Math.floor(index / 2)) }, element));
-  const firstSearch = domElement("div", { "data-content-search-unit-key": secret }, wrappers[0]);
-  const secondSearch = domElement("div", { "data-content-search-unit-key": secret }, wrappers[1]);
-  const nested = domElement("div", { "data-content-search-unit-key": secret }, wrappers[2]);
-  wrappers[2].childNodes.push(wrappers[3]); wrappers[3].parentElement = wrappers[2];
-  domElement("section", { "data-talvt-turn-state": secret }, firstSearch, secondSearch, nested);
-  const diagnostic = readBrowserReplies(selected)[0].identityDiagnostic;
-  assert.deepEqual([diagnostic.duplicateIdCount, diagnostic.duplicateWrapperCount, diagnostic.missingWrapperCount], [2, 4, 0]);
-  assert.deepEqual(diagnostic.duplicatePairs, [
-    { rows: [0, 1], containment: [0, 0], turnAncestorClasses: [1, 1], searchUnitAncestorClasses: [1, 2] },
-    { rows: [2, 3], containment: [1, 0], turnAncestorClasses: [1, 1], searchUnitAncestorClasses: [3, 3] },
-  ]);
-  const serialized = JSON.stringify(diagnostic);
-  assert.doesNotMatch(serialized, /PRIVATE_MARKER_VALUE|00000000-0000-4000/u);
 });
 
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
@@ -196,7 +182,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     familyText: "GPT-6", familyClicks: 0, sendEnabled: true, waitedMs: 0,
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
-    tabId: "owned-tab", navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0 };
+    tabId: "owned-tab", navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -251,6 +237,9 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ui.sendClicks += 1;
         ui.normalHeadingVisible = false;
         if (!ui.deferSavedUrl) ui.url = "https://chatgpt.com/c/owned-conversation";
+        ui.userMessages.push({ messageId: messageId(1000 + ui.sendClicks), text: ui.composerText,
+          baselineIds: ui.replyElements ? ui.replyElements.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
+            : ui.texts.map((_, index) => ui.replyIds?.[index] ?? messageId(index)) });
         ui.composerText = "";
         ui.onSend?.();
         if (ui.sendFailure) throw new Error("Send effect uncertain");
@@ -287,6 +276,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       ui.typed.push(text); ui.composerText += text;
       if (ui.draftCleared) { ui.sendEnabled = true; ui.draftCleared = false; }
       if (ui.stripChip) ui.chip = false;
+      ui.onType?.(text);
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
@@ -310,13 +300,49 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           "app-mention-path": `app://${plugin.pluginAppId}`, contenteditable: "false" }, domText(plugin.pluginName)));
         return callback([ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
       }
-      assert.equal(name, '[data-markdown-text-style="assistant-message"]');
       ui.replyReads += 1;
-      return callback(ui.replyElements ?? ui.texts.map((value, index) => {
-        const node = typeof value === "string" ? domElement("div", {}, domText(value)) : value;
+      const replies = ui.replyElements ?? ui.texts.map((value, index) => {
+        const node = typeof value === "string" ? domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(value)) : value;
         domElement("div", { "data-chatgpt-selection-message-id": ui.replyIds ? ui.replyIds[index] : messageId(index) }, node);
         return node;
-      }));
+      });
+      if (name.startsWith('[data-turn-key],')) {
+        const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
+        let precedingUser;
+        for (const user of ui.userMessages) {
+          let boundary = -1;
+          for (let index = 0; index < all.length; index += 1) if (user.baselineIds.includes(all[index].getAttribute('data-chatgpt-selection-message-id'))) boundary = index;
+          boundary = Math.max(boundary, all.indexOf(precedingUser));
+          precedingUser = domElement("div", { 'data-turn-key': user.messageId },
+            domElement("h4", {}, domText("You said:")), domElement("div", {}, domText(user.text)));
+          all.splice(boundary + 1, 0, precedingUser);
+        }
+        const turns = [];
+        let currentTurn = domElement("section", { 'data-turn-key': messageId(900) });
+        for (const element of all) {
+          if (element.matches('[data-turn-key]')) {
+            if (currentTurn.childNodes.length) turns.push(currentTurn);
+            currentTurn = element;
+          } else {
+            currentTurn.childNodes.push(element); currentTurn.children.push(element); element.parentElement = currentTurn;
+          }
+        }
+        if (currentTurn.childNodes.length) turns.push(currentTurn);
+        for (const [index, turn] of turns.entries()) {
+          const complete = index < turns.length - 1 || ui.complete;
+          const content = domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' }, ...turn.childNodes,
+            ...(complete ? [domElement('button', { 'aria-label': 'Regenerate response' })] : []));
+          turn.childNodes = [content]; turn.children = [content]; content.parentElement = turn;
+        }
+        const root = ui.messageRoot ?? domElement("main", {}, ...(ui.orphanMarkdownBefore ?? []), ...turns, ...(ui.orphanMarkdownAfter ?? []));
+        // Hand-built fragments in existing fixtures represent the selected
+        // markdown roots. Give them the observed marker before querying.
+        for (const element of replies) if (!element.matches(broadReplySelector)) {
+          element.setAttribute('data-markdown-text-style', 'assistant-message');
+        }
+        return callback(root.querySelectorAll(name), argument);
+      }
+      assert.fail(`Unobserved selector: ${name}`);
     },
   });
   const tab = { get id() { return ui.tabId; }, url: async () => ui.url ?? "https://chatgpt.com/", goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
@@ -386,6 +412,36 @@ function showFullConversation(ui) {
   ui.fullBanners = [{ text: fullConversationText }];
   ui.fullButtons = [{ text: "Start new chat" }];
 }
+
+function assistantMessage(index, text, attributes = {}) {
+  const markdown = domElement('div', { 'data-markdown-text-style': 'assistant-message', ...attributes }, domText(text));
+  return domElement('div', { 'data-chatgpt-selection-message-id': messageId(index) }, markdown);
+}
+
+function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false } = {}) {
+  const action = domElement('button', { 'aria-label': 'Regenerate response' });
+  return domElement('section', { 'data-turn-key': key }, domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' },
+    domElement('h4', {}, domText('You said:')), domElement('div', {}, domText(prompt)),
+    ...(actionFirst ? [action] : []), ...content, ...(!actionFirst && complete ? [action] : [])));
+}
+
+test("generation snapshots return only a marker match and do not read prior prompt text during observation", () => {
+  const privatePrompt = 'PRIVATE_USER_TRANSCRIPT';
+  const marker = 'Router generation: native-turn';
+  const turn = observedTurn(messageId(100), privatePrompt, [assistantMessage(20, 'Public answer')]);
+  const root = domElement('main', {}, turn);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  let promptReads = 0;
+  Object.defineProperty(turn, 'textContent', { get() { promptReads += 1; return `${privatePrompt}\n${marker}`; } });
+  const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
+  const observation = readBrowserReplies(selected, options);
+  assert.equal(promptReads, 0);
+  assert.equal(observation.turns[0].matchesGenerationMarker, false);
+  const confirmation = readBrowserReplies(selected, { ...options, generationMarker: marker });
+  assert.equal(promptReads, 1);
+  assert.equal(confirmation.turns[0].matchesGenerationMarker, true);
+  assert.doesNotMatch(JSON.stringify([observation, confirmation]), /PRIVATE_USER_TRANSCRIPT|Router generation/);
+});
 
 test("generated bootstrap reads the current session browser and opens a verified empty normal home", async () => {
   const f = fixture();
@@ -494,7 +550,7 @@ test("sending preserves the plugin chip, treats prompt as data, and refuses unce
   const prompt = 'User content: ` ${throwSomething()} "; await malicious(); //\nNext line';
   f.ui.sendFailure = true;
   await assert.rejects(f.run("send", { ...plugin, prompt }), /effect uncertain/);
-  assert.deepEqual(f.ui.typed, [` ${prompt}`]);
+  assert.deepEqual(f.ui.typed, [` ${prompt}`, `\nRouter generation: ${base.turnId}`]);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.chip, true);
   await assert.rejects(f.run("send", { ...plugin, prompt }), /cannot be replayed/);
@@ -510,7 +566,7 @@ test("typing that removes the required app chip cannot trigger Send", async () =
   assert.equal(f.ui.sendClicks, 0);
 });
 
-test("a long paste waits for Send readiness and performs one typing action and one actual Send", async () => {
+test("a long paste waits for Send readiness, types its payload and short marker once, and sends once", async () => {
   const f = fixture({ fastTimers: true });
   await f.ready();
   f.ui.sendEnabled = false;
@@ -519,10 +575,37 @@ test("a long paste waits for Send readiness and performs one typing action and o
   const result = await f.run("send", { ...plugin, prompt });
   assert.equal(result.sent, true);
   assert.equal(f.ui.waitedMs, 300);
-  assert.deepEqual(f.ui.typed, [` ${prompt}`]);
+  assert.deepEqual(f.ui.typed, [` ${prompt}`, `\nRouter generation: ${base.turnId}`]);
   assert.equal(f.ui.sendClicks, 1);
   await assert.rejects(f.run("send", { ...plugin, prompt }), /cannot be replayed/);
   assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a settled pasted attachment keeps the short generation marker visible and cannot replay Send", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  const prompt = 'Full native context\n'.repeat(4000);
+  f.ui.sendEnabled = false;
+  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
+  const sent = await f.run('send', { ...plugin, prompt });
+  assert.equal(sent.sent, true);
+  assert.deepEqual(f.ui.typed, [` ${prompt}`, `\nRouter generation: ${base.turnId}`]);
+  assert.equal(f.ui.userMessages[0].text, `\nRouter generation: ${base.turnId}`);
+  assert.equal(typeof sent.generationTurnKey, 'string');
+  await assert.rejects(f.run('send', { ...plugin, prompt }), /cannot be replayed/);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a changed draft while bulk paste or the short marker settles prevents Send", async () => {
+  for (const markerPhase of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.sendEnabled = markerPhase;
+    f.ui.onType = text => { if (markerPhase && text.startsWith('\nRouter generation:')) f.ui.sendEnabled = false; };
+    f.ui.onWait = () => { f.ui.composerText += ' Foreign draft'; f.ui.sendEnabled = true; };
+    await assert.rejects(f.run('send', { ...plugin, prompt: 'Request' }), /draft changed/);
+    assert.equal(f.ui.sendClicks, 0);
+    assert.equal(f.ui.typed.length, markerPhase ? 2 : 1);
+    await assert.rejects(f.run('send', { ...plugin, prompt: 'Request' }), /cannot be replayed/);
+  }
 });
 
 test("Send waits within its existing budget for one saved URL before confirming persistence", async () => {
@@ -535,7 +618,7 @@ test("Send waits within its existing budget for one saved URL before confirming 
   assert.equal(sent.url, "https://chatgpt.com/c/owned-conversation");
   assert.equal(f.ui.waitedMs, 300);
   assert.equal(f.ui.sendClicks, 1);
-  assert.equal(f.ui.typed.length, 1);
+  assert.equal(f.ui.typed.length, 2);
   assert.equal(f.getState().sendConfirmed, true);
 });
 
@@ -1020,7 +1103,29 @@ test("fragmented markdown in one message completes once with the full prose and 
   assert.equal(f.ui.newTabs, 1);
 });
 
-test("a proven current reply keeps its identity across missing mounts and rejects a replacement with identical text", async () => {
+test("orphan markdown widgets before and after saved messages do not enter the Send baseline or current answer", async () => {
+  const f = fixture(); await f.ready();
+  const widget = text => {
+    const node = domElement("div", {}, domText(text));
+    domElement("span", {}, domElement("span", {}, node));
+    return node;
+  };
+  f.ui.texts.push("Earlier answer");
+  f.ui.orphanMarkdownBefore = [widget("Tool widget before the message")];
+  f.ui.orphanMarkdownAfter = [widget("Tool widget after the message")];
+  const sent = await f.run("send", { ...plugin, prompt: "Read the actual message" });
+  assert.equal(sent.baselineReplyCount, 1);
+  f.ui.texts.push("The exact final answer."); f.ui.complete = true;
+  const observed = await f.run("observe", { observeIterations: 1 });
+  assert.deepEqual([observed.completed, observed.replyCount, observed.assistantText], [true, 2, "The exact final answer."]);
+  await f.run("retain");
+  const continued = await f.run("continue", { turnId: "next-turn" });
+  assert.equal(continued.assistantText, "The exact final answer.");
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1);
+});
+
+test("one Send permits a later assistant message identity while retaining all generation-owned identities", async () => {
   const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Same partial text"); f.ui.stop = true;
@@ -1030,11 +1135,124 @@ test("a proven current reply keeps its identity across missing mounts and reject
   assert.equal((await f.run("observe", { observeIterations: 1 })).replyId, null);
   f.ui.replyIds = [messageId(1)]; f.ui.stop = false; f.ui.complete = true;
   const replacement = await f.run("observe", { observeIterations: 1 });
-  assert.deepEqual([replacement.replyId, replacement.assistantText, replacement.completed], [null, "", false]);
-  assert.equal(replacement.replyUnavailableReason, "latched-message-no-longer-latest");
+  assert.deepEqual([replacement.replyId, replacement.assistantText, replacement.completed], [messageId(1), "Same partial text", true]);
+  assert.deepEqual(replacement.generationReplyIds, [messageId(0), messageId(1)]);
   f.ui.replyIds = [messageId(0)];
   assert.equal((await f.run("observe", { observeIterations: 1 })).completed, true);
   assert.equal(f.ui.sendClicks, 1);
+});
+
+test("one prompt-owned generation spans commentary, multiple tools and a different final message", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token_123 unchanged. Request' });
+  const key = sent.generationTurnKey;
+  const commentary = assistantMessage(20, 'I will inspect the file.');
+  const firstStatus = domElement('div', { 'data-streaming-response-status': 'true' });
+  f.ui.messageRoot = domElement('main', {}, observedTurn(key, 'Request', [commentary, firstStatus], { complete: false }));
+  f.ui.stop = true;
+  const beforeTool = await f.run('observe', { observeIterations: 1 });
+  assert.deepEqual([beforeTool.replyId, beforeTool.assistantText, beforeTool.completed], [messageId(20), '', false]);
+  const middle = assistantMessage(21, 'The measured result is 4.');
+  const secondStatus = domElement('div', { 'data-streaming-response-status': 'true' });
+  const final = assistantMessage(22, 'Verified final result: 4.');
+  const reasoning = domElement('div', { 'data-testid': 'cot-v5-summary' }, assistantMessage(23, 'Private reasoning is not the answer.'));
+  f.ui.messageRoot = domElement('main', {}, observedTurn(key, 'Request', [commentary, firstStatus, middle, secondStatus, final, reasoning]));
+  f.ui.stop = false; f.ui.complete = true;
+  const completed = await f.run('observe', { observeIterations: 1 });
+  assert.deepEqual([completed.replyId, completed.assistantText, completed.completed], [messageId(22), 'Verified final result: 4.', true]);
+  assert.deepEqual(completed.generationReplyIds, [20, 21, 22, 23].map(messageId));
+  const retained = await f.run('retain');
+  assert.equal(retained.assistantText, completed.assistantText);
+  await f.run('continue', { turnId: 'following-turn' });
+  assert.deepEqual(f.getState().baselineReplyIds, [20, 21, 22, 23].map(messageId));
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("the first status boundary preserves an answer chunk between later tool statuses", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run('send', { ...plugin, prompt: 'Request' });
+  f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [
+    assistantMessage(20, 'Prior commentary'), domElement('div', { 'data-streaming-response-status': 'true' }),
+    assistantMessage(21, 'Answer between two tool calls.'), domElement('div', { 'data-streaming-response-status': 'true' }),
+  ]));
+  f.ui.complete = true;
+  const observed = await f.run('observe', { observeIterations: 1 });
+  assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [messageId(21), 'Answer between two tool calls.', true]);
+});
+
+test("an unseen old reply remount cannot become a current answer and old controls cannot complete it", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run('send', { ...plugin, prompt: 'Current unique request' });
+  f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Old request', [assistantMessage(99, 'Old answer remounted')]),
+    observedTurn(sent.generationTurnKey, 'Current unique request', [], { complete: false }));
+  f.ui.complete = true;
+  const observed = await f.run('observe', { observeIterations: 1 });
+  assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.statusComplete], [null, '', false, false]);
+  assert.equal(observed.replyUnavailableReason, 'no-new-message');
+  assert.deepEqual(observed.generationReplyIds, []);
+});
+
+test("a duplicate generation key or a later foreign turn cannot supply the final answer", async () => {
+  for (const duplicate of [true, false]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run('send', { ...plugin, prompt: 'Request' });
+    f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(10, 'Owned answer')]),
+      observedTurn(duplicate ? sent.generationTurnKey : messageId(701), 'Different request', [assistantMessage(11, 'Other answer')]));
+    f.ui.complete = true;
+    const observed = await f.run('observe', { observeIterations: 1 });
+    assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [null, '', false]);
+    assert.equal(observed.replyUnavailableReason, duplicate ? 'duplicate-generation-turn' : 'generation-turn-not-latest');
+  }
+});
+
+test("Send cannot confirm an old remounted turn without this turn's short marker or replay its uncertain effect", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onSend = () => { f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Use turn_token previous_token unchanged. Request', [assistantMessage(99, 'Old answer')])); };
+  await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /unique prompt-owned turn/);
+  assert.equal(f.getState().sendConfirmed, false);
+  await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /already attempted/);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("completion requires the owned action after the answer and retain reads the current generation again", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run('send', { ...plugin, prompt: 'Request' });
+  f.ui.complete = true;
+  f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer')], { actionFirst: true }));
+  assert.equal((await f.run('observe', { observeIterations: 1 })).completed, false);
+  f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer')]));
+  assert.equal((await f.run('observe', { observeIterations: 1 })).completed, true);
+  f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [assistantMessage(20, 'Answer'), assistantMessage(21, 'New final answer')]));
+  const retained = await f.run('retain');
+  assert.deepEqual([retained.replyId, retained.assistantText, retained.completed], [messageId(21), 'New final answer', true]);
+});
+
+test("interrupted anchored recovery stops the exact tab and accepts a later final identity with or without the partial mounted", async () => {
+  for (const [partialMounted, retainedTabOnly] of [[true, true], [false, true], [true, false], [false, false]]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run('send', { ...plugin, prompt: 'Request' });
+    const commentary = assistantMessage(20, 'Checking the file.');
+    const status = domElement('div', { 'data-streaming-response-status': 'true' });
+    const partial = assistantMessage(21, 'Partial final');
+    f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [commentary, status, partial], { complete: false }));
+    f.ui.stop = true;
+    const observed = await f.run('observe', { observeIterations: 1 });
+    const recovery = { tabId: observed.tabId, url: observed.url, baselineReplyCount: observed.baselineReplyCount,
+      baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
+      generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
+      assistantPrefix: assistantPrefix(observed.assistantText), completed: false, ...(retainedTabOnly ? { retainedTabOnly: true } : {}) };
+    f.loseBinding();
+    f.ui.messageRoot = domElement('main', {}, observedTurn(sent.generationTurnKey, 'Request', [commentary, status,
+      ...(partialMounted ? [partial] : []), assistantMessage(22, 'Later verified final')], { complete: false }));
+    const continued = await f.run('continue', { turnId: 'following-turn', tabId: recovery.tabId,
+      interruptedTurnId: base.turnId, recovery });
+    assert.equal(continued.assistantText, 'Later verified final');
+    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.getState().baselineReplyIds, [20, 21, 22].map(messageId));
+    assert.equal(f.activeTurn().turnId, 'following-turn');
+  }
 });
 
 test("a proven reply unmounted before continuation remains old when it remounts after the next Send", async () => {
@@ -1059,8 +1277,8 @@ test("a proven reply unmounted before continuation remains old when it remounts 
 test("old, missing, duplicate or ambiguous reply identities cannot supply an answer even with completion controls", async () => {
   for (const [ids, reason] of [
     [[0, 1, 2], "no-new-message"], [[0, 1, null], "missing-message-identity"],
-    [[0, 3, 3], "duplicate-message-identity"], [[0, 3, 4], "multiple-new-messages"],
-    [[3, 1, 2], "new-message-not-latest"], [[0, 1, "invalid"], "invalid-message-identity"],
+    [[0, 3, 3], "duplicate-message-identity"],
+    [[3, 1, 2], "no-new-message"], [[0, 1, "invalid"], "invalid-message-identity"],
   ]) {
     const f = fixture(); await f.ready();
     f.ui.texts = ["Old one", "Old two", "Old three"];
@@ -1094,7 +1312,7 @@ test("continuation reports one sanitized bounded identity diagnostic before anot
     }, element);
     f.ui.replyElements = elements;
     const owner = f.activeTurn();
-    await assert.rejects(f.run("continue", { turnId: "next-turn" }), error => {
+    await assert.rejects(f.run("continue", { turnId: "next-turn", ...(kind === "missing-wrapper" ? { ui: { assistantFinalReplySelector: broadReplySelector } } : {}) }), error => {
       const marker = " ROUTER_WEB_REPLY_IDENTITY_DIAGNOSTIC ";
       assert.match(error.message, /^The retained conversation has missing or ambiguous assistant message identities\./u);
       const diagnostic = JSON.parse(error.message.split(marker)[1]);
@@ -1496,6 +1714,31 @@ test("cancel stops and retains the exact owned tab, and a lost tab fails continu
   assert.equal(f.ui.newTabs, 1);
 });
 
+test("Stop cannot act on another saved conversation in the same owned tab, including navigation during visibility observation", async () => {
+  for (const duringVisibility of [false, true]) {
+    const f = fixture(); await f.ready();
+    await f.run('send', { ...plugin, prompt: 'Request' });
+    f.ui.stop = true;
+    const owner = f.activeTurn();
+    if (duringVisibility) {
+      const getByRole = f.tab.playwright.getByRole;
+      f.tab.playwright.getByRole = (kind, options) => {
+        const locator = getByRole(kind, options);
+        if (kind === 'button' && options.name === 'Stop') {
+          const isVisible = locator.isVisible;
+          locator.isVisible = async () => { const visible = await isVisible(); f.ui.url = 'https://chatgpt.com/c/another-conversation'; return visible; };
+        }
+        return locator;
+      };
+    } else f.ui.url = 'https://chatgpt.com/c/another-conversation';
+    await assert.rejects(f.run('cancel'), /saved chat URL changed/);
+    assert.equal(f.ui.stopClicks, 0);
+    assert.equal(f.ui.stop, true);
+    assert.equal(f.ui.closeCount, 0);
+    assert.equal(f.activeTurn(), owner);
+  }
+});
+
 test("interrupted continuation stops the preceding native owner and starts a new turn in the same saved chat", async () => {
   const f = fixture();
   await f.ready();
@@ -1575,7 +1818,7 @@ test("interrupted continuation clears an ordinary unsent draft before the new tu
   assert.equal(f.ui.chip, false, "Clearing the owned draft can remove its chip; the normal attach stage restores it.");
   await f.run("attach", { ...plugin, turnId: "next-turn" });
   await f.run("send", { ...plugin, prompt: "Current request", turnId: "next-turn" });
-  assert.deepEqual(f.ui.typed, [" Abandoned draft", " Current request"]);
+  assert.deepEqual(f.ui.typed, [" Abandoned draft", " Current request", "\nRouter generation: next-turn"]);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.closeCount, 0);

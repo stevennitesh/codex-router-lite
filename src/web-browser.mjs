@@ -92,7 +92,7 @@ const defaultUi = {
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
   composerName: "Ask ChatGPT", normalHeadingName: "Ready when you are.", temporaryButtonName: "Temporary chat",
   temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
-  assistantFinalReplySelector: '[data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
+  assistantFinalReplySelector: '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
   stopButtonExactName: "Stop", responseCompleteStatusText: "Response complete", regenerateButtonExactName: "Regenerate response",
   conversationFullText: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.",
   startNewChatButtonName: "Start new chat",
@@ -102,7 +102,18 @@ const defaultUi = {
 // locator.evaluateAll API. Code source excludes the renderer's toolbar and uses
 // logical lines rather than layout-derived wrapping. The observed message wrapper
 // identity and its text come from the same DOM read.
-export function readBrowserReplies(elements) {
+export function readBrowserReplies(elements, options) {
+  const wrapperSelector = '[data-chatgpt-selection-message-id]';
+  const turns = options?.snapshot ? elements.filter(element => element.matches('[data-turn-key]')) : [];
+  const selectedElements = options?.snapshot ? elements.filter(element => element.matches(options.assistantSelector)) : elements;
+  const turnOrders = new Map();
+  const turnOrder = turn => {
+    if (!turnOrders.has(turn)) {
+      const ordered = Array.from(turn.querySelectorAll(`${options?.assistantSelector ?? '[data-markdown-text-style="assistant-message"]'},[data-streaming-response-status],[aria-label]`));
+      turnOrders.set(turn, new Map(ordered.map((element, index) => [element, index])));
+    }
+    return turnOrders.get(turn);
+  };
   const codeBlock = node => node.nodeType === 1 && (node.tagName === "PRE" || node.getAttribute("data-markdown-copy") === "code-block");
   const block = node => node.nodeType === 1 && (codeBlock(node) || /^(?:DIV|P|BLOCKQUOTE|H[1-6]|UL|OL|LI|TABLE|TR)$/.test(node.tagName));
   const paragraph = node => codeBlock(node) || node.nodeType === 1 && /^(?:P|BLOCKQUOTE|H[1-6])$/.test(node.tagName);
@@ -132,23 +143,30 @@ export function readBrowserReplies(elements) {
     }
     return text;
   };
-  const wrapperSelector = '[data-chatgpt-selection-message-id]';
-  const selected = new Set(elements), messages = new Map();
+  const selected = new Set(selectedElements), messages = new Map();
   // evaluateAll supplies document order. Multiple selected markdown fragments
   // can belong to one message; distinct wrappers with the same ID stay distinct
   // so the caller can reject that ambiguous identity.
-  for (const element of elements) {
+  for (const element of selectedElements) {
     const wrapper = element.closest(wrapperSelector);
     let ancestor = element.parentElement;
     while (ancestor && !(selected.has(ancestor) && ancestor.closest(wrapperSelector) === wrapper)) ancestor = ancestor.parentElement;
     if (ancestor) continue; // Its selected ancestor already includes this text.
     const key = wrapper ?? element;
-    if (!messages.has(key)) messages.set(key, { wrapper, element, fragmentCount: 0,
+    if (!messages.has(key)) messages.set(key, { wrapper, answerRoots: [],
       reply: { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" } });
-    const message = messages.get(key), text = read(element);
+    const message = messages.get(key);
+    // Status and reasoning roots use the same markdown renderer as answers.
+    // The first status boundary preserves answer chunks between later tools.
+    const turn = wrapper?.closest('[data-turn-key]');
+    const firstStatus = turn?.querySelector('[data-streaming-response-status]');
+    const order = turn ? turnOrder(turn) : null;
+    const commentary = element.closest('[data-streaming-response-status],[data-testid^="cot-v5"]')
+      || firstStatus && order.has(element) && order.has(firstStatus) && order.get(element) < order.get(firstStatus);
+    const text = commentary ? "" : read(element);
+    if (!commentary) message.answerRoots.push(element);
     if (message.reply.text && text) message.reply.text += "\n\n";
     message.reply.text += text;
-    message.fragmentCount += 1;
   }
   const groups = [...messages.values()], replies = groups.map(group => group.reply);
   const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -163,59 +181,37 @@ export function readBrowserReplies(elements) {
   const duplicates = [...identities.values()].filter(indices => indices.length > 1);
   for (const indices of duplicates) for (const index of indices) reasons[index] = "duplicate-wrapper-id";
   const invalid = reasons.flatMap((reason, index) => reason ? [index] : []);
-  if (!invalid.length) return replies;
-  // Only fixed structural names and transient numeric classes leave this DOM
-  // read. Attribute values, custom names, reply IDs and text are never diagnostics.
-  const tags = new Set(["DIV", "P", "SPAN", "ARTICLE", "SECTION", "MAIN", "ASIDE", "DETAILS", "SUMMARY", "PRE", "CODE",
-    "BUTTON", "UL", "OL", "LI", "TABLE", "TR", "TD", "H1", "H2", "H3", "H4", "H5", "H6", "BODY", "HTML"]);
-  const attributes = ["data-chatgpt-selection-message-id", "data-talvt-turn-state", "data-content-search-unit-key",
-    "data-markdown-text-style", "data-markdown-copy", "data-message-author-role", "data-testid", "role", "class", "id", "aria-hidden", "contenteditable"];
-  const ancestors = element => {
-    const result = [];
-    for (let current = element; current && result.length < 6; current = current.parentElement) result.push({
-      tag: tags.has(current.tagName) ? current.tagName : "other",
-      attributes: attributes.filter(name => current.getAttribute(name) !== null).slice(0, 4),
-    });
-    return result;
+  const result = () => {
+    if (!options?.snapshot) return replies;
+    for (const group of groups) {
+      const turn = group.wrapper?.closest('[data-turn-key]');
+      group.reply.turnKey = turn?.getAttribute('data-turn-key') ?? null;
+      group.reply.answer = group.answerRoots.length > 0;
+      const finalRoot = group.answerRoots.at(-1);
+      const order = turn ? turnOrder(turn) : null;
+      group.reply.completionActionAfter = Boolean(finalRoot && turn && Array.from(turn.querySelectorAll('[aria-label]'))
+        .some(action => action.getAttribute('aria-label') === options.regenerateName
+          && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
+    }
+    return { replies, turns: turns.map(turn => {
+      const states = Array.from(turn.querySelectorAll('[data-talvt-turn-state]'));
+      return { turnKey: turn.getAttribute('data-turn-key'),
+        matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
+        complete: states.length === 1 && states[0].getAttribute('data-talvt-turn-state') === 'complete' };
+    }) };
   };
-  const classes = [new Map(), new Map()];
-  const ancestorClass = (wrapper, selector, map) => {
-    const ancestor = wrapper.closest(selector);
-    if (!ancestor) return null;
-    if (!map.has(ancestor)) map.set(ancestor, map.size + 1);
-    return map.get(ancestor);
-  };
-  const contains = (parent, child) => {
-    for (let current = child.parentElement; current; current = current.parentElement) if (current === parent) return 1;
-    return 0;
-  };
-  const duplicatePairs = [];
-  for (const indices of duplicates) for (const index of indices.slice(1)) {
-    if (duplicatePairs.length === 2) break;
-    const rows = [indices[0], index], wrappers = rows.map(row => groups[row].wrapper);
-    duplicatePairs.push({ rows, containment: [contains(wrappers[0], wrappers[1]), contains(wrappers[1], wrappers[0])],
-      turnAncestorClasses: wrappers.map(wrapper => ancestorClass(wrapper, '[data-talvt-turn-state]', classes[0])),
-      searchUnitAncestorClasses: wrappers.map(wrapper => ancestorClass(wrapper, '[data-content-search-unit-key]', classes[1])) });
-  }
+  if (!invalid.length) return result();
   const distinctReasons = new Set(invalid.map(index => reasons[index]));
+  // Fixed reasons and counts remain useful without retaining any DOM structure,
+  // reply identity, attribute value or assistant text in an error.
   const diagnostic = { reason: distinctReasons.size === 1 ? reasons[invalid[0]] : "mixed-invalid-identities",
-    selectedElementCount: elements.length, messageCount: groups.length,
+    selectedElementCount: selectedElements.length, messageCount: groups.length,
     missingWrapperCount: reasons.filter(reason => reason === "missing-wrapper").length,
     invalidWrapperIdCount: reasons.filter(reason => reason === "invalid-wrapper-id").length,
     duplicateWrapperCount: reasons.filter(reason => reason === "duplicate-wrapper-id").length,
-    duplicateIdCount: duplicates.length,
-    sampledRows: invalid.slice(0, 2).map(index => ({ row: index, reason: reasons[index], fragmentCount: groups[index].fragmentCount,
-      ancestors: ancestors(groups[index].element) })), duplicatePairs,
-    omittedRowCount: Math.max(0, invalid.length - 2),
-    omittedDuplicatePairCount: duplicates.reduce((count, indices) => count + indices.length - 1, 0) - duplicatePairs.length };
-  // Drop whole structural samples rather than slicing JSON or risking an
-  // unbounded native error. All emitted strings are fixed ASCII literals.
-  if (JSON.stringify(diagnostic).length > 3500) {
-    diagnostic.sampledRows = [];
-    diagnostic.omittedRowCount = invalid.length;
-  }
+    duplicateIdCount: duplicates.length };
   replies[invalid[0]].identityDiagnostic = diagnostic;
-  return replies;
+  return result();
 }
 
 // This function is serialized into the active native REPL. It uses only public
@@ -235,7 +231,10 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
   };
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const replies = (tab = state.tab) => tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
+  const snapshot = (tab = state.tab, generationMarker) => tab.playwright.locator(`[data-turn-key],${ui.assistantFinalReplySelector}`)
+    .evaluateAll(replyReader, { snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+      ...(generationMarker ? { generationMarker } : {}) }, { timeoutMs: 1000 });
+  const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
       : new Set(values.map(value => value.messageId)).size !== values.length ? "duplicate-message-identity" : undefined;
@@ -248,17 +247,26 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!Array.isArray(state.baselineReplyIds)) return { replyUnavailableReason: "missing-send-baseline" };
     const fresh = values.filter(value => !state.baselineReplyIds.includes(value.messageId));
     const latest = values.at(-1);
-    // Mounted replies can disappear or return as ChatGPT virtualizes history.
-    // Keep the first unambiguous new message identity for the entire Send.
+    if (state.generationTurnKey) {
+      const owned = values.filter(value => value.turnKey === state.generationTurnKey && !state.baselineReplyIds.includes(value.messageId));
+      state.generationReplyIds = [...new Set([...(state.generationReplyIds ?? []), ...owned.map(value => value.messageId)])];
+      if (!owned.length) return { replyUnavailableReason: "no-new-message" };
+      if (owned.at(-1) !== latest) return { replyUnavailableReason: "generation-message-not-latest" };
+      const answer = owned.filter(value => value.answer).at(-1);
+      return answer?.text.trim() ? { reply: answer }
+        : { reply: answer ?? owned.at(-1), replyUnavailableReason: "no-answer-message" };
+    }
+    // Legacy retained proofs have no turn anchor. They may recover only their
+    // exact recorded reply; fresh Sends always establish a turn anchor below.
     if (state.replyId) return latest?.messageId === state.replyId && !state.baselineReplyIds.includes(state.replyId)
-      ? { reply: latest } : { replyUnavailableReason: "latched-message-no-longer-latest" };
+      ? { reply: latest } : { replyUnavailableReason: "recorded-message-no-longer-latest" };
     if (fresh.length === 0) return { replyUnavailableReason: "no-new-message" };
     if (fresh.length > 1) return { replyUnavailableReason: "multiple-new-messages" };
     return fresh[0] === latest ? { reply: latest } : { replyUnavailableReason: "new-message-not-latest" };
   };
   const conversationFull = async () => {
     const outsideMessages = (elements, assistantSelector) => {
-      const excluded = `${assistantSelector},[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input`;
+      const excluded = `${assistantSelector},[data-markdown-text-style="assistant-message"],[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input`;
       return elements.some(element => !element.closest(excluded) && !element.querySelector(excluded));
     };
     const [banner, button] = await Promise.all([
@@ -359,10 +367,16 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   };
   const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
     const current = activeOwner(turnIds, requireActive);
+    const requireSavedUrl = async () => {
+      if (state.savedUrl && await state.tab.url() !== state.savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
+    };
+    await requireSavedUrl();
     const stop = role(current?.stopButtonName ?? ui.stopButtonExactName);
     const visible = await stop.isVisible();
     activeOwner(turnIds, requireActive);
     if (visible) {
+      await requireSavedUrl();
+      activeOwner(turnIds, requireActive);
       await stop.click();
       activeOwner(turnIds, requireActive);
       await stop.waitFor({ state: "hidden", timeoutMs: 10000 });
@@ -387,7 +401,33 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   const resetChat = () => {
     Object.assign(state, { hasSentMessage: false, baselineReplyCount: 0, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false, interrupted: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId", "replyId"]) delete state[key];
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "model", "pluginAppId", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
+  };
+  const observeGeneration = async () => {
+    activeOwner([options.turnId], true);
+    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+    const view = await snapshot(), texts = view.replies;
+    const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
+    const current = state.generationTurnKey && (anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey)
+      ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
+    const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
+    if (reply) state.replyId = reply.messageId;
+    const stopVisible = await role(ui.stopButtonExactName).isVisible();
+    const generation = state.generationTurnKey ? state.tab.playwright.locator(`[data-turn-key="${state.generationTurnKey}"]`) : null;
+    const statuses = generation ? [] : await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
+    const statusComplete = generation ? anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete
+      : statuses.some(text => text.trim() === ui.responseCompleteStatusText);
+    const regenerateVisible = generation ? Boolean(reply?.completionActionAfter) && await generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
+      : await role(ui.regenerateButtonExactName).isVisible();
+    const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
+    const full = await conversationFull();
+    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+    activeOwner([options.turnId], true);
+    return { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
+      ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
+      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
+      generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
+      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
   };
 
   let recovered = false;
@@ -442,31 +482,42 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
     const { createHash } = await import("node:crypto");
     requireRecoveryOwnership();
-    let recoveredReplyId, recoveredBaselineIds;
-    verifyRecoveryTexts = texts => {
-      const latest = texts.at(-1), text = latest?.text;
+    let recoveredReplyId, recoveredBaselineIds, recoveredGenerationIds;
+    verifyRecoveryTexts = view => {
+      const texts = view.replies;
+      const fresh = texts.filter(value => !proof.baselineReplyIds?.includes(value.messageId)
+        && (!proof.generationTurnKey || value.turnKey === proof.generationTurnKey));
+      const latest = proof.generationTurnKey ? fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1) : texts.at(-1), text = latest?.text;
       const expectedReplyId = proof.replyId ?? recoveredReplyId;
       if (!validReplies(texts)) return false;
+      if (proof.generationTurnKey && (view.turns.filter(turn => turn.turnKey === proof.generationTurnKey).length !== 1
+          || view.turns.at(-1)?.turnKey !== proof.generationTurnKey)) return false;
+      const progressing = proof.generationTurnKey && !proof.completed;
       if (proof.retainedTabOnly) {
-        const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId));
-        if (fresh.length > 1 || fresh.length === 1 && fresh[0] !== latest || expectedReplyId && (fresh.length !== 1 || latest?.messageId !== expectedReplyId)) return false;
+        if ((!proof.generationTurnKey && fresh.length > 1) || fresh.length && fresh.at(-1) !== texts.at(-1)
+            || !progressing && expectedReplyId && latest?.messageId !== expectedReplyId) return false;
         if (!fresh.length) {
           recoveredBaselineIds = proof.baselineReplyIds;
           return proof.assistantPrefix.length === 0;
         }
       }
-      if (expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string" || text.length < proof.assistantPrefix.length
-          || createHash("sha256").update(text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256) return false;
+      const recorded = progressing && expectedReplyId ? fresh.find(value => value.messageId === expectedReplyId) : latest;
+      if (!progressing && expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string"
+          || recorded && (recorded.text.length < proof.assistantPrefix.length
+            || createHash("sha256").update(recorded.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256)
+          || !recorded && !progressing) return false;
       recoveredReplyId = latest.messageId;
       recoveredBaselineIds = proof.baselineReplyIds ?? texts.slice(0, -1).map(value => value.messageId);
+      recoveredGenerationIds = [...new Set([...(proof.generationReplyIds ?? []), ...fresh.map(value => value.messageId)])];
       return true;
     };
-    const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await replies(tab));
+    const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await snapshot(tab));
     if (!navigate && (!(await verifiedReply()) || !(await emptyComposer(tab)))) throw new Error("The saved chat reply or composer changed; recovery cannot reuse it.");
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url, baselineReplyCount: proof.baselineReplyCount,
       baselineReplyIds: [...(proof.baselineReplyIds ?? [])], replyId: proof.replyId,
+      ...(proof.generationTurnKey ? { generationTurnKey: proof.generationTurnKey, generationReplyIds: [...(proof.generationReplyIds ?? [])] } : {}),
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
     registerActive();
     await tab.markHandoff();
@@ -482,6 +533,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     }
     state.baselineReplyIds = [...recoveredBaselineIds];
     state.replyId = recoveredReplyId;
+    if (proof.generationTurnKey) state.generationReplyIds = recoveredGenerationIds ?? [...proof.generationReplyIds];
     recovered = true;
   }
 
@@ -544,10 +596,10 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     }
     if (state.closed || !(await normal())) throw new Error("The retained conversation is not ready for continuation.");
     if (await conversationFull()) {
-      const texts = await replies();
+      const view = await snapshot(), texts = view.replies;
       if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
       if (recovered) {
-        if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+        if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
         delete state.bindingLost;
       }
       const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
@@ -565,10 +617,10 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       state.retained = true;
     } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
     if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
-    const texts = await replies();
+    const view = await snapshot(), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
     if (recovered) {
-      if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+      if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
       delete state.bindingLost;
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
@@ -576,9 +628,11 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     const continuationUrl = await state.tab.url();
     if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
     activeOwner(owners, true);
-    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
+    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
     state.baselineReplyCount = texts.length;
     delete state.replyId;
+    delete state.generationTurnKey;
+    delete state.generationReplyIds;
     state.sendAttempted = false;
     state.sendClicked = false;
     state.sendConfirmed = false;
@@ -643,11 +697,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
     const evidence = await modelEvidence(false);
     if (options.pluginAppId && (!(await chip().isVisible()) || state.pluginAppId !== options.pluginAppId)) throw new Error("The configured plugin chip is missing.");
-    const baseline = await replies();
+    const beforeSend = await snapshot(), baseline = beforeSend.replies;
     if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
     state.baselineReplyCount = baseline.length;
-    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
+    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
     delete state.replyId;
+    delete state.generationTurnKey;
+    state.generationReplyIds = [];
     state.sendAttempted = true;
     state.sendClicked = false;
     state.sendConfirmed = false;
@@ -659,16 +715,36 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
     const send = role(ui.sendButtonExactName);
     const sendDeadline = Date.now() + 10000;
-    // Long pastes become an attachment in ChatGPT. Wait for that existing UI
-    // operation to finish without typing again or repeating a Send attempt.
-    while (!(await send.isEnabled())) {
-      const remaining = sendDeadline - Date.now();
-      if (remaining <= 0) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-    }
+    const waitForSend = async () => {
+      while (!(await send.isEnabled())) {
+        const remaining = sendDeadline - Date.now();
+        if (remaining <= 0) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
+        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+      }
+    };
+    // A large paste can become an attachment. Keep a short, nonsecret marker
+    // outside that payload so the confirmed Send owns one observable turn.
+    await waitForSend();
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
     if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+    const settledComposerText = await composer.innerText();
+    if (settledComposerText !== state.unsentComposerText && !(await emptyComposer())) throw new Error("The composer draft changed while the paste settled; nothing sent.");
+    const generationMarker = `\nRouter generation: ${options.turnId}`;
+    state.unsentDraft += generationMarker;
+    await composer.press('End');
+    await composer.type(generationMarker);
+    state.unsentComposerText = await composer.innerText();
+    if (state.unsentComposerText !== settledComposerText + generationMarker) throw new Error("The composer generation marker changed or was transformed; nothing sent.");
+    await waitForSend();
+    if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
+    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+    activeOwner([options.turnId], true);
     await state.tab.markHandoff();
+    activeOwner([options.turnId], true);
+    if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
+    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
     state.sendClicked = true;
     await send.click();
     state.hasSentMessage = true;
@@ -681,43 +757,50 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
     state.savedUrl = confirmedUrl;
     if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
+    const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
+    let anchor;
+    while (!anchor) {
+      const afterSend = await snapshot(state.tab, generationMarker.trim());
+      const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey)
+        && value.matchesGenerationMarker);
+      const latestTurn = afterSend.turns.at(-1);
+      if (candidates.length === 1 && candidates[0] === latestTurn
+          && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
+          && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1) anchor = latestTurn.turnKey;
+      if (anchor) break;
+      const remaining = sendDeadline - Date.now();
+      if (remaining <= 0) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
+      if (!(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+    }
+    state.generationTurnKey = anchor;
     state.sendConfirmed = true;
     delete state.unsentDraft;
     delete state.unsentComposerText;
     for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
     emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
-      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, ...evidence });
+      baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey, ...evidence });
   } else if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     let observation;
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
-      if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-      const texts = await replies();
-      const { reply, replyUnavailableReason } = currentReply(texts), assistantText = reply?.text ?? "";
-      if (reply) state.replyId = reply.messageId;
-      const stopVisible = await role(ui.stopButtonExactName).isVisible();
-      const statuses = await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
-      const statusComplete = statuses.some(text => text.trim() === ui.responseCompleteStatusText);
-      const regenerateVisible = await role(ui.regenerateButtonExactName).isVisible();
-      const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-      const full = await conversationFull();
-      if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-      observation = { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
-        ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
-        baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
-        stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
-      if (completed) state.completed = true;
-      if (completed || full) break;
+      observation = await observeGeneration();
+      state.completed = observation.completed;
+      if (observation.completed || observation.conversationFull) break;
       if (iteration + 1 < options.observeIterations) await new Promise(resolve => setTimeout(resolve, options.observeDelayMs));
     }
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
+    const observation = await observeGeneration();
+    state.completed = observation.completed;
+    if (!observation.completed) throw new Error("Only a currently completed generation can be retained.");
     await state.tab.markHandoff();
+    activeOwner([options.turnId], true);
     state.retained = true;
     // Retain can execute just before native Stop discards its result. Keep the
     // exact owner available until a confirmed handoff or explicit tab close.
-    emit({ retained: true, tabId: state.tabId });
+    emit({ retained: true, ...observation });
   } else if (operation === "cancel") {
     await stopGeneration([options.turnId], true);
     await state.tab.markHandoff();
@@ -756,6 +839,12 @@ export function browserScript(options) {
       && new Set(proof.baselineReplyIds).size === proof.baselineReplyIds.length;
     const validReplyId = typeof proof?.replyId === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.replyId)
       && validBaselineIds && !proof.baselineReplyIds.includes(proof.replyId);
+    const validGeneration = proof?.generationTurnKey === undefined && proof?.generationReplyIds === undefined
+      || typeof proof?.generationTurnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.generationTurnKey)
+        && Array.isArray(proof.generationReplyIds) && validBaselineIds
+        && proof.generationReplyIds.every(id => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(id) && !proof.baselineReplyIds.includes(id))
+        && new Set(proof.generationReplyIds).size === proof.generationReplyIds.length
+        && (proof.replyId === null || proof.generationReplyIds.includes(proof.replyId));
     let url;
     try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
     if (options.operation !== "continue" || !record(proof) || proof.tabId !== undefined && (typeof proof.tabId !== "string" || !proof.tabId)
@@ -766,7 +855,7 @@ export function browserScript(options) {
         || (retainedTabOnly ? !options.interruptedTurnId || !proof.tabId || proof.tabId !== options.tabId || !validBaselineIds
           || proof.completed !== false || proof.replyId !== null && !validReplyId
           : legacyReply ? proof.replyCount <= proof.baselineReplyCount : !validReplyId)
-        || proof.retainedTabOnly !== undefined && !retainedTabOnly
+        || !validGeneration || proof.retainedTabOnly !== undefined && !retainedTabOnly
         || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length < (retainedTabOnly ? 0 : 1)
         || typeof proof.assistantPrefix.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(proof.assistantPrefix.sha256) || typeof proof.completed !== "boolean"
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
