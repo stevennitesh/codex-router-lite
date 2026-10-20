@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import test from "node:test";
-import { setTimeout } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -14,12 +14,32 @@ const finish = (broker, token) => broker.finish(token, broker.beginCompletion(to
 const call = (client, turn, wireName, args = {}) => client.callTool({ name: "codex_tool_call", arguments: { turn_token: turn.token, wire_name: wireName, ...args } });
 
 async function nativeCalls(broker, token) {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
+  let revision = broker.revision(token);
+  for (;;) {
     const calls = broker.takeCalls(token);
     if (calls.length) return calls;
-    await setTimeout(5);
+    const changed = await broker.waitForChange(token, revision, { timeoutMs: 2_000 });
+    assert.equal(changed.closed, false, "MCP turn closed before queueing a native tool call.");
+    assert.notEqual(changed.revision, revision, "MCP did not queue a native tool call.");
+    revision = changed.revision;
   }
-  assert.fail("MCP did not queue a native tool call.");
+}
+
+async function beginObservation(broker, service, token, options = {}) {
+  let subscribed;
+  const ready = new Promise(resolve => { subscribed = resolve; });
+  const wait = broker.waitForChange;
+  broker.waitForChange = (...args) => {
+    const result = wait(...args);
+    subscribed(args[2].signal);
+    return result;
+  };
+  const response = fetch(service.observationUrl(token, broker.revision(token)), options);
+  try {
+    return { response, signal: await ready };
+  } finally {
+    broker.waitForChange = wait;
+  }
 }
 
 async function fixture(t, options = {}) {
@@ -264,4 +284,122 @@ test("SDK invocation keeps completion fenced until its handler returns the actua
   assert.equal(broker.finish(turn.token, before), false);
   assert.equal(broker.finish(turn.token, after), true);
   assert.equal((await call(client, turn, "read")).isError, true);
+});
+
+test("private observation wakes for real MCP discovery and native calls without losing earlier activity", { timeout: 10_000 }, async t => {
+  const { broker, service, connect } = await fixture(t);
+  const turn = register(broker, "observation");
+  const { client } = await connect();
+  const before = broker.revision(turn.token);
+  const discovery = await beginObservation(broker, service, turn.token);
+  const declarations = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+  assert.equal(declarations.structuredContent.tools.length, 1);
+  const discoveryResponse = await discovery.response;
+  assert.equal(discoveryResponse.status, 200);
+  const changed = await discoveryResponse.json();
+  assert.equal(changed.closed, false);
+  assert.ok(changed.revision > before);
+  assert.equal(getEventListeners(discovery.signal, "abort").length, 0);
+
+  // The activity already happened before HTTP subscription. It must still wake.
+  const stale = await fetch(service.observationUrl(turn.token, before));
+  assert.deepEqual(await stale.json(), { revision: broker.revision(turn.token), closed: false });
+  const invocation = await beginObservation(broker, service, turn.token);
+  const nativeResult = call(client, turn, "read", { arguments: { marker: "actual invocation" } });
+  const invoked = await invocation.response;
+  assert.equal(invoked.status, 200);
+  assert.equal((await invoked.json()).closed, false);
+  const [native] = await nativeCalls(broker, turn.token);
+  assert.deepEqual(JSON.parse(native.arguments), { marker: "actual invocation" });
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual native result" }]);
+  assert.equal((await nativeResult).content[0].text, "actual native result");
+  const retirement = await beginObservation(broker, service, turn.token);
+  const finalRevision = broker.revision(turn.token);
+  assert.equal(finish(broker, turn.token), true);
+  assert.deepEqual(await (await retirement.response).json(), { revision: finalRevision, closed: true });
+  assert.deepEqual(await (await fetch(service.observationUrl(turn.token, finalRevision))).json(), { revision: finalRevision, closed: true });
+});
+
+test("observation disconnection and service shutdown unsubscribe without cancelling the native turn", { timeout: 10_000 }, async t => {
+  const { broker, service } = await fixture(t);
+  const turn = register(broker, "observation-disconnect");
+  const controller = new AbortController();
+  const first = await beginObservation(broker, service, turn.token, { signal: controller.signal });
+  const disconnected = new Promise(resolve => first.signal.addEventListener("abort", resolve, { once: true }));
+  const rejected = assert.rejects(first.response, /abort/iu);
+  controller.abort();
+  await Promise.all([rejected, disconnected]);
+  assert.equal(getEventListeners(first.signal, "abort").length, 0);
+  assert.equal(broker.list(turn.token).length, 1);
+  const second = await beginObservation(broker, service, turn.token);
+  const stopped = assert.rejects(second.response, /fetch failed|socket|abort/iu);
+  await service.close();
+  await stopped;
+  assert.equal(getEventListeners(second.signal, "abort").length, 0);
+  assert.equal(broker.list(turn.token).length, 1);
+  assert.equal(finish(broker, turn.token), true);
+});
+
+test("an aborted observation can renew immediately before HTTP disconnect cleanup finishes", { timeout: 10_000 }, async t => {
+  const { broker, service } = await fixture(t);
+  const turn = register(broker, "observation-handoff");
+  const controller = new AbortController();
+  const previous = await beginObservation(broker, service, turn.token, { signal: controller.signal });
+  const rejected = assert.rejects(previous.response, /abort/iu);
+  controller.abort();
+  // Start the replacement without awaiting the previous HTTP request's close.
+  const next = await beginObservation(broker, service, turn.token);
+  await rejected;
+  broker.update(turn.token, { tools: [fn("read")] });
+  const response = await next.response;
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { revision: 1, closed: false });
+  assert.equal(broker.list(turn.token).length, 1);
+  assert.equal(finish(broker, turn.token), true);
+});
+
+test("observation rejects foreign capabilities, origins, malformed revisions, and duplicate waits", { timeout: 10_000 }, async t => {
+  const { broker, service } = await fixture(t);
+  const turn = register(broker, "observation-validation");
+  const url = service.observationUrl(turn.token, broker.revision(turn.token));
+  assert.equal((await fetch(new URL(`/wrong/observe/${turn.token}?revision=0`, url))).status, 404);
+  assert.equal((await fetch(url, { headers: { origin: "https://untrusted.example" } })).status, 403);
+  assert.equal((await fetch(url, { method: "POST" })).status, 405);
+  assert.equal((await fetch(url.replace(turn.token, "web_turn_00000000000000000000000000000000"))).status, 409);
+  for (const query of ["", "revision=-1", "revision=01", "revision=1", "revision=0.5", "revision=9007199254740992", "revision=0&other=1"]) {
+    const malformed = await fetch(url.slice(0, url.indexOf("?")) + (query ? `?${query}` : ""));
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.text()).includes(turn.token), false);
+  }
+  assert.throws(() => service.observationUrl("unknown", 0));
+  assert.throws(() => service.observationUrl(turn.token, 1));
+  const pending = await beginObservation(broker, service, turn.token);
+  const handoff = await beginObservation(broker, service, turn.token);
+  const duplicate = await fetch(url);
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.headers.get("access-control-allow-origin"), null);
+  assert.equal((await duplicate.text()).includes(turn.token), false);
+  broker.cancel(turn.token);
+  const response = await pending.response;
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { revision: 0, closed: true });
+  assert.deepEqual(await (await handoff.response).json(), { revision: 0, closed: true });
+});
+
+test("observation capacity is bounded across turns and released when waits finish", { timeout: 10_000 }, async t => {
+  const { broker, service } = await fixture(t);
+  const turns = Array.from({ length: 33 }, (_, index) => register(broker, `observation-capacity-${index}`));
+  const pending = [];
+  for (const turn of turns.slice(0, 32)) {
+    pending.push(await beginObservation(broker, service, turn.token));
+    pending.push(await beginObservation(broker, service, turn.token));
+  }
+  const extra = turns.at(-1);
+  const limited = await fetch(service.observationUrl(extra.token, broker.revision(extra.token)));
+  assert.equal(limited.status, 429);
+  broker.cancel(turns[0].token);
+  for (const wait of pending.splice(0, 2)) assert.equal((await (await wait.response).json()).closed, true);
+  const admitted = await beginObservation(broker, service, extra.token);
+  for (const turn of turns.slice(1)) broker.cancel(turn.token);
+  for (const wait of [...pending, admitted]) assert.equal((await (await wait.response).json()).closed, true);
 });

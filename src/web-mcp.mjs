@@ -34,6 +34,7 @@ const tools = [
 const validator = new AjvJsonSchemaValidator();
 const validators = new Map(tools.map(tool => [tool.name, validator.getValidator(tool.inputSchema)]));
 const maxSessions = 32;
+const maxObservations = 64;
 const idleMs = 10 * 60_000;
 
 function reject(response, status) {
@@ -43,15 +44,60 @@ function reject(response, status) {
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
 export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel } = {}) {
-  if (!broker || !["list", "invoke", "cancel", "beginActivity"].every(name => typeof broker[name] === "function")) {
+  if (!broker || !["list", "invoke", "cancel", "beginActivity", "revision", "waitForChange"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
   if (typeof capability !== "string" || !/^[A-Za-z0-9_-]{32,256}$/u.test(capability)) throw new TypeError("Invalid Web MCP capability.");
   if (onCancel !== undefined && typeof onCancel !== "function") throw new TypeError("Invalid Web MCP cancellation callback.");
   const path = `/${capability}/mcp`;
-  const sessions = new Map(), creating = new Set();
-  let closing = false, closed;
+  const observationPath = `/${capability}/observe/`;
+  const sessions = new Map(), creating = new Set(), observers = new Map();
+  let closing = false, closed, observationCount = 0;
+
+  const observationRevision = (token, value) => {
+    if (typeof token !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(token)
+      || !Number.isSafeInteger(value) || value < 0 || value > broker.revision(token)) {
+      throw Object.assign(new Error("Invalid Web tool observation."), { status: 400 });
+    }
+    return value;
+  };
+
+  const observe = async (request, response) => {
+    if (request.method !== "GET") return reject(response, 405);
+    const match = /^([a-z0-9_]+)\?revision=(0|[1-9][0-9]*)$/u.exec(request.url.slice(observationPath.length));
+    let token, revision;
+    try {
+      if (!match) return reject(response, 400);
+      token = match[1];
+      revision = observationRevision(token, Number(match[2]));
+    } catch (error) { return reject(response, error.status ?? 400); }
+    // A locally aborted fetch can renew before HTTP reports its old socket's
+    // close. Permit that one handoff overlap without admitting unbounded waits.
+    let turnObservers = observers.get(token);
+    if (turnObservers?.size >= 2) return reject(response, 409);
+    if (observationCount >= maxObservations) return reject(response, 429);
+    if (!turnObservers) { turnObservers = new Set(); observers.set(token, turnObservers); }
+    const controller = new AbortController();
+    turnObservers.add(controller);
+    observationCount += 1;
+    const abort = () => controller.abort(new DOMException("Web tool observation disconnected.", "AbortError"));
+    response.once("close", abort);
+    try {
+      const result = await broker.waitForChange(token, revision, { signal: controller.signal, timeoutMs: 25_000 });
+      if (!controller.signal.aborted) {
+        response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify(result));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && !response.headersSent) reject(response, error.status ?? 500);
+    } finally {
+      response.off("close", abort);
+      turnObservers.delete(controller);
+      observationCount -= 1;
+      if (!turnObservers.size) observers.delete(token);
+    }
+  };
 
   const cancel = token => {
     if (broker.cancel(token)) onCancel?.(token);
@@ -120,6 +166,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   const listener = createServer(async (request, response) => {
     if (closing) return reject(response, 503);
     if (request.headers.origin !== undefined) return reject(response, 403);
+    if (request.url.startsWith(observationPath)) return observe(request, response);
     if (request.url !== path) return reject(response, 404);
     if (!["POST", "GET", "DELETE"].includes(request.method)) return reject(response, 405);
     const sessionId = request.headers["mcp-session-id"];
@@ -160,11 +207,19 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   }
   return {
     url: `http://127.0.0.1:${listener.address().port}${path}`,
+    observationUrl(token, revision) {
+      if (closing) throw new Error("Web MCP is closed.");
+      observationRevision(token, revision);
+      return `http://127.0.0.1:${listener.address().port}${observationPath}${token}?revision=${revision}`;
+    },
     status: () => ({ listening: listener.listening && !closing, sessions: sessions.size, pending: [...sessions.values()].reduce((sum, entry) => sum + entry.pending.size, 0) }),
     close() {
       if (closed) return closed;
       closing = true;
       clearInterval(reaper);
+      for (const turnObservers of observers.values()) {
+        for (const controller of turnObservers) controller.abort(new DOMException("Web MCP is closed.", "AbortError"));
+      }
       closed = (async () => {
         const stopped = new Promise((resolve, rejectClose) => listener.close(error => error ? rejectClose(error) : resolve()));
         await Promise.all([...new Set([...sessions.values(), ...creating])].map(entry => entry.server.close()));

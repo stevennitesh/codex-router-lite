@@ -66,9 +66,16 @@ replaying Send. The helper runs in the native REPL, not injected page code.
 Each reply snapshot retains mounted turn/message identities and order, while
 reconstructing answer text and completion details only for the owned generation.
 Recovery still reads the historical proof it needs. Independent control reads run
-concurrently between navigation/ownership checks, and observations return control
-without pausing between batched page reads. The separate final retention check,
-broker activity checks, protected durable writes and Interrupt hook remain.
+concurrently between navigation/ownership checks. Each native browser read returns
+control promptly so Interrupt cleanup can run in the official Node REPL child.
+With the Router MCP adapter installed, one pending native observation call spans
+those short reads. A protected loopback notification wakes it on broker activity;
+browser completion, capacity errors and observation failures also return it. The
+adapter spaces its internal reads rather than repeatedly emitting visible wait
+calls. Its safety deadline renews the outer wait within Codex's call timeout.
+Stop prevents further reads and waits for an in-flight read's actual terminal
+callback before the existing cleanup. The separate final retention check, broker
+revision fences, protected durable writes and Interrupt hook remain.
 
 Native tool requests are delivered independently of final-answer readability.
 Completion requires an idle owned browser turn, an answer after the latest tool

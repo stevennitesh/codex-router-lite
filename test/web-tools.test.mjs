@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import test from "node:test";
 
 import { createWebToolBroker } from "../src/web-tools.mjs";
@@ -368,4 +369,73 @@ test("declaration changes invalidate completion and retired activity cannot affe
   assert.equal(broker.beginCompletion(replacement.token), current);
   assert.equal(broker.finish(first.token, before), false);
   assert.equal(broker.finish(replacement.token, current), true);
+});
+
+test("turn observation cannot lose a revision change and wakes only for its own activity", async () => {
+  const broker = createWebToolBroker();
+  const first = register(broker, [fn("read")]);
+  const other = broker.register({ threadId: "other", turnId: "turn", tools: [] });
+  const before = broker.revision(first.token);
+  broker.update(first.token, { tools: [fn("write")] });
+  assert.deepEqual(await broker.waitForChange(first.token, before), { revision: before + 1, closed: false });
+  let resolved = false;
+  const pending = broker.waitForChange(first.token, broker.revision(first.token));
+  void pending.then(() => { resolved = true; });
+  broker.update(other.token, { tools: [fn("other")] });
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  const release = broker.beginActivity(first.token);
+  assert.deepEqual(await pending, { revision: before + 2, closed: false });
+  const released = broker.waitForChange(first.token, broker.revision(first.token));
+  release();
+  assert.deepEqual(await released, { revision: before + 3, closed: false });
+  finish(broker, first.token);
+  finish(broker, other.token);
+});
+
+test("observation cancellation and deadline remove their subscription without retiring native work", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [fn("read")]);
+  const revision = broker.revision(token);
+  const controller = new AbortController();
+  const pending = broker.waitForChange(token, revision, { signal: controller.signal });
+  assert.equal(getEventListeners(controller.signal, "abort").length, 1);
+  const rejected = assert.rejects(pending, /observer left/u);
+  controller.abort(new Error("observer left"));
+  await rejected;
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  await assert.rejects(broker.waitForChange(token, revision, { signal: controller.signal }), /observer left/u);
+  const deadline = new AbortController();
+  assert.deepEqual(await broker.waitForChange(token, revision, { signal: deadline.signal, timeoutMs: 1 }), { revision, closed: false });
+  assert.equal(getEventListeners(deadline.signal, "abort").length, 0);
+  const wake = new AbortController();
+  const changed = broker.waitForChange(token, revision, { signal: wake.signal });
+  broker.update(token, { tools: [fn("read")] });
+  assert.deepEqual(await changed, { revision: revision + 1, closed: false });
+  assert.equal(getEventListeners(wake.signal, "abort").length, 0);
+  assert.equal(finish(broker, token), true);
+});
+
+test("retirement wakes observers and old observers cannot bind to a replacement turn", async () => {
+  const broker = createWebToolBroker();
+  const first = register(broker, []);
+  const revision = broker.revision(first.token);
+  const pending = broker.waitForChange(first.token, revision);
+  assert.equal(finish(broker, first.token), true);
+  assert.deepEqual(await pending, { revision, closed: true });
+  assert.deepEqual(await broker.waitForChange(first.token, revision), { revision, closed: true });
+  assert.equal(broker.revision(first.token), revision);
+  const replacement = register(broker, []);
+  const cancelled = broker.waitForChange(replacement.token, broker.revision(replacement.token));
+  broker.cancel(replacement.token);
+  assert.deepEqual(await cancelled, { revision: 0, closed: true });
+  assert.throws(() => broker.revision("unknown"), { code: "web_tool_turn_closed" });
+  assert.throws(() => broker.waitForChange("unknown", 0), { code: "web_tool_turn_closed" });
+  for (const value of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "0"]) {
+    assert.throws(() => broker.waitForChange(first.token, value), { code: "invalid_web_tool_call" });
+  }
+  assert.throws(() => broker.waitForChange(first.token, revision + 1), { code: "invalid_web_tool_call" });
+  for (const timeoutMs of [0, -1, 25_001, 0.5, NaN]) {
+    assert.throws(() => broker.waitForChange(first.token, revision, { timeoutMs }), { code: "invalid_web_tool_call" });
+  }
 });

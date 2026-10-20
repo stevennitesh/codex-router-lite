@@ -6,11 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { browserHelperVersion, browserScript } from '../src/web-browser.mjs';
+import { browserHelperVersion, browserScript, readBrowserProgram } from '../src/web-browser.mjs';
 import { createWebStopCode } from '../src/web-stop-hook.mjs';
+import { createWebToolBroker } from '../src/web-tools.mjs';
+import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
 
 const APPROVED_THREAD = '01a14b65-a7a8-7b41-bd33-7c19d3c6df82';
@@ -229,6 +232,178 @@ async function protocolFixture(t, toolHandler, options = {}) {
   t.after(async () => { await bridge.close(); await client.close(); await official.close(); });
   return { client, bridge, calls, cancellations, receipts, declarations, forwardedOuter, forwardedInner };
 }
+
+async function waitingFixture(t, toolHandler, options = {}) {
+  const broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
+  const service = await startWebMcp({ broker });
+  t.after(() => service.close());
+  const turn = broker.register({ threadId: APPROVED_THREAD, turnId: TURN,
+    tools: [{ type: 'function', name: 'read', parameters: { type: 'object' } }] });
+  const source = ordinary();
+  source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code),
+    observationWait: { url: service.observationUrl(turn.token, broker.revision(turn.token)) } });
+  const f = await protocolFixture(t, toolHandler, { observationIntervalMs: 5, ...options });
+  return { ...f, broker, service, turn, source };
+}
+function observationResult(params, fields = {}) {
+  const config = readBrowserProgram(params.arguments.code);
+  return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
+    operation: 'observe', normal: true, completed: false, stopVisible: true, statusComplete: false, ...fields,
+  } }) + config.frameEnd }] };
+}
+
+test('one actual MCP observation spans short private child reads and returns only the completed snapshot', async t => {
+  let reads = 0;
+  const f = await waitingFixture(t, params => observationResult(params, { completed: ++reads === 3 }));
+  f.source._meta['x-codex-turn-metadata'] = '  ' + JSON.stringify(canonical()) + '\n';
+  f.source._meta.futureAuthority = { untouched: ['opaque policy'] };
+  const result = await f.client.callTool(f.source);
+  assert.equal(reads, 3);
+  assert.match(result.content[0].text, /"completed":true/u);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
+  const children = f.forwardedInner.filter(message => message.method === 'tools/call');
+  assert.equal(new Set(children.map(message => message.id)).size, 3);
+  for (const child of children) {
+    assert.match(child.id, /^router_observe_/u);
+    assert.deepEqual(child.params._meta, f.source._meta);
+    assert.equal(child.params.arguments.code, f.source.arguments.code);
+    assert.ok(child.params.arguments.timeout_ms > 0 && child.params.arguments.timeout_ms <= 25000);
+  }
+  const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
+  assert.equal(receipt.readCount, 3); assert.equal(receipt.wakeReason, 'browser_ready');
+  assert.ok(!JSON.stringify(f.receipts).includes(f.turn.token));
+});
+
+test('broker activity wakes the outstanding observation before another child read is scheduled', async t => {
+  let first;
+  const seen = new Promise(resolve => { first = resolve; });
+  const f = await waitingFixture(t, params => { first(); return observationResult(params); }, { observationIntervalMs: 1000 });
+  const chatgpt = new Client({ name: 'chatgpt-tool-fixture', version: 'fixture' });
+  await chatgpt.connect(new StreamableHTTPClientTransport(new URL(f.service.url)));
+  t.after(() => chatgpt.close());
+  const answer = f.client.callTool(f.source);
+  await seen;
+  const invocation = chatgpt.callTool({ name: 'codex_tool_call', arguments: {
+    turn_token: f.turn.token, wire_name: 'read', arguments: { path: 'fixture' } } });
+  const result = await answer;
+  assert.match(result.content[0].text, /"completed":false/u);
+  assert.equal(f.calls.length, 1, 'The real broker revision wakes the call during its idle browser interval.');
+  const [native] = f.broker.takeCalls(f.turn.token);
+  f.broker.complete(f.turn.token, [{ type: 'function_call_output', call_id: native.call_id, output: 'actual result' }]);
+  assert.equal((await invocation).content[0].text, 'actual result');
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+});
+
+test('the safety deadline returns the latest incomplete snapshot without repeating Send or inventing completion', async t => {
+  const f = await waitingFixture(t, params => observationResult(params), { observationWaitMs: 30 });
+  const result = await f.client.callTool(f.source);
+  assert.match(result.content[0].text, /"completed":false/u);
+  assert.ok(f.calls.length >= 1);
+  assert.ok(f.calls.every(params => readBrowserProgram(params.arguments.code).operation === 'observe'));
+  const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
+  assert.equal(receipt.wakeReason, 'deadline');
+  assert.ok(receipt.elapsedMs < 1000);
+});
+
+test('actual child errors and malformed browser output end the held call without another browser read', async t => {
+  for (const result of [{ isError: true, content: [{ type: 'text', text: 'actual child failure' }] }, ordinaryResult]) {
+    await t.test(result.isError ? 'child failure' : 'malformed output', async subtest => {
+      const f = await waitingFixture(subtest, () => result);
+      assert.deepEqual(await f.client.callTool(f.source), result);
+      await delay(15); assert.equal(f.calls.length, 1);
+      assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_error');
+    });
+  }
+});
+
+test('a failed protected broker channel ends the native request with an explicit error', async t => {
+  const f = await waitingFixture(t, params => observationResult(params), { observationIntervalMs: 1000 });
+  const config = readBrowserProgram(f.source.arguments.code);
+  const url = new URL(config.observationWait.url); url.pathname = url.pathname.replace(/^\/[^/]+/u, '/' + 'b'.repeat(64));
+  f.source.arguments.code = browserScript({ ...config, observationWait: { url: url.href } });
+  await assert.rejects(f.client.callTool(f.source), /Router browser observation channel is unavailable/u);
+  assert.equal(f.calls.length, 1);
+});
+
+test('Stop freezes repeated observation between reads and during a real active child invocation', async t => {
+  for (const activeChild of [false, true]) await t.test(activeChild ? 'active child' : 'idle interval', async subtest => {
+    let first, release;
+    const seen = new Promise(resolve => { first = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+      first(); if (activeChild) await gate;
+      return observationResult(params);
+    }, { observationIntervalMs: 1000 });
+    const control = new AbortController();
+    const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await seen; if (!activeChild) await delay(0);
+    control.abort();
+    const stop = f.client.callTool(hook());
+    await delay(0);
+    if (activeChild) assert.equal(f.calls.length, 1, 'Stop cannot enter Node REPL before its real child terminal.');
+    release();
+    assert.equal((await stop).isError, undefined);
+    assert.equal(await answer, 'cancelled');
+    assert.equal(f.calls.length, 2);
+    assert.deepEqual(f.calls[1]._meta, retainedMetadata(f.source._meta));
+    assert.ok(f.receipts.some(entry => entry.code === 'stop_confirmed'));
+    await delay(15); assert.equal(f.calls.length, 2);
+  });
+});
+
+test('changed authority retires an idle wait and cannot authorize Stop or later repeated reads', async t => {
+  let first;
+  const seen = new Promise(resolve => { first = resolve; });
+  const f = await waitingFixture(t, params => {
+    if (!readBrowserProgram(params.arguments.code)) return ordinaryResult;
+    first(); return observationResult(params);
+  }, { observationIntervalMs: 1000 });
+  const answer = f.client.callTool(f.source); await seen; await delay(0);
+  const other = withAuthority(ordinary(), 'changed policy'); other.arguments.code = 'ordinary JS';
+  await f.client.callTool(other); await answer;
+  assert.equal((await f.client.callTool(hook())).isError, true);
+  await delay(15); assert.equal(f.calls.length, 2);
+  assert.ok(f.receipts.some(entry => entry.code === 'authority_replaced'));
+});
+
+test('an unsettled private observation forwards cancellation to its actual child ID once grace expires', async t => {
+  let first;
+  const seen = new Promise(resolve => { first = resolve; });
+  const f = await waitingFixture(t, async (params, extra) => {
+    first();
+    await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true }));
+    return observationResult(params);
+  }, { graceMs: 25 });
+  const control = new AbortController();
+  const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await seen; control.abort();
+  assert.equal(await answer, 'cancelled');
+  await delay(60);
+  assert.equal(f.cancellations.length, 1);
+  const childCall = f.forwardedInner.find(message => message.method === 'tools/call');
+  const cancelled = f.forwardedInner.filter(message => message.method === 'notifications/cancelled');
+  assert.equal(cancelled.length, 1); assert.equal(cancelled[0].params.requestId, childCall.id);
+  assert.equal((await f.client.callTool(hook())).isError, true);
+  assert.equal(f.calls.length, 1);
+});
+
+test('a closed broker turn and lost browser ownership wake immediately without a successful final answer', async t => {
+  for (const kind of ['closed broker', 'lost browser ownership']) await t.test(kind, async subtest => {
+    let first;
+    const seen = new Promise(resolve => { first = resolve; });
+    const f = await waitingFixture(subtest, params => {
+      first(); return observationResult(params, kind === 'lost browser ownership' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {});
+    }, { observationIntervalMs: 1000 });
+    const answer = f.client.callTool(f.source);
+    await seen;
+    if (kind === 'closed broker') {
+      f.broker.cancel(f.turn.token);
+      await assert.rejects(answer, /Router browser observation channel is unavailable/u);
+    } else assert.match((await answer).content[0].text, /generation-turn-not-latest/u);
+    assert.equal(f.calls.length, 1);
+  });
+});
 
 test('SDK protocol preserves declarations, capabilities, instructions and explicit adapter identity', async t => {
   const f = await protocolFixture(t, () => ordinaryResult);

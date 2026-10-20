@@ -13,7 +13,9 @@ after(() => rmSync(stateDir, { recursive: true, force: true }));
 
 const { createInAppWebRuntime, collectWebTools, webTurnIdentity } = await import("../src/web-runtime.mjs");
 const { createWebToolBroker } = await import("../src/web-tools.mjs");
-const { parseBrowserOutput } = await import("../src/web-browser.mjs");
+const { parseBrowserOutput, readBrowserProgram } = await import("../src/web-browser.mjs");
+const { startWebMcp } = await import("../src/web-mcp.mjs");
+const { qualifyBrowserCall } = await import("../src/web-stop-adapter.mjs");
 const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs");
 const { decodeCompaction } = await import("../src/compaction-checkpoint.mjs");
 const { privateFileIsProtected } = await import("../src/file-security.mjs");
@@ -157,7 +159,7 @@ function fakeBrowser() {
 
 let fixtureNumber = 0;
 function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", cancelDuringWatch = false,
-  tunnelReadiness = () => Promise.resolve(), storage = syntheticStorage } = {}) {
+  tunnelReadiness = () => Promise.resolve(), storage = syntheticStorage, mcpFactory } = {}) {
   const browser = fakeBrowser();
   const key = `router-web-runtime-test-${++fixtureNumber}`;
   globalThis[Symbol.for(key)] = browser.agent;
@@ -172,7 +174,10 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", canc
     startMcp: async options => {
       assert.equal(options.broker, broker);
       observations.services.push("mcp");
-      return { url: "http://127.0.0.1:40123/mcp", status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); } };
+      if (mcpFactory) return mcpFactory(options);
+      return { url: "http://127.0.0.1:40123/mcp",
+        observationUrl: (token, revision) => `http://127.0.0.1:40123/${"a".repeat(64)}/observe/${token}?revision=${revision}`,
+        status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); } };
     },
     startTunnel: async options => {
       observations.services.push("tunnel");
@@ -261,6 +266,26 @@ async function nativeV2Checkpoint(response) {
 
 const nativeV2Users = input => input.filter(item => item.role === "user").map(item => ({ type: "message", role: "user",
   content: typeof item.content === "string" ? [{ type: "input_text", text: item.content }] : item.content }));
+
+test("the emitted observation carries its exact live broker revision through adapter qualification and HTTP wakeup", async t => {
+  const h = harness(t, { mcpFactory: startWebMcp });
+  const { call } = await h.toObserve();
+  const args = JSON.parse(call.arguments), config = readBrowserProgram(args.code);
+  const url = new URL(config.observationWait.url);
+  assert.equal(url.searchParams.get("revision"), String(h.broker.revision(h.token())));
+  assert.ok(url.pathname.endsWith(`/observe/${h.token()}`));
+  const sandbox = { opaqueCurrentAuthority: [true] };
+  const native = { name: "js", arguments: args, _meta: { threadId, sessionId: threadId, callId: call.call_id,
+    "x-codex-turn-metadata": { ...metadata(), session_id: threadId, auto_review_enabled: true,
+      node_repl_auto_review_required: true, node_repl_disabled: false },
+    "codex/sandbox-state": sandbox, "codex/sandbox-state-meta": structuredClone(sandbox), "codex/sandbox-launcher": { opaque: true } } };
+  assert.equal(qualifyBrowserCall(native, h.settings.browser.runtimeModule)?.observation, true);
+  const wake = fetch(url).then(response => response.json());
+  const release = h.broker.beginActivity(h.token());
+  assert.deepEqual(await wake, { revision: h.broker.revision(h.token()), closed: false });
+  release();
+  assert.equal(h.browser.ui.sends.length, 1);
+});
 
 test("checkpoint writes finish before native actions and a cancelled turn's successor persists in order", async t => {
   let started, release;

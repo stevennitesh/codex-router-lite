@@ -5,7 +5,7 @@ import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { readBrowserProgram } from './web-browser.mjs';
+import { readBrowserProgram, parseBrowserOutput } from './web-browser.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
 import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 
@@ -24,6 +24,20 @@ const snapshot = value => freeze(structuredClone(value));
 const validThreadIds = validAdapterThreadIds;
 const threadAllowed = (threadId, threadIds) => uuid(threadId) && (threadIds === null || threadIds.includes(threadId));
 const turnKey = (threadId, turnId) => `${threadId}:${turnId}`;
+const OBSERVATION_INTERVAL_MS = 500;
+const OBSERVATION_WAIT_MS = 25_000;
+
+function observationWait(config) {
+  const wait = config.observationWait;
+  if (wait === undefined) return null;
+  if (!record(wait) || Object.keys(wait).length !== 1 || typeof wait.url !== 'string') throw new Error('observation_wait_refused');
+  const url = new URL(wait.url);
+  if (url.origin !== `http://127.0.0.1:${url.port}` || !url.port || url.username || url.password || url.hash
+      || !/^\/[A-Za-z0-9_-]{32,256}\/observe\/web_turn_[a-f0-9]{32}$/u.test(url.pathname)
+      || [...url.searchParams.keys()].join() !== 'revision' || !/^(0|[1-9][0-9]*)$/u.test(url.searchParams.get('revision'))
+      || !Number.isSafeInteger(Number(url.searchParams.get('revision')))) throw new Error('observation_wait_refused');
+  return { url: url.href, revision: Number(url.searchParams.get('revision')) };
+}
 
 // Do not reconstruct a sandbox object or infer a launcher. Preserve every field.
 export function readIdentity(meta, threadIds = null) {
@@ -64,6 +78,8 @@ export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
     if (!config || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
         || config.runtimeModule !== runtimeModule
         || config.ui.stopButtonExactName !== 'Stop') return null;
+    if (config.operation === 'observe') observationWait(config);
+    else if (config.observationWait !== undefined) return null;
     return { identity, sandbox, config, observation: config.operation === 'observe' };
   } catch { return null; }
 }
@@ -151,15 +167,20 @@ export function readStopResult(result) {
 // adapter registration and host-owned canonical metadata, not the tool name.
 export class AdapterBridge {
   constructor({ outer, child, stopConfig, generation = randomUUID(), receipt = () => {}, now = Date.now,
-    graceMs = 2850, cleanupMs = 2500, builtinWaitMs = 150 }) {
+    graceMs = 2850, cleanupMs = 2500, builtinWaitMs = 150,
+    observationIntervalMs = OBSERVATION_INTERVAL_MS, observationWaitMs = OBSERVATION_WAIT_MS }) {
     if (!uuid(generation) || graceMs < 1 || graceMs > 2850
         || cleanupMs < 1 || cleanupMs > 2500 || builtinWaitMs < 1 || builtinWaitMs > 300
+        || !Number.isSafeInteger(observationIntervalMs) || observationIntervalMs < 1 || observationIntervalMs > 1000
+        || !Number.isSafeInteger(observationWaitMs) || observationWaitMs < 1 || observationWaitMs > OBSERVATION_WAIT_MS
         || !validThreadIds(stopConfig.threadIds ?? null)) throw new Error('bounds_refused');
-    Object.assign(this, { outer, child, stopConfig: snapshot(stopConfig), generation, receipt, now, graceMs, cleanupMs, builtinWaitMs });
+    Object.assign(this, { outer, child, stopConfig: snapshot(stopConfig), generation, receipt, now, graceMs, cleanupMs, builtinWaitMs,
+      observationIntervalMs, observationWaitMs });
     this.cache = null; this.epoch = 0; this.pending = new Map(); this.injected = new Map(); this.hooks = new Map();
     this.initializeIds = new Set(); this.closed = false; this.authorityDisabled = false; this.graceDeadline = undefined;
     this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.turnSandbox = undefined; this.currentAuthority = undefined;
     this.cleanupGroup = null; this.builtinWait = null;
+    this.observationChildren = new Map();
   }
   event(code, flags = {}) {
     try { this.receipt({ at: new Date(this.now()).toISOString(), code, generation: this.generation, ...flags }); }
@@ -168,6 +189,10 @@ export class AdapterBridge {
     }
   }
   sendDetached(message) { void this.child.send(message).catch(() => this.fail()).catch(() => {}); }
+  cancelPending(pending, message) {
+    if (!pending.wait) return this.sendDetached(message);
+    if (pending.wait.active) this.sendDetached({ ...message, params: { ...message.params, requestId: pending.wait.childId } });
+  }
   retirePending(id, terminalResponse) {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -184,7 +209,8 @@ export class AdapterBridge {
     this.epoch += 1; this.cache = null; this.graceDeadline = undefined;
     this.cleanupGroup?.abort();
     for (const [id, pending] of this.pending) {
-      if (pending.deferred) { pending.deferred = false; this.retirePending(id, false); this.sendDetached(pending.cancel); }
+      if (pending.wait) this.wakeObservation(pending, code);
+      if (pending.deferred) { pending.deferred = false; this.retirePending(id, false); this.cancelPending(pending, pending.cancel); }
     }
     for (const injected of this.injected.values()) injected.cancel();
     if (this.builtinWait) void this.releaseBuiltinWait(this.builtinWait, code).catch(() => this.fail());
@@ -206,9 +232,10 @@ export class AdapterBridge {
           pending.timer = setTimeout(() => {
             if (!pending.deferred) return;
             pending.deferred = false; this.retirePending(message.params.requestId, false);
-            this.invalidate('cancel_grace_expired', { childTerminalObserved: false, elapsedMs: Math.max(0, this.now() - pending.cancelAt) }); this.sendDetached(message);
+            this.invalidate('cancel_grace_expired', { childTerminalObserved: false, elapsedMs: Math.max(0, this.now() - pending.cancelAt) }); this.cancelPending(pending, message);
           }, this.graceMs);
           this.event('observation_cancel_deferred');
+          if (pending.wait) this.wakeObservation(pending, 'cancelled');
         }
         return;
       }
@@ -222,7 +249,10 @@ export class AdapterBridge {
         } else this.event(hook.message.params.name === 'turn_ended' ? 'builtin_cancel_queued' : 'cleanup_duplicate_cancel_queued', { elapsedMs });
         return;
       }
-      if (pending) { this.retirePending(message.params.requestId, false); this.invalidate('ordinary_cancelled'); }
+      if (pending) {
+        this.retirePending(message.params.requestId, false); this.invalidate('ordinary_cancelled');
+        if (pending.wait) return this.cancelPending(pending, message);
+      }
       return this.child.send(message);
     }
     if (message.method !== 'tools/call') return this.child.send(message);
@@ -272,13 +302,71 @@ export class AdapterBridge {
     // Assignment after creation keeps the resolver distinct from Promise.resolve.
     pending.settle = settle;
     this.pending.set(message.id, pending);
+    if (pending.qualified && guard.config.observationWait) {
+      const wait = observationWait(guard.config);
+      pending.wait = { ...wait, outerId: message.id, message: snapshot(message), config: guard.config,
+        startedAt: this.now(), deadlineAt: this.now() + this.observationWaitMs,
+        readCount: 0, active: false, reason: null, last: null, abort: new AbortController() };
+      const state = pending.wait;
+      state.deadline = setTimeout(() => this.wakeObservation(pending, 'deadline'), this.observationWaitMs);
+      this.event('observation_wait_started');
+      void this.waitForBroker(pending).catch(() => this.wakeObservation(pending, 'broker_error'));
+      return this.readObservation(pending);
+    }
     return this.child.send(message);
+  }
+  async waitForBroker(pending) {
+    const state = pending.wait;
+    const response = await fetch(state.url, { signal: state.abort.signal, redirect: 'error', headers: { accept: 'application/json' } });
+    if (!response.ok) return this.wakeObservation(pending, 'broker_error');
+    const value = await response.json();
+    if (!record(value) || Object.keys(value).sort().join() !== 'closed,revision' || typeof value.closed !== 'boolean'
+        || !Number.isSafeInteger(value.revision) || value.revision < state.revision) return this.wakeObservation(pending, 'broker_error');
+    this.wakeObservation(pending, value.closed ? 'broker_closed' : value.revision !== state.revision ? 'broker_activity' : 'deadline');
+  }
+  wakeObservation(pending, reason) {
+    const state = pending.wait;
+    if (!state || state.finished) return;
+    state.reason ??= reason;
+    clearTimeout(state.timer); clearTimeout(state.deadline); state.abort.abort();
+    if (!state.active && state.last) void this.finishObservation(pending).catch(() => this.fail());
+  }
+  async readObservation(pending) {
+    const state = pending.wait;
+    if (state.finished || state.active || state.reason && state.last) return;
+    let settle;
+    pending.settled = new Promise(resolvePromise => { settle = resolvePromise; }); pending.settle = settle;
+    state.active = true; state.childId = `router_observe_${randomUUID()}`; state.readCount += 1;
+    this.observationChildren.set(state.childId, pending);
+    const args = state.message.params.arguments;
+    const params = Number.isSafeInteger(args.timeout_ms) ? { ...state.message.params, arguments: { ...args,
+      timeout_ms: Math.min(args.timeout_ms, Math.max(1, state.deadlineAt - this.now())) } } : state.message.params;
+    await this.child.send({ ...state.message, id: state.childId, params });
+  }
+  async finishObservation(pending) {
+    const state = pending.wait;
+    if (state.finished || state.active || !state.last) return;
+    state.finished = true;
+    clearTimeout(state.timer); clearTimeout(state.deadline); state.abort.abort();
+    this.retirePending(state.outerId, true);
+    this.event('observation_wait_finished', { readCount: state.readCount, wakeReason: state.reason,
+      elapsedMs: Math.max(0, this.now() - state.startedAt) });
+    return this.outer.send(['broker_error', 'broker_closed'].includes(state.reason)
+      ? { jsonrpc: '2.0', id: state.outerId, error: { code: -32603, message: 'Router browser observation channel is unavailable.' } }
+      : { ...state.last, id: state.outerId });
   }
   async fromChild(message) {
     if (this.closed) return;
     const internal = this.injected.get(message.id);
     if (internal && !message.method) { this.injected.delete(message.id); internal.finish(message); return; }
-    const pending = this.pending.get(message.id);
+    const observation = this.observationChildren.get(message.id);
+    if (observation && !message.method) {
+      this.observationChildren.delete(message.id);
+      const state = observation.wait;
+      state.active = false; state.last = message;
+      message = { ...message, id: state.outerId };
+    }
+    const pending = observation ?? this.pending.get(message.id);
     if (pending && !message.method) {
       const group = this.cleanupGroup;
       if (pending.interruptedAt !== undefined) this.event('interrupted_observation_terminal', {
@@ -294,8 +382,20 @@ export class AdapterBridge {
       // A real terminal error also ends the ordinary invocation. Only its
       // already accepted cleanup may retain authority; local cancellation or
       // timeout retirement never proves execution ended. Forward the error intact.
-      this.retirePending(message.id, true);
+      if (pending.wait) {
+        pending.settle(true);
+        let value;
+        try { value = parseBrowserOutput(message.result, pending.wait.config.frameToken); } catch { pending.wait.reason ??= 'browser_error'; }
+        if (message.error || message.result?.isError === true) pending.wait.reason ??= 'browser_error';
+        if (value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true
+            || value.statusComplete === true && value.stopVisible === false || value.normal !== true
+            || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) pending.wait.reason ??= 'browser_ready';
+        if (group?.pending === pending || pending.deferred) pending.wait.reason ??= 'cancelled';
+        if (pending.wait.reason) await this.finishObservation(pending);
+        else pending.wait.timer = setTimeout(() => { void this.readObservation(pending).catch(() => this.fail()); }, this.observationIntervalMs);
+      } else this.retirePending(message.id, true);
       if ((message.error || message.result?.isError === true) && !ownedObservation) this.invalidate('ordinary_js_failed');
+      if (pending.wait) return;
     }
     if (this.initializeIds.has(message.id) && !message.method) {
       this.initializeIds.delete(message.id);
@@ -381,6 +481,7 @@ export class AdapterBridge {
       return waiting.done;
     }
     const pending = [...this.pending.values()][0];
+    if (pending?.wait) this.wakeObservation(pending, 'interrupt');
     const startedAt = this.now(), deadline = Math.min(startedAt + this.graceMs, this.graceDeadline ?? Infinity);
     let finish, abortWait;
     const group = { authority: cached, meta: decision.meta, epoch: this.epoch, startedAt, deadline, pending, entries: [], aborted: false,
@@ -500,6 +601,7 @@ export class AdapterBridge {
     if (this.closed) return;
     this.closed = true; this.invalidate('bridge_closed');
     await Promise.allSettled([this.outer.close(), this.child.close()]);
+    this.observationChildren.clear();
   }
 }
 

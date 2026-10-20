@@ -187,7 +187,38 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     if (!turn) throw failure("Web tool turn is invalid or already closed.", "web_tool_turn_closed", 409);
     return turn;
   };
-  const change = turn => { turn.revision += 1; };
+  const notify = (turn, retired = false) => {
+    for (const waiter of turn.waiters) waiter.resolve({ revision: turn.revision, closed: retired });
+  };
+  const change = turn => { turn.revision += 1; notify(turn); };
+  const observed = token => {
+    const turn = turns.get(token) ?? closed.get(token);
+    if (!turn) throw failure("Web tool turn is invalid or already closed.", "web_tool_turn_closed", 409);
+    return turn;
+  };
+  const revision = token => observed(token).revision;
+  const waitForChange = (token, previous, { signal, timeoutMs = 25_000 } = {}) => {
+    if (!Number.isSafeInteger(previous) || previous < 0 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 25_000) {
+      throw failure("Invalid Web tool observation.");
+    }
+    const turn = observed(token);
+    if (previous > turn.revision) throw failure("Invalid Web tool observation revision.");
+    if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new DOMException("Web tool observation cancelled.", "AbortError"));
+    if (turns.get(token) !== turn || turn.revision !== previous) return Promise.resolve({ revision: turn.revision, closed: turns.get(token) !== turn });
+    // Comparing and subscribing happen in one synchronous turn. A revision
+    // change between the caller's read and this subscription cannot be lost.
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); turn.waiters.delete(waiter); };
+      const waiter = { resolve: value => { cleanup(); resolve(value); } };
+      const abort = () => {
+        cleanup();
+        reject(signal.reason instanceof Error ? signal.reason : new DOMException("Web tool observation cancelled.", "AbortError"));
+      };
+      const timer = setTimeout(() => waiter.resolve({ revision: turn.revision, closed: false }), timeoutMs);
+      turn.waiters.add(waiter);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
   const beginActivity = token => {
     const turn = active(token);
     turn.activity += 1;
@@ -213,6 +244,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     turns.delete(token);
     owners.delete(turn.owner);
     rememberClosed(token, turn, state);
+    notify(turn, true);
     for (const pending of turn.calls.values()) {
       pending.cleanup();
       pending.reject(reason);
@@ -276,11 +308,11 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const definitions = registry(tools, names);
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
-      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, revision: 0, activity: 0 });
+      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, revision: 0, activity: 0, waiters: new Set() });
       owners.set(owner, token);
       return { token, instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. ${webMcpDiscoveryGuidance} Never expose the token in your answer.` };
     },
-    list, update, takeCalls, beginActivity,
+    list, update, takeCalls, beginActivity, revision, waitForChange,
     async invoke(token, payload, { signal } = {}) {
       const release = beginActivity(token);
       try {
