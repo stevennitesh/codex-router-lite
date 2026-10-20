@@ -114,5 +114,72 @@
     "Earlier failed disposable adapters and the separate patched-native candidate remain historical evidence. This result does not retroactively validate those attempts.",
     "The separate native-patch installation and its rollback evidence are preserved in 2026-10-18-native-hook-context.json."
   ],
+  "generationContractFollowup": {
+    "status": "native-tools-sandbox-stop-and-continuation-verified",
+    "generationContractCommit": "19271e582b346ef08061c6ac7c414ef12d6adc77",
+    "deployedSourceCommit": "13e40eeb5c88937be7cfe7605f46a9997de22fe5",
+    "managedGeneration": "8e74763a7bfad2f988aec3c4815565edd1137b5628afcee42049c7858b495606",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "normalRestartLoadedMatchingAdapter": true,
+    "officialCliUnmodified": true,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingBrowser": false,
+    "ordinaryChatsEnabled": true,
+    "trustedHookDefinitionUnchanged": true,
+    "localVerification": {
+      "generationContractFullSuitePassed": 1372,
+      "generationContractCatalogCheckPassed": true,
+      "confirmationCorrectionFocusedTestsPassed": 105,
+      "sourceChecksPassed": true,
+      "scope": "The full suite covers the generation-contract candidate. After the narrow Stop-confirmation correction, affected hook, adapter and installer tests were rerun; unchanged tool-workflow evidence was reused."
+    },
+    "nativeToolWorkflow": {
+      "codingCalls": 5,
+      "pairedSuccessfulResults": 5,
+      "directNativeCommands": 4,
+      "nativePatches": 1,
+      "webSends": 1,
+      "nativeTurnCompleted": true,
+      "defaultSandbox": true,
+      "permissionEscalationUsed": false
+    },
+    "nativeSandbox": {
+      "workspaceCrud": true,
+      "preparedOutsideWriteDenied": true,
+      "outsideError": "UnauthorizedAccessException",
+      "unexpectedOutsideFileCreated": false,
+      "loopbackRouterHealthStatus": 200,
+      "probeExecutedOnce": true,
+      "pairedReceiptMatchedDisk": true,
+      "scope": "The named disposable workspace fixture, one prepared outside-directory write attempt, and local Router connectivity; not a general sandbox or Internet-isolation certification."
+    },
+    "stopConfirmation": {
+      "previousTrialClickedStopButConfirmationFailed": true,
+      "previousFailureStage": "stop_wait_hidden",
+      "previousFailureRawCauseUnknown": true,
+      "separateHalfSecondLimitRemoved": true,
+      "overallCleanupBudgetUnchanged": true,
+      "automaticReceiptConfirmedAfterNormalRestart": true,
+      "stopClicked": true,
+      "stopHidden": true,
+      "tabRetained": true,
+      "originatingAuthorityConsumedOnce": true,
+      "nativeTurnInterrupted": true,
+      "userObservedGenerationStopped": true
+    },
+    "continuation": {
+      "completed": true,
+      "durationMs": 19177,
+      "originalMarkerRecalledWithoutResupply": true,
+      "sameSavedChatUrlTabAndBinding": true,
+      "uncertainSend": false
+    },
+    "workingRollbackPairRetained": true,
+    "limits": [
+      "One initial cold recovery attempt failed before Send; a later retry and the final normal-restart preflight passed. The first readiness failure was not isolated or claimed fixed.",
+      "This live proof covers the named Instant Web primary route. Other models and Web subagents were not individually certified."
+    ]
+  },
   "privacy": "Raw saved-chat URLs, native thread and turn identifiers, turn tokens, private prompts, tool payloads, credentials and private filesystem paths are omitted."
 }
