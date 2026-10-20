@@ -43,20 +43,14 @@ function success(result) {
 test("in-app setup stores only the explicit safe configuration and advertises native browser verification", async () => {
   const status = await web.configureInAppWebBridge(config);
   assert.deepEqual(savedSettings(), {
-    version: 1, enabled: true, backend: "in-app", mode: "full", baseUrl: "http://127.0.0.1:17841/v1", capabilities,
+    version: 1, enabled: true, capabilities,
     browser: { runtimeModule, pluginName: config.pluginName, pluginAppId: config.pluginAppId,
       pluginSelectionButtonName: config.pluginSelectionButtonName },
     tunnel: { id: config.tunnelId, executable: tunnelClientPath },
   });
-  assert.equal(status.backend, "in-app");
   assert.equal(status.localToolsConfigured, true);
-  assert.match(status.browserReadiness, /Codex in-app browser/u);
-  assert.doesNotMatch(status.browserReadiness, /launcher/u);
-  assert.equal(status.home, undefined);
-  assert.equal(status.codexHome, undefined);
   assert.equal(web.webBridgeModels().length, 6);
   await web.disconnectWebBridge();
-  assert.equal(savedSettings().backend, "in-app");
   assert.equal(savedSettings().enabled, false);
   assert.deepEqual(web.webBridgeModels(), []);
 });
@@ -70,49 +64,47 @@ test("invalid in-app configuration cannot overwrite a previously valid setup", a
     { ...config, pluginAppId: "plugin_fixture" }, { ...config, tunnelId: "https://remote.invalid/tunnel" },
     { ...config, capabilities: { ...capabilities, proAvailable: "yes" } },
     { ...config, capabilities: { ...capabilities, token: "must-never-be-persisted" } },
-    { ...config, tunnelKey: "must-never-be-persisted" }, { ...config, backend: "launcher" },
-    ...[0, 65536, 1.5, "17843", 4200, 4202, 4203, 17841].map(mcpPort => ({ ...config, mcpPort }))];
+    { ...config, tunnelKey: "must-never-be-persisted" },
+    ...[0, 65536, 1.5, "17843", 4200, 4202, 4203].map(mcpPort => ({ ...config, mcpPort }))];
   for (const value of invalid) {
     await assert.rejects(web.configureInAppWebBridge(value), Error);
     assert.equal(readFileSync(settingsPath, "utf8"), before);
   }
 });
 
-test("persisted in-app settings are revalidated and unknown backends never select the launcher", () => {
+test("persisted settings project supported fields and require valid browser and tunnel configuration", async () => {
   const valid = savedSettings();
-  for (const value of [{ ...valid, backend: "unknown" }, { ...valid, backend: null }, { ...valid, mode: "browser-only" },
-    { ...valid, secret: "private-canary" }, { ...valid, browser: { ...valid.browser, token: "private-canary" } },
+  const extras = { backend: "in-app", mode: "full", baseUrl: "http://127.0.0.1:17841/v1", secret: "private-canary",
+    connectedAt: "historical", bridgeVersion: "historical", models: [{ slug: "chatgpt-web/invented" }] };
+  saveSettings({ ...valid, ...extras });
+  const read = web.readWebBridgeSettings();
+  const { models: _models, ...projected } = read;
+  assert.deepEqual(projected, valid);
+  assert.equal(read.models.some(row => row.slug === "chatgpt-web/invented"), false);
+  assert.equal(JSON.stringify(web.webBridgeStatus()).includes("private-canary"), false);
+  await web.disconnectWebBridge();
+  assert.deepEqual(savedSettings(), { ...valid, enabled: false }, "canonical writes drop retired fields");
+  for (const value of [{ ...valid, browser: { ...valid.browser, token: "private-canary" } },
     { ...valid, tunnel: { ...valid.tunnel, key: "private-canary" } }, { ...valid, browser: undefined },
     { ...valid, capabilities: undefined }, { ...valid, tunnel: { ...valid.tunnel, executable: "relative.exe" } }]) {
     saveSettings(value);
     assert.throws(() => web.readWebBridgeSettings(), Error);
   }
+  saveSettings({ version: 1, enabled: true, ...extras, capabilities });
+  assert.throws(() => web.readWebBridgeSettings(), /reconfigure with codex web browser/u);
   saveSettings(valid);
-  assert.equal(web.readWebBridgeSettings().backend, "in-app");
+  assert.equal(web.readWebBridgeSettings().enabled, true);
 });
 
-test("in-app exact model and effort rejection occurs before any browser or launcher transport", async () => {
+test("unavailable models and unsupported efforts fail locally", async () => {
   const valid = savedSettings();
   saveSettings({ ...valid, capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false } });
-  const fetch = globalThis.fetch;
-  let attempted = false;
-  globalThis.fetch = () => { attempted = true; throw new Error("Unexpected launcher request"); };
   try {
     for (const payload of [{ model: "chatgpt-web/sol" }, { model: "chatgpt-web/gpt-6-pro" },
       { model: "chatgpt-web/gpt-6-sol", reasoning: { effort: "xhigh" } },
       { model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "high" } }]) {
       await assert.rejects(web.requestWebBridge({ input: [], ...payload }), error => error.status === 400);
     }
-    assert.equal(attempted, false);
-  } finally { globalThis.fetch = fetch; saveSettings(valid); }
-});
-
-test("in-app picker does not advertise the unverified Luna family", async () => {
-  const valid = savedSettings();
-  try {
-    saveSettings({ ...valid, capabilities: { solAvailable: false, extraHighAvailable: false, proAvailable: false } });
-    assert.deepEqual(web.webBridgeModels(), []);
-    await assert.rejects(web.requestWebBridge({ model: "chatgpt-web/gpt-5.6-luna", input: [] }), error => error.status === 400);
   } finally { saveSettings(valid); }
 });
 
@@ -123,7 +115,7 @@ test("browser CLI configures the in-app backend and seeds Web visibility while r
   writeFileSync(source, JSON.stringify(config), "utf8");
   writeFileSync(picker, JSON.stringify({ version: 1, hidden: [hidden], visible: [], seeded: [hidden] }), "utf8");
   const status = success(control(["web", "browser", source]));
-  assert.equal(status.backend, "in-app");
+  assert.equal(status.localToolsConfigured, true);
   assert.equal(status.catalogRefreshRequired, true);
   const choices = JSON.parse(readFileSync(picker, "utf8"));
   assert.deepEqual(choices.hidden, [hidden]);

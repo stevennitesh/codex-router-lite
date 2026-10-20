@@ -10,11 +10,11 @@ The product is Windows Codex desktop and native CLI compatibility, the explicitl
 registered OpenRouter endpoints, Switchyard over native Codex models, and exact-route
 subagents. `src/routed-models.mjs` and the route JSON own the supported model set.
 The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) adds exact Web routes through
-`src/chatgpt-web.mjs` and its safe account capability snapshot. Its in-app backend
+`src/web-models.mjs` and its safe account capability snapshot. The integration
 uses Router-owned browser state, an MCP tool broker and a tunnel; native Codex
 executes browser operations and declared tools with its ordinary approvals.
-`src/web-runtime.mjs` owns that backend's lifecycle. An explicitly connected isolated
-launcher remains a separate backend, never a fallback. Web routes do not replace
+`src/web-runtime.mjs` owns the browser lifecycle; `src/chatgpt-web.mjs` owns configuration
+and route dispatch. Web routes do not replace
 native catalog authority or participate in OpenRouter preparation. The explicit
 V1/V2 selector governs new-conversation collaboration, with Web roles available
 only in V1.

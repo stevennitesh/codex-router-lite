@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { bridgeCustomTools, buildNamespaceLookups, flattenNamespaceTools } from "./namespace-relay.mjs";
+import { webMcpDiscoveryGuidance, webMcpQueryLimit } from "./web-mcp-contract.mjs";
+import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
 
 const hostedTools = new Set(["web_search", "web_search_preview", "image_generation"]);
-const outputTypes = { function: "function_call_output", custom: "custom_tool_call_output", tool_search: "tool_search_output" };
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
-const identity = tool => JSON.stringify([tool.namespace ?? null, tool.name, tool.kind]);
 
 function failure(message, code = "invalid_web_tool_call", status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -24,23 +24,22 @@ function declarations(tools) {
       for (const child of tool.tools) visit(child, tool.name);
       return;
     }
-    if (!["function", "custom", "tool_search"].includes(tool.type)) {
+    if (!Object.hasOwn(webToolKinds, tool.type)) {
       throw failure(`Unsupported client tool declaration: ${tool.type}.`);
     }
     if (tool.type === "tool_search" && (namespace !== undefined || tool.execution !== "client")) {
       throw failure("Web tool search must be a declared client-executed tool.");
     }
-    const definition = tool.type === "function" && record(tool.function) ? tool.function : tool;
-    const name = tool.type === "tool_search" ? "tool_search" : definition.name;
+    const name = tool.type === "tool_search" ? "tool_search" : tool.name;
     if (typeof name !== "string" || !name) throw failure("Web tool declaration is missing its name.");
     const entry = { name, kind: tool.type, ...(namespace === undefined ? {} : { namespace }),
-      description: definition.description ?? "",
+      description: tool.description ?? "",
       ...(tool.type === "custom" ? { format: structuredClone(tool.format) }
-        : { parameters: structuredClone(definition.parameters ?? definition.inputSchema ?? { type: "object", properties: {} }) }) };
+        : { parameters: structuredClone(tool.parameters ?? tool.inputSchema ?? { type: "object", properties: {} }) }) };
     if (typeof entry.description !== "string" || (entry.parameters !== undefined && !record(entry.parameters))) {
       throw failure(`Invalid declaration for Web tool ${name}.`);
     }
-    const key = identity(entry);
+    const key = webToolIdentity(entry);
     if (entries.has(key)) throw failure(`Duplicate Web tool declaration: ${name}.`);
     entries.set(key, entry);
   };
@@ -58,14 +57,14 @@ function registry(tools, names) {
   const result = new Map();
   for (const tool of custom.tools) {
     if (tool?.type !== "function") continue;
-    const suggested = tool.name ?? tool.function?.name;
+    const suggested = tool.name;
     let entry;
     const customIdentity = lookups.customTools?.get(suggested);
-    if (customIdentity) entry = native.get(identity({ ...customIdentity, kind: "custom" }));
-    else if (lookups.toolSearch?.providerName === suggested) entry = native.get(identity({ name: "tool_search", kind: "tool_search" }));
-    else entry = native.get(identity({ ...(lookups.flatToNative.get(suggested) ?? { name: suggested }), kind: "function" }));
+    if (customIdentity) entry = native.get(webToolIdentity({ ...customIdentity, kind: "custom" }));
+    else if (lookups.toolSearch?.providerName === suggested) entry = native.get(webToolIdentity({ name: "tool_search", kind: "tool_search" }));
+    else entry = native.get(webToolIdentity({ ...(lookups.flatToNative.get(suggested) ?? { name: suggested }), kind: "function" }));
     if (!entry) throw failure("Web tool declaration could not retain its native identity.");
-    const key = identity(entry);
+    const key = webToolIdentity(entry);
     let wireName = names.byIdentity.get(key);
     if (!wireName) {
       wireName = suggested;
@@ -115,14 +114,15 @@ function choicePolicy(choice, tools) {
 }
 
 function nativeCall(tool, payload) {
+  const representation = webToolKinds[tool.kind];
   const callId = `call_${randomUUID().replaceAll("-", "")}`;
-  const base = { id: `${tool.kind === "custom" ? "ctc" : tool.kind === "tool_search" ? "tsc" : "fc"}_${randomUUID().replaceAll("-", "")}`,
-    call_id: callId, status: "completed" };
+  const base = { id: `${representation.idPrefix}_${randomUUID().replaceAll("-", "")}`,
+    type: representation.callType, call_id: callId, status: "completed" };
   if (tool.kind === "custom") {
     if (typeof payload.input !== "string" || payload.arguments !== undefined) {
       throw failure(`Custom Web tool ${tool.wireName} requires raw input only.`);
     }
-    return { ...base, type: "custom_tool_call", name: tool.name, ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }), input: payload.input };
+    return { ...base, name: tool.name, ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }), input: payload.input };
   }
   if (payload.input !== undefined || (payload.arguments !== undefined && !record(payload.arguments))) {
     throw failure(`Web tool ${tool.wireName} requires structured arguments only.`);
@@ -135,17 +135,17 @@ function nativeCall(tool, payload) {
   catch { throw failure("Web tool arguments are not JSON serializable."); }
   const serialized = JSON.parse(text);
   if (!record(serialized)) throw failure("Web tool arguments must serialize to an object.");
-  if (tool.kind === "tool_search") return { ...base, type: "tool_search_call", execution: "client", arguments: serialized };
-  return { ...base, type: "function_call", name: tool.name, ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }), arguments: text };
+  if (tool.kind === "tool_search") return { ...base, execution: "client", arguments: serialized };
+  return { ...base, name: tool.name, ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }), arguments: text };
 }
 
 function contentBlock(block) {
   if (typeof block === "string") return { type: "text", text: block };
   if (!record(block)) throw failure("Invalid native Web tool content.");
   if (["text", "image", "audio", "resource", "resource_link"].includes(block.type)) return structuredClone(block);
-  if (block.type === "input_text" || block.type === "output_text") return { type: "text", text: block.text };
+  if (block.type === "input_text") return { type: "text", text: block.text };
   if (block.type === "input_image") {
-    const url = typeof block.image_url === "string" ? block.image_url : block.image_url?.url;
+    const url = block.image_url;
     const data = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/u.exec(url ?? "");
     if (data) return { type: "image", mimeType: data[1], data: data[2] };
     // Preserve URL-bearing content without fetching it or inventing image bytes.
@@ -170,7 +170,7 @@ function mcpResult(output) {
   const structured = envelope?.structuredContent ?? (record(value) && !envelope ? value : undefined);
   return { content,
     ...(structured === undefined ? {} : { structuredContent: structuredClone(structured) }),
-    ...(output.isError === true || output.is_error === true || value?.isError === true || value?.is_error === true
+    ...(output.isError === true || value?.isError === true
       || output.status === "failed" ? { isError: true } : {}),
     ...(envelope?._meta === undefined ? {} : { _meta: structuredClone(envelope._meta) }) };
 }
@@ -217,11 +217,6 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       pending.cleanup();
       pending.reject(reason);
     }
-    for (const waiter of turn.waiters) {
-      waiter.cleanup();
-      if (state === "finished") waiter.resolve([]);
-      else waiter.reject(reason);
-    }
     return true;
   };
   const takeCalls = token => {
@@ -234,19 +229,10 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     }
     return batch.map(call => structuredClone(call.item));
   };
-  const notify = (token, turn) => {
-    if (!turn.waiters.size || !turn.calls.size) return;
-    // One native observer owns delivery. Other observers can explicitly
-    // reobserve the stable batch through takeCalls after reconnecting.
-    const waiter = turn.waiters.values().next().value;
-    turn.waiters.delete(waiter);
-    waiter.cleanup();
-    waiter.resolve(takeCalls(token));
-  };
   const list = (token, { query } = {}) => {
     const turn = active(token);
-    if (query !== undefined && (typeof query !== "string" || !query.trim() || query.length > 1024)) {
-      throw failure("Web tool discovery query must be a nonempty string of at most 1024 characters.");
+    if (query !== undefined && (typeof query !== "string" || !query.trim() || query.length > webMcpQueryLimit)) {
+      throw failure(`Web tool discovery query must be a nonempty string of at most ${webMcpQueryLimit} characters.`);
     }
     const needle = query?.trim().toLowerCase();
     const matches = [];
@@ -268,7 +254,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     if (needle !== undefined) matches.sort((one, two) => one.rank - two.rank);
     return matches.map(({ tool }) => structuredClone(tool));
   };
-  const update = (token, { tools, toolChoice = "auto", includeTools = true }) => {
+  const update = (token, { tools, toolChoice = "auto" }) => {
     const turn = active(token);
     if (turn.calls.size) throw failure("Cannot replace Web tool declarations with unresolved calls.", "web_tools_pending", 409);
     const nextNames = { byIdentity: new Map(turn.names.byIdentity), byWire: new Map(turn.names.byWire) };
@@ -278,10 +264,9 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     turn.tools = next;
     turn.policy = policy;
     change(turn);
-    return includeTools ? list(token) : undefined;
   };
   return {
-    register({ threadId, turnId, tools = [], toolChoice = "auto", includeTools = true }) {
+    register({ threadId, turnId, tools = [], toolChoice = "auto" }) {
       if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) {
         throw failure("Web tools require the exact native thread and turn identity.");
       }
@@ -291,9 +276,9 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const definitions = registry(tools, names);
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
-      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, waiters: new Set(), revision: 0, activity: 0 });
+      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, revision: 0, activity: 0 });
       owners.set(owner, token);
-      return { token, ...(includeTools ? { tools: list(token) } : {}), instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. Discover the needed current tool definitions with codex_tools_list using a focused query; omit query for the full catalog. Use the returned complete parameters or raw custom-tool format and exact wireName. Native Codex performs tool execution and approvals. Never expose the token in your answer.` };
+      return { token, instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. ${webMcpDiscoveryGuidance} Never expose the token in your answer.` };
     },
     list, update, takeCalls, beginActivity,
     async invoke(token, payload, { signal } = {}) {
@@ -317,22 +302,10 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
           turn.callsMade += 1;
           change(turn);
           signal?.addEventListener("abort", abort, { once: true });
-          notify(token, turn);
         });
       } finally {
         release();
       }
-    },
-    waitForCalls(token, { signal } = {}) {
-      const turn = active(token);
-      if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("Web tool observation cancelled.", "AbortError"));
-      if (turn.calls.size) return Promise.resolve(takeCalls(token));
-      return new Promise((resolve, reject) => {
-        const waiter = { resolve, reject, cleanup: () => signal?.removeEventListener("abort", abort) };
-        const abort = () => { turn.waiters.delete(waiter); waiter.cleanup(); reject(signal.reason ?? new DOMException("Web tool observation cancelled.", "AbortError")); };
-        turn.waiters.add(waiter);
-        signal?.addEventListener("abort", abort, { once: true });
-      });
     },
     complete(token, outputs) {
       const turn = active(token);
@@ -346,7 +319,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
         }
         seen.add(output.call_id);
         const pending = turn.calls.get(output.call_id);
-        if (!pending?.delivered || output.type !== outputTypes[pending.kind]) throw failure("Native Web tool result does not match a delivered call.");
+        if (!pending?.delivered || output.type !== webToolKinds[pending.kind].outputType) throw failure("Native Web tool result does not match a delivered call.");
         if (pending.kind !== "tool_search" && !Object.hasOwn(output, "output")) throw failure("Native Web tool result is missing its output.");
         return { pending, output, result: mcpResult(output) };
       });
@@ -357,7 +330,6 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
         pending.cleanup();
         pending.resolve(result);
       }
-      notify(token, turn);
       return { completed: completions.length };
     },
     beginCompletion(token) {

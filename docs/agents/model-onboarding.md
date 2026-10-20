@@ -42,10 +42,10 @@ Existing contracts: [GLM](openrouter-glm.md), [DeepSeek](openrouter-deepseek.md)
 [Switchyard](../../config/switchyard/README.md). Read only the one being reused
 or changed. Their provider-specific repairs are not default settings for a new model.
 
-The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) has explicit backend dispatch
-at `src/chatgpt-web.mjs`. The in-app backend uses native Codex execution; the
-separate launcher backend owns its loopback Responses contract. Its account snapshot
-owns Web picker rows; it bypasses OpenRouter preparation and native credential
+The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) uses native Codex execution
+through the in-app browser. `src/web-models.mjs` owns model identity, effort mapping
+and account eligibility; `src/chatgpt-web.mjs` owns configuration and dispatch.
+It bypasses OpenRouter preparation and native credential
 relay. Do not add it to the fixed OpenRouter registry or merge its native catalog.
 
 The registry owns `supportedRoutedEfforts` and `validateRoutedEffort`. Generated

@@ -4,13 +4,12 @@ import test from "node:test";
 import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
-import { createWebStopHookConfig } from "../src/web-stop-hook.mjs";
+import { createWebStopCode } from "../src/web-stop-hook.mjs";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stateDir = path.resolve("generated/web-stop-rollout-20261018/hook/test-state");
 const runtimeModule = path.resolve("generated/web-stop-rollout-20261018/hook/public-browser-runtime.mjs");
-const config = createWebStopHookConfig({ stateDir, runtimeModule });
-const handler = config.hooks.Interrupt[0].hooks[0];
+const code = createWebStopCode({ stateDir, runtimeModule });
 const marker = "ROUTER_WEB_STOP ";
 
 function fixture() {
@@ -43,7 +42,7 @@ function fixture() {
       get: async tabId => { assert.equal(tabId, surface.tabId); touch("get_tab", thread); return tab; }, new: forbidden } };
     const state = { agent: undefined, browser, tab, tabId: surface.tabId, savedUrl: surface.url, sessionId: thread,
       runtimeModule, hasSentMessage: true, sendAttempted: true, sendClicked: true, sendConfirmed: true,
-      closed: false, bindingLost: false, completed: false, interrupted: false, retained: false };
+      bindingLost: false, completed: false, interrupted: false, retained: false };
     const active = { turnId: turn, state, stopButtonName: "Stop" };
     const bindingId = `binding_${thread.replaceAll("-", "")}`;
     const key = "routerWeb_" + bindingId;
@@ -82,8 +81,8 @@ function fixture() {
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
   const run = async ({ thread = model.owner, turn = model.turn, event = model.event, budgetMs } = {}) => {
-    const input = budgetMs === undefined ? handler.input : createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs }).hooks.Interrupt[0].hooks[0].input;
-    const source = input.code.replaceAll("${session_id}", thread).replaceAll("${turn_id}", turn)
+    const template = budgetMs === undefined ? code : createWebStopCode({ stateDir, runtimeModule }, { budgetMs });
+    const source = template.replaceAll("${session_id}", thread).replaceAll("${turn_id}", turn)
       .replaceAll("${hook_event_name}", event).replaceAll("import(", "__publicImport(");
     const count = outputs.length;
     await new vm.Script(`(async () => { ${source} })()`).runInContext(context, { timeout: 1000 });
@@ -119,19 +118,13 @@ async function blocked(change, expectedCode) {
   return f;
 }
 
-test("generator emits one bounded Interrupt handler and preserves native substitution fields", () => {
-  assert.deepEqual(Object.keys(config.hooks), ["Interrupt"]);
-  assert.equal(config.hooks.Interrupt.length, 1);
-  assert.equal(config.hooks.Interrupt[0].hooks.length, 1);
-  assert.equal(handler.type, "mcp_tool"); assert.equal(handler.server, "node_repl"); assert.equal(handler.tool, "js");
-  assert.equal(handler.timeout, 3); assert.equal(handler.input.timeout_ms, 2700);
-  for (const value of ["${session_id}", "${turn_id}", "${hook_event_name}"]) assert(handler.input.code.includes(value));
-  assert.deepEqual(createWebStopHookConfig({ stateDir, runtimeModule }), config);
-  assert.deepEqual(createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs: 2400 }), config);
+test("Stop code generator preserves validated native substitution fields and bounds its budget", () => {
+  for (const value of ["${session_id}", "${turn_id}", "${hook_event_name}"]) assert(code.includes(value));
+  assert.equal(createWebStopCode({ stateDir, runtimeModule }, { budgetMs: 2400 }), code);
   for (const budgetMs of [0, -1, 2401, 2250.5, "2250", NaN])
-    assert.throws(() => createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs }), /budget/u);
+    assert.throws(() => createWebStopCode({ stateDir, runtimeModule }, { budgetMs }), /budget/u);
   for (const changes of [{ stateDir: "relative" }, { runtimeModule: "relative" }, { stateDir: stateDir + "${session_id}" }])
-    assert.throws(() => createWebStopHookConfig({ stateDir, runtimeModule, ...changes }), /validated absolute path/u);
+    assert.throws(() => createWebStopCode({ stateDir, runtimeModule, ...changes }), /validated absolute path/u);
 });
 
 test("the remaining callback budget preserves the pre-click reserve and bounds confirmation and handoff", async () => {
@@ -258,7 +251,6 @@ test("unconfirmed Send, bad Stop authority and changed ledger prevent mutation",
     f => { f.first.state.sendAttempted = false; },
     f => { f.first.state.hasSentMessage = false; },
     f => { f.first.state.bindingLost = true; },
-    f => { f.first.state.closed = true; },
   ]) await blocked(change);
 });
 

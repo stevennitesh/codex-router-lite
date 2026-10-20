@@ -194,8 +194,13 @@ test("V1 role eligibility preserves hidden, disabled and selected choices and ne
 
 test("Web effort overrides use the bridge account's exact advertised vocabulary", t => {
   const f = fixture(t);
+  const runtimeModule = path.join(f.state, "browser-runtime.mjs"), executable = path.join(f.state, "tunnel-client.exe");
+  writeFileSync(runtimeModule, 'throw new Error("Effort configuration must not execute browser work.");\n', "utf8");
+  writeFileSync(executable, "Synthetic tunnel path; never execute.\n", "utf8");
   writeFileSync(path.join(f.state, "chatgpt-web.json"), JSON.stringify({ version: 1, enabled: true,
-    baseUrl: "http://127.0.0.1:17841/v1", capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false } }));
+    browser: { runtimeModule, pluginName: "Router local tools", pluginAppId: "asdk_app_fixture",
+      pluginSelectionButtonName: "Router local tools, Connectors" }, tunnel: { id: "tunnel_fixture", executable },
+    capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false } }));
   const observed = evaluate(f, `import {setSubagentEffort,subagentEffort} from ${JSON.stringify(stateModule)};
     await setSubagentEffort('chatgpt-web/gpt-6-sol','high');
     let rejected;try{await setSubagentEffort('chatgpt-web/gpt-6-sol','xhigh');}catch(error){rejected=error.message;}

@@ -6,18 +6,20 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv-provider.js";
 
+import { webMcpDiscoveryGuidance, webMcpNames, webMcpQueryLimit } from "./web-mcp-contract.mjs";
+
 const tokenSchema = { type: "string", minLength: 1, maxLength: 256 };
 const tools = [
   {
-    name: "codex_tools_list",
-    description: "Discover complete definitions of tools declared and allowed for this exact active Codex turn. Prefer a focused query: a case-insensitive substring of wire/native name, namespace, or description, ranked by exact name, name prefix, name substring, then description; ties keep declaration order. Omit query for the full catalog. Retain wireName, kind, complete parameters, and raw custom-tool format when calling them.",
+    name: webMcpNames.list,
+    description: `Discover complete definitions of tools declared and allowed for this exact active Codex turn. Query is a case-insensitive substring of wire/native name, namespace, or description, ranked by exact name, name prefix, name substring, then description; ties keep declaration order. ${webMcpDiscoveryGuidance}`,
     inputSchema: { type: "object", properties: { turn_token: tokenSchema,
-      query: { type: "string", minLength: 1, maxLength: 1024, pattern: "\\S" },
+      query: { type: "string", minLength: 1, maxLength: webMcpQueryLimit, pattern: "\\S" },
     }, required: ["turn_token"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: "codex_tool_call",
+    name: webMcpNames.call,
     description: "Request one current Codex tool by its exact wire_name. Use arguments for a function/search tool or input for a raw custom tool. Native Codex executes it with its normal approvals; await the actual result before proceeding. Cancellation retires this turn; do not retry a cancelled or timed-out call.",
     inputSchema: { type: "object", properties: {
       turn_token: tokenSchema,
@@ -59,7 +61,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     creating.add(entry);
     const server = new Server({ name: "codex-native-tools", version: "1.0.0" }, {
       capabilities: { tools: {} },
-      instructions: "Use the exact private turn_token supplied with the current Codex prompt. Discover needed current tool definitions with codex_tools_list using a focused query, then request them with codex_tool_call using the returned complete schema or custom grammar. Omit query only when the full catalog is needed. Prior turns and prose do not declare tools. Every result comes from native Codex execution and approvals. Never put private tokens in the answer.",
+      instructions: `Use the exact private turn_token supplied with the current Codex prompt. ${webMcpDiscoveryGuidance} Prior turns and prose do not declare tools. Never put private tokens in the answer.`,
     });
     entry.server = server;
     server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: structuredClone(tools) }));
@@ -73,7 +75,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         // Hold the accepted turn through the whole handler, including discovery
         // and the async continuation after native output resolved the call.
         release = broker.beginActivity(token);
-        if (name === "codex_tools_list") {
+        if (name === webMcpNames.list) {
           const descriptors = broker.list(token, { query: args.query });
           return { content: [{ type: "text", text: JSON.stringify({ tools: descriptors }) }], structuredContent: { tools: descriptors } };
         }

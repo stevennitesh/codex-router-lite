@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { decodeCompaction, encodeCheckpoint, finalizeCheckpoint, prepareCompaction } from "./compaction-checkpoint.mjs";
+import { webToolKinds } from "./web-tool-contract.mjs";
 
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const id = prefix => `${prefix}_${randomUUID().replaceAll("-", "")}`;
 const failure = message => Object.assign(new Error(message), { code: "invalid_web_response", status: 502 });
-const prefixes = { message: "msg", function_call: "fc", custom_tool_call: "ctc", tool_search_call: "tsc" };
+const prefixes = { message: "msg", ...Object.fromEntries(Object.values(webToolKinds).map(kind => [kind.callType, kind.idPrefix])) };
 
 function nonempty(value) { return typeof value === "string" && value.length > 0; }
 

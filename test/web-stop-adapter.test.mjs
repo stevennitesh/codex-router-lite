@@ -10,8 +10,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { browserHelperVersion, browserScript } from '../src/web-browser.mjs';
-import { createWebStopHookConfig } from '../src/web-stop-hook.mjs';
-import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, cleanupMetadata, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
+import { createWebStopCode } from '../src/web-stop-hook.mjs';
+import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
 
 const APPROVED_THREAD = '01a14b65-a7a8-7b41-bd33-7c19d3c6df82';
 const TURN = '01a14b65-a7a8-7b41-bd33-7c19d3c6df83';
@@ -122,7 +122,7 @@ test('minimal stock hook uses the exact retained origin metadata, stripping only
   source._meta.futureAuthority = { nested: ['private future authority', { preserved: true }] };
   source._meta.traceparent = 'origin trace'; source._meta.tracestate = 'origin state';
   const cache = cached(source), nativeHook = hook(), before = clone(nativeHook);
-  const result = cleanupMetadata(nativeHook, cache, GENERATION);
+  const result = cleanupDecision(nativeHook, cache, GENERATION).meta;
   assert.deepEqual(nativeHook, before);
   const expected = clone(source._meta); delete expected.callId; delete expected.itemId; delete expected.progressToken;
   assert.deepEqual(result, expected);
@@ -135,8 +135,8 @@ test('minimal stock hook uses the exact retained origin metadata, stripping only
 
 test('cold, mismatched, foreign, stale and conflicting authority refuses cleanup', () => {
   const cache = cached();
-  assert.equal(cleanupMetadata(hook(), null, GENERATION), null);
-  assert.equal(cleanupMetadata(hook(), cache, TURN2), null);
+  assert.equal(cleanupDecision(hook(), null, GENERATION).meta, null);
+  assert.equal(cleanupDecision(hook(), cache, TURN2).meta, null);
   const alternatives = [hook(TURN2), hook(), hook(), hook(), hook(), hook(), hook()];
   alternatives[1].arguments.session_id = SESSION;
   alternatives[2]._meta['x-codex-turn-metadata'] = { ...canonical(), node_repl_auto_review_required: false };
@@ -144,7 +144,7 @@ test('cold, mismatched, foreign, stale and conflicting authority refuses cleanup
   alternatives[4]._meta['codex/sandbox-state-meta'] = { different: true };
   alternatives[5]._meta['codex/sandbox-launcher'] = { different: true };
   alternatives[6]._meta.sessionId = SESSION;
-  for (const candidate of alternatives) assert.equal(cleanupMetadata(candidate, cache, GENERATION), null);
+  for (const candidate of alternatives) assert.equal(cleanupDecision(candidate, cache, GENERATION).meta, null);
   const invalidAlias = ordinary(); invalidAlias._meta['codex/sandbox-state-meta'].changed = true;
   assert.equal(qualifyBrowserCall(invalidAlias, STOP_CONFIG.runtimeModule), null);
 });
@@ -155,7 +155,7 @@ test('optional hook fields must match retained authority except documented reque
   const cache = cached(source), optional = hook();
   optional._meta = { ...clone(source._meta), traceparent: 'hook trace', tracestate: 'hook state' };
   delete optional._meta.callId;
-  const result = cleanupMetadata(optional, cache, GENERATION);
+  const result = cleanupDecision(optional, cache, GENERATION).meta;
   assert.equal(result.traceparent, 'origin trace'); assert.equal(result.tracestate, 'origin state');
   assert.equal(result['openai/readOnly'], true);
   for (const [key, value] of [['openai/readOnly', false], ['baggage', 'unverified baggage'], ['futureHookAuthority', {}]]) {
@@ -163,7 +163,7 @@ test('optional hook fields must match retained authority except documented reque
     assert.equal(cleanupDecision(conflict, cache, GENERATION).reason, 'hook_authority_conflict');
   }
   const presentReadOnly = hook(); presentReadOnly._meta['openai/readOnly'] = true;
-  assert.equal(cleanupMetadata(presentReadOnly, cached(), GENERATION), null);
+  assert.equal(cleanupDecision(presentReadOnly, cached(), GENERATION).meta, null);
 });
 
 test('any own hook callId excludes ordinary tool calls from lifecycle interpretation', () => {
@@ -174,7 +174,7 @@ test('any own hook callId excludes ordinary tool calls from lifecycle interpreta
 });
 
 test('Stop generator replaces only three validated native literal identities', () => {
-  const template = createWebStopHookConfig(STOP_CONFIG).hooks.Interrupt[0].hooks[0].input.code;
+  const template = createWebStopCode(STOP_CONFIG);
   const output = stopCode(STOP_CONFIG, cached().identity);
   assert.equal(output, template.replace('${session_id}', APPROVED_THREAD).replace('${turn_id}', TURN).replace('${hook_event_name}', 'Interrupt'));
   assert.throws(() => stopCode(STOP_CONFIG, { threadId: APPROVED_THREAD, turnId: "';evil()//", sessionId: SESSION }));
@@ -193,9 +193,9 @@ test('bounded actual native output envelope distinguishes explicit success, no-s
 });
 
 test('validated blocked proof retains bounded stage and progress without acquiring success', () => {
-  const proof = { outcome: 'blocked', stage: 'stop_hidden', freshController: true,
+  const proof = { outcome: 'blocked', stage: 'stop_readback_visibility', freshController: true,
     stopClicked: true, stopHidden: false, retained: false, elapsedMs: 1012, code: 'browser_operation_failed' };
-  for (const stage of ['stop_hidden', 'stop_wait_hidden', 'stop_readback_visibility']) {
+  for (const stage of ['stop_click', 'stop_readback_visibility', 'handoff']) {
     assert.deepEqual(readStopResult(success({ ...proof, stage })), { ok: false, ...proof, stage });
   }
   assert.deepEqual(readStopResult(success({ ...proof, stage: 'private unknown stage' })), { ok: false, code: 'malformed_proof' });

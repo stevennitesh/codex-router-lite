@@ -18,7 +18,7 @@ export function discoverBrowserExecutor(tools) {
     throw failure("Require one explicitly declared native mcp__node_repl.js function.");
   }
   const declaration = matches[0];
-  const schemas = [declaration.parameters, declaration.inputSchema, declaration.input_schema].filter(value => value !== undefined);
+  const schemas = [declaration.parameters, declaration.inputSchema].filter(value => value !== undefined);
   const schema = schemas[0];
   if (schemas.length !== 1 || !record(schema) || schema.type !== "object" || !hasType(schema.properties?.code, "string")
       || !Array.isArray(schema.required ?? []) || (schema.required || []).some(key => !["code", "title", "timeout_ms"].includes(key))
@@ -43,8 +43,26 @@ export function discoverBrowserExecutor(tools) {
     }
     return JSON.stringify(args);
   };
-  return { namespace: nativeNamespace, name: "js", type: "function", schema, declaration,
-    sha256: createHash("sha256").update(JSON.stringify(declaration)).digest("hex"), argumentsFor };
+  return { namespace: nativeNamespace, name: "js", argumentsFor };
+}
+
+export function isSavedChatUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
+      && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
+  } catch { return false; }
+}
+
+// Every phase can spend only the remainder of its caller's deadline. In
+// particular paste readiness, saved URL and generation proof share Send's budget.
+async function waitForBrowserState(ready, deadline, message) {
+  while (!(await ready())) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(message);
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
+  }
 }
 
 function frameParts(frameToken) {
@@ -87,50 +105,60 @@ export function parseBrowserOutput(output, frameToken) {
   return found[0];
 }
 
-const defaultUi = {
+export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
   composerName: "Ask ChatGPT", normalHeadingName: "Ready when you are.", temporaryButtonName: "Temporary chat",
   temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
   assistantFinalReplySelector: '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
-  stopButtonExactName: "Stop", responseCompleteStatusText: "Response complete", regenerateButtonExactName: "Regenerate response",
+  stopButtonExactName: "Stop", regenerateButtonExactName: "Regenerate response",
   conversationFullText: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.",
   startNewChatButtonName: "Start new chat",
-};
+  messageSelector: '[data-chatgpt-selection-message-id]', messageIdAttribute: "data-chatgpt-selection-message-id",
+  assistantSelector: '[data-markdown-text-style="assistant-message"]', turnSelector: '[data-turn-key]', turnKeyAttribute: "data-turn-key",
+  streamingStatusSelector: '[data-streaming-response-status]', reasoningSelector: '[data-testid^="cot-v5"]',
+  turnStateSelector: '[data-talvt-turn-state]', turnStateAttribute: "data-talvt-turn-state", completeTurnState: "complete",
+  labelSelector: '[aria-label]', labelAttribute: "aria-label", markdownCopyAttribute: "data-markdown-copy",
+  codeBlockCopyValue: "code-block", excludedCopyValue: "exclude", codeSelector: "code",
+  codeEditorSelector: ".cm-content[data-language]", codeLineClass: "cm-line",
+  contentEditableAttribute: "contenteditable", familySelector: '[role="menuitemradio"]', checkedAttribute: "aria-checked",
+  powerValueAttribute: "aria-valuenow", powerMinimumAttribute: "aria-valuemin", powerMaximumAttribute: "aria-valuemax",
+  conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
+});
 
 // Self-contained read-only DOM projection, also usable directly with the public
 // locator.evaluateAll API. Code source excludes the renderer's toolbar and uses
 // logical lines rather than layout-derived wrapping. The observed message wrapper
 // identity and its text come from the same DOM read.
 export function readBrowserReplies(elements, options) {
-  const wrapperSelector = '[data-chatgpt-selection-message-id]';
-  const turns = options?.snapshot ? elements.filter(element => element.matches('[data-turn-key]')) : [];
+  const ui = options.ui, wrapperSelector = ui.messageSelector;
+  const turns = options?.snapshot ? elements.filter(element => element.matches(ui.turnSelector)) : [];
   const selectedElements = options?.snapshot ? elements.filter(element => element.matches(options.assistantSelector)) : elements;
   const turnOrders = new Map();
   const turnOrder = turn => {
     if (!turnOrders.has(turn)) {
-      const ordered = Array.from(turn.querySelectorAll(`${options?.assistantSelector ?? '[data-markdown-text-style="assistant-message"]'},[data-streaming-response-status],[aria-label]`));
+      const ordered = Array.from(turn.querySelectorAll(`${options.assistantSelector ?? ui.assistantSelector},${ui.streamingStatusSelector},${ui.labelSelector}`));
       turnOrders.set(turn, new Map(ordered.map((element, index) => [element, index])));
     }
     return turnOrders.get(turn);
   };
-  const codeBlock = node => node.nodeType === 1 && (node.tagName === "PRE" || node.getAttribute("data-markdown-copy") === "code-block");
+  const codeBlock = node => node.nodeType === 1 && (node.tagName === "PRE" || node.getAttribute(ui.markdownCopyAttribute) === ui.codeBlockCopyValue);
   const block = node => node.nodeType === 1 && (codeBlock(node) || /^(?:DIV|P|BLOCKQUOTE|H[1-6]|UL|OL|LI|TABLE|TR)$/.test(node.tagName));
   const paragraph = node => codeBlock(node) || node.nodeType === 1 && /^(?:P|BLOCKQUOTE|H[1-6])$/.test(node.tagName);
   const readCode = element => {
-    const codes = element.querySelectorAll("code");
-    const editors = element.querySelectorAll(".cm-content[data-language]");
+    const codes = element.querySelectorAll(ui.codeSelector);
+    const editors = element.querySelectorAll(ui.codeEditorSelector);
     if (codes.length === 1 && editors.length === 0) return codes[0].textContent ?? "";
     if (codes.length === 0 && editors.length === 1) {
       const lines = Array.from(editors[0].children);
-      if (lines.every(line => line.classList.contains("cm-line"))) return lines.map(line => line.textContent ?? "").join("\n");
+      if (lines.every(line => line.classList.contains(ui.codeLineClass))) return lines.map(line => line.textContent ?? "").join("\n");
     }
     throw new Error("The assistant code block does not expose one complete source.");
   };
   const read = node => {
     if (node.nodeType === 3) return node.textContent ?? "";
     if (node.nodeType !== 1) return "";
-    if (node.getAttribute("data-markdown-copy") === "exclude" || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return "";
+    if (node.getAttribute(ui.markdownCopyAttribute) === ui.excludedCopyValue || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return "";
     if (node.tagName === "BR") return "\n";
     if (codeBlock(node)) return readCode(node);
     let text = "", previous;
@@ -154,18 +182,18 @@ export function readBrowserReplies(elements, options) {
     if (ancestor) continue; // Its selected ancestor already includes this text.
     const key = wrapper ?? element;
     if (!messages.has(key)) messages.set(key, { wrapper, answerRoots: [],
-      reply: { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" } });
+      reply: { messageId: wrapper?.getAttribute(ui.messageIdAttribute) ?? null, text: "" } });
     const message = messages.get(key);
-    const turn = wrapper?.closest('[data-turn-key]');
-    if (options?.snapshot) message.reply.turnKey = turn?.getAttribute('data-turn-key') ?? null;
+    const turn = wrapper?.closest(ui.turnSelector);
+    if (options?.snapshot) message.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
     // Identity and document order remain global. Historical bodies and their
     // completion controls are irrelevant to an anchored observation.
     if (options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
     // Status and reasoning roots use the same markdown renderer as answers.
     // The first status boundary preserves answer chunks between later tools.
-    const firstStatus = turn?.querySelector('[data-streaming-response-status]');
+    const firstStatus = turn?.querySelector(ui.streamingStatusSelector);
     const order = turn ? turnOrder(turn) : null;
-    const commentary = element.closest('[data-streaming-response-status],[data-testid^="cot-v5"]')
+    const commentary = element.closest(`${ui.streamingStatusSelector},${ui.reasoningSelector}`)
       || firstStatus && order.has(element) && order.has(firstStatus) && order.get(element) < order.get(firstStatus);
     const text = commentary ? "" : read(element);
     if (!commentary) message.answerRoots.push(element);
@@ -188,23 +216,23 @@ export function readBrowserReplies(elements, options) {
   const result = () => {
     if (!options?.snapshot) return replies;
     for (const group of groups) {
-      const turn = group.wrapper?.closest('[data-turn-key]');
-      group.reply.turnKey = turn?.getAttribute('data-turn-key') ?? null;
+      const turn = group.wrapper?.closest(ui.turnSelector);
+      group.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
       if (options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
-      group.reply.completionActionAfter = Boolean(finalRoot && turn && Array.from(turn.querySelectorAll('[aria-label]'))
-        .some(action => action.getAttribute('aria-label') === options.regenerateName
+      group.reply.completionActionAfter = Boolean(finalRoot && turn && Array.from(turn.querySelectorAll(ui.labelSelector))
+        .some(action => action.getAttribute(ui.labelAttribute) === options.regenerateName
           && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
     }
     return { replies, turns: turns.map(turn => {
-      const turnKey = turn.getAttribute('data-turn-key');
+      const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
-      const states = Array.from(turn.querySelectorAll('[data-talvt-turn-state]'));
+      const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
-        complete: states.length === 1 && states[0].getAttribute('data-talvt-turn-state') === 'complete' };
+        complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
   };
   if (!invalid.length) return result();
@@ -223,11 +251,11 @@ export function readBrowserReplies(elements, options) {
 
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-function createBrowserView(state, options, replyReader) {
+function createBrowserView(state, options, replyReader, savedUrl) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const snapshot = (tab = state.tab, generationMarker, generationTurnKey) => tab.playwright.locator(`[data-turn-key],${ui.assistantFinalReplySelector}`)
-    .evaluateAll(replyReader, { snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+  const snapshot = (tab = state.tab, generationMarker, generationTurnKey) => tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
+    .evaluateAll(replyReader, { ui, snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}) }, { timeoutMs: 1000 });
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
@@ -242,41 +270,27 @@ function createBrowserView(state, options, replyReader) {
     if (!Array.isArray(state.baselineReplyIds)) return { replyUnavailableReason: "missing-send-baseline" };
     const baseline = new Set(state.baselineReplyIds);
     const latest = values.at(-1);
-    if (state.generationTurnKey) {
-      const owned = values.filter(value => value.turnKey === state.generationTurnKey && !baseline.has(value.messageId));
-      state.generationReplyIds = [...new Set([...(state.generationReplyIds ?? []), ...owned.map(value => value.messageId)])];
-      if (!owned.length) return { replyUnavailableReason: "no-new-message" };
-      if (owned.at(-1) !== latest) return { replyUnavailableReason: "generation-message-not-latest" };
-      const answer = owned.filter(value => value.answer).at(-1);
-      return answer?.text.trim() ? { reply: answer }
-        : { reply: answer ?? owned.at(-1), replyUnavailableReason: "no-answer-message" };
-    }
-    // Legacy retained proofs have no turn anchor. They may recover only their
-    // exact recorded reply; fresh Sends always establish a turn anchor below.
-    if (state.replyId) return latest?.messageId === state.replyId && !baseline.has(state.replyId)
-      ? { reply: latest } : { replyUnavailableReason: "recorded-message-no-longer-latest" };
-    const fresh = values.filter(value => !baseline.has(value.messageId));
-    if (fresh.length === 0) return { replyUnavailableReason: "no-new-message" };
-    if (fresh.length > 1) return { replyUnavailableReason: "multiple-new-messages" };
-    return fresh[0] === latest ? { reply: latest } : { replyUnavailableReason: "new-message-not-latest" };
+    if (!state.generationTurnKey) return { replyUnavailableReason: "missing-generation-identity" };
+    const owned = values.filter(value => value.turnKey === state.generationTurnKey && !baseline.has(value.messageId));
+    state.generationReplyIds = [...new Set([...(state.generationReplyIds ?? []), ...owned.map(value => value.messageId)])];
+    if (!owned.length) return { replyUnavailableReason: "no-new-message" };
+    if (owned.at(-1) !== latest) return { replyUnavailableReason: "generation-message-not-latest" };
+    const answer = owned.filter(value => value.answer).at(-1);
+    return answer?.text.trim() ? { reply: answer }
+      : { reply: answer ?? owned.at(-1), replyUnavailableReason: "no-answer-message" };
   };
   const conversationFull = async () => {
-    const outsideMessages = (elements, assistantSelector) => {
-      const excluded = `${assistantSelector},[data-markdown-text-style="assistant-message"],[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input`;
+    const outsideMessages = (elements, ui) => {
+      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
       return elements.some(element => !element.closest(excluded) && !element.querySelector(excluded));
     };
     const [banner, button] = await Promise.all([
       state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true })
-        .evaluateAll(outsideMessages, ui.assistantFinalReplySelector, { timeoutMs: 1000 }),
+        .evaluateAll(outsideMessages, ui, { timeoutMs: 1000 }),
       role(ui.startNewChatButtonName).filter({ visible: true })
-        .evaluateAll(outsideMessages, ui.assistantFinalReplySelector, { timeoutMs: 1000 }),
+        .evaluateAll(outsideMessages, ui, { timeoutMs: 1000 }),
     ]);
     return banner && button;
-  };
-  const savedUrl = value => {
-    const url = new URL(value);
-    return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
-      && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
   };
   const temporaryInactive = async (tab = state.tab) => !(await role(ui.temporaryToggleName, "button", tab).isVisible())
     && !(await role(ui.temporaryHeadingName, "heading", tab).isVisible());
@@ -304,20 +318,17 @@ function createBrowserView(state, options, replyReader) {
     if (!(await normal(ownedUrl))) throw new Error("The observed conversation left its normal saved URL.");
     const view = await snapshot(state.tab, undefined, state.generationTurnKey), texts = view.replies;
     const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
-    const current = state.generationTurnKey && (anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey)
+    const current = anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey
       ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
     const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
     if (reply) state.replyId = reply.messageId;
-    const generation = state.generationTurnKey ? state.tab.playwright.locator(`[data-turn-key="${state.generationTurnKey}"]`) : null;
-    const [stopVisible, statuses, regenerateVisible, full] = await Promise.all([
+    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${state.generationTurnKey}"]`);
+    const [stopVisible, regenerateVisible, full] = await Promise.all([
       role(ui.stopButtonExactName).isVisible(),
-      generation ? [] : state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 }),
-      generation ? Boolean(reply?.completionActionAfter) && generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
-        : role(ui.regenerateButtonExactName).isVisible(),
+      Boolean(reply?.completionActionAfter) && generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible(),
       conversationFull(),
     ]);
-    const statusComplete = generation ? anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete
-      : statuses.some(text => text.trim() === ui.responseCompleteStatusText);
+    const statusComplete = anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete;
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
     const url = await state.tab.url();
     if (!(await normal(url))) throw new Error("The observed conversation left its normal saved URL.");
@@ -331,7 +342,7 @@ function createBrowserView(state, options, replyReader) {
   return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
 }
 
-async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFactory) {
+async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFactory, waitForState) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner } = viewFactory(state, options, replyReader);
@@ -341,22 +352,17 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     const active = globalThis.routerWebActiveTurns ??= new Map();
     active.set(options.sessionId, { turnId: options.turnId, state, stopButtonName: ui.stopButtonExactName });
   };
-  const clearActive = () => {
-    const active = globalThis.routerWebActiveTurns;
-    const current = active?.get(options.sessionId);
-    if (current?.turnId === options.turnId && current.state === state) active.delete(options.sessionId);
-  };
   const emptyComposer = async (tab = state.tab) => {
-    const values = await role(ui.composerName, "textbox", tab).evaluateAll((elements, ownedChipSelector) => {
+    const values = await role(ui.composerName, "textbox", tab).evaluateAll((elements, { ownedChipSelector, attribute }) => {
       const empty = node => {
         if (node.nodeType === 3) return !(node.textContent ?? "").trim();
         if (node.nodeType !== 1) return true;
         if (ownedChipSelector && node.matches(ownedChipSelector)) return true;
-        if (node.getAttribute("contenteditable") === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
+        if (node.getAttribute(attribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
         return Array.from(node.childNodes).every(empty);
       };
-      return Array.from(elements, element => element.tagName === "DIV" && element.getAttribute("contenteditable") === "true" && empty(element));
-    }, options.pluginChipSelector, { timeoutMs: 1000 });
+      return Array.from(elements, element => element.tagName === "DIV" && element.getAttribute(attribute) === "true" && empty(element));
+    }, { ownedChipSelector: options.pluginChipSelector, attribute: ui.contentEditableAttribute }, { timeoutMs: 1000 });
     return values.length === 1 && values[0] === true;
   };
   const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
@@ -373,14 +379,14 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
     // The current picker renders the family as generic text inside an unnamed
     // radio menu item. Match its observed DOM text, then verify the full text.
-    const familyLocator = () => menu.locator('[role="menuitemradio"]').filter({ hasText: options.modelFamily });
+    const familyLocator = () => menu.locator(ui.familySelector).filter({ hasText: options.modelFamily });
     const expand = menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true });
     const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
     let family = familyLocator();
     if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
     // Read the actual checked row before changing the picker. Collapsed rows
     // are readable but clipped over Power, so only click after expanding.
-    if (await family.getAttribute("aria-checked") !== "true") {
+    if (await family.getAttribute(ui.checkedAttribute) !== "true") {
       if (await expand.isVisible()) await expand.click();
       if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
       await family.click();
@@ -397,18 +403,18 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
       return Number(value);
     };
-    let value = await readPower("aria-valuenow");
-    const minimum = await readPower("aria-valuemin");
-    const maximum = await readPower("aria-valuemax");
+    let value = await readPower(ui.powerValueAttribute);
+    const minimum = await readPower(ui.powerMinimumAttribute);
+    const maximum = await readPower(ui.powerMaximumAttribute);
     if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
     for (let move = 0; value !== options.power && move < 4; move += 1) {
       const direction = value > options.power ? -1 : 1;
       await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
-      const after = await readPower("aria-valuenow");
+      const after = await readPower(ui.powerValueAttribute);
       if (after !== value + direction) throw new Error("Power did not move exactly one step.");
       value = after;
     }
-    const evidence = { familyChecked: await family.getAttribute("aria-checked") === "true", familyText: await family.textContent(),
+    const evidence = { familyChecked: await family.getAttribute(ui.checkedAttribute) === "true", familyText: await family.textContent(),
       powerValue: value, powerMinimum: minimum, powerMaximum: maximum };
     if (!evidence.familyChecked || evidence.familyText?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
     await power.press("Escape");
@@ -431,13 +437,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       await stop.waitFor({ state: "hidden", timeoutMs: 10000 });
       activeOwner(turnIds, requireActive);
     }
-  };
-  const stopAndClose = async () => {
-    await stopGeneration();
-    await state.tab.close();
-    state.closed = true;
-    clearActive();
-    return { tabId: state.tabId, closed: true };
   };
   const clearUnsentDraft = async () => {
     const composer = role(ui.composerName, "textbox");
@@ -462,15 +461,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
     const owned = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
     recoverMissingTab = owned.length === 0;
-    if (recoverMissingTab && options.recovery.retainedTabOnly && !options.recovery.generationTurnKey) throw new Error("The exact retained saved chat tab is unavailable; recovery cannot replace it.");
     if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
   }
   if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
-    // A confirmed saved URL and generation anchor or reply proof can recover a lost kernel.
+    // A confirmed saved URL and generation anchor can recover a lost kernel.
     // A browser/tab ID is only a hint after restart; the exact saved URL and
-    // rendered generation or reply remain authoritative. Never replace a surviving owner.
+    // rendered generation remain authoritative. Never replace a surviving owner.
     const proof = options.recovery;
-    const exactRetainedTab = proof.retainedTabOnly && !proof.generationTurnKey;
     const requireRecoveryOwnership = () => {
       if (recoverMissingTab) activeOwner(options.expectedOwnerTurnIds, true);
       else {
@@ -492,9 +489,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
     const tabs = await browser.tabs.list();
     requireRecoveryOwnership();
-    const hinted = proof.tabId ? tabs.filter(tab => tab.id === proof.tabId) : [];
-    const matches = exactRetainedTab ? hinted : hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
-    if (exactRetainedTab && (matches.length !== 1 || matches[0].url !== proof.url)) throw new Error("The exact retained saved chat tab or URL changed; recovery cannot replace it.");
+    const hinted = tabs.filter(tab => tab.id === proof.tabId);
+    const matches = hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
     if (matches.length > 1) throw new Error("The saved chat tab is ambiguous; recovery cannot choose a tab.");
     requireRecoveryOwnership();
     const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
@@ -503,23 +499,21 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     const recoveryTabUrl = await tab.url();
     const navigate = recoveryTabUrl !== proof.url;
     requireRecoveryOwnership();
-    if (exactRetainedTab && navigate) throw new Error("The exact retained saved chat URL changed during recovery.");
     if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
     const { createHash } = await import("node:crypto");
     requireRecoveryOwnership();
     let recoveredReplyId, recoveredBaselineIds, recoveredGenerationIds;
     verifyRecoveryTexts = view => {
       const texts = view.replies;
-      const fresh = texts.filter(value => !proof.baselineReplyIds?.includes(value.messageId)
-        && (!proof.generationTurnKey || value.turnKey === proof.generationTurnKey));
-      const latest = proof.generationTurnKey ? fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1) : texts.at(-1), text = latest?.text;
+      const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId) && value.turnKey === proof.generationTurnKey);
+      const latest = fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1), text = latest?.text;
       const expectedReplyId = proof.replyId ?? recoveredReplyId;
       if (!validReplies(texts)) return false;
-      if (proof.generationTurnKey && (view.turns.filter(turn => turn.turnKey === proof.generationTurnKey).length !== 1
-          || view.turns.at(-1)?.turnKey !== proof.generationTurnKey)) return false;
-      const progressing = proof.generationTurnKey && !proof.completed;
+      if (view.turns.filter(turn => turn.turnKey === proof.generationTurnKey).length !== 1
+          || view.turns.at(-1)?.turnKey !== proof.generationTurnKey) return false;
+      const progressing = !proof.completed;
       if (proof.retainedTabOnly) {
-        if ((!proof.generationTurnKey && fresh.length > 1) || fresh.length && fresh.at(-1) !== texts.at(-1)
+        if (fresh.length && fresh.at(-1) !== texts.at(-1)
             || !progressing && expectedReplyId && latest?.messageId !== expectedReplyId) return false;
         if (!fresh.length) {
           recoveredBaselineIds = proof.baselineReplyIds;
@@ -532,8 +526,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
             || createHash("sha256").update(recorded.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256)
           || !recorded && !progressing) return false;
       recoveredReplyId = latest.messageId;
-      recoveredBaselineIds = proof.baselineReplyIds ?? texts.slice(0, -1).map(value => value.messageId);
-      recoveredGenerationIds = [...new Set([...(proof.generationReplyIds ?? []), ...fresh.map(value => value.messageId)])];
+      recoveredBaselineIds = proof.baselineReplyIds;
+      recoveredGenerationIds = [...new Set([...proof.generationReplyIds, ...fresh.map(value => value.messageId)])];
       return true;
     };
     const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await snapshot(tab));
@@ -541,8 +535,8 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url, baselineReplyCount: proof.baselineReplyCount,
-      baselineReplyIds: [...(proof.baselineReplyIds ?? [])], replyId: proof.replyId,
-      ...(proof.generationTurnKey ? { generationTurnKey: proof.generationTurnKey, generationReplyIds: [...(proof.generationReplyIds ?? [])] } : {}),
+      baselineReplyIds: [...proof.baselineReplyIds], replyId: proof.replyId,
+      generationTurnKey: proof.generationTurnKey, generationReplyIds: [...proof.generationReplyIds],
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
     registerActive();
     await tab.markHandoff();
@@ -551,17 +545,13 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       if (matches.length && !(await emptyNormalHome(tab)) || await tab.url() !== recoveryTabUrl) throw new Error("The recovery tab changed before saved chat navigation; recovery cannot overwrite it.");
       activeOwner([options.turnId], true);
       await tab.goto(proof.url);
-      const deadline = Date.now() + 10000;
-      while (!(await verifiedReply())) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error("The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
-        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-      }
+      await waitForState(verifiedReply, Date.now() + 10000,
+        "The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
       if (!(await emptyComposer())) throw new Error("The saved chat composer has a draft; recovery cannot overwrite it.");
     }
     state.baselineReplyIds = [...recoveredBaselineIds];
     state.replyId = recoveredReplyId;
-    if (proof.generationTurnKey) state.generationReplyIds = recoveredGenerationIds ?? [...proof.generationReplyIds];
+    state.generationReplyIds = recoveredGenerationIds ?? [...proof.generationReplyIds];
     recovered = true;
   }
 
@@ -585,12 +575,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     state.tabId = state.tab.id;
     registerActive();
     await state.tab.goto("https://chatgpt.com/");
-    const openDeadline = Date.now() + 10000;
-    while (!(await emptyNormalHome())) {
-      const remaining = openDeadline - Date.now();
-      if (remaining <= 0) throw new Error("Empty normal ChatGPT home controls did not become ready within 10 seconds.");
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-    }
+    await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
     state.baselineReplyCount = 0;
     await state.tab.markHandoff();
     emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, replyCount: state.baselineReplyCount });
@@ -604,7 +589,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
     if (options.needsHistory && !state.needsHistory) throw new Error("The pending full-history successor binding is unavailable.");
     if (state.needsHistory) {
-      if (!state.rolloverAttempted || !state.rolloverFromUrl || state.closed) throw new Error("The pending full-history successor binding is unavailable.");
+      if (!state.rolloverAttempted || !state.rolloverFromUrl) throw new Error("The pending full-history successor binding is unavailable.");
       if (interrupted && state.sendAttempted && !state.sendConfirmed) {
         if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor is not an idle normal home.");
         await state.tab.markHandoff();
@@ -622,7 +607,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
         ...(interrupted ? { interrupted: true } : {}) });
       return;
     }
-    if (state.closed || !(await normal())) throw new Error("The retained conversation is not ready for continuation.");
+    if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
     if (await conversationFull()) {
       const view = await snapshot(), texts = view.replies;
       if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
@@ -674,7 +659,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
   } else if (operation === "rollover") {
     activeOwner(options.expectedOwnerTurnIds, true);
-    if (state.closed || state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with a closed binding or uncertain Send.");
+    if (state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with an uncertain Send.");
     if (state.rolloverAttempted) {
       if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
       await state.tab.markHandoff();
@@ -688,12 +673,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       activeOwner(options.expectedOwnerTurnIds, true);
       Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
       await start.click();
-      const deadline = Date.now() + 10000;
-      while (!(await emptyNormalHome())) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error("Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
-        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-      }
+      await waitForState(emptyNormalHome, Date.now() + 10000, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
     }
     if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
     activeOwner(options.expectedOwnerTurnIds, true);
@@ -737,13 +717,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
     const send = role(ui.sendButtonExactName);
     const sendDeadline = Date.now() + 10000;
-    const waitForSend = async () => {
-      while (!(await send.isEnabled())) {
-        const remaining = sendDeadline - Date.now();
-        if (remaining <= 0) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
-        await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-      }
-    };
+    const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
     // A large paste can become an attachment. Keep a short, nonsecret marker
     // outside that payload so the confirmed Send owns one observable turn.
     await waitForSend();
@@ -773,18 +747,15 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     state.sendClicked = true;
     await send.click();
     state.hasSentMessage = true;
-    while (!savedUrl(await state.tab.url())) {
-      const remaining = sendDeadline - Date.now();
-      if (remaining <= 0) throw new Error("The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-    }
+    await waitForState(async () => savedUrl(await state.tab.url()), sendDeadline,
+      "The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
     const confirmedUrl = await state.tab.url();
     if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
     state.savedUrl = confirmedUrl;
     if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
     const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
     let anchor;
-    while (!anchor) {
+    await waitForState(async () => {
       const afterSend = await snapshot(state.tab, generationMarker.trim());
       const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey)
         && value.matchesGenerationMarker);
@@ -792,12 +763,9 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       if (candidates.length === 1 && candidates[0] === latestTurn
           && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
           && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1) anchor = latestTurn.turnKey;
-      if (anchor) break;
-      const remaining = sendDeadline - Date.now();
-      if (remaining <= 0) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-      if (!(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-    }
+      if (!anchor && !(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
+      return Boolean(anchor);
+    }, sendDeadline, "The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
     state.generationTurnKey = anchor;
     state.sendConfirmed = true;
     delete state.unsentDraft;
@@ -805,15 +773,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
     emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
       baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey, ...evidence });
-  } else if (operation === "cancel") {
-    await stopGeneration([options.turnId], true);
-    await state.tab.markHandoff();
-    state.interrupted = true;
-    state.retained = true;
-    state.completed = false;
-    emit({ cancelled: true, interrupted: true, retained: true, tabId: state.tabId });
-  } else if (operation === "close") emit(await stopAndClose());
-  else throw new Error("Unsupported browser operation.");
+  } else throw new Error("Unsupported browser operation.");
 }
 
 async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory) {
@@ -830,7 +790,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
-    if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
+    if (!state.completed) throw new Error("Only a successfully completed conversation can be retained.");
     const observation = await observeGeneration(ownedUrl);
     state.completed = observation.completed;
     if (!observation.completed) throw new Error("Only a currently completed generation can be retained.");
@@ -838,7 +798,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     activeOwner([options.turnId], true);
     state.retained = true;
     // Retain can execute just before native Stop discards its result. Keep the
-    // exact owner available until a confirmed handoff or explicit tab close.
+    // exact owner available until a confirmed handoff.
     emit({ retained: true, ...observation });
   } else throw new Error("Unsupported browser observation operation.");
 }
@@ -847,10 +807,11 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // modules share this controller through one binding; browser page code has no
 // access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([readBrowserReplies, createBrowserView, runBrowserObservation].map(fn => fn.toString()).join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
+  .update([JSON.stringify(browserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserOperation, runBrowserObservation]
+    .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {
-  if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "close", "cancel", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
+  if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
@@ -861,44 +822,34 @@ export function browserScript(options) {
       || !transfersOwnership && options.expectedOwnerTurnIds !== undefined) throw failure("Continuation or rollover requires exact expected native owner identities.");
   if (options.needsHistory !== undefined && (options.operation !== "continue" || typeof options.needsHistory !== "boolean")
       || options.needsHistory && options.recovery !== undefined) throw failure("A pending full-history successor requires its existing browser binding without recovery.");
-  if (options.operation === "rollover") {
-    let url;
-    try { url = new URL(options.previousChatUrl); } catch { /* Invalid old chat URLs are rejected below. */ }
-    if (typeof options.previousChatUrl !== "string" || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
-        || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password) throw failure("Rollover requires the exact previous saved chat URL.");
-  }
+  if (options.operation === "rollover" && !isSavedChatUrl(options.previousChatUrl)) throw failure("Rollover requires the exact previous saved chat URL.");
   if (options.recovery !== undefined) {
     const proof = options.recovery;
-    const legacyReply = proof?.replyId === undefined && proof?.baselineReplyIds === undefined;
     const retainedTabOnly = proof?.retainedTabOnly === true;
     const validBaselineIds = Array.isArray(proof?.baselineReplyIds)
       && proof.baselineReplyIds.every(value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value))
       && new Set(proof.baselineReplyIds).size === proof.baselineReplyIds.length;
     const validReplyId = typeof proof?.replyId === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.replyId)
       && validBaselineIds && !proof.baselineReplyIds.includes(proof.replyId);
-    const validGeneration = proof?.generationTurnKey === undefined && proof?.generationReplyIds === undefined
-      || typeof proof?.generationTurnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.generationTurnKey)
+    const validGeneration = typeof proof?.generationTurnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(proof.generationTurnKey)
         && Array.isArray(proof.generationReplyIds) && validBaselineIds
         && proof.generationReplyIds.every(id => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(id) && !proof.baselineReplyIds.includes(id))
         && new Set(proof.generationReplyIds).size === proof.generationReplyIds.length
         && (proof.replyId === null || proof.generationReplyIds.includes(proof.replyId));
-    let url;
-    try { url = new URL(proof?.url); } catch { /* Invalid recovery proof is rejected below. */ }
-    if (options.operation !== "continue" || !record(proof) || proof.tabId !== undefined && (typeof proof.tabId !== "string" || !proof.tabId)
-        || url?.origin !== "https://chatgpt.com" || !/^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
-        || url.searchParams.has("temporary-chat") || url.hash || url.username || url.password
+    if (options.operation !== "continue" || !record(proof) || typeof proof.tabId !== "string" || !proof.tabId
+        || !isSavedChatUrl(proof.url)
         || !Number.isSafeInteger(proof.baselineReplyCount) || proof.baselineReplyCount < 0
         || !Number.isSafeInteger(proof.replyCount) || proof.replyCount < (retainedTabOnly ? 0 : 1)
         || (retainedTabOnly ? !options.interruptedTurnId || !proof.tabId || proof.tabId !== options.tabId || !validBaselineIds
           || proof.completed !== false || proof.replyId !== null && !validReplyId
-          : legacyReply ? proof.replyCount <= proof.baselineReplyCount : !validReplyId)
+          : !validReplyId)
         || !validGeneration || proof.retainedTabOnly !== undefined && !retainedTabOnly
         || !record(proof.assistantPrefix) || !Number.isSafeInteger(proof.assistantPrefix.length) || proof.assistantPrefix.length < (retainedTabOnly ? 0 : 1)
         || typeof proof.assistantPrefix.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(proof.assistantPrefix.sha256) || typeof proof.completed !== "boolean"
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
-  const config = { ...options, ui: { ...defaultUi, ...options.ui }, frameBegin, frameEnd,
+  const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
@@ -908,8 +859,8 @@ export function browserScript(options) {
     if (typeof options.pluginName !== "string" || !options.pluginName || typeof options.pluginAppId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(options.pluginAppId)) throw failure("Attachment requires the configured plugin name and app identity.");
     const css = value => '"' + String(value).replace(/[^A-Za-z0-9 _:/.-]/g, char => `\\${char.codePointAt(0).toString(16)} `) + '"';
     config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
-    if (options.pluginMentionName) config.pluginChipSelector += `[app-mention-name=${css(options.pluginMentionName)}]`;
-    config.pluginSelectionButtonName = options.pluginSelectionButtonName ?? options.ui?.pluginSelectionButtonExactName ?? options.pluginName;
+    if (typeof options.pluginSelectionButtonName !== "string" || !options.pluginSelectionButtonName) throw failure("Attachment requires the exact configured plugin button name.");
+    config.pluginSelectionButtonName = options.pluginSelectionButtonName;
   }
   // The official REPL runs each call in a fresh module and omits carried
   // bindings that the new module redeclares. Store state on its shared global
@@ -921,8 +872,26 @@ export function browserScript(options) {
   const helper = `${binding}.residentBrowser`;
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
   const resident = ["bootstrap", "continue"].includes(options.operation)
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, viewFactory, observer) => Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory) }))(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()});`
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
-  return `${initialize}\n${resident}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory);`;
+  return `${initialize}\n${resident}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState);`;
+}
+
+// This is a codec for our own producer, not a permissive JavaScript parser.
+// Complete regeneration also checks every binding guard and helper digest.
+export function readBrowserProgram(value) {
+  try {
+    if (typeof value !== "string" || value.length > 1048576) return null;
+    const code = value.replace(/\r\n?/gu, "\n");
+    let match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
+    if (!match) {
+      const end = code.lastIndexOf(", nodeRepl, ");
+      if (end < 0) return null;
+      match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\})$/u.exec(code.slice(0, end));
+    }
+    if (!match) return null;
+    const config = JSON.parse(match[2]);
+    return config.bindingId === match[1] && browserScript(config).replace(/\r\n?/gu, "\n") === code ? config : null;
+  } catch { return null; }
 }

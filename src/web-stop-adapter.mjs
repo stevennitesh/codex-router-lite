@@ -5,25 +5,23 @@ import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { browserScript } from './web-browser.mjs';
-import { createWebStopHookConfig } from './web-stop-hook.mjs';
+import { readBrowserProgram } from './web-browser.mjs';
+import { createWebStopCode } from './web-stop-hook.mjs';
+import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 
-export const INTERRUPT_TOOL = 'router_web_interrupt';
+export { INTERRUPT_TOOL } from './web-stop-contract.mjs';
 export const ADAPTER_INFO = Object.freeze({ name: 'codex_router_web_stop_adapter', version: '1.0.0' });
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
 const uuid = value => typeof value === 'string' && UUID.test(value);
-const SHA = /^[a-f0-9]{64}$/u;
 const SANDBOX_KEYS = ['codex/sandbox-state', 'codex/sandbox-state-meta', 'codex/sandbox-launcher'];
 const CORRELATION_KEYS = new Set(['callId', 'itemId', 'progressToken']);
 const TRACE_KEYS = new Set(['traceparent', 'tracestate']);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value, key) => Object.hasOwn(value, key);
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const normalize = value => value.replaceAll('\r\n', '\n');
 const freeze = value => { if (record(value) || Array.isArray(value)) { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const snapshot = value => freeze(structuredClone(value));
-const validThreadIds = value => value === null || Array.isArray(value) && value.length > 0
-  && value.every(uuid) && new Set(value).size === value.length;
+const validThreadIds = validAdapterThreadIds;
 const threadAllowed = (threadId, threadIds) => uuid(threadId) && (threadIds === null || threadIds.includes(threadId));
 const turnKey = (threadId, turnId) => `${threadId}:${turnId}`;
 
@@ -62,20 +60,9 @@ export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
         || params.arguments.code.length > 1048576 || !/^call_router_web_[a-f0-9]{32}$/u.test(params._meta?.callId ?? '')) return null;
     const identity = readIdentity(params._meta, threadIds), sandbox = readSandbox(params._meta);
     if (!identity || !sandbox || !own(params._meta, 'sessionId')) return null;
-    const code = normalize(params.arguments.code);
-    // Observe/retain invoke the binding's versioned resident helper. Other
-    // operations still carry the full runner. Extract only the producer's
-    // literal config; exact regeneration below validates every guard and byte.
-    let match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
-    if (!match) {
-      const end = code.lastIndexOf(', nodeRepl, ');
-      if (end < 0) return null;
-      match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\})$/u.exec(code.slice(0, end));
-    }
-    if (!match) return null;
-    const config = JSON.parse(match[2]);
-    if (config.bindingId !== match[1] || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
-        || config.runtimeModule !== runtimeModule || normalize(browserScript(config)) !== code
+    const config = readBrowserProgram(params.arguments.code);
+    if (!config || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
+        || config.runtimeModule !== runtimeModule
         || config.ui.stopButtonExactName !== 'Stop') return null;
     return { identity, sandbox, config, observation: config.operation === 'observe' };
   } catch { return null; }
@@ -108,16 +95,10 @@ export function cleanupDecision(hook, cached, generation) {
   return { reason: 'retained_originating_authority', meta: retainedMetadata(cached.nativeMeta) };
 }
 
-// The hook contributes event identity only. Minimal stock {threadId} callbacks
-// supply no new canonical authority, sandbox, launcher, or review decision.
-export function cleanupMetadata(hook, cached, generation) {
-  return cleanupDecision(hook, cached, generation).meta;
-}
-
 export function stopCode(stopConfig, identity, budgetMs = 2400) {
   if (!threadAllowed(identity?.threadId, stopConfig.threadIds ?? null)
       || !uuid(identity.turnId) || !uuid(identity.sessionId)) throw new Error('identity_refused');
-  const template = createWebStopHookConfig(stopConfig, { budgetMs }).hooks.Interrupt[0].hooks[0].input.code;
+  const template = createWebStopCode(stopConfig, { budgetMs });
   let code = template;
   for (const [placeholder, value] of [['${session_id}', identity.threadId], ['${turn_id}', identity.turnId], ['${hook_event_name}', 'Interrupt']]) {
     if (code.split(placeholder).length !== 2) throw new Error('template_refused');
@@ -125,14 +106,6 @@ export function stopCode(stopConfig, identity, budgetMs = 2400) {
   }
   return code;
 }
-
-const STAGES = new Set(['scope', 'ledger', 'metadata', 'public_setup', 'browser_inventory', 'public_browser',
-  'tab_inventory', 'public_tab', 'tab_url', 'stop_visibility', 'mutation_url', 'stop_click', 'stop_hidden',
-  'stop_wait_hidden', 'stop_readback_visibility', 'handoff_url', 'handoff', 'complete']);
-const STOP_CODES = new Set(['metadata_missing', 'metadata_mismatch', 'ledger_invalid', 'ledger_changed', 'ledger_unreadable',
-  'registry_invalid', 'owner_mismatch', 'owner_changed', 'state_unavailable', 'controller_invalid', 'browser_ambiguous',
-  'browser_mismatch', 'tab_ambiguous', 'tab_mismatch', 'tab_url_mismatch', 'stop_confirmation_failed', 'budget_exhausted',
-  'hook_busy', 'hook_registry_invalid', 'browser_operation_failed']);
 
 // Parse the actual native text envelope, including {systemMessage: ...}. No raw
 // output/error ever reaches receipts. Success must contain explicit readback.
@@ -162,9 +135,9 @@ export function readStopResult(result) {
   if (!record(proof)) return fail('no_stop_proof');
   const allowed = ['outcome', 'stage', 'freshController', 'stopClicked', 'stopHidden', 'retained', 'code', 'elapsedMs'];
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
-      || !STAGES.has(proof.stage) || ['freshController', 'stopClicked', 'stopHidden', 'retained'].some(key => typeof proof[key] !== 'boolean')
+      || !STOP_STAGES.includes(proof.stage) || ['freshController', 'stopClicked', 'stopHidden', 'retained'].some(key => typeof proof[key] !== 'boolean')
       || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > 3000
-      || proof.code !== undefined && !STOP_CODES.has(proof.code)) return fail('malformed_proof');
+      || proof.code !== undefined && !STOP_CODES.includes(proof.code)) return fail('malformed_proof');
   if (proof.outcome === 'blocked') return { ok: false, ...proof, code: proof.code ?? 'blocked' };
   if (proof.stage !== 'complete' || proof.retained !== true || own(proof, 'code')
       || proof.outcome === 'cancelled' && (!proof.stopClicked || !proof.stopHidden)
@@ -534,11 +507,7 @@ export function readConfig(filename) {
   if (typeof filename !== 'string' || !isAbsolute(filename)) throw new Error('config_refused');
   const file = statSync(filename);
   if (!file.isFile() || file.size > 16384) throw new Error('config_refused');
-  const value = JSON.parse(readFileSync(filename, 'utf8'));
-  const fields = ['version', 'server', 'serverSha256', 'stateDir', 'runtimeModule', 'sdkPackageJson', 'threadIds', 'receiptPath'];
-  if (!record(value) || Object.keys(value).length !== fields.length || fields.some(key => !own(value, key))
-      || value.version !== 1 || !validThreadIds(value.threadIds) || !SHA.test(value.serverSha256 ?? '')
-      || ['server', 'stateDir', 'runtimeModule', 'sdkPackageJson', 'receiptPath'].some(key => typeof value[key] !== 'string' || !isAbsolute(value[key]) || value[key].includes('\0'))) throw new Error('config_refused');
+  const value = validateAdapterConfig(JSON.parse(readFileSync(filename, 'utf8')));
   const receiptFile = lstatSync(value.receiptPath);
   if (!receiptFile.isFile() || receiptFile.isSymbolicLink()
       || realpathSync(value.receiptPath).toLowerCase() !== resolve(value.receiptPath).toLowerCase()) throw new Error('receipt_refused');
@@ -553,9 +522,8 @@ export function readConfig(filename) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 2 || !['--config', '--validate-config'].includes(args[0])) throw new Error('arguments_refused');
+  if (args.length !== 2 || args[0] !== '--config') throw new Error('arguments_refused');
   const config = readConfig(args[1]);
-  if (args[0] === '--validate-config') { process.stdout.write(JSON.stringify({ valid: true, serverSha256: config.serverSha256, threadIds: config.threadIds }) + '\n'); return; }
   // The staged adapter is independent of checkout-relative node_modules. The
   // installer records the SDK package location, whose normal export map resolves
   // both transports without copying or inventing protocol implementations.

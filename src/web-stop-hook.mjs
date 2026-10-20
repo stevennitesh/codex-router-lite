@@ -1,5 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { browserDom, isSavedChatUrl } from "./web-browser.mjs";
+import { STOP_CODES } from "./web-stop-contract.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
@@ -13,18 +15,8 @@ async function stopOwnedWebTurn() {
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const uuid = value => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value);
   const nonempty = value => typeof value === "string" && value.length > 0;
-  const normalUrl = value => {
-    if (typeof value !== "string") return false;
-    try {
-      const url = new URL(value);
-      return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
-        && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
-    } catch { return false; }
-  };
-  const codes = new Set(["metadata_missing", "metadata_mismatch", "ledger_invalid", "ledger_changed", "ledger_unreadable",
-    "registry_invalid", "owner_mismatch", "owner_changed", "state_unavailable", "controller_invalid",
-    "browser_ambiguous", "browser_mismatch", "tab_ambiguous", "tab_mismatch", "tab_url_mismatch",
-    "stop_confirmation_failed", "budget_exhausted", "hook_busy", "hook_registry_invalid"]);
+  const normalUrl = '__SAVED_CHAT_URL__';
+  const codes = new Set('__STOP_CODES__');
   const deny = code => { throw Object.assign(new Error(), { stopCode: code }); };
   const budget = (reserve = 0) => { if (deadline - Date.now() < reserve) deny("budget_exhausted"); };
   let inScope = false, stage = "scope", outcome = "blocked", code;
@@ -100,8 +92,8 @@ async function stopOwnedWebTurn() {
     const tabId = ledger.tabId, savedUrl = ledger.chatUrl;
     if (!absent) {
       if (!record(active) || !record(state) || active.state !== state || active.turnId !== nativeTurn
-          || active.stopButtonName !== "Stop" || state.sessionId !== nativeThread) deny("owner_mismatch");
-      if (state.closed || state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
+          || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread) deny("owner_mismatch");
+      if (state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
           || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule) deny("state_unavailable");
       ({ agent, browser, tab } = state);
       browserId = browser?.browserId;
@@ -124,8 +116,8 @@ async function stopOwnedWebTurn() {
       if (absent) {
         if (registry?.get(nativeThread) !== undefined || globalThis[key] !== undefined) deny("owner_changed");
       } else if (registry.get(nativeThread) !== active || globalThis[key] !== state || active.state !== state
-          || active.turnId !== nativeTurn || active.stopButtonName !== "Stop" || state.sessionId !== nativeThread
-          || state.closed || state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
+          || active.turnId !== nativeTurn || active.stopButtonName !== config.stopButtonExactName || state.sessionId !== nativeThread
+          || state.bindingLost || state.hasSentMessage !== true || state.sendAttempted !== true
           || state.sendClicked !== true || state.sendConfirmed !== true || state.runtimeModule !== config.runtimeModule
           || state.agent !== agent || state.browser !== browser || state.tab !== tab
           || state.tabId !== tabId || state.savedUrl !== savedUrl) deny("owner_changed");
@@ -174,7 +166,7 @@ async function stopOwnedWebTurn() {
     assertCurrent();
     if (url !== savedUrl) deny("tab_url_mismatch");
     stage = "stop_visibility";
-    const stop = tab.playwright.getByRole("button", { name: "Stop", exact: true });
+    const stop = tab.playwright.getByRole("button", { name: config.stopButtonExactName, exact: true });
     const count = await stop.count();
     assertCurrent();
     if (!Number.isInteger(count) || count < 0 || count > 1) deny("stop_confirmation_failed");
@@ -246,7 +238,7 @@ async function stopOwnedWebTurn() {
 }
 
 /** Pure generator. Inputs must be the validated, trusted installed configuration. */
-export function createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs = 2400 } = {}) {
+export function createWebStopCode({ stateDir, runtimeModule }, { budgetMs = 2400 } = {}) {
   if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 2400) throw new Error("Web Stop budget must be within 1..2400 ms.");
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
     if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0") || value.includes("${")) {
@@ -254,17 +246,13 @@ export function createWebStopHookConfig({ stateDir, runtimeModule }, { budgetMs 
     }
   }
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
-    runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href };
-  const code = `await (${stopOwnedWebTurn.toString()
+    runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName };
+  return `await (${stopOwnedWebTurn.toString()
     .replace("'__BUDGET_MS__'", String(budgetMs))
     .replace("'__NATIVE_SESSION__'", "'${session_id}'")
     .replace("'__NATIVE_TURN__'", "'${turn_id}'")
     .replace("'__NATIVE_EVENT__'", "'${hook_event_name}'")
+    .replace("'__SAVED_CHAT_URL__'", isSavedChatUrl.toString())
+    .replace("'__STOP_CODES__'", JSON.stringify(STOP_CODES))
     .replace("'__CONFIG__'", JSON.stringify(config))})();`;
-  return {
-    description: "Stop the current confirmed Router Web generation in its exact native conversation and retain its saved tab. Requires canonical native hook metadata and the private Router ledger; uses only the official public browser SDK. No Send, navigation, new chat, close, fallback, or ledger writes.",
-    hooks: { Interrupt: [{ hooks: [{ type: "mcp_tool", server: "node_repl", tool: "js", input: { code,
-      timeout_ms: 2700, title: "Stop owned ChatGPT Web generation and retain its tab" }, timeout: 3,
-      statusMessage: "Stopping owned ChatGPT Web generation" }] }] },
-  };
 }

@@ -24,9 +24,7 @@ import { writePrivateFile } from "./file-security.mjs";
 import { promptForSecret } from "./secret-prompt.mjs";
 import {
   configureInAppWebBridge,
-  connectWebBridge,
   disconnectWebBridge,
-  launchWebBridge,
   readWebBridgeSettings,
   webBridgeModels,
   webBridgeStatus,
@@ -117,41 +115,23 @@ async function main() {
       if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
       print(webTunnelKeyCommand(value ?? "status"));
     } else if (action === "stop") {
-      const operation = value ?? "status";
+      const operation = value ?? "adapter-status";
       if (["install-adapter", "adapter-status", "adapter-rollback"].includes(operation)) {
         const { installWebStopAdapter, webStopAdapterStatus, rollbackWebStopAdapter } = await import("./web-stop-adapter-install.mjs");
-        if (operation === "adapter-status" && args.length === 3) print(await webStopAdapterStatus());
+        if (operation === "adapter-status" && args.length <= 3) print(await webStopAdapterStatus());
         else if (operation === "adapter-rollback" && args.length === 3) print(await rollbackWebStopAdapter());
         else if (operation === "install-adapter" && extra && args.length === 4) {
           const settings = readWebBridgeSettings();
-          if (!settings.enabled || settings.backend !== "in-app") throw new Error("Persistent Web Stop requires the configured in-app browser backend.");
+          if (!settings.enabled) throw new Error("Persistent Web Stop requires the configured in-app browser integration.");
           print(await installWebStopAdapter({ manifestPath: path.resolve(extra) }));
         } else throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
         return;
       }
-      const { installWebStop, webStopStatus, removeWebStop } = await import("./web-stop-install.mjs");
-      if (operation === "status" && args.length <= 3) print(await webStopStatus());
-      else if (operation === "remove" && args.length === 3) print(await removeWebStop());
-      else if (operation === "install" && extra && args.length === 4) {
-        const settings = readWebBridgeSettings();
-        if (!settings.enabled || settings.backend !== "in-app") throw new Error("Persistent Web Stop requires the configured in-app browser backend.");
-        print(await installWebStop({ candidateManifestPath: path.resolve(extra), runtimeModule: settings.browser.runtimeModule }));
-      } else throw new Error("Usage: control web stop status|install <native-build-manifest-json>|remove");
-    }
-    else if (action === "launch") {
-      print({
-        ...await launchWebBridge(value),
-        next: "Finish browser login and MCP setup in the isolated bridge launcher, then run model-router.ps1 codex web connect <base-url>.",
-      });
-    } else if (action === "connect") {
-      const status = await connectWebBridge(value);
-      await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
-      print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
-        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex. Web subagents require V1; connecting does not change the protocol." });
+      throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|stop status|install <native-build-manifest-json>|remove|tunnel-key set|status|remove|launch <absolute-launcher-exe>|connect [http://127.0.0.1:17841/v1]|disconnect");
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
     return;
   }
   if (command === "subagents") {

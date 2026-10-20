@@ -11,8 +11,8 @@ const encode = value => `${JSON.stringify(value, null, 2)}\n`;
 const signature = { status: "Valid", signerSubject: 'CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC"', signerThumbprint: "fixture-openai-signer" };
 const marker = "Stopping ChatGPT Web generation through Router adapter";
 const trialThread = "01a14b65-a7a8-7b41-bd33-7c19d3c6df82";
-const native = { type: "mcp_tool", server: "node_repl", tool: "js", input: { code: "preserved native definition" },
-  timeout: 3, statusMessage: "Stopping owned ChatGPT Web generation", enabled: false, trusted: true };
+const userHook = { type: "command", command: "user interrupt handler",
+  timeout: 3, statusMessage: "User interrupt", enabled: false, trusted: true };
 const clone = value => structuredClone(value);
 
 function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null } } = {}) {
@@ -22,8 +22,9 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
   for (const directory of [sourceDir, stateDir, codexHome]) mkdirSync(directory);
   const hooksPath = path.join(codexHome, "hooks.json"), receiptPath = path.join(stateDir, "web-stop-adapter", "ownership.json");
   if (hooks !== undefined) writeFileSync(hooksPath, typeof hooks === "string" ? hooks : encode(hooks));
-  const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs";\n',
+  const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs";\n',
     "web-browser.mjs": "export const browserFixture = true;\n", "web-stop-hook.mjs": "export const hookFixture = true;\n",
+    "web-stop-contract.mjs": "export const contractFixture = true;\n",
     "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n' };
   for (const [name, contents] of Object.entries(sources)) writeFileSync(path.join(sourceDir, name), contents);
   const manifest = { version: 1 };
@@ -54,8 +55,8 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
     receipt: () => JSON.parse(readFileSync(receiptPath, "utf8")), hooks: () => JSON.parse(readFileSync(hooksPath, "utf8")) };
 }
 
-test("adapter install publishes private baseline before global changes and preserves native hook/trust", t => {
-  const original = { custom: true, hooks: { Interrupt: [{ matcher: "native", hooks: [native] }], Stop: [{ hooks: [{ type: "command", command: "user stop" }] }] } };
+test("adapter install publishes private baseline before global changes and preserves unrelated user hook/trust", t => {
+  const original = { custom: true, hooks: { Interrupt: [{ matcher: "user", hooks: [userHook] }], Stop: [{ hooks: [{ type: "command", command: "user stop" }] }] } };
   const text = JSON.stringify(original), f = fixture(t, { hooks: text });
   const write = f.dependencies.writePrivate;
   f.dependencies.writePrivate = (file, contents) => {
@@ -70,7 +71,7 @@ test("adapter install publishes private baseline before global changes and prese
   f.environment.compareExchangePair = (expected, values) => { assert.equal(f.receipt().state, "prepared"); return exchange(expected, values); };
   const result = installWebStopAdapter(f.options);
   assert.equal(result.installed, true); assert.equal(result.restartRequired, true); assert.equal(result.trustRequired, true);
-  assert.equal(result.nativeHookOperatorStep, true); assert.equal(result.environmentBroadcast, true);
+  assert.equal(result.environmentBroadcast, true);
   assert.deepEqual(f.hooks().hooks.Interrupt[0], original.hooks.Interrupt[0]);
   assert.deepEqual(f.hooks().hooks.Stop, original.hooks.Stop);
   assert.deepEqual(f.hooks().hooks.Interrupt[1].hooks[0], { type: "mcp_tool", server: "node_repl", tool: "router_web_interrupt",
@@ -80,7 +81,7 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(config, { version: 1, server: f.manifest.officialNodeRepl.path, serverSha256: f.manifest.officialNodeRepl.sha256,
     stateDir: f.stateDir, runtimeModule: f.manifest.runtimeModule, sdkPackageJson: f.manifest.sdkPackageJson,
     threadIds: [trialThread], receiptPath: path.join(f.stateDir, "web-stop-adapter", "events.jsonl") });
-  for (const name of ["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
+  for (const name of ["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
   const launcher = readFileSync(path.join(result.managedDirectory, "entry.cs"), "utf8");
   assert.equal(launcher.includes("@@"), false); assert.ok(launcher.includes(result.configPath)); assert.ok(launcher.includes(f.manifest.node.path));
   assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
@@ -106,6 +107,33 @@ test("repeat install is inert and thread scope promotion stages a new version wh
   assert.equal(f.receipt().previousHooksText, null);
   rollbackWebStopAdapter(f.options);
   assert.deepEqual(f.environment.values, JSON.parse(baseline).previousEnvironment); assert.equal(existsSync(f.hooksPath), false);
+});
+
+test("a verified installed snapshot upgrades when the candidate adds a local dependency and retains its original rollback", t => {
+  const f = fixture(t), first = installWebStopAdapter(f.options);
+  // Reconstruct the installed pre-contract snapshot. Its private manifest owns
+  // these exact bytes; current candidate source lists are deliberately different.
+  const oldSource = 'import "./web-browser.mjs"; import "./web-stop-hook.mjs";\n';
+  writeFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), oldSource);
+  rmSync(path.join(first.managedDirectory, "web-stop-contract.mjs"));
+  const manifestPath = path.join(first.managedDirectory, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  delete manifest.files["web-stop-contract.mjs"];
+  manifest.files["web-stop-adapter.mjs"] = hash(oldSource);
+  writeFileSync(manifestPath, encode(manifest));
+  const receipt = f.receipt(); receipt.managedManifestSha256 = hash(readFileSync(manifestPath));
+  writeFileSync(f.receiptPath, encode(receipt));
+  assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
+  // Ensure candidate staging has a new identity rather than rewriting the
+  // deliberately older immutable generation.
+  writeFileSync(path.join(f.sourceDir, "web-stop-adapter.mjs"), f.sources["web-stop-adapter.mjs"] + "// next candidate\n");
+  const next = installWebStopAdapter(f.options);
+  assert.notEqual(next.managedDirectory, first.managedDirectory);
+  assert.equal(readFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), "utf8"), oldSource);
+  assert.equal(existsSync(path.join(next.managedDirectory, "web-stop-contract.mjs")), true);
+  assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
+  assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
+  assert.equal(existsSync(f.hooksPath), false);
 });
 
 test("activation failure after a partial pair write restores both settings and keeps durable recovery baseline", t => {

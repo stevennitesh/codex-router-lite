@@ -5,13 +5,13 @@ Router owns the browser turn, its local MCP broker and the tunnel process. ChatG
 requests tools through that broker; native Codex executes each declared tool with
 its ordinary permissions and returns the actual result. Browser operations also
 run through the current native JavaScript tool. No separate launcher or inference
-controller is required by the in-app backend.
+controller is required.
 
 This is unofficial browser automation. Configuration and offline checks do not
 establish account-bound browser, tool, continuation or cancellation readiness.
 Verify those through an actual Web conversation before relying on the route.
 
-## Configure the in-app backend
+## Configure the browser integration
 
 Use a signed-in ChatGPT account in the current Codex in-app browser. Register the
 Router MCP connector with the official tunnel service, and retain its tunnel ID,
@@ -46,11 +46,11 @@ including any visible suffix. `capabilities` is a safe account observation used
 for model publication; it is checked against the browser before sending.
 
 An optional integer `mcpPort` selects a dedicated loopback port from 1 through
-65535, separate from Router ports and port 17841. Omit it to let the operating
+65535, separate from Router ports. Omit it to let the operating
 system choose a free port. The schema accepts only the fields shown above and
 `mcpPort`. Do not put runtime keys, cookies or account credentials in this file.
 
-Save the runtime key at the hidden prompt, then select the backend and refresh
+Save the runtime key at the hidden prompt, then configure the integration and refresh
 the model picker:
 
 ```powershell
@@ -116,11 +116,10 @@ its new chat.
 
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
 Codex conversation's browser and checks the previous reply's identity and text
-prefix before continuing. Existing saved records without a message ID retain
-their previous exact URL and reply-prefix check, then acquire the observed ID.
-If Stop preceded a readable answer, a confirmed generation's unique latest turn
-can establish ownership in the recorded saved chat instead. Without that anchor
-or a readable reply proof, recovery requires the exact retained tab.
+prefix before continuing. If Stop preceded a readable answer, a confirmed
+generation's unique latest turn can establish ownership in the recorded saved
+chat instead. Recovery requires the confirmed generation checkpoint and matching
+saved-chat proof.
 Tab IDs alone do not identify a chat. Reopening preserves the saved conversation;
 it does not resend its full history or execute historical tool calls again. An
 uncertain Send or unresolved native coding action blocks continuation until its
@@ -229,10 +228,9 @@ runtime module, and the existing MCP SDK package. `threadIds` restricts a trial;
 
 The installer stages its code and launcher in private durable Router state and
 records the original User `CODEX_CLI_PATH` and `CODEX_NODE_REPL_PATH` selections
-before changing either. It preserves the native-patch installation and unrelated
-hooks. Review and trust **Stopping ChatGPT Web generation through Router adapter**
-in Codex Settings → Hooks. Disable the native-patch handler **Stopping owned
-ChatGPT Web generation** while using the adapter, then fully quit and reopen
+before changing either. It preserves unrelated hooks.
+Review and trust **Stopping ChatGPT Web generation through Router adapter**
+in Codex Settings → Hooks, then fully quit and reopen
 Codex normally. No external Web launcher or special startup script is needed.
 Verify actual Stop and same-chat continuation after restart; configuration and
 offline tests alone do not establish live cancellation.
@@ -244,90 +242,25 @@ generated observation code exactly. Verify that equality before deployment.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. The managed hook definition remains unchanged. Preserve a compatible
-Router source and adapter generation for rollback; rolling back launch selections
-alone restores the original installation baseline.
+Router source, adapter generation and private configuration for rollback;
+rolling back launch selections alone restores the original installation baseline.
 
 ```powershell
 .\model-router.ps1 codex web stop adapter-rollback
 ```
 
 Rollback restores only still-owned launch selections and removes only the owned
-adapter hook, preserving foreign edits and the staged files. If the original
-setup used the native-patch handler, re-enable its unchanged trusted definition,
-then fully quit and reopen Codex. A Codex update needs a fresh compatibility check
+adapter hook, preserving foreign edits and the staged files. Fully quit and reopen
+Codex afterward. A Codex update needs a fresh compatibility check
 for the selected official executables and browser runtime.
 
-A separate optional [native source-patch alternative](../maintenance/codex-hook-context.patch) is
-pinned to OpenAI Codex commit `4ebc485ca321243727539187169425fcf972f2c4`
-(`0.163.0-alpha.10.2`). It forwards local hook metadata and retains the originating
-MCP client and sandbox policy for PostToolUse and Interrupt. Apply it from the
-matching Codex checkout root and build with its pinned Rust toolchain. A release
-archive may need its local workspace versions normalized in `Cargo.lock`; external
-dependency entries must remain unchanged before locked builds and tests.
-
-For this Windows source pin, migration SQL must use the CRLF bytes embedded by
-the installed Windows build. The release archive uses LF; its checksums fail
-against the existing database. Verify build-input checksums against read-only
-migration metadata before activation. Preserve stored checksums and validation.
-
-A native candidate can be selected for one desktop launch with `CODEX_CLI_PATH`.
-That override changes Windows registered-core integration, so verify the effective
-sandbox and native tools before relying on it. Recheck the source pin and desktop
-compatibility after a Codex update. A successful source build does not establish
-live browser cancellation. The
-[dated native-patch evidence](history/2026-10-18-native-hook-context.json) preserves
-its normal-restart Stop and same-chat continuation checks, recovery repair,
-native-tool sandbox limits, and original launch-setting rollback context.
-Those observations concern the patched native candidate; the adapter evidence
-above concerns the unmodified official CLI.
-
-To install the accepted native build and a user-level Stop hook for ordinary Web
-conversations, supply its explicit local build manifest:
-
-```powershell
-.\model-router.ps1 codex web stop install .\accepted-native-build-manifest.json
-.\model-router.ps1 codex web stop status
-```
-
-The installer verifies the accepted native executable and four official signed
-companions, copies them into durable Router state, and sets the current user's
-`CODEX_CLI_PATH`. It merges one Interrupt handler into the user's `hooks.json` and
-preserves unrelated hooks. Review and trust **Stopping owned ChatGPT Web
-generation** in Codex Settings → Hooks, then fully quit and reopen Codex normally.
-No external Web launcher or special restart script is required after installation.
-Verify the active executable and Stop after reopening; installing configuration
-alone does not establish either result. Codex updates require renewed native
-compatibility and accepted-build verification.
-
-The hook uses the actual interrupted thread and turn plus its protected Router
-ledger. It acts only on that conversation's exact saved chat and tab, keeps the
-tab open, and ignores conversations without a matching unfinished Web turn.
-It does not enable Interrupt hooks for Web subagents. The original one-chat trial
-must be disabled when the user-level replacement is trusted, to avoid duplicate
-handlers in that project.
-
-To remove this optional integration before disabling or uninstalling Router:
-
-```powershell
-.\model-router.ps1 codex web stop remove
-```
-
-Removal restores the saved original user launch setting and removes only the
-owned hook. It refuses conflicting external changes. Verified staged executables
-remain available to an already running process; reopen Codex to use the restored
-setting.
-
 Tool revocation and next-turn reconciliation alone do not establish immediate
-browser cancellation. Stop keeps the tab open;
-explicit close remains separate. Backend errors fail the selected route without
-a model or backend fallback. Offline tests cover the runtime contracts; immediate
-Stop requires separate live verification for the selected native runtime and
-hook definitions. The dated adapter and native-patch records each apply only to
-their recorded runtime and scope.
+browser cancellation. Stop keeps the saved chat and tab open. Route errors fail
+explicitly without a model fallback. Offline tests cover the runtime contracts;
+immediate Stop requires live verification with the selected official runtime and
+trusted adapter hook. Earlier native-patch trials remain historical evidence.
 
-The in-app backend currently accepts text input. Media upload is unsupported and
-is rejected. Luna's visible browser family has not been established for this
-backend, so Luna is unavailable there until that identity is verified.
+The integration accepts text input. Media upload is unsupported and rejected.
 
 ## Actual model and effort
 
@@ -354,7 +287,7 @@ effort fails without silently changing models or using Codex inference.
 ```
 
 The default remains V2. V1 enables plaintext collaboration and permits configured
-full-mode Web roles. V2 retains the certified route contract and excludes Web
+Web roles. V2 retains the certified route contract and excludes Web
 roles. Picking a Web primary model never switches the protocol. Changing the
 selector requires a full Codex restart and a new conversation; it cannot convert
 an existing task.
@@ -376,28 +309,3 @@ do not certify Web routes.
 
 Disconnect disables new Web requests and publication. It preserves saved browser
 configuration and the protected tunnel key; remove the key separately when needed.
-
-## Explicit launcher compatibility backend
-
-The existing isolated
-[codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web) launcher backend
-remains separately selectable:
-
-```powershell
-.\model-router.ps1 codex web launch 'C:\absolute\path\codex-chatgpt-web.exe'
-.\model-router.ps1 codex web connect http://127.0.0.1:17841/v1
-.\model-router.ps1 codex refresh-catalog
-```
-
-Complete its ChatGPT login, Automatic mode with Bigger Context off, and its own
-browser/MCP verification before connecting. Its configuration and browser storage
-remain isolated below Router's private `web-bridge` directory. Canonical Codex
-sessions are linked for resumed-turn authority; real `config.toml` and `auth.json`
-are not copied or linked. Do not run launcher setup against the real `CODEX_HOME`.
-
-`connect` explicitly switches to this backend and checks its accepting listener
-and safe account capabilities. Browser-only mode has no local coding tools or Web
-subagent roles; full mode requires the launcher's MCP setup. The launcher must
-remain running, and disconnect does not stop that externally owned process. An
-in-app failure never starts or selects this backend. Listener health alone does
-not prove a successful model or tool request.

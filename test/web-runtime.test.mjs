@@ -419,23 +419,24 @@ test("native continuation identity failure exposes bounded structural evidence b
   assert.equal(h.browserOwner().turnId, turnId);
 });
 
-test("an existing successful private mapping without message IDs recovers once by its original URL and prefix proof", async t => {
-  const h = harness(t), { call } = await h.toObserve();
-  h.browser.ui.texts.push("Existing deployed answer"); h.browser.ui.complete = true;
-  const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
-  await h.restartRuntime(); h.loseKernel();
-  const legacy = JSON.parse(readFileSync(h.stateFile, "utf8"));
-  delete legacy.sendBaselineReplyIds; delete legacy.observation.replyId;
-  delete legacy.generationTurnKey; delete legacy.generationReplyIds; delete legacy.generationCompleted;
-  assert.ok(legacy.observation.replyCount > legacy.sendBaseline);
-  writeFileSync(h.stateFile, JSON.stringify(legacy), "utf8");
-  h.newTurn(followupId, "Continue the existing deployed saved chat.");
-  await h.toObserve();
-  assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
-  assert.equal(h.browser.ui.sends.length, 2);
-  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue the existing deployed saved chat." }]);
-  const upgraded = JSON.parse(readFileSync(h.stateFile, "utf8"));
-  assert.deepEqual(upgraded.sendBaselineReplyIds, [messageId(0)]);
+test("unsupported saved mappings fail before browser effects and preserve the original private record", async t => {
+  for (const field of ["sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted"]) await t.test(field, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Existing deployed answer"); h.browser.ui.complete = true;
+    const retain = await h.answerBrowser(call), final = await h.answerBrowser(retain.output[0]); h.append(final.output[0]);
+    await h.restartRuntime(); h.loseKernel();
+    const legacy = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    delete legacy[field];
+    const original = JSON.stringify(legacy);
+    writeFileSync(h.stateFile, original, "utf8");
+    const sends = h.browser.ui.sends.length, navigations = h.browser.ui.navigations;
+    h.newTurn(followupId, "Continue the existing deployed saved chat.");
+    await assert.rejects(h.request(), { code: "web_conversation_state" });
+    assert.equal(readFileSync(h.stateFile, "utf8"), original);
+    assert.equal(h.browser.ui.sends.length, sends);
+    assert.equal(h.browser.ui.navigations, navigations);
+    assert.deepEqual(h.browser.ui.reacquired, []);
+  });
 });
 
 test("native observation validation rejects old, missing, changed or unpaired reply identity evidence", async t => {
@@ -668,7 +669,7 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.deepEqual(replay.output, initial.output);
   const { call } = await h.toObserve();
   assert.equal((await h.request()).output[0].call_id, call.call_id);
-  await assert.rejects(h.request({ reasoning: { effort: "high" } }), /cannot change model or effort/u);
+  await assert.rejects(h.request({ model: "chatgpt-web/gpt-6-sol", reasoning: { effort: "high" } }), /cannot change model or effort/u);
   assert.equal(h.browser.ui.sends.length, 1);
   h.browser.ui.texts.push("First answer"); h.browser.ui.complete = true;
   const retain = await h.answerBrowser(call);
@@ -2032,11 +2033,11 @@ test("missing or conflicting native executor declarations fail without fabricate
 test("native ownership uses current turn metadata ahead of stale headers and cache affinity", () => {
   const payload = { client_metadata: { "x-codex-turn-metadata": JSON.stringify(metadata()) } };
   assert.deepEqual(webTurnIdentity(payload, headers()), { threadId, turnId });
-  assert.deepEqual(webTurnIdentity({}, { "x-codex-thread-id": threadId, "x-codex-turn-id": turnId }), { threadId, turnId });
+  assert.throws(() => webTurnIdentity({}, { "x-codex-thread-id": threadId, "x-codex-turn-id": turnId }), { code: "web_turn_identity" });
   assert.deepEqual(webTurnIdentity(payload, { ...headers(followupId), "session-id": "cache-affinity", session_id: followupId }), { threadId, turnId });
   assert.deepEqual(webTurnIdentity(payload, { "x-codex-turn-metadata": "stale-prewarm", "x-codex-thread-id": followupId }), { threadId, turnId });
   assert.deepEqual(webTurnIdentity({}, { ...headers(), "session-id": "cache-affinity" }), { threadId, turnId });
   assert.throws(() => webTurnIdentity({ client_metadata: { "x-codex-turn-metadata": "broken-current" } }, headers()), /Invalid native Web turn metadata/);
-  assert.throws(() => webTurnIdentity({}, { "x-codex-thread-id": threadId }), /agreeing native thread and turn/);
-  assert.throws(() => webTurnIdentity({}, { "x-codex-thread-id": "some-open-task", "x-codex-turn-id": turnId }), /Invalid native Web ownership/);
+  assert.throws(() => webTurnIdentity({}, { "x-codex-thread-id": threadId }), /canonical native thread and turn/);
+  assert.throws(() => webTurnIdentity({}, { "x-codex-thread-id": "some-open-task", "x-codex-turn-id": turnId }), /canonical native thread and turn/);
 });

@@ -1,7 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { discoverBrowserExecutor, browserScript, parseBrowserOutput } from "./web-browser.mjs";
+import { discoverBrowserExecutor, browserScript, isSavedChatUrl, parseBrowserOutput } from "./web-browser.mjs";
+import { webModelSelection } from "./web-models.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
 import { decodeCompaction, renderCompactionValue } from "./compaction-checkpoint.mjs";
 import { readJsonFile } from "./file-probe.mjs";
@@ -13,6 +14,7 @@ import { webResponse, webCompactResponse } from "./web-response.mjs";
 import { createWebToolBroker } from "./web-tools.mjs";
 import { startWebTunnel } from "./web-tunnel.mjs";
 import { watchWebTurnCancellation } from "./web-turn-cancellation.mjs";
+import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
 
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -22,36 +24,27 @@ const sha256 = value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(valu
 const outputDigest = item => digest({ type: item.type, call_id: item.call_id, output: item.output, tools: item.tools,
   status: item.status, execution: item.execution, isError: item.isError });
 const id = prefix => `${prefix}_${randomUUID().replaceAll("-", "")}`;
-const outputTypes = new Set(["function_call_output", "custom_tool_call_output", "tool_search_output"]);
+const outputTypes = new Set(Object.values(webToolKinds).map(kind => kind.outputType));
+const callTypes = new Set(Object.values(webToolKinds).map(kind => kind.callType));
+const outputTypeFor = new Map(Object.values(webToolKinds).map(kind => [kind.callType, kind.outputType]));
 const internalCall = value => typeof value === "string" && /^call_router_web_[a-f0-9]{32}$/u.test(value);
 const fail = (message, code = "web_runtime_unavailable", status = 409) => Object.assign(new Error(message), { code, status });
 const nonempty = value => typeof value === "string" && value.length > 0;
 const messageIds = values => Array.isArray(values) && values.every(value => typeof value === "string" && uuid.test(value))
   && new Set(values).size === values.length;
-function savedChatUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname) && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
-  } catch { return false; }
-}
-
 function validConversation(value, threadId) {
   const last = value?.lastTurn, observed = value?.observation;
-  const legacyObservation = value?.sendBaselineReplyIds === undefined && observed?.replyId === undefined;
   return record(value) && value.version === 1 && value.threadId === threadId
     && typeof value.bindingId === "string" && /^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
     && Array.isArray(value.browserOwnerTurnIds) && value.browserOwnerTurnIds.every(owner => uuid.test(owner))
     && new Set(value.browserOwnerTurnIds).size === value.browserOwnerTurnIds.length
-    && (value.tabId === undefined || nonempty(value.tabId)) && (value.chatUrl === undefined || savedChatUrl(value.chatUrl))
-    && ((value.chatUrl === undefined && value.checkpoint === undefined && value.sendBaseline === undefined)
-      || savedChatUrl(value.chatUrl) && Array.isArray(value.checkpoint) && nonempty(value.tabId) && Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0)
-    && (value.checkpoint === undefined || Array.isArray(value.checkpoint) && value.checkpoint.every(sha256) && savedChatUrl(value.chatUrl) && value.browserOwnerTurnIds.length > 0)
-    && (value.sendBaseline === undefined || Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0)
-    && (value.sendBaselineReplyIds === undefined || messageIds(value.sendBaselineReplyIds))
-    && (value.generationTurnKey === undefined || uuid.test(value.generationTurnKey) && value.checkpoint !== undefined)
-    && (value.generationCompleted === undefined || typeof value.generationCompleted === "boolean" && value.checkpoint !== undefined)
-    && (value.generationReplyIds === undefined || messageIds(value.generationReplyIds) && value.checkpoint !== undefined
-      && messageIds(value.sendBaselineReplyIds) && value.generationReplyIds.every(replyId => !value.sendBaselineReplyIds.includes(replyId)))
+    && (value.tabId === undefined || nonempty(value.tabId)) && (value.chatUrl === undefined || isSavedChatUrl(value.chatUrl))
+    && (value.checkpoint === undefined
+      ? [value.chatUrl, value.sendBaseline, value.sendBaselineReplyIds, value.generationTurnKey, value.generationReplyIds, value.generationCompleted].every(field => field === undefined)
+      : Array.isArray(value.checkpoint) && value.checkpoint.every(sha256) && isSavedChatUrl(value.chatUrl) && nonempty(value.tabId) && value.browserOwnerTurnIds.length > 0
+        && Number.isSafeInteger(value.sendBaseline) && value.sendBaseline >= 0 && messageIds(value.sendBaselineReplyIds)
+        && uuid.test(value.generationTurnKey ?? "") && typeof value.generationCompleted === "boolean" && messageIds(value.generationReplyIds)
+        && value.generationReplyIds.every(replyId => !value.sendBaselineReplyIds.includes(replyId)))
     && typeof value.uncertainSend === "boolean" && Array.isArray(value.unresolvedCoding)
     && value.unresolvedCoding.every(call => record(call) && nonempty(call.callId) && outputTypes.has(call.outputType))
     && new Set(value.unresolvedCoding.map(call => call.callId)).size === value.unresolvedCoding.length
@@ -64,14 +57,14 @@ function validConversation(value, threadId) {
       && (compacted.acknowledgedTailHashes === undefined || Array.isArray(compacted.acknowledgedTailHashes) && compacted.acknowledgedTailHashes.every(sha256))
       && (compacted.protocol === undefined || compacted.protocol === "v2" && Array.isArray(compacted.inputHashes) && compacted.inputHashes.every(sha256)))
     && (value.needsHistory === undefined || typeof value.needsHistory === "boolean") && (value.rolloverRequired === undefined || typeof value.rolloverRequired === "boolean")
-    && (!value.needsHistory || value.rolloverRequired === true && savedChatUrl(value.chatUrl))
-    && (value.previousChatUrls === undefined || Array.isArray(value.previousChatUrls) && value.previousChatUrls.every(savedChatUrl))
+    && (!value.needsHistory || value.rolloverRequired === true && isSavedChatUrl(value.chatUrl))
+    && (value.previousChatUrls === undefined || Array.isArray(value.previousChatUrls) && value.previousChatUrls.every(isSavedChatUrl))
     && (observed === undefined || record(observed) && value.checkpoint !== undefined && Number.isSafeInteger(value.sendBaseline)
       && Number.isSafeInteger(observed.replyCount) && observed.replyCount >= 0 && typeof observed.completed === "boolean"
-      && (legacyObservation ? observed.replyCount >= value.sendBaseline : observed.replyId === null && observed.completed === false && observed.assistantPrefix?.length === 0
+      && (observed.replyId === null && observed.completed === false && observed.assistantPrefix?.length === 0
         || typeof observed.replyId === "string" && uuid.test(observed.replyId)
         && messageIds(value.sendBaselineReplyIds) && !value.sendBaselineReplyIds.includes(observed.replyId) && observed.replyCount > 0)
-      && (value.generationReplyIds === undefined || observed.replyId === null || value.generationReplyIds.includes(observed.replyId))
+      && (observed.replyId === null || value.generationReplyIds.includes(observed.replyId))
       && record(observed.assistantPrefix) && Number.isSafeInteger(observed.assistantPrefix.length) && observed.assistantPrefix.length >= 0 && observed.assistantPrefix.length <= 1024 && sha256(observed.assistantPrefix.sha256));
 }
 
@@ -84,20 +77,12 @@ export function webTurnIdentity(payload, headers = {}) {
     if (!record(parsed) || !uuid.test(parsed.thread_id ?? "") || !uuid.test(parsed.turn_id ?? "")) throw fail("Native Web turn metadata is missing its exact identity.");
     return { threadId: parsed.thread_id.toLowerCase(), turnId: parsed.turn_id.toLowerCase() };
   };
-  // Per-response metadata owns the paid turn. Compatibility headers can be
-  // frozen at WebSocket prewarm, and session-id is allowed to be cache affinity.
+  // Per-response metadata owns the paid turn. Canonical header metadata also
+  // attributes standalone compaction requests.
   const current = payload.client_metadata?.["x-codex-turn-metadata"];
   if (current !== undefined) return parse(current);
   if (headers["x-codex-turn-metadata"] !== undefined) return parse(headers["x-codex-turn-metadata"]);
-  const threads = [headers["x-codex-thread-id"], headers["x-codex-session-id"]].filter(value => value !== undefined);
-  const turns = [headers["x-codex-turn-id"]].filter(value => value !== undefined);
-  if (threads.some(value => typeof value !== "string" || !uuid.test(value)) || turns.some(value => typeof value !== "string" || !uuid.test(value))) throw fail("Invalid native Web ownership headers.");
-  const owner = threads.length && turns.length ? { threadId: threads[0].toLowerCase(), turnId: turns[0].toLowerCase() } : undefined;
-  if (!owner
-      || threads.some(value => value.toLowerCase() !== owner.threadId) || turns.some(value => value.toLowerCase() !== owner.turnId)) {
-    throw fail("Require agreeing native thread and turn identities for ChatGPT Web.", "web_turn_identity");
-  }
-  return owner;
+  throw fail("Require canonical native thread and turn metadata for ChatGPT Web.", "web_turn_identity");
 }
 
 // Merge declarations, not tool prose or invented schemas. Native additional_tools
@@ -113,7 +98,7 @@ export function collectWebTools(payload, discovered = []) {
     const own = tool.namespace ?? namespace;
     const clean = { ...tool };
     delete clean.namespace;
-    const key = JSON.stringify([own ?? null, tool.type, tool.name ?? tool.function?.name ?? ""]);
+    const key = webToolIdentity({ ...tool, namespace: own });
     const previous = entries.get(key);
     if (current && previous?.current && digest(previous.tool) !== digest(clean)) throw fail("Conflicting current native tool declarations.", "web_tool_declaration", 400);
     entries.set(key, { namespace: own, tool: clean, current });
@@ -149,7 +134,7 @@ function contentText(content) {
   if (!Array.isArray(content)) throw fail("Unsupported ChatGPT Web message content.", "web_input_unsupported", 400);
   return content.map(block => {
     if (["input_text", "output_text", "text"].includes(block?.type) && typeof block.text === "string") return block.text;
-    throw fail("The in-app Web backend currently accepts text input. Attachments require the launcher backend.", "web_input_unsupported", 400);
+    throw fail("The in-app Web backend currently accepts text input.", "web_input_unsupported", 400);
   }).join("\n");
 }
 
@@ -177,7 +162,7 @@ function transcript(payload, internalCalls) {
       if (!decodeCompaction(item.encrypted_content)) throw fail("The in-app Web backend cannot read an opaque native checkpoint; use Router-readable conversation history.", "encrypted_v2_unsupported", 422);
       result.push({ role: "developer", content: renderCompactionValue(item.encrypted_content) });
     }
-    else if (["function_call", "custom_tool_call", "tool_search_call"].includes(item.type)) result.push({ type: item.type, namespace: item.namespace, name: item.name, call_id: item.call_id, arguments: item.arguments, input: item.input });
+    else if (callTypes.has(item.type)) result.push({ type: item.type, namespace: item.namespace, name: item.name, call_id: item.call_id, arguments: item.arguments, input: item.input });
     else if (outputTypes.has(item.type)) result.push({ type: item.type, call_id: item.call_id, output: item.output, tools: item.tools, status: item.status });
     else throw fail(`Unsupported native Web input item: ${item.type ?? "unknown"}.`, "web_input_unsupported", 400);
   }
@@ -185,10 +170,7 @@ function transcript(payload, internalCalls) {
 }
 
 function selection(payload) {
-  const slug = payload.model?.replace(/^chatgpt-web\//u, "");
-  const family = slug?.startsWith("gpt-6-") ? "GPT-6" : slug?.startsWith("gpt-5.6-") && slug !== "gpt-5.6-luna" ? "GPT-5.6 Sol" : undefined;
-  const power = { low: 0, medium: 1, high: 2, xhigh: 3, max: 4 }[payload.reasoning?.effort];
-  if (!family || power === undefined) throw fail("This Web family and effort have no verified in-app selector.", "web_model_unverified", 400);
+  const { family, power } = webModelSelection(payload.model, payload.reasoning?.effort);
   return { modelFamily: family, power };
 }
 
@@ -299,7 +281,7 @@ export function createInAppWebRuntime({
     const raw = readableInput(payload, internalCalls), clean = { ...payload, input: raw };
     const seed = () => webCompactResponse(clean, { compactV2, retainedTail: compactV2 ? raw : [] });
     const attributed = payload.client_metadata?.["x-codex-turn-metadata"] !== undefined
-      || ["x-codex-turn-metadata", "x-codex-thread-id", "x-codex-session-id", "x-codex-turn-id"].some(key => headers[key] !== undefined);
+      || headers["x-codex-turn-metadata"] !== undefined;
     if (!attributed) return seed();
     const owner = webTurnIdentity(payload, headers);
     const conversation = conversations.get(owner.threadId) ?? loadConversation(owner.threadId);
@@ -387,21 +369,18 @@ export function createInAppWebRuntime({
     const observed = conversation.observation;
     const recoveryReply = typeof observed?.replyId === "string" && uuid.test(observed.replyId)
       && messageIds(conversation.sendBaselineReplyIds) && !conversation.sendBaselineReplyIds.includes(observed.replyId);
-    // Deployed records without message IDs retain their previous exact-URL and
-    // prefix proof. Browser recovery pins the actual DOM ID before continuation.
-    const legacyReply = observed?.replyId === undefined && conversation.sendBaselineReplyIds === undefined && observed?.replyCount > conversation.sendBaseline;
     // The checkpoint proves prior delivery. An interrupted unsent retry has not
     // superseded it, even when lastTurn no longer identifies the original Send.
     const retainedTabOnly = turn.interruptedTurnId && ["sent", "unsent"].includes(turn.interruptedSendState) && conversation.tabId
       && messageIds(conversation.sendBaselineReplyIds) && !conversation.unresolvedCoding.size
       && (!observed || observed.assistantPrefix.length === 0 && (observed.replyId === null || recoveryReply));
     const recovery = operation === "continue" && !conversation.rolloverRequired && !conversation.needsHistory && conversation.checkpoint && conversation.chatUrl && !conversation.uncertainSend
-      && (retainedTabOnly || observed?.assistantPrefix.length > 0 && (recoveryReply || legacyReply))
+      && (retainedTabOnly || observed?.assistantPrefix.length > 0 && recoveryReply)
       ? { url: conversation.chatUrl, tabId: conversation.tabId, baselineReplyCount: conversation.sendBaseline,
         baselineReplyIds: conversation.sendBaselineReplyIds,
         generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds,
         ...(observed ?? { replyCount: conversation.sendBaseline, replyId: null, assistantPrefix: { length: 0, sha256: textDigest("") }, completed: false }),
-        completed: (conversation.generationCompleted ?? (conversation.generationTurnKey ? conversation.lastTurn.completed : observed?.completed === true)) && observed?.completed === true,
+        completed: conversation.generationCompleted && observed?.completed === true,
         ...(retainedTabOnly ? { retainedTabOnly: true } : {}) } : undefined;
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
@@ -433,9 +412,8 @@ export function createInAppWebRuntime({
     // answer. Resolving the MCP promise cannot make that same text a final.
     turn.preToolAnswer = turn.lastBrowserAnswer ?? { replyId: null, text: "" };
     turn.completedAnswerAttempts = 0;
-    turn.finalText = undefined; turn.finalRevision = undefined;
-    for (const call of calls) turn.conversation.unresolvedCoding.set(call.call_id, call.type === "tool_search_call" ? "tool_search_output"
-      : call.type === "custom_tool_call" ? "custom_tool_call_output" : "function_call_output");
+    turn.finalRevision = undefined;
+    for (const call of calls) turn.conversation.unresolvedCoding.set(call.call_id, outputTypeFor.get(call.type));
     turn.pending = { kind: "coding", calls };
     await persist(turn.conversation);
     return webResponse(payload, calls);
@@ -473,16 +451,16 @@ export function createInAppWebRuntime({
   };
   const startRollover = async (turn, payload, value) => {
     const conversation = turn.conversation;
-    if (value.normal !== true || value.tabId !== conversation.tabId || value.url !== conversation.chatUrl || !savedChatUrl(value.url)) throw fail("The full-conversation signal does not belong to the connected saved chat.");
+    if (value.normal !== true || value.tabId !== conversation.tabId || value.url !== conversation.chatUrl || !isSavedChatUrl(value.url)) throw fail("The full-conversation signal does not belong to the connected saved chat.");
     if (conversation.uncertainSend || conversation.unresolvedCoding.size) throw fail("An uncertain Send or native coding action blocks saved-chat rollover.", "web_capacity_uncertain");
     if (turn.rollovers) throw fail("The successor chat also reached capacity; another rollover in this native turn is blocked.", "web_conversation_full");
     // Updating the existing declaration rejects any queued or delivered MCP
     // invocation. Do not abandon it and then repeat its request in a new chat.
-    broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
+    broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
     const previousToken = turn.token;
     tokenOwners.delete(previousToken);
     broker.cancel(previousToken, fail("The saved conversation reached capacity; its old tool token is revoked.", "web_turn_cancelled"));
-    const registration = broker.register({ threadId: turn.threadId, turnId: turn.turnId, tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
+    const registration = broker.register({ threadId: turn.threadId, turnId: turn.turnId, tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
     turn.token = registration.token; turn.toolInstructions = registration.instructions; tokenOwners.set(turn.token, turn);
     turn.cache.clear(); turn.rollovers = 1;
     conversation.rolloverRequired = true;
@@ -511,13 +489,11 @@ export function createInAppWebRuntime({
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
     if (operation === "bootstrap") {
-      if (typeof value.browserId !== "string" || !value.browserId) throw fail("The owned browser identity was not established.");
-      turn.conversation.browserId = value.browserId;
       return emitBrowser(turn, "open", payload);
     }
     if (operation === "send" && value.conversationFull === true) {
       if (value.sent !== false || value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
-          || !savedChatUrl(value.url)) throw fail("The capacity signal does not confirm that the connected chat rejected Send.", "web_send_uncertain");
+          || !isSavedChatUrl(value.url)) throw fail("The capacity signal does not confirm that the connected chat rejected Send.", "web_send_uncertain");
       turn.sendState = "unsent"; turn.conversation.uncertainSend = false;
       return startRollover(turn, payload, value);
     }
@@ -551,7 +527,7 @@ export function createInAppWebRuntime({
       if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
       if (!Number.isSafeInteger(value.baselineReplyCount) || value.baselineReplyCount < 0 || !messageIds(value.baselineReplyIds)
           || !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
-      if (!savedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
+      if (!isSavedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
       turn.sendState = "sent";
       turn.conversation.uncertainSend = false;
@@ -571,7 +547,6 @@ export function createInAppWebRuntime({
       return emitBrowser(turn, "observe", payload);
     }
     if (operation === "observe") {
-      if (value.cancelled) { cancel(turn); throw turn.error; }
       acceptObservation(turn, value);
       if (value.conversationFull === true) {
         turn.conversation.rolloverRequired = true;
@@ -597,7 +572,6 @@ export function createInAppWebRuntime({
           while (acknowledged < current.length && turn.deliveredCoding?.has(digest(current[acknowledged]))) acknowledged += 1;
           if (acknowledged > checkpoint.length) turn.conversation.checkpoint = current.slice(0, acknowledged).map(digest);
         }
-        turn.finalText = value.assistantText;
         turn.finalRevision = completionRevision;
         turn.conversation.assistantText = value.assistantText;
         return emitBrowser(turn, "retain", payload);
@@ -624,11 +598,10 @@ export function createInAppWebRuntime({
       if (!value.completed || !value.assistantText.trim() || !freshPostToolAnswer(turn, value)) return emitBrowser(turn, "observe", payload);
       if (!broker.finish(turn.token, turn.finalRevision)) {
         if (broker.beginCompletion(turn.token) === turn.finalRevision) throw fail("ChatGPT completed without the required native tool result.", "web_tool_required");
-        turn.finalText = undefined; turn.finalRevision = undefined;
+        turn.finalRevision = undefined;
         const calls = broker.takeCalls(turn.token);
         return calls.length ? emitCoding(turn, calls, payload) : emitBrowser(turn, "observe", payload);
       }
-      turn.finalText = value.assistantText;
       turn.conversation.assistantText = value.assistantText;
       turn.done = true; turn.pending = undefined;
       await turn.watcher.close();
@@ -639,7 +612,7 @@ export function createInAppWebRuntime({
       turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.toolInstructions = undefined; turn.tools = []; turn.discovered = []; turn.processed.clear(); turn.deliveredCoding?.clear();
       turn.cache.clear();
       return webResponse(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
-        content: [{ type: "output_text", text: turn.finalText.replaceAll(turn.token, "[private turn]"), annotations: [] }] }]);
+        content: [{ type: "output_text", text: value.assistantText.replaceAll(turn.token, "[private turn]"), annotations: [] }] }]);
     }
     throw fail("Unexpected native Web browser stage.");
   };
@@ -691,7 +664,7 @@ export function createInAppWebRuntime({
       throw error;
     } finally { signal?.removeEventListener("abort", abort); }
     try {
-    const registration = broker.register({ ...owner, tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
+    const registration = broker.register({ ...owner, tools, toolChoice: payload.tool_choice ?? "auto" });
     turn.token = registration.token; tokenOwners.set(turn.token, turn);
     turn.toolInstructions = registration.instructions;
     return turn;
@@ -756,7 +729,7 @@ export function createInAppWebRuntime({
               turn.discovered.push(...outputs[0].tools);
               turn.tools = collectWebTools(payload, turn.discovered);
               turn.executor = discoverBrowserExecutor(turn.tools);
-              broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
+              broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
               response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
             } else {
@@ -773,7 +746,7 @@ export function createInAppWebRuntime({
               // delivered. Drain those exact calls before changing schemas.
               const queued = broker.takeCalls(turn.token);
               if (!queued.length) {
-                broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
+                broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto" });
                 turn.tools = tools;
               }
               turn.pending = undefined;

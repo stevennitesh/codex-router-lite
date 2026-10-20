@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { after } from "node:test";
 import test from "node:test";
 import http from "node:http";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { decodeCompaction } from "../src/compaction-checkpoint.mjs";
 import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
+import { webModelSelection } from "../src/web-models.mjs";
 
 // Set both homes before importing stateful owners. No test reads the signed-in
 // user's bridge, Codex configuration, browser profile, or provider credentials.
@@ -29,18 +31,14 @@ const completed = { id: "resp_web", status: "completed", output: [
   { id: "fc_web", type: "custom_tool_call", call_id: "call_web", name: "functions.apply_patch", input: "*** Begin Patch\n*** End Patch" },
 ] };
 
-function saveSettings(baseUrl, { enabled = true, capabilities = allCapabilities, directory = state, ...extra } = {}) {
-  writeFileSync(path.join(directory, "chatgpt-web.json"), JSON.stringify({ version: 1, enabled, baseUrl, capabilities, ...extra }));
-}
-
-function launcherConfig(port, overrides = {}) {
-  return { version: 3, mode: "full", browserInteractionMode: "automatic", experimentalBiggerContext: false,
-    host: "127.0.0.1", port, ...allCapabilities, ...overrides };
-}
-
-function saveLauncherConfig(value) {
-  mkdirSync(web.WEB_BRIDGE_HOME, { recursive: true });
-  writeFileSync(path.join(web.WEB_BRIDGE_HOME, "config.json"), JSON.stringify(value));
+function saveSettings({ enabled = true, capabilities = allCapabilities, directory = state, ...extra } = {}) {
+  const runtimeModule = path.join(directory, "inert-browser-runtime.mjs");
+  const executable = path.join(directory, "inert-tunnel-client.exe");
+  writeFileSync(runtimeModule, 'throw new Error("This fixture must not execute the browser runtime.");\n', "utf8");
+  writeFileSync(executable, "Synthetic tunnel path; never execute.\n", "utf8");
+  writeFileSync(path.join(directory, "chatgpt-web.json"), JSON.stringify({ version: 1, enabled, capabilities,
+    browser: { runtimeModule, pluginName: "Router local tools", pluginAppId: "asdk_app_fixture", pluginSelectionButtonName: "Router local tools, Connectors" },
+    tunnel: { id: "tunnel_fixture", executable }, ...extra }));
 }
 
 async function listener(t, handle) {
@@ -71,7 +69,20 @@ async function routerFixture(t, handle, options = {}) {
   const directory = mkdtempSync(path.join(state, "http-"));
   const codexHome = path.join(directory, "codex");
   mkdirSync(codexHome);
-  saveSettings(bridge.baseUrl, { directory, ...options });
+  const { realRuntime = false, ...settings } = options;
+  saveSettings({ directory, ...settings, ...(realRuntime ? { enabled: false } : {}) });
+  // Replace only the in-app runtime dependency. The real Router and settings
+  // owner still validate and dispatch the ordinary request. Browser scheduling,
+  // native tool execution and compaction have their own real-runtime coverage.
+  const runtimeStub = path.join(directory, "runtime-stub.mjs"), preload = path.join(directory, "preload.mjs");
+  writeFileSync(runtimeStub, `export function startInAppWebBridge() {}\nexport function closeInAppWebBridge() {}\nexport function requestInAppWebBridge(payload, {compact, compactV2, signal, headers}) {
+    return fetch(${JSON.stringify(bridge.baseUrl)} + (compact ? '/compact' : '/request'), {method:'POST',signal,
+      headers:{...headers,'x-fixture-compact-v2':String(compactV2)},body:JSON.stringify(payload)});
+  }\n`, "utf8");
+  writeFileSync(preload, `import {registerHooks} from 'node:module';
+    registerHooks({resolve(specifier, context, nextResolve) { const result=nextResolve(specifier,context);
+      return result.url===${JSON.stringify(pathToFileURL(path.resolve("src/web-runtime.mjs")).href)}
+        ? {url:${JSON.stringify(pathToFileURL(runtimeStub).href)},shortCircuit:true} : result; }});\n`, "utf8");
   const catalog = path.join(directory, "native-models.json");
   writeFileSync(catalog, JSON.stringify({ models: [{ slug: "gpt-6.1-sol", supported_reasoning_levels: ["medium", "high"] }] }));
   const port = await openPort();
@@ -82,9 +93,10 @@ async function routerFixture(t, handle, options = {}) {
     CODEX_ROUTER_CATALOG: catalog, CODEX_ROUTER_QUIET: "1",
     CODEX_NATIVE_BASE_URL: native.baseUrl.replace(/\/v1$/u, ""),
     CODEX_ROUTER_API_BASE_URL: native.baseUrl, CODEX_ROUTER_GATEWAY_BASE_URL: native.baseUrl,
-  });
+  }, { nodeArgs: realRuntime ? [] : ["--import", pathToFileURL(preload).href] });
   t.after(() => stop(child));
   await ready(`http://127.0.0.1:${port}/live`, child);
+  if (realRuntime) saveSettings({ directory, ...settings });
   return { bridge, native, port, directory, child, url: callerBaseUrl(port, callerKey),
     post: (payload, suffix = "/responses", headers = {}, fetchOptions = {}) => fetch(`${callerBaseUrl(port, callerKey)}${suffix}`, {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload), ...fetchOptions,
@@ -138,21 +150,30 @@ test("Web catalog names the serving families and exposes only account-supported 
   const reduced = web.buildWebBridgeModels({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
   assert.equal(reduced.length, 4);
   assert.deepEqual(reduced.find(row => row.slug === model).supported_reasoning_levels.map(level => level.effort), ["medium", "high"]);
-  const [luna] = web.buildWebBridgeModels({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
-  assert.match(luna.displayName, /Luna.*version unverified/u);
-  assert.deepEqual(luna.supported_reasoning_levels, [{ effort: "low", description: "Ordinary Luna" }, { effort: "medium", description: "Think" }]);
+  assert.deepEqual(web.buildWebBridgeModels({ solAvailable: false, extraHighAvailable: false, proAvailable: false }), []);
   assert.ok(models.every(row => row.multi_agent_version === "v1"));
   for (const capabilities of [undefined, {}, { solAvailable: true, extraHighAvailable: "yes", proAvailable: false }]) {
     assert.throws(() => web.buildWebBridgeModels(capabilities), /capabilities/u);
   }
 });
 
-test("bridge address accepts a dedicated loopback service and rejects remote, credential, redirect-path and Router hops", () => {
-  assert.equal(web.validateWebBridgeBaseUrl("http://127.0.0.1:17841/v1/"), "http://127.0.0.1:17841/v1");
-  for (const address of ["https://127.0.0.1:17841/v1", "http://localhost:17841/v1", "http://192.0.2.1:17841/v1",
-    "http://secret@127.0.0.1:17841/v1", "http://127.0.0.1:17841/v1?token=secret", "http://127.0.0.1:17841/v1#secret",
-    "http://127.0.0.1:17841/other", "http://127.0.0.1:4200/v1", "http://127.0.0.1:4202/v1", "http://127.0.0.1:4203/v1"]) {
-    assert.throws(() => web.validateWebBridgeBaseUrl(address), Error, address);
+test("advertised Web routes select exact browser families and Power values", () => {
+  const expected = [
+    ["chatgpt-web/gpt-6-sol-instant", "GPT-6", { low: 0 }],
+    ["chatgpt-web/gpt-6-sol", "GPT-6", { medium: 1, high: 2, xhigh: 3 }],
+    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol", { low: 0 }],
+    ["chatgpt-web/gpt-5.6-sol", "GPT-5.6 Sol", { medium: 1, high: 2, xhigh: 3 }],
+    ["chatgpt-web/gpt-5.6-pro", "GPT-5.6 Sol", { max: 4 }],
+    ["chatgpt-web/gpt-6-pro", "GPT-6", { max: 4 }],
+  ];
+  for (const [slug, family, powers] of expected) {
+    const advertised = web.buildWebBridgeModels(allCapabilities).find(row => row.slug === slug);
+    assert.deepEqual(advertised.supported_reasoning_levels.map(row => row.effort), Object.keys(powers));
+    assert.deepEqual(webModelSelection(slug), { family, power: powers[advertised.defaultEffort] });
+    for (const [effort, power] of Object.entries(powers)) assert.deepEqual(webModelSelection(slug, effort), { family, power });
+  }
+  for (const [slug, effort] of [["chatgpt-web/sol", "medium"], [model, "low"], [model, "max"], [model, "toString"]]) {
+    assert.throws(() => webModelSelection(slug, effort), { status: 400, code: "web_model_unverified" });
   }
 });
 
@@ -160,7 +181,7 @@ test("missing settings are disabled, persisted model lists cannot invent availab
   rmSync(settingsPath, { force: true });
   assert.equal(web.readWebBridgeSettings().enabled, false);
   assert.deepEqual(web.webBridgeModels(), []);
-  saveSettings("http://127.0.0.1:17841/v1", { capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false },
+  saveSettings({ capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false },
     models: [{ slug: "chatgpt-web/anything", displayName: "invented" }] });
   assert.equal(web.webBridgeModels().some(row => row.slug.endsWith("anything")), false);
   assert.equal(web.webBridgeModels().some(row => row.slug.endsWith("pro")), false);
@@ -168,103 +189,15 @@ test("missing settings are disabled, persisted model lists cannot invent availab
   assert.throws(() => web.readWebBridgeSettings(), /invalid state/u);
 });
 
-test("connect checks credential-free health and stores only safe account observations; disconnect stops publication", async t => {
-  const bridge = await listener(t, ({ path: requestPath, method, headers, response }) => {
-    assert.equal(requestPath, "/healthz");
-    assert.equal(method, "GET");
-    assert.equal(headers.authorization, undefined);
-    assert.equal(headers["chatgpt-account-id"], undefined);
-    json(response, { service: "codex-chatgpt-web", status: "ok", mode: "full", accepting_turns: true, version: "6.1.9" });
-  });
-  saveLauncherConfig(launcherConfig(bridge.port, { tunnelToken: "private-tunnel", controlToken: "private-control", browserCookie: "private-cookie" }));
-  await web.connectWebBridge(bridge.baseUrl);
-  assert.equal(bridge.requests.length, 1);
-  const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
-  assert.deepEqual(Object.keys(stored).sort(), ["baseUrl", "bridgeVersion", "capabilities", "connectedAt", "enabled", "mode", "version"]);
-  assert.deepEqual(stored.capabilities, allCapabilities);
-  assert.equal(stored.enabled, true);
-  assert.equal(stored.bridgeVersion, "6.1.9");
-  assert.equal(web.webBridgeModels().length, 6);
-  await web.disconnectWebBridge();
-  assert.deepEqual(web.webBridgeModels(), []);
-  await assert.rejects(web.requestWebBridge({ model }), error => error.status === 409);
-  assert.equal(bridge.requests.length, 1, "disabled forwarding must not touch the bridge");
-});
-
-test("connect rejects non-production launcher modes before probing and rejects a non-accepting service", async t => {
-  const bridge = await listener(t, ({ response }) => json(response,
-    { service: "codex-chatgpt-web", status: "ok", mode: "full", accepting_turns: false }));
-  for (const overrides of [{ mode: "invalid" }, { browserInteractionMode: "manual" }, { experimentalBiggerContext: true },
-    { purpose: "dev-harness" }, { host: "0.0.0.0" }, { port: bridge.port + 1 }, { version: 2 }]) {
-    saveLauncherConfig(launcherConfig(bridge.port, overrides));
-    await assert.rejects(web.connectWebBridge(bridge.baseUrl), /isolated production launcher setup/u);
-  }
-  assert.equal(bridge.requests.length, 0);
-  saveLauncherConfig(launcherConfig(bridge.port));
-  await assert.rejects(web.connectWebBridge(bridge.baseUrl), /not an accepting ChatGPT Web bridge/u);
-  assert.equal(bridge.requests.length, 1);
-});
-
-test("browser-only connection publishes actual models without claiming local tools or subagents", async t => {
-  const bridge = await listener(t, ({ response }) => json(response,
-    { service: "codex-chatgpt-web", status: "ok", mode: "browser-only", accepting_turns: true, version: "6.1.9" }));
-  saveLauncherConfig(launcherConfig(bridge.port, { mode: "browser-only" }));
-  const status = await web.connectWebBridge(bridge.baseUrl);
-  assert.equal(status.mode, "browser-only");
-  assert.equal(status.localToolsConfigured, false);
-  assert.equal(web.webBridgeModels().length, 6);
-  assert.ok(web.webBridgeModels().every(model => model.supportsSubagents === false && model.description.includes("local coding tools are unavailable")));
-});
-
-test("launcher exposes native rollouts through the expected junction while keeping configuration and credentials isolated", async () => {
-  const nativeSessions = path.join(process.env.CODEX_HOME, "sessions");
-  const isolatedSessions = path.join(web.WEB_BRIDGE_CODEX_HOME, "sessions");
-  mkdirSync(nativeSessions);
-  mkdirSync(web.WEB_BRIDGE_CODEX_HOME, { recursive: true });
-  writeFileSync(path.join(nativeSessions, "rollout-fixture.jsonl"), "native rollout fixture\n");
-  writeFileSync(path.join(process.env.CODEX_HOME, "config.toml"), 'model = "native-fixture"\n');
-  writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), '{"fixtureCredential":"must-stay-isolated"}\n');
-  const isolatedConfig = path.join(web.WEB_BRIDGE_CODEX_HOME, "config.toml");
-  writeFileSync(isolatedConfig, 'model = "bridge-fixture"\n');
-
-  // Running Node with no arguments and ignored stdin exits immediately. This
-  // exercises the real Windows launch path without executing a Web launcher.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await web.launchWebBridge(process.execPath);
-    assert.equal(result.launched, true);
-    assert.ok(Number.isInteger(result.processId));
-    assert.equal(result.isolatedCodexHome, web.WEB_BRIDGE_CODEX_HOME);
-    assert.equal(lstatSync(isolatedSessions).isSymbolicLink(), true);
-    assert.equal(realpathSync(isolatedSessions).toLowerCase(), realpathSync(nativeSessions).toLowerCase());
-    assert.equal(readFileSync(path.join(isolatedSessions, "rollout-fixture.jsonl"), "utf8"), "native rollout fixture\n");
-    assert.equal(readFileSync(isolatedConfig, "utf8"), 'model = "bridge-fixture"\n');
-    assert.equal(lstatSync(isolatedConfig).isSymbolicLink(), false);
-    assert.equal(readFileSync(path.join(process.env.CODEX_HOME, "config.toml"), "utf8"), 'model = "native-fixture"\n');
-    assert.equal(existsSync(path.join(web.WEB_BRIDGE_CODEX_HOME, "auth.json")), false);
-    assert.equal(existsSync(path.join(web.WEB_BRIDGE_HOME, "auth.json")), false);
-  }
-
-  // Removing the junction alone must leave native rollouts intact. A real
-  // directory at that path belongs to its owner and must never be replaced.
-  unlinkSync(isolatedSessions);
-  mkdirSync(isolatedSessions);
-  writeFileSync(path.join(isolatedSessions, "owned-rollout.jsonl"), "keep this isolated rollout\n");
-  await assert.rejects(web.launchWebBridge(process.execPath), /not the expected native-rollout junction/u);
-  assert.equal(lstatSync(isolatedSessions).isSymbolicLink(), false);
-  assert.equal(readFileSync(path.join(isolatedSessions, "owned-rollout.jsonl"), "utf8"), "keep this isolated rollout\n");
-  assert.equal(readFileSync(path.join(nativeSessions, "rollout-fixture.jsonl"), "utf8"), "native rollout fixture\n");
-  assert.equal(readFileSync(isolatedConfig, "utf8"), 'model = "bridge-fixture"\n');
-  assert.equal(existsSync(path.join(web.WEB_BRIDGE_CODEX_HOME, "auth.json")), false);
-});
-
 test("Router forwards tools, history, exact selected effort and safe turn identity without native or Router credentials", async t => {
+  const metadata = JSON.stringify({ thread_id: "fixture-thread", turn_id: "fixture-turn" });
   const payload = { model, stream: false, input: [
     { role: "user", content: "Edit the file" },
     { type: "function_call", name: "functions.exec", call_id: "call_previous", arguments: "{}" },
     { type: "function_call_output", call_id: "call_previous", output: "prior result" },
   ], tools: [{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "apply_patch",
     description: "Patch files", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } }] }],
-  previous_response_id: "resp_previous", client_metadata: { thread_id: "fixture-thread", turn_id: "fixture-turn", custom: "retained" },
+  previous_response_id: "resp_previous", client_metadata: { "x-codex-turn-metadata": metadata, custom: "retained" },
   reasoning: { effort: "high", summary: "auto" }, context_management: [{ type: "compaction", compact_threshold: 12000 }],
   parallel_tool_calls: false, store: false };
   const fixture = await routerFixture(t, ({ response }) => json(response, completed, 200, { "set-cookie": "private=session" }));
@@ -272,7 +205,8 @@ test("Router forwards tools, history, exact selected effort and safe turn identi
     authorization: "Bearer native-secret", "chatgpt-account-id": "native-account", "openai-organization": "native-org",
     "x-openai-internal-codex-residency": "us", "x-api-key": "private-router-key", "x-codex-router-key": "private-capability",
     "x-codex-thread-id": "fixture-thread", "x-codex-turn-id": "fixture-turn", "x-codex-client-metadata": "safe-metadata",
-    "x-codex-parent-thread-id": "fixture-parent", session_id: "fixture-session",
+    "x-codex-parent-thread-id": "fixture-parent", session_id: "fixture-session", "session-id": "fixture-session",
+    "x-codex-session-id": "fixture-session", "x-codex-turn-metadata": metadata,
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), completed);
@@ -280,13 +214,11 @@ test("Router forwards tools, history, exact selected effort and safe turn identi
   assert.equal(fixture.bridge.requests.length, 1);
   assert.deepEqual(fixture.bridge.requests[0].payload, payload);
   const headers = fixture.bridge.requests[0].headers;
-  for (const name of ["authorization", "chatgpt-account-id", "openai-organization", "x-openai-internal-codex-residency", "x-api-key", "x-codex-router-key"]) {
+  for (const name of ["authorization", "chatgpt-account-id", "openai-organization", "x-openai-internal-codex-residency", "x-api-key", "x-codex-router-key",
+    "x-codex-thread-id", "x-codex-turn-id", "x-codex-parent-thread-id", "x-codex-client-metadata", "x-codex-session-id", "session_id", "session-id"]) {
     assert.equal(headers[name], undefined, `${name} must not reach the browser service`);
   }
-  assert.equal(headers["x-codex-thread-id"], "fixture-thread");
-  assert.equal(headers["x-codex-turn-id"], "fixture-turn");
-  assert.equal(headers["x-codex-parent-thread-id"], "fixture-parent");
-  assert.equal(headers.session_id, "fixture-session");
+  assert.equal(headers["x-codex-turn-metadata"], metadata);
   assert.equal(fixture.native.requests.length, 0);
 });
 
@@ -311,20 +243,20 @@ test("real compact route preserves the bridge's compaction envelope and history"
   const response = await fixture.post(payload, "/responses/compact");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), result);
-  assert.equal(fixture.bridge.requests[0].path, "/v1/responses/compact");
+  assert.equal(fixture.bridge.requests[0].path, "/v1/compact");
   assert.deepEqual(fixture.bridge.requests[0].payload, payload);
   assert.equal(fixture.native.requests.length, 0);
 });
 
 test("ordinary Web V2 compaction reaches the actual in-app backend without browser execution or service startup", async t => {
-  const fixture = await routerFixture(t, ({ response }) => json(response, { error: "unexpected launcher request" }, 500));
+  const fixture = await routerFixture(t, ({ response }) => json(response, { error: "unexpected runtime stub request" }, 500), { realRuntime: true });
   const runtimeModule = path.join(fixture.directory, "inert-browser-runtime.mjs");
   const executable = path.join(fixture.directory, "inert-tunnel-client.exe");
   writeFileSync(runtimeModule, 'throw new Error("Compaction must not import the browser runtime.");\n', "utf8");
   writeFileSync(executable, "Synthetic tunnel path; compaction must never execute it.\n", "utf8");
   // Startup owns service activation. Flip only this isolated fixture after /live
   // so this regression observes compaction, independently of startup behavior.
-  saveSettings(fixture.bridge.baseUrl, { directory: fixture.directory, backend: "in-app", mode: "full",
+  saveSettings({ directory: fixture.directory,
     browser: { runtimeModule, pluginName: "Router local tools", pluginAppId: "asdk_app_fixture", pluginSelectionButtonName: "Router local tools, Connectors" },
     tunnel: { id: "tunnel_fixture", executable } });
   const metadata = JSON.stringify({ thread_id: "22222222-2222-4222-8222-222222222222", turn_id: "33333333-3333-4333-8333-333333333333" });
@@ -382,19 +314,6 @@ test("ordinary Web V2 compaction reaches the actual in-app backend without brows
   });
 });
 
-test("launcher terminal V2 compaction stays on ordinary responses with its input unchanged", async t => {
-  const fixture = await routerFixture(t, ({ response }) => json(response, { output: [] }));
-  const payload = { model, input: [{ role: "user", content: "Keep launcher ownership" }, { type: "compaction_trigger" }], stream: false };
-  const response = await fixture.post(payload);
-  assert.equal(response.status, 200);
-  await response.arrayBuffer();
-  assert.equal(fixture.bridge.requests.length, 1);
-  assert.equal(fixture.bridge.requests[0].path, "/v1/responses");
-  assert.deepEqual(fixture.bridge.requests[0].payload.input, payload.input);
-  assert.equal(fixture.bridge.requests[0].payload.stream, false);
-  assert.equal(fixture.native.requests.length, 0);
-});
-
 test("Web model requests retain public Router authentication even while the bridge is enabled", async t => {
   const fixture = await routerFixture(t, ({ response }) => json(response, completed));
   const response = await fetch(`http://127.0.0.1:${fixture.port}/v1/responses`, {
@@ -416,7 +335,7 @@ test("unavailable models, aliases and unsupported efforts reject without a backe
     assert.equal(response.status, 400);
     await response.arrayBuffer();
   }
-  saveSettings(fixture.bridge.baseUrl, { directory: fixture.directory, enabled: false });
+  saveSettings({ directory: fixture.directory, enabled: false });
   const disabled = await fixture.post({ model, input: [] });
   assert.equal(disabled.status, 409);
   await disabled.arrayBuffer();

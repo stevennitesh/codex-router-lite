@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 import { CODEX_HOME, STATE_DIR } from "./paths.mjs";
 import { privateFileIsProtected, writePrivateFile } from "./file-security.mjs";
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
+import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapterThreadIds } from "./web-stop-contract.mjs";
 
 const OWNER = "codex-router-web-stop-adapter-v1";
-const HOOK_ID = "Stopping ChatGPT Web generation through Router adapter";
+const HOOK_ID = ADAPTER_HOOK_STATUS;
 const ENV_NAMES = ["CODEX_CLI_PATH", "CODEX_NODE_REPL_PATH"];
-const SOURCE_NAMES = ["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs"];
+const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]);
 const SHA = /^[a-f0-9]{64}$/iu;
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -110,8 +110,7 @@ function inspectManifest(ctx, file) {
   const runtimeHash = hash(bytes(runtimeModule)), sdkBytes = bytes(sdkPackageJson), sdk = JSON.parse(sdkBytes.toString("utf8"));
   if (path.basename(sdkPackageJson) !== "package.json" || sdk.name !== "@modelcontextprotocol/sdk" || typeof sdk.version !== "string") throw new Error("Invalid MCP SDK package anchor.");
   const threadIds = manifest.threadIds ?? null;
-  if (threadIds !== null && (!Array.isArray(threadIds) || threadIds.length < 1 || threadIds.length > 128
-      || threadIds.some(value => typeof value !== "string" || !UUID.test(value)) || new Set(threadIds).size !== threadIds.length)) throw new Error("Invalid adapter thread scope.");
+  if (!validAdapterThreadIds(threadIds)) throw new Error("Invalid adapter thread scope.");
   return { ...identities, runtimeModule, runtimeHash, sdkPackageJson, sdkPackageHash: hash(sdkBytes), threadIds: threadIds === null ? null : [...threadIds].sort() };
 }
 
@@ -144,12 +143,6 @@ function findHooks(document) {
   return matches;
 }
 
-function hookDefinition() {
-  return { type: "mcp_tool", server: "node_repl", tool: "router_web_interrupt", input: {
-    hook_event_name: "${hook_event_name}", session_id: "${session_id}", turn_id: "${turn_id}" },
-  timeout: 3, statusMessage: HOOK_ID };
-}
-
 function writeCompared(ctx, file, expected, value) {
   if (readText(file) !== expected) throw new Error("Installation state changed; refusing to overwrite another writer.");
   if (value === expected) return;
@@ -167,7 +160,7 @@ function loadReceipt(ctx) {
       || receipt.entryPath !== path.join(receipt.managedDirectory, "entry.exe")
       || receipt.configPath !== path.join(receipt.managedDirectory, "config.json") || !SHA.test(receipt.managedManifestSha256 ?? "")
       || receipt.hooksPath !== ctx.hooksPath || !(receipt.previousHooksText === null || typeof receipt.previousHooksText === "string")
-      || !same(receipt.hook, hookDefinition()) || !object(receipt.created)
+      || !same(receipt.hook, createAdapterHook()) || !object(receipt.created)
       || typeof receipt.created.hooks !== "boolean" || typeof receipt.created.interrupt !== "boolean") throw new Error("Invalid or foreign adapter ownership receipt.");
   receipt.environment = pair(receipt.environment); receipt.previousEnvironment = pair(receipt.previousEnvironment);
   receipt.priorEnvironment = pair(receipt.priorEnvironment);
@@ -180,18 +173,36 @@ function verifyManaged(ctx, receipt, { external = true } = {}) {
   regular(receipt.managedDirectory, { directory: true });
   const manifestPath = path.join(receipt.managedDirectory, "manifest.json");
   const manifest = JSON.parse(bytes(manifestPath, receipt.managedManifestSha256).toString("utf8"));
+  const names = object(manifest.files) ? Object.keys(manifest.files) : [];
+  const sourceNames = names.filter(name => /^[a-z][a-z0-9-]*\.mjs$/u.test(name));
   if (!ctx.isPrivate(manifestPath) || manifest.owner !== OWNER || manifest.version !== 1 || manifest.generation !== receipt.generation
-      || !object(manifest.files) || !same(Object.keys(manifest.files).sort(), [...SOURCE_NAMES, "config.json", "entry.cs", "entry.exe"].sort())
+      || !object(manifest.files) || !sourceNames.includes("web-stop-adapter.mjs")
+      || !same(names.sort(), [...sourceNames, "config.json", "entry.cs", "entry.exe"].sort())
       || !same(readdirSync(receipt.managedDirectory).sort(), [...Object.keys(manifest.files), "manifest.json"].sort())) throw new Error("Invalid managed adapter file set.");
   for (const [name, expected] of Object.entries(manifest.files)) {
     if (!SHA.test(expected) || !ctx.isPrivate(path.join(receipt.managedDirectory, name))) throw new Error("Managed adapter file is not private.");
     bytes(path.join(receipt.managedDirectory, name), expected);
   }
+  // A retained generation owns its own import closure. New source dependencies
+  // must not make a verified earlier generation impossible to upgrade or undo.
+  const reachable = new Set(), pending = ["web-stop-adapter.mjs"];
+  while (pending.length) {
+    const name = pending.pop();
+    if (reachable.has(name)) continue;
+    if (!sourceNames.includes(name)) throw new Error("Managed adapter local dependency is missing.");
+    reachable.add(name);
+    const source = bytes(path.join(receipt.managedDirectory, name)).toString("utf8");
+    for (const match of source.matchAll(/\b(?:import|export)\s+(?:[^'";]*?\s+from\s+)?['"](\.[^'"]+)['"]/gu)) {
+      if (!/^\.\/[a-z][a-z0-9-]*\.mjs$/u.test(match[1])) throw new Error("Invalid managed adapter local dependency.");
+      pending.push(match[1].slice(2));
+    }
+  }
+  if (reachable.size !== sourceNames.length) throw new Error("Unexpected managed adapter source file.");
   const plan = manifest.plan;
   const config = JSON.parse(bytes(receipt.configPath).toString("utf8"));
-  if (!object(plan) || !same(config, { version: 1, server: plan.officialNodeRepl?.path, serverSha256: plan.officialNodeRepl?.sha256,
+  if (!object(plan) || !same(config, createAdapterConfig({ server: plan.officialNodeRepl?.path, serverSha256: plan.officialNodeRepl?.sha256,
     stateDir: ctx.stateDir, runtimeModule: plan.runtimeModule, sdkPackageJson: plan.sdkPackageJson,
-    threadIds: plan.threadIds, receiptPath: ctx.eventsPath })
+    threadIds: plan.threadIds, receiptPath: ctx.eventsPath }))
       || receipt.environment && receipt.environment.CODEX_CLI_PATH !== plan.officialCli?.path
       || receipt.threadIds !== undefined && !same(receipt.threadIds, plan.threadIds)) throw new Error("Managed adapter configuration identity mismatch.");
   if (external) {
@@ -206,9 +217,9 @@ function stage(ctx, plan) {
   const template = bytes(path.join(ctx.sourceDir, "web-stop-adapter-entry.cs")).toString("utf8");
   const generation = hash(JSON.stringify({ plan, sources: Object.fromEntries(Object.entries(sources).map(([name, value]) => [name, hash(value)])), launcher: hash(template) }));
   const managedDirectory = path.join(ctx.root, generation), configPath = path.join(managedDirectory, "config.json"), entryPath = path.join(managedDirectory, "entry.exe");
-  const config = { version: 1, server: plan.officialNodeRepl.path, serverSha256: plan.officialNodeRepl.sha256,
+  const config = createAdapterConfig({ server: plan.officialNodeRepl.path, serverSha256: plan.officialNodeRepl.sha256,
     stateDir: ctx.stateDir, runtimeModule: plan.runtimeModule, sdkPackageJson: plan.sdkPackageJson,
-    threadIds: plan.threadIds, receiptPath: ctx.eventsPath };
+    threadIds: plan.threadIds, receiptPath: ctx.eventsPath });
   if (!existsSync(managedDirectory)) {
     const temporary = mkdtempSync(path.join(ctx.root, ".stage-"));
     for (const [name, value] of Object.entries(sources)) ctx.write(path.join(temporary, name), value);
@@ -281,7 +292,7 @@ export function installWebStopAdapter(options = {}) {
     const previous = loadReceipt(ctx), beforeEnvironment = pair(ctx.environment.readPair()), beforeHooksText = readText(ctx.hooksPath), document = parseHooks(beforeHooksText);
     const found = ensureInstallOwnership(previous, beforeEnvironment, document);
     if (previous && previous.state !== "removed") verifyManaged(ctx, previous);
-    const plan = inspectManifest(ctx, manifestPath), candidate = stage(ctx, plan), hook = hookDefinition();
+    const plan = inspectManifest(ctx, manifestPath), candidate = stage(ctx, plan), hook = createAdapterHook();
     regular(ctx.eventsPath, { optional: true });
     if (!existsSync(ctx.eventsPath)) ctx.write(ctx.eventsPath, "");
     if (!ctx.isPrivate(ctx.eventsPath)) throw new Error("Adapter event receipt is not private.");
@@ -315,7 +326,7 @@ export function installWebStopAdapter(options = {}) {
 function installResult(ctx, receipt, broadcast) {
   return { installed: true, state: receipt.state, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
     configPath: receipt.configPath, managedDirectory: receipt.managedDirectory, receiptPath: ctx.receiptPath,
-    threadIds: receipt.threadIds, restartRequired: true, trustRequired: true, nativeHookOperatorStep: true, environmentBroadcast: broadcast };
+    threadIds: receipt.threadIds, restartRequired: true, trustRequired: true, environmentBroadcast: broadcast };
 }
 
 export function webStopAdapterStatus(options = {}) {
@@ -365,6 +376,6 @@ export function rollbackWebStopAdapter(options = {}) {
     writeCompared(ctx, ctx.receiptPath, preparedText, json({ ...next, state }));
     return { installed: false, changed: !same(current, restored) || nextHooksText !== beforeHooksText, state,
       restartRequired: true, retainedManagedFiles: true, managedDirectory: receipt.managedDirectory, conflicts,
-      nativeHookOperatorStep: true, environmentBroadcast: result.broadcast };
+      environmentBroadcast: result.broadcast };
   });
 }

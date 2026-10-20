@@ -77,7 +77,8 @@ test("actual broker-produced function/custom/search calls survive SSE and existi
     { type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec" }] },
     { type: "tool_search", execution: "client" },
   ];
-  const { token, tools } = broker.register({ threadId: "thread", turnId: "turn", tools: declarations });
+  const { token } = broker.register({ threadId: "thread", turnId: "turn", tools: declarations });
+  const tools = broker.list(token);
   const pending = tools.map(tool => broker.invoke(token, { wireName: tool.wireName,
     ...(tool.kind === "custom" ? { input: "text('quoted 🌙');\n" } : { arguments: { query: "actual fixture" } }) }));
   const calls = broker.takeCalls(token);

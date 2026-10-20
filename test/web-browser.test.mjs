@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserHelperVersion, browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserDom, browserHelperVersion, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+
+const readReplies = (elements, options = {}) => readBrowserReplies(elements, { ui: browserDom, ...options });
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
@@ -63,8 +65,8 @@ test("reply projection excludes the observed code toolbar while preserving liter
   const root = domElement("div", {}, domElement("div", {}, sourceBlock(source)));
   const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, root);
-  assert.equal(isolatedReader([root])[0].text, source);
-  assert.equal(isolatedReader([root])[0].messageId, messageId(0));
+  assert.equal(isolatedReader([root], { ui: browserDom })[0].text, source);
+  assert.equal(isolatedReader([root], { ui: browserDom })[0].messageId, messageId(0));
   assert.equal(root.textContent, `Plain text${source}`, "The read does not mutate the browser DOM.");
 });
 
@@ -74,7 +76,7 @@ test("reply projection preserves paragraph, BR and code boundaries without remov
     domElement("p", {}, domText("Second paragraph"), domElement("br"), domText("continued")),
     sourceBlock("  first\n\n    second"),
     domElement("p", {}, domText("After "), domElement("code", {}, domText("inline")), domText(" code.")));
-  assert.equal(readBrowserReplies([root])[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
+  assert.equal(readReplies([root])[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
 });
 
 test("reply projection joins one wrapper's markdown fragments in DOM order without repeating nested selections", () => {
@@ -85,7 +87,7 @@ test("reply projection joins one wrapper's markdown fragments in DOM order witho
   const tail = domElement("div", {}, nested);
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, prose, code, tail);
   const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
-  const replies = isolatedReader([prose, code, tail, nested]);
+  const replies = isolatedReader([prose, code, tail, nested], { ui: browserDom });
   assert.equal(replies.length, 1);
   assert.equal(replies[0].messageId, messageId(0));
   assert.equal(replies[0].text, `Before code.\n\n${source}\n\nAfter code.`);
@@ -94,7 +96,7 @@ test("reply projection joins one wrapper's markdown fragments in DOM order witho
 test("reply projection preserves distinct wrappers with duplicate IDs and separate fragments without wrappers", () => {
   const selected = ["First", "Second", "Missing one", "Missing two"].map(text => domElement("div", {}, domText(text)));
   for (const node of selected.slice(0, 2)) domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, node);
-  assert.deepEqual(readBrowserReplies(selected).map(({ messageId, text }) => ({ messageId, text })), [
+  assert.deepEqual(readReplies(selected).map(({ messageId, text }) => ({ messageId, text })), [
     { messageId: messageId(0), text: "First" }, { messageId: messageId(0), text: "Second" },
     { messageId: null, text: "Missing one" }, { messageId: null, text: "Missing two" },
   ]);
@@ -109,7 +111,7 @@ test("invalid identity diagnostics contain only a fixed reason and integer count
     for (let depth = 0; depth < 9; depth += 1) root = domElement("div", { class: privateValue, role: privateValue }, root);
     return element;
   });
-  const replies = readBrowserReplies(elements), diagnostic = replies[0].identityDiagnostic;
+  const replies = readReplies(elements), diagnostic = replies[0].identityDiagnostic;
   assert.equal(diagnostic.reason, "missing-wrapper");
   assert.equal(diagnostic.selectedElementCount, 30);
   assert.equal(diagnostic.messageCount, 30);
@@ -121,7 +123,7 @@ test("invalid identity diagnostics contain only a fixed reason and integer count
   assert.equal(replies.filter(reply => reply.identityDiagnostic).length, 1);
   const valid = domElement("div", {}, domText(privateValue));
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, valid);
-  assert.deepEqual(readBrowserReplies([valid]), [{ messageId: messageId(0), text: privateValue }]);
+  assert.deepEqual(readReplies([valid]), [{ messageId: messageId(0), text: privateValue }]);
 });
 
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
@@ -132,19 +134,18 @@ test("CodeMirror logical lines preserve empty lines and reject incomplete or amb
     domElement("div", { class: "cm-line" }, domElement("br")));
   const block = (...content) => domElement("div", { "data-markdown-copy": "code-block" },
     domElement("div", { "data-markdown-copy": "exclude" }, domText("Python")), ...content);
-  assert.equal(readBrowserReplies([block(editor)])[0].text, "  first\n\n    last\n");
+  assert.equal(readReplies([block(editor)])[0].text, "  first\n\n    last\n");
   for (const invalid of [
     block(domElement("code", {}, domText("one")), domElement("code", {}, domText("two"))),
     block(editor, editor),
     block(domElement("div", { class: "cm-content", "data-language": "python" }, domElement("div", { class: "spacer" }))),
-  ]) assert.throws(() => readBrowserReplies([invalid]), /one complete source/);
+  ]) assert.throws(() => readReplies([invalid]), /one complete source/);
 });
 
 test("native browser executor preserves the exact declared schema and identity", () => {
   const executor = discoverBrowserExecutor(offered(schema));
   assert.equal(executor.namespace, "mcp__node_repl");
   assert.equal(executor.name, "js");
-  assert.equal(executor.schema, schema);
   const code = "const text = '` ${notExecutable}';";
   assert.deepEqual(JSON.parse(executor.argumentsFor(code, "Inspect", 12000)), { code, title: "Inspect", timeout_ms: 12000 });
   assert.throws(() => executor.argumentsFor(code, "Inspect", 90000), /current declaration/);
@@ -153,6 +154,39 @@ test("native browser executor preserves the exact declared schema and identity",
   assert.throws(() => discoverBrowserExecutor(offered({ ...schema, required: ["code", "executor"] })), /schema/);
   const nullableTitle = { ...schema, properties: { ...schema.properties, title: { type: ["string", "null"] } }, required: ["code", "title"] };
   assert.equal(JSON.parse(discoverBrowserExecutor(offered(nullableTitle)).argumentsFor(code)).title, "ChatGPT Web browser operation");
+  const withInputSchema = [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", inputSchema: schema }] }];
+  assert.deepEqual(JSON.parse(discoverBrowserExecutor(withInputSchema).argumentsFor(code)), JSON.parse(executor.argumentsFor(code)));
+  assert.throws(() => discoverBrowserExecutor([{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", input_schema: schema }] }]), /schema/);
+});
+
+test("saved chat URL qualification is shared and safe for malformed or foreign values", () => {
+  const isolated = runInNewContext(`(${isSavedChatUrl.toString()})`, { URL });
+  for (const [value, expected] of [
+    ["https://chatgpt.com/c/saved-chat", true], ["https://chatgpt.com/c/saved-chat?model=gpt-6", true],
+    ["https://chatgpt.com/", false], ["https://chatgpt.com/c/a?temporary-chat=false", false],
+    ["https://foreign.test/c/a", false], ["https://name@chatgpt.com/c/a", false],
+    ["https://chatgpt.com/c/a#part", false], ["https://chatgpt.com/c/a/b", false], ["bad", false], [null, false],
+  ]) assert.equal(isolated(value), expected, String(value));
+});
+
+test("browser programs round trip only with their complete exact guards, helper generation and literal config", () => {
+  for (const operation of ["bootstrap", "open", "send", "observe", "retain", "continue", "rollover"]) {
+    const options = { ...base, operation, ...plugin, runtimeModule: "current-runtime.mjs",
+      ...(operation === "send" ? { prompt: 'Literal `prompt` ${untrusted}\\n' } : {}),
+      ...(["continue", "rollover"].includes(operation) ? { expectedOwnerTurnIds: [base.turnId] } : {}),
+      ...(operation === "rollover" ? { previousChatUrl: "https://chatgpt.com/c/owned" } : {}) };
+    const code = browserScript(options), parsed = readBrowserProgram(code);
+    assert.equal(parsed.operation, operation);
+    assert.equal(parsed.bindingId, base.bindingId);
+    assert.equal(browserScript(parsed).replace(/\r\n?/gu, "\n"), code.replace(/\r\n?/gu, "\n"));
+    assert.deepEqual(readBrowserProgram(code.replace(/\r?\n/gu, "\r\n")), parsed);
+    assert.equal(readBrowserProgram(`${code}\nvoid 0;`), null);
+    assert.equal(readBrowserProgram(code.replace("Object.isFrozen", "Object.isSealed")), null);
+    assert.equal(readBrowserProgram(code.replace(browserHelperVersion, "0".repeat(64))), null);
+    assert.equal(readBrowserProgram(code.replace('"operation":"' + operation + '"', '"operation":"cancel"')), null);
+    assert.equal(readBrowserProgram(code.replace("globalThis.routerWeb_unit_test", "globalThis.routerWeb_other_binding")), null);
+  }
+  assert.equal(readBrowserProgram("await unknown({});"), null);
 });
 
 const framed = value => `ROUTER_WEB_BROWSER_${token}_BEGIN\n${JSON.stringify({ routerBrowser: value })}\nROUTER_WEB_BROWSER_${token}_END`;
@@ -402,7 +436,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   };
   const ready = async () => {
     await run("bootstrap", { runtimeModule: "current-runtime.mjs" });
-    await run("open");  };
+    await run("open");
+  };
   return { ui, run, ready, tab, browser, agent, runtimeModule, getState: () => nativeContext[bindingName],
     loseBinding({ preserveOwner = false } = {}) { delete nativeContext[bindingName]; if (!preserveOwner) nativeContext.routerWebActiveTurns?.delete(sessionId); },
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
@@ -419,6 +454,7 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
   if (completed) await f.run("retain");
   const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
     replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+    generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   return { ...f, recovery, text };
 }
@@ -439,7 +475,9 @@ async function interruptedBeforeReplyFixture() {
     baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
     generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: false, retainedTabOnly: true };
-  await f.run("cancel");
+  // Starting state after native Interrupt has already stopped this generation.
+  // Hook authority itself is exercised through the actual hook contract tests.
+  f.ui.stop = false;
   return { ...f, recovery, rendered };
 }
 
@@ -469,10 +507,10 @@ test("generation snapshots return only a marker match and do not read prior prom
   let promptReads = 0;
   Object.defineProperty(turn, 'textContent', { get() { promptReads += 1; return `${privatePrompt}\n${marker}`; } });
   const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
-  const observation = readBrowserReplies(selected, options);
+  const observation = readReplies(selected, options);
   assert.equal(promptReads, 0);
   assert.equal(observation.turns[0].matchesGenerationMarker, false);
-  const confirmation = readBrowserReplies(selected, { ...options, generationMarker: marker });
+  const confirmation = readReplies(selected, { ...options, generationMarker: marker });
   assert.equal(promptReads, 1);
   assert.equal(confirmation.turns[0].matchesGenerationMarker, true);
   assert.doesNotMatch(JSON.stringify([observation, confirmation]), /PRIVATE_USER_TRANSCRIPT|Router generation/);
@@ -494,18 +532,18 @@ test("anchored projection reads only the owned body and completion metadata whil
   const query = historical.querySelectorAll;
   historical.querySelectorAll = function (selector) { historicalMetadataReads += 1; return query.call(this, selector); };
   const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: "Regenerate response" };
-  const anchored = readBrowserReplies(selected, { ...options, generationTurnKey: messageId(200) });
+  const anchored = readReplies(selected, { ...options, generationTurnKey: messageId(200) });
   assert.deepEqual(anchored.replies.map(reply => reply.messageId), [messageId(10), messageId(20)]);
   assert.deepEqual(anchored.turns.map(turn => turn.turnKey), [messageId(100), messageId(200)]);
   assert.deepEqual(anchored.replies.map(reply => reply.text), ["", "Current answer"]);
   assert.deepEqual([historicalBodyReads, historicalMetadataReads, currentBodyReads], [0, 0, 1]);
   assert.equal(anchored.replies[1].completionActionAfter, true);
   assert.equal(anchored.turns[1].complete, true);
-  const full = readBrowserReplies(selected, options);
+  const full = readReplies(selected, options);
   assert.equal(full.replies[0].text, "Historical answer", "Recovery retains its full reply projection.");
   assert.ok(historicalBodyReads > 0 && historicalMetadataReads > 0);
   historicalAnswer.setAttribute("data-chatgpt-selection-message-id", messageId(20));
-  const duplicate = readBrowserReplies(selected, { ...options, generationTurnKey: messageId(200) });
+  const duplicate = readReplies(selected, { ...options, generationTurnKey: messageId(200) });
   assert.equal(duplicate.replies[0].identityDiagnostic.reason, "duplicate-wrapper-id");
   assert.equal(duplicate.replies[0].identityDiagnostic.duplicateWrapperCount, 2);
 });
@@ -797,6 +835,31 @@ test("Send waits within its existing budget for one saved URL before confirming 
   assert.equal(f.getState().sendConfirmed, true);
 });
 
+test("paste readiness, saved URL and generation proof consume one shared Send deadline", async () => {
+  for (const delayed of ["saved URL", "generation"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.sendEnabled = false;
+    f.ui.deferSavedUrl = delayed === "saved URL";
+    let sentMessages;
+    f.ui.onSend = () => { if (delayed === "generation") sentMessages = f.ui.userMessages.splice(0); };
+    f.ui.onWait = () => {
+      if (f.ui.waitedMs >= 8000) f.ui.sendEnabled = true;
+      // This evidence arrives within a fresh phase budget, but after the
+      // original Send budget. Resetting a deadline would wrongly confirm it.
+      if (f.ui.waitedMs >= 11000) {
+        f.ui.url = "https://chatgpt.com/c/owned-conversation";
+        if (sentMessages) f.ui.userMessages = sentMessages;
+      }
+    };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Shared deadline" }), /its effect is uncertain/);
+    assert.equal(f.ui.waitedMs, 10000);
+    assert.equal(f.getState().sendConfirmed, false);
+    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
 test("a missing saved URL or temporary URL after Send remains uncertain and cannot repeat Send", async () => {
   for (const url of ["https://chatgpt.com/", "https://chatgpt.com/c/owned-conversation?temporary-chat=true"]) {
     const f = fixture({ fastTimers: true });
@@ -974,7 +1037,8 @@ test("guarded rollover clicks once in the same owned tab and keeps full history 
     expectedOwnerTurnIds: [base.turnId, "next-turn"] });
   assert.equal(continued.needsHistory, true);
   assert.equal(continued.replyCount, 0);
-  assert.equal(continued.assistantText, "");  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
+  assert.equal(continued.assistantText, "");
+  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
   const sent = await f.run("send", { ...plugin, prompt: "Complete readable native history", turnId: "following-turn" });
   assert.equal(sent.baselineReplyCount, 0);
   for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) assert.equal(f.getState()[key], undefined);
@@ -1062,9 +1126,9 @@ test("pending full-history continuation reconciles only its exact owned unsent d
   for (const changeDraft of [false, true]) {
     const f = await recoverableFixture();
     showFullConversation(f.ui);
-    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });    f.ui.sendEnabled = false;
+    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
+    f.ui.sendEnabled = false;
     await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /nothing sent/);
-    await f.run("cancel", { turnId: "next-turn" });
     if (changeDraft) f.ui.composerText = "Changed user draft";
     const continuation = f.run("continue", { turnId: "following-turn", needsHistory: true, interruptedTurnId: "next-turn" });
     if (changeDraft) {
@@ -1087,7 +1151,8 @@ test("pending-history draft reconciliation cannot clear a draft after the tab le
   for (const change of [ui => { ui.url = "https://chatgpt.com/c/unrelated-conversation"; }, ui => { ui.temporary = true; }]) {
     const f = await recoverableFixture();
     showFullConversation(f.ui);
-    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });    f.ui.sendEnabled = false;
+    await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
+    f.ui.sendEnabled = false;
     await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /nothing sent/);
     const draft = f.ui.composerText;
     change(f.ui);
@@ -1115,7 +1180,8 @@ test("a changed active owner during rollover retention cannot click or reclaim t
 test("uncertain first successor Send preserves history markers and blocks continuation", async () => {
   const f = await recoverableFixture();
   showFullConversation(f.ui);
-  await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });  f.ui.sendFailure = true;
+  await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
+  f.ui.sendFailure = true;
   f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/c/successor-conversation"; };
   await assert.rejects(f.run("send", { ...plugin, prompt: "Full readable history", turnId: "next-turn" }), /effect uncertain/);
   await assert.rejects(f.run("continue", { turnId: "following-turn", needsHistory: true, interruptedTurnId: "next-turn" }), /preceding Send is uncertain/);
@@ -1195,7 +1261,7 @@ test("observations require a fresh assistant reply and continuation retains exac
   assert.deepEqual(f.activeTurn(), { turnId: "following-turn", state: f.getState(), stopButtonName: "Stop" });
   const active = f.activeTurn();
   f.ui.stop = true;
-  await assert.rejects(f.run("cancel"), /active.*turn|turn.*active/i);
+  await assert.rejects(f.run("continue", { turnId: "stale-turn", interruptedTurnId: base.turnId, expectedOwnerTurnIds: [base.turnId] }), /active.*turn|turn.*active/i);
   assert.equal(f.ui.stop, true, "A stale turn cannot stop the current generation.");
   assert.equal(f.ui.closeCount, 0, "A stale turn cannot close the continued turn's tab.");
   assert.equal(f.activeTurn(), active);
@@ -1216,7 +1282,8 @@ test("recovery-eligible continuation preserves its existing owned state across f
   const continued = await f.run("continue", { turnId: "following-turn", tabId: "owned-tab", runtimeModule: "must-not-import-recovery.mjs",
     recovery: { tabId: "owned-tab", url: observed.url, baselineReplyCount: observed.baselineReplyCount,
       replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
-      assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed } });
+      generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
+    assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed } });
   assert.equal(f.getState(), state);
   assert.equal(f.activeTurn().state, state);
   assert.equal(f.activeTurn().turnId, "following-turn");
@@ -1483,7 +1550,7 @@ test("saved URL restoration without a reply requires one latest confirmed genera
     };
     await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: f.recovery.tabId,
       interruptedTurnId: base.turnId, recovery: f.recovery }), /saved chat URL and reply did not become available/u);
-    assert.equal(f.ui.stopClicks, 1, "An unverified restored generation cannot authorize another Stop.");
+    assert.equal(f.ui.stopClicks, 0, "An unverified restored generation cannot authorize another Stop.");
     assert.equal(f.ui.sendClicks, 1);
     assert.equal(f.getState().bindingLost, true);
   }
@@ -1505,7 +1572,7 @@ test("anchored recovery before a reply cannot overwrite a different chat or a us
       interruptedTurnId: base.turnId, recovery: f.recovery }), /cannot overwrite it|reply or composer changed/u);
     assert.equal(f.ui.newTabs, 1);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
-    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.stopClicks, 0);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
@@ -1538,27 +1605,23 @@ test("saved URL recovery rechecks ownership and the destination tab after retent
       assert.equal(f.ui.composerText, "New user draft");
       assert.equal(f.ui.url, change === "chat" ? "https://chatgpt.com/c/another-conversation" : "https://chatgpt.com/");
     }
-    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.stopClicks, 0);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("an interrupted retained proof without a generation anchor still requires its exact existing tab and saved URL", async () => {
-  for (const loss of ["restart-home", "restart-closed", "closed"]) {
-    const f = await interruptedBeforeReplyFixture();
-    const recovery = { ...f.recovery };
-    delete recovery.generationTurnKey;
-    delete recovery.generationReplyIds;
-    if (loss.startsWith("restart")) f.loseBinding();
-    if (loss === "restart-home") f.ui.url = "https://chatgpt.com/";
-    else f.ui.present = false;
-    await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: recovery.tabId,
-      interruptedTurnId: base.turnId, recovery }), /exact retained saved chat tab(?: or URL changed| is unavailable)/u);
-    assert.equal(f.ui.newTabs, 1);
-    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
-    assert.equal(f.ui.stopClicks, 1);
-    assert.equal(f.ui.sendClicks, 1);
-  }
+test("anchorless recovery proofs are rejected before acquiring or navigating browser state", async () => {
+  const f = await interruptedBeforeReplyFixture();
+  const recovery = { ...f.recovery };
+  delete recovery.generationTurnKey;
+  delete recovery.generationReplyIds;
+  f.loseBinding();
+  await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: recovery.tabId,
+    interruptedTurnId: base.turnId, recovery }), /confirmed owned chat/);
+  assert.equal(f.ui.newTabs, 1);
+  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+  assert.equal(f.ui.stopClicks, 0);
+  assert.equal(f.ui.sendClicks, 1);
 });
 
 test("a proven reply unmounted before continuation remains old when it remounts after the next Send", async () => {
@@ -1652,19 +1715,15 @@ test("lost kernel recovery uses the current same-session browser and verifies a 
   assert.equal(f.ui.sendClicks, 1);
 });
 
-test("saved URL reacquires one existing tab when its old ID is absent or no tab hint was retained", async () => {
-  for (const retainHint of [true, false]) {
-    const f = await recoverableFixture();
-    f.loseBinding();
-    f.ui.tabId = "current-saved-tab";
-    const recovery = { ...f.recovery };
-    if (!retainHint) delete recovery.tabId;
-    const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery });
-    assert.equal(continued.tabId, "current-saved-tab");
-    assert.equal(continued.recovered, true);
-    assert.equal(f.ui.newTabs, 1);
-    assert.equal(f.ui.navigations.length, 1);
-  }
+test("saved URL reacquires one existing tab when its retained old ID is absent", async () => {
+  const f = await recoverableFixture();
+  f.loseBinding();
+  f.ui.tabId = "current-saved-tab";
+  const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
+  assert.equal(continued.tabId, "current-saved-tab");
+  assert.equal(continued.recovered, true);
+  assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.navigations.length, 1);
 });
 
 test("a missing original tab reopens only its exact saved URL and registers retention before navigation", async () => {
@@ -1759,7 +1818,7 @@ test("a rejected existing saved-URL candidate never becomes the retained owner's
     assert.equal(f.activeTurn(), originalOwner);
     assert.equal(f.activeTurn().state.tab, originalTab);
     candidate.ui.stop = true;
-    await assert.rejects(f.run("cancel"), /owned saved chat tab is unavailable/);
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /owned saved chat tab is unavailable/);
     assert.equal(candidate.ui.stopClicks, 0, "A failed proof cannot grant cleanup authority over its candidate.");
     assert.equal(candidate.ui.stop, true);
     assert.equal(f.ui.newTabs, 1);
@@ -1786,6 +1845,7 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   assert.equal(observed.replyCount, 41);
   const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyCount: observed.baselineReplyCount,
     replyCount: observed.replyCount, baselineReplyIds: observed.baselineReplyIds, replyId: observed.replyId,
+    generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   f.loseBinding();
   f.ui.present = false;
@@ -1798,7 +1858,8 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   assert.equal(continued.recovered, true);
   assert.equal(continued.replyCount, 2);
   assert.equal(continued.assistantText, latest, "The latest saved reply remains available for native delta history despite a smaller mounted list.");
-  assert.equal(f.ui.sendClicks, 2, "Recovery does not replay either prior Send.");  const sent = await f.run("send", { ...plugin, prompt: "New delta only", turnId: "third-turn" });
+  assert.equal(f.ui.sendClicks, 2, "Recovery does not replay either prior Send.");
+  const sent = await f.run("send", { ...plugin, prompt: "New delta only", turnId: "third-turn" });
   assert.equal(sent.baselineReplyCount, 2, "A new Send establishes its own current mounted count.");
   assert.equal(f.ui.sendClicks, 3);
   assert.equal(f.ui.newTabs, 2);
@@ -1999,22 +2060,17 @@ test("retained follow-up requires the exact saved URL and absence of Temporary C
   assert.equal(f.ui.sendClicks, 2);
 });
 
-test("cancel stops and retains the exact owned tab, and a lost tab fails continuation without replacement", async () => {
-  const f = fixture();
-  await f.ready();
+test("a lost interrupted tab fails continuation without replacement or replay", async () => {
+  const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
-  f.ui.stop = true;
   const active = f.activeTurn();
-  assert.deepEqual(await f.run("cancel"), { operation: "cancel", cancelled: true, interrupted: true, retained: true, tabId: "owned-tab" });
-  assert.equal(f.ui.stop, false);
-  assert.equal(f.ui.stopClicks, 1);
-  assert.equal(f.ui.closeCount, 0);
-  assert.equal(f.getState().interrupted, true);
-  assert.equal(f.getState().retained, true);
-  assert.equal(f.activeTurn(), active, "The cancelled owner remains available for the next turn's exact handoff.");
-  f.ui.present = false;
+  f.ui.stop = true; f.ui.present = false;
   await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /owned saved chat tab is unavailable/);
+  assert.equal(f.activeTurn(), active);
+  assert.equal(f.ui.stopClicks, 0);
+  assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
+  assert.equal(f.ui.closeCount, 0);
 });
 
 test("Stop cannot act on another saved conversation in the same owned tab, including navigation during visibility observation", async () => {
@@ -2034,7 +2090,7 @@ test("Stop cannot act on another saved conversation in the same owned tab, inclu
         return locator;
       };
     } else f.ui.url = 'https://chatgpt.com/c/another-conversation';
-    await assert.rejects(f.run('cancel'), /saved chat URL changed/);
+    await assert.rejects(f.run('continue', { turnId: 'next-turn', interruptedTurnId: base.turnId }), /saved chat URL changed|not ready for continuation/);
     assert.equal(f.ui.stopClicks, 0);
     assert.equal(f.ui.stop, true);
     assert.equal(f.ui.closeCount, 0);
@@ -2060,8 +2116,7 @@ test("interrupted continuation stops the preceding native owner and starts a new
   assert.equal(f.getState().interrupted, false);
   assert.equal(f.activeTurn()?.turnId, "next-turn");
   f.ui.stop = true;
-  await assert.rejects(f.run("cancel"), /active.*turn|turn.*active/i);
-  await assert.rejects(f.run("close"), /active.*turn|turn.*active/i);
+  await assert.rejects(f.run("continue", { turnId: "stale-turn", interruptedTurnId: base.turnId, expectedOwnerTurnIds: [base.turnId] }), /active.*turn|turn.*active/i);
   assert.equal(f.ui.stop, true, "Cleanup for the preceding turn cannot stop the new generation.");
   assert.equal(f.ui.stopClicks, 1);
   f.ui.stop = false;
@@ -2074,7 +2129,6 @@ test("Stop before Send retains the owned tab and does not attribute an earlier a
   const f = fixture();
   await f.ready();
   f.ui.texts.push("Earlier answer");
-  await f.run("cancel");
   const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
   assert.equal(result.interrupted, true);
   assert.equal(result.assistantText, "");
@@ -2114,7 +2168,6 @@ test("interrupted continuation clears an ordinary unsent draft before the new tu
   f.ui.sendEnabled = false;
   await assert.rejects(f.run("send", { ...plugin, prompt: "Abandoned draft" }), /nothing sent/);
   assert.equal(f.ui.composerText, " Abandoned draft");
-  await f.run("cancel");
   await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
   assert.equal(f.ui.composerText, "");
   assert.equal(f.ui.sendClicks, 0);
@@ -2133,7 +2186,6 @@ test("changed or transformed unsent drafts and uncertain Send cannot be replayed
     f.ui.sendEnabled = false;
     await assert.rejects(f.run("send", { ...plugin, prompt: "Unsent original" }), /nothing sent/);
     f.ui.composerText = composerText;
-    await f.run("cancel");
     const previous = f.activeTurn();
     await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /draft changed or became an attachment/);
     assert.equal(f.ui.composerText, composerText);
@@ -2151,7 +2203,6 @@ test("changed or transformed unsent drafts and uncertain Send cannot be replayed
   await f.run("continue", { turnId: "uncertain-turn" });
   f.ui.sendFailure = true;
   await assert.rejects(f.run("send", { ...plugin, prompt: "Uncertain request", turnId: "uncertain-turn" }), /effect uncertain/);
-  await f.run("cancel", { turnId: "uncertain-turn" });
   await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: "uncertain-turn" }), /Send is uncertain/);
   assert.equal(f.activeTurn()?.turnId, "uncertain-turn");
   assert.equal(f.ui.sendClicks, 2);
@@ -2159,75 +2210,39 @@ test("changed or transformed unsent drafts and uncertain Send cannot be replayed
   assert.equal(f.ui.closeCount, 0);
 });
 
-test("failed handoff or tab closure keeps the exact active turn available until cleanup succeeds", async () => {
-  const f = fixture();
-  await f.ready();
-  await f.run("send", { ...plugin, prompt: "Request" });
-  f.ui.texts.push("Completed request"); f.ui.complete = true;
-  await f.run("observe");
-  const active = f.activeTurn();
-  const handoff = f.tab.markHandoff;
-  f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
-  await assert.rejects(f.run("retain"), /Handoff failed/);
-  assert.equal(f.activeTurn(), active);
-  f.tab.markHandoff = handoff;
-  const close = f.tab.close;
-  f.tab.close = async () => { throw new Error("Closure failed"); };
-  await assert.rejects(f.run("close"), /Closure failed/);
-  assert.equal(f.activeTurn(), active);
-  assert.equal(f.getState().closed, undefined);
-  f.tab.close = close;
-  assert.equal((await f.run("close")).closed, true);
-  assert.equal(f.activeTurn(), undefined);
-});
-
-test("failed cancellation handoff keeps the old owner and explicit close remains separate", async () => {
-  const f = fixture();
-  await f.ready();
-  const active = f.activeTurn();
-  const handoff = f.tab.markHandoff;
-  f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
+test("failed interrupted-continuation handoff preserves the owner and retry retains its exact tab", async () => {
+  const f = fixture(); await f.ready();
+  await f.run("send", { ...plugin, prompt: "Interrupted request" });
+  const active = f.activeTurn(), handoff = f.tab.markHandoff;
   f.ui.stop = true;
-  await assert.rejects(f.run("cancel"), /Handoff failed/);
-  assert.equal(f.ui.stop, false);
+  f.tab.markHandoff = async () => { throw new Error("Handoff failed"); };
+  await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /Handoff failed/);
   assert.equal(f.activeTurn(), active);
-  assert.equal(f.getState().retained, undefined);
-  assert.equal(f.ui.closeCount, 0);
+  assert.equal(f.ui.stop, true);
+  assert.equal(f.ui.stopClicks, 0);
   f.tab.markHandoff = handoff;
-  await f.run("cancel");
-  assert.equal(f.activeTurn(), active);
-  assert.equal((await f.run("close")).closed, true);
-  assert.equal(f.ui.closeCount, 1);
-  assert.equal(f.activeTurn(), undefined);
+  await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(f.activeTurn().turnId, "next-turn");
+  assert.equal(f.ui.stopClicks, 1);
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.closeCount, 0);
 });
 
-test("cleanup cannot remove a newer binding or another native session's active turn", async () => {
+test("interrupted continuation cannot replace a newer binding or another native session's active turn", async () => {
   const nativeContext = {};
-  const older = fixture({ nativeContext });
-  const newer = fixture({ nativeContext });
+  const older = fixture({ nativeContext }), newer = fixture({ nativeContext });
   const otherSession = fixture({ nativeContext, sessionId: "different-session" });
-  await older.ready();
-  await newer.ready();
-  await otherSession.ready();
-  const newest = newer.activeTurn();
-  const unrelated = otherSession.activeTurn();
-  await assert.rejects(newer.run("close", { sessionId: "different-session" }), /another native session/);
-  assert.equal(newer.ui.closeCount, 0);
+  await older.ready(); await newer.ready(); await otherSession.ready();
+  const newest = newer.activeTurn(), unrelated = otherSession.activeTurn();
+  await assert.rejects(newer.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, sessionId: "different-session" }), /another native session/);
   older.ui.stop = true;
-  await assert.rejects(older.run("close"), /active.*turn|turn.*active/i);
+  await assert.rejects(older.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /active.*turn|turn.*active/i);
   assert.equal(older.ui.stop, true);
+  assert.equal(older.ui.stopClicks, 0);
+  assert.equal(newer.activeTurn(), newest);
+  assert.equal(otherSession.activeTurn(), unrelated);
   assert.equal(older.ui.closeCount, 0);
-  assert.equal(newer.activeTurn(), newest, "An older binding cannot clear a newer binding even when the turn ID matches.");
-  assert.equal(otherSession.activeTurn(), unrelated);
-  await newer.run("close");
-  assert.equal(newer.activeTurn(), undefined);
-  assert.equal(otherSession.activeTurn(), unrelated);
-  await older.run("close");
-  assert.equal(older.ui.closeCount, 1, "An idle owned tab remains explicitly closeable after the active turn ends.");
-  assert.equal(otherSession.activeTurn(), unrelated);
-  await otherSession.run("cancel");
-  assert.equal(otherSession.activeTurn(), unrelated);
-  assert.equal(otherSession.ui.closeCount, 0);
+  assert.equal(newer.ui.closeCount, 0);
 });
 
 test("a visual observation returns the current generation without an artificial pause or another Send", async () => {
@@ -2364,13 +2379,14 @@ test("script arguments reject unsafe bindings or native identities", () => {
   for (const interruptedTurnId of ["", "not an identity", "x".repeat(129)]) {
     assert.throws(() => browserScript({ ...base, operation: "continue", interruptedTurnId, expectedOwnerTurnIds: [base.turnId] }), /previous native turn identity/);
   }
-  assert.throws(() => browserScript({ ...base, operation: "cancel", interruptedTurnId: "previous-turn" }), /previous native turn identity/);
+  assert.throws(() => browserScript({ ...base, operation: "observe", interruptedTurnId: "previous-turn" }), /previous native turn identity/);
   for (const operation of ["continue", "rollover"]) for (const expectedOwnerTurnIds of [undefined, [], [""], ["not an identity"], [base.turnId, base.turnId]]) {
     assert.throws(() => browserScript({ ...base, operation, expectedOwnerTurnIds, previousChatUrl: "https://chatgpt.com/c/owned-conversation" }), /expected native owner identities/);
   }
-  assert.throws(() => browserScript({ ...base, operation: "cancel", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
+  assert.throws(() => browserScript({ ...base, operation: "observe", expectedOwnerTurnIds: [base.turnId] }), /expected native owner identities/);
   const recovery = { tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation",
     baselineReplyCount: 0, baselineReplyIds: [], replyId: messageId(0), replyCount: 1,
+    generationTurnKey: messageId(100), generationReplyIds: [messageId(0)],
     assistantPrefix: assistantPrefix("Observed partial"), completed: false };
   const continuation = { ...base, operation: "continue", tabId: "owned-tab", runtimeModule: "current-runtime.mjs", expectedOwnerTurnIds: [base.turnId] };
   for (const previousChatUrl of [undefined, "https://chatgpt.com/", "https://elsewhere.test/c/owned-conversation",

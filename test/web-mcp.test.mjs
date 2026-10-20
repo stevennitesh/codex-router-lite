@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -11,6 +12,15 @@ const fn = name => ({ type: "function", name, description: "Native tool", parame
 const register = (broker, turnId, tools = [fn("read")]) => broker.register({ threadId: "native-thread", turnId, tools });
 const finish = (broker, token) => broker.finish(token, broker.beginCompletion(token));
 const call = (client, turn, wireName, args = {}) => client.callTool({ name: "codex_tool_call", arguments: { turn_token: turn.token, wire_name: wireName, ...args } });
+
+async function nativeCalls(broker, token) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const calls = broker.takeCalls(token);
+    if (calls.length) return calls;
+    await setTimeout(5);
+  }
+  assert.fail("MCP did not queue a native tool call.");
+}
 
 async function fixture(t, options = {}) {
   const broker = createWebToolBroker({ invocationTimeoutMs: 5_000 });
@@ -40,13 +50,12 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   assert.equal(listed.tools[1].annotations.readOnlyHint, false);
   assert.equal(listed.tools[1].annotations.destructiveHint, true);
   const declarations = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
-  assert.deepEqual(declarations.structuredContent.tools, turn.tools);
+  assert.deepEqual(declarations.structuredContent.tools, broker.list(turn.token));
   assert.deepEqual(JSON.parse(declarations.content[0].text), declarations.structuredContent);
   let resolved = false;
-  const waiting = broker.waitForCalls(turn.token);
   const result = call(client, turn, "mcp__files__read", { arguments: { path: "native.txt" } });
   void result.then(() => { resolved = true; });
-  const [native] = await waiting;
+  const [native] = await nativeCalls(broker, turn.token);
   assert.equal(native.type, "function_call");
   assert.equal(native.namespace, "mcp__files");
   assert.equal(native.name, "read");
@@ -71,12 +80,12 @@ test("SDK focused discovery returns complete function schemas and custom grammar
   const { client } = await connect();
   const discover = query => client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, query } });
   const selected = await discover("MCP__FILES__READ");
-  assert.deepEqual(selected.structuredContent.tools, turn.tools.filter(tool => tool.name === "read"));
+  assert.deepEqual(selected.structuredContent.tools, broker.list(turn.token).filter(tool => tool.name === "read"));
   assert.deepEqual(JSON.parse(selected.content[0].text), selected.structuredContent);
   const [read] = selected.structuredContent.tools;
   assert.deepEqual(read.parameters, parameters);
   const pendingRead = call(client, turn, read.wireName, { arguments: { path: read.parameters.properties.path.enum[0] } });
-  const [nativeRead] = await broker.waitForCalls(turn.token);
+  const [nativeRead] = await nativeCalls(broker, turn.token);
   assert.equal(nativeRead.namespace, "mcp__files");
   assert.equal(nativeRead.name, "read");
   assert.deepEqual(JSON.parse(nativeRead.arguments), { path: "native.txt" });
@@ -86,7 +95,7 @@ test("SDK focused discovery returns complete function schemas and custom grammar
   assert.deepEqual(custom.structuredContent.tools[0].format, format);
   assert.deepEqual(JSON.parse(custom.content[0].text), custom.structuredContent);
   const pendingCustom = call(client, turn, custom.structuredContent.tools[0].wireName, { input: "native" });
-  const [nativeCustom] = await broker.waitForCalls(turn.token);
+  const [nativeCustom] = await nativeCalls(broker, turn.token);
   assert.equal(nativeCustom.type, "custom_tool_call");
   assert.equal(nativeCustom.namespace, "functions");
   assert.equal(nativeCustom.input, "native");
@@ -104,11 +113,10 @@ test("concurrent ChatGPT sessions retain exact turn identity and raw custom inpu
     { type: "custom", name: "exec", description: "Native code tool", format: { type: "text" } },
   ] }]);
   const [{ client: one }, { client: two }] = await Promise.all([connect(), connect()]);
-  const waitingOne = broker.waitForCalls(first.token), waitingTwo = broker.waitForCalls(second.token);
   const input = "text('native caller executes this');\n$not_a_shell_command";
   const resultOne = call(one, first, "read", { arguments: { marker: "one" } });
-  const resultTwo = call(two, second, second.tools[0].wireName, { input });
-  const [[nativeOne], [nativeTwo]] = await Promise.all([waitingOne, waitingTwo]);
+  const resultTwo = call(two, second, broker.list(second.token)[0].wireName, { input });
+  const [[nativeOne], [nativeTwo]] = await Promise.all([nativeCalls(broker, first.token), nativeCalls(broker, second.token)]);
   assert.equal(nativeTwo.type, "custom_tool_call");
   assert.equal(nativeTwo.namespace, "functions");
   assert.equal(nativeTwo.name, "exec");
@@ -129,11 +137,10 @@ test("SDK cancellation retires only its native turn and notifies the generation 
   const { broker, service, connect } = await fixture(t, { onCancel: token => cancelled(token) });
   const first = register(broker, "cancel"), second = register(broker, "retained");
   const { client } = await connect();
-  const waiting = broker.waitForCalls(first.token);
   const controller = new AbortController();
   const pending = client.callTool({ name: "codex_tool_call", arguments: { turn_token: first.token, wire_name: "read" } }, undefined, { signal: controller.signal });
   const rejected = assert.rejects(pending, /cancel|abort/iu);
-  const [native] = await waiting;
+  const [native] = await nativeCalls(broker, first.token);
   controller.abort(new Error("test cancellation"));
   await rejected;
   assert.equal(await observed, first.token);
@@ -149,11 +156,10 @@ test("session termination and server close cancel unresolved native calls", { ti
   const { broker, service, connect } = await fixture(t, { onCancel: token => { seen.push(token); } });
   const first = register(broker, "delete"), second = register(broker, "close");
   const [{ client: one, transport }, { client: two }] = await Promise.all([connect(), connect()]);
-  const waitingOne = broker.waitForCalls(first.token), waitingTwo = broker.waitForCalls(second.token);
   const resultOne = call(one, first, "read"), resultTwo = call(two, second, "read");
   // A closed transport may reject the caller; either way it must retire native work.
   const settled = Promise.allSettled([resultOne, resultTwo]);
-  await Promise.all([waitingOne, waitingTwo]);
+  await Promise.all([nativeCalls(broker, first.token), nativeCalls(broker, second.token)]);
   await transport.terminateSession();
   assert.throws(() => broker.list(first.token), { code: "web_tool_turn_closed" });
   assert.equal(broker.list(second.token).length, 1);
@@ -210,7 +216,7 @@ test("SDK discovery holds activity and invalidates an earlier completion observa
   };
   const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
   assert.equal(observed, true);
-  assert.deepEqual(discovered.structuredContent.tools, turn.tools);
+  assert.deepEqual(discovered.structuredContent.tools, list(turn.token));
   const after = broker.beginCompletion(turn.token);
   assert.equal(typeof after, "number");
   assert.notEqual(after, before);
@@ -236,10 +242,9 @@ test("SDK invocation keeps completion fenced until its handler returns the actua
     await held;
     return result;
   };
-  const waiting = broker.waitForCalls(turn.token);
   const result = call(client, turn, "read", { arguments: { marker: "paired result" } });
   try {
-    const [native] = await waiting;
+    const [native] = await nativeCalls(broker, turn.token);
     assert.equal(broker.beginCompletion(turn.token), undefined);
     assert.equal(broker.finish(turn.token, before), false);
     broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual paired native result" }]);
