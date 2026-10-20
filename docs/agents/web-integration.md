@@ -157,7 +157,8 @@ does not expire the originating authority before the trusted callback arrives.
 Cleanup waits for actual terminal responses from any already forwarded bundled
 callbacks and active browser call before admitting another native operation.
 All of this work shares the trusted callback's existing deadline. A timeout,
-cancellation of cleanup itself, or changed authority prevents further actions.
+cancellation of cleanup itself, or changed authority prevents admitting further
+cleanup actions. Sending cancellation does not prove an in-flight operation ended.
 
 A verified native Send result arms cleanup before the first observation. Its
 exact saved URL, tab and generation key can prove the cancellation target while
@@ -180,12 +181,23 @@ and actual tab survival are separate evidence; live checks confirm survival.
 Browser work and readback use the remaining native execution budget.
 Read admission reserves time for follow-up work; accepting a completed read uses
 the actual deadline and rechecks authority, without charging that reserve again.
-Some public SDK operations have no per-call timeout, and failed clicks can perform additional
-SDK diagnostics before rejecting. A request that does not settle within the host
+Some public SDK operations have no per-call timeout, and failed clicks can perform
+additional SDK diagnostics before rejecting. A request that does not settle within the host
 deadline remains unconfirmed; cleanup does not race it with another UI action.
 The public browser API cannot make the generation predicate atomic with native
 pointer dispatch; a concurrent manual replacement during that final input boundary
 remains a platform limitation rather than a guarantee supplied by Router.
+
+The native execution allowance and terminal receipt deadline are separate. The
+adapter waits for the terminal result through the remaining original callback
+budget, including after the native execution allowance expires; it does not give
+the browser more execution time. No terminal reply by that deadline is an
+acknowledgement timeout, rather than an observed native error.
+
+An internal request remains owned until its actual terminal reply or child closure,
+even after local retirement. Late replies are consumed and recorded as historical
+evidence; they cannot produce a second hook response or renew cancellation authority.
+Another adapter cleanup cannot start while an earlier one is actually unsettled.
 
 An unconfirmed native cleanup records whether the child returned an RPC error,
 a tool error, an invalid result, or no response. Diagnostics retain only numeric

@@ -830,6 +830,19 @@ test('owner cancellation cancels only injected Stop and preserves queued builtin
   assert.deepEqual(f.receipts.find(entry => entry.code === 'cleanup_owner_cancel_received'), {
     at: new Date(clock).toISOString(), code: 'cleanup_owner_cancel_received', generation: GENERATION, elapsedMs: 1012 });
   assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  const injected = f.forwardedInner.find(message => message.params?.arguments?.code?.includes('stopOwnedWebTurn'));
+  const hookReplies = f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length;
+  // Cancellation notification is not a terminal callback. The fixture SDK
+  // suppresses its cancelled handler's return, so deliver the real child frame.
+  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() }); await delay(0);
+  const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
+  assert.equal(historical.retirementReason, 'cleanup_cancelled'); assert.equal(historical.proofOk, true);
+  assert.equal(historical.requestDigest, f.receipts.find(entry => entry.code === 'stop_native_dispatched').requestDigest);
+  assert.match(historical.requestDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(historical.childTerminalObserved, true);
+  assert.equal(f.forwardedOuter.some(message => message.id === injected.id), false);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length, hookReplies);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
 });
 
 test('duplicate owned and builtin callbacks share one attempt without replacing originals', async t => {
@@ -1222,15 +1235,132 @@ test('unsettled observation refuses cleanup and releases the original native can
   assert.equal(expired.childTerminalObserved, false);
 });
 
-test('cleanup deadline cancels the injected request once and cannot accept a late success', async t => {
-  const f = await protocolFixture(t, async (params, extra) => {
-    if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
-      await new Promise(resolve => extra.signal.addEventListener('abort', resolve, { once: true })); return success();
-    }
+test('Stop accepts an actual terminal after its execution allowance within the original callback deadline', async t => {
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { await delay(2600); return success(); }
     return ordinaryResult;
+  });
+  await f.client.callTool(ordinary());
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  const dispatched = f.receipts.find(entry => entry.code === 'stop_native_dispatched');
+  assert.equal(dispatched.executionTimeoutMs, 2500); assert.equal(dispatched.scriptBudgetMs, 2400);
+  assert.ok(dispatched.receiptTimeoutMs <= 2850 && dispatched.receiptTimeoutMs > 2500);
+  const confirmed = f.receipts.find(entry => entry.code === 'stop_confirmed');
+  assert.equal(confirmed.childTerminalObserved, true);
+  assert.ok(confirmed.nativeElapsedMs > 2500 && confirmed.callbackElapsedMs <= 2850);
+  assert.equal(f.cancellations.length, 0);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement'), false);
+});
+
+test('callback deadline reports missing acknowledgement and passively consumes a late terminal without new authority', async t => {
+  let entered, release, stopCalls = 0;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
+      if (++stopCalls === 1) { entered(); await terminal; }
+      return success();
+    }
+    return readBrowserProgram(params.arguments?.code)?.operation === 'send' ? sendResult(params) : ordinaryResult;
   }, { graceMs: 250, cleanupMs: 150 });
-  await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true); await delay(0);
+  t.after(release);
+  await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  await delay(175);
+  assert.equal(f.cancellations.length, 0, 'The execution allowance is not the terminal receipt deadline.');
+  const result = await owned;
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /acknowledgement_timeout/u); await delay(0);
   assert.equal(f.cancellations.length, 1); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  const missing = f.receipts.find(entry => entry.code === 'stop_unconfirmed');
+  assert.equal(missing.resultCode, 'acknowledgement_timeout'); assert.equal(missing.childTerminalObserved, false);
+  assert.equal(missing.nativeFailure, undefined);
+  const nextObservation = ordinary(TURN2), nextSend = ordinary(TURN2, 'send');
+  await f.client.callTool(nextObservation); await f.client.callTool(nextSend);
+  assert.equal((await f.client.callTool(hook(TURN2))).isError, true);
+  const replacement = withAuthority(nextObservation, 'replacement after local retirement');
+  await f.client.callTool(replacement);
+  assert.equal((await f.client.callTool(hook(TURN2))).isError, true);
+  assert.ok(f.calls.some(params => params.arguments?.code === nextSend.arguments.code), 'Ordinary MCP calls still reach the child.');
+  assert.equal(stopCalls, 1, 'An outstanding native cleanup blocks another adapter UI cleanup.');
+  const injected = f.forwardedInner.find(message => message.params?.arguments?.code?.includes('stopOwnedWebTurn'));
+  const hookReplies = f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length;
+  release(); await delay(0);
+  assert.equal(f.bridge.injected.size, 1, 'A cancellation notification or suppressed fixture result is not a terminal.');
+  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() }); await delay(0);
+  const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
+  assert.equal(historical.retirementReason, 'acknowledgement_timeout'); assert.equal(historical.proofOk, true);
+  assert.equal(historical.requestDigest, f.receipts.find(entry => entry.code === 'stop_native_dispatched').requestDigest);
+  assert.equal(historical.requestDigest, missing.requestDigest);
+  assert.match(historical.requestDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(historical.outcome, 'cancelled'); assert.equal(historical.stage, 'complete');
+  assert.equal(historical.childTerminalObserved, true);
+  assert.equal(f.bridge.injected.size, 0); assert.equal(f.bridge.cache, null);
+  assert.equal(f.forwardedOuter.some(message => message.id === injected.id), false);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length, hookReplies);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  for (const secret of [APPROVED_THREAD, TURN, 'private opaque value', 'private launcher value', 'private originating policy']) {
+    assert.equal(JSON.stringify(historical).includes(secret), false);
+  }
+  assert.equal((await f.client.callTool(hook(TURN2))).isError, true, 'A late terminal never restores cached cleanup authority.');
+  const nextTurn = '01a14b65-a7a8-7b41-bd33-7c19d3c6df88';
+  await f.client.callTool(ordinary(nextTurn));
+  assert.equal((await f.client.callTool(hook(nextTurn))).isError, undefined);
+  assert.equal(stopCalls, 2, 'Fresh authority can arm only after actual settlement.');
+});
+
+test('a terminal received after the deadline cannot gain authority from a delayed local timer', async t => {
+  let entered, release, clock = 1000;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
+    return ordinaryResult;
+  }, { graceMs: 250, cleanupMs: 150, now: () => clock });
+  t.after(release);
+  await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  clock = 1251; release();
+  const result = await owned;
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /acknowledgement_timeout/u);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  assert.equal(f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement').proofOk, true);
+  assert.equal(f.cancellations.length, 0, 'A received terminal does not need a cancellation notification.');
+});
+
+test('late native errors keep sanitized failure evidence without changing the completed hook result', async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
+    return ordinaryResult;
+  }, { graceMs: 150, cleanupMs: 125 });
+  t.after(release);
+  await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  assert.match((await owned).content[0].text, /acknowledgement_timeout/u);
+  const injected = f.forwardedInner.find(message => message.params?.arguments?.code?.includes('stopOwnedWebTurn'));
+  const replyCount = f.forwardedOuter.length;
+  const privateText = 'private late failure payload';
+  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id,
+    error: { code: -32602, message: 'js execution cancelled before execution', data: { privateText } } }); await delay(0);
+  const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
+  assert.equal(historical.proofOk, false); assert.equal(historical.resultCode, 'native_error');
+  assert.equal(historical.nativeFailure.source, 'rpc_error'); assert.equal(historical.nativeFailure.rpcCode, -32602);
+  assert.deepEqual(historical.nativeFailure.signatures, ['cancelled_before_execution']);
+  assert.equal(historical.requestDigest, f.receipts.find(entry => entry.code === 'stop_native_dispatched').requestDigest);
+  assert.equal(JSON.stringify(f.receipts).includes(privateText), false);
+  assert.equal(f.forwardedOuter.length, replyCount);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+});
+
+test('actual child closure releases passive cleanup ownership without interpreting a terminal', async t => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), terminal = new Promise(resolve => { release = resolve; });
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
+    return ordinaryResult;
+  }, { graceMs: 150, cleanupMs: 125 });
+  t.after(release);
+  await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  assert.equal((await owned).isError, true); assert.equal(f.bridge.injected.size, 1);
+  await f.serverWire.close(); await delay(0);
+  assert.equal(f.bridge.closed, true); assert.equal(f.bridge.injected.size, 0);
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement' || entry.code === 'stop_confirmed'), false);
 });
 
 test('native identities reject coercible non-string tokens', () => {

@@ -206,6 +206,15 @@ function nativeStopFailure(response) {
   };
 }
 
+const stopProof = response => response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
+function stopReceipt(proof, response) {
+  return { ...(proof.ok ? {} : { resultCode: proof.code }),
+    ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}),
+    ...(proof.outcome ? { outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
+      clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
+      stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained, elapsedMs: proof.elapsedMs } : {}) };
+}
+
 // SDK transports are deliberately bridged below their Client/Server handlers:
 // every unknown method/result/notification retains its actual wire payload.
 // MCP offers no signed per-call hook provenance. Trust is in the explicit
@@ -421,7 +430,7 @@ export class AdapterBridge {
   async fromChild(message) {
     if (this.closed) return;
     const internal = this.injected.get(message.id);
-    if (internal && !message.method) { this.injected.delete(message.id); internal.finish(message); return; }
+    if (internal && !message.method) { this.injected.delete(message.id); internal.terminal(message); return; }
     const builtin = this.builtinTerminals.get(message.id);
     if (builtin && !message.method) {
       this.builtinTerminals.delete(message.id); builtin.settle(true);
@@ -491,15 +500,43 @@ export class AdapterBridge {
     try { return await Promise.race([promise, new Promise(resolvePromise => { timer = setTimeout(() => resolvePromise(false), ms); })]); }
     finally { clearTimeout(timer); }
   }
-  async inject(params, ms) {
+  async inject(params, deadline, callbackStartedAt, scriptBudgetMs) {
     const id = `router_stop_${randomUUID()}`;
+    const startedAt = this.now(), requestDigest = digest(id);
     let finish, timer, complete = false;
-    const result = new Promise(resolvePromise => { finish = value => { if (complete) return; complete = true; clearTimeout(timer); resolvePromise(value); }; });
-    const cancel = () => { if (complete) return; this.sendDetached({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } }); finish(null); };
-    this.injected.set(id, { finish, cancel });
-    timer = setTimeout(cancel, ms);
+    const result = new Promise(resolvePromise => { finish = (response, reason) => {
+      if (complete) return;
+      complete = true; clearTimeout(timer);
+      resolvePromise({ response, reason, requestDigest, nativeElapsedMs: Math.max(0, this.now() - startedAt) });
+    }; });
+    const internal = { retired: false, cancel: (reason = 'cleanup_cancelled') => {
+      if (complete) return;
+      internal.retired = true; internal.retirementReason = reason;
+      this.sendDetached({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } });
+      finish(null, reason);
+    }, terminal: response => {
+      // A delayed timer cannot extend callback authority. The actual terminal
+      // still belongs to this internal request, including after local retirement.
+      if (!complete && this.now() > deadline) {
+        internal.retired = true; internal.retirementReason = 'acknowledgement_timeout';
+        finish(null, internal.retirementReason);
+      }
+      if (internal.retired) {
+        const proof = stopProof(response);
+        this.event('stop_terminal_after_retirement', { requestDigest, retirementReason: internal.retirementReason,
+          childTerminalObserved: true, proofOk: proof.ok, ...stopReceipt(proof, response),
+          nativeElapsedMs: Math.max(0, this.now() - startedAt), callbackElapsedMs: Math.max(0, this.now() - callbackStartedAt) });
+      } else finish(response);
+    } };
+    this.injected.set(id, internal);
+    timer = setTimeout(() => internal.cancel('acknowledgement_timeout'), Math.max(0, deadline - this.now()));
+    this.event('stop_native_dispatched', { requestDigest, executionTimeoutMs: params.arguments.timeout_ms, scriptBudgetMs,
+      receiptTimeoutMs: Math.max(0, deadline - this.now()) });
+    // Local timeout or cancellation is not a child terminal. Keep passive
+    // ownership until its real result/error or child closure, blocking another
+    // adapter cleanup without changing ordinary MCP request forwarding.
     try { await this.child.send({ jsonrpc: '2.0', id, method: 'tools/call', params }); return await result; }
-    finally { clearTimeout(timer); this.injected.delete(id); }
+    finally { clearTimeout(timer); }
   }
   async handleHook(message) {
     const params = message.params, hookMeta = record(params?._meta) ? params._meta : {};
@@ -539,7 +576,8 @@ export class AdapterBridge {
       this.event('retired_hook_forwarded_without_stop');
       return owned ? this.replyOwned(message, { ok: false, code: 'retired_turn' }) : this.child.send(message);
     }
-    const scopeMatches = this.pending.size <= 1 && [...this.pending.values()].every(value => value.qualified && value.cache === cached);
+    const scopeMatches = this.injected.size === 0 && this.pending.size <= 1
+      && [...this.pending.values()].every(value => value.qualified && value.cache === cached);
     if (!decision.meta || !scopeMatches || this.authorityDisabled) {
       this.event('hook_forwarded_without_stop', { reason: !decision.meta ? decision.reason : 'observation_scope_mismatch' });
       if (matchingCurrent && decision.reason === 'hook_authority_conflict') {
@@ -654,18 +692,13 @@ export class AdapterBridge {
         proof = { ok: false, code: 'stop_budget_refused' }; this.event('stop_budget_refused'); return;
       }
       const code = stopCode(this.stopConfig, cached.identity, budgetMs, cached.delivery);
-      const response = await this.inject({ name: 'js', arguments: { code, timeout_ms: timeoutMs,
-        title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, Math.min(timeoutMs, Math.max(0, deadline - this.now())));
-      if (!current() || this.now() > deadline) { this.event('stop_result_stale'); return; }
-      proof = response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
-      this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', proof.ok
-        ? { clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
-          stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained }
-        : { resultCode: proof.code, ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}), ...(proof.outcome === 'blocked' ? {
-          outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
-          clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
-          stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, retained: proof.retained, elapsedMs: proof.elapsedMs,
-        } : {}) });
+      const native = await this.inject({ name: 'js', arguments: { code, timeout_ms: timeoutMs,
+        title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, deadline, group.startedAt, budgetMs);
+      if (!current()) { this.event('stop_result_stale'); return; }
+      proof = native.response === null ? { ok: false, code: native.reason } : stopProof(native.response);
+      this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', { requestDigest: native.requestDigest, ...stopReceipt(proof, native.response),
+        childTerminalObserved: native.response !== null, nativeElapsedMs: native.nativeElapsedMs,
+        callbackElapsedMs: Math.max(0, this.now() - group.startedAt) });
     } finally {
       // Only the explicit callback owns this result. Original bundled messages
       // and their cancellations pass through without fabricated acknowledgments.
@@ -704,6 +737,7 @@ export class AdapterBridge {
     await Promise.allSettled([this.outer.close(), this.child.close()]);
     this.observationChildren.clear();
     this.builtinTerminals.clear();
+    this.injected.clear();
   }
 }
 
