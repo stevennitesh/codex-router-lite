@@ -109,6 +109,32 @@ test("repeat install is inert and thread scope promotion stages a new version wh
   assert.deepEqual(f.environment.values, JSON.parse(baseline).previousEnvironment); assert.equal(existsSync(f.hooksPath), false);
 });
 
+test("read-only adapter status proves local ownership while restart and native trust remain unknown", t => {
+  const f = fixture(t), absent = webStopAdapterStatus(f.options);
+  assert.equal(absent.state, "absent"); assert.equal(absent.installed, false); assert.equal(absent.hookDefinitionOwned, false);
+  installWebStopAdapter(f.options);
+  const receipt = readFileSync(f.receiptPath, "utf8"), hooks = readFileSync(f.hooksPath, "utf8"), effects = f.effects.length;
+  const installed = webStopAdapterStatus(f.options);
+  assert.equal(installed.installed, true); assert.equal(installed.hookDefinitionOwned, true); assert.deepEqual(installed.conflicts, []);
+  assert.equal(readFileSync(f.receiptPath, "utf8"), receipt); assert.equal(readFileSync(f.hooksPath, "utf8"), hooks);
+  assert.equal(f.effects.length, effects);
+  f.environment.values.CODEX_CLI_PATH = "foreign selected CLI";
+  const launchConflict = webStopAdapterStatus(f.options);
+  assert.equal(launchConflict.installed, false); assert.equal(launchConflict.hookDefinitionOwned, true);
+  f.environment.values.CODEX_CLI_PATH = installed.cliPath;
+  const changed = f.hooks(); changed.hooks.Interrupt[0].hooks[0].trusted = true; writeFileSync(f.hooksPath, encode(changed));
+  const conflict = webStopAdapterStatus(f.options);
+  assert.equal(conflict.installed, false); assert.equal(conflict.hookDefinitionOwned, false); assert.equal(conflict.conflicts.length, 1);
+  writeFileSync(f.hooksPath, 'private-canary-invalid-hooks');
+  const unreadable = webStopAdapterStatus(f.options);
+  assert.equal(unreadable.hookDefinitionOwned, "unknown"); assert.equal(JSON.stringify(unreadable).includes("private-canary"), false);
+  writeFileSync(f.hooksPath, hooks); rollbackWebStopAdapter(f.options);
+  const removed = webStopAdapterStatus(f.options);
+  assert.equal(removed.hookDefinitionOwned, false);
+  for (const status of [absent, installed, launchConflict, conflict, unreadable, removed]) for (const name of ["appLoaded", "hookTrusted", "restartRequired", "trustRequired"]) assert.equal(status[name], "unknown");
+  assert.equal(installed.environmentBroadcast, undefined);
+});
+
 test("a verified installed snapshot upgrades when the candidate adds a local dependency and retains its original rollback", t => {
   const f = fixture(t), first = installWebStopAdapter(f.options);
   // Reconstruct the installed pre-contract snapshot. Its private manifest owns

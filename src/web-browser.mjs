@@ -132,8 +132,8 @@ export const browserDom = Object.freeze({
 // identity and its text come from the same DOM read.
 export function readBrowserReplies(elements, options) {
   const ui = options.ui, wrapperSelector = ui.messageSelector;
-  const turns = options?.snapshot ? elements.filter(element => element.matches(ui.turnSelector)) : [];
-  const selectedElements = options?.snapshot ? elements.filter(element => element.matches(options.assistantSelector)) : elements;
+  const turns = elements.filter(element => element.matches(ui.turnSelector));
+  const selectedElements = elements.filter(element => element.matches(options.assistantSelector));
   const turnOrders = new Map();
   const turnOrder = turn => {
     if (!turnOrders.has(turn)) {
@@ -185,7 +185,7 @@ export function readBrowserReplies(elements, options) {
       reply: { messageId: wrapper?.getAttribute(ui.messageIdAttribute) ?? null, text: "" } });
     const message = messages.get(key);
     const turn = wrapper?.closest(ui.turnSelector);
-    if (options?.snapshot) message.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
+    message.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
     // Identity and document order remain global. Historical bodies and their
     // completion controls are irrelevant to an anchored observation.
     if (options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
@@ -214,10 +214,8 @@ export function readBrowserReplies(elements, options) {
   for (const indices of duplicates) for (const index of indices) reasons[index] = "duplicate-wrapper-id";
   const invalid = reasons.flatMap((reason, index) => reason ? [index] : []);
   const result = () => {
-    if (!options?.snapshot) return replies;
     for (const group of groups) {
       const turn = group.wrapper?.closest(ui.turnSelector);
-      group.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
       if (options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
@@ -255,7 +253,7 @@ function createBrowserView(state, options, replyReader, savedUrl) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const snapshot = (tab = state.tab, generationMarker, generationTurnKey) => tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-    .evaluateAll(replyReader, { ui, snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+    .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}) }, { timeoutMs: 1000 });
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
@@ -803,11 +801,12 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   } else throw new Error("Unsupported browser observation operation.");
 }
 
-// The digest binds the resident observer to its exact source generation. Native
-// modules share this controller through one binding; browser page code has no
-// access to its captured state or helper references.
+// The digest binds the resident controller and DOM contract to their exact source
+// generation. The mutation runner ships with each operation and is not retained.
+// Native modules share this controller through one binding; browser page code has
+// no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(browserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserOperation, runBrowserObservation]
+  .update([JSON.stringify(browserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {

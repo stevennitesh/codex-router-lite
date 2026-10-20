@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync, unlinkSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 
 import { readControlHealth } from "./control-health.mjs";
 import {
@@ -19,9 +19,10 @@ import {
 import { LISTED_MODELS, MODEL_BY_SLUG } from "./routed-models.mjs";
 import { modelPickerSnapshot, setModelVisible, seedWebModelsVisible } from "./model-picker-state.mjs";
 import { runServiceCli } from "./service.mjs";
-import { fileProbeErrorReason, probeRegularFile, readJsonFile } from "./file-probe.mjs";
+import { readJsonFile } from "./file-probe.mjs";
 import { writePrivateFile } from "./file-security.mjs";
 import { promptForSecret } from "./secret-prompt.mjs";
+import { readWebMaintenanceStatus, webTunnelKeyStatus } from "./web-status.mjs";
 import {
   configureInAppWebBridge,
   disconnectWebBridge,
@@ -49,17 +50,6 @@ function requireCertifiedRoute(slug) {
 
 function print(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-}
-
-function webTunnelKeyStatus() {
-  const observed = probeRegularFile(WEB_BRIDGE_TUNNEL_KEY_PATH);
-  if (observed.status === "missing") return { configured: false, fileStatus: "missing" };
-  if (observed.status !== "present") throw new Error(`Cannot read the protected ChatGPT Web tunnel key (${observed.status}).`);
-  let secret;
-  try { secret = readFileSync(WEB_BRIDGE_TUNNEL_KEY_PATH, "utf8").trim(); }
-  catch (error) { throw new Error(`Cannot read the protected ChatGPT Web tunnel key (${fileProbeErrorReason(error)}).`); }
-  if (/[\u0000-\u001f\u007f]/u.test(secret)) throw new Error("The protected ChatGPT Web tunnel key contains invalid control characters.");
-  return { configured: Boolean(secret), fileStatus: secret ? "present" : "empty" };
 }
 
 function webTunnelKeyCommand(operation) {
@@ -102,7 +92,7 @@ async function main() {
     return;
   }
   if (command === "web") {
-    if (action === "status") print({ ...webBridgeStatus(), subagentProtocol: readSubagentProtocol() });
+    if (action === "status") print(await readWebMaintenanceStatus());
     else if (action === "browser") {
       if (!value || args.length !== 3) throw new Error("Usage: control web browser <safe-config-json-file>");
       const config = readJsonFile(value);

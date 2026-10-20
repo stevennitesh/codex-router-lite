@@ -12,7 +12,6 @@ import { decodeCompaction } from "../src/compaction-checkpoint.mjs";
 import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
-import { webModelSelection } from "../src/web-models.mjs";
 
 // Set both homes before importing stateful owners. No test reads the signed-in
 // user's bridge, Codex configuration, browser profile, or provider credentials.
@@ -133,48 +132,6 @@ test("Web child effort overrides apply only to child turns and invalid saved eff
   assert.equal((await response.json()).error.code, "unsupported_reasoning_effort");
   assert.equal(fixture.bridge.requests.length, 2);
   assert.equal(fixture.native.requests.length, 0);
-});
-
-test("Web catalog names the serving families and exposes only account-supported effort choices", () => {
-  const models = web.buildWebBridgeModels(allCapabilities);
-  assert.equal(models.find(row => row.slug === "chatgpt-web/gpt-6-pro").displayName, "GPT-6 Astra Pro (Web)");
-  assert.equal(models.find(row => row.slug === "chatgpt-web/gpt-5.6-pro").displayName, "GPT-5.6 Sol Pro (Web)");
-  assert.deepEqual(models.map(row => [row.slug, row.supported_reasoning_levels.map(level => level.effort), row.defaultEffort]), [
-    ["chatgpt-web/gpt-6-sol-instant", ["low"], "low"],
-    ["chatgpt-web/gpt-6-sol", ["medium", "high", "xhigh"], "medium"],
-    ["chatgpt-web/gpt-5.6-sol-instant", ["low"], "low"],
-    ["chatgpt-web/gpt-5.6-sol", ["medium", "high", "xhigh"], "medium"],
-    ["chatgpt-web/gpt-5.6-pro", ["max"], "max"],
-    ["chatgpt-web/gpt-6-pro", ["max"], "max"],
-  ]);
-  const reduced = web.buildWebBridgeModels({ solAvailable: true, extraHighAvailable: false, proAvailable: false });
-  assert.equal(reduced.length, 4);
-  assert.deepEqual(reduced.find(row => row.slug === model).supported_reasoning_levels.map(level => level.effort), ["medium", "high"]);
-  assert.deepEqual(web.buildWebBridgeModels({ solAvailable: false, extraHighAvailable: false, proAvailable: false }), []);
-  assert.ok(models.every(row => row.multi_agent_version === "v1"));
-  for (const capabilities of [undefined, {}, { solAvailable: true, extraHighAvailable: "yes", proAvailable: false }]) {
-    assert.throws(() => web.buildWebBridgeModels(capabilities), /capabilities/u);
-  }
-});
-
-test("advertised Web routes select exact browser families and Power values", () => {
-  const expected = [
-    ["chatgpt-web/gpt-6-sol-instant", "GPT-6", { low: 0 }],
-    ["chatgpt-web/gpt-6-sol", "GPT-6", { medium: 1, high: 2, xhigh: 3 }],
-    ["chatgpt-web/gpt-5.6-sol-instant", "GPT-5.6 Sol", { low: 0 }],
-    ["chatgpt-web/gpt-5.6-sol", "GPT-5.6 Sol", { medium: 1, high: 2, xhigh: 3 }],
-    ["chatgpt-web/gpt-5.6-pro", "GPT-5.6 Sol", { max: 4 }],
-    ["chatgpt-web/gpt-6-pro", "GPT-6", { max: 4 }],
-  ];
-  for (const [slug, family, powers] of expected) {
-    const advertised = web.buildWebBridgeModels(allCapabilities).find(row => row.slug === slug);
-    assert.deepEqual(advertised.supported_reasoning_levels.map(row => row.effort), Object.keys(powers));
-    assert.deepEqual(webModelSelection(slug), { family, power: powers[advertised.defaultEffort] });
-    for (const [effort, power] of Object.entries(powers)) assert.deepEqual(webModelSelection(slug, effort), { family, power });
-  }
-  for (const [slug, effort] of [["chatgpt-web/sol", "medium"], [model, "low"], [model, "max"], [model, "toString"]]) {
-    assert.throws(() => webModelSelection(slug, effort), { status: 400, code: "web_model_unverified" });
-  }
 });
 
 test("missing settings are disabled, persisted model lists cannot invent availability, and corrupt settings fail closed", () => {

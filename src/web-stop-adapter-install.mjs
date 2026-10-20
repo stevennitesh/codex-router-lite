@@ -323,22 +323,37 @@ export function installWebStopAdapter(options = {}) {
   });
 }
 
-function installResult(ctx, receipt, broadcast) {
-  return { installed: true, state: receipt.state, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
+function adapterPaths(ctx, receipt) {
+  return { state: receipt.state, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
     configPath: receipt.configPath, managedDirectory: receipt.managedDirectory, receiptPath: ctx.receiptPath,
-    threadIds: receipt.threadIds, restartRequired: true, trustRequired: true, environmentBroadcast: broadcast };
+    threadIds: receipt.threadIds };
+}
+
+function installResult(ctx, receipt, broadcast) {
+  return { ...adapterPaths(ctx, receipt), installed: true, restartRequired: true, trustRequired: true, environmentBroadcast: broadcast };
 }
 
 export function webStopAdapterStatus(options = {}) {
   const ctx = context(options), receipt = loadReceipt(ctx);
-  if (!receipt) return { installed: false, state: "absent", receiptPath: ctx.receiptPath, conflicts: [] };
+  // A local receipt owns files and launch selections. It does not establish
+  // which generation an existing app loaded or the app's native hook trust.
+  const runtime = { appLoaded: "unknown", hookTrusted: "unknown", restartRequired: "unknown", trustRequired: "unknown" };
+  if (!receipt) return { installed: false, state: "absent", receiptPath: ctx.receiptPath, hookDefinitionOwned: false, conflicts: [], ...runtime };
   const conflicts = [];
-  try { verifyManaged(ctx, receipt); } catch (error) { conflicts.push(error.message); }
+  const conflictMessage = error => error instanceof SyntaxError ? "Adapter JSON is invalid." : error.message;
+  try { verifyManaged(ctx, receipt); } catch (error) { conflicts.push(conflictMessage(error)); }
+  let hookDefinitionOwned = false;
   if (receipt.state !== "removed") {
-    try { ensureInstallOwnership(receipt, pair(ctx.environment.readPair()), parseHooks(readText(ctx.hooksPath))); } catch (error) { conflicts.push(error.message); }
+    let document;
+    try {
+      document = parseHooks(readText(ctx.hooksPath));
+      const found = findHooks(document);
+      hookDefinitionOwned = found.length === 1 && same(found[0].hook, receipt.hook);
+    } catch (error) { hookDefinitionOwned = "unknown"; conflicts.push(conflictMessage(error)); }
+    if (document) try { ensureInstallOwnership(receipt, pair(ctx.environment.readPair()), document); } catch (error) { conflicts.push(error.message); }
   }
-  return { ...installResult(ctx, receipt, null), installed: receipt.state === "installed" && conflicts.length === 0,
-    recoveryRequired: receipt.state === "prepared", restartRequired: receipt.state !== "removed", conflicts };
+  return { ...adapterPaths(ctx, receipt), installed: receipt.state === "installed" && conflicts.length === 0,
+    recoveryRequired: receipt.state === "prepared", hookDefinitionOwned, conflicts, ...runtime };
 }
 
 export function rollbackWebStopAdapter(options = {}) {

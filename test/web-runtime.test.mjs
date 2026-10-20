@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
+import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
 const stateDir = mkdtempSync(path.join(os.tmpdir(), "router-web-runtime-"));
 process.env.CODEX_HOME = path.join(stateDir, "codex");
@@ -37,7 +38,6 @@ const currentRead = { type: "namespace", name: "mcp__work", tools: [{ type: "fun
 const search = { type: "tool_search", execution: "client" };
 const metadata = (turn = turnId) => ({ thread_id: threadId, turn_id: turn });
 const headers = (turn = turnId) => ({ "x-codex-turn-metadata": JSON.stringify(metadata(turn)), "x-codex-thread-id": threadId });
-const messageId = index => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
 const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? "tool_search_output" : "function_call_output", call_id: call.call_id,
   ...(call.type === "tool_search_call" ? { tools: output, execution: "client", status: "completed" } : { output }) });
 
@@ -92,10 +92,10 @@ function fakeBrowser() {
     async evaluateAll(callback, ownedChipSelector) {
       if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
       if (name === "Ask ChatGPT") {
-        const chip = { nodeType: 1, tagName: "SPAN", childNodes: [], getAttribute: key => key === "contenteditable" ? "false" : null,
-          matches: selector => selector.includes("app://asdk_current_tools") };
-        return callback([{ nodeType: 1, tagName: "DIV", getAttribute: key => key === "contenteditable" ? "true" : null, matches: () => false,
-          childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
+        const content = [domText(ui.composer)];
+        if (ui.chip) content.push(domElement("span", { "app-mention-display-name": "Current Codex Tools",
+          "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
+        return callback([domElement("div", { contenteditable: "true" }, ...content)], ownedChipSelector);
       }
       assert.equal(name, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]');
       const roots = ui.turns.map((turn, index) => {
@@ -109,12 +109,7 @@ function fakeBrowser() {
                 ? [...root.fixtureMarkdown, action] : [] };
         return root;
       });
-      const elements = ui.replyElements ?? ui.texts.map((value, index) => {
-        const wrapper = { nodeType: 1, tagName: "DIV",
-          getAttribute: name => name === "data-chatgpt-selection-message-id" ? ui.replyIds ? ui.replyIds[index] : messageId(index) : null };
-        return { nodeType: 1, tagName: "DIV", getAttribute: () => null, parentElement: wrapper,
-          closest: () => wrapper, childNodes: [{ nodeType: 3, textContent: value }] };
-      });
+      const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
       for (const [index, element] of elements.entries()) {
         const wrapper = element.fixtureWrapper ?? element.closest('[data-chatgpt-selection-message-id]');
         element.fixtureWrapper = wrapper;
@@ -129,7 +124,8 @@ function fakeBrowser() {
             roots.push(turn);
           }
         }
-        if (wrapper) wrapper.closest = selector => selector === '[data-turn-key]' ? turn : null;
+        if (wrapper) wrapper.closest = selector => selector === '[data-turn-key]' ? turn
+          : selector === '[data-chatgpt-selection-message-id]' ? wrapper : null;
         turn?.fixtureMarkdown?.push(element);
         element.matches = selector => selector !== '[data-turn-key]';
         element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
@@ -359,14 +355,11 @@ test("the native runtime accepts a new reply identity after mounted counts shrin
 test("fragmented message DOM reaches native completion with all prose and code and retains its saved binding", async t => {
   const h = harness(t), { call } = await h.toObserve();
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
-  const wrapper = { getAttribute: () => messageId(0) };
-  const node = (tagName, childNodes, attributes = {}) => ({ nodeType: 1, tagName, childNodes,
-    getAttribute: key => attributes[key] ?? null, closest: () => wrapper });
-  const text = value => ({ nodeType: 3, textContent: value });
-  const code = node("DIV", [], { "data-markdown-copy": "code-block" });
-  code.querySelectorAll = selector => selector === "code" ? [{ textContent: source }] : [];
-  h.browser.ui.replyElements = [node("DIV", [node("P", [text("Before code.")])]),
-    node("DIV", [code]), node("DIV", [node("P", [text("After code.")])])];
+  const fragments = [domElement("div", {}, domElement("p", {}, domText("Before code."))),
+    domElement("div", {}, domElement("div", { "data-markdown-copy": "code-block" }, domElement("code", {}, domText(source)))),
+    domElement("div", {}, domElement("p", {}, domText("After code.")))];
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, ...fragments);
+  h.browser.ui.replyElements = fragments;
   h.browser.ui.complete = true;
   const frame = await h.executeBrowser(call);
   const frameToken = frame.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/u)[1];
@@ -399,9 +392,7 @@ test("native continuation identity failure exposes bounded structural evidence b
   const retained = await h.answerBrowser(call), final = await h.answerBrowser(retained.output[0]);
   h.append(final.output[0]);
   const secret = "PRIVATE_TOKEN_path_https://private.invalid/value";
-  h.browser.ui.replyElements = Array.from({ length: 10 }, () => ({ nodeType: 1, tagName: "PRIVATE_SECRET_TAG",
-    getAttribute: name => name === "class" ? secret : null, closest: () => null,
-    childNodes: [{ nodeType: 3, textContent: secret }] }));
+  h.browser.ui.replyElements = Array.from({ length: 10 }, () => domElement("private-secret-tag", { class: secret }, domText(secret)));
   h.newTurn(followupId, "Continue only with valid identity evidence.");
   const continuation = (await h.request()).output[0];
   assert.equal(JSON.parse(continuation.arguments).title, "ChatGPT Web: continue");
@@ -526,9 +517,7 @@ test("one Send carries commentary, actual native execution and a final answer un
 
 test("orphan connector widgets cannot block native calls or become the answer through the runtime browser handoff", async t => {
   const h = harness(t);
-  const widget = text => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
-    matches: selector => selector === '[data-markdown-text-style="assistant-message"]', closest: () => null,
-    childNodes: [{ nodeType: 3, textContent: text }] });
+  const widget = text => domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(text));
   h.browser.ui.orphanMarkdownBefore = [widget("A connector widget before the saved messages")];
   h.browser.ui.orphanMarkdownAfter = [widget("A connector widget after the saved messages")];
   const { call } = await h.toObserve();
@@ -824,6 +813,18 @@ test("historical unpaired calls are data and do not create owned unresolved-acti
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue without re-executing historical actions." }]);
   assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("history filters only the exact Router browser-control identity format", async t => {
+  const h = harness(t);
+  const internal = `call_router_web_${"a".repeat(32)}`;
+  const nativeIds = ["call_router_web_fixture", `call_router_web_${"b".repeat(31)}`,
+    `call_router_web_${"A".repeat(32)}`, `call_router_web_${"c".repeat(32)}_suffix`];
+  const calls = [internal, ...nativeIds].map(call_id => ({ type: "function_call", call_id, name: "read", arguments: "{}" }));
+  const results = calls.map(call => outputFor(call, `Actual result for ${call.call_id}`));
+  h.append(...calls.flatMap((call, index) => [call, results[index]]));
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h).slice(1), calls.slice(1).flatMap((call, index) => [call, results[index + 1]]));
 });
 
 test("invalid saved mappings fail before any fresh chat or browser call", async t => {

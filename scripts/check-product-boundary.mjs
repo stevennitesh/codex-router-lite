@@ -30,6 +30,7 @@ const retainedConfig = [
 ];
 const retainedWebRuntime = [
   "src/chatgpt-web.mjs",
+  "src/web-status.mjs",
   "src/web-models.mjs",
   "src/web-runtime.mjs",
   "src/web-response.mjs",

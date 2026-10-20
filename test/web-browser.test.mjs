@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
-const readReplies = (elements, options = {}) => readBrowserReplies(elements, { ui: browserDom, ...options });
+const replyOptions = { ui: browserDom, assistantSelector: browserDom.assistantSelector, regenerateName: browserDom.regenerateButtonExactName };
+const readReplies = (elements, options = {}) => readBrowserReplies(elements, { ...replyOptions, ...options });
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
@@ -14,89 +17,52 @@ const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", p
 const fullConversationText = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
 const offered = parameters => [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", parameters }] }];
-const messageId = index => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
 const broadReplySelector = '[data-markdown-text-style="assistant-message"]';
 const scopedReplySelector = `[data-chatgpt-selection-message-id] ${broadReplySelector}`;
 
-const domText = value => ({ nodeType: 3, textContent: value });
-function domElement(tag, attributes = {}, ...children) {
-  const node = { nodeType: 1, tagName: tag.toUpperCase(), childNodes: children, children: children.filter(child => child.nodeType === 1),
-    getAttribute: name => attributes[name] ?? null,
-    setAttribute: (name, value) => { attributes[name] = value; },
-    matches(selector) {
-      return selector.split(/\s*,\s*/u).some(part => {
-        const parts = part.trim().split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/u);
-        if (parts.length > 1) {
-          const last = parts.pop();
-          return this.matches(last) && Boolean(this.parentElement?.closest(parts.join(" ")));
-        }
-        const requiredTag = part.match(/^[A-Za-z][A-Za-z0-9-]*/u)?.[0];
-        const requiredAttributes = Array.from(part.matchAll(/\[([\w-]+)(?:(\^?=)"([^"]*)")?\]/gu));
-        return Boolean(requiredTag || requiredAttributes.length) && (!requiredTag || requiredTag.toUpperCase() === this.tagName)
-          && requiredAttributes.every(match => match[2] === undefined ? attributes[match[1]] !== undefined
-            : match[2] === "^=" ? attributes[match[1]]?.startsWith(match[3]) : attributes[match[1]] === match[3]);
-      });
-    },
-    closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector) ?? null; },
-    classList: { contains: name => (attributes.class ?? "").split(/\s+/).includes(name) },
-    get textContent() { return this.childNodes.map(child => child.textContent).join(""); },
-    querySelectorAll(selector) {
-      const found = [];
-      const visit = candidate => {
-        if (candidate.nodeType !== 1) return;
-        if (selector === "code" ? candidate.tagName === "CODE"
-          : selector === ".cm-content[data-language]" ? candidate.classList.contains("cm-content") && candidate.getAttribute("data-language") !== null
-            : candidate.matches(selector)) found.push(candidate);
-        candidate.childNodes.forEach(visit);
-      };
-      this.childNodes.forEach(visit);
-      return found;
-    },
-    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; } };
-  for (const child of node.children) child.parentElement = node;
-  return node;
-}
 const sourceBlock = source => domElement("div", { "data-markdown-copy": "code-block" },
   domElement("div", { "data-markdown-copy": "exclude" }, domText("Plain text")),
   domElement("div", { "data-code-block-source": "true" }, domElement("code", {}, domElement("span", {}, domText(source)))));
 
 test("reply projection excludes the observed code toolbar while preserving literal code, indentation and blank lines", () => {
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
-  const root = domElement("div", {}, domElement("div", {}, sourceBlock(source)));
+  const root = domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("div", {}, sourceBlock(source)));
   const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, root);
-  assert.equal(isolatedReader([root], { ui: browserDom })[0].text, source);
-  assert.equal(isolatedReader([root], { ui: browserDom })[0].messageId, messageId(0));
+  const snapshot = isolatedReader([root], replyOptions);
+  assert.equal(snapshot.replies[0].text, source);
+  assert.equal(snapshot.replies[0].messageId, messageId(0));
+  assert.equal(snapshot.turns.length, 0);
   assert.equal(root.textContent, `Plain text${source}`, "The read does not mutate the browser DOM.");
 });
 
 test("reply projection preserves paragraph, BR and code boundaries without removing literal Plain text prose", () => {
-  const root = domElement("div", {},
+  const root = domElement("div", { "data-markdown-text-style": "assistant-message" },
     domElement("p", {}, domText("Literal Plain text belongs to the answer.")),
     domElement("p", {}, domText("Second paragraph"), domElement("br"), domText("continued")),
     sourceBlock("  first\n\n    second"),
     domElement("p", {}, domText("After "), domElement("code", {}, domText("inline")), domText(" code.")));
-  assert.equal(readReplies([root])[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
+  assert.equal(readReplies([root]).replies[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
 });
 
 test("reply projection joins one wrapper's markdown fragments in DOM order without repeating nested selections", () => {
-  const prose = domElement("div", {}, domElement("p", {}, domText("Before code.")));
+  const prose = domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("p", {}, domText("Before code.")));
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
-  const code = domElement("div", {}, sourceBlock(source));
-  const nested = domElement("div", {}, domElement("p", {}, domText("After code.")));
-  const tail = domElement("div", {}, nested);
+  const code = domElement("div", { "data-markdown-text-style": "assistant-message" }, sourceBlock(source));
+  const nested = domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("p", {}, domText("After code.")));
+  const tail = domElement("div", { "data-markdown-text-style": "assistant-message" }, nested);
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, prose, code, tail);
   const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
-  const replies = isolatedReader([prose, code, tail, nested], { ui: browserDom });
+  const { replies } = isolatedReader([prose, code, tail, nested], replyOptions);
   assert.equal(replies.length, 1);
   assert.equal(replies[0].messageId, messageId(0));
   assert.equal(replies[0].text, `Before code.\n\n${source}\n\nAfter code.`);
 });
 
 test("reply projection preserves distinct wrappers with duplicate IDs and separate fragments without wrappers", () => {
-  const selected = ["First", "Second", "Missing one", "Missing two"].map(text => domElement("div", {}, domText(text)));
+  const selected = ["First", "Second", "Missing one", "Missing two"].map(text => domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(text)));
   for (const node of selected.slice(0, 2)) domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, node);
-  assert.deepEqual(readReplies(selected).map(({ messageId, text }) => ({ messageId, text })), [
+  assert.deepEqual(readReplies(selected).replies.map(({ messageId, text }) => ({ messageId, text })), [
     { messageId: messageId(0), text: "First" }, { messageId: messageId(0), text: "Second" },
     { messageId: null, text: "Missing one" }, { messageId: null, text: "Missing two" },
   ]);
@@ -106,12 +72,12 @@ test("invalid identity diagnostics contain only a fixed reason and integer count
   const privateValue = "PRIVATE_TOKEN_path_https://private.invalid/value";
   const elements = Array.from({ length: 30 }, () => {
     const element = domElement("private-secret-tag", { class: privateValue, id: privateValue, "data-testid": privateValue,
-      "data-private-secret-attribute": privateValue }, domText(privateValue));
+      "data-private-secret-attribute": privateValue, "data-markdown-text-style": "assistant-message" }, domText(privateValue));
     let root = element;
     for (let depth = 0; depth < 9; depth += 1) root = domElement("div", { class: privateValue, role: privateValue }, root);
     return element;
   });
-  const replies = readReplies(elements), diagnostic = replies[0].identityDiagnostic;
+  const { replies } = readReplies(elements), diagnostic = replies[0].identityDiagnostic;
   assert.equal(diagnostic.reason, "missing-wrapper");
   assert.equal(diagnostic.selectedElementCount, 30);
   assert.equal(diagnostic.messageCount, 30);
@@ -121,9 +87,9 @@ test("invalid identity diagnostics contain only a fixed reason and integer count
   assert.ok(serialized.length < 512);
   assert.doesNotMatch(serialized, /PRIVATE_TOKEN|private-secret|private\.invalid/u);
   assert.equal(replies.filter(reply => reply.identityDiagnostic).length, 1);
-  const valid = domElement("div", {}, domText(privateValue));
+  const valid = domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(privateValue));
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, valid);
-  assert.deepEqual(readReplies([valid]), [{ messageId: messageId(0), text: privateValue }]);
+  assert.deepEqual(readReplies([valid]).replies, [{ messageId: messageId(0), text: privateValue, turnKey: null, answer: true, completionActionAfter: false }]);
 });
 
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
@@ -132,9 +98,9 @@ test("CodeMirror logical lines preserve empty lines and reject incomplete or amb
     domElement("div", { class: "cm-line" }, domElement("br")),
     domElement("div", { class: "cm-line" }, domText("    last")),
     domElement("div", { class: "cm-line" }, domElement("br")));
-  const block = (...content) => domElement("div", { "data-markdown-copy": "code-block" },
+  const block = (...content) => domElement("div", { "data-markdown-copy": "code-block", "data-markdown-text-style": "assistant-message" },
     domElement("div", { "data-markdown-copy": "exclude" }, domText("Python")), ...content);
-  assert.equal(readReplies([block(editor)])[0].text, "  first\n\n    last\n");
+  assert.equal(readReplies([block(editor)]).replies[0].text, "  first\n\n    last\n");
   for (const invalid of [
     block(domElement("code", {}, domText("one")), domElement("code", {}, domText("two"))),
     block(editor, editor),
@@ -187,6 +153,40 @@ test("browser programs round trip only with their complete exact guards, helper 
     assert.equal(readBrowserProgram(code.replace("globalThis.routerWeb_unit_test", "globalThis.routerWeb_other_binding")), null);
   }
   assert.equal(readBrowserProgram("await unknown({});"), null);
+});
+
+test("resident source changes invalidate compact programs while independently shipped operations keep their own exact qualification", async () => {
+  const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
+  const loadVariant = async changed => {
+    assert.notEqual(changed, source, "The fixture must change the module source.");
+    return import(`data:text/javascript;base64,${Buffer.from(changed, "utf8").toString("base64")}`);
+  };
+  const changeFunction = name => source.replace(new RegExp(`(function ${name}\\([^\\n]*\\) \\{)`, "u"), `$1\n  /* changed ${name} source */`);
+  const compact = ["observe", "retain"].map(operation => browserScript({ ...base, operation }));
+  for (const changed of [
+    source.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",'),
+    ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+  ]) {
+    const variant = await loadVariant(changed);
+    assert.notEqual(variant.browserHelperVersion, browserHelperVersion);
+    for (const code of compact) {
+      assert.equal(variant.readBrowserProgram(code), null, "An old compact invocation cannot use changed resident dependencies.");
+      const current = variant.browserScript(readBrowserProgram(code));
+      assert.ok(variant.readBrowserProgram(current));
+    }
+  }
+  const operationVariant = await loadVariant(changeFunction("runBrowserOperation"));
+  assert.equal(operationVariant.browserHelperVersion, browserHelperVersion);
+  for (const code of compact) {
+    const options = operationVariant.readBrowserProgram(code);
+    assert.ok(options, "Independently shipped model and Send logic cannot invalidate resident observation calls.");
+    assert.equal(operationVariant.browserScript(options), code);
+  }
+  const send = browserScript({ ...base, operation: "send", prompt: "Request" });
+  assert.equal(operationVariant.readBrowserProgram(send), null, "Mutation programs still require their complete current source.");
+  const currentSend = operationVariant.browserScript(readBrowserProgram(send));
+  assert.notEqual(currentSend, send);
+  assert.ok(operationVariant.readBrowserProgram(currentSend));
 });
 
 const framed = value => `ROUTER_WEB_BROWSER_${token}_BEGIN\n${JSON.stringify({ routerBrowser: value })}\nROUTER_WEB_BROWSER_${token}_END`;
@@ -353,11 +353,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       ui.replyReads += 1;
       ui.onReplyRead?.();
-      const replies = ui.replyElements ?? ui.texts.map((value, index) => {
-        const node = typeof value === "string" ? domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(value)) : value;
-        domElement("div", { "data-chatgpt-selection-message-id": ui.replyIds ? ui.replyIds[index] : messageId(index) }, node);
-        return node;
-      });
+      const replies = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
       if (name.startsWith('[data-turn-key],')) {
         const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
         let precedingUser;
@@ -487,8 +483,7 @@ function showFullConversation(ui) {
 }
 
 function assistantMessage(index, text, attributes = {}) {
-  const markdown = domElement('div', { 'data-markdown-text-style': 'assistant-message', ...attributes }, domText(text));
-  return domElement('div', { 'data-chatgpt-selection-message-id': messageId(index) }, markdown);
+  return replyElement(text, messageId(index), attributes).parentElement;
 }
 
 function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false } = {}) {
@@ -506,7 +501,7 @@ test("generation snapshots return only a marker match and do not read prior prom
   const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
   let promptReads = 0;
   Object.defineProperty(turn, 'textContent', { get() { promptReads += 1; return `${privatePrompt}\n${marker}`; } });
-  const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
+  const options = { assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
   const observation = readReplies(selected, options);
   assert.equal(promptReads, 0);
   assert.equal(observation.turns[0].matchesGenerationMarker, false);
@@ -531,7 +526,7 @@ test("anchored projection reads only the owned body and completion metadata whil
   });
   const query = historical.querySelectorAll;
   historical.querySelectorAll = function (selector) { historicalMetadataReads += 1; return query.call(this, selector); };
-  const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: "Regenerate response" };
+  const options = { assistantSelector: scopedReplySelector, regenerateName: "Regenerate response" };
   const anchored = readReplies(selected, { ...options, generationTurnKey: messageId(200) });
   assert.deepEqual(anchored.replies.map(reply => reply.messageId), [messageId(10), messageId(20)]);
   assert.deepEqual(anchored.turns.map(turn => turn.turnKey), [messageId(100), messageId(200)]);

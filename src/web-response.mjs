@@ -106,7 +106,7 @@ function responseEnvelope(payload, response) {
 // Local compaction is deliberately lossy. Keep actual Router-extracted source
 // records and their machine-derived outcomes, without inventing a model summary
 // or spending an inference request. Existing checkpoint limits own all excerpts.
-export function webCompactResponse(payload, { retainedTail = [], compactV2 = false } = {}) {
+export function webCompactOutput(payload, { retainedTail = [], compactV2 = false } = {}) {
   if (!Array.isArray(payload?.input)) throw Object.assign(new Error("Web compaction requires a native input array."), { code: "invalid_web_compaction", status: 400 });
   if (payload.input.some(item => item?.type === "compaction" && !decodeCompaction(item.encrypted_content))) {
     throw Object.assign(new Error("Web local compaction cannot read an opaque native checkpoint; use Router-readable conversation history."), { code: "encrypted_v2_unsupported", status: 422 });
@@ -139,8 +139,13 @@ export function webCompactResponse(payload, { retainedTail = [], compactV2 = fal
   const itemId = id("cmp");
   const item = { type: "compaction", id: itemId, encrypted_content: encodeCheckpoint(checkpoint,
     compactV2 ? { retainedTail, retainedTailId: itemId } : {}) };
+  return compactV2 ? [item] : [item, ...retainedTail];
+}
+
+export function webCompactResponse(payload, { retainedTail = [], compactV2 = false,
+  output = webCompactOutput(payload, { retainedTail, compactV2 }) } = {}) {
   if (compactV2) return responseEnvelope({ ...payload, stream: payload.stream !== false }, { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1_000),
-    status: "completed", model: payload.model, output: [item], usage: null, error: null });
-  return new Response(json({ output: [item, ...retainedTail] }),
+    status: "completed", model: payload.model, output, usage: null, error: null });
+  return new Response(json({ output }),
     { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }

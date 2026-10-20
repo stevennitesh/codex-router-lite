@@ -73,6 +73,7 @@ test("invalid in-app configuration cannot overwrite a previously valid setup", a
 });
 
 test("persisted settings project supported fields and require valid browser and tunnel configuration", async () => {
+  await web.configureInAppWebBridge(config);
   const valid = savedSettings();
   const extras = { backend: "in-app", mode: "full", baseUrl: "http://127.0.0.1:17841/v1", secret: "private-canary",
     connectedAt: "historical", bridgeVersion: "historical", models: [{ slug: "chatgpt-web/invented" }] };
@@ -97,6 +98,7 @@ test("persisted settings project supported fields and require valid browser and 
 });
 
 test("unavailable models and unsupported efforts fail locally", async () => {
+  await web.configureInAppWebBridge(config);
   const valid = savedSettings();
   saveSettings({ ...valid, capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false } });
   try {

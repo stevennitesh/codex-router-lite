@@ -14,7 +14,8 @@ The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) adds exact Web routes throu
 uses Router-owned browser state, an MCP tool broker and a tunnel; native Codex
 executes browser operations and declared tools with its ordinary approvals.
 `src/web-runtime.mjs` owns the browser lifecycle; `src/chatgpt-web.mjs` owns configuration
-and route dispatch. Web routes do not replace
+and route dispatch. Changes to browser context, tools or cancellation follow the
+[Web integration maintenance guide](web-integration.md). Web routes do not replace
 native catalog authority or participate in OpenRouter preparation. The explicit
 V1/V2 selector governs new-conversation collaboration, with Web roles available
 only in V1.

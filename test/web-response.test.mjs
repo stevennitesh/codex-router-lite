@@ -9,7 +9,7 @@ import { NamespaceToolCallTransform } from "../src/namespace-relay.mjs";
 import { ResponseUsageTransform, responseTerminalOutcome } from "../src/response-usage.mjs";
 import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
-import { webCompactResponse, webResponse } from "../src/web-response.mjs";
+import { webCompactOutput, webCompactResponse, webResponse } from "../src/web-response.mjs";
 
 const model = "chatgpt-web/gpt-6-sol";
 const supplied = { responseId: "resp_native_fixture", createdAt: 123 };
@@ -232,7 +232,9 @@ test("compaction preserves the undelivered native tail beside its readable check
   ];
   const input = [{ role: "user", content: "Already delivered history." }, ...retainedTail];
   const before = structuredClone(input);
-  const { output } = await webCompactResponse({ model, input }, { retainedTail }).json();
+  const built = webCompactOutput({ model, input }, { retainedTail });
+  const { output } = await webCompactResponse({ model, input }, { output: built }).json();
+  assert.deepEqual(output, built, "Transport framing preserves the generated checkpoint identity and native tail.");
   assert.ok(decodeCompaction(output[0].encrypted_content));
   assert.deepEqual(output.slice(1), retainedTail);
   assert.deepEqual(input, before);
@@ -243,7 +245,9 @@ test("native V2 compaction emits one completed item with an in-band exact tail a
     { type: "function_call", name: "read", call_id: "pending_native", arguments: '{ "path": "literal.txt" }' },
     { type: "function_call_output", call_id: "pending_native", output: "Actual pending result" }];
   for (const stream of [true, false]) {
-    const response = webCompactResponse({ model, stream, input: [{ role: "user", content: "History" }] }, { compactV2: true, retainedTail });
+    const payload = { model, stream, input: [{ role: "user", content: "History" }] };
+    const built = webCompactOutput(payload, { compactV2: true, retainedTail });
+    const response = webCompactResponse(payload, { compactV2: true, output: built });
     let output;
     if (stream) {
       assert.equal(response.headers.get("content-type"), "text/event-stream");
@@ -255,6 +259,7 @@ test("native V2 compaction emits one completed item with an in-band exact tail a
       const body = await response.json();
       assert.equal(body.object, "response"); assert.equal(body.status, "completed"); output = body.output;
     }
+    assert.deepEqual(output, built, "JSON and SSE transport preserve the generated checkpoint identity and in-band tail.");
     assert.equal(output.length, 1); assert.equal(output[0].type, "compaction");
     const nativeRetainedItem = { type: "compaction", encrypted_content: output[0].encrypted_content };
     const checkpoint = decodeCompaction(nativeRetainedItem.encrypted_content).checkpoint;
