@@ -32,8 +32,16 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
     surface.inventoryUrl = surface.url;
     const stop = { count: async () => { touch("count", thread); return surface.stopCount; },
       isVisible: async () => { touch("visible", thread); return surface.visible; },
-      click: async options => { assert.equal(options.timeoutMs, 350); touch("click", thread);
-        if (surface.pauseClick) await surface.pauseClick; if (!surface.keepVisible) surface.visible = false; } };
+      click: async options => {
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
+        surface.clickTimeoutMs = options.timeoutMs; touch("click", thread);
+        if (surface.pauseClick) await surface.pauseClick;
+        const acknowledgementMs = surface.clickAcknowledgementMs ?? 0;
+        model.now += Math.min(acknowledgementMs, options.timeoutMs);
+        if (!surface.keepVisible) surface.visible = false;
+        if (acknowledgementMs > options.timeoutMs) throw new Error('Timed out running CDP command "Input.dispatchMouseEvent"');
+        if (surface.clickError) throw surface.clickError;
+      } };
     const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
       markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
       playwright: { getByRole: (role, options) => { assert.equal(role, "button"); assert.equal(options.name, "Stop");
@@ -144,6 +152,48 @@ test("the remaining callback budget preserves the pre-click reserve and bounds c
   assert(expired.elapsedMs <= 1200); assert.equal(clicked(g).length, 1);
   assert(!g.calls.some(call => call.name === "handoff"));
   const h = fixture(); stopped(await h.run({ budgetMs: 2250 }));
+});
+
+test("a 600 ms click acknowledgement after setup succeeds within the reduced original cleanup budget", async () => {
+  const f = fixture();
+  f.model.onCall = name => { if (name === "tabs") f.model.now += 300; };
+  f.first.clickAcknowledgementMs = 600;
+  const result = await f.run({ budgetMs: 1500 }); stopped(result);
+  assert.equal(result.elapsedMs, 900);
+  assert(f.first.clickTimeoutMs >= 600 && f.first.clickTimeoutMs <= 1200);
+  assert.equal(clicked(f).length, 1);
+  assert.deepEqual(mutations(f).map(call => call.name), ["click", "handoff"]);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 2);
+});
+
+test("a click acknowledgement beyond the remaining allowance fails once before readback or handoff", async () => {
+  const f = fixture();
+  f.model.onCall = name => { if (name === "tabs") f.model.now += 300; };
+  f.first.clickAcknowledgementMs = 1300;
+  const result = await f.run({ budgetMs: 1500 });
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
+  assert.equal(result.stage, "stop_click");
+  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(result.elapsedMs, 300 + f.first.clickTimeoutMs);
+  assert(result.elapsedMs <= 1500);
+  assert.equal(clicked(f).length, 1);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 1);
+  assert(!f.calls.some(call => call.name === "handoff"));
+});
+
+test("a click effect followed by a genuine SDK rejection remains a failure without replay", async () => {
+  const f = fixture();
+  f.first.clickAcknowledgementMs = 100;
+  f.first.clickError = new Error("private actual CDP failure");
+  const result = await f.run();
+  assert.equal(f.first.visible, false, "The page effect does not prove that the click acknowledged successfully.");
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
+  assert.equal(result.stage, "stop_click");
+  assert.equal(result.stopClicked, false); assert.equal(result.stopHidden, false); assert.equal(result.retained, false);
+  assert.equal(clicked(f).length, 1);
+  assert.equal(f.calls.filter(call => call.name === "visible").length, 1);
+  assert(!f.calls.some(call => call.name === "handoff"));
+  assert(!JSON.stringify(result).includes("private actual CDP failure"));
 });
 
 test("two main/peer Web conversations Stop only their own saved tabs, retaining ordinary owners", async () => {

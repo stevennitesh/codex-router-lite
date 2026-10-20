@@ -143,9 +143,11 @@ observation error releases that wait only for the already accepted matching
 cleanup; the original error still reaches Codex. A timeout, cancellation of the
 cleanup itself, or changed authority prevents further browser actions.
 Stop must still read back hidden generation controls and retain the exact saved
-tab before reporting success. Visibility checks use the remaining cleanup budget;
-they do not impose a separate half-second acknowledgement limit or click Stop
-again. A partial cleanup remains an explicit failure.
+tab before reporting success. Click acknowledgement and visibility checks use the
+remaining cleanup budget, reserving time for retention. A separate short click
+limit also shortens the native CDP dispatch deadline and can detach its debugger
+before cleanup's deadline. Stop is clicked once; a rejected click remains an
+explicit partial failure and is never replayed.
 
 The unmodified official CLI adapter path has
 [dated Stop and same-chat continuation evidence](../history/2026-10-19-web-stop-adapter-verification.json).

@@ -173,16 +173,16 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     assertCurrent(visible ? 1000 : 200);
     if (beforeClickUrl !== savedUrl) deny("tab_url_mismatch");
     if (visible) {
+      const handoffReserve = 200;
       stage = "stop_click";
       assertCurrent(1000);
-      await stop.click({ timeoutMs: 350 });
+      await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - handoffReserve) });
       diagnostic.stopClicked = true;
       assertCurrent();
       stage = "stop_readback_visibility";
       // Stop acknowledgement can outlive a separate short locator wait. Observe
       // it within this cleanup's original budget, leaving time for retention.
       // Only a successful visible read is pending; SDK errors remain failures.
-      const handoffReserve = 200;
       const confirmUrl = async () => {
         assertCurrent(handoffReserve);
         const currentUrl = await tab.url();
