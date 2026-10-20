@@ -140,6 +140,13 @@ stop a newer turn. Revocation does not undo
 a tool that native Codex has already started. A missing or changed native rollout
 prevents the runtime from asserting cancellation authority.
 
+The private Router log's `web-mcp` entries distinguish SDK handler arrival,
+wrapper rejection, discovery, invocation start and the actual paired result.
+They retain fixed categories, timestamps and a turn-token digest, without tool
+arguments, outputs or credentials. Arrival occurs after HTTP/session/protocol
+validation; its absence alone does not identify a ChatGPT safety decision.
+Invocation start does not prove that native execution was accepted.
+
 ## Immediate Stop
 
 Immediate browser Stop needs both the interrupted conversation's native context

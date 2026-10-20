@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
 import test from "node:test";
 
@@ -12,6 +13,10 @@ const fn = name => ({ type: "function", name, description: "Native tool", parame
 const register = (broker, turnId, tools = [fn("read")]) => broker.register({ threadId: "native-thread", turnId, tools });
 const finish = (broker, token) => broker.finish(token, broker.beginCompletion(token));
 const call = (client, turn, wireName, args = {}) => client.callTool({ name: "codex_tool_call", arguments: { turn_token: turn.token, wire_name: wireName, ...args } });
+const withoutDiagnosticTime = receipts => receipts.map(({ at, ...receipt }) => {
+  assert.equal(new Date(at).toISOString(), at);
+  return receipt;
+});
 
 async function nativeCalls(broker, token) {
   let revision = broker.revision(token);
@@ -44,7 +49,7 @@ async function beginObservation(broker, service, token, options = {}) {
 
 async function fixture(t, options = {}) {
   const broker = createWebToolBroker({ invocationTimeoutMs: 5_000 });
-  const service = await startWebMcp({ broker, ...options });
+  const service = await startWebMcp({ broker, onDiagnostic: () => {}, ...options });
   const clients = [];
   t.after(async () => {
     await Promise.all(clients.map(({ client }) => client.close()));
@@ -61,8 +66,10 @@ async function fixture(t, options = {}) {
 }
 
 test("SDK HTTP client initializes, discovers current native tools, and waits for native execution", { timeout: 10_000 }, async t => {
-  const { broker, service, connect } = await fixture(t);
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
   const turn = register(broker, "function", [{ type: "namespace", name: "mcp__files", tools: [fn("read")] }]);
+  const turnHash = createHash("sha256").update(turn.token).digest("hex");
   const { client, transport } = await connect();
   assert.match(transport.sessionId, /^[a-f0-9-]{36}$/u);
   const listed = await client.listTools();
@@ -82,9 +89,29 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   assert.deepEqual(JSON.parse(native.arguments), { path: "native.txt" });
   assert.equal(resolved, false);
   assert.equal(service.status().pending, 1);
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    { operation: "list", stage: "received", turnHash },
+    { operation: "list", stage: "list-completed", turnHash },
+    { operation: "call", stage: "received", turnHash },
+    { operation: "call", stage: "invoke-started", turnHash },
+  ]);
   // Only the actual native caller may supply the output that resolves MCP.
   broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual native result" }]);
   assert.deepEqual((await result).content, [{ type: "text", text: "actual native result" }]);
+  const failed = call(client, turn, "mcp__files__read");
+  const [nativeFailure] = await nativeCalls(broker, turn.token);
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: nativeFailure.call_id, isError: true, output: "private native failure text" }]);
+  assert.equal((await failed).isError, true);
+  assert.deepEqual(withoutDiagnosticTime(receipts).slice(4), [
+    { operation: "call", stage: "native-result", turnHash, isError: false },
+    { operation: "call", stage: "received", turnHash },
+    { operation: "call", stage: "invoke-started", turnHash },
+    { operation: "call", stage: "native-result", turnHash, isError: true },
+  ]);
+  const logged = JSON.stringify(receipts);
+  for (const privateValue of [turn.token, service.url, transport.sessionId, "mcp__files", "native.txt", "Native tool", "actual native result", "private native failure text"]) {
+    assert.equal(logged.includes(privateValue), false);
+  }
   assert.equal(finish(broker, turn.token), true);
   assert.equal(service.status().pending, 0);
 });
@@ -191,8 +218,10 @@ test("session termination and server close cancel unresolved native calls", { ti
 });
 
 test("capability, method, origin, schema, and stale token failures cannot enqueue tools", { timeout: 10_000 }, async t => {
-  const { broker, service, connect } = await fixture(t);
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
   const turn = register(broker, "validation");
+  const turnHash = createHash("sha256").update(turn.token).digest("hex");
   const headers = { accept: "application/json, text/event-stream", "content-type": "application/json" };
   assert.equal((await fetch(new URL("/wrong/mcp", service.url), { method: "POST", headers, body: "{}" })).status, 404);
   assert.equal((await fetch(service.url, { method: "PUT" })).status, 405);
@@ -209,12 +238,47 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   for (const query of ["", " ", 1, "x".repeat(1025)]) {
     await assert.rejects(client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, query } }), /invalid arguments/iu);
   }
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    ...Array.from({ length: 4 }, () => [
+      { operation: "call", stage: "received", turnHash },
+      { operation: "call", stage: "invalid-arguments", turnHash },
+    ]).flat(),
+    ...Array.from({ length: 4 }, () => [
+      { operation: "list", stage: "received", turnHash },
+      { operation: "list", stage: "invalid-arguments", turnHash },
+    ]).flat(),
+  ]);
+  receipts.length = 0;
+  await assert.rejects(client.callTool({ name: "private-unknown-operation", arguments: { turn_token: "private-malformed-token", secret: "private argument text" } }), /invalid arguments/iu);
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    { operation: "unknown", stage: "received" },
+    { operation: "unknown", stage: "unknown-operation" },
+  ]);
+  receipts.length = 0;
   const unknownDiscovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: "web_turn_00000000000000000000000000000000", query: "read" } });
   assert.equal(unknownDiscovery.isError, true);
   const unknown = await call(client, { token: "web_turn_00000000000000000000000000000000" }, "read");
   assert.equal(unknown.isError, true);
   const undeclared = await call(client, turn, "never_declared");
   assert.equal(undeclared.isError, true);
+  assert.deepEqual(withoutDiagnosticTime(receipts).slice(-3), [
+    { operation: "call", stage: "received", turnHash },
+    { operation: "call", stage: "invoke-started", turnHash },
+    { operation: "call", stage: "rejected", turnHash },
+  ]);
+  receipts.length = 0;
+  const invoke = broker.invoke;
+  broker.invoke = async () => { throw new Error(`private broker rejection ${turn.token} private error text`); };
+  const rejected = await call(client, turn, "read", { arguments: { secret: "private argument text" } });
+  broker.invoke = invoke;
+  assert.equal(rejected.isError, true);
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    { operation: "call", stage: "received", turnHash },
+    { operation: "call", stage: "invoke-started", turnHash },
+    { operation: "call", stage: "rejected", turnHash },
+  ]);
+  assert.equal(JSON.stringify(receipts).includes("private"), false);
+  assert.equal(JSON.stringify(rejected).includes("private"), false);
   assert.deepEqual(broker.takeCalls(turn.token), []);
   assert.equal(service.status().pending, 0);
   assert.equal(finish(broker, turn.token), true);
@@ -247,7 +311,12 @@ test("SDK discovery holds activity and invalidates an earlier completion observa
 });
 
 test("SDK invocation keeps completion fenced until its handler returns the actual native result", { timeout: 10_000 }, async t => {
-  const { broker, service, connect } = await fixture(t);
+  let diagnostics = 0;
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: () => {
+    diagnostics += 1;
+    if (diagnostics % 2) throw new Error("synchronous logger failure");
+    return Promise.reject(new Error("asynchronous logger failure"));
+  } });
   const turn = register(broker, "settlement-fence");
   const { client } = await connect();
   const before = broker.beginCompletion(turn.token);
@@ -277,6 +346,7 @@ test("SDK invocation keeps completion fenced until its handler returns the actua
     release();
   }
   assert.deepEqual((await result).content, [{ type: "text", text: "actual paired native result" }]);
+  assert.equal(diagnostics, 3);
   assert.equal(service.status().pending, 0);
   const after = broker.beginCompletion(turn.token);
   assert.equal(typeof after, "number");

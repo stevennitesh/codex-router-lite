@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -43,17 +43,33 @@ function reject(response, status) {
 }
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
-export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel } = {}) {
+export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel,
+  onDiagnostic = receipt => console.warn(`[codex-router] web-mcp ${JSON.stringify(receipt)}`),
+} = {}) {
   if (!broker || !["list", "invoke", "cancel", "beginActivity", "revision", "waitForChange"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
   if (typeof capability !== "string" || !/^[A-Za-z0-9_-]{32,256}$/u.test(capability)) throw new TypeError("Invalid Web MCP capability.");
   if (onCancel !== undefined && typeof onCancel !== "function") throw new TypeError("Invalid Web MCP cancellation callback.");
+  if (typeof onDiagnostic !== "function") throw new TypeError("Invalid Web MCP diagnostic callback.");
   const path = `/${capability}/mcp`;
   const observationPath = `/${capability}/observe/`;
   const sessions = new Map(), creating = new Set(), observers = new Map();
   let closing = false, closed, observationCount = 0;
+
+  const diagnostic = (stage, operation, token, isError) => {
+    try {
+      // Only fixed categories and a digest of a correctly shaped private token
+      // may leave this boundary. A failed logger must never affect native work.
+      const turnHash = typeof token === "string" && /^web_turn_[a-f0-9]{32}$/u.test(token)
+        ? createHash("sha256").update(token).digest("hex") : undefined;
+      void Promise.resolve(onDiagnostic({ at: new Date().toISOString(), operation, stage,
+        ...(turnHash === undefined ? {} : { turnHash }),
+        ...(isError === undefined ? {} : { isError }),
+      })).catch(() => {});
+    } catch { /* Diagnostics cannot change protocol or activity ownership. */ }
+  };
 
   const observationRevision = (token, value) => {
     if (typeof token !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(token)
@@ -113,9 +129,14 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: structuredClone(tools) }));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
+      const operation = name === webMcpNames.list ? "list" : name === webMcpNames.call ? "call" : "unknown";
+      const token = args?.turn_token;
+      diagnostic("received", operation, token);
       const validate = validators.get(name);
-      if (!validate || !validate(args).valid) throw new McpError(ErrorCode.InvalidParams, "Unknown MCP tool or invalid arguments.");
-      const token = args.turn_token;
+      if (!validate || !validate(args).valid) {
+        diagnostic(validate ? "invalid-arguments" : "unknown-operation", operation, token);
+        throw new McpError(ErrorCode.InvalidParams, "Unknown MCP tool or invalid arguments.");
+      }
       let release;
       try {
         // Hold the accepted turn through the whole handler, including discovery
@@ -123,6 +144,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         release = broker.beginActivity(token);
         if (name === webMcpNames.list) {
           const descriptors = broker.list(token, { query: args.query });
+          diagnostic("list-completed", operation, token);
           return { content: [{ type: "text", text: JSON.stringify({ tools: descriptors }) }], structuredContent: { tools: descriptors } };
         }
         const invocation = { token };
@@ -131,16 +153,20 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         extra.signal.addEventListener("abort", abort, { once: true });
         try {
           if (extra.signal.aborted) abort();
-          return await broker.invoke(token, { wireName: args.wire_name,
+          diagnostic("invoke-started", operation, token);
+          const result = await broker.invoke(token, { wireName: args.wire_name,
             ...(Object.hasOwn(args, "arguments") ? { arguments: args.arguments } : {}),
             ...(Object.hasOwn(args, "input") ? { input: args.input } : {}),
           }, { signal: extra.signal });
+          diagnostic("native-result", operation, token, result.isError === true);
+          return result;
         } finally {
           entry.pending.delete(invocation);
           extra.signal.removeEventListener("abort", abort);
           entry.lastUsed = Date.now();
         }
       } catch {
+        diagnostic("rejected", operation, token);
         // Broker errors can contain native payloads. Return a fixed failure
         // envelope; full execution results pass through only on the success path.
         return { isError: true, content: [{ type: "text", text: "Codex tool request failed or the turn is closed. Do not retry a cancelled or timed-out turn." }] };
