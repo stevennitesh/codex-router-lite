@@ -94,7 +94,7 @@ function fakeBrowser() {
           childNodes: [{ nodeType: 3, textContent: ui.composer }, ...(ui.chip ? [chip] : [])] }], ownedChipSelector);
       }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
-      return callback(ui.texts.map((value, index) => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
+      return callback(ui.replyElements ?? ui.texts.map((value, index) => ({ nodeType: 1, tagName: "DIV", getAttribute: () => null,
         closest: () => ({ getAttribute: () => ui.replyIds ? ui.replyIds[index] : messageId(index) }),
         childNodes: [{ nodeType: 3, textContent: value }] })));
     },
@@ -315,6 +315,43 @@ test("the native runtime accepts a new reply identity after mounted counts shrin
   assert.equal(h.browser.ui.sends.length, 2, "Recovery never resends the completed turn.");
   assert.deepEqual(h.browser.ui.reacquired, ["owned-saved-tab"]);
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue from the identified reply." }]);
+});
+
+test("fragmented message DOM reaches native completion with all prose and code and retains its saved binding", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
+  const wrapper = { getAttribute: () => messageId(0) };
+  const node = (tagName, childNodes, attributes = {}) => ({ nodeType: 1, tagName, childNodes,
+    getAttribute: key => attributes[key] ?? null, closest: () => wrapper });
+  const text = value => ({ nodeType: 3, textContent: value });
+  const code = node("DIV", [], { "data-markdown-copy": "code-block" });
+  code.querySelectorAll = selector => selector === "code" ? [{ textContent: source }] : [];
+  h.browser.ui.replyElements = [node("DIV", [node("P", [text("Before code.")])]),
+    node("DIV", [code]), node("DIV", [node("P", [text("After code.")])])];
+  h.browser.ui.complete = true;
+  const frame = await h.executeBrowser(call);
+  const frameToken = frame.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/u)[1];
+  const observed = parseBrowserOutput(frame, frameToken);
+  const expected = `Before code.\n\n${source}\n\nAfter code.`;
+  assert.equal(observed.completed, true);
+  assert.equal(observed.assistantText, expected);
+  assert.equal(observed.replyCount, 1);
+  h.append(call, outputFor(call, frame));
+  const retained = await h.request();
+  assert.equal(JSON.parse(retained.output[0].arguments).title, "ChatGPT Web: retain");
+  const final = await h.answerBrowser(retained.output[0]);
+  assert.equal(final.output[0].content[0].text, expected);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.chatUrl, "https://chatgpt.com/c/owned-conversation");
+  assert.equal(saved.tabId, "owned-saved-tab");
+  assert.equal(saved.observation.replyId, messageId(0));
+  assert.equal(saved.observation.completed, true);
+  assert.equal(saved.bindingId, h.observations.bindings[0].replace(/^routerWeb_/u, ""));
+  assert.equal(h.browserOwner().state.retained, true);
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.closes, 0);
+  assert.equal(new Set(h.observations.bindings).size, 1);
 });
 
 test("an existing successful private mapping without message IDs recovers once by its original URL and prefix proof", async t => {

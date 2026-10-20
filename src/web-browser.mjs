@@ -132,10 +132,23 @@ export function readBrowserReplies(elements) {
     }
     return text;
   };
-  return Array.from(elements, element => ({
-    messageId: element.closest('[data-chatgpt-selection-message-id]')?.getAttribute("data-chatgpt-selection-message-id") ?? null,
-    text: read(element),
-  }));
+  const wrapperSelector = '[data-chatgpt-selection-message-id]';
+  const selected = new Set(elements), messages = new Map();
+  // evaluateAll supplies document order. Multiple selected markdown fragments
+  // can belong to one message; distinct wrappers with the same ID stay distinct
+  // so the caller can reject that ambiguous identity.
+  for (const element of elements) {
+    const wrapper = element.closest(wrapperSelector);
+    let ancestor = element.parentElement;
+    while (ancestor && !(selected.has(ancestor) && ancestor.closest(wrapperSelector) === wrapper)) ancestor = ancestor.parentElement;
+    if (ancestor) continue; // Its selected ancestor already includes this text.
+    const key = wrapper ?? element;
+    if (!messages.has(key)) messages.set(key, { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" });
+    const message = messages.get(key), text = read(element);
+    if (message.text && text) message.text += "\n\n";
+    message.text += text;
+  }
+  return [...messages.values()];
 }
 
 // This function is serialized into the active native REPL. It uses only public
@@ -156,17 +169,23 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
   };
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const replies = (tab = state.tab) => tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll(replyReader, undefined, { timeoutMs: 1000 });
-  const validReplies = values => values.every(value => typeof value.messageId === "string"
-    && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId))
-    && new Set(values.map(value => value.messageId)).size === values.length;
+  const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
+    : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
+      : new Set(values.map(value => value.messageId)).size !== values.length ? "duplicate-message-identity" : undefined;
+  const validReplies = values => replyIdentityIssue(values) === undefined;
   const currentReply = values => {
-    if (!validReplies(values) || !Array.isArray(state.baselineReplyIds)) return undefined;
+    const issue = replyIdentityIssue(values);
+    if (issue) return { replyUnavailableReason: issue };
+    if (!Array.isArray(state.baselineReplyIds)) return { replyUnavailableReason: "missing-send-baseline" };
     const fresh = values.filter(value => !state.baselineReplyIds.includes(value.messageId));
     const latest = values.at(-1);
     // Mounted replies can disappear or return as ChatGPT virtualizes history.
     // Keep the first unambiguous new message identity for the entire Send.
-    if (state.replyId) return latest?.messageId === state.replyId && !state.baselineReplyIds.includes(state.replyId) ? latest : undefined;
-    return fresh.length === 1 && fresh[0] === latest ? latest : undefined;
+    if (state.replyId) return latest?.messageId === state.replyId && !state.baselineReplyIds.includes(state.replyId)
+      ? { reply: latest } : { replyUnavailableReason: "latched-message-no-longer-latest" };
+    if (fresh.length === 0) return { replyUnavailableReason: "no-new-message" };
+    if (fresh.length > 1) return { replyUnavailableReason: "multiple-new-messages" };
+    return fresh[0] === latest ? { reply: latest } : { replyUnavailableReason: "new-message-not-latest" };
   };
   const conversationFull = async () => {
     const outsideMessages = (elements, assistantSelector) => {
@@ -462,7 +481,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
         if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
         delete state.bindingLost;
       }
-      const assistantText = state.sendConfirmed ? currentReply(texts)?.text ?? "" : "";
+      const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
       await state.tab.markHandoff();
       activeOwner(owners, true);
       emit({ tabId: state.tabId, url: await state.tab.url(), replyCount: texts.length, normal: true, assistantText, conversationFull: true,
@@ -483,7 +502,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       if (!verifyRecoveryTexts(texts)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
       delete state.bindingLost;
     }
-    const assistantText = state.sendConfirmed ? currentReply(texts)?.text ?? "" : "";
+    const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
     if (!validReplies(texts)) throw new Error("The retained conversation has missing or ambiguous assistant message identities.");
     const continuationUrl = await state.tab.url();
     if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
@@ -605,7 +624,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
     for (let iteration = 0; iteration < options.observeIterations; iteration += 1) {
       if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
       const texts = await replies();
-      const reply = currentReply(texts), assistantText = reply?.text ?? "";
+      const { reply, replyUnavailableReason } = currentReply(texts), assistantText = reply?.text ?? "";
       if (reply) state.replyId = reply.messageId;
       const stopVisible = await role(ui.stopButtonExactName).isVisible();
       const statuses = await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
@@ -615,6 +634,7 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader) {
       const full = await conversationFull();
       if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
       observation = { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
+        ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
         baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
         stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
       if (completed) state.completed = true;

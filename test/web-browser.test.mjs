@@ -68,6 +68,29 @@ test("reply projection preserves paragraph, BR and code boundaries without remov
   assert.equal(readBrowserReplies([root])[0].text, "Literal Plain text belongs to the answer.\n\nSecond paragraph\ncontinued\n\n  first\n\n    second\n\nAfter inline code.");
 });
 
+test("reply projection joins one wrapper's markdown fragments in DOM order without repeating nested selections", () => {
+  const prose = domElement("div", {}, domElement("p", {}, domText("Before code.")));
+  const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
+  const code = domElement("div", {}, sourceBlock(source));
+  const nested = domElement("div", {}, domElement("p", {}, domText("After code.")));
+  const tail = domElement("div", {}, nested);
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, prose, code, tail);
+  const isolatedReader = runInNewContext(`(${readBrowserReplies.toString()})`);
+  const replies = isolatedReader([prose, code, tail, nested]);
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].messageId, messageId(0));
+  assert.equal(replies[0].text, `Before code.\n\n${source}\n\nAfter code.`);
+});
+
+test("reply projection preserves distinct wrappers with duplicate IDs and separate fragments without wrappers", () => {
+  const selected = ["First", "Second", "Missing one", "Missing two"].map(text => domElement("div", {}, domText(text)));
+  for (const node of selected.slice(0, 2)) domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, node);
+  assert.deepEqual(readBrowserReplies(selected), [
+    { messageId: messageId(0), text: "First" }, { messageId: messageId(0), text: "Second" },
+    { messageId: null, text: "Missing one" }, { messageId: null, text: "Missing two" },
+  ]);
+});
+
 test("CodeMirror logical lines preserve empty lines and reject incomplete or ambiguous source", () => {
   const editor = domElement("div", { class: "cm-content", "data-language": "python" },
     domElement("div", { class: "cm-line" }, domText("  first")),
@@ -242,7 +265,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       assert.equal(name, '[data-markdown-text-style="assistant-message"]');
       ui.replyReads += 1;
-      return callback(ui.texts.map((value, index) => {
+      return callback(ui.replyElements ?? ui.texts.map((value, index) => {
         const node = typeof value === "string" ? domElement("div", {}, domText(value)) : value;
         domElement("div", { "data-chatgpt-selection-message-id": ui.replyIds ? ui.replyIds[index] : messageId(index) }, node);
         return node;
@@ -927,6 +950,29 @@ test("a new message identity completes after mounted replies shrink below the Se
   assert.equal(f.ui.sendClicks, 1);
 });
 
+test("fragmented markdown in one message completes once with the full prose and literal code", async () => {
+  const f = fixture(); await f.ready();
+  const earlier = [domElement("div", {}, domText("Earlier reply")), domElement("div", {}, domText("Earlier tail"))];
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, ...earlier);
+  f.ui.replyElements = [...earlier];
+  const sent = await f.run("send", { ...plugin, prompt: "Return prose and code" });
+  assert.equal(sent.baselineReplyCount, 1);
+  assert.deepEqual(sent.baselineReplyIds, [messageId(0)]);
+  const source = "  first\n\n    last\n";
+  const fragments = [domElement("div", {}, domElement("p", {}, domText("Before."))),
+    domElement("div", {}, sourceBlock(source)), domElement("div", {}, domElement("p", {}, domText("After.")))];
+  domElement("div", { "data-chatgpt-selection-message-id": messageId(1) }, ...fragments);
+  f.ui.replyElements.push(...fragments); f.ui.complete = true;
+  const observed = await f.run("observe", { observeIterations: 1 });
+  assert.deepEqual([observed.replyCount, observed.replyId, observed.completed], [2, messageId(1), true]);
+  assert.equal(observed.assistantText, `Before.\n\n${source}\n\nAfter.`);
+  assert.equal(observed.replyUnavailableReason, undefined);
+  await f.run("retain");
+  assert.equal(f.getState().retained, true);
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1);
+});
+
 test("a proven current reply keeps its identity across missing mounts and rejects a replacement with identical text", async () => {
   const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
@@ -938,6 +984,7 @@ test("a proven current reply keeps its identity across missing mounts and reject
   f.ui.replyIds = [messageId(1)]; f.ui.stop = false; f.ui.complete = true;
   const replacement = await f.run("observe", { observeIterations: 1 });
   assert.deepEqual([replacement.replyId, replacement.assistantText, replacement.completed], [null, "", false]);
+  assert.equal(replacement.replyUnavailableReason, "latched-message-no-longer-latest");
   f.ui.replyIds = [messageId(0)];
   assert.equal((await f.run("observe", { observeIterations: 1 })).completed, true);
   assert.equal(f.ui.sendClicks, 1);
@@ -963,14 +1010,19 @@ test("a proven reply unmounted before continuation remains old when it remounts 
 });
 
 test("old, missing, duplicate or ambiguous reply identities cannot supply an answer even with completion controls", async () => {
-  for (const ids of [[0, 1, 2], [0, 1, null], [0, 3, 3], [0, 3, 4]]) {
+  for (const [ids, reason] of [
+    [[0, 1, 2], "no-new-message"], [[0, 1, null], "missing-message-identity"],
+    [[0, 3, 3], "duplicate-message-identity"], [[0, 3, 4], "multiple-new-messages"],
+    [[3, 1, 2], "new-message-not-latest"], [[0, 1, "invalid"], "invalid-message-identity"],
+  ]) {
     const f = fixture(); await f.ready();
     f.ui.texts = ["Old one", "Old two", "Old three"];
     await f.run("send", { ...plugin, prompt: "New request" });
-    f.ui.replyIds = ids.map(value => value === null ? null : messageId(value));
+    f.ui.replyIds = ids.map(value => typeof value === "number" ? messageId(value) : value);
     f.ui.complete = true;
     const observed = await f.run("observe", { observeIterations: 1 });
     assert.deepEqual([observed.replyId, observed.assistantText, observed.completed], [null, "", false]);
+    assert.equal(observed.replyUnavailableReason, reason);
     await assert.rejects(f.run("retain"), /successfully completed/);
     assert.equal(f.ui.sendClicks, 1);
   }
