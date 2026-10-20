@@ -167,6 +167,61 @@ test("allowed_tools resolves exact namespaces and excludes sibling tools", async
   assert.throws(() => register(broker, declarations, { toolChoice: { type: "function", name: "read" } }), { code: "unsupported_tool_choice" });
 });
 
+test("focused discovery ranks case-insensitive identity and description matches without truncating declarations", () => {
+  const broker = createWebToolBroker();
+  const parameters = { type: "object", properties: { path: { type: "string", enum: ["native.txt"] } }, required: ["path"], additionalProperties: false };
+  const { token, tools } = register(broker, [
+    fn("alpha", { description: "Read a file from native storage" }), fn("pre_read"), fn("reader"), fn("read", { parameters }), fn("read_more"),
+    { type: "namespace", name: "mcp__read", tools: [fn("fetch")] },
+    { type: "namespace", name: "functions", tools: [custom("exec")] },
+  ]);
+  assert.deepEqual(broker.list(token, { query: " ReAd " }).map(tool => tool.name), ["read", "reader", "read_more", "pre_read", "fetch", "alpha"]);
+  assert.deepEqual(broker.list(token, { query: "MCP__READ" }).map(tool => tool.wireName), ["mcp__read__fetch"]);
+  assert.deepEqual(broker.list(token, { query: "MCP__READ__FETCH" }), tools.filter(tool => tool.name === "fetch"));
+  const [read] = broker.list(token, { query: "read" });
+  assert.deepEqual(read.parameters, parameters);
+  read.parameters.properties.path.enum[0] = "mutated";
+  assert.deepEqual(broker.list(token, { query: "read" })[0].parameters, parameters);
+  assert.deepEqual(broker.list(token, { query: "ExEc" })[0].format, custom("exec").format);
+  assert.deepEqual(broker.list(token, { query: "missing" }), []);
+  assert.deepEqual(broker.list(token), tools);
+  for (const query of ["", " ", 1, "x".repeat(1025)]) assert.throws(() => broker.list(token, { query }), { code: "invalid_web_tool_call" });
+  assert.equal(finish(broker, token), true);
+});
+
+test("focused discovery uses current allowed schemas and cannot authorize a removed or replacement turn tool", async () => {
+  const broker = createWebToolBroker();
+  const first = register(broker, [fn("read"), fn("write")], { toolChoice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "read" }] } });
+  assert.deepEqual(broker.list(first.token, { query: "write" }), []);
+  const [old] = broker.list(first.token, { query: "read" });
+  const parameters = { type: "object", properties: { revision: { const: 2 } }, required: ["revision"] };
+  broker.update(first.token, { tools: [fn("read", { parameters })] });
+  assert.equal(broker.list(first.token, { query: "read" })[0].wireName, old.wireName);
+  assert.deepEqual(broker.list(first.token, { query: "read" })[0].parameters, parameters);
+  broker.update(first.token, { tools: [fn("write")] });
+  assert.deepEqual(broker.list(first.token, { query: "read" }), []);
+  await assert.rejects(broker.invoke(first.token, { wireName: old.wireName }), /not declared and allowed/);
+  assert.equal(finish(broker, first.token), true);
+  const replacement = register(broker, [fn("write")]);
+  assert.throws(() => broker.list(first.token, { query: "write" }), { code: "web_tool_turn_closed" });
+  assert.throws(() => broker.list("unknown", { query: "write" }), { code: "web_tool_turn_closed" });
+  await assert.rejects(broker.invoke(replacement.token, { wireName: old.wireName }), /not declared and allowed/);
+  assert.deepEqual(broker.takeCalls(replacement.token), []);
+  assert.equal(finish(broker, replacement.token), true);
+});
+
+test("registration and updates can omit unused snapshots while retaining current discovery", () => {
+  const broker = createWebToolBroker();
+  const registration = register(broker, [fn("read")], { includeTools: false });
+  assert.equal(Object.hasOwn(registration, "tools"), false);
+  assert.match(registration.instructions, new RegExp(registration.token, "u"));
+  assert.deepEqual(broker.list(registration.token).map(tool => tool.name), ["read"]);
+  assert.equal(broker.update(registration.token, { tools: [fn("write")], includeTools: false }), undefined);
+  assert.deepEqual(broker.list(registration.token).map(tool => tool.name), ["write"]);
+  assert.deepEqual(broker.update(registration.token, { tools: [fn("read")] }).map(tool => tool.name), ["read"]);
+  assert.equal(finish(broker, registration.token), true);
+});
+
 test("normal tool errors and multimodal native outputs return through MCP without execution", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [fn("read")]);

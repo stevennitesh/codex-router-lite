@@ -156,9 +156,13 @@ export function readBrowserReplies(elements, options) {
     if (!messages.has(key)) messages.set(key, { wrapper, answerRoots: [],
       reply: { messageId: wrapper?.getAttribute("data-chatgpt-selection-message-id") ?? null, text: "" } });
     const message = messages.get(key);
+    const turn = wrapper?.closest('[data-turn-key]');
+    if (options?.snapshot) message.reply.turnKey = turn?.getAttribute('data-turn-key') ?? null;
+    // Identity and document order remain global. Historical bodies and their
+    // completion controls are irrelevant to an anchored observation.
+    if (options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
     // Status and reasoning roots use the same markdown renderer as answers.
     // The first status boundary preserves answer chunks between later tools.
-    const turn = wrapper?.closest('[data-turn-key]');
     const firstStatus = turn?.querySelector('[data-streaming-response-status]');
     const order = turn ? turnOrder(turn) : null;
     const commentary = element.closest('[data-streaming-response-status],[data-testid^="cot-v5"]')
@@ -186,6 +190,7 @@ export function readBrowserReplies(elements, options) {
     for (const group of groups) {
       const turn = group.wrapper?.closest('[data-turn-key]');
       group.reply.turnKey = turn?.getAttribute('data-turn-key') ?? null;
+      if (options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
@@ -194,8 +199,10 @@ export function readBrowserReplies(elements, options) {
           && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
     }
     return { replies, turns: turns.map(turn => {
+      const turnKey = turn.getAttribute('data-turn-key');
+      if (options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
       const states = Array.from(turn.querySelectorAll('[data-talvt-turn-state]'));
-      return { turnKey: turn.getAttribute('data-turn-key'),
+      return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
         complete: states.length === 1 && states[0].getAttribute('data-talvt-turn-state') === 'complete' };
     }) };
@@ -219,9 +226,9 @@ export function readBrowserReplies(elements, options) {
 function createBrowserView(state, options, replyReader) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const snapshot = (tab = state.tab, generationMarker) => tab.playwright.locator(`[data-turn-key],${ui.assistantFinalReplySelector}`)
+  const snapshot = (tab = state.tab, generationMarker, generationTurnKey) => tab.playwright.locator(`[data-turn-key],${ui.assistantFinalReplySelector}`)
     .evaluateAll(replyReader, { snapshot: true, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-      ...(generationMarker ? { generationMarker } : {}) }, { timeoutMs: 1000 });
+      ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}) }, { timeoutMs: 1000 });
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
@@ -233,10 +240,10 @@ function createBrowserView(state, options, replyReader) {
     const issue = replyIdentityIssue(values);
     if (issue) return { replyUnavailableReason: issue };
     if (!Array.isArray(state.baselineReplyIds)) return { replyUnavailableReason: "missing-send-baseline" };
-    const fresh = values.filter(value => !state.baselineReplyIds.includes(value.messageId));
+    const baseline = new Set(state.baselineReplyIds);
     const latest = values.at(-1);
     if (state.generationTurnKey) {
-      const owned = values.filter(value => value.turnKey === state.generationTurnKey && !state.baselineReplyIds.includes(value.messageId));
+      const owned = values.filter(value => value.turnKey === state.generationTurnKey && !baseline.has(value.messageId));
       state.generationReplyIds = [...new Set([...(state.generationReplyIds ?? []), ...owned.map(value => value.messageId)])];
       if (!owned.length) return { replyUnavailableReason: "no-new-message" };
       if (owned.at(-1) !== latest) return { replyUnavailableReason: "generation-message-not-latest" };
@@ -246,8 +253,9 @@ function createBrowserView(state, options, replyReader) {
     }
     // Legacy retained proofs have no turn anchor. They may recover only their
     // exact recorded reply; fresh Sends always establish a turn anchor below.
-    if (state.replyId) return latest?.messageId === state.replyId && !state.baselineReplyIds.includes(state.replyId)
+    if (state.replyId) return latest?.messageId === state.replyId && !baseline.has(state.replyId)
       ? { reply: latest } : { replyUnavailableReason: "recorded-message-no-longer-latest" };
+    const fresh = values.filter(value => !baseline.has(value.messageId));
     if (fresh.length === 0) return { replyUnavailableReason: "no-new-message" };
     if (fresh.length > 1) return { replyUnavailableReason: "multiple-new-messages" };
     return fresh[0] === latest ? { reply: latest } : { replyUnavailableReason: "new-message-not-latest" };
@@ -272,8 +280,8 @@ function createBrowserView(state, options, replyReader) {
   };
   const temporaryInactive = async (tab = state.tab) => !(await role(ui.temporaryToggleName, "button", tab).isVisible())
     && !(await role(ui.temporaryHeadingName, "heading", tab).isVisible());
-  const normal = async () => {
-    const value = await state.tab.url();
+  const normal = async (value) => {
+    value ??= await state.tab.url();
     const url = new URL(value);
     if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat") || !(await temporaryInactive())) return false;
     return state.hasSentMessage ? savedUrl(value) && value === state.savedUrl : url.pathname === "/";
@@ -284,37 +292,41 @@ function createBrowserView(state, options, replyReader) {
     if (matches.length !== 1) throw new Error("The owned saved chat tab is unavailable; continuation cannot replace a live binding.");
     const url = await state.tab.url();
     if (new URL(url).origin !== "https://chatgpt.com") throw new Error("The owned tab left ChatGPT.");
+    return url;
   };
   const activeOwner = (turnIds = [options.turnId], requireActive = false) => {
     const current = globalThis.routerWebActiveTurns?.get(options.sessionId);
     if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
     return current;
   };
-  const observeGeneration = async () => {
+  const observeGeneration = async (ownedUrl) => {
     activeOwner([options.turnId], true);
-    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
-    const view = await snapshot(), texts = view.replies;
+    if (!(await normal(ownedUrl))) throw new Error("The observed conversation left its normal saved URL.");
+    const view = await snapshot(state.tab, undefined, state.generationTurnKey), texts = view.replies;
     const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
     const current = state.generationTurnKey && (anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey)
       ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
     const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
     if (reply) state.replyId = reply.messageId;
-    const stopVisible = await role(ui.stopButtonExactName).isVisible();
     const generation = state.generationTurnKey ? state.tab.playwright.locator(`[data-turn-key="${state.generationTurnKey}"]`) : null;
-    const statuses = generation ? [] : await state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 });
+    const [stopVisible, statuses, regenerateVisible, full] = await Promise.all([
+      role(ui.stopButtonExactName).isVisible(),
+      generation ? [] : state.tab.playwright.locator('[role="status"]').allTextContents({ timeoutMs: 1000 }),
+      generation ? Boolean(reply?.completionActionAfter) && generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
+        : role(ui.regenerateButtonExactName).isVisible(),
+      conversationFull(),
+    ]);
     const statusComplete = generation ? anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete
       : statuses.some(text => text.trim() === ui.responseCompleteStatusText);
-    const regenerateVisible = generation ? Boolean(reply?.completionActionAfter) && await generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible()
-      : await role(ui.regenerateButtonExactName).isVisible();
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-    const full = await conversationFull();
-    if (!(await normal())) throw new Error("The observed conversation left its normal saved URL.");
+    const url = await state.tab.url();
+    if (!(await normal(url))) throw new Error("The observed conversation left its normal saved URL.");
     activeOwner([options.turnId], true);
     return { completed, assistantText, replyId: reply?.messageId ?? null, replyCount: texts.length,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
       baselineReplyCount: state.baselineReplyCount, baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
-      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url: await state.tab.url(), normal: true, conversationFull: full };
+      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full };
   };
   return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
 }
@@ -363,17 +375,23 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     // radio menu item. Match its observed DOM text, then verify the full text.
     const familyLocator = () => menu.locator('[role="menuitemradio"]').filter({ hasText: options.modelFamily });
     const expand = menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true });
-    // Collapsed family rows remain in the DOM, but their clipped hit targets
-    // overlap Power. Open the actual list before any family click.
-    if (await expand.isVisible()) await expand.click();
+    const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
     let family = familyLocator();
     if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    // Clicking an already-selected row also returns the expanded list to Power.
-    await family.click();
+    // Read the actual checked row before changing the picker. Collapsed rows
+    // are readable but clipped over Power, so only click after expanding.
+    if (await family.getAttribute("aria-checked") !== "true") {
+      if (await expand.isVisible()) await expand.click();
+      if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
+      await family.click();
+    } else if (!(await power.isVisible())) {
+      // An already-expanded list returns to Power when its selected row is clicked.
+      if (await expand.isVisible()) throw new Error("The selected model Power view is unavailable.");
+      await family.click();
+    }
     family = familyLocator();
     if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
     const slider = menu.locator(ui.powerSliderSelector);
-    const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
     const readPower = async attribute => {
       const value = await slider.getAttribute(attribute);
       if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
@@ -804,16 +822,16 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   const { ensureOwned, activeOwner, observeGeneration } = viewFactory(state, options, replyReader);
   if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
   if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
-  await ensureOwned();
+  const ownedUrl = await ensureOwned();
   if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     // Return after one page read so native Interrupt and queued tools can run.
-    const observation = await observeGeneration();
+    const observation = await observeGeneration(ownedUrl);
     state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed || state.closed) throw new Error("Only a successfully completed conversation can be retained.");
-    const observation = await observeGeneration();
+    const observation = await observeGeneration(ownedUrl);
     state.completed = observation.completed;
     if (!observation.completed) throw new Error("Only a currently completed generation can be retained.");
     await state.tab.markHandoff();
@@ -824,6 +842,12 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     emit({ retained: true, ...observation });
   } else throw new Error("Unsupported browser observation operation.");
 }
+
+// The digest binds the resident observer to its exact source generation. Native
+// modules share this controller through one binding; browser page code has no
+// access to its captured state or helper references.
+export const browserHelperVersion = createHash("sha256")
+  .update([readBrowserReplies, createBrowserView, runBrowserObservation].map(fn => fn.toString()).join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {
   if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "close", "cancel", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
@@ -894,6 +918,11 @@ export function browserScript(options) {
   const initialize = options.operation === "bootstrap" ? `${binding} ??= {};`
     : options.operation === "continue" && options.recovery ? `${binding} ??= { bindingLost: true };`
       : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
-  const runner = ["observe", "retain"].includes(options.operation) ? runBrowserObservation : runBrowserOperation;
-  return `${initialize}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${readBrowserReplies.toString()}, ${createBrowserView.toString()});`;
+  const helper = `${binding}.residentBrowser`;
+  const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
+  const resident = ["bootstrap", "continue"].includes(options.operation)
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, viewFactory, observer) => Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory) }))(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()});`
+    : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
+  if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
+  return `${initialize}\n${resident}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory);`;
 }

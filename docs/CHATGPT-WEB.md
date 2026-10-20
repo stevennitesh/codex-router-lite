@@ -94,6 +94,9 @@ coding conversation remains in the signed-in ChatGPT account's history until
 removed there. One native browser operation attaches the configured connector
 when needed, selects and verifies the requested ChatGPT family and Power, then
 sends the request. Selection is checked against the current page on every turn.
+If the requested family is already selected, Router verifies its current Power
+without expanding and reselecting the family. A family change first opens the
+visible family list; collapsed rows remaining in the DOM are not click targets.
 Follow-ups send the
 native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
@@ -131,11 +134,19 @@ answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
 answer. Missing or ambiguous turn/message identities fail explicitly.
 
-Polling and final retention carry only the observation code they need, sharing
-the same ownership and reply checks as the full browser operations. The separate
-final retention check and Interrupt hook remain in place. Each observation reads
-the current page once and returns control immediately; it does not pause between
-batched page reads.
+Bootstrap and ordinary continuation install a versioned browser helper in the
+native Node REPL binding. Observation and final retention invoke that helper with
+a small operation request instead of repeating its source. Its source digest,
+frozen controller and exact binding are checked before invocation. A missing or
+changed helper fails explicitly; ordinary continuation can restore it without
+replaying Send. The helper runs in the native REPL, not injected page code.
+
+Each reply snapshot retains mounted turn/message identities and order, while
+reconstructing answer text and completion details only for the owned generation.
+Recovery still reads the historical proof it needs. Independent control reads run
+concurrently between navigation/ownership checks, and observations return control
+without pausing between batched page reads. The separate final retention check,
+broker activity checks, protected durable writes and Interrupt hook remain.
 
 Native tool requests are delivered independently of final-answer readability.
 Completion requires an idle owned browser turn, an answer after the latest tool
@@ -155,7 +166,13 @@ remain part of the handoff. A successor that also reports full fails rather than
 creating an unbounded chain of chats.
 
 The connector discovers only tools declared and allowed for the current native
-Codex request. It requests a tool by its exact identity, and Router returns that
+Codex request. Its `codex_tools_list` operation accepts an optional `query` matching
+the current wire name, native name, namespace or description, ignoring case.
+Exact names rank first, followed by name prefixes, name substrings and description
+matches. Omit the query for the full catalog. Focused results retain each selected
+tool's complete current schema or custom grammar; discovery does not grant tool
+authorization. Prefer a focused query for the tool needed by the current action.
+It requests a tool by its exact identity, and Router returns that
 request to native Codex for execution and approval. Router itself does not run
 shell commands or bypass Codex approvals. Tool results return to the same active
 browser turn before ChatGPT continues. Private turn tokens and the tunnel runtime

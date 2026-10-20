@@ -478,11 +478,11 @@ export function createInAppWebRuntime({
     if (turn.rollovers) throw fail("The successor chat also reached capacity; another rollover in this native turn is blocked.", "web_conversation_full");
     // Updating the existing declaration rejects any queued or delivered MCP
     // invocation. Do not abandon it and then repeat its request in a new chat.
-    broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
+    broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
     const previousToken = turn.token;
     tokenOwners.delete(previousToken);
     broker.cancel(previousToken, fail("The saved conversation reached capacity; its old tool token is revoked.", "web_turn_cancelled"));
-    const registration = broker.register({ threadId: turn.threadId, turnId: turn.turnId, tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
+    const registration = broker.register({ threadId: turn.threadId, turnId: turn.turnId, tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
     turn.token = registration.token; turn.toolInstructions = registration.instructions; tokenOwners.set(turn.token, turn);
     turn.cache.clear(); turn.rollovers = 1;
     conversation.rolloverRequired = true;
@@ -691,7 +691,7 @@ export function createInAppWebRuntime({
       throw error;
     } finally { signal?.removeEventListener("abort", abort); }
     try {
-    const registration = broker.register({ ...owner, tools, toolChoice: payload.tool_choice ?? "auto" });
+    const registration = broker.register({ ...owner, tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
     turn.token = registration.token; tokenOwners.set(turn.token, turn);
     turn.toolInstructions = registration.instructions;
     return turn;
@@ -756,7 +756,7 @@ export function createInAppWebRuntime({
               turn.discovered.push(...outputs[0].tools);
               turn.tools = collectWebTools(payload, turn.discovered);
               turn.executor = discoverBrowserExecutor(turn.tools);
-              broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
+              broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
               response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
             } else {
@@ -773,7 +773,7 @@ export function createInAppWebRuntime({
               // delivered. Drain those exact calls before changing schemas.
               const queued = broker.takeCalls(turn.token);
               if (!queued.length) {
-                broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto" });
+                broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto", includeTools: false });
                 turn.tools = tools;
               }
               turn.pending = undefined;

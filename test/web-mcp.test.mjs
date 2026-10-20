@@ -41,6 +41,7 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   assert.equal(listed.tools[1].annotations.destructiveHint, true);
   const declarations = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
   assert.deepEqual(declarations.structuredContent.tools, turn.tools);
+  assert.deepEqual(JSON.parse(declarations.content[0].text), declarations.structuredContent);
   let resolved = false;
   const waiting = broker.waitForCalls(turn.token);
   const result = call(client, turn, "mcp__files__read", { arguments: { path: "native.txt" } });
@@ -57,6 +58,43 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   assert.deepEqual((await result).content, [{ type: "text", text: "actual native result" }]);
   assert.equal(finish(broker, turn.token), true);
   assert.equal(service.status().pending, 0);
+});
+
+test("SDK focused discovery returns complete function schemas and custom grammar before exact native calls", { timeout: 10_000 }, async t => {
+  const { broker, connect } = await fixture(t);
+  const parameters = { type: "object", properties: { path: { type: "string", enum: ["native.txt"] } }, required: ["path"], additionalProperties: false };
+  const format = { type: "grammar", syntax: "lark", definition: "start: /[a-z]+/\n" };
+  const turn = register(broker, "focused", [
+    fn("unrelated"), { type: "namespace", name: "mcp__files", tools: [{ ...fn("read"), parameters }] },
+    { type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec", description: "Raw code", format }] },
+  ]);
+  const { client } = await connect();
+  const discover = query => client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, query } });
+  const selected = await discover("MCP__FILES__READ");
+  assert.deepEqual(selected.structuredContent.tools, turn.tools.filter(tool => tool.name === "read"));
+  assert.deepEqual(JSON.parse(selected.content[0].text), selected.structuredContent);
+  const [read] = selected.structuredContent.tools;
+  assert.deepEqual(read.parameters, parameters);
+  const pendingRead = call(client, turn, read.wireName, { arguments: { path: read.parameters.properties.path.enum[0] } });
+  const [nativeRead] = await broker.waitForCalls(turn.token);
+  assert.equal(nativeRead.namespace, "mcp__files");
+  assert.equal(nativeRead.name, "read");
+  assert.deepEqual(JSON.parse(nativeRead.arguments), { path: "native.txt" });
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: nativeRead.call_id, output: "native file contents" }]);
+  assert.equal((await pendingRead).content[0].text, "native file contents");
+  const custom = await discover("ExEc");
+  assert.deepEqual(custom.structuredContent.tools[0].format, format);
+  assert.deepEqual(JSON.parse(custom.content[0].text), custom.structuredContent);
+  const pendingCustom = call(client, turn, custom.structuredContent.tools[0].wireName, { input: "native" });
+  const [nativeCustom] = await broker.waitForCalls(turn.token);
+  assert.equal(nativeCustom.type, "custom_tool_call");
+  assert.equal(nativeCustom.namespace, "functions");
+  assert.equal(nativeCustom.input, "native");
+  broker.complete(turn.token, [{ type: "custom_tool_call_output", call_id: nativeCustom.call_id, output: "native code result" }]);
+  assert.equal((await pendingCustom).content[0].text, "native code result");
+  assert.deepEqual((await discover("missing")).structuredContent.tools, []);
+  assert.equal(finish(broker, turn.token), true);
+  assert.equal((await discover("read")).isError, true);
 });
 
 test("concurrent ChatGPT sessions retain exact turn identity and raw custom input", { timeout: 10_000 }, async t => {
@@ -142,6 +180,11 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
     { turn_token: turn.token, wire_name: "read", injected: "unexpected" },
     { turn_token: turn.token, wire_name: "x".repeat(1025) },
   ]) await assert.rejects(client.callTool({ name: "codex_tool_call", arguments: args }), /invalid arguments/iu);
+  for (const query of ["", " ", 1, "x".repeat(1025)]) {
+    await assert.rejects(client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, query } }), /invalid arguments/iu);
+  }
+  const unknownDiscovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: "web_turn_00000000000000000000000000000000", query: "read" } });
+  assert.equal(unknownDiscovery.isError, true);
   const unknown = await call(client, { token: "web_turn_00000000000000000000000000000000" }, "read");
   assert.equal(unknown.isError, true);
   const undeclared = await call(client, turn, "never_declared");

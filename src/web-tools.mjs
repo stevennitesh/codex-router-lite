@@ -243,11 +243,32 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     waiter.cleanup();
     waiter.resolve(takeCalls(token));
   };
-  const list = token => {
+  const list = (token, { query } = {}) => {
     const turn = active(token);
-    return [...turn.tools.values()].filter(tool => turn.policy.allowed.has(tool.wireName)).map(tool => structuredClone(tool));
+    if (query !== undefined && (typeof query !== "string" || !query.trim() || query.length > 1024)) {
+      throw failure("Web tool discovery query must be a nonempty string of at most 1024 characters.");
+    }
+    const needle = query?.trim().toLowerCase();
+    const matches = [];
+    for (const tool of turn.tools.values()) {
+      if (!turn.policy.allowed.has(tool.wireName)) continue;
+      let rank = 0;
+      if (needle !== undefined) {
+        const names = [tool.wireName, tool.name, tool.namespace].filter(value => value !== undefined).map(value => value.toLowerCase());
+        rank = names.some(value => value === needle) ? 0
+          : names.some(value => value.startsWith(needle)) ? 1
+            : names.some(value => value.includes(needle)) ? 2
+              : tool.description.toLowerCase().includes(needle) ? 3 : -1;
+        if (rank < 0) continue;
+      }
+      matches.push({ tool, rank });
+    }
+    // Stable sorting retains declaration order for equal matches. Only selected
+    // current declarations are cloned; discovery never grants authorization.
+    if (needle !== undefined) matches.sort((one, two) => one.rank - two.rank);
+    return matches.map(({ tool }) => structuredClone(tool));
   };
-  const update = (token, { tools, toolChoice = "auto" }) => {
+  const update = (token, { tools, toolChoice = "auto", includeTools = true }) => {
     const turn = active(token);
     if (turn.calls.size) throw failure("Cannot replace Web tool declarations with unresolved calls.", "web_tools_pending", 409);
     const nextNames = { byIdentity: new Map(turn.names.byIdentity), byWire: new Map(turn.names.byWire) };
@@ -257,10 +278,10 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     turn.tools = next;
     turn.policy = policy;
     change(turn);
-    return list(token);
+    return includeTools ? list(token) : undefined;
   };
   return {
-    register({ threadId, turnId, tools = [], toolChoice = "auto" }) {
+    register({ threadId, turnId, tools = [], toolChoice = "auto", includeTools = true }) {
       if (typeof threadId !== "string" || !threadId || typeof turnId !== "string" || !turnId) {
         throw failure("Web tools require the exact native thread and turn identity.");
       }
@@ -272,7 +293,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
       turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, waiters: new Set(), revision: 0, activity: 0 });
       owners.set(owner, token);
-      return { token, tools: list(token), instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. Discover current tools before invoking their exact wireName. Native Codex performs tool execution and approvals. Never expose the token in your answer.` };
+      return { token, ...(includeTools ? { tools: list(token) } : {}), instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. Discover the needed current tool definitions with codex_tools_list using a focused query; omit query for the full catalog. Use the returned complete parameters or raw custom-tool format and exact wireName. Native Codex performs tool execution and approvals. Never expose the token in your answer.` };
     },
     list, update, takeCalls, beginActivity,
     async invoke(token, payload, { signal } = {}) {

@@ -10,8 +10,10 @@ const tokenSchema = { type: "string", minLength: 1, maxLength: 256 };
 const tools = [
   {
     name: "codex_tools_list",
-    description: "Discover the tools declared and allowed for this exact active Codex turn. Retain wireName, kind, parameters, and raw custom-tool format when calling them.",
-    inputSchema: { type: "object", properties: { turn_token: tokenSchema }, required: ["turn_token"], additionalProperties: false },
+    description: "Discover complete definitions of tools declared and allowed for this exact active Codex turn. Prefer a focused query: a case-insensitive substring of wire/native name, namespace, or description, ranked by exact name, name prefix, name substring, then description; ties keep declaration order. Omit query for the full catalog. Retain wireName, kind, complete parameters, and raw custom-tool format when calling them.",
+    inputSchema: { type: "object", properties: { turn_token: tokenSchema,
+      query: { type: "string", minLength: 1, maxLength: 1024, pattern: "\\S" },
+    }, required: ["turn_token"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -57,7 +59,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     creating.add(entry);
     const server = new Server({ name: "codex-native-tools", version: "1.0.0" }, {
       capabilities: { tools: {} },
-      instructions: "Use the exact private turn_token supplied with the current Codex prompt. Discover current tools with codex_tools_list, then request them with codex_tool_call. Every result comes from native Codex execution and approvals. Never put private tokens in the answer.",
+      instructions: "Use the exact private turn_token supplied with the current Codex prompt. Discover needed current tool definitions with codex_tools_list using a focused query, then request them with codex_tool_call using the returned complete schema or custom grammar. Omit query only when the full catalog is needed. Prior turns and prose do not declare tools. Every result comes from native Codex execution and approvals. Never put private tokens in the answer.",
     });
     entry.server = server;
     server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: structuredClone(tools) }));
@@ -72,7 +74,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         // and the async continuation after native output resolved the call.
         release = broker.beginActivity(token);
         if (name === "codex_tools_list") {
-          const descriptors = broker.list(token);
+          const descriptors = broker.list(token, { query: args.query });
           return { content: [{ type: "text", text: JSON.stringify({ tools: descriptors }) }], structuredContent: { tools: descriptors } };
         }
         const invocation = { token };

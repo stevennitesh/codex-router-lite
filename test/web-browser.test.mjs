@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserHelperVersion, browserScript, discoverBrowserExecutor, parseBrowserOutput, readBrowserReplies } from "../src/web-browser.mjs";
 
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
@@ -183,7 +183,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
-    tabId: "owned-tab", navigations: [], replyReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
+    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -236,7 +236,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.familyExpanded = false; ui.onModel?.(); }
       else if (name === "Select model" && kind === "menuitem") {
         assert.equal(ui.menu && !ui.familyExpanded, true);
-        ui.actions.push("expand-models"); ui.familyExpansionClicks += 1; ui.familyExpanded = true;
+        ui.actions.push("expand-models"); ui.familyExpansionClicks += 1; ui.familyExpanded = !ui.expansionFails;
       }
       else if (kind === "family-text") {
         if (!ui.familyExpanded) { ui.clippedFamilyClicks += 1; ui.power = 2; }
@@ -318,6 +318,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         return callback([ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
       }
       ui.replyReads += 1;
+      ui.onReplyRead?.();
       const replies = ui.replyElements ?? ui.texts.map((value, index) => {
         const node = typeof value === "string" ? domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(value)) : value;
         domElement("div", { "data-chatgpt-selection-message-id": ui.replyIds ? ui.replyIds[index] : messageId(index) }, node);
@@ -362,13 +363,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       assert.fail(`Unobserved selector: ${name}`);
     },
   });
-  const tab = { get id() { return ui.tabId; }, url: async () => ui.url ?? "https://chatgpt.com/", goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
+  const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
     playwright: { getByRole: (kind, options) => makeLocator(kind, options.name), getByText: (text, options) => {
       assert.equal(options.exact, true); return makeLocator("text", text);
     }, locator: name => makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser", documentation: async () => "Current public browser docs",
-    tabs: { list: async () => [...(ui.present ? [{ id: tab.id, url: await tab.url() }] : []), ...(ui.extraTabs ?? [])],
+    tabs: { list: async () => [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])],
       get: async id => { assert.equal(id, tab.id); return tab; },
       new: async () => {
         if (ui.newTabs) { ui.tabId = "reopened-tab"; ui.url = "about:blank"; ui.texts = []; ui.composerText = ""; ui.chip = false; }
@@ -477,6 +478,38 @@ test("generation snapshots return only a marker match and do not read prior prom
   assert.doesNotMatch(JSON.stringify([observation, confirmation]), /PRIVATE_USER_TRANSCRIPT|Router generation/);
 });
 
+test("anchored projection reads only the owned body and completion metadata while retaining all identities", () => {
+  const historicalAnswer = assistantMessage(10, "Historical answer");
+  const currentAnswer = assistantMessage(20, "Current answer");
+  const historical = observedTurn(messageId(100), "Old request", [historicalAnswer]);
+  const current = observedTurn(messageId(200), "Current request", [currentAnswer]);
+  const root = domElement("main", {}, historical, current);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  const oldBody = historicalAnswer.querySelector(scopedReplySelector), oldText = oldBody.childNodes[0];
+  let historicalBodyReads = 0, historicalMetadataReads = 0, currentBodyReads = 0;
+  Object.defineProperty(oldText, "textContent", { get() { historicalBodyReads += 1; return "Historical answer"; } });
+  Object.defineProperty(currentAnswer.querySelector(scopedReplySelector).childNodes[0], "textContent", {
+    get() { currentBodyReads += 1; return "Current answer"; },
+  });
+  const query = historical.querySelectorAll;
+  historical.querySelectorAll = function (selector) { historicalMetadataReads += 1; return query.call(this, selector); };
+  const options = { snapshot: true, assistantSelector: scopedReplySelector, regenerateName: "Regenerate response" };
+  const anchored = readBrowserReplies(selected, { ...options, generationTurnKey: messageId(200) });
+  assert.deepEqual(anchored.replies.map(reply => reply.messageId), [messageId(10), messageId(20)]);
+  assert.deepEqual(anchored.turns.map(turn => turn.turnKey), [messageId(100), messageId(200)]);
+  assert.deepEqual(anchored.replies.map(reply => reply.text), ["", "Current answer"]);
+  assert.deepEqual([historicalBodyReads, historicalMetadataReads, currentBodyReads], [0, 0, 1]);
+  assert.equal(anchored.replies[1].completionActionAfter, true);
+  assert.equal(anchored.turns[1].complete, true);
+  const full = readBrowserReplies(selected, options);
+  assert.equal(full.replies[0].text, "Historical answer", "Recovery retains its full reply projection.");
+  assert.ok(historicalBodyReads > 0 && historicalMetadataReads > 0);
+  historicalAnswer.setAttribute("data-chatgpt-selection-message-id", messageId(20));
+  const duplicate = readBrowserReplies(selected, { ...options, generationTurnKey: messageId(200) });
+  assert.equal(duplicate.replies[0].identityDiagnostic.reason, "duplicate-wrapper-id");
+  assert.equal(duplicate.replies[0].identityDiagnostic.duplicateWrapperCount, 2);
+});
+
 test("generated bootstrap reads the current session browser and opens a verified empty normal home", async () => {
   const f = fixture();
   const boot = await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
@@ -558,9 +591,9 @@ test("prepared Send attaches before one current model verification and moves Pow
   await f.run("send", { ...plugin, prompt: "Use the exact requested model" });
   assert.equal(f.ui.power, 0);
   assert.deepEqual(f.ui.powerMoves, Array(4).fill("ArrowLeft"));
-  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "expand-models", "select-family", "send"]);
-  assert.equal(f.ui.familyExpansionClicks, 1);
-  assert.equal(f.ui.familyClicks, 1, 'The already-selected row returns to Power.');
+  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
+  assert.equal(f.ui.familyExpansionClicks, 0);
+  assert.equal(f.ui.familyClicks, 0, 'The current checked row requires no selection.');
   assert.equal(f.ui.familySwitches, 0);
   assert.equal(f.ui.clippedFamilyClicks, 0);
   assert.equal(f.ui.sendClicks, 1);
@@ -606,6 +639,25 @@ test("collapsed-present family rows are expanded before switching to GPT-5.6 Sol
   assert.equal(f.ui.sendClicks, 1);
 });
 
+test("an exact current family and Power send without family selection or Power movement", async () => {
+  const f = fixture({ currentPower: 0 }); await f.ready();
+  const sent = await f.run("send", { ...plugin, prompt: "Keep the current selection" });
+  assert.deepEqual([sent.familyChecked, sent.familyText, sent.powerValue], [true, "GPT-6", 0]);
+  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
+  assert.deepEqual(f.ui.powerMoves, []);
+  assert.equal(f.ui.clippedFamilyClicks, 0);
+});
+
+test("failed family expansion cannot click a clipped row or send", async () => {
+  const f = fixture(); await f.ready();
+  f.ui.checked = false; f.ui.expansionFails = true;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Select the requested family" }), /list did not expand/);
+  assert.equal(f.ui.familyExpansionClicks, 1);
+  assert.equal(f.ui.familyClicks, 0);
+  assert.equal(f.ui.clippedFamilyClicks, 0);
+  assert.equal(f.ui.sendClicks, 0);
+});
+
 test("prepared Send skips an existing exact connector chip and ignores cached model and connector state", async () => {
   const f = fixture({ currentPower: 4 });
   await f.ready();
@@ -613,10 +665,27 @@ test("prepared Send skips an existing exact connector chip and ignores cached mo
   Object.assign(f.getState(), { model: { family: "GPT-6", power: 0 }, pluginAppId: "asdk_old_tools" });
   f.ui.onType = () => { f.ui.power = 3; };
   await f.run("send", { ...plugin, prompt: "Recheck after preparation" });
-  assert.deepEqual(f.ui.actions, ["model-menu", "expand-models", "select-family", "send"]);
+  assert.deepEqual(f.ui.actions, ["model-menu", "send"]);
   assert.equal(f.ui.attachedName, null);
   assert.equal(f.ui.power, 0);
   assert.deepEqual(f.ui.powerMoves, Array(3).fill("ArrowLeft"));
+});
+
+test("a model change between retained turns is read from the picker before the next Send", async () => {
+  const f = fixture({ currentPower: 0 }); await f.ready();
+  await f.run("send", { ...plugin, prompt: "First request" });
+  f.ui.texts.push("First answer"); f.ui.complete = true;
+  await f.run("observe"); await f.run("retain");
+  await f.run("continue", { turnId: "next-turn" });
+  f.getState().model = { family: "GPT-6", power: 0 };
+  f.ui.checked = false; f.ui.power = 4; f.ui.complete = false;
+  await f.run("send", { ...plugin, prompt: "Second request", turnId: "next-turn" });
+  assert.equal(f.ui.familyExpansionClicks, 1);
+  assert.equal(f.ui.familySwitches, 1);
+  assert.equal(f.ui.clippedFamilyClicks, 0);
+  assert.deepEqual(f.ui.powerMoves, ["ArrowLeft", "ArrowLeft"], "The actual family switch resets Power to 2.");
+  assert.equal(f.ui.sendClicks, 2);
+  assert.equal(f.ui.newTabs, 1);
 });
 
 test("connector attachment failures or a changed draft prevent model selection, typing and Send", async () => {
@@ -1284,6 +1353,24 @@ test("an unseen old reply remount cannot become a current answer and old control
   assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.statusComplete], [null, '', false, false]);
   assert.equal(observed.replyUnavailableReason, 'no-new-message');
   assert.deepEqual(observed.generationReplyIds, []);
+});
+
+test("an invalid historical identity still blocks a valid current answer during scoped observation", async () => {
+  for (const [identity, reason] of [[null, "missing-message-identity"], ["invalid", "invalid-message-identity"],
+    [messageId(20), "duplicate-message-identity"]]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    const historical = assistantMessage(10, "Old answer");
+    historical.setAttribute("data-chatgpt-selection-message-id", identity);
+    f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(100), "Old request", [historical]),
+      observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Current final answer")]));
+    f.ui.complete = true;
+    const observed = await f.run("observe");
+    assert.deepEqual([observed.assistantText, observed.replyId, observed.completed], ["", null, false]);
+    assert.equal(observed.replyUnavailableReason, reason);
+    await assert.rejects(f.run("retain"), /successfully completed/);
+    assert.equal(f.ui.sendClicks, 1);
+  }
 });
 
 test("a duplicate generation key or a later foreign turn cannot supply the final answer", async () => {
@@ -2148,24 +2235,86 @@ test("a visual observation returns the current generation without an artificial 
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Call the current tools" });
   f.ui.stop = true;
-  const before = f.ui.replyReads, waitedBefore = f.ui.waitedMs;
+  const before = f.ui.replyReads, waitedBefore = f.ui.waitedMs, urlsBefore = f.ui.urlReads;
   const pending = await f.run("observe");
   assert.equal(pending.completed, false);
   assert.equal(pending.stopVisible, true);
   assert.equal(f.ui.replyReads - before, 1);
   assert.equal(f.ui.waitedMs - waitedBefore, 0);
+  assert.equal(f.ui.urlReads - urlsBefore, 2, "Observation validates a URL before and after its DOM reads.");
   assert.equal(f.ui.fetchCalls, 0);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.handoffs, 2);
 });
 
-test("observation and retention keep their serialized native browser payload below 22 KB", () => {
+test("observation and retention use compact resident invocations below 4 KB", () => {
   const sendBytes = Buffer.byteLength(browserScript({ ...base, operation: "send", prompt: "Request" }), "utf8");
   for (const operation of ["observe", "retain"]) {
     const bytes = Buffer.byteLength(browserScript({ ...base, operation }), "utf8");
-    assert.ok(bytes < 22000, `${operation} payload is ${bytes} bytes`);
+    assert.ok(bytes < 4000, `${operation} payload is ${bytes} bytes`);
     assert.ok(bytes < sendBytes / 2, `${operation} must omit the full mutation runner`);
+  }
+});
+
+test("one frozen resident controller survives ordinary observation, retention, bootstrap and continuation", async () => {
+  const f = fixture(); await f.ready();
+  const helper = f.getState().residentBrowser;
+  assert.equal(Object.isFrozen(helper), true);
+  assert.equal(helper.version, browserHelperVersion);
+  assert.equal(helper.state, f.getState());
+  await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+  await f.run("send", { ...plugin, prompt: "Request" });
+  f.ui.texts.push("Completed answer"); f.ui.complete = true;
+  await f.run("observe");
+  await f.run("retain");
+  await f.run("continue", { turnId: "next-turn" });
+  assert.equal(f.getState().residentBrowser, helper);
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1);
+});
+
+test("missing, incompatible or foreign resident helpers fail before DOM reads and continuation repairs them without replay", async () => {
+  for (const corrupt of [
+    state => { delete state.residentBrowser; },
+    state => { state.residentBrowser = Object.freeze({ ...state.residentBrowser, version: "outdated-source" }); },
+    state => { state.residentBrowser = Object.freeze({ ...state.residentBrowser, state: {} }); },
+    state => { state.residentBrowser = { ...state.residentBrowser }; },
+  ]) {
+    const f = fixture(); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Completed answer"); f.ui.complete = true;
+    await f.run("observe"); await f.run("retain");
+    const original = f.getState().residentBrowser;
+    corrupt(f.getState());
+    const reads = f.ui.replyReads, handoffs = f.ui.handoffs;
+    for (const operation of ["observe", "retain"]) await assert.rejects(f.run(operation), /helper was lost or changed/);
+    assert.equal(f.ui.replyReads, reads);
+    assert.equal(f.ui.handoffs, handoffs);
+    const continued = await f.run("continue", { turnId: "next-turn" });
+    assert.equal(continued.assistantText, "Completed answer");
+    const repaired = f.getState().residentBrowser;
+    assert.notEqual(repaired, original);
+    assert.equal(repaired.version, browserHelperVersion);
+    assert.equal(Object.isFrozen(repaired), true);
+    assert.equal(repaired.state, f.getState());
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1);
+    assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("resident observation rejects navigation or owner changes during the page read", async () => {
+  for (const change of [f => { f.ui.url = "https://chatgpt.com/c/another-conversation"; },
+    f => { f.ui.temporary = true; }, f => { f.activeTurn().turnId = "newer-turn"; }]) {
+    const f = fixture(); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Completed answer"); f.ui.complete = true;
+    f.ui.onReplyRead = () => change(f);
+    await assert.rejects(f.run("observe"), /normal saved URL|different native turn owns/);
+    assert.notEqual(f.getState().completed, true);
+    assert.notEqual(f.getState().retained, true);
+    assert.equal(f.ui.sendClicks, 1);
   }
 });
 

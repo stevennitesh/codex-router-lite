@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { browserScript } from '../src/web-browser.mjs';
+import { browserHelperVersion, browserScript } from '../src/web-browser.mjs';
 import { createWebStopHookConfig } from '../src/web-stop-hook.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, cleanupMetadata, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
 
@@ -66,23 +66,40 @@ test('only actual generated observation code gains cancellation grace', () => {
   assert.equal(qualifyBrowserCall(call, STOP_CONFIG.runtimeModule)?.observation, true);
   assert.equal(qualifyBrowserCall({ ...call, arguments: { ...call.arguments, code: call.arguments.code + '\n// changed' } }, STOP_CONFIG.runtimeModule), null);
   assert.equal(qualifyBrowserCall(ordinary(TURN, 'retain'), STOP_CONFIG.runtimeModule)?.observation, false);
+  assert.equal(qualifyBrowserCall(ordinary(TURN, 'send'), STOP_CONFIG.runtimeModule)?.observation, false);
   assert.equal(qualifyBrowserCall(call, 'E:\\other-runtime.mjs'), null);
 });
 
-test('compact observe and retain qualify only with the exact generated runner and shared browser view', () => {
+test('resident observe and retain qualify only with the exact binding, helper version and canonical invocation', () => {
   for (const operation of ['observe', 'retain']) {
     const call = ordinary(TURN, operation), code = call.arguments.code;
-    assert.ok(Buffer.byteLength(code, 'utf8') < 22000);
+    assert.ok(Buffer.byteLength(code, 'utf8') < 5000);
     const qualified = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule);
     assert.equal(qualified?.config.operation, operation);
     assert.equal(qualified?.observation, operation === 'observe');
+    assert.ok(code.includes(browserHelperVersion));
     for (const tampered of [
-      code.replace('await ensureOwned();', 'await Promise.resolve();'),
-      code.replace('current.state !== state', 'false'),
+      code.replaceAll('routerWeb_fixtureBinding', 'routerWeb_foreignBinding'),
+      code.replace(browserHelperVersion, '0'.repeat(64)),
+      code.replace('Object.isFrozen(', 'Object.isExtensible('),
+      code.slice(code.lastIndexOf('await globalThis.')),
+      `${code}\nvoid 0;`,
     ]) {
       assert.notEqual(tampered, code);
       assert.equal(qualifyBrowserCall({ ...call, arguments: { ...call.arguments, code: tampered } }, STOP_CONFIG.runtimeModule), null);
     }
+  }
+});
+
+test('compact configuration remains bound to the originating native identity, runtime and Stop control', () => {
+  const call = ordinary();
+  const config = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule).config;
+  for (const replacement of [
+    { sessionId: SESSION }, { turnId: TURN2 }, { runtimeModule: 'E:\\other-runtime.mjs' },
+    { ui: { ...config.ui, stopButtonExactName: 'Stop generating' } },
+  ]) {
+    const candidate = { ...call, arguments: { ...call.arguments, code: browserScript({ ...config, ...replacement }) } };
+    assert.equal(qualifyBrowserCall(candidate, STOP_CONFIG.runtimeModule), null);
   }
 });
 

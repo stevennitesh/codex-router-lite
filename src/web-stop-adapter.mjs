@@ -63,9 +63,15 @@ export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
     const identity = readIdentity(params._meta, threadIds), sandbox = readSandbox(params._meta);
     if (!identity || !sandbox || !own(params._meta, 'sessionId')) return null;
     const code = normalize(params.arguments.code);
-    const end = code.lastIndexOf(', nodeRepl, function readBrowserReplies(');
-    if (end < 0) return null;
-    const match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\})$/u.exec(code.slice(0, end));
+    // Observe/retain invoke the binding's versioned resident helper. Other
+    // operations still carry the full runner. Extract only the producer's
+    // literal config; exact regeneration below validates every guard and byte.
+    let match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
+    if (!match) {
+      const end = code.lastIndexOf(', nodeRepl, ');
+      if (end < 0) return null;
+      match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\})$/u.exec(code.slice(0, end));
+    }
     if (!match) return null;
     const config = JSON.parse(match[2]);
     if (config.bindingId !== match[1] || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
