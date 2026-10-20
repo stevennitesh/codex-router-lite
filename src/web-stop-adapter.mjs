@@ -157,6 +157,53 @@ export function readStopResult(result) {
   return { ok: true, ...proof };
 }
 
+// Recognize only fixed public runtime failures. Never persist native error text,
+// stacks, arguments or metadata; even a rejected tool can contain private data.
+const NATIVE_STOP_FAILURES = [
+  ['model_unavailable', 'node_repl is unavailable for this model'],
+  ['cancelled_before_execution', 'js execution cancelled before execution'],
+  ['sandbox_changed', 'js sandbox changed; kernel reset, rerun your request'],
+  ['execution_timeout', 'js execution timed out; kernel reset, rerun your request'],
+  ['execution_cancelled', 'js execution cancelled; kernel reset'],
+  ['kernel_closed', 'node_repl kernel closed unexpectedly'],
+  ['process_exited', 'trusted Node process exited unexpectedly; kernel reset, rerun your request'],
+  ['approval_required', 'JavaScript execution requires an approval'],
+  ['approval_required', 'JavaScript execution requires an approval elicitation'],
+  ['approval_denied', 'JavaScript execution was denied'],
+  ['approval_missing', 'JavaScript execution did not receive approval'],
+  ['execution_cancelled', 'JavaScript execution cancelled'],
+];
+function nativeStopFailure(response) {
+  const result = response?.result;
+  const source = response == null ? 'no_response' : own(response, 'error') ? 'rpc_error'
+    : !record(result) ? 'missing_result' : result.isError === true ? 'tool_error' : 'invalid_content';
+  const texts = [];
+  if (typeof response?.error?.message === 'string') texts.push(response.error.message.slice(0, 16384));
+  if (Array.isArray(result?.content)) for (const block of result.content.slice(0, 16)) {
+    if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text.slice(0, 16384));
+  }
+  const text = texts.join('\n');
+  const messages = [], errorKinds = new Set();
+  for (const sample of texts) {
+    messages.push(sample);
+    try {
+      const parsed = JSON.parse(sample);
+      if (typeof parsed === 'string') messages.push(parsed);
+      if (record(parsed)) {
+        if (typeof parsed.error === 'string') messages.push(parsed.error);
+        if (['import_error', 'syntax_error', 'reference_error', 'type_error', 'uncaught_exception', 'unhandled_rejection'].includes(parsed.error_kind)) errorKinds.add(parsed.error_kind);
+      }
+    } catch { /* Native tool errors need not be JSON. */ }
+  }
+  const normalized = new Set(messages.map(message => message.replace(/^(?:MCP error -?[0-9]+: |Error: )/u, '')));
+  return { source, ...(Number.isSafeInteger(response?.error?.code) ? { rpcCode: response.error.code } : {}),
+    textBytes: Buffer.byteLength(text), textSha256: createHash('sha256').update(text).digest('hex'),
+    signatures: [...new Set(NATIVE_STOP_FAILURES.filter(([, literal]) => normalized.has(literal)).map(([name]) => name))],
+    errorKinds: [...errorKinds].sort(),
+    errorClasses: [...new Set([...normalized].map(message => /^(SyntaxError|ReferenceError|TypeError|RangeError|EvalError|URIError|AggregateError):/u.exec(message)?.[1]).filter(Boolean))].sort(),
+  };
+}
+
 // SDK transports are deliberately bridged below their Client/Server handlers:
 // every unknown method/result/notification retains its actual wire payload.
 // MCP offers no signed per-call hook provenance. Trust is in the explicit
@@ -566,7 +613,7 @@ export class AdapterBridge {
       proof = response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
       this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', proof.ok
         ? { stopClicked: proof.stopClicked, stopHidden: proof.stopHidden, retained: proof.retained }
-        : { resultCode: proof.code, ...(proof.outcome === 'blocked' ? {
+        : { resultCode: proof.code, ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}), ...(proof.outcome === 'blocked' ? {
           outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
           stopClicked: proof.stopClicked, stopHidden: proof.stopHidden, retained: proof.retained, elapsedMs: proof.elapsedMs,
         } : {}) });

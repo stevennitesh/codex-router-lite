@@ -963,6 +963,34 @@ test('blocked Stop exposes only validated progress; errors or malformed proof ca
   });
 });
 
+test('native Stop failures distinguish RPC rejection and tool errors without retaining private error data', async t => {
+  for (const branch of ['rpc', 'tool', 'structured', 'unknown']) await t.test(branch, async subtest => {
+    const privateText = 'synthetic-private-credential';
+    const message = branch === 'rpc' ? 'js execution cancelled before execution'
+      : branch === 'tool' ? `TypeError: ${privateText}` : branch === 'structured'
+        ? JSON.stringify({ error: privateText, error_kind: 'reference_error' }) : `Cannot find package 'TypeError': ${privateText}`;
+    const f = await protocolFixture(subtest, params => {
+      if (!params.arguments?.code?.includes('stopOwnedWebTurn')) return ordinaryResult;
+      if (branch === 'rpc') throw new McpError(-32602, message, { secret: privateText });
+      return { isError: true, content: [{ type: 'text', text: message }] };
+    });
+    await f.client.callTool(ordinary());
+    assert.equal((await f.client.callTool(hook())).isError, true);
+    const diagnostic = f.receipts.find(entry => entry.code === 'stop_unconfirmed');
+    assert.equal(diagnostic.resultCode, 'native_error');
+    const failure = diagnostic.nativeFailure;
+    assert.equal(failure.source, branch === 'rpc' ? 'rpc_error' : 'tool_error');
+    assert.equal(failure.rpcCode, branch === 'rpc' ? -32602 : undefined);
+    assert.deepEqual(failure.signatures, branch === 'rpc' ? ['cancelled_before_execution'] : []);
+    assert.deepEqual(failure.errorClasses, branch === 'tool' ? ['TypeError'] : []);
+    assert.deepEqual(failure.errorKinds, branch === 'structured' ? ['reference_error'] : []);
+    assert.ok(failure.textBytes > 0);
+    assert.match(failure.textSha256, /^[a-f0-9]{64}$/u);
+    assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+    assert.equal(JSON.stringify(f.receipts).includes(privateText), false);
+  });
+});
+
 test('overlapping ordinary JS cancels injected cleanup and prevents late success', async t => {
   let entered;
   const started = new Promise(resolve => { entered = resolve; });

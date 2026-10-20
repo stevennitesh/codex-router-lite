@@ -165,6 +165,12 @@ limit also shortens the native CDP dispatch deadline and can detach its debugger
 before cleanup's deadline. Stop is clicked once; a rejected click remains an
 explicit partial failure and is never replayed.
 
+An unconfirmed native cleanup records whether the child returned an RPC error,
+a tool error, an invalid result, or no response. Diagnostics retain only numeric
+RPC codes, fixed runtime failure signatures, known JavaScript error classes/kinds and
+bounded text size/digest; arbitrary error text and private payloads are omitted.
+These observations locate a failed boundary and do not establish that Stop ran.
+
 The unmodified official CLI adapter path has
 [dated Stop and same-chat continuation evidence](../history/2026-10-19-web-stop-adapter-verification.json).
 The record covers the all-ordinary configuration after a normal Codex restart,
