@@ -1163,10 +1163,38 @@ test("a confirmed interrupted Send without observed text recovers its exact reta
   });
 });
 
-test("retained-tab recovery rejects changed tabs, ambiguous replies and drafts before Stop or Send", async t => {
+test("a confirmed interrupted generation recovers its saved chat after its tab identity is lost without replaying Send", async t => {
+  for (const closed of [false, true]) await t.test(closed ? "closed tab" : "replacement tab at the same saved URL", async t => {
+    const h = harness(t);
+    await stopBeforeRenderedReply(h);
+    const savedUrl = h.browser.ui.url;
+    if (closed) h.browser.ui.present = false;
+    else h.browser.ui.tabId = "another-tab";
+    await h.restartRuntime();
+    const priorCheckpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
+    h.newTurn(followupId, "Continue in the recovered saved chat.");
+    const continuation = (await h.request()).output[0];
+    const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(pending.lastTurn.sendState, "unsent");
+    assert.deepEqual(pending.checkpoint, priorCheckpoint);
+    const result = await h.executeBrowser(continuation);
+    assert.match(result, /"recovered":true/u);
+    assert.match(result, /"interrupted":true/u);
+    assert.equal(h.browser.ui.url, savedUrl);
+    assert.equal(h.browser.ui.sends.length, 1, "Recovery must not replay the interrupted Send.");
+    h.append(continuation, outputFor(continuation, result));
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue in the recovered saved chat." }]);
+    assert.equal(h.browser.ui.sends.length, 2, "Only the new follow-up is sent.");
+    assert.equal(h.browser.ui.newTabs, closed ? 2 : 1);
+    assert.equal(h.browser.ui.navigations, closed ? 2 : 1);
+    assert.equal(h.browser.ui.closes, 0);
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  });
+});
+
+test("retained-tab recovery rejects foreign chats, ambiguous replies and drafts before Stop or Send", async t => {
   for (const [label, mutate, emptyReply] of [
-    ["missing exact tab", h => { h.browser.ui.present = false; }],
-    ["different tab at the same URL", h => { h.browser.ui.tabId = "another-tab"; }],
     ["changed saved URL", h => { h.browser.ui.url = "https://chatgpt.com/c/another-chat"; }],
     ["duplicate identity", h => { h.browser.ui.replyIds = [messageId(0), messageId(0)]; }],
     ["missing identity", h => { h.browser.ui.replyIds = [messageId(0), null]; }],
@@ -1178,7 +1206,9 @@ test("retained-tab recovery rejects changed tabs, ambiguous replies and drafts b
     await stopBeforeRenderedReply(h, { emptyReply }); mutate(h);
     h.newTurn(followupId, "Continue only in the retained chat.");
     const continuation = (await h.request()).output[0];
-    await assert.rejects(h.executeBrowser(continuation), /retained saved chat|saved chat reply or composer/iu);
+    await assert.rejects(h.executeBrowser(continuation), label === "changed saved URL"
+      ? /known tab is not an empty normal ChatGPT home/iu
+      : /saved chat reply or composer/iu);
     assert.equal(h.browser.ui.stop, true); assert.deepEqual(h.browser.ui.stopMarks, []);
     assert.equal(h.browser.ui.sends.length, 1); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
   });

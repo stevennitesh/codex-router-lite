@@ -406,6 +406,26 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
   return { ...f, recovery, text };
 }
 
+async function interruptedBeforeReplyFixture() {
+  const f = fixture({ fastTimers: true });
+  await f.ready();
+  f.ui.texts.push("Earlier answer");
+  const sent = await f.run("send", { ...plugin, prompt: "Interrupted request" });
+  const rendered = (content = []) => domElement("main", {},
+    observedTurn(messageId(100), "Earlier request", [assistantMessage(0, "Earlier answer")]),
+    observedTurn(sent.generationTurnKey, "Interrupted request", content, { complete: false }));
+  f.ui.messageRoot = rendered();
+  f.ui.stop = true;
+  const observed = await f.run("observe");
+  assert.deepEqual([observed.assistantText, observed.replyId, observed.generationReplyIds], ["", null, []]);
+  const recovery = { tabId: observed.tabId, url: observed.url, baselineReplyCount: observed.baselineReplyCount,
+    baselineReplyIds: observed.baselineReplyIds, replyCount: observed.replyCount, replyId: observed.replyId,
+    generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
+    assistantPrefix: assistantPrefix(observed.assistantText), completed: false, retainedTabOnly: true };
+  await f.run("cancel");
+  return { ...f, recovery, rendered };
+}
+
 function showFullConversation(ui) {
   ui.fullBanners = [{ text: fullConversationText }];
   ui.fullButtons = [{ text: "Start new chat" }];
@@ -1290,6 +1310,131 @@ test("interrupted anchored recovery stops the exact tab and accepts a later fina
     assert.equal(f.ui.newTabs, 1);
     assert.deepEqual(f.getState().baselineReplyIds, [20, 21, 22].map(messageId));
     assert.equal(f.activeTurn().turnId, 'following-turn');
+  }
+});
+
+test("an interrupted confirmed generation without a reply restores its saved URL after restart or tab closure without replaying Send", async () => {
+  for (const loss of ["restart-home", "restart-closed", "closed"]) for (const answerMounted of [false, true]) {
+    const f = await interruptedBeforeReplyFixture();
+    if (loss.startsWith("restart")) f.loseBinding();
+    if (loss === "restart-home") {
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      delete f.ui.messageRoot;
+    } else f.ui.present = false;
+    f.ui.onGoto = url => {
+      assert.equal(url, f.recovery.url);
+      f.ui.texts = ["Earlier answer", ...(answerMounted ? ["Answer mounted after restart"] : [])];
+      f.ui.messageRoot = f.rendered(answerMounted ? [assistantMessage(20, "Answer mounted after restart")] : []);
+    };
+    const continued = await f.run("continue", { turnId: "following-turn", tabId: f.recovery.tabId,
+      interruptedTurnId: base.turnId, recovery: f.recovery });
+    assert.equal(continued.recovered, true);
+    assert.equal(continued.url, f.recovery.url);
+    assert.equal(continued.assistantText, answerMounted ? "Answer mounted after restart" : "");
+    assert.deepEqual(f.getState().baselineReplyIds, [0, ...(answerMounted ? [20] : [])].map(messageId));
+    assert.equal(f.ui.newTabs, loss === "restart-home" ? 1 : 2);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
+    assert.equal(f.ui.sendClicks, 1, "Restoring the interrupted generation cannot replay its confirmed Send.");
+    delete f.ui.messageRoot;
+    const next = await f.run("send", { ...plugin, turnId: "following-turn", prompt: "New follow-up request" });
+    assert.equal(next.sent, true);
+    assert.equal(next.url, f.recovery.url);
+    assert.equal(f.ui.sendClicks, 2);
+    assert.equal(f.ui.typed.filter(text => text.includes("Interrupted request")).length, 1);
+  }
+});
+
+test("saved URL restoration without a reply requires one latest confirmed generation and valid mounted message identities", async () => {
+  for (const invalid of ["missing", "mismatched", "duplicate", "later-turn", "duplicate-message"]) {
+    const f = await interruptedBeforeReplyFixture();
+    f.loseBinding();
+    f.ui.present = false;
+    f.ui.onGoto = () => {
+      const key = f.recovery.generationTurnKey;
+      const turn = () => observedTurn(key, "Interrupted request", [], { complete: false });
+      f.ui.messageRoot = invalid === "missing" ? domElement("main", {})
+        : invalid === "mismatched" ? domElement("main", {}, observedTurn(messageId(900), "Another request", [], { complete: false }))
+          : invalid === "duplicate" ? domElement("main", {}, turn(), turn())
+            : invalid === "later-turn" ? domElement("main", {}, turn(), observedTurn(messageId(900), "Later request", [], { complete: false }))
+              : f.rendered([assistantMessage(20, "First message"), assistantMessage(20, "Duplicate identity")]);
+    };
+    await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: f.recovery.tabId,
+      interruptedTurnId: base.turnId, recovery: f.recovery }), /saved chat URL and reply did not become available/u);
+    assert.equal(f.ui.stopClicks, 1, "An unverified restored generation cannot authorize another Stop.");
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.getState().bindingLost, true);
+  }
+});
+
+test("anchored recovery before a reply cannot overwrite a different chat or a user draft", async () => {
+  for (const invalid of ["different-chat", "home-draft", "saved-draft"]) {
+    const f = await interruptedBeforeReplyFixture();
+    f.loseBinding();
+    if (invalid === "different-chat") f.ui.url = "https://chatgpt.com/c/another-conversation";
+    else {
+      f.ui.composerText = "User draft";
+      if (invalid === "home-draft") {
+        Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+        delete f.ui.messageRoot;
+      }
+    }
+    await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: f.recovery.tabId,
+      interruptedTurnId: base.turnId, recovery: f.recovery }), /cannot overwrite it|reply or composer changed/u);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("saved URL recovery rechecks ownership and the destination tab after retention before navigation", async () => {
+  for (const [closed, change] of [[false, "owner"], [false, "chat"], [false, "draft"], [true, "owner"], [true, "chat"]]) {
+    const f = await interruptedBeforeReplyFixture();
+    f.loseBinding();
+    if (closed) f.ui.present = false;
+    else {
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      delete f.ui.messageRoot;
+    }
+    const handoff = f.tab.markHandoff;
+    f.tab.markHandoff = async () => {
+      await handoff();
+      if (change === "owner") f.activeTurn().turnId = "newer-turn";
+      else {
+        if (change === "chat") f.ui.url = "https://chatgpt.com/c/another-conversation";
+        f.ui.composerText = "New user draft";
+      }
+    };
+    f.ui.onGoto = () => { f.ui.messageRoot = f.rendered(); };
+    await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: f.recovery.tabId,
+      interruptedTurnId: base.turnId, recovery: f.recovery }), change === "owner"
+      ? /different native turn owns/u : /recovery tab changed before saved chat navigation/u);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"], "A changed recovery target cannot be navigated before its guard rejects.");
+    if (change === "owner") assert.equal(f.activeTurn().turnId, "newer-turn");
+    else {
+      assert.equal(f.ui.composerText, "New user draft");
+      assert.equal(f.ui.url, change === "chat" ? "https://chatgpt.com/c/another-conversation" : "https://chatgpt.com/");
+    }
+    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("an interrupted retained proof without a generation anchor still requires its exact existing tab and saved URL", async () => {
+  for (const loss of ["restart-home", "restart-closed", "closed"]) {
+    const f = await interruptedBeforeReplyFixture();
+    const recovery = { ...f.recovery };
+    delete recovery.generationTurnKey;
+    delete recovery.generationReplyIds;
+    if (loss.startsWith("restart")) f.loseBinding();
+    if (loss === "restart-home") f.ui.url = "https://chatgpt.com/";
+    else f.ui.present = false;
+    await assert.rejects(f.run("continue", { turnId: "following-turn", tabId: recovery.tabId,
+      interruptedTurnId: base.turnId, recovery }), /exact retained saved chat tab(?: or URL changed| is unavailable)/u);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.stopClicks, 1);
+    assert.equal(f.ui.sendClicks, 1);
   }
 });
 

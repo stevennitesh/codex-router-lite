@@ -115,6 +115,9 @@ If the tab closes or Codex restarts, Router reopens the recorded chat URL in tha
 Codex conversation's browser and checks the previous reply's identity and text
 prefix before continuing. Existing saved records without a message ID retain
 their previous exact URL and reply-prefix check, then acquire the observed ID.
+If Stop preceded a readable answer, a confirmed generation's unique latest turn
+can establish ownership in the recorded saved chat instead. Without that anchor
+or a readable reply proof, recovery requires the exact retained tab.
 Tab IDs alone do not identify a chat. Reopening preserves the saved conversation;
 it does not resend its full history or execute historical tool calls again. An
 uncertain Send or unresolved native coding action blocks continuation until its
@@ -218,12 +221,14 @@ Verify actual Stop and same-chat continuation after restart; configuration and
 offline tests alone do not establish live cancellation.
 
 The managed adapter contains an immutable browser-code snapshot and recognizes
-only exact Router browser operations. After changing `src/web-browser.mjs` or the
-Stop cleanup in `src/web-stop-hook.mjs`, run the supported adapter installer from
-the matching Router source and fully quit and reopen Codex. The managed hook
-definition remains unchanged. Preserve a matching Router source and adapter
-generation for rollback; rolling back launch
-selections alone restores the original installation baseline.
+only exact Router observation programs. Changes to selection, Send or recovery
+can keep the existing adapter when its installed qualifier still accepts the
+generated observation code exactly. Verify that equality before deployment.
+Changes to observation, shared reply or ownership helpers, or Stop cleanup need
+the supported adapter installer from the matching Router source and a full Codex
+restart. The managed hook definition remains unchanged. Preserve a compatible
+Router source and adapter generation for rollback; rolling back launch selections
+alone restores the original installation baseline.
 
 ```powershell
 .\model-router.ps1 codex web stop adapter-rollback

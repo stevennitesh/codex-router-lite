@@ -445,14 +445,15 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
     const owned = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
     recoverMissingTab = owned.length === 0;
-    if (recoverMissingTab && options.recovery.retainedTabOnly) throw new Error("The exact retained saved chat tab is unavailable; recovery cannot replace it.");
+    if (recoverMissingTab && options.recovery.retainedTabOnly && !options.recovery.generationTurnKey) throw new Error("The exact retained saved chat tab is unavailable; recovery cannot replace it.");
     if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
   }
   if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
-    // A confirmed saved URL, message identity and reply prefix can recover a lost kernel.
+    // A confirmed saved URL and generation anchor or reply proof can recover a lost kernel.
     // A browser/tab ID is only a hint after restart; the exact saved URL and
-    // visible reply remain authoritative. Never replace a surviving owner.
+    // rendered generation or reply remain authoritative. Never replace a surviving owner.
     const proof = options.recovery;
+    const exactRetainedTab = proof.retainedTabOnly && !proof.generationTurnKey;
     const requireRecoveryOwnership = () => {
       if (recoverMissingTab) activeOwner(options.expectedOwnerTurnIds, true);
       else {
@@ -475,16 +476,17 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     const tabs = await browser.tabs.list();
     requireRecoveryOwnership();
     const hinted = proof.tabId ? tabs.filter(tab => tab.id === proof.tabId) : [];
-    const matches = proof.retainedTabOnly ? hinted : hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
-    if (proof.retainedTabOnly && (matches.length !== 1 || matches[0].url !== proof.url)) throw new Error("The exact retained saved chat tab or URL changed; recovery cannot replace it.");
+    const matches = exactRetainedTab ? hinted : hinted.length ? hinted : tabs.filter(tab => tab.url === proof.url);
+    if (exactRetainedTab && (matches.length !== 1 || matches[0].url !== proof.url)) throw new Error("The exact retained saved chat tab or URL changed; recovery cannot replace it.");
     if (matches.length > 1) throw new Error("The saved chat tab is ambiguous; recovery cannot choose a tab.");
     requireRecoveryOwnership();
     const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
     requireRecoveryOwnership();
     if (!tab?.id || matches.length && tab.id !== matches[0].id) throw new Error("The current tab identity changed during recovery.");
-    const navigate = await tab.url() !== proof.url;
+    const recoveryTabUrl = await tab.url();
+    const navigate = recoveryTabUrl !== proof.url;
     requireRecoveryOwnership();
-    if (proof.retainedTabOnly && navigate) throw new Error("The exact retained saved chat URL changed during recovery.");
+    if (exactRetainedTab && navigate) throw new Error("The exact retained saved chat URL changed during recovery.");
     if (matches.length && navigate && !(await emptyNormalHome(tab))) throw new Error("The known tab is not an empty normal ChatGPT home; recovery cannot overwrite it.");
     const { createHash } = await import("node:crypto");
     requireRecoveryOwnership();
@@ -527,7 +529,10 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       sendAttempted: true, sendClicked: true, sendConfirmed: true, completed: proof.completed, retained: proof.completed });
     registerActive();
     await tab.markHandoff();
+    activeOwner([options.turnId], true);
     if (navigate) {
+      if (matches.length && !(await emptyNormalHome(tab)) || await tab.url() !== recoveryTabUrl) throw new Error("The recovery tab changed before saved chat navigation; recovery cannot overwrite it.");
+      activeOwner([options.turnId], true);
       await tab.goto(proof.url);
       const deadline = Date.now() + 10000;
       while (!(await verifiedReply())) {
