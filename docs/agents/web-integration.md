@@ -25,6 +25,16 @@ native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
 records locally; storing or forwarding them does not request Codex inference.
 
+The full bridge protocol and exact current Codex instructions are sent on first
+attachment or an instruction revision. Confirmed Send records their digest and
+the owning browser generation in optional V1 ledger fields
+`deliveredInstructionsSha256` and `deliveredInstructionsGenerationTurnKey`.
+Unchanged follow-ups carry compact guidance, a fresh turn token and the exact new
+transcript items. A missing or stale delivery record requires full instructions;
+changed instructions explicitly supersede the earlier instructions. A successor
+chat receives full instructions. Existing rollback readers can still read these
+records and resume with their ordinary full instruction delivery.
+
 Web-route native compaction selects source excerpts locally, without requesting
 a model summary. Both standalone compaction and native V2 compaction stay local;
 they do not generate a Web reply or request browser tools. This is separate from
@@ -62,6 +72,8 @@ a small operation request instead of repeating its source. Its source digest,
 frozen controller and exact binding are checked before invocation. A missing or
 changed helper fails explicitly; ordinary continuation can restore it without
 replaying Send. The helper runs in the native REPL, not injected page code.
+Other browser programs serialize only the runners needed by their operation;
+recovery, selection and Send retain their separate lifecycle checkpoints.
 
 Each reply snapshot retains mounted turn/message identities and order, while
 reconstructing answer text and completion details only for the owned generation.
@@ -111,6 +123,9 @@ request to native Codex for execution and approval. Router itself does not run
 shell commands or bypass Codex approvals. Tool results return to the same active
 browser turn before ChatGPT continues. Private turn tokens and the tunnel runtime
 key are transport state and must not appear in answers or logs.
+An unchanged declaration set reuses its private accepted registry. Each update
+still evaluates current tool choice and advances its broker revision; changed
+schemas rebuild the registry without reassigning reserved wire identities.
 
 Native cancellation retires the exact Web turn and revokes further connector tool
 access; cancelled or timed-out tool calls are not replayed. Router preserves the

@@ -175,18 +175,20 @@ test("resident source changes invalidate compact programs while independently sh
       assert.ok(variant.readBrowserProgram(current));
     }
   }
-  const operationVariant = await loadVariant(changeFunction("runBrowserOperation"));
-  assert.equal(operationVariant.browserHelperVersion, browserHelperVersion);
-  for (const code of compact) {
-    const options = operationVariant.readBrowserProgram(code);
-    assert.ok(options, "Independently shipped model and Send logic cannot invalidate resident observation calls.");
-    assert.equal(operationVariant.browserScript(options), code);
-  }
   const send = browserScript({ ...base, operation: "send", prompt: "Request" });
-  assert.equal(operationVariant.readBrowserProgram(send), null, "Mutation programs still require their complete current source.");
-  const currentSend = operationVariant.browserScript(readBrowserProgram(send));
-  assert.notEqual(currentSend, send);
-  assert.ok(operationVariant.readBrowserProgram(currentSend));
+  for (const name of ["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"]) {
+    const operationVariant = await loadVariant(changeFunction(name));
+    assert.equal(operationVariant.browserHelperVersion, browserHelperVersion);
+    for (const code of compact) {
+      const options = operationVariant.readBrowserProgram(code);
+      assert.ok(options, "Independently shipped model and Send logic cannot invalidate resident observation calls.");
+      assert.equal(operationVariant.browserScript(options), code);
+    }
+    assert.equal(operationVariant.readBrowserProgram(send), null, "Mutation programs still require their complete current source.");
+    const currentSend = operationVariant.browserScript(readBrowserProgram(send));
+    assert.notEqual(currentSend, send);
+    assert.ok(operationVariant.readBrowserProgram(currentSend));
+  }
 });
 
 const framed = value => `ROUTER_WEB_BROWSER_${token}_BEGIN\n${JSON.stringify({ routerBrowser: value })}\nROUTER_WEB_BROWSER_${token}_END`;
@@ -246,11 +248,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return makeLocator("family-text", hasText);
     },
     async count() {
+      await ui.onControlRead?.({ kind, name, method: "count" });
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
       return kind === "family-text" ? Number(ui.familyText.includes(name)) : name === plugin.pluginSelectionButtonName ? ui.selectionCount ?? 1 : 0;
     },
     async isVisible() {
+      await ui.onControlRead?.({ kind, name, method: "isVisible" });
       if (name === "Select ChatGPT model" && kind === "menu") return ui.menu;
       if (name === "Select ChatGPT model" && kind === "button") return ui.modelButtonVisible;
       if (name === "Select model" && kind === "menuitem") return ui.menu && !ui.familyExpanded;
@@ -304,11 +308,12 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
     },
     async getAttribute(attribute) {
+      await ui.onControlRead?.({ kind, name, method: "getAttribute", attribute });
       if (name === '[role="slider"]') assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is read from the visible Power view.');
       if (attribute === "aria-valuenow" && ui.missingPower) return null;
       return { "aria-checked": String(ui.checked), "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null;
     },
-    async textContent() { return kind === "family-text" ? ui.familyText : name; },
+    async textContent() { await ui.onControlRead?.({ kind, name, method: "textContent" }); return kind === "family-text" ? ui.familyText : name; },
     async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
       if (name === "Power") {
@@ -582,6 +587,23 @@ test("open observes deferred hydration of all four controls without opening or n
   assert.equal(f.ui.sendClicks, 0);
 });
 
+test("normal home waits for both independent temporary-mode visibility reads", { timeout: 2000 }, async () => {
+  const f = fixture();
+  await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+  const started = new Set(), barrier = Promise.withResolvers();
+  f.ui.onControlRead = async ({ kind, name, method }) => {
+    if (method !== "isVisible" || !["Turn off temporary chat", "Temporary chat"].includes(name)
+        || name === "Temporary chat" && kind !== "heading") return;
+    started.add(name);
+    if (started.size === 2) barrier.resolve();
+    await barrier.promise;
+  };
+  assert.equal((await f.run("open")).normal, true);
+  assert.deepEqual([...started].sort(), ["Temporary chat", "Turn off temporary chat"]);
+  assert.equal(f.ui.sendClicks, 0);
+  assert.equal(f.ui.newTabs, 1);
+});
+
 test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
   for (const control of ["composerVisible", "modelButtonVisible", "temporaryButtonVisible", "normalHeadingVisible"]) {
     const f = fixture({ fastTimers: true });
@@ -673,6 +695,47 @@ test("an exact current family and Power send without family selection or Power m
   assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
   assert.deepEqual(f.ui.powerMoves, []);
   assert.equal(f.ui.clippedFamilyClicks, 0);
+});
+
+test("picker reads settle together within each stable phase before selection or Send proceeds", { timeout: 2000 }, async () => {
+  const f = fixture(); await f.ready();
+  const groups = [
+    ["family:count", "family:textContent", "family:aria-checked"],
+    ["family:count", "family:textContent"],
+    ["slider:aria-valuenow", "slider:aria-valuemin", "slider:aria-valuemax"],
+    ["family:aria-checked", "family:textContent"],
+  ];
+  let phase = 0, started = new Set(), barrier = Promise.withResolvers();
+  f.ui.onControlRead = async ({ kind, name, method, attribute }) => {
+    const key = `${kind === "family-text" ? "family" : name === '[role="slider"]' ? "slider" : "other"}:${attribute ?? method}`;
+    if (!groups[phase]?.includes(key)) return;
+    const pending = barrier;
+    assert.equal(started.has(key), false, "A phase cannot reread one control while another independent read is pending.");
+    started.add(key);
+    assert.equal(f.ui.sendClicks, 0);
+    if (phase === 2) assert.equal(f.ui.powerMoves.length, 0, "Power must not move before its range has been read.");
+    if (started.size === groups[phase].length) {
+      phase += 1;
+      started = new Set();
+      barrier = Promise.withResolvers();
+      pending.resolve();
+    }
+    await pending.promise;
+  };
+  await f.run("send", { ...plugin, prompt: "Read stable control groups" });
+  assert.equal(phase, groups.length);
+  assert.deepEqual(f.ui.powerMoves, ["ArrowLeft", "ArrowLeft", "ArrowLeft"]);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("final concurrent family verification rejects a changed checked state or family after Power readback", async () => {
+  for (const change of [ui => { ui.checked = false; }, ui => { ui.familyText = "GPT-6 unexpected"; }]) {
+    const f = fixture(); await f.ready();
+    f.ui.onControlRead = ({ kind }) => { if (kind === "family-text" && f.ui.powerMoves.length === 3) change(f.ui); };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Require the current final selection" }), /Requested model and Power were not verified/u);
+    assert.equal(f.ui.sendClicks, 0);
+    assert.deepEqual(f.ui.powerMoves, ["ArrowLeft", "ArrowLeft", "ArrowLeft"]);
+  }
 });
 
 test("failed family expansion cannot click a clipped row or send", async () => {

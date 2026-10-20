@@ -165,6 +165,61 @@ test("tool choice blocks unauthorized tools and required choices prevent a no-to
   assert.throws(() => register(broker, [fn("read")], { toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
 });
 
+test("unchanged registries reevaluate mutable current policy and preserve pending-call and revision fences", async () => {
+  const broker = createWebToolBroker();
+  const declarations = [fn("read"), fn("write")], policy = { type: "function", name: "read" };
+  const { token } = register(broker, declarations, { toolChoice: policy });
+  const before = broker.beginCompletion(token);
+  policy.name = "write";
+  broker.update(token, { tools: structuredClone(declarations), toolChoice: policy });
+  assert.equal(broker.revision(token), before + 1);
+  assert.equal(broker.finish(token, before), false);
+  assert.deepEqual(broker.list(token).map(tool => tool.name), ["write"]);
+  await assert.rejects(broker.invoke(token, { wireName: "read" }), /not declared and allowed/u);
+  assert.equal(finish(broker, token), false, "Required policy still applies on the unchanged declaration path.");
+  const result = broker.invoke(token, { wireName: "write" });
+  assert.throws(() => broker.update(token, { tools: declarations, toolChoice: "none" }), { code: "web_tools_pending" });
+  const [call] = broker.takeCalls(token);
+  assert.equal(call.name, "write");
+  broker.complete(token, [output(call, "actual write result")]);
+  await result;
+  const revision = broker.revision(token);
+  assert.throws(() => broker.update(token, { tools: declarations, toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
+  assert.equal(broker.revision(token), revision);
+  assert.deepEqual(broker.list(token).map(tool => tool.name), ["write"]);
+  broker.update(token, { tools: declarations, toolChoice: "none" });
+  assert.deepEqual(broker.list(token), []);
+  assert.equal(finish(broker, token), true);
+});
+
+test("caller and discovery mutations cannot change accepted schemas until a successful current update", () => {
+  const broker = createWebToolBroker();
+  const declarations = [{ type: "namespace", name: "functions", tools: [custom("exec"), fn("read", {
+    parameters: { type: "object", properties: { marker: { enum: ["original"] } } },
+  })] }];
+  const original = structuredClone(declarations);
+  const { token } = register(broker, declarations);
+  const before = broker.list(token);
+  broker.update(token, { tools: structuredClone(original) });
+  declarations[0].tools[0].format.definition = "start: /changed/";
+  declarations[0].tools[1].parameters.properties.marker.enum[0] = "changed";
+  assert.deepEqual(broker.list(token), before, "Input mutation cannot alter the private accepted snapshot.");
+  broker.update(token, { tools: declarations });
+  const changed = broker.list(token);
+  assert.deepEqual(changed.map(tool => tool.wireName), before.map(tool => tool.wireName));
+  assert.equal(changed[0].format.definition, "start: /changed/");
+  assert.deepEqual(changed[1].parameters.properties.marker.enum, ["changed"]);
+  changed[0].format.definition = "start: /discovery mutation/";
+  changed[1].parameters.properties.marker.enum[0] = "discovery mutation";
+  broker.update(token, { tools: structuredClone(declarations) });
+  assert.equal(broker.list(token)[0].format.definition, "start: /changed/");
+  assert.deepEqual(broker.list(token)[1].parameters.properties.marker.enum, ["changed"]);
+  declarations[0].tools[1].parameters.properties.marker.enum[0] = "unaccepted";
+  assert.throws(() => broker.update(token, { tools: declarations, toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
+  assert.deepEqual(broker.list(token)[1].parameters.properties.marker.enum, ["changed"]);
+  assert.equal(finish(broker, token), true);
+});
+
 test("allowed_tools resolves exact namespaces and excludes sibling tools", async () => {
   const broker = createWebToolBroker();
   const declarations = [{ type: "namespace", name: "one", tools: [fn("read")] }, { type: "namespace", name: "two", tools: [fn("read")] }];

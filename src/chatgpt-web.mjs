@@ -41,7 +41,7 @@ function existingAbsoluteFile(value, extensions, label) {
 function inAppConfiguration(value) {
   requireFields(value, ["runtimeModule", "pluginName", "pluginAppId", "pluginSelectionButtonName", "tunnelId", "tunnelClientPath", "capabilities", "mcpPort"], "in-app Web configuration");
   requireFields(value.capabilities, ["solAvailable", "extraHighAvailable", "proAvailable"], "Web account capabilities");
-  buildWebBridgeModels(value.capabilities);
+  const models = buildWebBridgeModels(value.capabilities);
   if (typeof value.pluginAppId !== "string" || !/^asdk_app_[a-zA-Z0-9_-]+$/u.test(value.pluginAppId)) {
     throw new Error("Invalid pluginAppId; supply the observed asdk_app_ identity.");
   }
@@ -53,6 +53,7 @@ function inAppConfiguration(value) {
     throw new Error("Invalid mcpPort; supply a dedicated loopback TCP port separate from Router.");
   }
   return {
+    models,
     capabilities: Object.fromEntries(["solAvailable", "extraHighAvailable", "proAvailable"].map(key => [key, value.capabilities[key]])),
     browser: {
       runtimeModule: existingAbsoluteFile(value.runtimeModule, [".mjs", ".js"], "official public browser runtime module"),
@@ -86,7 +87,7 @@ export function readWebBridgeSettings() {
   const inApp = readInAppConfiguration(value);
   return { version: 1, enabled: value.enabled, capabilities: inApp.capabilities, browser: inApp.browser,
     tunnel: inApp.tunnel, ...(inApp.mcpPort === undefined ? {} : { mcpPort: inApp.mcpPort }),
-    models: buildWebBridgeModels(inApp.capabilities) };
+    models: inApp.models };
 }
 export function webBridgeModels() {
   const settings = readWebBridgeSettings();
@@ -100,7 +101,7 @@ export function webBridgeStatus() {
 }
 
 export async function configureInAppWebBridge(config) {
-  const safeConfiguration = inAppConfiguration(config);
+  const { models: _models, ...safeConfiguration } = inAppConfiguration(config);
   return withCatalogPublicationLock(() => {
     writePrivateJson(settingsPath, { version: 1, enabled: true, ...safeConfiguration });
     return webBridgeStatus();

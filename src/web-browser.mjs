@@ -290,8 +290,13 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     ]);
     return banner && button;
   };
-  const temporaryInactive = async (tab = state.tab) => !(await role(ui.temporaryToggleName, "button", tab).isVisible())
-    && !(await role(ui.temporaryHeadingName, "heading", tab).isVisible());
+  const temporaryInactive = async (tab = state.tab) => {
+    const [toggle, heading] = await Promise.all([
+      role(ui.temporaryToggleName, "button", tab).isVisible(),
+      role(ui.temporaryHeadingName, "heading", tab).isVisible(),
+    ]);
+    return !toggle && !heading;
+  };
   const normal = async (value) => {
     value ??= await state.tab.url();
     const url = new URL(value);
@@ -340,10 +345,11 @@ function createBrowserView(state, options, replyReader, savedUrl) {
   return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
 }
 
-async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFactory, waitForState) {
+function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
-  const { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner } = viewFactory(state, options, replyReader);
+  const view = viewFactory(state, options, replyReader);
+  const { role, replies, temporaryInactive, activeOwner } = view;
   // Native Interrupt runs in a new JS invocation. Retained tab ownership must
   // remain available there without looking for tabs by URL or replaying Send.
   const registerActive = () => {
@@ -370,50 +376,6 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
       && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
       && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
-  };
-  const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
-  const selectModel = async () => {
-    const menu = role(ui.modelMenuName, "menu");
-    if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
-    // The current picker renders the family as generic text inside an unnamed
-    // radio menu item. Match its observed DOM text, then verify the full text.
-    const familyLocator = () => menu.locator(ui.familySelector).filter({ hasText: options.modelFamily });
-    const expand = menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true });
-    const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
-    let family = familyLocator();
-    if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    // Read the actual checked row before changing the picker. Collapsed rows
-    // are readable but clipped over Power, so only click after expanding.
-    if (await family.getAttribute(ui.checkedAttribute) !== "true") {
-      if (await expand.isVisible()) await expand.click();
-      if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
-      await family.click();
-    } else if (!(await power.isVisible())) {
-      // An already-expanded list returns to Power when its selected row is clicked.
-      if (await expand.isVisible()) throw new Error("The selected model Power view is unavailable.");
-      await family.click();
-    }
-    family = familyLocator();
-    if (await family.count() !== 1 || (await family.textContent())?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
-    const slider = menu.locator(ui.powerSliderSelector);
-    const readPower = async attribute => {
-      const value = await slider.getAttribute(attribute);
-      if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
-      return Number(value);
-    };
-    let value = await readPower(ui.powerValueAttribute);
-    const minimum = await readPower(ui.powerMinimumAttribute);
-    const maximum = await readPower(ui.powerMaximumAttribute);
-    if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
-    for (let move = 0; value !== options.power && move < 4; move += 1) {
-      const direction = value > options.power ? -1 : 1;
-      await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
-      const after = await readPower(ui.powerValueAttribute);
-      if (after !== value + direction) throw new Error("Power did not move exactly one step.");
-      value = after;
-    }
-    if (await family.getAttribute(ui.checkedAttribute) !== "true" || (await family.textContent())?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
-    await power.press("Escape");
   };
   const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
     const current = activeOwner(turnIds, requireActive);
@@ -447,6 +409,97 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
   };
 
+  const requireBinding = () => {
+    if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
+    if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
+  };
+  return { ...view, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, stopGeneration, clearUnsentDraft, resetChat, requireBinding };
+}
+
+// Selection ships only with Send. These reads share a stable picker phase;
+// mutations and their required readback remain sequential.
+async function selectBrowserModel(state, options, role) {
+  const { ui } = options;
+  const menu = role(ui.modelMenuName, "menu");
+  if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
+  // The current picker renders the family as generic text inside an unnamed
+  // radio menu item. Match its observed DOM text, then verify the full text.
+  const familyLocator = () => menu.locator(ui.familySelector).filter({ hasText: options.modelFamily });
+  const expand = menu.getByRole("menuitem", { name: ui.modelExpandName, exact: true });
+  const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
+  let family = familyLocator();
+  const [familyCount, familyText, familyChecked] = await Promise.all([
+    family.count(), family.textContent(), family.getAttribute(ui.checkedAttribute),
+  ]);
+  if (familyCount !== 1 || familyText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
+  // Read the actual checked row before changing the picker. Collapsed rows
+  // are readable but clipped over Power, so only click after expanding.
+  if (familyChecked !== "true") {
+    if (await expand.isVisible()) await expand.click();
+    if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
+    await family.click();
+  } else if (!(await power.isVisible())) {
+    // An already-expanded list returns to Power when its selected row is clicked.
+    if (await expand.isVisible()) throw new Error("The selected model Power view is unavailable.");
+    await family.click();
+  }
+  family = familyLocator();
+  const [selectedCount, selectedText] = await Promise.all([family.count(), family.textContent()]);
+  if (selectedCount !== 1 || selectedText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
+  const slider = menu.locator(ui.powerSliderSelector);
+  const readPower = async attribute => {
+    const value = await slider.getAttribute(attribute);
+    if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
+    return Number(value);
+  };
+  const [initialValue, minimum, maximum] = await Promise.all([
+    readPower(ui.powerValueAttribute), readPower(ui.powerMinimumAttribute), readPower(ui.powerMaximumAttribute),
+  ]);
+  let value = initialValue;
+  if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
+  for (let move = 0; value !== options.power && move < 4; move += 1) {
+    const direction = value > options.power ? -1 : 1;
+    await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
+    const after = await readPower(ui.powerValueAttribute);
+    if (after !== value + direction) throw new Error("Power did not move exactly one step.");
+    value = after;
+  }
+  const [checked, text] = await Promise.all([family.getAttribute(ui.checkedAttribute), family.textContent()]);
+  if (checked !== "true" || text?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
+  await power.press("Escape");
+}
+
+async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+  const { emit } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  if (state.sessionId && (state.sessionId !== options.sessionId || state.runtimeModule !== options.runtimeModule)) throw new Error("Browser binding belongs to another session or runtime.");
+  if (!state.agent) state.agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
+  const own = (await state.agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
+  if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("Expected exactly one same-session in-app browser.");
+  if (state.browser && state.browser.browserId !== own[0].id) throw new Error("Owned browser identity changed.");
+  state.browser ??= await state.agent.browsers.get(own[0].id);
+  state.sessionId = options.sessionId;
+  state.runtimeModule = options.runtimeModule;
+  emit({});
+  return;
+}
+
+async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+  const { emit, registerActive, emptyNormalHome, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  requireBinding();
+  if (state.tab) throw new Error("This browser binding already owns a tab.");
+  state.tab = await state.browser.tabs.new();
+  state.tabId = state.tab.id;
+  registerActive();
+  await state.tab.goto("https://chatgpt.com/");
+  await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
+  await state.tab.markHandoff();
+  emit({ tabId: state.tabId, url: await state.tab.url(), normal: true });
+  return;
+}
+
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, stopGeneration, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { operation, ui } = options;
   let recovered = false;
   let verifyRecoveryTexts;
   let recoverMissingTab = false;
@@ -550,79 +603,34 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
     recovered = true;
   }
 
-  if (operation === "bootstrap") {
-    if (state.sessionId && (state.sessionId !== options.sessionId || state.runtimeModule !== options.runtimeModule)) throw new Error("Browser binding belongs to another session or runtime.");
-    if (!state.agent) state.agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
-    const own = (await state.agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
-    if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("Expected exactly one same-session in-app browser.");
-    if (state.browser && state.browser.browserId !== own[0].id) throw new Error("Owned browser identity changed.");
-    state.browser ??= await state.agent.browsers.get(own[0].id);
-    state.sessionId = options.sessionId;
-    state.runtimeModule = options.runtimeModule;
-    emit({});
-    return;
-  }
-  if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
-  if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
-  if (operation === "open") {
-    if (state.tab) throw new Error("This browser binding already owns a tab.");
-    state.tab = await state.browser.tabs.new();
-    state.tabId = state.tab.id;
-    registerActive();
-    await state.tab.goto("https://chatgpt.com/");
-    await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
-    await state.tab.markHandoff();
-    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true });
-    return;
-  }
+  requireBinding();
   await ensureOwned(recovered);
-  if (operation === "continue") {
-    const interrupted = options.interruptedTurnId !== undefined;
-    const owners = recovered ? [options.turnId] : options.expectedOwnerTurnIds;
-    activeOwner(owners, true);
-    if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
-    if (options.needsHistory && !state.needsHistory) throw new Error("The pending full-history successor binding is unavailable.");
-    if (state.needsHistory) {
-      if (!state.rolloverAttempted || !state.rolloverFromUrl) throw new Error("The pending full-history successor binding is unavailable.");
-      if (interrupted && state.sendAttempted && !state.sendConfirmed) {
-        if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor is not an idle normal home.");
-        await state.tab.markHandoff();
-        activeOwner(owners, true);
-        if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor left its idle normal home; the draft was not cleared.");
-        await clearUnsentDraft();
-      }
-      if (!(await emptyNormalHome())) throw new Error("The pending full-history successor is not a proven empty normal home.");
-      await state.tab.markHandoff();
-      if (!(await emptyNormalHome())) throw new Error("The pending full-history successor left its proven empty normal home.");
-      activeOwner(owners, true);
-      resetChat();
-      registerActive();
-      emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, needsHistory: true, assistantText: "", conversationFull: false,
-        ...(interrupted ? { interrupted: true } : {}) });
-      return;
-    }
-    if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
-    if (await conversationFull()) {
-      const view = await snapshot(), texts = view.replies;
-      if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
-      if (recovered) {
-        if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
-        delete state.bindingLost;
-      }
-      const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
+  const interrupted = options.interruptedTurnId !== undefined;
+  const owners = recovered ? [options.turnId] : options.expectedOwnerTurnIds;
+  activeOwner(owners, true);
+  if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
+  if (options.needsHistory && !state.needsHistory) throw new Error("The pending full-history successor binding is unavailable.");
+  if (state.needsHistory) {
+    if (!state.rolloverAttempted || !state.rolloverFromUrl) throw new Error("The pending full-history successor binding is unavailable.");
+    if (interrupted && state.sendAttempted && !state.sendConfirmed) {
+      if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor is not an idle normal home.");
       await state.tab.markHandoff();
       activeOwner(owners, true);
-      emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, assistantText, conversationFull: true,
-        ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
-      return;
+      if (!(await normalHomeMode()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The pending full-history successor left its idle normal home; the draft was not cleared.");
+      await clearUnsentDraft();
     }
+    if (!(await emptyNormalHome())) throw new Error("The pending full-history successor is not a proven empty normal home.");
     await state.tab.markHandoff();
-    if (interrupted) {
-      await stopGeneration(owners, true);
-      if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
-      state.retained = true;
-    } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
-    if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
+    if (!(await emptyNormalHome())) throw new Error("The pending full-history successor left its proven empty normal home.");
+    activeOwner(owners, true);
+    resetChat();
+    registerActive();
+    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, needsHistory: true, assistantText: "", conversationFull: false,
+      ...(interrupted ? { interrupted: true } : {}) });
+    return;
+  }
+  if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
+  if (await conversationFull()) {
     const view = await snapshot(), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
     if (recovered) {
@@ -630,140 +638,172 @@ async function runBrowserOperation(state, options, nodeRepl, replyReader, viewFa
       delete state.bindingLost;
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
-    if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
-    const continuationUrl = await state.tab.url();
-    if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
-    activeOwner(owners, true);
-    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
-    delete state.replyId;
-    delete state.generationTurnKey;
-    delete state.generationReplyIds;
-    state.sendAttempted = false;
-    state.sendClicked = false;
-    state.sendConfirmed = false;
-    delete state.unsentDraft;
-    delete state.unsentComposerText;
-    state.completed = false;
-    state.retained = false;
-    registerActive();
-    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
-      ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
-  } else if (operation === "rollover") {
-    activeOwner(options.expectedOwnerTurnIds, true);
-    if (state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with an uncertain Send.");
-    if (state.rolloverAttempted) {
-      if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
-      await state.tab.markHandoff();
-    } else {
-      const ready = async () => state.savedUrl === options.previousChatUrl && await state.tab.url() === options.previousChatUrl
-        && await normal() && await conversationFull() && !(await role(ui.stopButtonExactName).isVisible()) && await emptyComposer();
-      const start = role(ui.startNewChatButtonName).filter({ visible: true });
-      if (!(await ready()) || await start.count() !== 1) throw new Error("Rollover requires the exact owned full saved chat, an idle empty composer and one visible Start new chat button.");
-      await state.tab.markHandoff();
-      if (!(await ready()) || await start.count() !== 1) throw new Error("The full saved chat changed before rollover; nothing clicked.");
-      activeOwner(options.expectedOwnerTurnIds, true);
-      Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
-      await start.click();
-      await waitForState(emptyNormalHome, Date.now() + 10000, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
-    }
-    if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
-    activeOwner(options.expectedOwnerTurnIds, true);
-    resetChat();
-    registerActive();
-    emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
-  } else if (operation === "send") {
-    if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
-    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
-    if (await conversationFull()) {
-      emit({ sent: false, conversationFull: true, tabId: state.tabId, url: await state.tab.url(), normal: true });
-      return;
-    }
-    if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
-    if (options.pluginAppId) {
-      if (!(await chip().isVisible())) {
-        await role(ui.addButtonName).click();
-        const selection = role(options.pluginSelectionButtonName);
-        if (await selection.count() !== 1) throw new Error("The configured plugin button is unavailable or ambiguous.");
-        await selection.click();
-      }
-      if (!(await chip().isVisible())) throw new Error("The configured plugin chip was not attached.");
-    }
-    if (!(await emptyComposer())) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
-    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-    const beforeSend = await snapshot(), baseline = beforeSend.replies;
-    if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
-    state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
-    delete state.replyId;
-    delete state.generationTurnKey;
-    state.generationReplyIds = [];
-    state.sendAttempted = true;
-    state.sendClicked = false;
-    state.sendConfirmed = false;
-    state.unsentDraft = ` ${options.prompt}`;
-    const composer = role(ui.composerName, "textbox");
-    await composer.press("End");
-    await composer.type(state.unsentDraft);
-    state.unsentComposerText = await composer.innerText();
-    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
-    const send = role(ui.sendButtonExactName);
-    const sendDeadline = Date.now() + 10000;
-    const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
-    // A large paste can become an attachment. Keep a short, nonsecret marker
-    // outside that payload so the confirmed Send owns one observable turn.
-    await waitForSend();
-    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
-    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-    const settledComposerText = await composer.innerText();
-    if (settledComposerText !== state.unsentComposerText && !(await emptyComposer())) throw new Error("The composer draft changed while the paste settled; nothing sent.");
-    const generationMarker = `\nRouter generation: ${options.turnId}`;
-    state.unsentDraft += generationMarker;
-    await composer.press('End');
-    await composer.type(generationMarker);
-    state.unsentComposerText = await composer.innerText();
-    if (state.unsentComposerText !== settledComposerText + generationMarker) throw new Error("The composer generation marker changed or was transformed; nothing sent.");
-    await waitForSend();
-    // Attachment and paste can alter the picker. Select and verify the exact
-    // requested family and Power once, using the current DOM before Send.
-    await selectModel();
-    if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
-    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
-    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-    activeOwner([options.turnId], true);
     await state.tab.markHandoff();
-    activeOwner([options.turnId], true);
-    if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
-    if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
-    if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-    state.sendClicked = true;
-    await send.click();
-    state.hasSentMessage = true;
-    await waitForState(async () => savedUrl(await state.tab.url()), sendDeadline,
-      "The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
-    const confirmedUrl = await state.tab.url();
-    if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
-    state.savedUrl = confirmedUrl;
-    if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
-    const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
-    let anchor;
-    await waitForState(async () => {
-      const afterSend = await snapshot(state.tab, generationMarker.trim());
-      const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey)
-        && value.matchesGenerationMarker);
-      const latestTurn = afterSend.turns.at(-1);
-      if (candidates.length === 1 && candidates[0] === latestTurn
-          && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
-          && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1) anchor = latestTurn.turnKey;
-      if (!anchor && !(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
-      return Boolean(anchor);
-    }, sendDeadline, "The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-    state.generationTurnKey = anchor;
-    state.sendConfirmed = true;
-    delete state.unsentDraft;
-    delete state.unsentComposerText;
-    for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
-    emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
-      baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
-  } else throw new Error("Unsupported browser operation.");
+    activeOwner(owners, true);
+    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, assistantText, conversationFull: true,
+      ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+    return;
+  }
+  await state.tab.markHandoff();
+  if (interrupted) {
+    await stopGeneration(owners, true);
+    if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
+    state.retained = true;
+  } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
+  if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
+  const view = await snapshot(), texts = view.replies;
+  if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
+  if (recovered) {
+    if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+    delete state.bindingLost;
+  }
+  const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
+  if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
+  const continuationUrl = await state.tab.url();
+  if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
+  activeOwner(owners, true);
+  state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
+  delete state.replyId;
+  delete state.generationTurnKey;
+  delete state.generationReplyIds;
+  state.sendAttempted = false;
+  state.sendClicked = false;
+  state.sendConfirmed = false;
+  delete state.unsentDraft;
+  delete state.unsentComposerText;
+  state.completed = false;
+  state.retained = false;
+  registerActive();
+  emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
+    ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+}
+
+async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+  const { role, conversationFull, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, emptyNormalHome, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { ui } = options;
+  requireBinding();
+  await ensureOwned();
+  activeOwner(options.expectedOwnerTurnIds, true);
+  if (state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with an uncertain Send.");
+  if (state.rolloverAttempted) {
+    if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
+    await state.tab.markHandoff();
+  } else {
+    const ready = async () => state.savedUrl === options.previousChatUrl && await state.tab.url() === options.previousChatUrl
+      && await normal() && await conversationFull() && !(await role(ui.stopButtonExactName).isVisible()) && await emptyComposer();
+    const start = role(ui.startNewChatButtonName).filter({ visible: true });
+    if (!(await ready()) || await start.count() !== 1) throw new Error("Rollover requires the exact owned full saved chat, an idle empty composer and one visible Start new chat button.");
+    await state.tab.markHandoff();
+    if (!(await ready()) || await start.count() !== 1) throw new Error("The full saved chat changed before rollover; nothing clicked.");
+    activeOwner(options.expectedOwnerTurnIds, true);
+    Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
+    await start.click();
+    await waitForState(emptyNormalHome, Date.now() + 10000, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
+  }
+  if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
+  activeOwner(options.expectedOwnerTurnIds, true);
+  resetChat();
+  registerActive();
+  emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
+}
+
+async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel) {
+  const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { ui } = options;
+  const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
+  requireBinding();
+  await ensureOwned();
+  if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
+  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
+  if (await conversationFull()) {
+    emit({ sent: false, conversationFull: true, tabId: state.tabId, url: await state.tab.url(), normal: true });
+    return;
+  }
+  if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
+  if (options.pluginAppId) {
+    if (!(await chip().isVisible())) {
+      await role(ui.addButtonName).click();
+      const selection = role(options.pluginSelectionButtonName);
+      if (await selection.count() !== 1) throw new Error("The configured plugin button is unavailable or ambiguous.");
+      await selection.click();
+    }
+    if (!(await chip().isVisible())) throw new Error("The configured plugin chip was not attached.");
+  }
+  if (!(await emptyComposer())) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
+  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  const beforeSend = await snapshot(), baseline = beforeSend.replies;
+  if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
+  state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
+  delete state.replyId;
+  delete state.generationTurnKey;
+  state.generationReplyIds = [];
+  state.sendAttempted = true;
+  state.sendClicked = false;
+  state.sendConfirmed = false;
+  state.unsentDraft = ` ${options.prompt}`;
+  const composer = role(ui.composerName, "textbox");
+  await composer.press("End");
+  await composer.type(state.unsentDraft);
+  state.unsentComposerText = await composer.innerText();
+  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
+  const send = role(ui.sendButtonExactName);
+  const sendDeadline = Date.now() + 10000;
+  const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
+  // A large paste can become an attachment. Keep a short, nonsecret marker
+  // outside that payload so the confirmed Send owns one observable turn.
+  await waitForSend();
+  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
+  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  const settledComposerText = await composer.innerText();
+  if (settledComposerText !== state.unsentComposerText && !(await emptyComposer())) throw new Error("The composer draft changed while the paste settled; nothing sent.");
+  const generationMarker = `\nRouter generation: ${options.turnId}`;
+  state.unsentDraft += generationMarker;
+  await composer.press('End');
+  await composer.type(generationMarker);
+  state.unsentComposerText = await composer.innerText();
+  if (state.unsentComposerText !== settledComposerText + generationMarker) throw new Error("The composer generation marker changed or was transformed; nothing sent.");
+  await waitForSend();
+  // Attachment and paste can alter the picker. Select and verify the exact
+  // requested family and Power once, using the current DOM before Send.
+  await selectModel(state, options, role);
+  if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
+  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  activeOwner([options.turnId], true);
+  await state.tab.markHandoff();
+  activeOwner([options.turnId], true);
+  if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
+  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  state.sendClicked = true;
+  await send.click();
+  state.hasSentMessage = true;
+  await waitForState(async () => savedUrl(await state.tab.url()), sendDeadline,
+    "The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
+  const confirmedUrl = await state.tab.url();
+  if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
+  state.savedUrl = confirmedUrl;
+  if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
+  const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
+  let anchor;
+  await waitForState(async () => {
+    const afterSend = await snapshot(state.tab, generationMarker.trim());
+    const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey)
+      && value.matchesGenerationMarker);
+    const latestTurn = afterSend.turns.at(-1);
+    if (candidates.length === 1 && candidates[0] === latestTurn
+        && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
+        && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1) anchor = latestTurn.turnKey;
+    if (!anchor && !(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
+    return Boolean(anchor);
+  }, sendDeadline, "The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
+  state.generationTurnKey = anchor;
+  state.sendConfirmed = true;
+  delete state.unsentDraft;
+  delete state.unsentComposerText;
+  for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
+  emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
+    baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
 }
 
 async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory) {
@@ -794,7 +834,8 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 }
 
 // The digest binds the resident controller and DOM contract to their exact source
-// generation. The mutation runner ships with each operation and is not retained.
+// generation. Each mutation program ships only its own runner and shared context;
+// mutation code is not retained in the resident controller.
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
@@ -864,7 +905,8 @@ export function browserScript(options) {
     ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
-  return `${initialize}\n${resident}\nawait (${runBrowserOperation.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState);`;
+  const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, continue: runBrowserContinuation, rollover: runBrowserRollover, send: runBrowserSend }[options.operation];
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()}${options.operation === "send" ? `, ${selectBrowserModel.toString()}` : ""});`;
 }
 
 // This is a codec for our own producer, not a permissive JavaScript parser.
@@ -875,9 +917,7 @@ export function readBrowserProgram(value) {
     const code = value.replace(/\r\n?/gu, "\n");
     let match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
     if (!match) {
-      const end = code.lastIndexOf(", nodeRepl, ");
-      if (end < 0) return null;
-      match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\})$/u.exec(code.slice(0, end));
+      match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\}), nodeRepl, globalThis\.routerWeb_[A-Za-z][A-Za-z0-9_]{0,100}\.residentBrowser\.replyReader,/u.exec(code);
     }
     if (!match) return null;
     const config = JSON.parse(match[2]);

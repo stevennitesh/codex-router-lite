@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import { appendFile, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +14,13 @@ const FOREIGN = "01a144be-0020-74f1-bfc1-75d8f5c883fa";
 const event = (turnId = TURN) => JSON.stringify({ timestamp: "2026-10-16T23:34:35Z",
   type: "event_msg", payload: { type: "turn_aborted", turn_id: turnId, reason: "interrupted" } });
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const waitFor = async predicate => {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, "Timed out waiting for the rollout poll.");
+    await delay(10);
+  }
+};
 
 async function fixture(t, { contents = "", create = true } = {}) {
   const codexHome = await mkdtemp(path.join(os.tmpdir(), "router-turn-cancel-"));
@@ -31,6 +40,54 @@ async function fixture(t, { contents = "", create = true } = {}) {
     return watcher;
   } };
 }
+
+test("unchanged polls validate the pathname without reopening and growth resumes exact cancellation reads", async t => {
+  const fix = await fixture(t, { contents: event(FOREIGN) + "\n" });
+  const originalOpen = fs.open, originalLstat = fs.lstat;
+  let opened = 0, checked = 0, cancelled = 0;
+  const openMock = t.mock.method(fs, "open", (...args) => {
+    if (args[0] === fix.file) opened += 1;
+    return originalOpen(...args);
+  });
+  const lstatMock = t.mock.method(fs, "lstat", async (...args) => {
+    const stat = await originalLstat(...args);
+    if (args[0] === fix.file) checked += 1;
+    return stat;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    openMock.mock.restore();
+    lstatMock.mock.restore();
+    syncBuiltinESMExports();
+  });
+  const watcher = fix.watch({ onCancel: () => { cancelled += 1; } });
+  await watcher.ready;
+  await waitFor(() => checked >= 4);
+  assert.equal(opened, 1, "idle polls must still check identity without acquiring a file handle");
+  assert.equal(cancelled, 0);
+  const previousChecks = checked;
+  await appendFile(fix.file, event(FOREIGN) + "\n");
+  await waitFor(() => checked >= previousChecks + 4);
+  assert.equal(opened, 2, "one growth window must be read, then unchanged polls must stop reopening");
+  assert.equal(watcher.state, "watching");
+  await appendFile(fix.file, event() + "\n");
+  assert.equal((await watcher.finished).state, "cancelled");
+  assert.equal(opened, 3);
+  assert.equal(cancelled, 1);
+});
+
+test("same-size rollout replacement loses authority before an idle poll can skip reading", async t => {
+  const fix = await fixture(t, { contents: event(FOREIGN) + "\n" });
+  let cancelled = 0;
+  const watcher = fix.watch({ onCancel: () => { cancelled += 1; } });
+  await watcher.ready;
+  const replacement = path.join(fix.day, "replacement.jsonl");
+  await writeFile(replacement, event() + "\n");
+  await rename(replacement, fix.file);
+  assert.equal((await watcher.finished).error.reason, "rollout_changed");
+  assert.equal(watcher.state, "unavailable");
+  assert.equal(cancelled, 0);
+});
 
 test("native cancellation follows the exact appended event once, including split UTF-8/JSONL", async t => {
   const fix = await fixture(t, { contents: JSON.stringify({ type: "event_msg",

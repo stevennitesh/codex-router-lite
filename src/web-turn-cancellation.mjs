@@ -115,6 +115,9 @@ export function watchWebTurnCancellation({
   }
 
   async function readWindow(initial = false) {
+    // The pathname remains the authority even when there is no new data. Avoid
+    // opening an unchanged rollout, but still reject replacement or truncation.
+    if (!initial && await checkFile() === offset) return false;
     const file = await open(filePath, "r");
     try {
       const stat = await file.stat({ bigint: true });

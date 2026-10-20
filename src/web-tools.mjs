@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { bridgeCustomTools, buildNamespaceLookups, flattenNamespaceTools } from "./namespace-relay.mjs";
 import { webMcpDiscoveryGuidance, webMcpQueryLimit } from "./web-mcp-contract.mjs";
@@ -289,11 +290,16 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
   const update = (token, { tools, toolChoice = "auto" }) => {
     const turn = active(token);
     if (turn.calls.size) throw failure("Cannot replace Web tool declarations with unresolved calls.", "web_tools_pending", 409);
-    const nextNames = { byIdentity: new Map(turn.names.byIdentity), byWire: new Map(turn.names.byWire) };
-    const next = registry(tools, nextNames);
+    // Compare with our accepted snapshot, never the caller's mutable array.
+    // Unchanged schemas keep their exact registry and reserved wire identities.
+    const unchanged = isDeepStrictEqual(tools, turn.declarations);
+    const nextNames = unchanged ? turn.names : { byIdentity: new Map(turn.names.byIdentity), byWire: new Map(turn.names.byWire) };
+    const next = unchanged ? turn.tools : registry(tools, nextNames);
     const policy = choicePolicy(toolChoice, next);
+    const accepted = unchanged ? turn.declarations : structuredClone(tools);
     turn.names = nextNames;
     turn.tools = next;
+    turn.declarations = accepted;
     turn.policy = policy;
     change(turn);
   };
@@ -308,7 +314,8 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const definitions = registry(tools, names);
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
-      turns.set(token, { owner, names, tools: definitions, policy, calls: new Map(), callsMade: 0, revision: 0, activity: 0, waiters: new Set() });
+      turns.set(token, { owner, names, tools: definitions, declarations: structuredClone(tools), policy,
+        calls: new Map(), callsMade: 0, revision: 0, activity: 0, waiters: new Set() });
       owners.set(owner, token);
       return { token, instructions: `Use turn_token ${token} unchanged with every Codex MCP tool call in this response. ${webMcpDiscoveryGuidance} Never expose the token in your answer.` };
     },
