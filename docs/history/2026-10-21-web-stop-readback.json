@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "date": "2026-10-21",
+  "evidenceKind": "Stop readback diagnosis with bounded semantic-control observations",
+  "sourceBase": "f852485d",
+  "baseline": {
+    "adapterGeneration": "85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113",
+    "receiptAtUtc": "2026-10-21T18:31:15.063Z",
+    "receipt": "stop_unconfirmed",
+    "resultCode": "stop_confirmation_failed",
+    "stage": "stop_readback_visibility",
+    "clickAcknowledged": true,
+    "tabRetained": true,
+    "childTerminalObserved": true,
+    "scriptElapsedMs": 2144,
+    "scriptBudgetMs": 2400,
+    "callbackElapsedMs": 2528,
+    "userObservedGenerationStoppedAndTabStayedOpen": true,
+    "sameChatContinuationPassed": true,
+    "limits": "The original false visibility/inactivity fields could be stale when control validation failed. They do not establish continued generation or timeout exhaustion."
+  },
+  "investigation": {
+    "unchangedStopProgram": "The runtime-refresh candidate and its baseline generated identical Stop programs with equal inputs; this rules out changed program content but not live browser-state or scheduling differences.",
+    "alternatives": ["Final Stop remains semantically visible", "Stop disappears without either accepted inactivity signal", "Semantic idle matches accessible-name selection but fails the direct-label decoder"],
+    "sdkInspection": "The installed browser SDK unions, deduplicates and orders locator matches before evaluating the supplied callback on those elements. Its accessible-name role matcher supports aria-labelledby and name normalization, while the Stop decoder conservatively accepts direct aria-label equality only.",
+    "instrumentation": "Readback state category, bounded Stop/idle/unrecognized/labelledby counts and nullable visibility/recognition/completion flags from the existing coherent read. Cleared at each read attempt and after a click so failed observations cannot reuse stale values.",
+    "privacy": "No page text, control label values, URLs, credentials or tool payloads retained.",
+    "behaviorChanged": false,
+    "liveDiagnosticStatus": "Not installed or exercised yet; no causal repair claimed."
+  },
+  "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
+}

@@ -18,7 +18,15 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
   let inScope = false, stage = "scope", outcome = "blocked", code;
   let guards, guard, key, registry, active, state;
   const diagnostic = { freshController: false, clickAttempted: false, clickError: false,
-    stopClicked: false, stopHidden: false, generationInactive: false, inactivityEvidence: "none", retained: false };
+    stopClicked: false, stopHidden: false, generationInactive: false, inactivityEvidence: "none", retained: false,
+    readbackState: null, readbackStopCount: null, readbackStopVisible: null,
+    readbackIdleCount: null, readbackIdleVisibleCount: null, readbackControlsRecognized: null,
+    readbackUnrecognizedCount: null, readbackLabelledByCount: null, readbackComplete: null };
+  const clearReadback = () => {
+    for (const field of ["readbackState", "readbackStopCount", "readbackStopVisible", "readbackIdleCount",
+      "readbackIdleVisibleCount", "readbackControlsRecognized", "readbackUnrecognizedCount",
+      "readbackLabelledByCount", "readbackComplete"]) diagnostic[field] = null;
+  };
   try {
     // A native route (or an older Web turn in the same native conversation) has
     // no current confirmed Web delivery in this exact UUID-derived file.
@@ -194,6 +202,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     const readAllowanceMs = 200;
     let allowComposerRestored = false;
     const inspectGeneration = async (reserve = 0) => {
+      clearReadback();
       assertCurrent(reserve);
       const timeoutMs = Math.min(1000, Math.floor(deadline - Date.now() - reserve));
       if (timeoutMs < readAllowanceMs) deny("budget_exhausted");
@@ -224,6 +233,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
             stopCount: stops.length, stopVisible: stops.some(visible),
             idleCount: idles.length, idleVisibleCount: idles.filter(visible).length,
             controlsRecognized: stops.length + idles.length === controls.length,
+            unrecognizedCount: controls.length - stops.length - idles.length,
+            labelledByCount: controls.filter(element => element.getAttribute("aria-labelledby")).length,
             complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
         }, { ui: config.ui, generationTurnKey, stopName: config.stopButtonExactName, idleName: config.idleButtonExactName }, { timeoutMs });
       // Reserve admits the read; accepting its result needs only the actual
@@ -233,6 +244,16 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       if (!record(view) || view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey
           || typeof view.complete !== "boolean") deny("generation_mismatch");
       const count = view.stopCount, visible = view.stopVisible;
+      // Keep only bounded primitives from this owned, coherent read. Invalid
+      // control data remains distinguishable without echoing arbitrary values.
+      const diagnosticCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 1000 ? value : null;
+      const diagnosticBoolean = value => typeof value === "boolean" ? value : null;
+      Object.assign(diagnostic, { readbackState: "invalid_controls",
+        readbackStopCount: diagnosticCount(count), readbackStopVisible: diagnosticBoolean(visible),
+        readbackIdleCount: diagnosticCount(view.idleCount), readbackIdleVisibleCount: diagnosticCount(view.idleVisibleCount),
+        readbackControlsRecognized: diagnosticBoolean(view.controlsRecognized),
+        readbackUnrecognizedCount: diagnosticCount(view.unrecognizedCount),
+        readbackLabelledByCount: diagnosticCount(view.labelledByCount), readbackComplete: view.complete });
       if (!Number.isInteger(count) || count < 0 || count > 1 || typeof visible !== "boolean"
           || visible && count !== 1 || view.controlsRecognized !== true
           || !Number.isInteger(view.idleCount) || view.idleCount < 0
@@ -242,6 +263,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       diagnostic.inactivityEvidence = !visible && view.complete ? "turn_complete"
         : !visible && allowComposerRestored && view.idleCount === 1 && view.idleVisibleCount === 1 ? "composer_restored" : "none";
       diagnostic.generationInactive = diagnostic.inactivityEvidence !== "none";
+      diagnostic.readbackState = diagnostic.generationInactive ? "inactive_readback" : "unconfirmed_readback";
       return { visible, idleCount: view.idleCount, inactive: diagnostic.generationInactive };
     };
     const waitForReadiness = async locator => {
@@ -292,6 +314,9 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
           // completion removed its target. Never repeat an uncertain click.
           diagnostic.clickError = true;
         }
+        // A click attempt invalidates the earlier observation, even when the
+        // acknowledgement or following read cannot complete within the budget.
+        clearReadback();
         assertCurrent(readAllowanceMs);
         stage = "stop_readback_visibility";
         allowComposerRestored = diagnostic.stopClicked && !diagnostic.clickError && composerAbsentBeforeClick;

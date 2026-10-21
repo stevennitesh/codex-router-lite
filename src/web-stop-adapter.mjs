@@ -121,6 +121,11 @@ export function stopCode(stopConfig, identity, budgetMs = 2400, delivery) {
   return createWebStopCode(stopConfig, identity, { budgetMs, ...(delivery ? { delivery } : {}) });
 }
 
+const STOP_READBACK_COUNTS = ['readbackStopCount', 'readbackIdleCount', 'readbackIdleVisibleCount',
+  'readbackUnrecognizedCount', 'readbackLabelledByCount'];
+const STOP_READBACK_FLAGS = ['readbackStopVisible', 'readbackControlsRecognized', 'readbackComplete'];
+const STOP_READBACK_FIELDS = ['readbackState', ...STOP_READBACK_COUNTS, ...STOP_READBACK_FLAGS];
+
 // Parse the actual native text envelope, including {systemMessage: ...}. No raw
 // output/error ever reaches receipts. Success must contain explicit readback.
 export function readStopResult(result) {
@@ -148,12 +153,16 @@ export function readStopResult(result) {
   if (!visit(result)) return fail('malformed_result');
   if (!record(proof)) return fail('no_stop_proof');
   const flags = ['freshController', 'clickAttempted', 'clickError', 'stopClicked', 'stopHidden', 'generationInactive', 'retained'];
-  const allowed = ['outcome', 'stage', ...flags, 'inactivityEvidence', 'code', 'elapsedMs'];
+  const allowed = ['outcome', 'stage', ...flags, 'inactivityEvidence', 'code', 'elapsedMs', ...STOP_READBACK_FIELDS];
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
       || !STOP_STAGES.includes(proof.stage) || flags.some(key => typeof proof[key] !== 'boolean')
       || !['none', 'turn_complete', 'composer_restored'].includes(proof.inactivityEvidence)
       || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > 3000
-      || proof.code !== undefined && !STOP_CODES.includes(proof.code)) return fail('malformed_proof');
+      || proof.code !== undefined && !STOP_CODES.includes(proof.code)
+      || own(proof, 'readbackState') && ![null, 'invalid_controls', 'unconfirmed_readback', 'inactive_readback'].includes(proof.readbackState)
+      || STOP_READBACK_COUNTS.some(key => own(proof, key) && proof[key] !== null
+        && (!Number.isSafeInteger(proof[key]) || proof[key] < 0 || proof[key] > 1000))
+      || STOP_READBACK_FLAGS.some(key => own(proof, key) && proof[key] !== null && typeof proof[key] !== 'boolean')) return fail('malformed_proof');
   if (proof.generationInactive !== (proof.inactivityEvidence !== 'none')
       || proof.inactivityEvidence !== 'none' && !proof.stopHidden
       || proof.inactivityEvidence === 'composer_restored' && (!proof.clickAttempted || !proof.stopClicked || proof.clickError)) return fail('incomplete_proof');
@@ -219,7 +228,8 @@ function stopReceipt(proof, response) {
     ...(proof.outcome ? { outcome: proof.outcome, stage: proof.stage, freshController: proof.freshController,
       clickAttempted: proof.clickAttempted, clickError: proof.clickError, stopClicked: proof.stopClicked,
       stopHidden: proof.stopHidden, generationInactive: proof.generationInactive, inactivityEvidence: proof.inactivityEvidence,
-      retained: proof.retained, elapsedMs: proof.elapsedMs } : {}) };
+      retained: proof.retained, elapsedMs: proof.elapsedMs,
+      ...Object.fromEntries(STOP_READBACK_FIELDS.filter(key => own(proof, key)).map(key => [key, proof[key]])) } : {}) };
 }
 
 // SDK transports are deliberately bridged below their Client/Server handlers:

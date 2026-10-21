@@ -98,7 +98,7 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
             ] : [];
             const view = reader([body, ...controls], args);
             touch("generation_return", thread);
-            return view;
+            return surface.viewOverride ? { ...view, ...surface.viewOverride } : view;
           },
     });
     const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
@@ -178,6 +178,11 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
 
 const mutations = f => f.calls.filter(call => ["click", "handoff"].includes(call.name));
 const clicked = f => f.calls.filter(call => call.name === "click");
+const readback = result => ({ state: result.readbackState, stopCount: result.readbackStopCount,
+  stopVisible: result.readbackStopVisible, idleCount: result.readbackIdleCount,
+  idleVisibleCount: result.readbackIdleVisibleCount, controlsRecognized: result.readbackControlsRecognized,
+  unrecognizedCount: result.readbackUnrecognizedCount, labelledByCount: result.readbackLabelledByCount,
+  complete: result.readbackComplete });
 function stopped(result) {
   assert.equal(result.outcome, "cancelled", JSON.stringify(result));
   assert.equal(result.stopClicked, true);
@@ -186,6 +191,8 @@ function stopped(result) {
   assert.equal(result.stopHidden, true);
   assert.equal(result.generationInactive, true);
   assert.equal(result.retained, true);
+  assert.equal(result.readbackState, "inactive_readback");
+  assert.equal(result.readbackControlsRecognized, true);
 }
 async function blocked(change, expectedCode) {
   const f = fixture();
@@ -555,6 +562,9 @@ test("persistently visible Stop exhausts confirmation without claiming cancellat
   const result = await f.run();
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
   assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+  assert.deepEqual(readback(result), { state: "unconfirmed_readback", stopCount: 1, stopVisible: true,
+    idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
+    unrecognizedCount: 0, labelledByCount: 0, complete: false });
   assert(result.elapsedMs > 500 && result.elapsedMs < 2400);
   assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
@@ -590,6 +600,9 @@ test("a confirmation visibility-read error fails closed without retrying or expo
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "browser_operation_failed");
   assert.equal(result.stage, "stop_readback_visibility");
   assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
+  assert.deepEqual(readback(result), { state: null, stopCount: null, stopVisible: null,
+    idleCount: null, idleVisibleCount: null, controlsRecognized: null,
+    unrecognizedCount: null, labelledByCount: null, complete: null });
   assert.equal(visibilityReads, 3); assert.equal(clicked(f).length, 1);
   assert(!f.calls.some(call => call.name === "wait"));
   assert(!JSON.stringify(result).includes("private browser details"));
@@ -608,6 +621,9 @@ test("idle Stop with zero matches retains its tab without claiming cancellation"
   const f = fixture(); f.first.visible = false; f.first.stopCount = 0; f.first.complete = true;
   const result = await f.run();
   assert.equal(result.outcome, "already_idle"); assert.equal(result.stopClicked, false); assert.equal(result.retained, true);
+  assert.deepEqual(readback(result), { state: "inactive_readback", stopCount: 0, stopVisible: false,
+    idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
+    unrecognizedCount: 0, labelledByCount: 0, complete: true });
   assert.equal(f.first.state.retained, true); assert.equal(clicked(f).length, 0);
 });
 
@@ -832,7 +848,38 @@ test("overridden direct labels cannot reclassify a semantic Stop control as rest
   const result = await f.run();
   assert.equal(result.code, "stop_confirmation_failed"); assert.equal(result.inactivityEvidence, "none");
   assert.equal(result.generationInactive, false); assert.equal(result.stopHidden, false);
+  assert.deepEqual(readback(result), { state: "invalid_controls", stopCount: 0, stopVisible: false,
+    idleCount: 0, idleVisibleCount: 0, controlsRecognized: false,
+    unrecognizedCount: 1, labelledByCount: 1, complete: false });
   assert.equal(clicked(f).length, 1);
+});
+
+test("invalid control readback retains only bounded primitives without changing confirmation rules", async () => {
+  for (const [override, expected] of [
+    [{ stopCount: 2 }, { stopCount: 2 }],
+    [{ stopCount: "private diagnostic payload" }, { stopCount: null }],
+    [{ stopVisible: { token: "private diagnostic payload" } }, { stopVisible: null }],
+    [{ idleCount: -1 }, { idleCount: null }],
+    [{ idleCount: 1.5 }, { idleCount: null }],
+    [{ idleCount: 1001, idleVisibleCount: 1002 }, { idleCount: null, idleVisibleCount: null }],
+    [{ idleVisibleCount: "private diagnostic payload" }, { idleVisibleCount: null }],
+    [{ controlsRecognized: "private diagnostic payload" }, { controlsRecognized: null }],
+    [{ controlsRecognized: false, unrecognizedCount: "private diagnostic payload" },
+      { controlsRecognized: false, unrecognizedCount: null }],
+    [{ controlsRecognized: false, labelledByCount: 1001 }, { controlsRecognized: false, labelledByCount: null }],
+  ]) {
+    const f = fixture();
+    f.model.onCall = name => { if (name === "click") f.first.viewOverride = override; };
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+    assert.equal(result.stage, "stop_readback_visibility");
+    assert.deepEqual(readback(result), { state: "invalid_controls", stopCount: 1, stopVisible: false,
+      idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
+      unrecognizedCount: 0, labelledByCount: 0, complete: true, ...expected });
+    assert.equal(result.stopClicked, true); assert.equal(result.retained, true);
+    assert.equal(result.generationInactive, false); assert.equal(clicked(f).length, 1);
+    assert(!JSON.stringify(result).includes("private diagnostic payload"));
+  }
 });
 
 test("the restored composer proof rejects changed URL, generation, native authority and owner", async () => {
@@ -857,6 +904,9 @@ test("insufficient read allowance after acknowledged click blocks without dispat
   const result = await f.run();
   assert.equal(result.code, "budget_exhausted"); assert.equal(result.stopClicked, true);
   assert.equal(result.inactivityEvidence, "none"); assert.equal(result.generationInactive, false);
+  assert.deepEqual(readback(result), { state: null, stopCount: null, stopVisible: null,
+    idleCount: null, idleVisibleCount: null, controlsRecognized: null,
+    unrecognizedCount: null, labelledByCount: null, complete: null });
   assert.equal(f.calls.filter(call => call.name === "generation").length, 2);
   assert(f.first.readTimeouts.every(timeout => timeout >= 200));
   assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 0);

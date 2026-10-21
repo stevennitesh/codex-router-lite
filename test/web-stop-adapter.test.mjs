@@ -251,6 +251,28 @@ test('validated blocked proof retains bounded stage and progress without acquiri
   assert.deepEqual(readStopResult(success({ ...proof, elapsedMs: 3001 })), { ok: false, code: 'malformed_proof' });
 });
 
+test('readback diagnostics accept only fixed states, bounded counts and nullable booleans', () => {
+  const observations = { readbackState: null, readbackStopCount: null, readbackIdleCount: null,
+    readbackIdleVisibleCount: null, readbackUnrecognizedCount: null, readbackLabelledByCount: null,
+    readbackStopVisible: null, readbackControlsRecognized: null, readbackComplete: null };
+  const proof = readStopResult(success(observations));
+  assert.equal(proof.ok, true);
+  for (const [key, value] of Object.entries(observations)) assert.equal(proof[key], value);
+  for (const field of ['readbackStopCount', 'readbackIdleCount', 'readbackIdleVisibleCount',
+    'readbackUnrecognizedCount', 'readbackLabelledByCount']) {
+    assert.equal(readStopResult(success({ [field]: 1000 })).ok, true);
+    for (const value of [-1, 1001, 1.5, '1', true, {}])
+      assert.deepEqual(readStopResult(success({ [field]: value })), { ok: false, code: 'malformed_proof' });
+  }
+  for (const field of ['readbackStopVisible', 'readbackControlsRecognized', 'readbackComplete']) {
+    for (const value of [false, true]) assert.equal(readStopResult(success({ [field]: value })).ok, true);
+    for (const value of [0, 'false', {}])
+      assert.deepEqual(readStopResult(success({ [field]: value })), { ok: false, code: 'malformed_proof' });
+  }
+  for (const value of ['private unknown state', 'active_readback', ['unconfirmed_readback'], {}])
+    assert.deepEqual(readStopResult(success({ readbackState: value })), { ok: false, code: 'malformed_proof' });
+});
+
 test('inactivity evidence is required, discriminated and consistent with acknowledged click authority', () => {
   assert.equal(readStopResult(success({ inactivityEvidence: 'composer_restored' })).ok, true);
   for (const overrides of [
@@ -1456,6 +1478,35 @@ test('blocked Stop exposes only validated progress; errors or malformed proof ca
     if (branch === 'blocked') assert.equal(diagnostic.stage, 'handoff');
     const receipts = JSON.stringify(f.receipts);
     for (const secret of ['secret output', 'private opaque value', 'private launcher value', 'private originating policy']) assert.equal(receipts.includes(secret), false);
+  });
+});
+
+test('blocked Stop receipts retain safe readback observations and exclude unrecognized payloads', async t => {
+  const observations = { readbackState: 'invalid_controls', readbackStopCount: 2, readbackIdleCount: 1,
+    readbackIdleVisibleCount: 0, readbackUnrecognizedCount: 1, readbackLabelledByCount: 1,
+    readbackStopVisible: true, readbackControlsRecognized: false, readbackComplete: null };
+  for (const branch of ['valid', 'unconfirmed', 'unrecognized', 'malicious']) await t.test(branch, async subtest => {
+    const privateText = 'synthetic-private-readback-url-and-key';
+    const diagnostic = { ...observations,
+      ...(branch === 'unconfirmed' ? { readbackState: 'unconfirmed_readback', readbackStopCount: 1,
+        readbackUnrecognizedCount: 0, readbackControlsRecognized: true,
+        readbackComplete: false } : {}),
+      ...(branch === 'unrecognized' ? { readbackState: privateText } : {}),
+      ...(branch === 'malicious' ? { readbackStopCount: { url: privateText }, privatePayload: privateText } : {}) };
+    const result = success({ outcome: 'blocked', stage: 'stop_readback_visibility', stopHidden: false,
+      generationInactive: false, inactivityEvidence: 'none', code: 'stop_confirmation_failed', ...diagnostic });
+    const f = await protocolFixture(subtest, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? result : ordinaryResult);
+    await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true);
+    const receipt = f.receipts.find(entry => entry.code === 'stop_unconfirmed');
+    assert.ok(receipt); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+    if (branch === 'valid' || branch === 'unconfirmed') {
+      assert.equal(receipt.resultCode, 'stop_confirmation_failed');
+      for (const [key, value] of Object.entries(diagnostic)) assert.equal(receipt[key], value);
+    } else {
+      assert.equal(receipt.resultCode, 'malformed_proof');
+      for (const key of Object.keys(observations)) assert.equal(Object.hasOwn(receipt, key), false);
+    }
+    assert.equal(JSON.stringify(f.receipts).includes(privateText), false);
   });
 });
 

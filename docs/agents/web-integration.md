@@ -244,6 +244,13 @@ a tool error, an invalid result, or no response. Diagnostics retain only numeric
 RPC codes, fixed runtime failure signatures, known JavaScript error classes/kinds and
 bounded text size/digest; arbitrary error text and private payloads are omitted.
 These observations locate a failed boundary and do not establish that Stop ran.
+Stop readback also records a fixed state category and bounded counts for Stop,
+idle, unrecognized and `aria-labelledby` controls, plus nullable visibility,
+recognition and completion flags. A new read clears the previous values; missing
+or rejected observations remain unknown. `invalid_controls` distinguishes rejected
+control markup from `unconfirmed_readback`, where the accepted view supplies no
+inactivity proof. These diagnostics retain no control labels or page content and
+do not relax Stop confirmation.
 
 The unmodified official CLI adapter path has
 [dated Stop and same-chat continuation evidence](../history/2026-10-19-web-stop-adapter-verification.json).
