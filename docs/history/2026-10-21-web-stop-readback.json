@@ -26,7 +26,34 @@
     "instrumentation": "Readback state category, bounded Stop/idle/unrecognized/labelledby counts and nullable visibility/recognition/completion flags from the existing coherent read. Cleared at each read attempt and after a click so failed observations cannot reuse stale values.",
     "privacy": "No page text, control label values, URLs, credentials or tool payloads retained.",
     "behaviorChanged": false,
-    "liveDiagnosticStatus": "Not installed or exercised yet; no causal repair claimed."
+    "liveDiagnosticStatus": "Diagnostic build installed and loaded after normal restart. The first live attempt failed during saved-chat recovery before Send, so no new Stop readback evidence or causal repair is claimed."
+  },
+  "diagnosticActivation": {
+    "sourceCommit": "4b80fc84dc63b517da37b2793e89123a4cd64f58",
+    "deploymentOperation": "9d98583da6f94de992886fae23055a7a",
+    "deploymentAccepted": true,
+    "forcedInterruption": false,
+    "adapterGeneration": "d10fcd3708efa9e5f80dd82f137b17719e26e4b5e2a3a39ee1c2b8f14e4b8357",
+    "routerReloaded": true,
+    "normalCodexRestartReported": true,
+    "runningProcessSelectedDiagnosticAdapter": true,
+    "hookSha256": "58afd7f48773ef3de7747234417e220aede74939c2167a544eea3034cacd4cef",
+    "validation": "272 focused hook, adapter, installer and runtime-refresh tests passed; source checks passed; independent selected-diff review found no actionable issues.",
+    "rollback": "Previous adapter generation 85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113, protected ownership/settings/User-environment snapshot, source baseline and guarded deployment rollback remain retained. Runtime key excluded from the snapshot."
+  },
+  "diagnosticAttempt": {
+    "nativeTurnStatus": "failed",
+    "stage": "saved-chat recovery before Send",
+    "underlyingNativeError": "The saved chat reply or composer changed; recovery cannot reuse it.",
+    "routerSurface": "HTTP 409 web_browser_output_shape after the native browser call returned an error instead of a nonce-framed result",
+    "lastTurnSendState": "unsent",
+    "priorGenerationCompleted": true,
+    "uncertainSend": false,
+    "unresolvedCodingCount": 0,
+    "newStopReceiptObserved": false,
+    "interpretation": "This is a pre-Send recovery failure, not evidence about the diagnostic Stop path. The user confirmed the earlier conversation and empty composer were visible; one short readiness attempt still failed before Send. A matching saved URL is checked immediately on recovery; navigation has a separate readiness wait. Hydration alone is not established as the cause.",
+    "nextProbe": "Local recovery failure diagnostics distinguish fixed URL/mode, reply identity, generation, prefix and composer predicates using bounded counts and nullable flags. No checkpoint is cleared, no failed Send is replayed, and no UI action or retry is added to recovery.",
+    "adapterQualification": "Generated observe, retain and Send programs remain byte-identical to baseline 38e992d6488d7b93394b089bc1d49bcf22c2f7e4a71d7cd936b5873b43748cfd. Baseline program qualification and confirmed-Send authority extraction still pass; resident helper digest 209c91edd1857c263af89c874b6d8c8cca4d34f0810e8d1667c1603d0bf57ed4 is unchanged. Router activation of this diagnostic does not require replacing the installed adapter."
   },
   "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
 }

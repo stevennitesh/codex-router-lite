@@ -610,35 +610,74 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const { createHash } = await import("node:crypto");
     requireRecoveryOwnership();
     let recoveredReplyId, recoveredBaselineIds, recoveredGenerationIds;
+    const unobservedRecovery = () => ({ reason: null, urlMatches: null, temporaryInactive: null,
+      replyCount: null, replyIdentitiesValid: null, generationTurnCount: null, generationIsLatest: null,
+      freshReplyCount: null, freshReplyIsLatest: null, expectedReplyMatches: null, replyTextAvailable: null,
+      recordedReplyPresent: null, prefixLongEnough: null, prefixMatches: null,
+      composerCount: null, composerShapeValid: null, composerEmpty: null });
+    let recoveryDiagnostic = unobservedRecovery();
+    const recoveryRejected = reason => { recoveryDiagnostic.reason = reason; return false; };
+    const boundedCount = values => Math.min(values.length, 10000);
     verifyRecoveryTexts = view => {
       const texts = view.replies;
       const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId) && value.turnKey === proof.generationTurnKey);
       const latest = fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1), text = latest?.text;
       const expectedReplyId = proof.replyId ?? recoveredReplyId;
-      if (!validReplies(texts)) return false;
-      if (view.turns.filter(turn => turn.turnKey === proof.generationTurnKey).length !== 1
-          || view.turns.at(-1)?.turnKey !== proof.generationTurnKey) return false;
+      recoveryDiagnostic.replyCount = boundedCount(texts);
+      if (!(recoveryDiagnostic.replyIdentitiesValid = validReplies(texts))) return recoveryRejected("invalid-reply-identities");
+      const generationTurns = view.turns.filter(turn => turn.turnKey === proof.generationTurnKey);
+      recoveryDiagnostic.generationTurnCount = boundedCount(generationTurns);
+      if (generationTurns.length !== 1) return recoveryRejected("generation-turn-not-unique");
+      if (!(recoveryDiagnostic.generationIsLatest = view.turns.at(-1)?.turnKey === proof.generationTurnKey)) return recoveryRejected("generation-turn-not-latest");
+      recoveryDiagnostic.freshReplyCount = boundedCount(fresh);
       const progressing = !proof.completed;
       if (proof.retainedTabOnly) {
-        if (fresh.length && fresh.at(-1) !== texts.at(-1)
-            || !progressing && expectedReplyId && latest?.messageId !== expectedReplyId) return false;
+        if (fresh.length && !(recoveryDiagnostic.freshReplyIsLatest = fresh.at(-1) === texts.at(-1))) return recoveryRejected("fresh-reply-not-latest");
+        if (!progressing && expectedReplyId && !(recoveryDiagnostic.expectedReplyMatches = latest?.messageId === expectedReplyId)) return recoveryRejected("expected-reply-mismatch");
         if (!fresh.length) {
           recoveredBaselineIds = proof.baselineReplyIds;
-          return proof.assistantPrefix.length === 0;
+          return proof.assistantPrefix.length === 0 || recoveryRejected("missing-fresh-reply");
         }
       }
       const recorded = progressing && expectedReplyId ? fresh.find(value => value.messageId === expectedReplyId) : latest;
-      if (!progressing && expectedReplyId && latest?.messageId !== expectedReplyId || typeof text !== "string"
-          || recorded && (recorded.text.length < proof.assistantPrefix.length
-            || createHash("sha256").update(recorded.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") !== proof.assistantPrefix.sha256)
-          || !recorded && !progressing) return false;
+      if (!progressing && expectedReplyId && !(recoveryDiagnostic.expectedReplyMatches = latest?.messageId === expectedReplyId)) return recoveryRejected("expected-reply-mismatch");
+      if (!(recoveryDiagnostic.replyTextAvailable = typeof text === "string")) return recoveryRejected(fresh.length ? "reply-text-unavailable" : "missing-fresh-reply");
+      recoveryDiagnostic.recordedReplyPresent = Boolean(recorded);
+      if (recorded) {
+        if (!(recoveryDiagnostic.prefixLongEnough = recorded.text.length >= proof.assistantPrefix.length)) return recoveryRejected("reply-prefix-too-short");
+        if (!(recoveryDiagnostic.prefixMatches = createHash("sha256").update(recorded.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") === proof.assistantPrefix.sha256)) return recoveryRejected("reply-prefix-mismatch");
+      } else if (!progressing) return recoveryRejected("recorded-reply-missing");
       recoveredReplyId = latest.messageId;
       recoveredBaselineIds = proof.baselineReplyIds;
       recoveredGenerationIds = [...new Set([...proof.generationReplyIds, ...fresh.map(value => value.messageId)])];
       return true;
     };
-    const verifiedReply = async () => await tab.url() === proof.url && await temporaryInactive(tab) && verifyRecoveryTexts(await snapshot(tab));
-    if (!navigate && (!(await verifiedReply()) || !(await emptyComposer(tab)))) throw new Error("The saved chat reply or composer changed; recovery cannot reuse it.");
+    const verifiedReply = async () => {
+      recoveryDiagnostic = unobservedRecovery();
+      if (!(recoveryDiagnostic.urlMatches = await tab.url() === proof.url)) return recoveryRejected("saved-url-changed");
+      if (!(recoveryDiagnostic.temporaryInactive = await temporaryInactive(tab))) return recoveryRejected("temporary-mode-active");
+      return verifyRecoveryTexts(await snapshot(tab));
+    };
+    const emptyRecoveryComposer = async () => {
+      // The existing emptiness predicate, projected once with fixed failure
+      // categories. No labels, attributes, draft text or reply proof is returned.
+      const values = await role(ui.composerName, "textbox", tab).evaluateAll((elements, { ownedChipSelector, attribute }) => {
+        const issue = node => {
+          if (node.nodeType === 3) return (node.textContent ?? "").trim() ? "draft" : null;
+          if (node.nodeType !== 1 || ownedChipSelector && node.matches(ownedChipSelector)) return null;
+          if (node.getAttribute(attribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return "shape";
+          for (const child of node.childNodes) { const found = issue(child); if (found) return found; }
+          return null;
+        };
+        return Array.from(elements, element => element.tagName === "DIV" && element.getAttribute(attribute) === "true" ? issue(element) : "shape");
+      }, { ownedChipSelector: options.pluginChipSelector, attribute: ui.contentEditableAttribute }, { timeoutMs: 1000 });
+      recoveryDiagnostic.composerCount = boundedCount(values);
+      if (values.length !== 1) return recoveryRejected(values.length ? "composer-ambiguous" : "composer-unavailable");
+      recoveryDiagnostic.composerShapeValid = values[0] === "shape" ? false : values[0] === null ? true : null;
+      recoveryDiagnostic.composerEmpty = values[0] === null;
+      return recoveryDiagnostic.composerEmpty || recoveryRejected(values[0] === "shape" ? "composer-shape-invalid" : "composer-draft-present");
+    };
+    if (!navigate && (!(await verifiedReply()) || !(await emptyRecoveryComposer()))) throw new Error(`The saved chat reply or composer changed; recovery cannot reuse it. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url,

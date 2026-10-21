@@ -241,7 +241,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
-    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0,
+    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0,
     fetchCalls: 0, stopClicks: 0, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
@@ -447,10 +447,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         return callback((ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).map(candidate => siteIndicator(candidate, "button")), argument);
       }
       if (name === "Ask ChatGPT" && kind === "textbox") {
+        ui.composerReads += 1;
         const content = [domText(ui.composerText)];
         if (ui.chip) content.unshift(domElement("span", { "app-mention-display-name": plugin.pluginName,
           "app-mention-path": `app://${plugin.pluginAppId}`, contenteditable: "false" }, domText(plugin.pluginName)));
-        return callback([ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
+        return callback(ui.composerElements ?? [ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
       }
       ui.replyReads += 1;
       ui.onReplyRead?.();
@@ -2016,21 +2017,84 @@ test("recovery never overwrites unrelated conversations, drafts, noneditable con
   }
 });
 
-test("corrupted or changed latest saved replies, active temporary mode and drafts reject recovery without navigation", async () => {
-  for (const change of [
-    ui => { ui.texts[0] = "Corrupted reply"; },
-    ui => { ui.replyIds = [messageId(999)]; },
-    ui => { ui.texts.push("An unexpected extra reply"); },
-    ui => { ui.temporary = true; },
-    ui => { ui.composerText = "An existing saved-chat draft"; },
+test("saved-chat recovery rejects changed proof or composer with bounded private-data-free diagnostics and no later reads", async () => {
+  const privateValue = "PRIVATE_RECOVERY_SECRET_https://private.invalid/token";
+  const empty = () => domElement("div", { contenteditable: "true" });
+  for (const [reason, change, expected] of [
+    ["saved-url-changed", f => { let reads = 0; f.tab.url = async () => ++reads === 1 ? f.recovery.url : `https://chatgpt.com/c/${privateValue}`; },
+      { urlMatches: false, temporaryInactive: null, replyCount: null }],
+    ["temporary-mode-active", f => { f.ui.temporary = true; }, { temporaryInactive: false, replyCount: null }],
+    ["invalid-reply-identities", f => { f.ui.replyIds = [privateValue]; }, { replyIdentitiesValid: false, generationTurnCount: null }],
+    ["generation-turn-not-unique", f => { f.ui.userMessages = []; }, { generationTurnCount: 0, generationIsLatest: null }],
+    ["generation-turn-not-unique", f => { f.ui.messageRoot = domElement("main", {},
+      observedTurn(f.recovery.generationTurnKey, privateValue, [assistantMessage(0, f.text)]),
+      observedTurn(f.recovery.generationTurnKey, privateValue, [assistantMessage(1, privateValue)])); },
+      { generationTurnCount: 2, generationIsLatest: null }],
+    ["generation-turn-not-latest", f => { f.ui.messageRoot = domElement("main", {},
+      observedTurn(f.recovery.generationTurnKey, privateValue, [assistantMessage(0, f.text)]),
+      observedTurn(messageId(999), privateValue)); }, { generationIsLatest: false, freshReplyCount: null }],
+    ["expected-reply-mismatch", f => { f.ui.replyIds = [messageId(999)]; }, { expectedReplyMatches: false, prefixMatches: null }],
+    ["expected-reply-mismatch", f => { f.ui.texts.push(privateValue); }, { expectedReplyMatches: false, prefixMatches: null }],
+    ["reply-prefix-too-short", f => { f.ui.texts[0] = "x"; }, { prefixLongEnough: false, prefixMatches: null }],
+    ["reply-prefix-mismatch", f => { f.ui.texts[0] = `changed ${privateValue}`; }, { prefixLongEnough: true, prefixMatches: false }],
+    ["composer-unavailable", f => { f.ui.composerElements = []; }, { prefixMatches: true, composerCount: 0, composerEmpty: null }],
+    ["composer-ambiguous", f => { f.ui.composerElements = [empty(), empty()]; }, { composerCount: 2, composerEmpty: null }],
+    ["composer-shape-invalid", f => { f.ui.composerNode = domElement("textarea", { contenteditable: "true" }, domText(privateValue)); },
+      { composerCount: 1, composerShapeValid: false, composerEmpty: false }],
+    ["composer-shape-invalid", f => { f.ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("img", { src: privateValue })); },
+      { composerShapeValid: false, composerEmpty: false }],
+    ["composer-draft-present", f => { f.ui.composerText = privateValue; }, { composerShapeValid: null, composerEmpty: false }],
   ]) {
-    const f = await recoverableFixture();
+    const f = await recoverableFixture({ text: privateValue });
     f.loseBinding();
-    change(f.ui);
-    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply or composer changed/);
+    change(f);
+    const composerReads = f.ui.composerReads, replyReads = f.ui.replyReads, actions = [...f.ui.actions], handoffs = f.ui.handoffs;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), error => {
+      const prefix = "The saved chat reply or composer changed; recovery cannot reuse it. ROUTER_WEB_RECOVERY_DIAGNOSTIC ";
+      assert.ok(error.message.startsWith(prefix));
+      const diagnostic = JSON.parse(error.message.slice(prefix.length));
+      assert.equal(diagnostic.reason, reason);
+      for (const [key, value] of Object.entries(expected)) assert.equal(diagnostic[key], value, `${reason}: ${key}`);
+      for (const [key, value] of Object.entries(diagnostic)) {
+        if (key !== "reason") assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
+      }
+      assert.ok(error.message.length < 1024);
+      assert.doesNotMatch(error.message, /PRIVATE_RECOVERY_SECRET|private\.invalid|https:\/\/|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/iu);
+      for (const secret of [token, f.recovery.assistantPrefix.sha256, f.recovery.url]) assert.equal(error.message.includes(secret), false);
+      if (!reason.startsWith("composer-")) assert.equal(diagnostic.composerCount, null, "A rejected reply proof cannot read the composer.");
+      return true;
+    });
+    assert.equal(f.ui.composerReads - composerReads, Number(reason.startsWith("composer-")), "Recovery adds no composer reread.");
+    assert.equal(f.ui.replyReads - replyReads, Number(!["saved-url-changed", "temporary-mode-active"].includes(reason)));
     assert.equal(f.ui.newTabs, 1);
     assert.equal(f.ui.navigations.length, 1);
     assert.equal(f.ui.stopClicks, 0);
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.handoffs, handoffs);
+    assert.deepEqual(f.ui.actions, actions);
+    assert.equal(f.activeTurn(), undefined);
+  }
+});
+
+test("retained interrupted recovery diagnoses missing and displaced fresh replies before reading the composer", async () => {
+  for (const displaced of [false, true]) {
+    const f = await interruptedBeforeReplyFixture();
+    f.loseBinding();
+    if (displaced) f.ui.messageRoot = domElement("main", {},
+      observedTurn(f.recovery.generationTurnKey, "Private prompt", [assistantMessage(1, "Private reply")]), assistantMessage(2, "Private outside reply"));
+    else f.recovery.assistantPrefix = assistantPrefix("Private expected reply");
+    const composerReads = f.ui.composerReads;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", tabId: f.recovery.tabId,
+      interruptedTurnId: base.turnId, recovery: f.recovery }), error => {
+      const diagnostic = JSON.parse(error.message.split("ROUTER_WEB_RECOVERY_DIAGNOSTIC ")[1]);
+      assert.equal(diagnostic.reason, displaced ? "fresh-reply-not-latest" : "missing-fresh-reply");
+      assert.equal(diagnostic.freshReplyCount, Number(displaced));
+      assert.equal(diagnostic.freshReplyIsLatest, displaced ? false : null);
+      assert.equal(diagnostic.composerCount, null);
+      return true;
+    });
+    assert.equal(f.ui.composerReads, composerReads);
+    assert.equal(f.ui.sendClicks, 1);
     assert.equal(f.activeTurn(), undefined);
   }
 });
