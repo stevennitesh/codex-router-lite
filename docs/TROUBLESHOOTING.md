@@ -204,12 +204,10 @@ Start with the redacted current-generation summary:
 The trace command reports counts and continuity only. It never prints request
 bodies, headers, capabilities, or raw agent identifiers.
 
-When collecting certification evidence after the failure owner is resolved,
-use the bounded redacted view instead of copying either raw log:
-
-```powershell
-.\model-router.ps1 codex switchyard-certification-evidence --limit 20
-```
+For a combined diagnostic packet, use the bounded redacted view in
+[Switchyard runtime diagnostics](../config/switchyard/runtime.md#runtime-supervision-and-diagnosis).
+It summarizes the whole generation; it is not attributed native-child proof.
+Fresh certification uses the [runner or manual extractor](SUBAGENT-CERTIFICATION.md).
 
 ## Windows task mismatch
 

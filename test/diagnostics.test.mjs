@@ -89,6 +89,7 @@ $global:npmCalls=0
 $global:networkCalls=0
 $global:catalogCalls=0
 $global:doctorCalls=0
+$global:webCalls=0
 $global:scopedCalls=0
 function git {
  $global:LASTEXITCODE=0
@@ -100,7 +101,10 @@ function git {
 }
 function node {
  $global:LASTEXITCODE=0
- if ($args -contains '--input-type=module') { Join-Path $PSScriptRoot 'fixture-codex.ps1' }
+ if ($args -contains '--input-type=module') {
+  if (($args -join ' ') -match 'readWebMaintenanceStatus') { $global:webCalls++; $env:DIAGNOSTICS_WEB_STATUS }
+  else { Join-Path $PSScriptRoot 'fixture-codex.ps1' }
+ }
  elseif ($args -contains 'src/doctor.mjs') { $global:doctorCalls++; $env:DIAGNOSTICS_CHECKS }
  elseif ($args -contains 'scripts/check-codex-catalog-compat.mjs') { $global:catalogCalls++ }
  elseif ($args -contains '--test') { $global:scopedCalls++; if ($env:DIAGNOSTICS_FAIL_SCOPED -eq '1') { $global:LASTEXITCODE=8 } }
@@ -114,15 +118,24 @@ Write-Output "FIXTURE_NPM_CALLS=$global:npmCalls"
 Write-Output "FIXTURE_NETWORK_CALLS=$global:networkCalls"
 Write-Output "FIXTURE_CATALOG_CALLS=$global:catalogCalls"
 Write-Output "FIXTURE_DOCTOR_CALLS=$global:doctorCalls"
+Write-Output "FIXTURE_WEB_CALLS=$global:webCalls"
 Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
 `);
-    for (const mode of ["scoped", "full", "online", "skip", "skip-missing-plugin", "wrong-service", "failed-tests", "failed-scoped"]) {
+    for (const mode of ["scoped", "full", "online", "skip", "skip-missing-plugin", "wrong-service", "web-disabled", "web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter", "failed-tests", "failed-scoped"]) {
       // Feed ordinary Doctor's actual produced JSON through the refresh aggregation.
       const doctor = f.runDoctor({ service: mode === "wrong-service" ? "foreign" : "codex-router", degraded: [] });
       assert.equal(doctor.status, 0, doctor.stderr);
+      const webStatus = {
+        configurationStatus: mode === "web-invalid-config" ? "unavailable" : "ok",
+        enabled: mode === "web-invalid-config" ? null : !mode.startsWith("web-disabled"),
+        adapterState: ["web-disabled", "web-invalid-config", "web-missing-adapter"].includes(mode) ? "absent" : "installed",
+        adapterInstalled: !["web-disabled", "web-invalid-config", "web-missing-adapter", "web-stale-adapter", "web-disabled-stale-adapter"].includes(mode),
+        adapterConflictCount: mode.endsWith("stale-adapter") ? 1 : 0,
+        detail: "not-safe-private-web-metadata",
+      };
       const skip = mode.startsWith("skip"), result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, ...(skip ? ["-SkipTests"] : []), ...(mode === "full" ? ["-FullTests"] : []), ...(mode === "online" ? ["-Online"] : [])], {
         encoding: "utf8", windowsHide: true, timeout: 15_000,
-        env: { ...process.env, DIAGNOSTICS_CHECKS: doctor.stdout, DIAGNOSTICS_PLUGIN: mode === "skip-missing-plugin" ? "missing" : "present", DIAGNOSTICS_FAIL_TESTS: mode === "failed-tests" ? "1" : "0", DIAGNOSTICS_FAIL_SCOPED: mode === "failed-scoped" ? "1" : "0" },
+        env: { ...process.env, DIAGNOSTICS_CHECKS: doctor.stdout, DIAGNOSTICS_WEB_STATUS: JSON.stringify(webStatus), DIAGNOSTICS_PLUGIN: mode === "skip-missing-plugin" ? "missing" : "present", DIAGNOSTICS_FAIL_TESTS: mode === "failed-tests" ? "1" : "0", DIAGNOSTICS_FAIL_SCOPED: mode === "failed-scoped" ? "1" : "0" },
       });
       const failed = mode.startsWith("failed-");
       assert.equal(result.status, failed ? 1 : 0, result.stderr + result.stdout);
@@ -132,13 +145,30 @@ Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
         assert.match(result.stdout, new RegExp(`FIXTURE_NETWORK_CALLS=${mode === "online" ? 2 : 0}`, "u"));
         assert.match(result.stdout, /FIXTURE_CATALOG_CALLS=1/u);
         assert.match(result.stdout, /FIXTURE_DOCTOR_CALLS=1/u);
+        assert.match(result.stdout, /FIXTURE_WEB_CALLS=1/u);
         assert.match(result.stdout, new RegExp(`FIXTURE_SCOPED_CALLS=${skip || mode === "full" ? 0 : 1}`, "u"));
+        assert.match(result.stdout, /Web live readiness: browserSession=unknown; appLoaded=unknown; hookTrusted=unknown/u);
+        assert.match(result.stdout, /ChatGPT Web browser, native-tool and Stop readiness remain unverified/u);
+        assert.doesNotMatch(result.stdout + result.stderr, /not-safe-private-web-metadata/u);
         if (mode !== "online") assert.match(result.stdout, /current head is unknown/u);
       }
       if (mode === "full") assert.match(result.stdout, /Full source suite: passed/u);
       if (mode === "scoped" || mode === "online") assert.match(result.stdout, /Catalog and namespace compatibility tests: passed/u);
+      if (mode === "scoped") {
+        assert.match(result.stdout, /configurationStatus=ok; enabled=true/u);
+        assert.match(result.stdout, /state=installed; installed=true; conflicts=0/u);
+      }
       if (skip) assert.match(result.stdout, /source verification was skipped/u);
-      if (mode === "wrong-service" || mode === "skip-missing-plugin") assert.match(result.stdout, /warnings above still require investigation/iu);
+      const webWarning = ["web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter"].includes(mode);
+      if (mode === "wrong-service" || mode === "skip-missing-plugin" || webWarning) assert.match(result.stdout, /warnings above still require investigation/iu);
+      else if (!failed) assert.doesNotMatch(result.stdout, /warnings above still require investigation/iu);
+      if (mode === "web-disabled") {
+        assert.match(result.stdout, /configurationStatus=ok; enabled=false/u);
+        assert.match(result.stdout, /state=absent; installed=false; conflicts=0/u);
+        assert.doesNotMatch(result.stdout, /Web Stop adapter is missing/u);
+      }
+      if (mode === "web-invalid-config") assert.match(result.stdout, /Saved Web configuration is unavailable or invalid/u);
+      if (webWarning) assert.match(result.stdout, /Web Stop adapter is missing, stale or its ownership is unconfirmed/u);
       if (mode === "failed-tests") assert.match(result.stdout, /npm exited with status 7/u);
       if (mode === "failed-scoped") assert.match(result.stdout, /node exited with status 8/u);
     }

@@ -75,6 +75,16 @@ function readInAppConfiguration(value) {
     tunnelId: value.tunnel.id, tunnelClientPath: value.tunnel.executable, ...(value.mcpPort === undefined ? {} : { mcpPort: value.mcpPort }) });
 }
 
+// Replacing an obsolete browser path must not require that obsolete file to
+// exist. Validate the replacement with the ordinary configuration owner and
+// retain only its supported persisted fields, without publishing anything.
+export function webBridgeSettingsWithRuntime(value, runtimeModule) {
+  if (value?.version !== 1 || typeof value.enabled !== "boolean") throw new Error("Cannot refresh invalid Web bridge settings.");
+  const { models: _models, ...configuration } = readInAppConfiguration({ ...value,
+    browser: { ...value.browser, runtimeModule } });
+  return { version: 1, enabled: value.enabled, ...configuration };
+}
+
 export function readWebBridgeSettings() {
   const observed = readJsonFile(settingsPath);
   if (observed.status === "missing") return { version: 1, enabled: false, models: [] };

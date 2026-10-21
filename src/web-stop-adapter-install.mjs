@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { CODEX_HOME, STATE_DIR } from "./paths.mjs";
 import { privateFileIsProtected, writePrivateFile } from "./file-security.mjs";
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
+import { withDirectoryLock } from "./directory-lock.mjs";
 import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapterThreadIds } from "./web-stop-contract.mjs";
 
 const OWNER = "codex-router-web-stop-adapter-v1";
@@ -87,10 +88,13 @@ function context(options = {}) {
     write: dependencies.writePrivate ?? writePrivateFile, isPrivate: dependencies.isPrivate ?? privateFileIsProtected };
 }
 
-function inspectManifest(ctx, file) {
-  const text = bytes(absolute(file));
-  if (text.length > 65536) throw new Error("Adapter manifest exceeds its bound.");
-  const manifest = JSON.parse(text.toString("utf8"));
+function inspectManifest(ctx, input) {
+  let manifest = input;
+  if (typeof input === "string") {
+    const text = bytes(absolute(input));
+    if (text.length > 65536) throw new Error("Adapter manifest exceeds its bound.");
+    manifest = JSON.parse(text.toString("utf8"));
+  }
   const allowed = ["version", "node", "officialCli", "officialNodeRepl", "runtimeModule", "sdkPackageJson", "threadIds"];
   if (!object(manifest) || manifest.version !== 1 || Object.keys(manifest).some(key => !allowed.includes(key))) throw new Error("Invalid adapter manifest.");
   const identities = {};
@@ -203,7 +207,7 @@ function verifyManaged(ctx, receipt, { external = true } = {}) {
   if (!object(plan) || !same(config, createAdapterConfig({ server: plan.officialNodeRepl?.path, serverSha256: plan.officialNodeRepl?.sha256,
     stateDir: ctx.stateDir, runtimeModule: plan.runtimeModule, sdkPackageJson: plan.sdkPackageJson,
     threadIds: plan.threadIds, receiptPath: ctx.eventsPath }))
-      || receipt.environment && receipt.environment.CODEX_CLI_PATH !== plan.officialCli?.path
+      || receipt.environment && ![receipt.previousEnvironment.CODEX_CLI_PATH, plan.officialCli?.path].includes(receipt.environment.CODEX_CLI_PATH)
       || receipt.threadIds !== undefined && !same(receipt.threadIds, plan.threadIds)) throw new Error("Managed adapter configuration identity mismatch.");
   if (external) {
     verifySignatures(ctx, [plan.node, plan.officialCli, plan.officialNodeRepl]);
@@ -212,10 +216,15 @@ function verifyManaged(ctx, receipt, { external = true } = {}) {
   return manifest;
 }
 
-function stage(ctx, plan) {
+function stageInputs(ctx, plan) {
   const sources = Object.fromEntries(SOURCE_NAMES.map(name => [name, bytes(path.join(ctx.sourceDir, name))]));
   const template = bytes(path.join(ctx.sourceDir, "web-stop-adapter-entry.cs")).toString("utf8");
   const generation = hash(JSON.stringify({ plan, sources: Object.fromEntries(Object.entries(sources).map(([name, value]) => [name, hash(value)])), launcher: hash(template) }));
+  return { sources, template, generation };
+}
+
+function stage(ctx, plan) {
+  const { sources, template, generation } = stageInputs(ctx, plan);
   const managedDirectory = path.join(ctx.root, generation), configPath = path.join(managedDirectory, "config.json"), entryPath = path.join(managedDirectory, "entry.exe");
   const config = createAdapterConfig({ server: plan.officialNodeRepl.path, serverSha256: plan.officialNodeRepl.sha256,
     stateDir: ctx.stateDir, runtimeModule: plan.runtimeModule, sdkPackageJson: plan.sdkPackageJson,
@@ -285,14 +294,15 @@ function restoreFailedInstall(ctx, transaction, cause) {
   throw cause;
 }
 
-export function installWebStopAdapter(options = {}) {
-  const ctx = context(options), manifestPath = absolute(options.manifestPath);
-  regular(ctx.root, { optional: true, directory: true }); mkdirSync(ctx.root, { recursive: true });
-  return withAtomicStateLock(ctx.receiptPath, () => {
+function installUnlocked(ctx, manifest, refreshTransaction) {
     const previous = loadReceipt(ctx), beforeEnvironment = pair(ctx.environment.readPair()), beforeHooksText = readText(ctx.hooksPath), document = parseHooks(beforeHooksText);
     const found = ensureInstallOwnership(previous, beforeEnvironment, document);
-    if (previous && previous.state !== "removed") verifyManaged(ctx, previous);
-    const plan = inspectManifest(ctx, manifestPath), candidate = stage(ctx, plan), hook = createAdapterHook();
+    // An app update may already have removed the old official runtime. Its
+    // retained private generation still proves ownership; the new candidate
+    // below must independently pass the full external verification.
+    if (previous && previous.state !== "removed") verifyManaged(ctx, previous, { external: false });
+    const plan = inspectManifest(ctx, manifest), candidate = stage(ctx, plan), hook = createAdapterHook();
+    if (refreshTransaction?.expectedGeneration && refreshTransaction.expectedGeneration !== candidate.generation) throw new Error("Adapter source changed during runtime refresh; retry with current source.");
     regular(ctx.eventsPath, { optional: true });
     if (!existsSync(ctx.eventsPath)) ctx.write(ctx.eventsPath, "");
     if (!ctx.isPrivate(ctx.eventsPath)) throw new Error("Adapter event receipt is not private.");
@@ -300,7 +310,10 @@ export function installWebStopAdapter(options = {}) {
     const created = existing ? previous.created : { hooks: document.hooks === undefined, interrupt: document.hooks?.Interrupt === undefined };
     if (!found) { document.hooks ??= {}; document.hooks.Interrupt ??= []; document.hooks.Interrupt.push({ hooks: [hook] }); }
     const nextHooksText = same(document, parseHooks(beforeHooksText)) ? beforeHooksText : json(document);
-    const desired = { CODEX_CLI_PATH: plan.officialCli.path, CODEX_NODE_REPL_PATH: candidate.entryPath };
+    // The official CLI is a verified compatibility record, not a Router launch
+    // override. Also release a still-owned legacy pin to the original baseline.
+    const desired = { CODEX_CLI_PATH: existing ? previous.previousEnvironment.CODEX_CLI_PATH : beforeEnvironment.CODEX_CLI_PATH,
+      CODEX_NODE_REPL_PATH: candidate.entryPath };
     const installed = { owner: OWNER, version: 1, state: "installed", ...candidate, hooksPath: ctx.hooksPath, hook, created,
       environment: desired, priorEnvironment: existing ? previous.priorEnvironment : beforeEnvironment,
       previousEnvironment: existing ? previous.previousEnvironment : beforeEnvironment,
@@ -309,6 +322,7 @@ export function installWebStopAdapter(options = {}) {
     if (previous?.state === "installed" && same({ ...previous, text: undefined }, { ...installed, text: undefined })
         && same(beforeEnvironment, desired) && beforeHooksText === nextHooksText) return installResult(ctx, installed, null);
     const preparedText = json({ ...installed, state: "prepared", priorEnvironment: beforeEnvironment });
+    if (refreshTransaction) Object.assign(refreshTransaction, { desired, preparedText, installedText });
     // Durable private baseline precedes both the hook file and User overrides.
     writeCompared(ctx, ctx.receiptPath, previous?.text ?? null, preparedText);
     const transaction = { beforeEnvironment, desired, beforeHooksText, nextHooksText, preparedText, installedText };
@@ -320,7 +334,106 @@ export function installWebStopAdapter(options = {}) {
       writeCompared(ctx, ctx.receiptPath, preparedText, installedText);
     } catch (error) { restoreFailedInstall(ctx, transaction, error); }
     return installResult(ctx, installed, result.broadcast);
-  });
+}
+
+export function installWebStopAdapter(options = {}) {
+  const ctx = context(options), manifestPath = absolute(options.manifestPath);
+  regular(ctx.root, { optional: true, directory: true }); mkdirSync(ctx.root, { recursive: true });
+  return withAtomicStateLock(ctx.receiptPath, () => installUnlocked(ctx, manifestPath));
+}
+
+function ownedRefreshState(ctx) {
+  const receipt = loadReceipt(ctx);
+  if (receipt?.state !== "installed") throw new Error("Runtime refresh requires an installed owned Web Stop adapter; finish adapter setup or recovery first.");
+  verifyManaged(ctx, receipt, { external: false });
+  const environment = pair(ctx.environment.readPair()), hooksText = readText(ctx.hooksPath);
+  ensureInstallOwnership(receipt, environment, parseHooks(hooksText));
+  return { receipt, environment, hooksText };
+}
+
+export function ownedWebStopAdapterEntry(options = {}) {
+  return ownedRefreshState(context(options)).receipt.entryPath;
+}
+
+function inspectRefresh(ctx, options) {
+  const { receipt, environment, hooksText } = ownedRefreshState(ctx);
+  let manifest = options.manifestPath ? absolute(options.manifestPath) : options.manifest;
+  if (!manifest && options.anchors) {
+    const anchors = options.anchors, paths = [anchors.node, anchors.officialCli, anchors.officialNodeRepl].map(absolute);
+    const signatures = ctx.inspectSignatures(paths);
+    if (!Array.isArray(signatures) || signatures.length !== paths.length) throw new Error("Incomplete official signature inspection.");
+    manifest = { version: 1, runtimeModule: anchors.runtimeModule, sdkPackageJson: anchors.sdkPackageJson,
+      threadIds: receipt.threadIds ?? null };
+    for (const [index, name] of ["node", "officialCli", "officialNodeRepl"].entries()) {
+      const matches = signatures.filter(item => item.path === paths[index]);
+      if (matches.length !== 1) throw new Error("Ambiguous official runtime signature inspection.");
+      const { status, signerSubject, signerThumbprint } = matches[0];
+      manifest[name] = { path: paths[index], sha256: hash(bytes(paths[index])), authenticode: { status, signerSubject, signerThumbprint } };
+    }
+  }
+  const candidate = inspectManifest(ctx, manifest);
+  if (path.dirname(candidate.node.path) !== path.dirname(candidate.officialNodeRepl.path)) throw new Error("Web runtime refresh requires Node and Node REPL from the same official runtime directory.");
+  if (!same(candidate.threadIds, receipt.threadIds ?? null)) throw new Error("Runtime refresh must preserve the installed adapter thread scope.");
+  return { manifest, candidate, candidateGeneration: stageInputs(ctx, candidate).generation, receipt, environment, hooksText };
+}
+
+export function inspectWebStopAdapterRuntimeRefresh(options = {}) {
+  const ctx = context(options), observed = inspectRefresh(ctx, options);
+  return { manifest: observed.manifest, candidate: observed.candidate, candidateGeneration: observed.candidateGeneration, generation: observed.receipt.generation,
+    threadIds: observed.receipt.threadIds ?? null, receiptSha256: hash(observed.receipt.text),
+    hooksSha256: hash(observed.hooksText ?? ""), environment: observed.environment,
+    cliSelectionChanged: observed.environment.CODEX_CLI_PATH !== observed.receipt.previousEnvironment.CODEX_CLI_PATH };
+}
+
+// The same lock pathname and owner-file format as the ordinary installer keeps
+// install/rollback out while the coordinated Router reload is pending.
+export async function withWebStopAdapterRuntimeRefresh(options, operation) {
+  const ctx = context(options);
+  return withDirectoryLock(async () => {
+    const before = inspectRefresh(ctx, options);
+    if (options.expected && (options.expected.receiptSha256 !== hash(before.receipt.text)
+        || options.expected.hooksSha256 !== hash(before.hooksText ?? "")
+        || !same(options.expected.environment, before.environment)
+        || options.expected.candidateGeneration !== before.candidateGeneration
+        || !same(options.expected.candidate, before.candidate))) throw new Error("Web runtime refresh plan changed; retry before applying.");
+    const transaction = { expectedGeneration: before.candidateGeneration };
+    try {
+      const result = installUnlocked(ctx, options.manifestPath ? absolute(options.manifestPath) : options.manifest, transaction);
+      return await operation(result);
+    } catch (cause) {
+      // A reloaded Router can already be admitting calls. The coordinator
+      // withholds compensation if a fresh idle drain cannot be established.
+      if (cause.runtimeRefreshRollbackAllowed === false) throw cause;
+      const failures = [];
+      try {
+        const current = pair(ctx.environment.readPair()), restored = { ...current };
+        for (const name of ENV_NAMES) {
+          if (current[name] === transaction.desired?.[name]) restored[name] = before.environment[name];
+          else if (current[name] !== before.environment[name]) failures.push("Foreign User environment preserved.");
+        }
+        if (!same(current, restored)) ctx.environment.compareExchangePair(current, restored);
+        if (!same(pair(ctx.environment.readPair()), restored)) throw new Error("Environment restoration readback failed.");
+      } catch { failures.push("User environment restoration failed."); }
+      try {
+        // Refresh never changes an existing hook definition or trust; retain a
+        // concurrent foreign edit while restoring only the exact owned bytes.
+        const current = readText(ctx.hooksPath);
+        if (current !== before.hooksText) failures.push("Foreign hooks changes preserved.");
+      } catch { failures.push("Hook restoration verification failed."); }
+      try {
+        const current = readText(ctx.receiptPath);
+        if (current !== before.receipt.text) {
+          if (![transaction.installedText, transaction.preparedText].includes(current)) throw new Error("Foreign ownership receipt preserved.");
+          writeCompared(ctx, ctx.receiptPath, current, before.receipt.text);
+        }
+      } catch { failures.push("Ownership receipt restoration failed."); }
+      if (failures.length) throw new Error(`Web runtime refresh failed; rollback incomplete: ${failures.join(" ")}`, { cause });
+      throw cause;
+    }
+  }, { target: ctx.receiptPath, waitMs: 2_000, retryMs: 25, heartbeatMs: 10_000,
+    defaults: { waitMs: 2_000, retryMs: 25, heartbeatMs: 10_000 },
+    lockedError: (_wait, cause) => new Error("Another Web Stop adapter operation is running; retry shortly.", { cause }),
+    releaseErrorKey: "adapterLockReleaseError", releaseErrorMessage: () => "Web runtime refresh finished, but the adapter ownership lock could not be released." });
 }
 
 function adapterPaths(ctx, receipt) {
@@ -341,7 +454,7 @@ export function webStopAdapterStatus(options = {}) {
   if (!receipt) return { installed: false, state: "absent", receiptPath: ctx.receiptPath, hookDefinitionOwned: false, conflicts: [], ...runtime };
   const conflicts = [];
   const conflictMessage = error => error instanceof SyntaxError ? "Adapter JSON is invalid." : error.message;
-  try { verifyManaged(ctx, receipt); } catch (error) { conflicts.push(conflictMessage(error)); }
+  try { verifyManaged(ctx, receipt, { external: receipt.state !== "removed" }); } catch (error) { conflicts.push(conflictMessage(error)); }
   let hookDefinitionOwned = false;
   if (receipt.state !== "removed") {
     let document;

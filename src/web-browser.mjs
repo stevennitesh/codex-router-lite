@@ -129,6 +129,15 @@ export const browserDom = Object.freeze({
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
 });
 
+// These controls belong to independently shipped setup, selection and Send.
+// Everything else, including any newly added field, remains a resident dependency.
+const operationDomKeys = new Set([
+  "modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
+  "composerName", "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+  "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
+]);
+const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(browserDom).filter(([key]) => !operationDomKeys.has(key))));
+
 // Self-contained read-only DOM projection, also usable directly with the public
 // locator.evaluateAll API. Code source excludes the renderer's toolbar and uses
 // logical lines rather than layout-derived wrapping. The observed message wrapper
@@ -227,7 +236,7 @@ export function readBrowserReplies(elements, options) {
         .some(action => action.getAttribute(ui.labelAttribute) === options.regenerateName
           && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
     }
-    return { replies, turns: turns.map(turn => {
+    const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
@@ -235,6 +244,46 @@ export function readBrowserReplies(elements, options) {
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
         complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
+    if (options.observation) {
+      const bodies = elements.filter(element => element.tagName === "BODY");
+      const body = bodies.length === 1 ? bodies[0] : null, document = body?.ownerDocument;
+      if (!document || document.body !== body) throw new Error("The browser observation document is unavailable.");
+      const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
+        && !element.matches(options.assistantSelector));
+      // The semantic union selected each exact accessible control. Canonical
+      // direct labels or text identify its group without guessing aria-labelledby.
+      const name = element => element.getAttribute("aria-labelledby") ? null
+        : element.getAttribute("aria-label") || (element.textContent ?? "").replace(/\s+/gu, " ").trim();
+      const button = element => element.matches('button,[role="button"]');
+      const heading = element => /^(?:H[1-6])$/u.test(element.tagName) || element.getAttribute("role") === "heading";
+      const visible = element => {
+        const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      const groups = [
+        ["stop", ui.stopButtonExactName, button], ["regenerate", ui.regenerateButtonExactName, button],
+        ["temporaryToggle", ui.temporaryToggleName, button], ["temporaryHeading", ui.temporaryHeadingName, heading],
+        ["fullButton", ui.startNewChatButtonName, button], ["fullBanner", ui.conversationFullText, () => true],
+      ];
+      const recognized = new Set(), values = {};
+      for (const [key, expected, kind] of groups) {
+        const matches = controls.filter(element => kind(element) && (key === "fullBanner"
+          ? (element.textContent ?? "").replace(/\s+/gu, " ").trim() : name(element)) === expected);
+        matches.forEach(element => recognized.add(element));
+        values[key] = { matches, count: matches.length, visible: matches.some(visible) };
+      }
+      if (recognized.size !== controls.length || ["stop", "temporaryToggle", "temporaryHeading"].some(key => values[key].count > 1)) {
+        throw new Error("The browser observation controls are unrecognized or ambiguous.");
+      }
+      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
+      const outside = key => values[key].matches.some(element => visible(element)
+        && !element.closest(excluded) && !element.querySelector(excluded));
+      projection.observation = { url: document.URL, stopVisible: values.stop.visible,
+        regenerateVisible: values.regenerate.visible, regenerateCount: values.regenerate.count,
+        temporaryInactive: !values.temporaryToggle.visible && !values.temporaryHeading.visible,
+        conversationFull: outside("fullBanner") && outside("fullButton") };
+    }
+    return projection;
   };
   if (!invalid.length) return result();
   const distinctReasons = new Set(invalid.map(index => reasons[index]));
@@ -321,23 +370,30 @@ function createBrowserView(state, options, replyReader, savedUrl) {
   };
   const observeGeneration = async (ownedUrl) => {
     activeOwner([options.turnId], true);
-    if (!(await normal(ownedUrl))) throw new Error("The observed conversation left its normal saved URL.");
-    const view = await snapshot(state.tab, undefined, state.generationTurnKey), texts = view.replies;
+    const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === state.savedUrl;
+    if (!normalUrl(ownedUrl)) throw new Error("The observed conversation left its normal saved URL.");
+    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${state.generationTurnKey}"]`);
+    const view = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
+      .or(state.tab.playwright.locator("body"))
+      .or(role(ui.stopButtonExactName)).or(role(ui.temporaryToggleName)).or(role(ui.temporaryHeadingName, "heading"))
+      .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
+      .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
+      .or(role(ui.startNewChatButtonName).filter({ visible: true }))
+      .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+        generationTurnKey: state.generationTurnKey, observation: true }, { timeoutMs: 1000 });
+    activeOwner([options.turnId], true);
+    const { url, stopVisible, temporaryInactive, conversationFull: full } = view.observation;
+    if (!normalUrl(url) || !temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
+    const texts = view.replies;
     const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
     const current = anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey
       ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
     const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
     if (reply) state.replyId = reply.messageId;
-    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${state.generationTurnKey}"]`);
-    const [stopVisible, regenerateVisible, full] = await Promise.all([
-      role(ui.stopButtonExactName).isVisible(),
-      Boolean(reply?.completionActionAfter) && generation.getByRole('button', { name: ui.regenerateButtonExactName, exact: true }).isVisible(),
-      conversationFull(),
-    ]);
+    if (reply?.completionActionAfter && view.observation.regenerateCount > 1) throw new Error("The browser observation controls are unrecognized or ambiguous.");
+    const regenerateVisible = Boolean(reply?.completionActionAfter) && view.observation.regenerateVisible;
     const statusComplete = anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete;
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-    const url = await state.tab.url();
-    if (!(await normal(url))) throw new Error("The observed conversation left its normal saved URL.");
     activeOwner([options.turnId], true);
     return { completed, assistantText, replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
@@ -842,7 +898,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(browserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
+  .update([JSON.stringify(residentBrowserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {
@@ -882,6 +938,7 @@ export function browserScript(options) {
         || typeof options.runtimeModule !== "string" || !options.runtimeModule) throw failure("Continuation recovery requires a confirmed owned chat and observed assistant reply.");
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
+  const compact = ["observe", "retain"].includes(options.operation);
   const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
@@ -894,6 +951,10 @@ export function browserScript(options) {
     config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
     if (typeof options.pluginSelectionButtonName !== "string" || !options.pluginSelectionButtonName) throw failure("Attachment requires the exact configured plugin button name.");
     config.pluginSelectionButtonName = options.pluginSelectionButtonName;
+  }
+  if (compact) {
+    config.ui = Object.fromEntries(Object.entries(config.ui).filter(([key]) => !operationDomKeys.has(key)));
+    for (const key of ["modelFamily", "power", "prompt", "pluginAppId", "pluginName", "pluginSelectionButtonName", "pluginChipSelector"]) delete config[key];
   }
   // The official REPL runs each call in a fresh module and omits carried
   // bindings that the new module redeclares. Store state on its shared global

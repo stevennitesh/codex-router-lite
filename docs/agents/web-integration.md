@@ -4,9 +4,18 @@ Use this guide when changing the browser lifecycle, context delivery, native-too
 broker, or Stop adapter. For setup, model selection and everyday use, start with
 [ChatGPT Web models](../CHATGPT-WEB.md).
 
-The maintained source owners are `src/chatgpt-web.mjs` for configuration and dispatch,
-`src/web-runtime.mjs` for conversation and tool coordination, `src/web-browser.mjs`
-for browser programs, and `src/web-stop-adapter*.mjs` for immediate cancellation.
+| Change | Read next | Source owner |
+| --- | --- | --- |
+| Instruction delivery or native compaction | [Context delivery](#instruction-delivery-and-compaction) | `src/web-runtime.mjs` |
+| Closed tabs, restarts or uncertain delivery | [Ownership and recovery](#ownership-and-recovery) | `src/web-runtime.mjs`, `src/web-browser.mjs` |
+| Reply observation or completion | [Observation and completion](#observation-and-completion) | `src/web-browser.mjs`, `src/web-stop-adapter.mjs` |
+| Full ChatGPT conversation | [Successor handoff](#full-conversation-handoff) | `src/web-runtime.mjs` |
+| Native tools or connector failures | [Tools and cancellation](#native-tools-and-cancellation) | `src/web-tools.mjs`, `src/web-mcp.mjs`, `src/web-tunnel.mjs` |
+| Immediate Stop | [Stop authority and completion](#immediate-stop) | `src/web-stop-hook.mjs`, `src/web-stop-adapter.mjs` |
+| Adapter update or rollback | [Installation and rollback](#adapter-installation-and-rollback) | `src/web-stop-adapter-install.mjs` |
+
+`src/chatgpt-web.mjs` owns configuration and route dispatch. `src/web-models.mjs`
+owns model identity and effort mapping; the user guide lists their public controls.
 
 ## Saved chats and browser lifecycle
 
@@ -25,6 +34,8 @@ native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
 records locally; storing or forwarding them does not request Codex inference.
 
+### Instruction delivery and compaction
+
 The full bridge protocol and exact current Codex instructions are sent on first
 attachment or an instruction revision. Confirmed Send records their digest and
 the owning browser generation in optional V1 ledger fields
@@ -39,14 +50,17 @@ records and resume with their ordinary full instruction delivery.
 Web-route native compaction selects source excerpts locally, without requesting
 a model summary. Both standalone compaction and native V2 compaction stay local;
 they do not generate a Web reply or request browser tools. This is separate from
-the subagent protocol selector below. For an owned saved conversation, Router
-records the delivery boundary and preserves genuinely undelivered native items.
+the [subagent protocol selector](../CHATGPT-WEB.md#subagent-selector). For an owned
+saved conversation, Router records the delivery boundary and preserves genuinely
+undelivered native items.
 V2 carries those exact items inside the readable checkpoint because Codex keeps
 only the compaction output item. New material is never silently excerpted to fit
 that carrier: compaction fails if it cannot fit. Continuing sends the new items
 without repeating a summary of history already delivered to ChatGPT. A first
 attachment with readable compacted history still uses that checkpoint to seed
 its new chat.
+
+### Ownership and recovery
 
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
 Codex conversation's browser and checks the previous reply's identity and text
@@ -60,6 +74,8 @@ uncertain Send or unresolved native coding action blocks continuation until its
 actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
+
+### Observation and completion
 
 Each confirmed Send owns one rendered logical turn. That turn can contain
 commentary, tool activity and several assistant messages. Router reads the latest
@@ -78,17 +94,22 @@ recovery, selection and Send retain their separate lifecycle checkpoints.
 
 Each reply snapshot retains mounted turn/message identities and order, while
 reconstructing answer text and completion details only for the owned generation.
-Recovery still reads the historical proof it needs. Independent control reads run
-concurrently between navigation/ownership checks. Each native browser read returns
+Recovery still reads the historical proof it needs. A semantic locator union reads
+the owned turn, controls and current URL together, between independent ownership
+and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
 With the Router MCP adapter installed, one pending native observation call spans
 those short reads. A protected loopback notification wakes it on broker activity;
 browser completion, capacity errors and observation failures also return it. The
-adapter spaces its internal reads rather than repeatedly emitting visible wait
-calls. The renewal deadline stops scheduling new reads; an already dispatched
-read keeps a separate execution allowance within Codex's call timeout. Shrinking
-that read's execution budget to the remaining renewal interval can time out a
-normal read and reset the native REPL kernel. Renewal waits for its actual result.
+notification uses an owned Node HTTP request with its abort signal and no shared
+connection pool. This private loopback channel accepts the configured listener
+port without browser Fetch port restrictions; failed or malformed broker
+responses still fail closed. The adapter spaces its internal reads rather than
+repeatedly emitting visible wait calls. The renewal deadline stops scheduling new
+reads; an already dispatched read keeps a separate execution allowance within
+Codex's call timeout. Shrinking that read's execution budget to the remaining
+renewal interval can time out a normal read and reset the native REPL kernel.
+Renewal waits for its actual result.
 Stop prevents further reads and waits for an in-flight read's actual terminal
 callback before the existing cleanup. The separate final retention check, broker
 revision fences, protected durable writes and Interrupt hook remain.
@@ -98,6 +119,8 @@ Completion requires an idle owned browser turn, an answer after the latest tool
 boundary, and unchanged broker activity across the completion read and final
 delivery. A completed page with unreadable output or no post-tool answer ends
 with a bounded error instead of waiting for the general generation deadline.
+
+### Full conversation handoff
 
 The site's explicit maximum-conversation-length notice and **Start new chat**
 action permit a successor saved chat. Assistant prose, timeouts and generic
@@ -240,9 +263,16 @@ runtime module, and the existing MCP SDK package. `threadIds` restricts a trial;
 .\model-router.ps1 codex web stop adapter-status
 ```
 
-The installer stages its code and launcher in private durable Router state and
-records the original User `CODEX_CLI_PATH` and `CODEX_NODE_REPL_PATH` selections
-before changing either. It preserves unrelated hooks.
+The installer stages its code and launcher in private durable Router state. It
+preserves the original User `CODEX_CLI_PATH` selection, including an unset value,
+and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
+compatibility; the adapter does not pin the whole app to that CLI build. Updating
+an older owned installation releases its CLI pin back to the original selection.
+Foreign changes are preserved, and unrelated hooks are untouched.
+If the saved browser runtime or tunnel configuration changed, also use the
+[guarded Router restart](../INSTALL.md#replacement-and-drain) to reload that
+configuration before live verification. A Codex restart only reloads the adapter;
+it does not restart Router's already initialized Web services.
 Review and trust **Stopping ChatGPT Web generation through Router adapter**
 in Codex Settings → Hooks, then fully quit and reopen
 Codex normally. No external Web launcher or special startup script is needed.
@@ -250,8 +280,9 @@ Verify actual Stop and same-chat continuation after restart; configuration and
 offline tests alone do not establish live cancellation.
 
 The resident helper version covers only its retained reply, view, observation and
-DOM dependencies. Separately shipped selection, Send and recovery programs do not
-change that helper version. The managed adapter contains an immutable browser-code
+DOM dependencies. Picker-only labels and controls are separated from both the
+resident configuration and its version inputs. Separately shipped selection,
+Send and recovery programs do not change that helper version. The managed adapter contains an immutable browser-code
 snapshot and recognizes only exact Router observation programs. Changes to selection, Send or recovery
 can keep the existing adapter when its installed qualifier still accepts the
 generated observation code exactly. Verify that equality before deployment.
@@ -261,6 +292,30 @@ restart. The managed hook definition remains unchanged. Preserve a compatible
 Router source, adapter generation and private configuration for rollback;
 rolling back launch selections alone restores the original installation baseline.
 
+After an app update removes old runtime files, use a fresh manifest for the current
+signed CLI, Node, Node REPL and public browser module. Replacement verifies the
+retained adapter's own protected files without requiring the deleted old app
+files; the new candidate still needs complete signature and hash verification.
+Refresh the saved Web configuration too if its browser module path changed.
+Runtime anchors are rebound deliberately before restart, never during an active
+browser call.
+
+`model-router.ps1 codex web refresh-runtime` plans that refresh from the configured
+Node REPL command, its paired Node executable, and the configured trusted browser
+service. It uses the existing CLI identity resolver and the installer's candidate
+validation. Missing or conflicting configured anchors require an explicit
+`--manifest`; cache-directory age does not establish runtime authority.
+`--apply` coordinates adapter replacement, saved browser configuration and the
+existing guarded service restart. It preserves connector/tunnel identities,
+capabilities, runtime-key storage and the hook definition. The current generation
+remains fixed during admitted calls, and failed refreshes preserve or restore
+still-owned prior state. A reported Codex restart is needed to load the new adapter.
+Online refresh requires explicit known-idle Web counters from the serving Router,
+including the gaps between native HTTP requests. Older drain replies do not
+establish this proof; deploy and reload the new Router before refreshing runtime
+selections. Recovery requires the same idle proof before restoring prior state;
+new or uncertain work defers compensation and retains the refreshed generation.
+
 ```powershell
 .\model-router.ps1 codex web stop adapter-rollback
 ```
@@ -269,11 +324,3 @@ Rollback restores only still-owned launch selections and removes only the owned
 adapter hook, preserving foreign edits and the staged files. Fully quit and reopen
 Codex afterward. A Codex update needs a fresh compatibility check
 for the selected official executables and browser runtime.
-
-Tool revocation and next-turn reconciliation alone do not establish immediate
-browser cancellation. Stop keeps the saved chat and tab open. Route errors fail
-explicitly without a model fallback. Offline tests cover the runtime contracts;
-immediate Stop requires live verification with the selected official runtime and
-trusted adapter hook. Earlier native-patch trials remain historical evidence.
-
-The integration accepts text input. Media upload is unsupported and rejected.

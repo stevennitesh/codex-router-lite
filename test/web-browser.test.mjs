@@ -162,9 +162,11 @@ test("resident source changes invalidate compact programs while independently sh
     return import(`data:text/javascript;base64,${Buffer.from(changed, "utf8").toString("base64")}`);
   };
   const changeFunction = name => source.replace(new RegExp(`(function ${name}\\([^\\n]*\\) \\{)`, "u"), `$1\n  /* changed ${name} source */`);
+  const changeDom = name => source.replace(new RegExp(`\\b${name}: ("[^"\\n]*"|'[^'\\n]*')`, "u"), `${name}: "Changed ${name}"`);
   const compact = ["observe", "retain"].map(operation => browserScript({ ...base, operation }));
   for (const changed of [
     source.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",'),
+    ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute"].map(changeDom),
     ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
   ]) {
     const variant = await loadVariant(changed);
@@ -176,18 +178,38 @@ test("resident source changes invalidate compact programs while independently sh
     }
   }
   const send = browserScript({ ...base, operation: "send", prompt: "Request" });
-  for (const name of ["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"]) {
-    const operationVariant = await loadVariant(changeFunction(name));
+  for (const [changed, sourceChanged] of [
+    ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
+    ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
+      "composerName", "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+      "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
+  ]) {
+    const operationVariant = await loadVariant(changed);
     assert.equal(operationVariant.browserHelperVersion, browserHelperVersion);
     for (const code of compact) {
       const options = operationVariant.readBrowserProgram(code);
       assert.ok(options, "Independently shipped model and Send logic cannot invalidate resident observation calls.");
       assert.equal(operationVariant.browserScript(options), code);
     }
-    assert.equal(operationVariant.readBrowserProgram(send), null, "Mutation programs still require their complete current source.");
-    const currentSend = operationVariant.browserScript(readBrowserProgram(send));
+    if (sourceChanged) assert.equal(operationVariant.readBrowserProgram(send), null, "Mutation programs still require their complete current source.");
+    const currentSend = operationVariant.browserScript({ ...base, operation: "send", prompt: "Request" });
     assert.notEqual(currentSend, send);
     assert.ok(operationVariant.readBrowserProgram(currentSend));
+  }
+});
+
+test("compact program configuration excludes operation inputs while preserving unknown fields for exact qualification", () => {
+  for (const operation of ["observe", "retain"]) {
+    const code = browserScript({ ...base, operation, ...plugin, prompt: "Request", futureOption: { enabled: true }, ui: { futureControl: "Future control" } });
+    const parsed = readBrowserProgram(code);
+    for (const key of ["modelFamily", "power", "prompt", "pluginAppId", "pluginName", "pluginSelectionButtonName", "pluginChipSelector"]) assert.equal(Object.hasOwn(parsed, key), false);
+    assert.equal(Object.hasOwn(parsed.ui, "modelButtonName"), false);
+    assert.deepEqual(parsed.futureOption, { enabled: true });
+    assert.equal(parsed.ui.futureControl, "Future control");
+    assert.equal(browserScript(parsed), code);
+    assert.equal(readBrowserProgram(code.replace('"ui":{', '"ui":{"modelButtonName":"Tampered picker",')), null);
+    assert.equal(readBrowserProgram(code.replace('"ui":{', '"prompt":"Injected operation input","ui":{')), null);
+    assert.throws(() => browserScript({ ...base, operation, ui: { futureControl: null } }), /Invalid observed browser control/);
   }
 });
 
@@ -219,7 +241,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
-    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, fetchCalls: 0, stopClicks: 0, userMessages: [] };
+    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0,
+    fetchCalls: 0, stopClicks: 0, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -238,8 +261,83 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     if (scope === "composer") domElement("div", { contenteditable: "true" }, node);
     return node;
   };
-  const makeLocator = (kind, name, visibleOnly = false) => ({
-    getByRole(role, options) { return makeLocator(role, options.name); },
+  const replyRoot = () => {
+    const replies = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
+    const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
+    let precedingUser;
+    for (const user of ui.userMessages) {
+      let boundary = -1;
+      for (let index = 0; index < all.length; index += 1) if (user.baselineIds.includes(all[index].getAttribute('data-chatgpt-selection-message-id'))) boundary = index;
+      boundary = Math.max(boundary, all.indexOf(precedingUser));
+      precedingUser = domElement("div", { 'data-turn-key': user.messageId },
+        domElement("h4", {}, domText("You said:")), domElement("div", {}, domText(user.text)));
+      all.splice(boundary + 1, 0, precedingUser);
+    }
+    const turns = [];
+    let currentTurn = domElement("section", { 'data-turn-key': messageId(900) });
+    for (const element of all) {
+      if (element.matches('[data-turn-key]')) {
+        if (currentTurn.childNodes.length) turns.push(currentTurn);
+        currentTurn = element;
+      } else {
+        currentTurn.childNodes.push(element); currentTurn.children.push(element); element.parentElement = currentTurn;
+      }
+    }
+    if (currentTurn.childNodes.length) turns.push(currentTurn);
+    for (const [index, turn] of turns.entries()) {
+      const complete = index < turns.length - 1 || ui.complete;
+      const content = domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' }, ...turn.childNodes,
+        ...(complete ? [domElement('button', { 'aria-label': 'Regenerate response' })] : []));
+      turn.childNodes = [content]; turn.children = [content]; content.parentElement = turn;
+    }
+    const root = ui.messageRoot ?? domElement("main", {}, ...(ui.orphanMarkdownBefore ?? []), ...turns, ...(ui.orphanMarkdownAfter ?? []));
+    // Hand-built fragments represent selected markdown roots.
+    for (const element of replies) if (!element.matches(broadReplySelector)) element.setAttribute('data-markdown-text-style', 'assistant-message');
+    return root;
+  };
+  const makeUnion = locators => ({
+    or(other) { return makeUnion([...locators, other]); },
+    async evaluateAll(callback, argument) {
+      ui.replyReads += 1; ui.observationReads += 1;
+      ui.onReplyRead?.();
+      const root = replyRoot(), body = domElement("body", {}, root);
+      const document = { body, get URL() { return ui.url ?? "https://chatgpt.com/"; },
+        defaultView: { getComputedStyle: element => ({ visibility: element.visibilityStyle ?? "visible" }) } };
+      body.ownerDocument = document;
+      const control = (tag, text, attributes = {}) => {
+        const element = domElement(tag, attributes, domText(text));
+        element.getBoundingClientRect = () => ({ width: 32, height: 32 });
+        return element;
+      };
+      const namedControls = {
+        Stop: ui.stop ? [control("button", "", { "aria-label": "Stop" })] : [],
+        "Turn off temporary chat": ui.temporary ? [control("button", "", { "aria-label": "Turn off temporary chat" })] : [],
+        "Temporary chat": ui.temporary && ui.temporaryHeadingVisible ? [control("h2", "Temporary chat")] : [],
+        ...ui.observationControls,
+      };
+      const elements = [];
+      for (const { kind, name, scopeSelector } of locators) {
+        if (kind === "selector") elements.push(...(name === "body" ? [body] : root.querySelectorAll(name)));
+        else if (name === "Regenerate response") {
+          const scope = scopeSelector ? root.querySelectorAll(scopeSelector) : [root];
+          const matches = scope.flatMap(element => element.querySelectorAll('[aria-label="Regenerate response"]'));
+          for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+          elements.push(...matches);
+        } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
+        else if (kind === "text") {
+          const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
+            ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })), { text: ui.composerText, scope: "composer" }];
+          elements.push(...candidates.filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate)));
+        } else elements.push(...(namedControls[name] ?? []));
+      }
+      for (const element of elements) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+      return callback([...new Set(elements)], argument);
+    },
+  });
+  const makeLocator = (kind, name, visibleOnly = false, scopeSelector) => ({
+    kind, name, scopeSelector,
+    or(other) { return makeUnion([this, other]); },
+    getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
     locator(selector) { return makeLocator("selector", selector); },
     filter({ hasText, visible }) {
       if (visible !== undefined) return makeLocator(kind, name, visible);
@@ -248,12 +346,14 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return makeLocator("family-text", hasText);
     },
     async count() {
+      ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "count" });
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
       return kind === "family-text" ? Number(ui.familyText.includes(name)) : name === plugin.pluginSelectionButtonName ? ui.selectionCount ?? 1 : 0;
     },
     async isVisible() {
+      ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "isVisible" });
       if (name === "Select ChatGPT model" && kind === "menu") return ui.menu;
       if (name === "Select ChatGPT model" && kind === "button") return ui.modelButtonVisible;
@@ -308,12 +408,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
     },
     async getAttribute(attribute) {
+      ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "getAttribute", attribute });
       if (name === '[role="slider"]') assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is read from the visible Power view.');
       if (attribute === "aria-valuenow" && ui.missingPower) return null;
       return { "aria-checked": String(ui.checked), "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null;
     },
-    async textContent() { await ui.onControlRead?.({ kind, name, method: "textContent" }); return kind === "family-text" ? ui.familyText : name; },
+    async textContent() { ui.controlReads += 1; await ui.onControlRead?.({ kind, name, method: "textContent" }); return kind === "family-text" ? ui.familyText : name; },
     async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
       if (name === "Power") {
@@ -353,42 +454,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       ui.replyReads += 1;
       ui.onReplyRead?.();
-      const replies = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
       if (name.startsWith('[data-turn-key],')) {
-        const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
-        let precedingUser;
-        for (const user of ui.userMessages) {
-          let boundary = -1;
-          for (let index = 0; index < all.length; index += 1) if (user.baselineIds.includes(all[index].getAttribute('data-chatgpt-selection-message-id'))) boundary = index;
-          boundary = Math.max(boundary, all.indexOf(precedingUser));
-          precedingUser = domElement("div", { 'data-turn-key': user.messageId },
-            domElement("h4", {}, domText("You said:")), domElement("div", {}, domText(user.text)));
-          all.splice(boundary + 1, 0, precedingUser);
-        }
-        const turns = [];
-        let currentTurn = domElement("section", { 'data-turn-key': messageId(900) });
-        for (const element of all) {
-          if (element.matches('[data-turn-key]')) {
-            if (currentTurn.childNodes.length) turns.push(currentTurn);
-            currentTurn = element;
-          } else {
-            currentTurn.childNodes.push(element); currentTurn.children.push(element); element.parentElement = currentTurn;
-          }
-        }
-        if (currentTurn.childNodes.length) turns.push(currentTurn);
-        for (const [index, turn] of turns.entries()) {
-          const complete = index < turns.length - 1 || ui.complete;
-          const content = domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' }, ...turn.childNodes,
-            ...(complete ? [domElement('button', { 'aria-label': 'Regenerate response' })] : []));
-          turn.childNodes = [content]; turn.children = [content]; content.parentElement = turn;
-        }
-        const root = ui.messageRoot ?? domElement("main", {}, ...(ui.orphanMarkdownBefore ?? []), ...turns, ...(ui.orphanMarkdownAfter ?? []));
-        // Hand-built fragments in existing fixtures represent the selected
-        // markdown roots. Give them the observed marker before querying.
-        for (const element of replies) if (!element.matches(broadReplySelector)) {
-          element.setAttribute('data-markdown-text-style', 'assistant-message');
-        }
-        return callback(root.querySelectorAll(name), argument);
+        return callback(replyRoot().querySelectorAll(name), argument);
       }
       assert.fail(`Unobserved selector: ${name}`);
     },
@@ -399,7 +466,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }, locator: name => makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser",
-    tabs: { list: async () => [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])],
+    tabs: { list: async () => { ui.tabReads += 1; return [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])]; },
       get: async id => { assert.equal(id, tab.id); return tab; },
       new: async () => {
         if (ui.newTabs) { ui.tabId = "reopened-tab"; ui.url = "about:blank"; ui.texts = []; ui.composerText = ""; ui.chip = false; }
@@ -2299,11 +2366,50 @@ test("a visual observation returns the current generation without an artificial 
   assert.equal(pending.stopVisible, true);
   assert.equal(f.ui.replyReads - before, 1);
   assert.equal(f.ui.waitedMs - waitedBefore, 0);
-  assert.equal(f.ui.urlReads - urlsBefore, 2, "Observation validates a URL before and after its DOM reads.");
+  assert.equal(f.ui.urlReads - urlsBefore, 1, "The initial URL check precedes the coherent DOM URL and control read.");
   assert.equal(f.ui.fetchCalls, 0);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.handoffs, 2);
+});
+
+test("active, completed and retention reads batch exact controls with the owned reply and document URL", async () => {
+  for (const operation of ["active", "completed", "retain"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Owned answer");
+    f.ui.complete = operation !== "active"; f.ui.stop = !f.ui.complete;
+    if (operation === "retain") await f.run("observe");
+    const before = { tabs: f.ui.tabReads, urls: f.ui.urlReads, replies: f.ui.replyReads,
+      controls: f.ui.controlReads, observations: f.ui.observationReads, waits: f.ui.waitedMs, handoffs: f.ui.handoffs };
+    const result = await f.run(operation === "retain" ? "retain" : "observe");
+    assert.deepEqual({ tabs: f.ui.tabReads - before.tabs, urls: f.ui.urlReads - before.urls,
+      replies: f.ui.replyReads - before.replies, controls: f.ui.controlReads - before.controls,
+      observations: f.ui.observationReads - before.observations, waits: f.ui.waitedMs - before.waits },
+    { tabs: 1, urls: 1, replies: 1, controls: 0, observations: 1, waits: 0 });
+    assert.deepEqual([result.assistantText, result.completed, result.stopVisible, result.url],
+      ["Owned answer", operation !== "active", operation === "active", f.getState().savedUrl]);
+    assert.equal(f.ui.handoffs - before.handoffs, operation === "retain" ? 1 : 0);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("batched exact-control reads reject duplicate controls and unrecognized accessible-name markup", async () => {
+  const stop = attributes => domElement("button", { "aria-label": "Stop", ...attributes });
+  for (const controls of [
+    { Stop: [stop(), stop()] },
+    { Stop: [stop({ "aria-labelledby": "alternative-accessible-name" })] },
+    { "Turn off temporary chat": [domElement("button", { "aria-label": "Turn off temporary chat" }), domElement("button", { "aria-label": "Turn off temporary chat" })] },
+    { "Temporary chat": [domElement("h2", {}, domText("Temporary chat")), domElement("h2", {}, domText("Temporary chat"))] },
+  ]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Owned answer"); f.ui.complete = true;
+    f.ui.observationControls = controls;
+    await assert.rejects(f.run("observe"), /controls are unrecognized or ambiguous/);
+    assert.notEqual(f.getState().completed, true);
+    assert.equal(f.ui.sendClicks, 1);
+  }
 });
 
 test("observation and retention use compact resident invocations below 4 KB", () => {

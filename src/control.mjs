@@ -100,7 +100,17 @@ async function main() {
       const status = await configureInAppWebBridge(config.value);
       await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
       print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
-        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex. Web subagents require V1; configuration does not change the protocol." });
+        next: "Run restart-codex-router.ps1 to reload browser and tunnel settings, then model-router.ps1 codex refresh-catalog and fully reopen Codex. Web subagents require V1; configuration does not change the protocol." });
+    } else if (action === "refresh-runtime") {
+      let apply = false, manifestPath;
+      for (let index = 2; index < args.length; index += 1) {
+        if (args[index] === "--apply" && !apply) apply = true;
+        else if (args[index] === "--manifest" && manifestPath === undefined && args[index + 1] && !args[index + 1].startsWith("--")) {
+          manifestPath = path.resolve(args[++index]);
+        } else throw new Error("Usage: control web refresh-runtime [--apply] [--manifest <adapter-manifest-json>]");
+      }
+      const { refreshWebRuntime } = await import("./web-runtime-refresh.mjs");
+      print(await refreshWebRuntime({ apply, ...(manifestPath === undefined ? {} : { manifestPath }) }));
     } else if (action === "tunnel-key") {
       if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
       print(webTunnelKeyCommand(value ?? "status"));
@@ -121,7 +131,7 @@ async function main() {
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|refresh-runtime [--apply] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
     return;
   }
   if (command === "subagents") {

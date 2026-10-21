@@ -68,15 +68,20 @@ async function routerFixture(t, handle, options = {}) {
   const directory = mkdtempSync(path.join(state, "http-"));
   const codexHome = path.join(directory, "codex");
   mkdirSync(codexHome);
-  const { realRuntime = false, ...settings } = options;
+  const { realRuntime = false, runtimeStates = [], ...settings } = options;
   saveSettings({ directory, ...settings, ...(realRuntime ? { enabled: false } : {}) });
   // Replace only the in-app runtime dependency. The real Router and settings
   // owner still validate and dispatch the ordinary request. Browser scheduling,
   // native tool execution and compaction have their own real-runtime coverage.
   const runtimeStub = path.join(directory, "runtime-stub.mjs"), preload = path.join(directory, "preload.mjs");
-  writeFileSync(runtimeStub, `export function startInAppWebBridge() {}\nexport function closeInAppWebBridge() {}\nexport function requestInAppWebBridge(payload, {compact, compactV2, signal, headers}) {
-    return fetch(${JSON.stringify(bridge.baseUrl)} + (compact ? '/compact' : '/request'), {method:'POST',signal,
+  writeFileSync(runtimeStub, `let maintenance = {activeTurns:0,uncertainSends:0,unresolvedActions:0};
+  const states = ${JSON.stringify(runtimeStates)};
+  export function inAppWebMaintenanceState() { return {...maintenance}; }
+  export function startInAppWebBridge() {}\nexport function closeInAppWebBridge() {}\nexport async function requestInAppWebBridge(payload, {compact, compactV2, signal, headers}) {
+    const response = await fetch(${JSON.stringify(bridge.baseUrl)} + (compact ? '/compact' : '/request'), {method:'POST',signal,
       headers:{...headers,'x-fixture-compact-v2':String(compactV2)},body:JSON.stringify(payload)});
+    maintenance = states.shift() ?? maintenance;
+    return response;
   }\n`, "utf8");
   writeFileSync(preload, `import {registerHooks} from 'node:module';
     registerHooks({resolve(specifier, context, nextResolve) { const result=nextResolve(specifier,context);
@@ -101,6 +106,47 @@ async function routerFixture(t, handle, options = {}) {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload), ...fetchOptions,
     }) };
 }
+
+test("Router defers drain for Web work created by an admitted HTTP round and during its native-tool gap", async t => {
+  const started = Promise.withResolvers(), released = Promise.withResolvers();
+  let calls = 0;
+  const fixture = await routerFixture(t, async ({ response }) => {
+    if (++calls === 1) { started.resolve(); await released.promise; }
+    json(response, completed);
+  }, { runtimeStates: [
+    { activeTurns: 1, uncertainSends: 0, unresolvedActions: 0 },
+    { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 },
+  ] });
+  const lifecycle = (operation = "", body) => fetch(`http://127.0.0.1:${fixture.port}/internal/lifecycle${operation ? `/${operation}` : ""}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { authorization: "Bearer web-fixture-internal-capability-long-enough", "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const response = fixture.post({ model, input: [] });
+  await started.promise;
+  const draining = lifecycle("drain", { timeout_ms: 1_000 });
+  let state;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    state = await (await lifecycle()).json();
+    if (state.state === "draining") break;
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+  assert.equal(state.state, "draining");
+  released.resolve();
+  assert.equal((await response).status, 200);
+  const result = await draining;
+  assert.equal(result.status, 409);
+  const deferred = await result.json();
+  assert.equal(deferred.reason, "web-workflow-active");
+  assert.equal(deferred.activeRequests, 0);
+  assert.equal(deferred.webRuntime.activeTurns, 1);
+  assert.equal(deferred.state, "open");
+  assert.equal((await lifecycle("drain", { timeout_ms: 1_000 })).status, 409);
+  assert.equal((await fixture.post({ model, input: [{ role: "user", content: "Continue the native tool round." }] })).status, 200);
+  const finished = await lifecycle("drain", { timeout_ms: 1_000 });
+  assert.equal(finished.status, 200);
+  assert.equal((await finished.json()).status, "drained");
+});
 
 test("Web compact forwards canonical header-only turn metadata without native credentials", async t => {
   const metadata = JSON.stringify({ thread_id: "synthetic-thread", turn_id: "synthetic-turn" });

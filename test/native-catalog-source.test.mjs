@@ -12,6 +12,8 @@ test("native adoption reads real root assignments and retains legacy Windows pat
   const root = mkdtempSync(path.join(os.tmpdir(), "codex-router-adoption-"));
   const home = path.join(root, "home"), state = path.join(root, "state");
   const actual = path.join(root, "models.json"), fake = path.join(root, "fake.json");
+  // Keep unknown Windows escapes literal, but protect valid TOML escapes in TEMP.
+  const legacyActual = actual.replace(/\\(?=[bfnrt])/gu, "\\\\");
   mkdirSync(home); mkdirSync(state);
   writeFileSync(actual, JSON.stringify({models:[{slug:"gpt-native"}]}));
   writeFileSync(fake, JSON.stringify({models:[{slug:"gpt-fake"}]}));
@@ -26,7 +28,7 @@ test("native adoption reads real root assignments and retains legacy Windows pat
   try {
     for (const assignment of [
       `"model_catalog_json" = '${actual}'`,
-      `'model_catalog_json' = "${actual}"`,
+      `'model_catalog_json' = "${legacyActual}"`,
       `model_catalog_json = ${JSON.stringify(actual)}`,
       `model_catalog_json = "\\U${actual.codePointAt(0).toString(16).padStart(8,"0")}${JSON.stringify(actual).slice(2,-1)}"`,
     ]) {

@@ -71,9 +71,15 @@ the model picker:
 ```powershell
 .\model-router.ps1 codex web tunnel-key set
 .\model-router.ps1 codex web browser 'C:\absolute\path\web-browser.json'
+.\restart-codex-router.ps1
 .\model-router.ps1 codex refresh-catalog
 .\model-router.ps1 codex web status
 ```
+
+After changing browser or tunnel settings, restart Router before sending a Web
+request. Reopening Codex reloads its adapter; it does not reload Router's running
+tunnel and browser configuration. The guarded restart waits for active work and
+leaves the current service running if it cannot safely replace it.
 
 The key is stored in Router state as the owner-only
 `chatgpt-web-runtime-key.secret` file. `set` never accepts a key argument or echoes
@@ -116,9 +122,10 @@ notice. Input is text only; media upload is unsupported.
 ## Immediate Stop
 
 Immediate browser cancellation uses the Router MCP adapter and a separately trusted
-Interrupt hook. Codex's Stop cancels generation while retaining the same saved chat
-and tab. Native cancellation also revokes tool access; it cannot undo a tool that
-has already started.
+Interrupt hook. The adapter covers ordinary primary Web conversations and excludes
+subagents. Codex's Stop cancels generation while retaining the same saved chat and
+tab. Native cancellation also revokes tool access; it cannot undo a tool that has
+already started.
 
 After installing the adapter, review and trust **Stopping ChatGPT Web generation
 through Router adapter** in Codex Settings → Hooks, then fully quit and reopen Codex.
@@ -129,6 +136,29 @@ For the adapter manifest, installation commands, source-version matching and
 rollback, see [integration maintenance](agents/web-integration.md#adapter-installation-and-rollback).
 That guide also owns [browser and context details](agents/web-integration.md#saved-chats-and-browser-lifecycle)
 and [Stop's authority and deadline](agents/web-integration.md#immediate-stop).
+
+## Refresh after a Codex update
+
+Preview the runtime refresh before changing the installed integration:
+
+```powershell
+.\model-router.ps1 codex web refresh-runtime
+.\model-router.ps1 codex web refresh-runtime --apply
+```
+
+Planning reads the configured official Node REPL and browser service and validates
+their runtime identities. It preserves your connector, tunnel, runtime key and
+model capabilities. If the configured runtime is missing or ambiguous, supply a
+reviewed manifest with `--manifest 'C:\absolute\path\adapter-manifest.json'`.
+
+Applying a required refresh waits for active Router work, installs the matching
+adapter and browser configuration, and reloads Router. It does not force an
+interruption. The serving Router must support Web-aware drain checks: active
+generations, uncertain Sends and unresolved native actions postpone the refresh.
+If an older Router cannot supply that proof, deploy and reload the current Router
+before applying the runtime refresh. Fully quit and reopen Codex normally when the command reports that
+the adapter needs to reload. The existing trusted Interrupt hook is retained;
+verify tools, Stop and same-chat continuation after activation.
 
 ## Actual model and effort
 

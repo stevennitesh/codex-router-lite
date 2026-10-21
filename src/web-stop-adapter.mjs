@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { get as httpGet } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -28,6 +29,7 @@ const OBSERVATION_INTERVAL_MS = 500;
 const OBSERVATION_WAIT_MS = 25_000;
 const OBSERVATION_FINISH_GRACE_MS = 4000;
 const OBSERVATION_TRANSPORT_MARGIN_MS = 1000;
+const MAX_BROKER_OBSERVATION_BYTES = 4096;
 
 function observationWait(config) {
   const wait = config.observationWait;
@@ -390,12 +392,27 @@ export class AdapterBridge {
   }
   async waitForBroker(pending) {
     const state = pending.wait;
-    const response = await fetch(state.url, { signal: state.abort.signal, redirect: 'error', headers: { accept: 'application/json' } });
-    if (!response.ok) return this.wakeObservation(pending, 'broker_error');
-    const value = await response.json();
-    if (!record(value) || Object.keys(value).sort().join() !== 'closed,revision' || typeof value.closed !== 'boolean'
-        || !Number.isSafeInteger(value.revision) || value.revision < state.revision) return this.wakeObservation(pending, 'broker_error');
-    this.wakeObservation(pending, value.closed ? 'broker_closed' : value.revision !== state.revision ? 'broker_activity' : 'deadline');
+    // This URL was restricted to private loopback HTTP by observationWait.
+    // Own its socket; browser Fetch port rules and global pools do not apply to IPC.
+    const response = await new Promise((resolveResponse, rejectResponse) => {
+      httpGet(state.url, { agent: false, signal: state.abort.signal, headers: { accept: 'application/json' } }, incoming => {
+        incoming.once('error', rejectResponse); resolveResponse(incoming);
+      }).once('error', rejectResponse);
+    });
+    try {
+      if (response.statusCode < 200 || response.statusCode >= 300) return this.wakeObservation(pending, 'broker_error');
+      const chunks = [];
+      let bytes = 0;
+      for await (const chunk of response) {
+        bytes += chunk.length;
+        if (bytes > MAX_BROKER_OBSERVATION_BYTES) throw new Error('broker_observation_body_limit');
+        chunks.push(chunk);
+      }
+      const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
+      if (!record(value) || Object.keys(value).sort().join() !== 'closed,revision' || typeof value.closed !== 'boolean'
+          || !Number.isSafeInteger(value.revision) || value.revision < state.revision) return this.wakeObservation(pending, 'broker_error');
+      this.wakeObservation(pending, value.closed ? 'broker_closed' : value.revision !== state.revision ? 'broker_activity' : 'deadline');
+    } finally { response.destroy(); }
   }
   wakeObservation(pending, reason) {
     const state = pending.wait;

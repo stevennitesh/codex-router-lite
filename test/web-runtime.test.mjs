@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
+import { RouterAdmission } from "../src/router-admission.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
 const stateDir = mkdtempSync(path.join(os.tmpdir(), "router-web-runtime-"));
@@ -13,7 +14,7 @@ after(() => rmSync(stateDir, { recursive: true, force: true }));
 
 const { createInAppWebRuntime, collectWebTools, webTurnIdentity } = await import("../src/web-runtime.mjs");
 const { createWebToolBroker } = await import("../src/web-tools.mjs");
-const { parseBrowserOutput, readBrowserProgram } = await import("../src/web-browser.mjs");
+const { browserDom, parseBrowserOutput, readBrowserProgram } = await import("../src/web-browser.mjs");
 const { startWebMcp } = await import("../src/web-mcp.mjs");
 const { qualifyBrowserCall } = await import("../src/web-stop-adapter.mjs");
 const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs");
@@ -47,6 +48,7 @@ function fakeBrowser() {
   const ui = { power: 2, menu: false, chip: false, stop: false, texts: [], complete: false, sends: [], marks: 0, newTabs: 0, closes: 0, present: true, navigations: 0, reacquired: [], stopMarks: [],
     temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map(), turns: [], savedTurns: new Map() };
   const locator = (kind, name, visibleOnly = false) => ({
+    or() { return this; },
     getByRole: (childKind, options) => locator(childKind, options.name), locator: selector => locator("selector", selector),
     filter({ hasText, visible }) {
       if (visible !== undefined) return locator(kind, name, visible);
@@ -131,7 +133,23 @@ function fakeBrowser() {
         element.matches = selector => selector !== '[data-turn-key]';
         element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
       }
-      return callback([...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])], ownedChipSelector);
+      let selected = [...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])];
+      if (ownedChipSelector?.observation) {
+        selected = selected.filter(element => element.matches("[data-turn-key]") || element.matches(ownedChipSelector.assistantSelector));
+        const body = domElement("body"), document = { body, URL: ui.url,
+          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
+        body.ownerDocument = document;
+        const control = (tag, label) => {
+          const element = domElement(tag, { "aria-label": label }, domText(label));
+          element.getBoundingClientRect = () => ({ width: 32, height: 32 });
+          return element;
+        };
+        selected.push(body, control("button", "Regenerate response"));
+        if (ui.stop) selected.push(control("button", "Stop"));
+        if (ui.temporaryControls) selected.push(control("button", "Turn off temporary chat"), control("h2", "Temporary chat"));
+        if (ui.full) selected.push(control("div", browserDom.conversationFullText), control("button", "Start new chat"));
+      }
+      return callback(selected, ownedChipSelector);
     },
   });
   const tab = { get id() { return ui.tabId; }, goto: async url => {
@@ -1204,6 +1222,7 @@ test("cancellation before Send emission preserves unsent native input in the sam
 
 test("owned unresolved coding blocks across restart until a late actual result arrives without re-emitting the action", async t => {
   const h = harness(t);
+  const admission = new RouterAdmission({ webRuntimeState: () => h.runtime.maintenanceState() });
   const { call } = await h.toObserve();
   const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
   const pending = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "unknown.txt" } });
@@ -1212,12 +1231,15 @@ test("owned unresolved coding blocks across restart until a late actual result a
   h.append(coding);
   h.observations.watchers[0].onCancel();
   await rejection;
+  assert.deepEqual(h.runtime.maintenanceState(), { activeTurns: 0, uncertainSends: 0, unresolvedActions: 1 });
+  assert.equal((await admission.drain()).reason, "web-workflow-indeterminate");
   const oldBroker = h.broker;
   await h.restartRuntime();
   const operationsBefore = h.observations.nativeOperations.length;
   await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_coding_uncertain" });
   h.newTurn(followupId, "Continue using only confirmed results.");
   await assert.rejects(h.request(), { code: "web_coding_uncertain" });
+  assert.equal((await admission.drain()).reason, "web-workflow-indeterminate");
   assert.equal(h.observations.nativeOperations.length, operationsBefore);
   assert.equal(h.browser.ui.sends.length, 1);
   h.append({ type: "function_call_output", call_id: coding.call_id });
@@ -1233,6 +1255,7 @@ test("owned unresolved coding blocks across restart until a late actual result a
   assert.deepEqual(sentTranscript(h).find(item => item.type === "function_call_output"), { type: "function_call_output", call_id: coding.call_id, output: "late actual result" });
   assert.throws(() => oldBroker.list(token), { code: "web_tool_turn_closed" });
   assert.notEqual(h.token(), token);
+  assert.equal(h.runtime.maintenanceState().unresolvedActions, 0);
 });
 
 test("an unconfirmed Send is never replayed after cancellation even if its click took effect", async t => {
@@ -1242,11 +1265,14 @@ test("an unconfirmed Send is never replayed after cancellation even if its click
     while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
     if (executed) await h.executeBrowser(response.output[0]);
     h.observations.watchers[0].onCancel();
+    assert.deepEqual(h.runtime.maintenanceState(), { activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 });
     if (lostKernel) { h.loseKernel(); await h.restartRuntime(); }
     await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_send_uncertain" });
     h.newTurn(followupId, "Resume without duplicating the uncertain Send.");
     const before = h.observations.nativeOperations.length;
     await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    const admission = new RouterAdmission({ webRuntimeState: () => h.runtime.maintenanceState() });
+    assert.equal((await admission.drain()).reason, "web-workflow-indeterminate");
     assert.equal(h.observations.nativeOperations.length, before);
     assert.equal(h.browser.ui.sends.length, executed ? 1 : 0);
     assert.equal(h.browser.ui.newTabs, 1);
@@ -1265,6 +1291,32 @@ async function stopBeforeRenderedReply(h, { observed = true, emptyReply = false 
   h.observations.watchers[0].onCancel();
   h.loseKernel();
 }
+
+test("maintenance drain follows Web work through Stop and confirmed same-chat continuation", async t => {
+  const h = harness(t);
+  const admission = new RouterAdmission({ webRuntimeState: () => h.runtime.maintenanceState() });
+  const idle = { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 };
+  assert.deepEqual(h.runtime.maintenanceState(), idle);
+  const admitted = admission.begin();
+  const draining = admission.drain({ timeoutMs: 1_000 });
+  await h.request();
+  admitted.finish();
+  assert.equal((await draining).reason, "web-workflow-active");
+  await stopBeforeRenderedReply(h);
+  assert.deepEqual(h.runtime.maintenanceState(), idle);
+  assert.equal((await admission.drain()).status, "drained");
+  admission.resume();
+
+  h.newTurn(followupId, "Continue in the same chat after Stop.");
+  const { call } = await h.toObserve();
+  assert.equal((await admission.drain()).reason, "web-workflow-active");
+  await h.completeAnswer(call, "Completed after confirmed same-chat recovery.");
+  assert.deepEqual(h.runtime.maintenanceState(), idle);
+  assert.equal((await admission.drain()).status, "drained");
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.sends.length, 2);
+  assert.equal(h.browser.ui.stopMarks.length, 1);
+});
 
 test("a confirmed interrupted Send without observed text recovers its exact retained tab and sends only new native history", async t => {
   for (const kind of ["no observation", "zero fresh replies", "one latest fresh reply", "multiple owned replies", "known empty reply", "empty reply progressed identity"]) await t.test(kind, async t => {
@@ -1985,6 +2037,9 @@ test("cancellation during startup stops before service creation or native browse
   assert.deepEqual(h.observations.nativeOperations, []);
   assert.equal(h.observations.watchers[0].closed, true);
   assert.equal(h.browser.ui.sends.length, 0);
+  assert.deepEqual(h.runtime.maintenanceState(), { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 });
+  const admission = new RouterAdmission({ webRuntimeState: () => h.runtime.maintenanceState() });
+  assert.equal((await admission.drain()).status, "drained");
 });
 
 test("browser executor discovery uses actual client search results and preserves their schemas", async t => {

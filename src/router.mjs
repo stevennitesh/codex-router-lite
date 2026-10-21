@@ -141,6 +141,7 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
+import { inAppWebMaintenanceState } from "./web-runtime.mjs";
 import {
   clientToolCalls,
   clientToolOutputs,
@@ -181,7 +182,7 @@ const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
 const switchyardNativeAttempts = new SwitchyardNativeAttemptObserver({
   capability: SWITCHYARD_CAPABILITY,
 });
-const routerAdmission = new RouterAdmission();
+const routerAdmission = new RouterAdmission({ webRuntimeState: inAppWebMaintenanceState });
 const QUIET =
   process.env.CODEX_ROUTER_QUIET === "1";
 function positiveByteLimit(value, fallback) {

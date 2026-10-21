@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "date": "2026-10-21",
+  "evidenceKind": "Historical Windows app update recovery and bounded upstream review",
+  "sourceBase": "5a4156e7cb112d59d2897b7b101cf4ea8fd759bd",
+  "sourceCandidate": "Uncommitted adapter installer repair, compatibility diagnostics, setup reload guidance and natural service-CLI exit; existing Stop and context cleanup preserved.",
+  "nativeCodex": {
+    "desktopVersion": "26.1016.51333",
+    "desktopBuildVersion": "21161",
+    "updateStatus": "up_to_date",
+    "windowsPackage": "OpenAI.Codex_26.1016.6573.0_x64__2p2nqsd0c76g0",
+    "cli": "0.163.0-alpha.11",
+    "cliBuildDirectory": "6257d9e8f63c0f2b",
+    "cliSha256": "00c0f1e4099246fddcd67ec620ca8ed50827c7d70e113b7224f7a2933cf2d67c",
+    "signature": "Valid OpenAI signature",
+    "codeModeHost": "Present beside the current CLI with a valid OpenAI signature",
+    "bundledAppToolsPlugin": "0.1.6",
+    "catalogModels": 17,
+    "nodeVersion": "24.13.0",
+    "browserRuntimeVersion": "26.1016.51333",
+    "officialReleaseNotes": "https://learn.chatgpt.com/docs/changelog",
+    "nativeQuotaCertificationRenewed": false
+  },
+  "recovery": {
+    "reportedFailure": "Native tools and delegated agents failed before filesystem access because a removed CLI build's codex-code-mode-host.exe was selected.",
+    "cause": "The Stop adapter installer persisted an unnecessary CODEX_CLI_PATH override. The app update removed that exact CLI build and the old adapter's other external runtime anchors. Adapter rollback restored working native tools.",
+    "repairs": [
+      "Preserve the original User CLI selection instead of pinning the adapter's recorded CLI; safely release an owned legacy pin during replacement.",
+      "Validate retained adapter artifacts without requiring deleted old external runtimes when replacing or inspecting a removed installation; fully validate the fresh candidate before mutation.",
+      "Report unavailable saved Web configuration and stale adapter ownership separately from discovery of a working new CLI.",
+      "Refresh the saved browser runtime configuration while preserving existing connector, tunnel, capabilities and protected key."
+    ],
+    "preserved": ["Compare-and-exchange ownership and rollback", "Signed runtime and artifact integrity checks", "Existing hook and ordinary-chat scope", "Unmodified official Codex binaries", "Existing pending Stop and repository guidance changes"],
+    "activation": "Browser configuration refreshed; matching adapter installed with CLI override absent, ordinary-chat scope, restart and native hook trust required. Catalog published 24 models including six Web models. Previous managed generations retained for rollback.",
+    "rollbackScope": "The proven current adapter generation and current-runtime manifest remain intact. Supported adapter rollback restores the original stock-Codex launch selection. Retained older managed artifacts are protected recovery material, but their removed external runtime paths prevent directly launching those old generations without rebinding to valid current anchors.",
+    "liveVerification": "After normal Codex restart, the current adapter started against the updated official Node REPL. The first Web request hit the intentional configuration-reload guard before Send. A guarded Router restart loaded the changed configuration; the retry completed one native fixture read with exit code 0, exact paired output and recall of the original saved-chat marker. A fresh Stop test then confirmed cancellation with the same tab retained, followed by successful original-marker recall in that same chat, tab and binding.",
+    "configurationReload": "Saved browser/tunnel changes require Router restart as well as Codex adapter restart. Updated the setup CLI hint and maintained setup instructions to include the existing guarded restart.",
+    "restartCliObservation": "The service reported running and fresh health was ready, but its CLI aborted during Node shutdown with the Windows async-handle assertion. The service restart itself succeeded. Replaced forced CLI process.exit with process.exitCode, matching the existing start.mjs owner. The existing direct/control fixture now verifies natural event-loop drain across success, returned errors and ownership refusal; it fails with the previous implementation. No second live restart was used to try to reproduce the native assertion."
+  },
+  "liveWebVerification": {
+    "route": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "nativeRead": {"commandCount": 1, "exitCode": 0, "actualPairedOutputMatched": true, "savedSessionMarkerRecalled": true},
+    "stop": {
+      "earlierAttempt": "Finished naturally before the user pressed Stop; it does not establish cancellation.",
+      "nativeTurnStatus": "interrupted",
+      "receiptAtUtc": "2026-10-21T17:29:39.562Z",
+      "receiptCorrelatedToExactOriginatingTurn": true,
+      "outcome": "cancelled",
+      "clickAttempted": true,
+      "clickError": false,
+      "stopClicked": true,
+      "stopHidden": true,
+      "generationInactive": true,
+      "inactivityEvidence": "composer_restored",
+      "retained": true,
+      "childTerminalObserved": true,
+      "callbackElapsedMs": 1530,
+      "timingScope": "One observed callback, not a latency benchmark or a guaranteed bound for future runs.",
+      "userConfirmedGenerationStoppedAndTabStayedOpen": true
+    },
+    "continuation": {
+      "nativeTurnStatus": "completed",
+      "expectedAcknowledgementAndOriginalMarkerMatched": true,
+      "savedChatUnchanged": true,
+      "tabUnchanged": true,
+      "bindingUnchanged": true,
+      "generationCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingCount": 0
+    },
+    "scope": "One ordinary Instant Web conversation on the current app runtime; does not individually certify other Web models or subagents, or refresh the full native sandbox probe."
+  },
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router",
+    "reviewedFromExclusive": "eb5acc9c5dc8d87fdce8bcd428ae59d789ddeb47",
+    "reviewedThroughInclusive": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
+    "commitCount": 9,
+    "productionChanges": false,
+    "decision": "No integration; inspect relevant future fixture changes only if a retained workflow reproduces their failure.",
+    "dispositions": [
+      {"commit": "9593a75a7dc9ef371e18675e7de3690cccfa77e9", "category": "excluded", "reason": "Subagent explanation fixture isolation targets a retired owner."},
+      {"commit": "4d4eb5f4091751c9a40f133f6bc47744ef3159ca", "category": "excluded", "reason": "Support-bundle log reset targets a retired owner."},
+      {"commit": "e9c8659441881e73255650f89bd09c62e07c4ac2", "category": "excluded", "reason": "Expanded fixture port allocation is unnecessary for Lite's current 19 consumers and bounded per-process capacity."},
+      {"commit": "8c4706935f7db9ef6a791179cacbcbdef90842e4", "category": "merge_only", "reason": "Topology-only merge without additional resolution changes."},
+      {"commit": "3d190c98d1e096686c0a69ea8f9ea8e7825147f8", "category": "merge_only", "reason": "Topology-only merge without additional resolution changes."},
+      {"commit": "292c833b5f24bc4bfedb1f51de6d2292879e1ca9", "category": "merge_only", "reason": "Topology-only merge without additional resolution changes."},
+      {"commit": "627357eb67d81cb31f090c19af171fd6fd650492", "category": "deferred", "reason": "Separate process-start and HTTP-readiness instrumentation adds a longer startup allowance; retain existing bounded headers/body and exited-child handling absent a current cold-start incident."},
+      {"commit": "36f1578d9e148b44293996be062bf149d0f85ff0", "category": "deferred", "reason": "Binding-phase and slow-start instrumentation belongs with the preceding deferred fixture change."},
+      {"commit": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4", "category": "merge_only", "reason": "Topology-only merge without additional resolution changes."}
+    ]
+  },
+  "switchyardUpstream": {
+    "repository": "https://github.com/NVIDIA-NeMo/Switchyard",
+    "lockedBase": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "reviewedHead": "21075c6652152dac88a5fbc6b878ca37d7617c1c",
+    "commitCount": 95,
+    "decision": "Retain the serving pin and ordered contribution plus compatibility patches. New Decision APIs and a two-tier classifier are not a drop-in replacement for the maintained four-target Jev route.",
+    "patchApplicability": "The contribution patch conflicts against fresh upstream HEAD; the following compatibility patch was therefore not attempted. This is upstream drift, not a failure of the currently pinned service.",
+    "followUps": [
+      {"commit": "f6441cc4a303b24aa663511f0d5ad7f53e5a3a31", "pullRequest": 969, "decision": "Worth a narrow selective port", "reason": "Contradictory streamed and final Responses snapshots currently produce StreamError, but same-format replay suppresses only DecodeError. Upstream classifies the mismatch as DecodeError and adds a same-format regression.", "status": "Not ported, built, deployed or recertified in this app-update repair."},
+      {"commit": "38a71edb36168d04869091350f755d4f786b24c2", "pullRequest": 970, "decision": "Deferred", "reason": "Credential error redaction is useful, but the affected static-key branch is dormant in the maintained forward-auth route; the patched classifier credential path already uses fallible omission."}
+    ],
+    "dispositionGroups": [
+      {"category": "deferred_architecture", "reason": "Decision, driver and policy migration requires a separately scoped classifier port; retain four-target behavior.", "commits": ["0266133e", "8a219527", "e9ef1d17", "16cbe593", "41771336", "1aebea44", "1cac9637", "db0a6bc5", "fdf6454a", "de4cc554", "7fa4b00c", "f3baf439", "5a5bff2c", "9c0924f2", "d93bcd97"]},
+      {"category": "excluded_algorithms", "reason": "Other classifiers and policy algorithms are outside the maintained exact Jev route.", "commits": ["47bba06c", "5b670a15", "4d5ca0cf", "e0050c0e", "2bd647e8", "3cf60ce0", "9eb962fe", "f26dafe4", "9ce208be", "34c8e90f", "8200f01a", "ce7edef3", "34894b5b", "63886106", "f106ed2e", "249484be", "df27594b", "bca35291", "f959dd76", "016856aa", "f7295b7a"]},
+      {"category": "reviewed_protocols", "reason": "Keep the Responses consistency follow-up above; remaining translation work primarily serves inactive cross-format paths.", "commits": ["649e91d1", "edfce4fa", "84075f1f", "4bdf5719", "ab7d2644", "9a6d26d9", "f6441cc4", "286425ec", "8e7d72be", "a0ece874", "0ae4384b"]},
+      {"category": "reviewed_runtime", "reason": "Credential redaction is deferred above; new-API cancellation, failure cooldown, optional telemetry and build changes do not warrant replacing the maintained route in this repair. HEAD defaults to Rust 1.99 while its Cargo MSRV remains 1.96.1.", "commits": ["abf90180", "841558bf", "12922d57", "c8848511", "611e2701", "b9e7ccce", "50f635d7", "fc9ef681", "38a71edb", "7f0602d2", "1e099697", "c6f6b0d9", "9ee35cb3", "a9551717", "58a33572", "7dddc65a"]},
+      {"category": "excluded_platforms", "reason": "Other platform bindings and integrations are outside the Windows native Responses route.", "commits": ["3cdcf406", "7621d235", "1a0d1191", "5ec82621", "ef8c2cc8", "b2b5e60f", "47cf1d94", "0c398045", "5df8940d", "6180e15c", "2a1f7531", "c9476199", "21075c66", "79f2751f"]},
+      {"category": "excluded_docs_examples", "reason": "Documentation, examples and topology do not change the retained serving behavior.", "commits": ["101b8af8", "3bbea7a7", "700a3ff6", "6d3dafbd", "a3cdc51c", "3a918cb9", "fc64565a", "19371a9f", "04ffffee", "4cbb2d11", "6f4e7749", "9aff22a9", "4ac2d997", "aebcaab2", "75287a0c", "c39d38de", "9537e072", "5415db20"]}
+    ],
+    "commitIdentifiers": "Unique abbreviated commits within the exact locked-base to reviewed-head range. Every one of the 95 reviewed commits appears once in the groups.",
+    "sourceLockChanged": false
+  },
+  "validation": {
+    "installerAdapterHookFocused": "224 passed",
+    "diagnostics": "3 passed",
+    "operationsNormalWindowsContext": "22 passed after sandbox-only access-denied fixture failures",
+    "fullCommand": "npm run verify:codex",
+    "fullResult": {"passed": 1519, "failed": 0, "skipped": 0, "durationMs": 233646.2515},
+    "fullResultScope": "Full suite covered the installer and compatibility diagnostics candidate before the later setup-hint and natural service-CLI exit changes. Those follow-ups received their affected 6 Web setup and 57 lifecycle/readiness checks plus source checks; the full suite was not repeated for them.",
+    "catalogResult": "Current CLI parsed 17 models; GLM, DeepSeek, Pareto and Switchyard compatibility passed.",
+    "afterActivation": "Source checks passed again after recording the review. Offline diagnostics reused the existing fetch and full test evidence: Web configuration ok, adapter installed without conflicts, Router healthy, CLI override absent. At that stage app-loaded and native hook-trust states were unknown; the subsequent live Web check below established them for the tested conversation.",
+    "afterRestartFollowUp": "Native read and original saved-chat recall passed after normal Codex restart and the guarded Router configuration reload. Web setup tests passed 6/6; lifecycle/readiness fixtures passed 57/57 with writable workspace TEMP and normal Windows context. Read-only service status exited 0. Sandbox-only fixture attempts stalled or reported COM access denial and were rerun without changing lifecycle logic. The native Windows assertion was not reproduced in fixtures; natural-exit regression was fault-checked against old code.",
+    "upstreamRefreshExit": 1,
+    "upstreamRefreshLimit": "AnalyzeUpstream reported the fresh Switchyard contribution-patch conflict. Source, catalog and namespace checks passed; no Switchyard rebuild or serving change was made.",
+    "independentReview": "No actionable findings in the installer, compatibility diagnostics and owner guidance candidate. Existing pending Stop changes were preserved. A separate read-only live evidence review confirmed current signed executable, browser, SDK and managed-source hashes, owned hook and ordinary-chat scope, absent CLI override, retained protected prior artifacts, and the exact originating-turn to terminal Stop receipt chain. Older retained generations have missing external runtimes, as noted in rollbackScope.",
+    "notClaimed": ["Live Web native-tool sandbox proof on the new app runtime", "Separate certification of every Web route or Web subagent", "Switchyard selective-port applicability or certification", "Commit, push or Router source deployment"]
+  }
+}

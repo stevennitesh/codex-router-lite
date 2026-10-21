@@ -192,6 +192,44 @@ if (-not $healthClean) {
   Write-Warning "Router health is not fully confirmed in this process. Re-run under the interactive Windows user if protected state was unavailable."
 }
 
+Write-Step "ChatGPT Web configuration and Stop adapter"
+$webStatus = [pscustomobject]@{
+  configurationStatus = "unavailable"; enabled = $null
+  adapterState = "unknown"; adapterInstalled = $null; adapterConflictCount = $null
+}
+try {
+  $webStatusJson = & node --input-type=module -e @'
+import {readWebMaintenanceStatus} from './src/web-status.mjs';
+const status = await readWebMaintenanceStatus();
+const adapter = status.stopAdapter;
+process.stdout.write(JSON.stringify({
+  configurationStatus: status.configurationStatus === 'ok' ? 'ok' : 'unavailable',
+  enabled: typeof status.enabled === 'boolean' ? status.enabled : null,
+  adapterState: ['absent', 'prepared', 'installed', 'removed'].includes(adapter?.state) ? adapter.state : 'unknown',
+  adapterInstalled: typeof adapter?.installed === 'boolean' ? adapter.installed : null,
+  adapterConflictCount: Array.isArray(adapter?.conflicts) ? adapter.conflicts.length : null,
+}));
+'@ 2>$null
+  if ($LASTEXITCODE -eq 0) { $webStatus = $webStatusJson | ConvertFrom-Json }
+} catch {
+  # Keep local paths, configuration and raw diagnostic errors out of this report.
+}
+$webEnabled = if ($webStatus.enabled -eq $true) { "true" } elseif ($webStatus.enabled -eq $false) { "false" } else { "unknown" }
+$webAdapterInstalled = if ($webStatus.adapterInstalled -eq $true) { "true" } elseif ($webStatus.adapterInstalled -eq $false) { "false" } else { "unknown" }
+$webAdapterConflicts = if ($null -eq $webStatus.adapterConflictCount) { "unknown" } else { [string]$webStatus.adapterConflictCount }
+Write-Host "Web configuration: configurationStatus=$($webStatus.configurationStatus); enabled=$webEnabled"
+Write-Host "Web Stop adapter: state=$($webStatus.adapterState); installed=$webAdapterInstalled; conflicts=$webAdapterConflicts"
+Write-Host "Web live readiness: browserSession=unknown; appLoaded=unknown; hookTrusted=unknown."
+$webWarnings = $webStatus.configurationStatus -ne "ok"
+if ($webWarnings) {
+  Write-Warning "Saved Web configuration is unavailable or invalid. Inspect model-router.ps1 codex web status before reconfiguring."
+}
+$webAdapterRequired = $webStatus.enabled -ne $false -or $webStatus.adapterState -notin @("absent", "removed")
+if ($webAdapterRequired -and ($webStatus.adapterInstalled -ne $true -or $webStatus.adapterConflictCount -ne 0)) {
+  $webWarnings = $true
+  Write-Warning "Web Stop adapter is missing, stale or its ownership is unconfirmed. Inspect model-router.ps1 codex web stop adapter-status before changing the installation."
+}
+
 if (-not $SkipTests) {
   Write-Step "Source verification"
   Invoke-Checked "npm" @("run", "check")
@@ -266,8 +304,9 @@ if ($SkipTests) {
 } else {
   Write-Host "Selected source checks completed; current native catalog parsing passed."
 }
-if (-not $appToolsVersion -or -not $healthClean) {
+if (-not $appToolsVersion -or -not $healthClean -or $webWarnings) {
   Write-Host "Warnings above still require investigation."
 }
 Write-Host "Model execution and Desktop app-tool behavior were not tested; select additional checks from the changed contract."
+Write-Host "ChatGPT Web browser, native-tool and Stop readiness remain unverified."
 Write-Host "No live configuration, provider quota, or service state was changed. Git refs and disposable upstream checkouts may have been refreshed."

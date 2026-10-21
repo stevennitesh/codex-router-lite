@@ -124,9 +124,11 @@ export async function runServiceCli(args = process.argv.slice(2)) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    process.exit(await runServiceCli());
+    // Let Node drain fetch and child-process handles before teardown, as in
+    // start.mjs. Forced exit can hit Windows' UV_HANDLE_CLOSING assertion.
+    process.exitCode = await runServiceCli();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

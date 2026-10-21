@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "eb5acc9c5dc8d87fdce8bcd428ae59d789ddeb47",
+  "lastReviewedCommit": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -12,9 +12,10 @@
     "3737cd26 and 60fb5a3e: reduce and retry image-heavy routed/compaction requests after provider image-payload refusal; relevant to image-capable GLM but defer until the retained OpenRouter endpoints reproduce a ceiling or current provider documentation gives a stable bound",
     "6625cb07, 3c708bd2 and cc369942: connector/tool declaration deferral changes model-visible tools; no current context or latency defect warrants replacing request-local discovery",
     "3cea80e9, 3f31f9fe and 84cd25a5: image-history elision changes preserved input; retain current bounds until retained-endpoint evidence requires it",
-    "042a6d70: pre-TLS reset recovery expands safe retry eligibility; defer without a retained-route incident"
+    "042a6d70: pre-TLS reset recovery expands safe retry eligibility; defer without a retained-route incident",
+    "627357eb and 36f1578d: separate fixture process-start and HTTP-readiness instrumentation; existing bounded headers/body and exited-child coverage remains sufficient absent a retained cold-start incident"
   ],
-  "reviewedAt": "2026-10-17",
+  "reviewedAt": "2026-10-21",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -77,7 +78,10 @@
       "894c4585 and merges bd0862f2/01afbfb8: direct Z.ai reasoning deadlines and Ollama transport outside retained OpenRouter endpoints",
       "f4e2108c, a6aa0e77 and merge 18c01b66: retired generic multi-client publication owner",
       "Remaining 0a70b48c..85259b67 commits are excluded Ollama/Grok/MiniMax/vision/registry/tray/UI/macOS/POSIX/docs/tests or merge synchronization; all 52 commits have individual dispositions in docs/history/2026-10-05-compatibility-review.json",
-      "All 156 commits in 85259b67..eb5acc9c are individually accounted for by grouped full-SHA dispositions in docs/history/2026-10-17-app-compatibility-review.json, including 57 excluded changes and 57 topology-only merges; all resolution-bearing merges received explicit review"
+      "All 156 commits in 85259b67..eb5acc9c are individually accounted for by grouped full-SHA dispositions in docs/history/2026-10-17-app-compatibility-review.json, including 57 excluded changes and 57 topology-only merges; all resolution-bearing merges received explicit review",
+      "9593a75a and 4d4eb5f: fixture isolation for retired subagent-explanation and support-bundle owners",
+      "e9c86594: expanded test port allocation is unnecessary for current bounded Lite consumers",
+      "8c470693, 3d190c98, 292c833b and 0a0fdce1: topology-only merges; all nine commits in eb5acc9c..0a0fdce1 are dispositioned in docs/history/2026-10-21-app-compatibility-review.json"
     ]
   }
 }

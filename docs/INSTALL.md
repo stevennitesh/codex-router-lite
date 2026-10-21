@@ -243,7 +243,9 @@ selection change requires it:
 .\restart-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
 
-Do not run a standalone stop. The transaction stages one generation, checks readiness, and restores the prior generation on failure.
+Do not run a standalone stop. Restart uses the existing installed files and the
+drain and ownership checks below. Deployment transactions own file staging and
+rollback; retain their recovery copies when restarting for a configuration change.
 
 ### Replacement and drain
 

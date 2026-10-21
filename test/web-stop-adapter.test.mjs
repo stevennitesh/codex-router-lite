@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { channel } from 'node:diagnostics_channel';
+import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +26,37 @@ const GENERATION = '01a14b65-a7a8-7b41-bd33-7c19d3c6df86';
 const SOURCE_SESSION = '01a14b65-a7a8-7b41-bd33-7c19d3c6df87';
 const STOP_CONFIG = { stateDir: 'E:\\private-state', runtimeModule: 'E:\\official-runtime\\browser.mjs' };
 const clone = value => structuredClone(value);
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Wall time only guards a missing fixture event; modeled behavior uses mock clocks.
+const eventGuardTimer = globalThis.setTimeout, clearEventGuardTimer = globalThis.clearTimeout;
+
+function recordedEvents(t) {
+  const values = [], waiters = new Set();
+  t.after(() => { for (const waiter of waiters) clearEventGuardTimer(waiter.guard); waiters.clear(); });
+  return {
+    values,
+    record(value) {
+      values.push(value);
+      for (const waiter of waiters) if (waiter.matches(value)) { waiters.delete(waiter); waiter.resolve(value); }
+    },
+    waitFor(matches) {
+      const value = values.find(matches);
+      if (value !== undefined) return Promise.resolve(value);
+      return new Promise((resolve, reject) => {
+        const waiter = { matches, resolve: observed => { clearEventGuardTimer(waiter.guard); resolve(observed); } };
+        waiter.guard = eventGuardTimer(() => { waiters.delete(waiter); reject(new Error('Expected fixture event was not observed.')); }, 10_000);
+        waiter.guard.unref();
+        waiters.add(waiter);
+      });
+    },
+  };
+}
+
+function brokerWake(t, pending) {
+  if (pending.wait.abort.signal.aborted) return Promise.resolve(pending.wait.reason);
+  const events = recordedEvents(t);
+  pending.wait.abort.signal.addEventListener('abort', () => events.record(pending.wait.reason), { once: true });
+  return events.waitFor(() => true);
+}
 function canonical(turn = TURN) {
   return { thread_id: APPROVED_THREAD, turn_id: turn, session_id: SESSION,
     auto_review_enabled: true, node_repl_auto_review_required: true, node_repl_disabled: false,
@@ -237,32 +269,52 @@ test('inactivity evidence is required, discriminated and consistent with acknowl
 async function protocolFixture(t, toolHandler, options = {}) {
   const [clientWire, outerWire] = InMemoryTransport.createLinkedPair();
   const [childWire, serverWire] = InMemoryTransport.createLinkedPair();
-  const calls = [], cancellations = [], receipts = [], forwardedOuter = [], forwardedInner = [];
+  const callEvents = recordedEvents(t), cancellationEvents = recordedEvents(t), receiptEvents = recordedEvents(t);
+  const innerEvents = recordedEvents(t), childTerminalEvents = recordedEvents(t);
+  const calls = callEvents.values, cancellations = cancellationEvents.values, receipts = receiptEvents.values;
+  const forwardedOuter = [], forwardedInner = innerEvents.values;
   const official = new Server({ name: 'official_fixture', version: 'fixture' }, {
     capabilities: { tools: {}, experimental: { 'codex/sandbox-state': {} } }, instructions: 'official fixture instructions' });
   const declarations = [{ name: 'js', inputSchema: { type: 'object', properties: { code: { type: 'string' } } } },
     { name: 'turn_ended', inputSchema: { type: 'object' } }, { name: 'js_reset', inputSchema: { type: 'object' } }];
   official.setRequestHandler(ListToolsRequestSchema, () => ({ tools: declarations }));
   official.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    calls.push(request.params);
-    extra.signal.addEventListener('abort', () => cancellations.push(request.params), { once: true });
+    callEvents.record(request.params);
+    extra.signal.addEventListener('abort', () => cancellationEvents.record(request.params), { once: true });
     return toolHandler(request.params, extra);
   });
   await official.connect(serverWire);
   const receiveOfficial = serverWire.onmessage;
-  serverWire.onmessage = (message, extra) => { forwardedInner.push(clone(message)); receiveOfficial(message, extra); };
+  serverWire.onmessage = (message, extra) => { innerEvents.record(clone(message)); receiveOfficial(message, extra); };
+  const sendTerminal = serverWire.send.bind(serverWire);
+  serverWire.send = async message => {
+    await sendTerminal(message);
+    if (!message.method) childTerminalEvents.record(clone(message));
+  };
   const bridge = new AdapterBridge({ outer: outerWire, child: childWire, stopConfig: STOP_CONFIG,
-    generation: GENERATION, receipt: entry => receipts.push(entry), ...options });
+    generation: GENERATION, receipt: entry => receiptEvents.record(entry), ...options });
+  const { promise: closed, resolve: didClose } = Promise.withResolvers();
+  const close = bridge.close.bind(bridge);
+  bridge.close = async () => {
+    const firstClose = !bridge.closed;
+    await close();
+    if (firstClose) didClose();
+  };
   const receiveOuter = outerWire.send.bind(outerWire);
   outerWire.send = async message => { forwardedOuter.push(clone(message)); return receiveOuter(message); };
   await bridge.start();
   const client = new Client({ name: 'codex_fixture', version: 'fixture' });
   await client.connect(clientWire);
   t.after(async () => { await bridge.close(); await client.close(); await official.close(); });
-  return { client, bridge, calls, cancellations, receipts, declarations, forwardedOuter, forwardedInner, serverWire };
+  return { client, bridge, closed, calls, cancellations, receipts, declarations, forwardedOuter, forwardedInner, serverWire,
+    waitForCall: matches => callEvents.waitFor(matches), waitForCancellation: matches => cancellationEvents.waitFor(matches),
+    waitForReceipt: (code, matches = () => true) => receiptEvents.waitFor(entry => entry.code === code && matches(entry)),
+    waitForInner: matches => innerEvents.waitFor(matches),
+    waitForChildTerminal: matches => childTerminalEvents.waitFor(matches) };
 }
 
 async function waitingFixture(t, toolHandler, options = {}) {
+  const { brokerTransport = 'direct', ...bridgeOptions } = options;
   const broker = createWebToolBroker({ invocationTimeoutMs: 5000 });
   const service = await startWebMcp({ broker });
   t.after(() => service.close());
@@ -271,8 +323,36 @@ async function waitingFixture(t, toolHandler, options = {}) {
   const source = ordinary();
   source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code),
     observationWait: { url: service.observationUrl(turn.token, broker.revision(turn.token)) } });
-  const f = await protocolFixture(t, toolHandler, { observationIntervalMs: 5, ...options });
+  const f = await protocolFixture(t, toolHandler, { observationIntervalMs: 5, ...bridgeOptions });
+  if (brokerTransport === 'direct') {
+    // Scheduling cases control the broker through its actual revision/abort
+    // events. Dedicated HTTP cases below retain the production HTTP boundary.
+    f.bridge.waitForBroker = async pending => {
+      const state = pending.wait;
+      const value = await broker.waitForChange(turn.token, state.revision, { signal: state.abort.signal, timeoutMs: 25_000 });
+      f.bridge.wakeObservation(pending, value.closed ? 'broker_closed' : value.revision !== state.revision ? 'broker_activity' : 'deadline');
+    };
+  }
   return { ...f, broker, service, turn, source };
+}
+
+async function observationServer(t, handler, port = 0) {
+  const requests = recordedEvents(t);
+  const server = createServer((request, response) => {
+    requests.record({ method: request.method, url: request.url, accept: request.headers.accept });
+    handler(request, response);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve()); server.closeAllConnections();
+  }));
+  const url = `http://127.0.0.1:${server.address().port}/${'c'.repeat(64)}/observe/web_turn_${'d'.repeat(32)}?revision=0`;
+  const source = ordinary();
+  source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code), observationWait: { url } });
+  return { source, url, requests: requests.values, waitForRequest: () => requests.waitFor(() => true) };
 }
 function observationResult(params, fields = {}) {
   const config = readBrowserProgram(params.arguments.code);
@@ -327,16 +407,18 @@ test('cancelling pending Send cannot acquire authority from its late successful 
   const { promise: started, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
   const source = ordinary(TURN, 'send');
-  let produced;
-  const f = await protocolFixture(t, async params => { entered(); await terminal; produced = sendResult(params); return produced; });
+  const { promise: producedResult, resolve: produced } = Promise.withResolvers();
+  const f = await protocolFixture(t, async params => {
+    entered(); await terminal; const result = sendResult(params); produced(result); return result;
+  });
   const control = new AbortController();
   const sending = f.client.callTool(source, undefined, { signal: control.signal }).catch(() => 'cancelled');
   await started; control.abort(); assert.equal(await sending, 'cancelled');
-  release(); await delay(0);
+  release(); const result = await producedResult;
   // The SDK fixture suppresses its handler's result after cancellation; the
   // official child can send one. Deliver the actual produced frame on its wire.
   const wire = f.forwardedInner.find(message => message.params?.arguments?.code === source.arguments.code);
-  await f.serverWire.send({ jsonrpc: '2.0', id: wire.id, result: produced }); await delay(0);
+  await f.serverWire.send({ jsonrpc: '2.0', id: wire.id, result });
   assert.equal((await f.client.callTool(hook())).isError, true);
   assert.deepEqual(f.calls, [source]);
   assert.equal(f.cancellations.length, 1);
@@ -359,11 +441,19 @@ test('a Send frame cannot acquire authority after an intervening native policy c
 });
 
 test('one actual MCP observation spans short private child reads and returns only the completed snapshot', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   let reads = 0;
   const f = await waitingFixture(t, params => observationResult(params, { completed: ++reads === 3 }));
   f.source._meta['x-codex-turn-metadata'] = '  ' + JSON.stringify(canonical()) + '\n';
   f.source._meta.futureAuthority = { untouched: ['opaque policy'] };
-  const result = await f.client.callTool(f.source);
+  const answer = f.client.callTool(f.source);
+  let previousId;
+  for (let read = 0; read < 2; read++) {
+    const terminal = await f.waitForChildTerminal(message => message.result?.content && message.id !== previousId);
+    previousId = terminal.id;
+    t.mock.timers.tick(5);
+  }
+  const result = await answer;
   assert.equal(reads, 3);
   assert.match(result.content[0].text, /"completed":true/u);
   assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
@@ -381,17 +471,20 @@ test('one actual MCP observation spans short private child reads and returns onl
 });
 
 test('broker activity wakes the outstanding observation before another child read is scheduled', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: seen, resolve: first } = Promise.withResolvers();
-  const f = await waitingFixture(t, params => { first(); return observationResult(params); }, { observationIntervalMs: 1000 });
+  const f = await waitingFixture(t, params => { first(); return observationResult(params); }, { observationIntervalMs: 1000, brokerTransport: 'http' });
   const chatgpt = new Client({ name: 'chatgpt-tool-fixture', version: 'fixture' });
   await chatgpt.connect(new StreamableHTTPClientTransport(new URL(f.service.url)));
   t.after(() => chatgpt.close());
   const answer = f.client.callTool(f.source);
-  await seen;
+  await seen; await f.waitForChildTerminal(message => message.result?.content);
   const invocation = chatgpt.callTool({ name: 'codex_tool_call', arguments: {
     turn_token: f.turn.token, wire_name: 'read', arguments: { path: 'fixture' } } });
+  void invocation.catch(() => {});
   const result = await answer;
   assert.match(result.content[0].text, /"completed":false/u);
+  t.mock.timers.tick(1000); await f.client.ping();
   assert.equal(f.calls.length, 1, 'The real broker revision wakes the call during its idle browser interval.');
   const [native] = f.broker.takeCalls(f.turn.token);
   f.broker.complete(f.turn.token, [{ type: 'function_call_output', call_id: native.call_id, output: 'actual result' }]);
@@ -400,25 +493,30 @@ test('broker activity wakes the outstanding observation before another child rea
 });
 
 test('the safety deadline returns the latest incomplete snapshot without repeating Send or inventing completion', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const f = await waitingFixture(t, params => observationResult(params), { observationWaitMs: 30 });
-  const result = await f.client.callTool(f.source);
+  const answer = f.client.callTool(f.source);
+  await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(30);
+  const result = await answer;
   assert.match(result.content[0].text, /"completed":false/u);
   assert.ok(f.calls.length >= 1);
   assert.ok(f.calls.every(params => readBrowserProgram(params.arguments.code).operation === 'observe'));
   const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
   assert.equal(receipt.wakeReason, 'deadline');
-  assert.ok(receipt.elapsedMs < 1000);
+  assert.equal(receipt.elapsedMs, 30);
 });
 
 test('a read begun just before renewal can finish across that boundary without resetting its kernel', async t => {
   for (const childFails of [false, true]) await t.test(childFails ? 'actual child error still propagates' : 'incomplete read renews successfully', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     let clock = 1000, reads = 0, kernelResets = 0;
     const nativeError = { isError: true, content: [{ type: 'text', text: 'js execution timed out; kernel reset, rerun your request' }] };
     const f = await waitingFixture(subtest, async params => {
       reads += 1;
       if (reads === 1) { clock = 1995; return observationResult(params); }
       if (reads > 2) return observationResult(params, { completed: true });
-      // Place actual timed work five milliseconds before the renewal boundary.
+      // Place controlled work five milliseconds before the renewal boundary.
       // The fixture implements Node REPL's consequential timeout: losing the
       // deadline returns no nonce frame and resets the resident browser kernel.
       return new Promise(resolve => {
@@ -431,12 +529,16 @@ test('a read begun just before renewal can finish across that boundary without r
         }, params.arguments.timeout_ms);
       });
     }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1 });
-    const result = await f.client.callTool(f.source);
+    const answer = f.client.callTool(f.source);
+    await f.waitForChildTerminal(message => message.result?.content);
+    subtest.mock.timers.tick(1);
+    await f.waitForCall(params => params === f.calls[1]);
+    subtest.mock.timers.tick(20);
+    const result = await answer;
     if (childFails) {
       assert.deepEqual(result, nativeError);
       assert.equal(reads, 2);
-      await delay(0);
-      assert.ok(f.receipts.some(entry => entry.code === 'ordinary_js_failed'));
+      await f.waitForReceipt('ordinary_js_failed');
       assert.equal((await f.client.callTool(hook())).isError, true);
     } else {
       assert.equal(result.isError, undefined, 'A renewal deadline must not create a native execution timeout.');
@@ -453,6 +555,7 @@ test('a read begun just before renewal can finish across that boundary without r
 });
 
 test('Stop during the last read headroom still waits for its actual terminal within the original cleanup budget', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   let clock = 1000, reads = 0;
   const { promise: activeRead, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
@@ -465,9 +568,11 @@ test('Stop during the last read headroom still waits for its actual terminal wit
   }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1 });
   const control = new AbortController();
   const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(1);
   await activeRead; control.abort();
   const stopped = f.client.callTool(hook());
-  await delay(0);
+  await f.waitForReceipt('cleanup_authority_consumed');
   assert.equal(f.calls.length, 2, 'Neither soft renewal nor native Stop establishes the active read terminal.');
   release();
   assert.equal((await stopped).isError, undefined); assert.equal(await answer, 'cancelled');
@@ -479,13 +584,14 @@ test('Stop during the last read headroom still waits for its actual terminal wit
 });
 
 test('a true last-child error remains intact when broker closure wakes its held request first', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: activeRead, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
   const nativeError = { isError: true, content: [{ type: 'text', text: 'actual native execution failure' }] };
-  const f = await waitingFixture(t, async () => { entered(); await terminal; return nativeError; });
+  const f = await waitingFixture(t, async () => { entered(); await terminal; return nativeError; }, { brokerTransport: 'http' });
   const answer = f.client.callTool(f.source); await activeRead;
   const pending = [...f.bridge.pending.values()][0];
-  const woken = new Promise(resolve => pending.wait.abort.signal.addEventListener('abort', resolve, { once: true }));
+  const woken = brokerWake(t, pending);
   f.broker.cancel(f.turn.token); await woken;
   release();
   assert.deepEqual(await answer, nativeError, 'A broker wake cannot replace an actual child terminal error.');
@@ -495,16 +601,19 @@ test('a true last-child error remains intact when broker closure wakes its held 
 test('actual child errors and malformed browser output end the held call without another browser read', async t => {
   for (const result of [{ isError: true, content: [{ type: 'text', text: 'actual child failure' }] }, ordinaryResult]) {
     await t.test(result.isError ? 'child failure' : 'malformed output', async subtest => {
+      subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
       const f = await waitingFixture(subtest, () => result);
       assert.deepEqual(await f.client.callTool(f.source), result);
-      await delay(15); assert.equal(f.calls.length, 1);
+      subtest.mock.timers.tick(1000); await f.client.ping();
+      assert.equal(f.calls.length, 1);
       assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_error');
     });
   }
 });
 
 test('a failed protected broker channel ends the native request with an explicit error', async t => {
-  const f = await waitingFixture(t, params => observationResult(params), { observationIntervalMs: 1000 });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const f = await waitingFixture(t, params => observationResult(params), { observationIntervalMs: 1000, brokerTransport: 'http' });
   const config = readBrowserProgram(f.source.arguments.code);
   const url = new URL(config.observationWait.url); url.pathname = url.pathname.replace(/^\/[^/]+/u, '/' + 'b'.repeat(64));
   f.source.arguments.code = browserScript({ ...config, observationWait: { url: url.href } });
@@ -514,6 +623,7 @@ test('a failed protected broker channel ends the native request with an explicit
 
 test('Stop freezes repeated observation between reads and during a real active child invocation', async t => {
   for (const activeChild of [false, true]) await t.test(activeChild ? 'active child' : 'idle interval', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     const { promise: seen, resolve: first } = Promise.withResolvers();
     const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await waitingFixture(subtest, async params => {
@@ -523,10 +633,11 @@ test('Stop freezes repeated observation between reads and during a real active c
     }, { observationIntervalMs: 1000 });
     const control = new AbortController();
     const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
-    await seen; if (!activeChild) await delay(0);
+    await seen;
+    if (!activeChild) await f.waitForChildTerminal(message => message.result?.content);
     control.abort();
     const stop = f.client.callTool(hook());
-    await delay(0);
+    await f.waitForReceipt('cleanup_authority_consumed');
     if (activeChild) assert.equal(f.calls.length, 1, 'Stop cannot enter Node REPL before its real child terminal.');
     release();
     assert.equal((await stop).isError, undefined);
@@ -534,25 +645,30 @@ test('Stop freezes repeated observation between reads and during a real active c
     assert.equal(f.calls.length, 2);
     assert.deepEqual(f.calls[1]._meta, retainedMetadata(f.source._meta));
     assert.ok(f.receipts.some(entry => entry.code === 'stop_confirmed'));
-    await delay(15); assert.equal(f.calls.length, 2);
+    subtest.mock.timers.tick(1000); await f.client.ping();
+    assert.equal(f.calls.length, 2);
   });
 });
 
 test('changed authority retires an idle wait and cannot authorize Stop or later repeated reads', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: seen, resolve: first } = Promise.withResolvers();
   const f = await waitingFixture(t, params => {
     if (!readBrowserProgram(params.arguments.code)) return ordinaryResult;
     first(); return observationResult(params);
   }, { observationIntervalMs: 1000 });
-  const answer = f.client.callTool(f.source); await seen; await delay(0);
+  const answer = f.client.callTool(f.source); await seen;
+  await f.waitForChildTerminal(message => message.result?.content);
   const other = withAuthority(ordinary(), 'changed policy'); other.arguments.code = 'ordinary JS';
   await f.client.callTool(other); await answer;
   assert.equal((await f.client.callTool(hook())).isError, true);
-  await delay(15); assert.equal(f.calls.length, 2);
+  t.mock.timers.tick(1000); await f.client.ping();
+  assert.equal(f.calls.length, 2);
   assert.ok(f.receipts.some(entry => entry.code === 'authority_replaced'));
 });
 
 test('an unsettled private observation forwards cancellation to its actual child ID once grace expires', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: seen, resolve: first } = Promise.withResolvers();
   const f = await waitingFixture(t, async (params, extra) => {
     first();
@@ -563,7 +679,10 @@ test('an unsettled private observation forwards cancellation to its actual child
   const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
   await seen; control.abort();
   assert.equal(await answer, 'cancelled');
-  await delay(60);
+  await f.waitForReceipt('observation_cancel_deferred');
+  t.mock.timers.tick(25);
+  await f.waitForReceipt('cancel_grace_expired');
+  await f.waitForCancellation(() => true);
   assert.equal(f.cancellations.length, 1);
   const childCall = f.forwardedInner.find(message => message.method === 'tools/call');
   const cancelled = f.forwardedInner.filter(message => message.method === 'notifications/cancelled');
@@ -574,16 +693,138 @@ test('an unsettled private observation forwards cancellation to its actual child
 
 test('a closed broker turn and lost browser ownership wake immediately without a successful final answer', async t => {
   for (const kind of ['closed broker', 'lost browser ownership']) await t.test(kind, async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     const { promise: seen, resolve: first } = Promise.withResolvers();
     const f = await waitingFixture(subtest, params => {
       first(); return observationResult(params, kind === 'lost browser ownership' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {});
-    }, { observationIntervalMs: 1000 });
+    }, { observationIntervalMs: 1000, brokerTransport: kind === 'closed broker' ? 'http' : 'direct' });
     const answer = f.client.callTool(f.source);
     await seen;
     if (kind === 'closed broker') {
       f.broker.cancel(f.turn.token);
       await assert.rejects(answer, /Router browser observation channel is unavailable/u);
-    } else assert.match((await answer).content[0].text, /generation-turn-not-latest/u);
+    } else {
+      assert.match((await answer).content[0].text, /generation-turn-not-latest/u);
+      assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_ready');
+    }
+    assert.equal(f.calls.length, 1);
+  });
+});
+
+test('a broker transport rejection before an ownership-loss terminal remains an explicit failure', async t => {
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
+  const server = await observationServer(t, request => request.socket.destroy());
+  const f = await protocolFixture(t, async params => {
+    entered(); await terminal;
+    return observationResult(params, { replyUnavailableReason: 'generation-turn-not-latest' });
+  });
+  t.after(release);
+  const rejected = assert.rejects(f.client.callTool(server.source), /Router browser observation channel is unavailable/u);
+  await started;
+  const pending = [...f.bridge.pending.values()][0];
+  assert.equal(await brokerWake(t, pending), 'broker_error');
+  assert.equal((await server.waitForRequest()).method, 'GET');
+  release(); await rejected;
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_error');
+});
+
+test('private broker HTTP reaches a real listener on Fetch-forbidden port 10080', async t => {
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
+  const server = await observationServer(t, (_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ closed: false, revision: 1 }));
+  }, 10080);
+  const f = await protocolFixture(t, async params => { entered(); await terminal; return observationResult(params); });
+  t.after(release);
+  const answer = f.client.callTool(server.source).then(result => ({ result }), error => ({ error }));
+  await started;
+  const pending = [...f.bridge.pending.values()][0];
+  assert.equal(await brokerWake(t, pending), 'broker_activity');
+  const request = await server.waitForRequest();
+  assert.deepEqual(request, { method: 'GET', url: new URL(server.url).pathname + '?revision=0', accept: 'application/json' });
+  release();
+  const outcome = await answer;
+  assert.equal(outcome.error, undefined);
+  assert.match(outcome.result.content[0].text, /"completed":false/u);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+});
+
+test('private broker HTTP bounds its control body and rejects redirects, malformed output and invalid revisions', async t => {
+  const valid = JSON.stringify({ closed: false, revision: 1 });
+  for (const branch of [
+    { name: '4096-byte valid envelope', body: valid.padEnd(4096), ok: true },
+    { name: '4097-byte envelope', body: valid.padEnd(4097) },
+    { name: 'malformed JSON', body: '{' },
+    { name: 'invalid UTF-8', body: Buffer.from([0xff]) },
+    { name: 'truncated body', body: valid, headers: { 'content-length': Buffer.byteLength(valid) + 1 } },
+    { name: 'redirect', body: valid, status: 302, headers: { location: '/must-not-follow' } },
+    { name: 'backward revision', body: JSON.stringify({ closed: false, revision: -1 }) },
+    { name: 'extra schema field', body: JSON.stringify({ closed: false, revision: 1, extra: true }) },
+  ]) await t.test(branch.name, async subtest => {
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
+    const server = await observationServer(subtest, (_request, response) => {
+      response.writeHead(branch.status ?? 200, { 'content-type': 'application/json', ...branch.headers });
+      response.end(branch.body);
+    });
+    const f = await protocolFixture(subtest, async params => { entered(); await terminal; return observationResult(params); });
+    subtest.after(release);
+    const answer = f.client.callTool(server.source).then(result => ({ result }), error => ({ error }));
+    await started;
+    const pending = [...f.bridge.pending.values()][0];
+    assert.equal(await brokerWake(subtest, pending), branch.ok ? 'broker_activity' : 'broker_error');
+    release();
+    const outcome = await answer;
+    if (branch.ok) assert.match(outcome.result.content[0].text, /"completed":false/u);
+    else { assert.equal(outcome.error.code, -32603); assert.match(outcome.error.message, /observation channel is unavailable/u); }
+    assert.equal(server.requests.length, 1, 'The private channel never follows a redirect or retries.');
+    assert.equal(f.calls.length, 1);
+  });
+});
+
+test('browser completion aborts the owned broker HTTP request before headers and during its body', async t => {
+  for (const headersStarted of [false, true]) await t.test(headersStarted ? 'partial body' : 'before headers', async subtest => {
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
+    const connectionEvents = recordedEvents(subtest);
+    const clientPhases = recordedEvents(subtest);
+    let partialResponse;
+    const server = await observationServer(subtest, (_request, response) => {
+      response.once('close', () => connectionEvents.record('closed'));
+      if (headersStarted) {
+        partialResponse = response;
+        response.writeHead(200, { 'content-type': 'application/json' }); response.flushHeaders();
+      }
+    });
+    if (headersStarted) {
+      const endpoint = new URL(server.url), starts = channel('http.client.request.start');
+      const observeClient = ({ request }) => {
+        if (request.method !== 'GET' || request.getHeader('host') !== endpoint.host || request.path !== endpoint.pathname + endpoint.search) return;
+        request.once('response', response => {
+          clientPhases.record({ phase: 'headers', status: response.statusCode });
+          response.once('readable', () => clientPhases.record({ phase: 'body', bytes: response.readableLength, complete: response.complete }));
+        });
+      };
+      starts.subscribe(observeClient); subtest.after(() => starts.unsubscribe(observeClient));
+    }
+    const f = await protocolFixture(subtest, async params => { await terminal; return observationResult(params, { completed: true }); });
+    subtest.after(release);
+    const answer = f.client.callTool(server.source);
+    await server.waitForRequest();
+    if (headersStarted) {
+      assert.equal((await clientPhases.waitFor(event => event.phase === 'headers')).status, 200);
+      partialResponse.write('{"closed":');
+      assert.deepEqual(await clientPhases.waitFor(event => event.phase === 'body'), {
+        phase: 'body', bytes: Buffer.byteLength('{"closed":'), complete: false,
+      });
+    }
+    release();
+    assert.match((await answer).content[0].text, /"completed":true/u);
+    await connectionEvents.waitFor(() => true);
+    assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_ready');
     assert.equal(f.calls.length, 1);
   });
 });
@@ -619,9 +860,10 @@ test('either callback arrival order gives cleanup exclusively to the owned callb
     });
     await f.client.callTool(ordinary());
     let original, owned;
-    if (builtinFirst) { original = f.client.callTool(builtin()); await delay(0); owned = f.client.callTool(hook()); }
+    if (builtinFirst) { original = f.client.callTool(builtin()); await f.waitForReceipt('builtin_interrupt_waiting'); owned = f.client.callTool(hook()); }
     else { owned = f.client.callTool(hook()); await started; original = f.client.callTool(builtin()); }
-    await started; await delay(0);
+    await started;
+    if (!builtinFirst) await f.waitForReceipt('builtin_interrupt_queued');
     assert.equal(f.calls.length, 2); assert.equal(f.calls.some(params => params.name === 'turn_ended'), false);
     release();
     assert.equal((await owned).isError, undefined); await original;
@@ -642,12 +884,18 @@ test('builtin cancellation never aborts the separately owned cleanup, for either
     await f.client.callTool(ordinary());
     const control = new AbortController(); let original, owned;
     const callBuiltin = () => f.client.callTool(builtin(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-    if (builtinFirst) { original = callBuiltin(); await delay(0); control.abort(); await delay(0); owned = f.client.callTool(hook()); }
-    else { owned = f.client.callTool(hook()); await started; original = callBuiltin(); await delay(0); control.abort(); }
-    await started; await delay(0);
+    if (builtinFirst) {
+      original = callBuiltin(); await f.waitForReceipt('builtin_interrupt_waiting'); control.abort();
+      await f.waitForReceipt('builtin_cancel_queued'); owned = f.client.callTool(hook());
+    } else {
+      owned = f.client.callTool(hook()); await started; original = callBuiltin();
+      await f.waitForReceipt('builtin_interrupt_queued'); control.abort(); await f.waitForReceipt('builtin_cancel_queued');
+    }
+    await started;
     assert.equal(f.cancellations.length, 0);
-    release(); assert.equal((await owned).isError, undefined); assert.equal(await original, 'cancelled'); await delay(0);
-    const wire = f.forwardedInner.find(message => message.params?.name === 'turn_ended');
+    release(); assert.equal((await owned).isError, undefined); assert.equal(await original, 'cancelled');
+    const wire = await f.waitForInner(message => message.params?.name === 'turn_ended');
+    await f.waitForInner(message => message.method === 'notifications/cancelled' && message.params.requestId === wire.id);
     assert.ok(wire);
     assert.ok(f.forwardedInner.some(message => message.method === 'notifications/cancelled' && message.params.requestId === wire.id));
     assert.equal(f.cancellations.some(params => params.arguments?.code?.includes('stopOwnedWebTurn')), false);
@@ -657,8 +905,11 @@ test('builtin cancellation never aborts the separately owned cleanup, for either
 });
 
 test('builtin coalescing expiry alone never starts Stop and preserves a later trusted callback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : ordinaryResult, { builtinWaitMs: 10 });
-  await f.client.callTool(ordinary()); await f.client.callTool(builtin());
+  await f.client.callTool(ordinary());
+  const original = f.client.callTool(builtin()); await f.waitForReceipt('builtin_interrupt_waiting');
+  t.mock.timers.tick(10); await original;
   assert.deepEqual(f.calls, [ordinary(), builtin()]);
   assert.equal((await f.client.callTool(hook())).isError, undefined);
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
@@ -666,6 +917,7 @@ test('builtin coalescing expiry alone never starts Stop and preserves a later tr
 
 test('late owned cleanup waits for a forwarded builtin actual terminal, including terminal errors', async t => {
   for (const rpcError of [false, true]) await t.test(rpcError ? 'RPC error' : 'tool result', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     let builtinRunning = false;
     const { promise: started, resolve: entered } = Promise.withResolvers();
     const { promise: terminal, resolve: release } = Promise.withResolvers();
@@ -679,8 +931,9 @@ test('late owned cleanup waits for a forwarded builtin actual terminal, includin
       return ordinaryResult;
     }, { builtinWaitMs: 10 });
     await f.client.callTool(ordinary());
-    const original = f.client.callTool(builtin()).catch(() => 'actual terminal error'); await started;
-    const owned = f.client.callTool(hook()); await delay(15);
+    const original = f.client.callTool(builtin()).catch(() => 'actual terminal error');
+    await f.waitForReceipt('builtin_interrupt_waiting'); subtest.mock.timers.tick(10); await started;
+    const owned = f.client.callTool(hook()); await f.waitForReceipt('cleanup_authority_consumed');
     assert.equal(f.calls.length, 2, 'Forwarding a callback is not its terminal response.');
     release();
     assert.equal((await owned).isError, undefined);
@@ -691,8 +944,11 @@ test('late owned cleanup waits for a forwarded builtin actual terminal, includin
 });
 
 test('late owned cleanup cannot cross a new ordinary turn after builtin coalescing expires', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? success() : ordinaryResult, { builtinWaitMs: 10 });
-  await f.client.callTool(ordinary()); await f.client.callTool(builtin());
+  await f.client.callTool(ordinary());
+  const original = f.client.callTool(builtin()); await f.waitForReceipt('builtin_interrupt_waiting');
+  t.mock.timers.tick(10); await original;
   await f.client.callTool(ordinary(TURN2));
   assert.equal((await f.client.callTool(hook())).isError, true);
   assert.equal((await f.client.callTool(hook(TURN2))).isError, undefined);
@@ -701,6 +957,7 @@ test('late owned cleanup cannot cross a new ordinary turn after builtin coalesci
 
 test('deadline or owner cancellation while awaiting a forwarded builtin cannot authorize Stop', async t => {
   for (const cancelOwner of [false, true]) await t.test(cancelOwner ? 'owner cancellation' : 'shared deadline', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     const { promise: started, resolve: entered } = Promise.withResolvers();
     const { promise: terminal, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async params => {
@@ -708,13 +965,16 @@ test('deadline or owner cancellation while awaiting a forwarded builtin cannot a
       return ordinaryResult;
     }, { builtinWaitMs: 5, graceMs: 40, cleanupMs: 10 });
     await f.client.callTool(ordinary());
-    const original = f.client.callTool(builtin()); await started;
+    const original = f.client.callTool(builtin()); await f.waitForReceipt('builtin_interrupt_waiting');
+    subtest.mock.timers.tick(5); await started;
     const control = new AbortController();
     const owned = f.client.callTool(hook(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-    if (cancelOwner) { await delay(0); control.abort(); }
+    await f.waitForReceipt('cleanup_authority_consumed');
+    if (cancelOwner) control.abort();
+    else subtest.mock.timers.tick(40);
     const proof = await owned;
     assert.equal(cancelOwner ? proof : proof.isError, cancelOwner ? 'cancelled' : true);
-    await delay(0);
+    if (cancelOwner) await f.waitForReceipt('cleanup_owner_cancel_received');
     assert.equal(f.calls.length, 2);
     assert.equal(f.cancellations.length, 0, 'Owned cleanup cannot cancel an original builtin.');
     release(); assert.deepEqual(await original, ordinaryResult);
@@ -724,6 +984,7 @@ test('deadline or owner cancellation while awaiting a forwarded builtin cannot a
 });
 
 test('all released builtins form the barrier before a backpressured first request is sent', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: transportBlocked, resolve: blocked } = Promise.withResolvers();
   const { promise: transportGate, resolve: unblock } = Promise.withResolvers();
   const { promise: secondStarted, resolve: secondEntered } = Promise.withResolvers();
@@ -741,9 +1002,11 @@ test('all released builtins form the barrier before a backpressured first reques
   };
   await f.client.callTool(ordinary());
   const originals = [f.client.callTool(builtin()), f.client.callTool(builtin())];
+  await f.waitForReceipt('builtin_interrupt_waiting', () => f.receipts.filter(entry => entry.code === 'builtin_interrupt_waiting').length === 2);
+  t.mock.timers.tick(10);
   await transportBlocked;
-  const owned = f.client.callTool(hook()); await delay(0);
-  unblock(); await secondStarted; await delay(0);
+  const owned = f.client.callTool(hook()); await f.waitForReceipt('cleanup_authority_consumed');
+  unblock(); await secondStarted;
   assert.equal(f.calls.length, 3, 'The first actual terminal cannot release cleanup ahead of the second builtin.');
   releaseSecond();
   assert.equal((await owned).isError, undefined); await Promise.all(originals);
@@ -796,8 +1059,8 @@ test('transport backpressure cannot forward a builtin cancellation before its or
     const owned = f.client.callTool(hook()); await started;
     const control = new AbortController();
     const original = f.client.callTool(builtin(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-    await delay(0); releaseStop(); await transportBlocked;
-    control.abort(); await delay(0);
+    await f.waitForReceipt('builtin_interrupt_queued'); releaseStop(); await transportBlocked;
+    control.abort(); await f.waitForReceipt('builtin_cancel_queued');
     assert.equal(f.forwardedInner.some(message => message.method === 'notifications/cancelled'), false);
     assert.equal(f.forwardedInner.some(message => message.params?.name === 'turn_ended'), false);
     if (blockedTransport === 'builtin_request') {
@@ -808,7 +1071,9 @@ test('transport backpressure cannot forward a builtin cancellation before its or
       assert.equal((await f.client.callTool(hook(TURN2))).isError, undefined);
     }
     releaseTransport(); assert.equal((await owned).isError, undefined);
-    assert.equal(await original, 'cancelled'); await delay(0);
+    assert.equal(await original, 'cancelled');
+    const wire = await f.waitForInner(message => message.method === 'tools/call' && message.params?.name === 'turn_ended');
+    await f.waitForInner(message => message.method === 'notifications/cancelled' && message.params.requestId === wire.id);
     const requestIndex = f.forwardedInner.findIndex(message => message.method === 'tools/call' && message.params?.name === 'turn_ended');
     assert.ok(requestIndex >= 0);
     const request = f.forwardedInner[requestIndex];
@@ -843,8 +1108,12 @@ test('owner cancellation cancels only injected Stop and preserves queued builtin
   const owned = f.client.callTool(hook(), undefined, { signal: ownerControl.signal }).catch(() => 'cancelled');
   await started;
   const original = f.client.callTool(builtin(), undefined, { signal: builtinControl.signal }).catch(() => 'cancelled');
-  await delay(0); builtinControl.abort(); await delay(0); clock = 2012; ownerControl.abort();
-  assert.equal(await owned, 'cancelled'); assert.equal(await original, 'cancelled'); await delay(10);
+  await f.waitForReceipt('builtin_interrupt_queued'); builtinControl.abort(); await f.waitForReceipt('builtin_cancel_queued');
+  clock = 2012; ownerControl.abort();
+  assert.equal(await owned, 'cancelled'); assert.equal(await original, 'cancelled');
+  await f.waitForCancellation(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
+  const builtinWire = await f.waitForInner(message => message.params?.name === 'turn_ended');
+  await f.waitForInner(message => message.method === 'notifications/cancelled' && message.params.requestId === builtinWire.id);
   assert.equal(f.cancellations.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
   assert.equal(f.calls.some(params => params.name === INTERRUPT_TOOL), false);
   assert.deepEqual(f.calls.at(-1), builtin());
@@ -855,7 +1124,8 @@ test('owner cancellation cancels only injected Stop and preserves queued builtin
   const hookReplies = f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length;
   // Cancellation notification is not a terminal callback. The fixture SDK
   // suppresses its cancelled handler's return, so deliver the real child frame.
-  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() }); await delay(0);
+  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() });
+  await f.waitForReceipt('stop_terminal_after_retirement');
   const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
   assert.equal(historical.retirementReason, 'cleanup_cancelled'); assert.equal(historical.proofOk, true);
   assert.equal(historical.requestDigest, f.receipts.find(entry => entry.code === 'stop_native_dispatched').requestDigest);
@@ -875,7 +1145,9 @@ test('duplicate owned and builtin callbacks share one attempt without replacing 
   });
   await f.client.callTool(ordinary()); const first = f.client.callTool(hook()); await started;
   const duplicate = f.client.callTool(hook()), one = f.client.callTool(builtin()), two = f.client.callTool(builtin());
-  await delay(0); release(); const results = await Promise.all([first, duplicate, one, two]);
+  await f.waitForReceipt('cleanup_duplicate_queued');
+  await f.waitForReceipt('builtin_interrupt_queued', () => f.receipts.filter(entry => entry.code === 'builtin_interrupt_queued').length === 2);
+  release(); const results = await Promise.all([first, duplicate, one, two]);
   assert.equal(results[0].isError, undefined); assert.deepEqual(results[0], results[1]);
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
   assert.deepEqual(f.calls.filter(params => params.name === 'turn_ended'), [builtin(), builtin()]);
@@ -972,12 +1244,13 @@ test('unqualified ordinary cancellation reaches the official child immediately w
   });
   const control = new AbortController();
   const pending = f.client.callTool({ name: 'js', arguments: { code: 'unqualified' } }, undefined, { signal: control.signal }).catch(() => 'cancelled');
-  await started; control.abort(); await delay(0);
+  await started; control.abort(); await f.waitForCancellation(() => true);
   assert.equal(await pending, 'cancelled'); assert.equal(f.cancellations.length, 1); assert.equal(f.calls.length, 1);
 });
 
 test('observation cancellation can settle before owned cleanup; no callback expires the original cancellation once', async t => {
   for (const useOwned of [true, false]) await t.test(useOwned ? 'owned cleanup' : 'no callback', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
     const { promise: started, resolve: entered } = Promise.withResolvers();
     const { promise: gate, resolve: release } = Promise.withResolvers();
     const f = await protocolFixture(subtest, async (params, extra) => {
@@ -989,9 +1262,12 @@ test('observation cancellation can settle before owned cleanup; no callback expi
     }, useOwned ? {} : { graceMs: 40, cleanupMs: 10 });
     const control = new AbortController();
     const pending = f.client.callTool(ordinary(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-    await started; control.abort(); await delay(0); assert.equal(f.cancellations.length, 0);
+    await started; control.abort(); await f.waitForReceipt('observation_cancel_deferred'); assert.equal(f.cancellations.length, 0);
     if (useOwned) { const owned = f.client.callTool(hook()); release(); await owned; assert.ok(f.receipts.some(entry => entry.code === 'stop_confirmed')); }
-    else { await delay(60); assert.equal(f.cancellations.length, 1); assert.ok(f.receipts.some(entry => entry.code === 'cancel_grace_expired')); }
+    else {
+      subtest.mock.timers.tick(40); await f.waitForReceipt('cancel_grace_expired'); await f.waitForCancellation(() => true);
+      assert.equal(f.cancellations.length, 1);
+    }
     await pending;
   });
 });
@@ -1016,7 +1292,8 @@ test('a terminal observation error releases owned cleanup without changing the o
     const observation = f.client.callTool(source).then(result => ({ result }), error => ({ error }));
     await started;
     const owned = f.client.callTool(hook()), originals = Array.from({ length: 3 }, () => f.client.callTool(builtin()));
-    await delay(0);
+    await f.waitForReceipt('cleanup_authority_consumed');
+    await f.waitForReceipt('builtin_interrupt_queued', () => f.receipts.filter(entry => entry.code === 'builtin_interrupt_queued').length === 3);
     assert.ok(f.receipts.some(entry => entry.code === 'cleanup_authority_consumed'));
     assert.deepEqual(f.calls, [source]);
     release();
@@ -1067,7 +1344,7 @@ test('a real child return after 500 ms releases one Stop within the original sha
   const owned = f.client.callTool(hook()), original = f.client.callTool(builtin());
   await cleanupStarted;
   t.mock.timers.tick(500);
-  await new Promise(resolve => setImmediate(resolve));
+  await f.client.ping();
   assert.equal(f.calls.length, 1, 'The outer cancellation and 500 elapsed ms do not end the child invocation.');
   assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
   release();
@@ -1119,14 +1396,13 @@ test('a terminal observation error cannot revive cleanup after owner cancellatio
     const observation = f.client.callTool(source); await started;
     const control = new AbortController();
     const owned = f.client.callTool(hook(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-    await delay(0);
+    await f.waitForReceipt('cleanup_authority_consumed');
     if (replaceAuthority) {
       const generic = withAuthority(source, 'replacement'); generic.arguments = { code: 'void 0' };
       await f.client.callTool(generic);
       assert.ok(f.receipts.some(entry => entry.code === 'authority_replaced'));
     } else {
-      control.abort(); await delay(0);
-      assert.ok(f.receipts.some(entry => entry.code === 'cleanup_owner_cancel_received'));
+      control.abort(); await f.waitForReceipt('cleanup_owner_cancel_received');
     }
     release(); assert.deepEqual(await observation, errorResult);
     const result = await owned;
@@ -1149,7 +1425,7 @@ test('owner cancellation releases the child-terminal wait before the child retur
   const control = new AbortController();
   const owned = f.client.callTool(hook(), undefined, { signal: control.signal }).catch(() => 'cancelled');
   const original = f.client.callTool(builtin());
-  await delay(0); control.abort();
+  await f.waitForReceipt('builtin_interrupt_queued'); control.abort();
   assert.equal(await owned, 'cancelled');
   assert.deepEqual(await original, ordinaryResult, 'The builtin is released without waiting for a child result.');
   assert.deepEqual(f.calls, [source, builtin()]);
@@ -1226,8 +1502,11 @@ test('overlapping ordinary JS cancels injected cleanup and prevents late success
 });
 
 test('conflicting ordinary authority after a forwarded builtin prevents later reacquisition', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const f = await protocolFixture(t, () => ordinaryResult);
-  await f.client.callTool(ordinary()); const original = f.client.callTool(builtin()); await delay(0);
+  await f.client.callTool(ordinary()); const original = f.client.callTool(builtin());
+  await f.waitForReceipt('builtin_interrupt_waiting'); t.mock.timers.tick(150);
+  await f.waitForCall(params => params.name === 'turn_ended');
   const conflicting = withAuthority(ordinary(), 'changed policy'); conflicting.arguments.code = 'ordinary invalidation';
   await f.client.callTool(conflicting); await original;
   await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true);
@@ -1235,6 +1514,7 @@ test('conflicting ordinary authority after a forwarded builtin prevents later re
 });
 
 test('unsettled observation refuses cleanup and releases the original native cancellation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: started, resolve: entered } = Promise.withResolvers();
   const f = await protocolFixture(t, async (params, extra) => {
     if (params.arguments?.code === ordinary().arguments.code) {
@@ -1244,8 +1524,10 @@ test('unsettled observation refuses cleanup and releases the original native can
   }, { graceMs: 40 });
   const control = new AbortController();
   const pending = f.client.callTool(ordinary(), undefined, { signal: control.signal }).catch(() => 'cancelled');
-  await started; control.abort(); await delay(0);
-  assert.equal((await f.client.callTool(hook())).isError, true); await pending; await delay(0);
+  await started; control.abort(); await f.waitForReceipt('observation_cancel_deferred');
+  const owned = f.client.callTool(hook()); await f.waitForReceipt('cleanup_authority_consumed');
+  t.mock.timers.tick(40);
+  assert.equal((await owned).isError, true); await pending; await f.waitForCancellation(() => true);
   assert.equal(f.cancellations.length, 1); assert.equal(f.calls.length, 1);
   assert.ok(f.receipts.some(entry => entry.code === 'observe_not_settled' || entry.code === 'cancel_grace_expired'));
   assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
@@ -1256,12 +1538,18 @@ test('unsettled observation refuses cleanup and releases the original native can
 });
 
 test('Stop accepts an actual terminal after its execution allowance within the original callback deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const { promise: started, resolve: entered } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
-    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { await delay(2600); return success(); }
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { entered(); await terminal; return success(); }
     return ordinaryResult;
   });
+  t.after(release);
   await f.client.callTool(ordinary());
-  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  const owned = f.client.callTool(hook()); await started;
+  t.mock.timers.tick(2600); release();
+  assert.equal((await owned).isError, undefined);
   const dispatched = f.receipts.find(entry => entry.code === 'stop_native_dispatched');
   assert.equal(dispatched.executionTimeoutMs, 2500); assert.equal(dispatched.scriptBudgetMs, 2400);
   assert.ok(dispatched.receiptTimeoutMs <= 2850 && dispatched.receiptTimeoutMs > 2500);
@@ -1273,22 +1561,26 @@ test('Stop accepts an actual terminal after its execution allowance within the o
 });
 
 test('callback deadline reports missing acknowledgement and passively consumes a late terminal without new authority', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   let stopCalls = 0;
   const { promise: started, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
+  const { promise: handlerReturned, resolve: returned } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
-      if (++stopCalls === 1) { entered(); await terminal; }
+      if (++stopCalls === 1) { entered(); await terminal; returned(); }
       return success();
     }
     return readBrowserProgram(params.arguments?.code)?.operation === 'send' ? sendResult(params) : ordinaryResult;
   }, { graceMs: 250, cleanupMs: 150 });
   t.after(release);
   await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
-  await delay(175);
+  t.mock.timers.tick(175); await f.client.ping();
   assert.equal(f.cancellations.length, 0, 'The execution allowance is not the terminal receipt deadline.');
+  t.mock.timers.tick(75);
   const result = await owned;
-  assert.equal(result.isError, true); assert.match(result.content[0].text, /acknowledgement_timeout/u); await delay(0);
+  assert.equal(result.isError, true); assert.match(result.content[0].text, /acknowledgement_timeout/u);
+  await f.waitForCancellation(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
   assert.equal(f.cancellations.length, 1); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
   const missing = f.receipts.find(entry => entry.code === 'stop_unconfirmed');
   assert.equal(missing.resultCode, 'acknowledgement_timeout'); assert.equal(missing.childTerminalObserved, false);
@@ -1303,9 +1595,10 @@ test('callback deadline reports missing acknowledgement and passively consumes a
   assert.equal(stopCalls, 1, 'An outstanding native cleanup blocks another adapter UI cleanup.');
   const injected = f.forwardedInner.find(message => message.params?.arguments?.code?.includes('stopOwnedWebTurn'));
   const hookReplies = f.forwardedOuter.filter(message => message.result?.content?.[0]?.text?.includes('ROUTER_WEB_STOP_ADAPTER')).length;
-  release(); await delay(0);
+  release(); await handlerReturned; await f.client.ping();
   assert.equal(f.bridge.injected.size, 1, 'A cancellation notification or suppressed fixture result is not a terminal.');
-  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() }); await delay(0);
+  await f.serverWire.send({ jsonrpc: '2.0', id: injected.id, result: success() });
+  await f.waitForReceipt('stop_terminal_after_retirement');
   const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
   assert.equal(historical.retirementReason, 'acknowledgement_timeout'); assert.equal(historical.proofOk, true);
   assert.equal(historical.requestDigest, f.receipts.find(entry => entry.code === 'stop_native_dispatched').requestDigest);
@@ -1346,6 +1639,7 @@ test('a terminal received after the deadline cannot gain authority from a delaye
 });
 
 test('late native errors keep sanitized failure evidence without changing the completed hook result', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: started, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
@@ -1354,12 +1648,14 @@ test('late native errors keep sanitized failure evidence without changing the co
   }, { graceMs: 150, cleanupMs: 125 });
   t.after(release);
   await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  t.mock.timers.tick(150);
   assert.match((await owned).content[0].text, /acknowledgement_timeout/u);
   const injected = f.forwardedInner.find(message => message.params?.arguments?.code?.includes('stopOwnedWebTurn'));
   const replyCount = f.forwardedOuter.length;
   const privateText = 'private late failure payload';
   await f.serverWire.send({ jsonrpc: '2.0', id: injected.id,
-    error: { code: -32602, message: 'js execution cancelled before execution', data: { privateText } } }); await delay(0);
+    error: { code: -32602, message: 'js execution cancelled before execution', data: { privateText } } });
+  await f.waitForReceipt('stop_terminal_after_retirement');
   const historical = f.receipts.find(entry => entry.code === 'stop_terminal_after_retirement');
   assert.equal(historical.proofOk, false); assert.equal(historical.resultCode, 'native_error');
   assert.equal(historical.nativeFailure.source, 'rpc_error'); assert.equal(historical.nativeFailure.rpcCode, -32602);
@@ -1371,6 +1667,7 @@ test('late native errors keep sanitized failure evidence without changing the co
 });
 
 test('actual child closure releases passive cleanup ownership without interpreting a terminal', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: started, resolve: entered } = Promise.withResolvers();
   const { promise: terminal, resolve: release } = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
@@ -1379,8 +1676,9 @@ test('actual child closure releases passive cleanup ownership without interpreti
   }, { graceMs: 150, cleanupMs: 125 });
   t.after(release);
   await f.client.callTool(ordinary()); const owned = f.client.callTool(hook()); await started;
+  t.mock.timers.tick(150);
   assert.equal((await owned).isError, true); assert.equal(f.bridge.injected.size, 1);
-  await f.serverWire.close(); await delay(0);
+  await f.serverWire.close(); await f.closed;
   assert.equal(f.bridge.closed, true); assert.equal(f.bridge.injected.size, 0);
   assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement' || entry.code === 'stop_confirmed'), false);
 });

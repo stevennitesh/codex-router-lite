@@ -186,6 +186,13 @@ export function createInAppWebRuntime({
 } = {}) {
   const turns = new Map(), conversations = new Map(), tokenOwners = new Map();
   const compactions = new Set();
+  // Use live ownership and the replay guards' actual uncertainty records.
+  // Retired pending observations do not become permanent maintenance blockers.
+  const maintenanceState = () => ({
+    activeTurns: [...turns.values()].filter(turn => !turn.done && !turn.cancelled).length,
+    uncertainSends: [...conversations.values()].filter(conversation => conversation.uncertainSend).length,
+    unresolvedActions: [...conversations.values()].reduce((count, conversation) => count + conversation.unresolvedCoding.size, 0),
+  });
   const serviceAbort = new AbortController();
   let services, servicePromise, serviceSettings, closing = false;
   const conversationPath = threadId => path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`);
@@ -783,7 +790,8 @@ export function createInAppWebRuntime({
       } catch (error) { cancel(turn, error); throw error; }
       finally { signal?.removeEventListener("abort", abort); turn.busy = false; }
     },
-    status: () => ({ started: !!services, conversations: conversations.size, activeTurns: [...turns.values()].filter(turn => !turn.done && !turn.cancelled).length,
+    maintenanceState,
+    status: () => ({ started: !!services, conversations: conversations.size, activeTurns: maintenanceState().activeTurns,
       ...(services ? { mcp: services.mcp.status(), tunnel: services.tunnel.status() } : {}) }),
     async close() {
       closing = true;
@@ -803,6 +811,9 @@ export function createInAppWebRuntime({
 }
 
 let runtime;
+export function inAppWebMaintenanceState() {
+  return runtime?.maintenanceState() ?? { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 };
+}
 export function requestInAppWebBridge(payload, options) {
   runtime ??= createInAppWebRuntime();
   return runtime.request(payload, options);

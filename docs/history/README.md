@@ -6,6 +6,10 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Coordinated Web runtime refresh and deterministic browser-read measurements, 2026-10-21](2026-10-21-web-runtime-refresh.json)
+
+- [Windows app update recovery, adapter CLI ownership repair and upstream review, 2026-10-21](2026-10-21-app-compatibility-review.json)
+
 - [Unmodified-CLI adapter Stop and same-chat continuation after all-ordinary restart, 2026-10-19](2026-10-19-web-stop-adapter-verification.json)
 
 - [Superseded native hook context repair candidate and verification limits, 2026-10-18](https://github.com/stevennitesh/codex-router-lite/blob/c44baa1c56fb9716ebbe9bc9cabe16053fe48deb/docs/history/2026-10-18-native-hook-context.json)

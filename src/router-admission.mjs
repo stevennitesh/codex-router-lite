@@ -24,6 +24,11 @@ export class RouterAdmission {
   #indeterminateWorkflow = false;
   #peers = new Set();
   #pendingDrain;
+  #webRuntimeState;
+
+  constructor({ webRuntimeState } = {}) {
+    this.#webRuntimeState = webRuntimeState;
+  }
 
   begin({ controller, nestedCallbackLease } = {}) {
     const nestedOwner = nestedCallbackLease
@@ -132,6 +137,7 @@ export class RouterAdmission {
       workflows: this.#workflows.size,
       workflowCalls,
       indeterminateWorkflow: this.#indeterminateWorkflow,
+      ...(this.#webRuntimeState !== undefined ? { webRuntime: this.#readWebRuntimeState() } : {}),
     };
   }
 
@@ -151,6 +157,8 @@ export class RouterAdmission {
     if (this.#indeterminateWorkflow || this.#workflows.size) {
       return { status: "deferred", reason: this.#indeterminateWorkflow ? "switchyard-workflow-indeterminate" : "switchyard-workflow-active", ...this.status() };
     }
+    const webBlocker = this.#webRuntimeBlocker();
+    if (webBlocker) return { status: "deferred", reason: webBlocker, ...this.status() };
     this.#state = "draining";
     if (this.#active.size === 0) {
       this.#state = "closed";
@@ -178,12 +186,36 @@ export class RouterAdmission {
 
   #settleDrainIfReady() {
     if (this.#state !== "draining" || this.#active.size || this.#hasWorkflow()) return;
+    const webBlocker = this.#webRuntimeBlocker();
+    if (webBlocker) {
+      this.#deferPendingDrain(webBlocker);
+      return;
+    }
     this.#state = "closed";
     this.#finishPendingDrain({ status: "drained", ...this.status() });
   }
 
   #hasWorkflow() {
     return this.#indeterminateWorkflow || this.#workflows.size > 0;
+  }
+
+  #readWebRuntimeState() {
+    try {
+      const state = this.#webRuntimeState();
+      if (!state || typeof state !== "object" || Array.isArray(state)
+          || ![state.activeTurns, state.uncertainSends, state.unresolvedActions]
+            .every(value => Number.isSafeInteger(value) && value >= 0)) return { known: false };
+      return { known: true, activeTurns: state.activeTurns, uncertainSends: state.uncertainSends, unresolvedActions: state.unresolvedActions };
+    } catch {
+      return { known: false };
+    }
+  }
+
+  #webRuntimeBlocker() {
+    if (this.#webRuntimeState === undefined) return undefined;
+    const state = this.#readWebRuntimeState();
+    if (!state.known || state.uncertainSends || state.unresolvedActions) return "web-workflow-indeterminate";
+    return state.activeTurns ? "web-workflow-active" : undefined;
   }
 
   #deferPendingDrain(reason) {

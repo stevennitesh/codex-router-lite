@@ -91,6 +91,67 @@ test("a tool call produced by already admitted work reopens admission and defers
   active.finish();
 });
 
+test("Web runtime work defers replacement between HTTP rounds and idle state permits it", async () => {
+  let state = { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 };
+  const admission = new RouterAdmission({ webRuntimeState: () => state });
+  for (const [field, reason] of [
+    ["activeTurns", "web-workflow-active"],
+    ["uncertainSends", "web-workflow-indeterminate"],
+    ["unresolvedActions", "web-workflow-indeterminate"],
+  ]) {
+    state[field] = 1;
+    const result = await admission.drain();
+    assert.equal(result.status, "deferred");
+    assert.equal(result.reason, reason);
+    assert.equal(result.activeRequests, 0);
+    assert.equal(result.state, "open");
+    assert.deepEqual(result.webRuntime, { known: true, ...state });
+    const continuation = admission.begin();
+    continuation.finish();
+    state[field] = 0;
+  }
+  assert.equal((await admission.drain()).status, "drained");
+});
+
+test("Web work created by an admitted request reopens admission when pending drain settles", async () => {
+  let state = { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 };
+  const admission = new RouterAdmission({ webRuntimeState: () => state });
+  const active = admission.begin();
+  const draining = admission.drain({ timeoutMs: 1_000 });
+  state = { ...state, activeTurns: 1 };
+  active.finish();
+  const result = await draining;
+  assert.equal(result.status, "deferred");
+  assert.equal(result.reason, "web-workflow-active");
+  assert.equal(result.state, "open");
+  const continuation = admission.begin();
+  state = { ...state, activeTurns: 0 };
+  continuation.finish();
+  assert.equal((await admission.drain()).status, "drained");
+});
+
+test("an installed but unavailable or invalid Web runtime state fails closed at both drain boundaries", async () => {
+  for (const invalid of [
+    null, () => undefined, () => Promise.resolve({ activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 }),
+    () => ({ activeTurns: 0, uncertainSends: 0 }),
+    () => ({ activeTurns: -1, uncertainSends: 0, unresolvedActions: 0 }),
+    () => { throw new Error("Unavailable private runtime detail"); },
+  ]) {
+    let provider = () => ({ activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 });
+    const admission = new RouterAdmission({ webRuntimeState: () => provider() });
+    const active = admission.begin();
+    const draining = admission.drain({ timeoutMs: 1_000 });
+    provider = invalid;
+    active.finish();
+    const result = await draining;
+    assert.equal(result.status, "deferred");
+    assert.equal(result.reason, "web-workflow-indeterminate");
+    assert.deepEqual(result.webRuntime, { known: false });
+    assert.equal(result.state, "open");
+    assert.equal((await admission.drain()).status, "deferred");
+  }
+});
+
 test("indeterminate and over-capacity workflows never become idle through eviction or expiry", async () => {
   const admission = new RouterAdmission();
   admission.recordSwitchyardWorkflow({ produced: ["unknown-owner"] });
@@ -112,7 +173,7 @@ test("indeterminate and over-capacity workflows never become idle through evicti
 });
 
 test("force cancels active work and peers while tool parsing excludes hosted provider calls", async () => {
-  const admission = new RouterAdmission();
+  const admission = new RouterAdmission({ webRuntimeState: () => { throw new Error("Unavailable runtime"); } });
   const controller = new AbortController();
   admission.begin({ controller });
   let closed = false;
