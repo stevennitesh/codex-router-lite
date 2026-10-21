@@ -67,7 +67,20 @@
     "savedGenerationTurnsMounted": 0,
     "interpretation": "Recovery rejected the missing generation before checking reply content or composer. This does not establish that either changed. No new message was sent and no Stop trial ran.",
     "expandedProbe": "Only on this rejected same-URL recovery, report bounded checkpoint identity/prefix facts from the existing snapshot and one read-only scroll geometry observation. Acceptance guards remain unchanged; no scrolling, retry, Send or checkpoint reset is added.",
-    "validation": "119 browser tests passed. Observe, retain and Send programs remain byte-identical to baseline; baseline adapter qualification, confirmed-Send cleanup arming and resident helper digest remain unchanged. The installed diagnostic adapter can stay loaded."
+    "validation": "119 browser tests passed. Observe, retain and Send programs remain byte-identical to baseline; baseline adapter qualification, confirmed-Send cleanup arming and resident helper digest remain unchanged. The installed diagnostic adapter can stay loaded.",
+    "expandedSourceCommit": "d7d727ebed43d04a77fe5e8b5d6235d7221634d7",
+    "expandedDeploymentAccepted": true,
+    "expandedObservedAtUtc": "2026-10-21T20:32:06.730Z",
+    "expandedResult": {
+      "savedCheckpointReplyMounted": false,
+      "matchingCheckpointPrefixes": 0,
+      "scrollAtEnd": true,
+      "documentAtEnd": true,
+      "mountedRepliesEqualFinalFiveSavedBaselineIdentities": true
+    },
+    "causalCheck": "A separate read-only view of the same saved chat initially showed the same prior state. One explicit reload restored the exact completed checkpoint reply and its original identity. The native verification browser is independently restored and remained stale; its next readiness attempt was also unsent. This establishes recoverable restored-page staleness, not loss of the remotely saved checkpoint.",
+    "repairBoundary": "Allow one native reload only for an empty, normal saved tab with exactly one visible idle composer control and no visible Stop, containing exclusively known baseline replies ending at the immediate predecessor of a completed nonempty checkpoint. The predecessor's unique logical turn must be latest. Recheck ownership and page/composer state before reload, then wait for the exact checkpoint reply and reapply the complete existing recovery proof. No repeated reload, history replay, replacement chat or weakened acceptance.",
+    "repairValidation": "445 affected browser/runtime/adapter tests passed before the final positive-idle gate; 122 browser tests and source checks passed on the final gate. Independent review's inactivity finding was fixed and re-reviewed with no remaining actionable findings. Exact observe/retain/Send qualification and resident helper digest remain unchanged; no adapter replacement or restart is needed."
   },
   "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
 }

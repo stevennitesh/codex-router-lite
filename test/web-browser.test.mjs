@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserDom, browserHelperVersion, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserDom, browserHelperVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
 const replyOptions = { ui: browserDom, assistantSelector: browserDom.assistantSelector, regenerateName: browserDom.regenerateButtonExactName };
@@ -242,7 +242,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
-    fetchCalls: 0, stopClicks: 0, userMessages: [] };
+    fetchCalls: 0, stopClicks: 0, reloads: 0, attachmentWaits: 0, idleButtonCount: 1, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -349,6 +349,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "count" });
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
+      if (kind === "button" && name === browserIdleButtonExactName) return ui.idleButtonCount;
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
       return kind === "family-text" ? Number(ui.familyText.includes(name)) : name === plugin.pluginSelectionButtonName ? ui.selectionCount ?? 1 : 0;
     },
@@ -435,7 +436,14 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       ui.onType?.(text);
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
-    async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
+    async waitFor({ state, timeoutMs }) {
+      if (state === "attached") {
+        assert.equal(kind, "selector");
+        ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint");
+        await ui.onAttachmentWait?.({ selector: name, timeoutMs });
+        if (!replyRoot().querySelector(name)) throw new Error("The checkpoint did not attach.");
+      } else assert.equal(await this.isVisible(), state === "visible");
+    },
     async evaluateAll(callback, argument) {
       if (kind === "text") {
         const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
@@ -448,6 +456,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       if (name === "Ask ChatGPT" && kind === "textbox") {
         ui.composerReads += 1;
+        ui.onComposerRead?.();
         const content = [domText(ui.composerText)];
         if (ui.chip) content.unshift(domElement("span", { "app-mention-display-name": plugin.pluginName,
           "app-mention-path": `app://${plugin.pluginAppId}`, contenteditable: "false" }, domText(plugin.pluginName)));
@@ -467,6 +476,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
   });
   const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
+    reload: async () => { ui.reloads += 1; ui.actions.push("reload"); await ui.onReload?.(); if (ui.reloadFailure) throw new Error("Reload failed."); },
     playwright: { getByRole: (kind, options) => makeLocator(kind, options.name), getByText: (text, options) => {
       assert.equal(options.exact, true); return makeLocator("text", text);
     }, locator: name => makeLocator("selector", name) },
@@ -526,6 +536,26 @@ async function recoverableFixture({ completed = true, text = "  Observed 🔧 re
     generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   return { ...f, recovery, text };
+}
+
+async function staleCompletedCheckpointFixture() {
+  const nativeContext = {}, baseline = ["Older reply", "Previous reply", "Immediate predecessor"], text = "Completed checkpoint reply";
+  const f = fixture({ fastTimers: true, nativeContext });
+  await f.ready();
+  f.ui.texts = [...baseline];
+  await f.run("send", { ...plugin, prompt: "Request" });
+  f.ui.texts.push(text); f.ui.complete = true;
+  const observed = await f.run("observe");
+  await f.run("retain");
+  const recovery = { url: observed.url, tabId: observed.tabId, baselineReplyIds: observed.baselineReplyIds,
+    replyId: observed.replyId, generationTurnKey: observed.generationTurnKey, generationReplyIds: observed.generationReplyIds,
+    assistantPrefix: assistantPrefix(observed.assistantText), completed: true };
+  const predecessor = () => observedTurn(messageId(900), "Previous request", [assistantMessage(2, baseline[2])]);
+  const restored = (replyText = text, key = recovery.generationTurnKey) => domElement("main", {}, predecessor(),
+    observedTurn(key, "Request", [assistantMessage(3, replyText)]));
+  f.ui.messageRoot = domElement("main", {}, predecessor());
+  f.loseBinding();
+  return { ...f, recovery, text, predecessor, restored, nativeContext };
 }
 
 async function interruptedBeforeReplyFixture() {
@@ -1832,6 +1862,106 @@ test("lost kernel recovery uses the current same-session browser and verifies a 
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.reloads, 0);
+});
+
+test("a stale completed predecessor reloads once, waits for its exact checkpoint and acquires ownership only after full verification", async () => {
+  const f = await staleCompletedCheckpointFixture(), order = [];
+  f.ui.onReplyRead = () => order.push("snapshot");
+  f.ui.onControlRead = ({ name, method }) => {
+    if (name === "Stop" && method === "isVisible") order.push("stop");
+    if (name === browserIdleButtonExactName && method === "count") order.push("idle");
+  };
+  f.ui.onComposerRead = () => order.push("composer");
+  f.ui.onReload = () => {
+    order.push("reload");
+    assert.equal(f.activeTurn(), undefined);
+    assert.match(f.getState().recoveryReloadCheckpoint, /^[a-f0-9]{64}$/u);
+  };
+  f.ui.onAttachmentWait = ({ selector, timeoutMs }) => {
+    order.push("attached");
+    assert.equal(selector, `[data-chatgpt-selection-message-id="${f.recovery.replyId}"]`);
+    assert.equal(timeoutMs, 10000);
+    assert.equal(f.activeTurn(), undefined);
+    f.ui.messageRoot = f.restored();
+  };
+  const handoff = f.tab.markHandoff;
+  f.tab.markHandoff = async () => { order.push("handoff"); assert.equal(f.activeTurn()?.turnId, "next-turn"); await handoff(); };
+  const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.equal(continued.recovered, true);
+  assert.equal(continued.assistantText, f.text);
+  assert.equal(continued.tabId, f.recovery.tabId);
+  assert.equal(continued.url, f.recovery.url);
+  assert.equal(f.getState().bindingLost, undefined);
+  assert.equal(f.getState().recoveryReloadCheckpoint, undefined);
+  assert.ok(f.getState().baselineReplyIds.includes(f.recovery.replyId));
+  assert.equal(f.getState().sendAttempted, false);
+  assert.equal(f.getState().sendConfirmed, false);
+  assert.equal(f.ui.reloads, 1); assert.equal(f.ui.attachmentWaits, 1);
+  assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1); assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+  assert.deepEqual(order.slice(0, 8), ["snapshot", "snapshot", "stop", "idle", "composer", "reload", "attached", "snapshot"]);
+  assert.ok(order.indexOf("handoff") > order.indexOf("attached"));
+  assert.equal(f.ui.waitedMs, 0, "The checkpoint wait uses the locator event, without a timer/poll loop.");
+});
+
+test("recovery cannot refresh unknown replies, newer user activity, drafts, active generation or changed ownership", async () => {
+  const foreign = { turnId: "foreign-owner", state: {} };
+  for (const [scenario, configure] of [
+    ["draft", f => { f.ui.composerText = "Private unsent draft"; }],
+    ["visible generation", f => { f.ui.stop = true; }],
+    ["Stop absent but idle control unavailable", f => { f.ui.idleButtonCount = 0; }],
+    ["ambiguous visible idle controls", f => { f.ui.idleButtonCount = 2; }],
+    ["unknown mounted reply", f => { f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(900), "Previous", [assistantMessage(99, "Unknown reply")])); }],
+    ["earlier known baseline", f => { f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(900), "Previous", [assistantMessage(1, "Previous reply")])); }],
+    ["newer user-only turn", f => { f.ui.messageRoot = domElement("main", {}, f.predecessor(), observedTurn(messageId(999), "New private user request", [], { complete: false })); }],
+    ["checkpoint under changed turn identity", f => { f.ui.messageRoot = f.restored(f.text, messageId(777)); }],
+    ["incomplete checkpoint", f => { f.recovery.completed = false; }],
+    ["draft during fresh snapshot", f => { let reads = 0; f.ui.onReplyRead = () => { if (++reads === 2) f.ui.composerText = "New private draft"; }; }],
+    ["newer user during fresh snapshot", f => { let reads = 0; f.ui.onReplyRead = () => { if (++reads === 2) f.ui.messageRoot = domElement("main", {}, f.predecessor(), observedTurn(messageId(999), "New request")); }; }],
+    ["changed URL during fresh snapshot", f => { let reads = 0; f.ui.onReplyRead = () => { if (++reads === 2) f.ui.url = "https://chatgpt.com/c/foreign"; }; }],
+    ["changed owner during composer read", f => { f.ui.onComposerRead = () => { f.nativeContext.routerWebActiveTurns.set(base.sessionId, foreign); }; }],
+  ]) {
+    const f = await staleCompletedCheckpointFixture();
+    configure(f);
+    const handoffs = f.ui.handoffs;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /recovery|refresh/iu, scenario);
+    assert.equal(f.ui.reloads, 0, scenario); assert.equal(f.ui.attachmentWaits, 0, scenario);
+    assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.handoffs, handoffs);
+    assert.equal(f.getState().recoveryReloadCheckpoint, undefined);
+    assert.equal(f.activeTurn(), scenario === "changed owner during composer read" ? foreign : undefined);
+  }
+});
+
+test("failed refresh never accepts changed checkpoint proof or repeats reload, and a late verified checkpoint can recover without another reload", async () => {
+  for (const [scenario, afterReload, expected] of [
+    ["missing attachment", () => {}, /did not attach within 10 seconds/u],
+    ["reload failure", f => { f.ui.reloadFailure = true; }, /reload failed/u],
+    ["changed prefix", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(`Changed ${f.text}`); }; }, /reply-prefix-mismatch/u],
+    ["changed generation identity", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(f.text, messageId(777)); }; }, /generation-turn-not-unique/u],
+    ["new user turn after checkpoint", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = domElement("main", {}, f.restored(), observedTurn(messageId(999), "New user request")); }; }, /generation-turn-not-latest/u],
+    ["draft after refresh", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(); f.ui.composerText = "Private draft"; }; }, /composer changed|reply or composer changed/u],
+    ["active generation after refresh", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(); f.ui.stop = true; }; }, /generating after refresh/u],
+    ["redirect after refresh", f => { f.ui.url = "https://chatgpt.com/c/foreign"; }, /left its saved URL after refresh/u],
+  ]) {
+    const f = await staleCompletedCheckpointFixture();
+    f.ui.onReload = () => { assert.equal(f.activeTurn(), undefined); afterReload(f); };
+    const handoffs = f.ui.handoffs;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), expected, scenario);
+    assert.equal(f.ui.reloads, 1, scenario); assert.equal(f.ui.handoffs, handoffs);
+    assert.equal(f.activeTurn(), undefined);
+    assert.match(f.getState().recoveryReloadCheckpoint, /^[a-f0-9]{64}$/u);
+    assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.sendClicks, 1);
+    f.ui.messageRoot = domElement("main", {}, f.predecessor()); f.ui.url = f.recovery.url;
+    f.ui.stop = false; f.ui.composerText = "";
+    await assert.rejects(f.run("continue", { turnId: "retry-turn", recovery: f.recovery }), /already refreshed/u);
+    assert.equal(f.ui.reloads, 1);
+    f.ui.messageRoot = f.restored();
+    const continued = await f.run("continue", { turnId: "late-turn", recovery: f.recovery });
+    assert.equal(continued.assistantText, f.text);
+    assert.equal(f.ui.reloads, 1);
+    assert.equal(f.getState().recoveryReloadCheckpoint, undefined);
+  }
 });
 
 test("saved URL reacquires one existing tab when its retained old ID is absent", async () => {

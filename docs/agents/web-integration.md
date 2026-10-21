@@ -68,6 +68,13 @@ prefix before continuing. If Stop preceded a readable answer, a confirmed
 generation's unique latest turn can establish ownership in the recorded saved
 chat instead. Recovery requires the confirmed generation checkpoint and matching
 saved-chat proof.
+An existing tab restored to the known immediate predecessor of a completed
+checkpoint may be stale. Recovery may reload that exact saved URL once, only
+after checking that all mounted replies belong to the saved baseline, its last
+reply is the final baseline reply, the idle composer control is uniquely visible,
+Stop is not visible, and the composer is empty.
+The reload must reveal the exact checkpoint and pass the full recovery proof;
+it does not authorize replay, a replacement chat, or ignoring a changed reply.
 Tab IDs alone do not identify a chat. Reopening preserves the saved conversation;
 it does not resend its full history or execute historical tool calls again. An
 uncertain Send or unresolved native coding action blocks continuation until its

@@ -623,7 +623,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       scrollAncestorCount: null, scrollUnknownCount: null, scrollChainComplete: null,
       scrollHasAbove: null, scrollHasBelow: null, scrollAtEnd: null,
       documentHasAbove: null, documentHasBelow: null, documentAtEnd: null });
-    let recoveryDiagnostic = unobservedRecovery();
+    let recoveryDiagnostic = unobservedRecovery(), recoveryView;
     const recoveryRejected = reason => { recoveryDiagnostic.reason = reason; return false; };
     const boundedCount = values => Math.min(values.length, 10000);
     verifyRecoveryTexts = view => {
@@ -730,9 +730,11 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     }, { url: proof.url, replyId: view.replies.at(-1)?.messageId ?? null, messageIdAttribute: ui.messageIdAttribute }, { timeoutMs: 1000 });
     const verifiedReply = async () => {
       recoveryDiagnostic = unobservedRecovery();
+      recoveryView = undefined;
       if (!(recoveryDiagnostic.urlMatches = await tab.url() === proof.url)) return recoveryRejected("saved-url-changed");
       if (!(recoveryDiagnostic.temporaryInactive = await temporaryInactive(tab))) return recoveryRejected("temporary-mode-active");
       const view = await snapshot(tab), accepted = verifyRecoveryTexts(view);
+      recoveryView = view;
       if (!navigate && !accepted && recoveryDiagnostic.reason === "generation-turn-not-unique") {
         try { Object.assign(recoveryDiagnostic, await recoveryViewport(view)); }
         catch { recoveryDiagnostic.viewportReadSucceeded = false; }
@@ -758,7 +760,51 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       recoveryDiagnostic.composerEmpty = values[0] === null;
       return recoveryDiagnostic.composerEmpty || recoveryRejected(values[0] === "shape" ? "composer-shape-invalid" : "composer-draft-present");
     };
-    if (!navigate && (!(await verifiedReply()) || !(await emptyRecoveryComposer()))) throw new Error(`The saved chat reply or composer changed; recovery cannot reuse it. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
+    const recoveryFailure = message => new Error(`${message} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
+    const staleCompletedCheckpoint = () => {
+      const texts = recoveryView?.replies, latest = texts?.at(-1), baseline = proof.baselineReplyIds;
+      return state.bindingLost === true && proof.completed && proof.replyId && proof.assistantPrefix.length > 0
+        && recoveryDiagnostic.generationTurnCount === 0 && recoveryDiagnostic.checkpointReplyCount === 0
+        && latest && baseline.length > 0 && latest.messageId === baseline.at(-1)
+        && texts.every(value => baseline.includes(value.messageId))
+        && typeof latest.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latest.turnKey)
+        && recoveryView.turns.filter(turn => turn.turnKey === latest.turnKey).length === 1
+        && recoveryView.turns.at(-1)?.turnKey === latest.turnKey;
+    };
+    if (!navigate) {
+      let verified = await verifiedReply();
+      if (!verified && staleCompletedCheckpoint()) {
+        requireRecoveryOwnership();
+        if (await tab.url() !== proof.url || !(await temporaryInactive(tab))) throw recoveryFailure("The saved chat changed before refresh; recovery cannot reload it.");
+        recoveryDiagnostic = unobservedRecovery();
+        recoveryDiagnostic.urlMatches = true; recoveryDiagnostic.temporaryInactive = true;
+        recoveryView = await snapshot(tab);
+        verified = verifyRecoveryTexts(recoveryView);
+        requireRecoveryOwnership();
+        if (!verified && staleCompletedCheckpoint()) {
+          const checkpoint = createHash("sha256").update(JSON.stringify([proof.url, proof.replyId, proof.generationTurnKey, proof.assistantPrefix.length, proof.assistantPrefix.sha256]), "utf8").digest("hex");
+          if (state.recoveryReloadCheckpoint === checkpoint) throw recoveryFailure("The saved chat was already refreshed for this completed checkpoint; recovery remains unverified.");
+          if (await tab.url() !== proof.url || !(await temporaryInactive(tab)) || await role(ui.stopButtonExactName, "button", tab).isVisible()) throw recoveryFailure("The saved chat changed or is generating before refresh; recovery cannot reload it.");
+          if (await role(options.recoveryIdleButtonExactName, "button", tab).filter({ visible: true }).count() !== 1) throw recoveryFailure("The saved chat has no unique visible idle control before refresh; recovery cannot reload it.");
+          if (!(await emptyRecoveryComposer())) throw recoveryFailure("The saved chat composer changed before refresh; recovery cannot reload it.");
+          requireRecoveryOwnership();
+          // Refresh only this proven stale predecessor. A failed attempt cannot
+          // repeat the action for the same checkpoint or acquire cleanup ownership.
+          state.recoveryReloadCheckpoint = checkpoint;
+          try { await tab.reload(); }
+          catch { throw recoveryFailure("The saved chat reload failed; recovery remains unverified."); }
+          requireRecoveryOwnership();
+          if (await tab.url() !== proof.url) throw recoveryFailure("The saved chat left its saved URL after refresh; recovery remains unverified.");
+          try { await tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`).waitFor({ state: "attached", timeoutMs: 10000 }); }
+          catch { throw recoveryFailure("The saved chat completed reply did not attach within 10 seconds after refresh; recovery remains unverified."); }
+          requireRecoveryOwnership();
+          verified = await verifiedReply();
+          if (!verified) throw recoveryFailure("The saved chat refresh did not restore the completed checkpoint; recovery remains unverified.");
+          if (await role(ui.stopButtonExactName, "button", tab).isVisible()) throw recoveryFailure("The saved chat is generating after refresh; recovery remains unverified.");
+        }
+      }
+      if (!verified || !(await emptyRecoveryComposer())) throw recoveryFailure("The saved chat reply or composer changed; recovery cannot reuse it.");
+    }
     requireRecoveryOwnership();
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url,
@@ -815,6 +861,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     if (recovered) {
       if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
       delete state.bindingLost;
+      delete state.recoveryReloadCheckpoint;
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
     await state.tab.markHandoff();
@@ -835,6 +882,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   if (recovered) {
     if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
     delete state.bindingLost;
+    delete state.recoveryReloadCheckpoint;
   }
   const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
   if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
@@ -1061,6 +1109,7 @@ export function browserScript(options) {
   const compact = ["observe", "retain"].includes(options.operation);
   const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
+  if (options.operation === "continue" && options.recovery) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
