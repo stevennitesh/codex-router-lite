@@ -31,15 +31,56 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
       generationTurnKey: id(Number(thread.slice(-12)) + 200), tabId: `tab-${thread}`, browserId: `browser-${thread}`,
       url: `https://chatgpt.com/c/${id(Number(thread.slice(-12)) + 100)}` };
     surface.inventoryUrl = surface.url;
-    const matchesGuard = () => {
-      const keys = surface.turnKeys ?? [surface.generationTurnKey];
-      return keys.filter(key => key === stop.guardGeneration).length === 1 && keys.at(-1) === stop.guardGeneration;
-    };
-    const stop = { click: async options => {
+    // This is a policy model of SDK locator resolution, not a browser/accname
+    // implementation. Accessible names are explicit inputs; real SDK semantics
+    // and page transitions are covered by the separate local browser fixture.
+    const body = { tagName: "BODY" };
+    const turns = () => (surface.turnKeys ?? [surface.generationTurnKey]).map(turnKey => ({
+      getAttribute: name => { assert.equal(name, 'data-turn-key'); return turnKey; },
+      querySelectorAll: name => {
+        assert.equal(name, '[data-talvt-turn-state]');
+        return Array.from({ length: surface.stateCount ?? 1 }, () => ({ getAttribute: attribute => {
+          assert.equal(attribute, 'data-talvt-turn-state'); return surface.turnState ?? (surface.complete ? 'complete' : 'running');
+        } }));
+      },
+    }));
+    body.ownerDocument = { body, get URL() { return surface.url; },
+      querySelectorAll: name => { assert.equal(name, '[data-turn-key]'); return turns(); } };
+    const visibility = (shown, style) => shown && !['hidden', 'collapse'].includes(style ?? 'visible');
+    const controls = () => [
+      ...Array.from({ length: surface.stopCount }, (_, index) => ({ kind: 'stop', index,
+        name: surface.stopAccessibleName ?? 'Stop', visible: visibility(surface.visible, surface.visibilityStyle) })),
+      ...Array.from({ length: surface.idleCount ?? (surface.idleVisible ? 1 : 0) }, (_, index) => ({ kind: 'idle', index,
+        name: surface.idleAccessibleName ?? 'Start Voice', visible: visibility(surface.idleVisible, surface.idleVisibilityStyle) })),
+    ];
+    const same = (left, right) => left === right || left.kind === right.kind && left.index === right.index;
+    class PolicyLocator {
+      constructor(resolve) { this.resolve = resolve; }
+      filter(options) {
+        assert(Object.keys(options).every(key => ['has', 'hasNot', 'visible'].includes(key)));
+        return new PolicyLocator(() => this.resolve().filter(element =>
+          (options.visible === undefined || element.visible === options.visible)
+          && (!options.has || options.has.resolve().length > 0)
+          && (!options.hasNot || options.hasNot.resolve().length === 0)));
+      }
+      nth(index) { return new PolicyLocator(() => this.resolve().slice(index, index + 1)); }
+      or(other) { return new PolicyLocator(() => {
+        const combined = [...this.resolve()];
+        for (const element of other.resolve()) if (!combined.some(item => same(item, element))) combined.push(element);
+        return combined;
+      }); }
+      getByRole(role, options) {
+        assert.equal(role, 'button'); assert.equal(options.exact, true);
+        assert(['Stop', 'Start Voice'].includes(options.name));
+        touch('locator', thread);
+        return new PolicyLocator(() => this.resolve().length ? controls().filter(element => element.name === options.name) : []);
+      }
+      async click(options) {
         assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
-        touch("click_request", thread);
-        if (!matchesGuard()) throw new Error("No element matched the guarded Stop selector");
-        surface.clickTimeoutMs = options.timeoutMs; touch("click", thread);
+        touch('click_request', thread);
+        const selected = this.resolve();
+        if (selected.length !== 1 || selected[0].kind !== 'stop' || !selected[0].visible) throw new Error('No unique guarded Stop matched');
+        surface.clickTimeoutMs = options.timeoutMs; touch('click', thread);
         if (surface.pauseClick) await surface.pauseClick;
         const acknowledgementMs = surface.clickAcknowledgementMs ?? 0;
         model.now += Math.min(acknowledgementMs, options.timeoutMs);
@@ -49,71 +90,47 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
           model.now += surface.errorDiagnosticsMs ?? 0;
           throw surface.clickError ?? new Error('Timed out running CDP command "Input.dispatchMouseEvent"');
         }
-      } };
-    const idle = {};
-    const union = parts => ({
-      or: other => union([...parts, other]),
-      waitFor: async options => {
-        assert.equal(options.state, "visible");
+      }
+      async waitFor(options) {
+        assert.equal(options.state, 'visible');
         assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
-        touch("readiness_wait", thread);
+        touch('readiness_wait', thread);
         const delayMs = surface.readinessDelayMs ?? 0;
         model.now += Math.min(delayMs, options.timeoutMs);
         model.now += surface.readinessTerminalMs ?? 0;
-        const complete = (surface.stateCount ?? 1) === 1 && (surface.turnState ?? (surface.complete ? 'complete' : 'running')) === 'complete';
-        const ready = matchesGuard() && (complete && !surface.visible || parts.includes(stop) && surface.visible
-          || parts.some(part => typeof part === "string" && part.includes("Start Voice")) && surface.idleVisible && !surface.visible);
+        const ready = this.resolve().some(element => element === body || element.visible);
         if (!ready || delayMs > options.timeoutMs) {
           model.now += Math.max(0, options.timeoutMs - delayMs);
-          throw new Error("Readiness was not observed");
+          throw new Error('Readiness was not observed');
         }
-      },
-      evaluateAll: async (reader, args, options) => {
-            assert(parts.includes("body") && parts.includes(stop) && parts.includes(idle));
-            assert(Number.isInteger(options.timeoutMs) && options.timeoutMs >= 200 && options.timeoutMs <= 1000);
-            surface.readTimeouts ??= []; surface.readTimeouts.push(options.timeoutMs);
-            touch("generation", thread);
-            if (surface.generationReadError) throw surface.generationReadError;
-            touch("visible", thread);
-            const turns = (surface.turnKeys ?? [surface.generationTurnKey]).map(turnKey => ({
-              getAttribute: name => { assert.equal(name, 'data-turn-key'); return turnKey; },
-              querySelectorAll: name => {
-                assert.equal(name, '[data-talvt-turn-state]');
-                return Array.from({ length: surface.stateCount ?? 1 }, () => ({ getAttribute: attribute => {
-                  assert.equal(attribute, 'data-talvt-turn-state'); return surface.turnState ?? (surface.complete ? 'complete' : 'running');
-                } }));
-              },
-            }));
-            const body = { tagName: "BODY" };
-            body.ownerDocument = { body, URL: surface.url, defaultView: {
-              getComputedStyle: element => ({ visibility: element.visibilityStyle ?? surface.visibilityStyle ?? "visible" }),
-            }, querySelectorAll: name => { assert.equal(name, '[data-turn-key]'); return turns; } };
-            const button = (name, visible, visibilityStyle) => ({ tagName: "BUTTON", visibilityStyle,
-              getAttribute: attribute => attribute === "aria-label" ? name === "Stop" ? surface.stopAriaLabel ?? name : name
-                : attribute === "aria-labelledby" && name === "Stop" ? surface.stopLabelledBy ?? null : null,
-              getBoundingClientRect: () => ({ width: visible ? 32 : 0, height: visible ? 32 : 0 }) });
-            const controls = matchesGuard() ? [
-              ...Array.from({ length: surface.stopCount }, () => button("Stop", surface.visible)),
-              ...Array.from({ length: surface.idleCount ?? (surface.idleVisible ? 1 : 0) }, () => button("Start Voice", surface.idleVisible, surface.idleVisibilityStyle)),
-            ] : [];
-            const view = reader([body, ...controls], args);
-            touch("generation_return", thread);
-            return surface.viewOverride ? { ...view, ...surface.viewOverride } : view;
-          },
-    });
-    const tab = { id: surface.tabId, url: async () => { touch("url", thread); return surface.url; },
-      markHandoff: async () => { touch("handoff", thread); }, close: forbidden, goto: forbidden,
-      playwright: { getByRole: forbidden,
-        locator: selector => {
-          if (selector === "body" || selector.startsWith("xpath=(")) return union([selector]);
-          const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
-          assert.equal(selector, `xpath=//body[count(//*[@data-turn-key='${key}'])=1 and (//*[@data-turn-key])[last()][@data-turn-key='${key}']]`);
-          stop.guardGeneration = key;
-          return { getByRole: (role, options) => {
-            assert.equal(role, "button"); assert(["Stop", "Start Voice"].includes(options.name)); assert.equal(options.exact, true);
-            touch("locator", thread); return options.name === "Stop" ? stop : idle;
-          } };
-        } } };
+      }
+      async evaluateAll(reader, args, options) {
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs >= 200 && options.timeoutMs <= 1000);
+        surface.readTimeouts ??= []; surface.readTimeouts.push(options.timeoutMs);
+        touch('generation', thread);
+        if (surface.generationReadError) throw surface.generationReadError;
+        touch('visible', thread);
+        const view = reader(this.resolve(), args);
+        touch(view ? 'generation_return' : 'predicate_miss_return', thread);
+        return view;
+      }
+    }
+    const locator = selector => {
+      if (selector === 'body') return new PolicyLocator(() => [body]);
+      assert(selector.startsWith('xpath=//body['));
+      const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
+      assert(key);
+      const needsComplete = selector.includes('data-talvt-turn-state');
+      return new PolicyLocator(() => {
+        const keys = surface.turnKeys ?? [surface.generationTurnKey];
+        const owned = keys.filter(item => item === key).length === 1 && keys.at(-1) === key;
+        const complete = (surface.stateCount ?? 1) === 1 && (surface.turnState ?? (surface.complete ? 'complete' : 'running')) === 'complete';
+        return owned && (!needsComplete || complete) ? [body] : [];
+      });
+    };
+    const tab = { id: surface.tabId, url: async () => { touch('url', thread); return surface.url; },
+      markHandoff: async () => { touch('handoff', thread); }, close: forbidden, goto: forbidden,
+      playwright: { locator, getByRole: (role, options) => locator('body').getByRole(role, options) } };
     const browser = { browserId: surface.browserId, tabs: {
       list: async () => { touch("tabs", thread); return surface.tabs ?? [{ id: surface.tabId, url: surface.inventoryUrl }]; },
       get: async tabId => { assert.equal(tabId, surface.tabId); touch("get_tab", thread); return tab; }, new: forbidden } };
@@ -563,8 +580,8 @@ test("persistently visible Stop exhausts confirmation without claiming cancellat
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
   assert.equal(result.stopClicked, true); assert.equal(result.stopHidden, false); assert.equal(result.retained, true);
   assert.deepEqual(readback(result), { state: "unconfirmed_readback", stopCount: 1, stopVisible: true,
-    idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
-    unrecognizedCount: 0, labelledByCount: 0, complete: false });
+    idleCount: null, idleVisibleCount: 0, controlsRecognized: true,
+    unrecognizedCount: null, labelledByCount: null, complete: false });
   assert(result.elapsedMs > 500 && result.elapsedMs < 2400);
   assert.equal(clicked(f).length, 1); assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
 });
@@ -621,9 +638,9 @@ test("idle Stop with zero matches retains its tab without claiming cancellation"
   const f = fixture(); f.first.visible = false; f.first.stopCount = 0; f.first.complete = true;
   const result = await f.run();
   assert.equal(result.outcome, "already_idle"); assert.equal(result.stopClicked, false); assert.equal(result.retained, true);
-  assert.deepEqual(readback(result), { state: "inactive_readback", stopCount: 0, stopVisible: false,
-    idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
-    unrecognizedCount: 0, labelledByCount: 0, complete: true });
+  assert.deepEqual(readback(result), { state: "inactive_readback", stopCount: null, stopVisible: false,
+    idleCount: null, idleVisibleCount: null, controlsRecognized: true,
+    unrecognizedCount: null, labelledByCount: null, complete: true });
   assert.equal(f.first.state.retained, true); assert.equal(clicked(f).length, 0);
 });
 
@@ -690,6 +707,28 @@ test("the saved generation must be unique and latest before any tab effect", asy
     f => { f.first.ledger.generationTurnKey = "invalid"; },
     f => { f.first.state.generationTurnKey = id(500); },
   ]) await blocked(change);
+});
+
+test("ambiguous semantic Stop controls fail before retention or click", async () => {
+  for (const complete of [false, true]) await blocked(f => {
+    f.first.stopCount = 2;
+    f.first.visible = !complete;
+    f.first.complete = complete;
+  }, "stop_confirmation_failed");
+});
+
+test("revoked authority after an unmatched predicate prevents dispatching another browser read", async () => {
+  for (const [change, code] of [
+    [f => { f.context.nodeRepl.requestMeta = f.metadata(f.model.owner, id(13)); }, "metadata_mismatch"],
+    [f => { f.context.routerWebActiveTurns.set(f.model.owner, { ...f.first.active }); }, "owner_changed"],
+    [f => { f.first.ledger.generationTurnKey = id(500); }, "ledger_changed"],
+  ]) {
+    const f = await blocked(f => {
+      f.first.idleCount = 1;
+      f.model.onCall = name => { if (name === "predicate_miss_return") change(f); };
+    }, code);
+    assert.equal(f.calls.filter(call => call.name === "generation").length, 1);
+  }
 });
 
 test("generation identity changes in the ledger or binding revoke authority across awaits", async () => {
@@ -803,6 +842,7 @@ test("only a newly restored unique visible idle control after acknowledged Stop 
   for (const change of [
     f => { f.first.idleVisible = true; },
     f => { f.model.onCall = name => { if (name === "handoff") f.first.idleVisible = true; }; },
+    f => { f.first.idleCount = 1; },
     f => { f.first.idleCount = 2; },
     f => { f.first.idleVisibilityStyle = "hidden"; },
     f => { f.first.keepVisible = true; },
@@ -812,7 +852,7 @@ test("only a newly restored unique visible idle control after acknowledged Stop 
     assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
     assert.equal(result.inactivityEvidence, "none"); assert.equal(result.generationInactive, false);
     assert.equal(result.stopClicked, true); assert.equal(clicked(f).length, 1);
-    assert.equal(f.calls.filter(call => call.name === "generation").length, 3);
+    assert(f.calls.filter(call => call.name === "generation").length >= 3);
   }
 });
 
@@ -840,42 +880,37 @@ test("a readiness match is scheduling only and cannot replace the final coherent
   assert.equal(clicked(f).length, 1);
 });
 
-test("overridden direct labels cannot reclassify a semantic Stop control as restored composer", async () => {
+test("semantic Stop provenance is preserved when direct labels disagree", async () => {
   const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
   f.model.onCall = name => {
-    if (name === "click") { f.first.stopAriaLabel = "Start Voice"; f.first.stopLabelledBy = "actual-stop-label"; }
+    if (name === "click") {
+      // Explicit semantic input models the SDK's aria-labelledby resolution.
+      f.first.stopAccessibleName = "Stop";
+      f.first.stopAriaLabel = "Start Voice";
+      f.first.stopLabelledBy = "actual-stop-label";
+    }
   };
   const result = await f.run();
   assert.equal(result.code, "stop_confirmation_failed"); assert.equal(result.inactivityEvidence, "none");
   assert.equal(result.generationInactive, false); assert.equal(result.stopHidden, false);
-  assert.deepEqual(readback(result), { state: "invalid_controls", stopCount: 0, stopVisible: false,
-    idleCount: 0, idleVisibleCount: 0, controlsRecognized: false,
-    unrecognizedCount: 1, labelledByCount: 1, complete: false });
+  assert.deepEqual(readback(result), { state: "unconfirmed_readback", stopCount: 1, stopVisible: true,
+    idleCount: null, idleVisibleCount: 0, controlsRecognized: true,
+    unrecognizedCount: null, labelledByCount: null, complete: false });
   assert.equal(clicked(f).length, 1);
 });
 
-test("invalid control readback retains only bounded primitives without changing confirmation rules", async () => {
-  for (const [override, expected] of [
-    [{ stopCount: 2 }, { stopCount: 2 }],
-    [{ stopCount: "private diagnostic payload" }, { stopCount: null }],
-    [{ stopVisible: { token: "private diagnostic payload" } }, { stopVisible: null }],
-    [{ idleCount: -1 }, { idleCount: null }],
-    [{ idleCount: 1.5 }, { idleCount: null }],
-    [{ idleCount: 1001, idleVisibleCount: 1002 }, { idleCount: null, idleVisibleCount: null }],
-    [{ idleVisibleCount: "private diagnostic payload" }, { idleVisibleCount: null }],
-    [{ controlsRecognized: "private diagnostic payload" }, { controlsRecognized: null }],
-    [{ controlsRecognized: false, unrecognizedCount: "private diagnostic payload" },
-      { controlsRecognized: false, unrecognizedCount: null }],
-    [{ controlsRecognized: false, labelledByCount: 1001 }, { controlsRecognized: false, labelledByCount: null }],
-  ]) {
+test("ambiguous semantic Stop readback retains unknown diagnostic counts without exposing page data", async () => {
+  for (const count of [2, 1001]) {
     const f = fixture();
-    f.model.onCall = name => { if (name === "click") f.first.viewOverride = override; };
+    f.model.onCall = name => {
+      if (name === "click") { f.first.stopCount = count; f.first.stopAriaLabel = "private diagnostic payload"; }
+    };
     const result = await f.run();
     assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
     assert.equal(result.stage, "stop_readback_visibility");
-    assert.deepEqual(readback(result), { state: "invalid_controls", stopCount: 1, stopVisible: false,
-      idleCount: 0, idleVisibleCount: 0, controlsRecognized: true,
-      unrecognizedCount: 0, labelledByCount: 0, complete: true, ...expected });
+    assert.deepEqual(readback(result), { state: "invalid_controls", stopCount: null, stopVisible: null,
+      idleCount: null, idleVisibleCount: null, controlsRecognized: false,
+      unrecognizedCount: null, labelledByCount: null, complete: true });
     assert.equal(result.stopClicked, true); assert.equal(result.retained, true);
     assert.equal(result.generationInactive, false); assert.equal(clicked(f).length, 1);
     assert(!JSON.stringify(result).includes("private diagnostic payload"));

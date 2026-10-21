@@ -20,7 +20,9 @@ function fixture(t) {
   for (const directory of [stateDir, codexHome, sourceDir]) mkdirSync(directory);
   for (const [name, contents] of Object.entries({
     "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs";\n',
-    "web-browser.mjs": "export const browser = true;\n", "web-stop-hook.mjs": "export const hook = true;\n",
+    "web-browser.mjs": 'import "./web-browser-state.mjs"; export const browser = true;\n',
+    "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; export const hook = true;\n',
+    "web-browser-state.mjs": "export const state = true;\n",
     "web-stop-contract.mjs": "export const contract = true;\n",
     "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n',
   })) write(path.join(sourceDir, name), contents);

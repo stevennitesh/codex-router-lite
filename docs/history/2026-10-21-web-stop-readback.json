@@ -125,5 +125,16 @@
     "diagnosticAdapterStillSelected": true,
     "limits": "This confirms the current Stop path with coherent post-click evidence, without increasing budgets or changing Stop acceptance. The earlier unconfirmed incident lacked these fields; its exact cause remains unproven. The behavioral repair in this investigation addresses stale restored-page recovery, not a proven Stop-semantic defect. No launcher, native runtime patch or separate model browser driver was used."
   },
+  "semanticStateRefactor": {
+    "sourceBase": "2294088a89433306fca18a2a053aabcb491e5c93",
+    "changes": "One browser-state owner supplies page controls and semantic Stop predicates. Readiness and final confirmation use the same conditional locator. The raw direct-label decoder and DOM-existence-only Stop absence rule are removed. Existing authority, exact-generation, single-click, affirmative inactivity and deadline rules remain.",
+    "actualBrowserBoundary": "Installed Codex in-app browser SDK against rendered isolated loopback fixture; transitions use real clicks and state predicates, with no ChatGPT, connector or model calls.",
+    "actualBrowserCasesPassed": ["hidden mounted Stop with idle", "aria-labelledby overriding conflicting direct labels", "normalized accessible names", "duplicate Stop rejection", "duplicate idle rejection", "successor generation prevents stale click", "acknowledged click restores idle", "absence alone stays unconfirmed", "explicit completion"],
+    "regressionDiscriminator": "With a hidden Stop still mounted, the previous raw-absence predicate matched zero bodies; shared semantic readiness matched one and produced affirmative inactivity proof.",
+    "validation": "122 browser tests, 274 hook/adapter/installer/runtime-refresh tests and 187 runtime/diagnostics tests passed. Source checks passed; independent selected-diff review found no actionable issues. Loopback tests ran in the normal Windows user context after sandbox-launched transport jobs stalled; no assertions were skipped or weakened.",
+    "verificationSeparation": "Rendered contract, saved-chat recovery, actual native tools, live Stop and post-Stop continuation have separate checks and evidence. A pre-Send recovery failure is never counted as a Stop trial.",
+    "activation": "Pending reviewed candidate deployment and matching adapter refresh. The current trusted hook and working adapter generation remain available for rollback.",
+    "limits": "These fixture results verify the actual SDK for the tested markup cases. They do not establish deployed ChatGPT cancellation or guarantee compatibility with arbitrary future updates."
+  },
   "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
 }

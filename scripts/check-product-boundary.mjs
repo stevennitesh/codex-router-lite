@@ -40,6 +40,7 @@ const retainedWebRuntime = [
   "src/web-mcp.mjs",
   "src/web-mcp-contract.mjs",
   "src/web-browser.mjs",
+  "src/web-browser-state.mjs",
   "src/web-turn-cancellation.mjs",
   "src/web-stop-hook.mjs",
   "src/web-stop-contract.mjs",

@@ -11,7 +11,8 @@ broker, or Stop adapter. For setup, model selection and everyday use, start with
 | Reply observation or completion | [Observation and completion](#observation-and-completion) | `src/web-browser.mjs`, `src/web-stop-adapter.mjs` |
 | Full ChatGPT conversation | [Successor handoff](#full-conversation-handoff) | `src/web-runtime.mjs` |
 | Native tools or connector failures | [Tools and cancellation](#native-tools-and-cancellation) | `src/web-tools.mjs`, `src/web-mcp.mjs`, `src/web-tunnel.mjs` |
-| Immediate Stop | [Stop authority and completion](#immediate-stop) | `src/web-stop-hook.mjs`, `src/web-stop-adapter.mjs` |
+| Immediate Stop | [Stop authority and completion](#immediate-stop) | `src/web-browser-state.mjs`, `src/web-stop-hook.mjs`, `src/web-stop-adapter.mjs` |
+| Browser compatibility tests | [Independent verification](#independent-verification) | `scripts/test-web-stop-browser.mjs`, `test/fixtures/web-stop-browser.html` |
 | Adapter update or rollback | [Installation and rollback](#adapter-installation-and-rollback) | `src/web-stop-adapter-install.mjs` |
 
 `src/chatgpt-web.mjs` owns configuration and route dispatch. `src/web-models.mjs`
@@ -209,6 +210,14 @@ cleanup authority and is never repeated.
 Stop verifies that the exact owned generation is unique and latest, marks its
 saved tab for handoff, then attempts the semantic Stop click at most once. Its
 locator includes that generation condition when the browser resolves the action.
+`src/web-browser-state.mjs` owns the page controls and the shared Stop predicates.
+Readiness and confirmation use the same conditional semantic locator. Accessible
+names, visibility and cardinality come from the public browser SDK; Router does
+not classify those matches again from raw `aria-label` values. A hidden mounted
+Stop control does not block the idle predicate. Duplicate semantic controls still
+prevent confirmation. Each accepted conditional body is read with its URL and
+generation state in one synchronous DOM projection. An unconditional body read
+can supply failure diagnostics, never inactivity proof.
 URL, generation state and Stop visibility come from one synchronous DOM read,
 so a later URL request cannot make a stale snapshot appear current. A
 hidden or temporarily missing button alone does not prove inactivity. Success
@@ -254,7 +263,9 @@ These observations locate a failed boundary and do not establish that Stop ran.
 Stop readback also records a fixed state category and bounded counts for Stop,
 idle, unrecognized and `aria-labelledby` controls, plus nullable visibility,
 recognition and completion flags. A new read clears the previous values; missing
-or rejected observations remain unknown. `invalid_controls` distinguishes rejected
+or rejected observations remain unknown. Predicate-backed reads leave counts
+they do not observe as null; they do not infer counts from label attributes.
+`invalid_controls` distinguishes rejected
 control markup from `unconfirmed_readback`, where the accepted view supplies no
 inactivity proof. These diagnostics retain no control labels or page content and
 do not relax Stop confirmation.
@@ -264,6 +275,55 @@ The unmodified official CLI adapter path has
 The record covers the all-ordinary configuration after a normal Codex restart,
 with the same saved chat, tab and binding retained. Its live check used one
 Instant Web primary route; it does not individually certify every Web model.
+
+## Independent verification
+
+Keep the following checks separate so a failure identifies its own boundary:
+
+1. **Policy and transport:** run the affected Node tests for ownership, one-click
+   behavior, authority changes and callback deadlines. These controlled fixtures
+   do not establish browser SDK or current ChatGPT markup compatibility.
+2. **Rendered browser contract:** run the installed SDK against the isolated
+   fixture below. This checks real role matching, XPath, visibility and locator
+   waits without ChatGPT, a connector, saved history or a human Stop press.
+3. **Recovery:** after a restart or recovery change, send one short recall request
+   in the approved saved Web chat. Require completed native delivery, the prior
+   marker recalled without supplying it, the same saved URL and no uncertain Send
+   or unresolved action. A failure before Send is a recovery failure; no Stop
+   trial has occurred. Do not start a long response until this passes.
+4. **Live Stop:** start generation in that established chat, press Codex Stop once,
+   and correlate the interrupted native turn with its exact adapter receipt and
+   observed tab retention. Acknowledged click, confirmed inactivity and tab
+   survival are distinct facts. Report an unavailable confirmation as unknown.
+5. **Continuation:** send a separate short recall request after Stop and require
+   completed delivery in the same saved URL, tab and binding. Do not resume the
+   interrupted work or supply the marker in the request.
+
+Run native-tool verification separately when the tool path changes. A recovery
+check does not need a native command, and a browser-contract fixture does not
+need a tool connector. Reuse passing checks while their relevant inputs remain
+unchanged; documentation edits do not require another manual Stop trial.
+
+Start the fixed loopback fixture server in a normal Windows user terminal:
+
+```powershell
+node scripts/test-web-stop-browser.mjs --serve
+```
+
+It prints `fixtureUrl` and serves only the test HTML. In the current official
+browser REPL, import `scripts/test-web-stop-browser.mjs` by its absolute file URL,
+create a disposable blank tab with the documented SDK, and call
+`runWebStopBrowserContract({ tab, fixtureUrl })`. Require every returned row's
+`passed` value to be true. The harness refuses an existing non-fixture tab before
+navigation. Close that tab and stop the fixture server afterward.
+
+The cases cover hidden mounted Stop, accessible names from `aria-labelledby`,
+name normalization, ambiguous Stop/idle controls, a replacement generation,
+the acknowledged Stop-to-idle transition, missing positive inactivity evidence,
+and explicit completion. Fixture transitions use actual button clicks, not
+sleep-driven state changes; timeouts are failure bounds. These checks expose SDK
+and markup assumptions, while the live check establishes the current ChatGPT
+path. Neither guarantees compatibility with arbitrary future updates.
 
 ## Adapter installation and rollback
 

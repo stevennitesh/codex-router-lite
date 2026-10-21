@@ -23,7 +23,9 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
   const hooksPath = path.join(codexHome, "hooks.json"), receiptPath = path.join(stateDir, "web-stop-adapter", "ownership.json");
   if (hooks !== undefined) writeFileSync(hooksPath, typeof hooks === "string" ? hooks : encode(hooks));
   const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs";\n',
-    "web-browser.mjs": "export const browserFixture = true;\n", "web-stop-hook.mjs": "export const hookFixture = true;\n",
+    "web-browser.mjs": 'import "./web-browser-state.mjs"; export const browserFixture = true;\n',
+    "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; export const hookFixture = true;\n',
+    "web-browser-state.mjs": "export const stateFixture = true;\n",
     "web-stop-contract.mjs": "export const contractFixture = true;\n",
     "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n' };
   for (const [name, contents] of Object.entries(sources)) writeFileSync(path.join(sourceDir, name), contents);
@@ -107,7 +109,7 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(config, { version: 1, server: f.manifest.officialNodeRepl.path, serverSha256: f.manifest.officialNodeRepl.sha256,
     stateDir: f.stateDir, runtimeModule: f.manifest.runtimeModule, sdkPackageJson: f.manifest.sdkPackageJson,
     threadIds: [trialThread], receiptPath: path.join(f.stateDir, "web-stop-adapter", "events.jsonl") });
-  for (const name of ["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
+  for (const name of ["web-stop-adapter.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
   const launcher = readFileSync(path.join(result.managedDirectory, "entry.cs"), "utf8");
   assert.equal(launcher.includes("@@"), false); assert.ok(launcher.includes(result.configPath)); assert.ok(launcher.includes(f.manifest.node.path));
   assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
@@ -245,15 +247,20 @@ test("read-only adapter status proves local ownership while restart and native t
 
 test("a verified installed snapshot upgrades when the candidate adds a local dependency and retains its original rollback", t => {
   const f = fixture(t), first = installWebStopAdapter(f.options);
-  // Reconstruct the installed pre-contract snapshot. Its private manifest owns
+  // Reconstruct the installed snapshot before the shared browser-state owner. Its private manifest owns
   // these exact bytes; current candidate source lists are deliberately different.
-  const oldSource = 'import "./web-browser.mjs"; import "./web-stop-hook.mjs";\n';
+  const oldSource = f.sources["web-stop-adapter.mjs"];
+  const oldBrowser = "export const browserFixture = true;\n", oldHook = "export const hookFixture = true;\n";
   writeFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), oldSource);
-  rmSync(path.join(first.managedDirectory, "web-stop-contract.mjs"));
+  writeFileSync(path.join(first.managedDirectory, "web-browser.mjs"), oldBrowser);
+  writeFileSync(path.join(first.managedDirectory, "web-stop-hook.mjs"), oldHook);
+  rmSync(path.join(first.managedDirectory, "web-browser-state.mjs"));
   const manifestPath = path.join(first.managedDirectory, "manifest.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  delete manifest.files["web-stop-contract.mjs"];
+  delete manifest.files["web-browser-state.mjs"];
   manifest.files["web-stop-adapter.mjs"] = hash(oldSource);
+  manifest.files["web-browser.mjs"] = hash(oldBrowser);
+  manifest.files["web-stop-hook.mjs"] = hash(oldHook);
   writeFileSync(manifestPath, encode(manifest));
   const receipt = f.receipt(); receipt.managedManifestSha256 = hash(readFileSync(manifestPath));
   writeFileSync(f.receiptPath, encode(receipt));
@@ -264,7 +271,7 @@ test("a verified installed snapshot upgrades when the candidate adds a local dep
   const next = installWebStopAdapter(f.options);
   assert.notEqual(next.managedDirectory, first.managedDirectory);
   assert.equal(readFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), "utf8"), oldSource);
-  assert.equal(existsSync(path.join(next.managedDirectory, "web-stop-contract.mjs")), true);
+  assert.equal(existsSync(path.join(next.managedDirectory, "web-browser-state.mjs")), true);
   assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
   assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
   assert.equal(existsSync(f.hooksPath), false);

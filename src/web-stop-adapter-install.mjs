@@ -12,7 +12,7 @@ import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapt
 const OWNER = "codex-router-web-stop-adapter-v1";
 const HOOK_ID = ADAPTER_HOOK_STATUS;
 const ENV_NAMES = ["CODEX_CLI_PATH", "CODEX_NODE_REPL_PATH"];
-const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-browser.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]);
+const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]);
 const SHA = /^[a-f0-9]{64}$/iu;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);

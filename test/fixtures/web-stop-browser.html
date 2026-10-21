@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Router Stop browser contract fixture</title>
+  <style>
+    body { margin: 2rem auto; padding: 0 1rem; max-width: 58rem; font: 16px system-ui, sans-serif; color: #17212b; background: #f5f7fa; }
+    h1 { font-size: 1.5rem; }
+    button { padding: .55rem .8rem; margin: .2rem; font: inherit; cursor: pointer; }
+    nav, #rendered-chat { padding: 1rem; margin: 1rem 0; border: 1px solid #b8c4d0; border-radius: .5rem; background: white; }
+    #contract-status { display: block; padding: .7rem; background: #e7eef6; }
+    .label { display: inline-block; margin: 0 .4rem; }
+    [data-turn-key] { padding: .5rem; border-bottom: 1px solid #d5dde5; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>Router Stop browser contract fixture</h1>
+  <p>This local page exercises semantic controls and rendered visibility. It sends no messages or network requests.</p>
+  <nav aria-label="Fixture scenarios">
+    <button type="button" data-scenario="hidden-stop-idle">Hidden Stop with idle</button>
+    <button type="button" data-scenario="labelledby-transition">Labelledby transition</button>
+    <button type="button" data-scenario="normalized-transition">Normalized names transition</button>
+    <button type="button" data-scenario="duplicate-stop">Duplicate Stop</button>
+    <button type="button" data-scenario="duplicate-idle">Duplicate idle</button>
+    <button type="button" data-scenario="changed-generation">Changed latest generation</button>
+    <button type="button" data-scenario="click-idle-transition">Click restores idle</button>
+    <button type="button" data-scenario="absent-unconfirmed">Absent unconfirmed</button>
+    <button type="button" data-scenario="explicit-complete">Explicit complete</button>
+  </nav>
+  <output id="contract-status" data-scenario="not-selected" data-stop-clicks="0" aria-live="polite">Choose a fixture scenario.</output>
+  <section id="rendered-chat" aria-label="Rendered chat fixture"></section>
+  <button type="button" id="advance-generation" hidden>Advance fixture generation</button>
+  <script>
+    const chat = document.querySelector('#rendered-chat');
+    const status = document.querySelector('#contract-status');
+    const advance = document.querySelector('#advance-generation');
+    let stopClicks = 0;
+    let scenario = 'not-selected';
+
+    function record() {
+      status.dataset.scenario = scenario;
+      status.dataset.stopClicks = String(stopClicks);
+      status.textContent = `Scenario: ${scenario}. Stop clicks: ${stopClicks}.`;
+    }
+
+    function makeTurn(key, complete = false) {
+      const turn = document.createElement('article');
+      turn.setAttribute('data-turn-key', key);
+      const state = document.createElement('span');
+      state.setAttribute('data-talvt-turn-state', complete ? 'complete' : 'running');
+      state.textContent = complete ? 'Complete generation' : 'Running generation';
+      turn.append(state);
+      return turn;
+    }
+
+    function makeControl(kind, markup = 'direct') {
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.dataset.fixtureControl = kind;
+      const name = kind === 'stop' ? 'Stop' : 'Start Voice';
+      control.textContent = kind === 'stop' ? 'Stop generation' : 'Start voice session';
+      if (markup === 'labelledby') {
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.id = `${kind}-semantic-label`;
+        label.textContent = name;
+        control.setAttribute('aria-labelledby', label.id);
+        // ARIA labelledby overrides this conflicting direct label.
+        control.setAttribute('aria-label', kind === 'stop' ? 'Start Voice' : 'Stop');
+        chat.append(label);
+      } else {
+        control.setAttribute('aria-label', markup === 'normalized'
+          ? kind === 'stop' ? '  \tStop\n ' : ' \n Start   Voice\t ' : name);
+      }
+      if (kind === 'stop') control.addEventListener('click', () => {
+        stopClicks += 1;
+        control.hidden = true;
+        if (scenario.endsWith('-transition')) chat.append(makeControl('idle', markup));
+        record();
+      });
+      return control;
+    }
+
+    function selectScenario(next) {
+      scenario = next;
+      stopClicks = 0;
+      chat.replaceChildren(makeTurn('fixture-owned-generation', next === 'explicit-complete'));
+      advance.hidden = next !== 'changed-generation';
+      if (next === 'hidden-stop-idle' || next === 'duplicate-idle') {
+        const stop = makeControl('stop');
+        stop.hidden = true;
+        chat.append(stop, makeControl('idle'));
+        if (next === 'duplicate-idle') chat.append(makeControl('idle'));
+      } else if (next !== 'absent-unconfirmed' && next !== 'explicit-complete') {
+        const markup = next === 'labelledby-transition' ? 'labelledby'
+          : next === 'normalized-transition' ? 'normalized' : 'direct';
+        chat.append(makeControl('stop', markup));
+        if (next === 'duplicate-stop') chat.append(makeControl('stop'));
+      }
+      record();
+    }
+
+    document.querySelectorAll('[data-scenario]').forEach(button => {
+      if (button.tagName === 'BUTTON') button.addEventListener('click', () => selectScenario(button.dataset.scenario));
+    });
+    advance.addEventListener('click', () => {
+      chat.append(makeTurn('fixture-successor-generation'));
+      advance.hidden = true;
+      record();
+    });
+  </script>
+</body>
+</html>

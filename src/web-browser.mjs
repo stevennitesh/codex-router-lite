@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { browserDom, browserIdleButtonExactName } from "./web-browser-state.mjs";
+export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,30 +106,6 @@ export function parseBrowserOutput(output, frameToken) {
   if (found.length !== 1) throw failure("Expected one nonce-framed native browser result.", "web_browser_output_shape");
   return found[0];
 }
-
-// Stop-only composer evidence must not change the retained observation helper.
-export const browserIdleButtonExactName = "Start Voice";
-
-export const browserDom = Object.freeze({
-  modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
-  powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
-  composerName: "Ask ChatGPT", normalHeadingName: "Ready when you are.", temporaryButtonName: "Temporary chat",
-  temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
-  assistantFinalReplySelector: '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
-  stopButtonExactName: "Stop", regenerateButtonExactName: "Regenerate response",
-  conversationFullText: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.",
-  startNewChatButtonName: "Start new chat",
-  messageSelector: '[data-chatgpt-selection-message-id]', messageIdAttribute: "data-chatgpt-selection-message-id",
-  assistantSelector: '[data-markdown-text-style="assistant-message"]', turnSelector: '[data-turn-key]', turnKeyAttribute: "data-turn-key",
-  streamingStatusSelector: '[data-streaming-response-status]', reasoningSelector: '[data-testid^="cot-v5"]',
-  turnStateSelector: '[data-talvt-turn-state]', turnStateAttribute: "data-talvt-turn-state", completeTurnState: "complete",
-  labelSelector: '[aria-label]', labelAttribute: "aria-label", markdownCopyAttribute: "data-markdown-copy",
-  codeBlockCopyValue: "code-block", excludedCopyValue: "exclude", codeSelector: "code",
-  codeEditorSelector: ".cm-content[data-language]", codeLineClass: "cm-line",
-  contentEditableAttribute: "contenteditable", familySelector: '[role="menuitemradio"]', checkedAttribute: "aria-checked",
-  powerValueAttribute: "aria-valuenow", powerMinimumAttribute: "aria-valuemin", powerMaximumAttribute: "aria-valuemax",
-  conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
-});
 
 // These controls belong to independently shipped setup, selection and Send.
 // Everything else, including any newly added field, remains a resident dependency.

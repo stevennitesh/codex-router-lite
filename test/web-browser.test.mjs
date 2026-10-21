@@ -157,15 +157,17 @@ test("browser programs round trip only with their complete exact guards, helper 
 
 test("resident source changes invalidate compact programs while independently shipped operations keep their own exact qualification", async () => {
   const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
-  const loadVariant = async changed => {
-    assert.notEqual(changed, source, "The fixture must change the module source.");
-    return import(`data:text/javascript;base64,${Buffer.from(changed, "utf8").toString("base64")}`);
+  const stateSource = readFileSync(new URL("../src/web-browser-state.mjs", import.meta.url), "utf8");
+  const moduleUrl = text => `data:text/javascript;base64,${Buffer.from(text, "utf8").toString("base64")}`;
+  const loadVariant = async ({ browser = source, state = stateSource }) => {
+    assert.ok(browser !== source || state !== stateSource, "The fixture must change a module dependency.");
+    return import(moduleUrl(browser.replaceAll('"./web-browser-state.mjs"', JSON.stringify(moduleUrl(state)))));
   };
-  const changeFunction = name => source.replace(new RegExp(`(function ${name}\\([^\\n]*\\) \\{)`, "u"), `$1\n  /* changed ${name} source */`);
-  const changeDom = name => source.replace(new RegExp(`\\b${name}: ("[^"\\n]*"|'[^'\\n]*')`, "u"), `${name}: "Changed ${name}"`);
+  const changeFunction = name => ({ browser: source.replace(new RegExp(`(function ${name}\\([^\\n]*\\) \\{)`, "u"), `$1\n  /* changed ${name} source */`) });
+  const changeDom = name => ({ state: stateSource.replace(new RegExp(`\\b${name}: ("[^"\\n]*"|'[^'\\n]*')`, "u"), `${name}: "Changed ${name}"`) });
   const compact = ["observe", "retain"].map(operation => browserScript({ ...base, operation }));
   for (const changed of [
-    source.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",'),
+    { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
     ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute"].map(changeDom),
     ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
   ]) {
