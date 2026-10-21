@@ -241,7 +241,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
-    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0,
+    tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
     fetchCalls: 0, stopClicks: 0, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
@@ -452,6 +452,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         if (ui.chip) content.unshift(domElement("span", { "app-mention-display-name": plugin.pluginName,
           "app-mention-path": `app://${plugin.pluginAppId}`, contenteditable: "false" }, domText(plugin.pluginName)));
         return callback(ui.composerElements ?? [ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
+      }
+      if (name === scopedReplySelector) {
+        ui.viewportReads += 1;
+        if (ui.viewportError) throw ui.viewportError;
+        return callback(ui.viewportElements ?? replyRoot().querySelectorAll(name), argument);
       }
       ui.replyReads += 1;
       ui.onReplyRead?.();
@@ -2058,7 +2063,7 @@ test("saved-chat recovery rejects changed proof or composer with bounded private
       for (const [key, value] of Object.entries(diagnostic)) {
         if (key !== "reason") assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
       }
-      assert.ok(error.message.length < 1024);
+      assert.ok(error.message.length < 2048);
       assert.doesNotMatch(error.message, /PRIVATE_RECOVERY_SECRET|private\.invalid|https:\/\/|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/iu);
       for (const secret of [token, f.recovery.assistantPrefix.sha256, f.recovery.url]) assert.equal(error.message.includes(secret), false);
       if (!reason.startsWith("composer-")) assert.equal(diagnostic.composerCount, null, "A rejected reply proof cannot read the composer.");
@@ -2066,6 +2071,7 @@ test("saved-chat recovery rejects changed proof or composer with bounded private
     });
     assert.equal(f.ui.composerReads - composerReads, Number(reason.startsWith("composer-")), "Recovery adds no composer reread.");
     assert.equal(f.ui.replyReads - replyReads, Number(!["saved-url-changed", "temporary-mode-active"].includes(reason)));
+    assert.equal(f.ui.viewportReads, Number(reason === "generation-turn-not-unique"), "Only the rejected generation identity permits one viewport diagnostic read.");
     assert.equal(f.ui.newTabs, 1);
     assert.equal(f.ui.navigations.length, 1);
     assert.equal(f.ui.stopClicks, 0);
@@ -2095,6 +2101,90 @@ test("retained interrupted recovery diagnoses missing and displaced fresh replie
     });
     assert.equal(f.ui.composerReads, composerReads);
     assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.activeTurn(), undefined);
+  }
+});
+
+test("a rejected generation checkpoint distinguishes changed turn identity, absent mounted reply and changed reply without accepting recovery", async () => {
+  const privateValue = "PRIVATE_CHECKPOINT_TEXT_https://private.invalid/token";
+  const viewport = (f, id, { top = 300, height = 1000, client = 400, documentTop = 0, invalid = false } = {}) => {
+    const reply = replyElement(privateValue, id), wrapper = reply.parentElement;
+    const scroll = domElement("div", { class: privateValue }, wrapper);
+    Object.assign(scroll, { overflowY: "auto", scrollTop: top, scrollHeight: invalid ? NaN : height, clientHeight: client });
+    const root = domElement("html", {}, domElement("body", {}, scroll));
+    Object.assign(root, { parentElement: null, scrollTop: documentTop, scrollHeight: 2000, clientHeight: 800 });
+    const document = { URL: f.recovery.url, scrollingElement: root, documentElement: root,
+      defaultView: { getComputedStyle: element => ({ overflowY: element.overflowY ?? "visible" }) } };
+    for (let element = reply; element; element = element.parentElement) Object.assign(element, { ownerDocument: document, isConnected: true });
+    f.ui.viewportElements = [reply];
+  };
+  for (const [scenario, configure, expected] of [
+    ["same latest reply under a different turn identity", f => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(777), privateValue, [assistantMessage(0, f.text)]));
+      viewport(f, messageId(0), { top: 600, documentTop: 1200 });
+    }, { checkpointReplyCount: 1, checkpointIsLatestReply: true, checkpointPrefixMatches: true,
+      checkpointHasTurnIdentity: true, checkpointTurnCount: 1, checkpointTurnIsLatest: true,
+      scrollHasAbove: true, scrollHasBelow: false, scrollAtEnd: true, documentAtEnd: true }],
+    ["same latest reply text under different message and turn identities", f => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(777), privateValue, [assistantMessage(1, f.text)]));
+      viewport(f, messageId(1));
+    }, { checkpointReplyCount: 0, checkpointIsLatestReply: null, checkpointPrefixMatches: null,
+      prefixMatchingReplyCount: 1, latestReplyPrefixMatches: true }],
+    ["earlier mounted viewport omits the checkpoint", f => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(777), privateValue, [assistantMessage(1, `Different ${privateValue}`)]));
+      viewport(f, messageId(1), { top: 0 });
+    }, { checkpointReplyCount: 0, checkpointIsLatestReply: null, checkpointPrefixMatches: null, checkpointHasTurnIdentity: null,
+      checkpointTurnCount: null, checkpointTurnIsLatest: null, scrollHasAbove: false, scrollHasBelow: true, scrollAtEnd: false,
+      prefixMatchingReplyCount: 0, latestReplyPrefixMatches: false }],
+    ["checkpoint content changed", f => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(777), privateValue, [assistantMessage(0, `Changed ${privateValue}`)]));
+      viewport(f, messageId(0));
+    }, { checkpointReplyCount: 1, checkpointIsLatestReply: true, checkpointPrefixLongEnough: true, checkpointPrefixMatches: false,
+      checkpointTurnCount: 1, checkpointTurnIsLatest: true }],
+    ["checkpoint still mounted before a newer reply", f => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(777), privateValue,
+        [assistantMessage(0, f.text), assistantMessage(1, privateValue)]));
+      viewport(f, messageId(1));
+    }, { checkpointReplyCount: 1, checkpointIsLatestReply: false, checkpointPrefixMatches: true, checkpointTurnIsLatest: true }],
+    ["checkpoint lacks a turn identity", f => {
+      f.ui.messageRoot = domElement("main", {}, assistantMessage(0, f.text));
+      viewport(f, messageId(0));
+    }, { mountedTurnCount: 0, checkpointReplyCount: 1, checkpointHasTurnIdentity: false, checkpointTurnCount: null, checkpointTurnIsLatest: null }],
+    ["viewport reply changed during the second read", f => {
+      f.ui.userMessages = [];
+      viewport(f, messageId(99));
+    }, { viewportLastReplyMatches: false, scrollAncestorCount: null, scrollHasAbove: null, scrollHasBelow: null, documentAtEnd: null }],
+    ["scroll geometry is unavailable", f => {
+      f.ui.userMessages = [];
+      viewport(f, messageId(0), { invalid: true });
+    }, { viewportReadSucceeded: true, scrollUnknownCount: 1, scrollHasAbove: null, scrollHasBelow: null, scrollAtEnd: null }],
+    ["viewport read fails", f => { f.ui.userMessages = []; f.ui.viewportError = new Error(privateValue); },
+      { viewportReadSucceeded: false, viewportLastReplyMatches: null, scrollAncestorCount: null, scrollHasBelow: null }],
+  ]) {
+    const f = await recoverableFixture({ text: privateValue });
+    configure(f);
+    f.loseBinding();
+    const composerReads = f.ui.composerReads, actions = [...f.ui.actions], handoffs = f.ui.handoffs;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), error => {
+      assert.ok(error.message.startsWith("The saved chat reply or composer changed; recovery cannot reuse it. ROUTER_WEB_RECOVERY_DIAGNOSTIC "));
+      const diagnostic = JSON.parse(error.message.split("ROUTER_WEB_RECOVERY_DIAGNOSTIC ")[1]);
+      assert.equal(diagnostic.reason, "generation-turn-not-unique");
+      for (const [key, value] of Object.entries(expected)) assert.equal(diagnostic[key], value, `${scenario}: ${key}`);
+      for (const key of ["generationIsLatest", "freshReplyCount", "expectedReplyMatches", "prefixLongEnough", "prefixMatches", "composerCount"]) assert.equal(diagnostic[key], null);
+      for (const [key, value] of Object.entries(diagnostic)) if (key !== "reason") {
+        assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
+      }
+      assert.ok(error.message.length < 2048);
+      assert.doesNotMatch(error.message, /PRIVATE_CHECKPOINT|private\.invalid|https:\/\/|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/iu);
+      assert.equal(error.message.includes(f.recovery.assistantPrefix.sha256), false);
+      return true;
+    });
+    assert.equal(f.ui.viewportReads, 1);
+    assert.equal(f.ui.composerReads, composerReads);
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.stopClicks, 0);
+    assert.equal(f.ui.handoffs, handoffs);
+    assert.deepEqual(f.ui.actions, actions);
     assert.equal(f.activeTurn(), undefined);
   }
 });

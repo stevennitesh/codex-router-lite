@@ -55,5 +55,19 @@
     "nextProbe": "Local recovery failure diagnostics distinguish fixed URL/mode, reply identity, generation, prefix and composer predicates using bounded counts and nullable flags. No checkpoint is cleared, no failed Send is replayed, and no UI action or retry is added to recovery.",
     "adapterQualification": "Generated observe, retain and Send programs remain byte-identical to baseline 38e992d6488d7b93394b089bc1d49bcf22c2f7e4a71d7cd936b5873b43748cfd. Baseline program qualification and confirmed-Send authority extraction still pass; resident helper digest 209c91edd1857c263af89c874b6d8c8cca4d34f0810e8d1667c1603d0bf57ed4 is unchanged. Router activation of this diagnostic does not require replacing the installed adapter."
   },
+  "recoveryProbe": {
+    "sourceCommit": "c64dd6073c4173c79911e150b652d7904c4dc207",
+    "deploymentAccepted": true,
+    "observedAtUtc": "2026-10-21T20:19:50.143Z",
+    "reason": "generation-turn-not-unique",
+    "savedUrlMatched": true,
+    "temporaryModeInactive": true,
+    "mountedReplies": 5,
+    "replyIdentitiesValid": true,
+    "savedGenerationTurnsMounted": 0,
+    "interpretation": "Recovery rejected the missing generation before checking reply content or composer. This does not establish that either changed. No new message was sent and no Stop trial ran.",
+    "expandedProbe": "Only on this rejected same-URL recovery, report bounded checkpoint identity/prefix facts from the existing snapshot and one read-only scroll geometry observation. Acceptance guards remain unchanged; no scrolling, retry, Send or checkpoint reset is added.",
+    "validation": "119 browser tests passed. Observe, retain and Send programs remain byte-identical to baseline; baseline adapter qualification, confirmed-Send cleanup arming and resident helper digest remain unchanged. The installed diagnostic adapter can stay loaded."
+  },
   "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
 }

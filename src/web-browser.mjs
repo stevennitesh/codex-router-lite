@@ -614,7 +614,15 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       replyCount: null, replyIdentitiesValid: null, generationTurnCount: null, generationIsLatest: null,
       freshReplyCount: null, freshReplyIsLatest: null, expectedReplyMatches: null, replyTextAvailable: null,
       recordedReplyPresent: null, prefixLongEnough: null, prefixMatches: null,
-      composerCount: null, composerShapeValid: null, composerEmpty: null });
+      composerCount: null, composerShapeValid: null, composerEmpty: null,
+      mountedTurnCount: null, prefixMatchingReplyCount: null, latestReplyPrefixMatches: null,
+      checkpointReplyCount: null, checkpointIsLatestReply: null,
+      checkpointPrefixLongEnough: null, checkpointPrefixMatches: null, checkpointHasTurnIdentity: null,
+      checkpointTurnCount: null, checkpointTurnIsLatest: null,
+      viewportReadSucceeded: null, viewportUrlMatches: null, viewportLastReplyMatches: null,
+      scrollAncestorCount: null, scrollUnknownCount: null, scrollChainComplete: null,
+      scrollHasAbove: null, scrollHasBelow: null, scrollAtEnd: null,
+      documentHasAbove: null, documentHasBelow: null, documentAtEnd: null });
     let recoveryDiagnostic = unobservedRecovery();
     const recoveryRejected = reason => { recoveryDiagnostic.reason = reason; return false; };
     const boundedCount = values => Math.min(values.length, 10000);
@@ -627,7 +635,36 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       if (!(recoveryDiagnostic.replyIdentitiesValid = validReplies(texts))) return recoveryRejected("invalid-reply-identities");
       const generationTurns = view.turns.filter(turn => turn.turnKey === proof.generationTurnKey);
       recoveryDiagnostic.generationTurnCount = boundedCount(generationTurns);
-      if (generationTurns.length !== 1) return recoveryRejected("generation-turn-not-unique");
+      if (generationTurns.length !== 1) {
+        // Independent diagnostic facts do not replace the generation guard.
+        recoveryDiagnostic.mountedTurnCount = boundedCount(view.turns);
+        if (proof.assistantPrefix.length > 0) {
+          const matches = texts.map(value => typeof value.text === "string" && value.text.length >= proof.assistantPrefix.length
+            ? createHash("sha256").update(value.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") === proof.assistantPrefix.sha256 : null);
+          recoveryDiagnostic.prefixMatchingReplyCount = boundedCount(matches.filter(value => value === true));
+          recoveryDiagnostic.latestReplyPrefixMatches = matches.at(-1) ?? null;
+        }
+        if (proof.replyId) {
+          const checkpoints = texts.filter(value => value.messageId === proof.replyId);
+          recoveryDiagnostic.checkpointReplyCount = boundedCount(checkpoints);
+          if (checkpoints.length === 1) {
+            const checkpoint = checkpoints[0];
+            recoveryDiagnostic.checkpointIsLatestReply = checkpoint === texts.at(-1);
+            if (typeof checkpoint.text === "string") {
+              recoveryDiagnostic.checkpointPrefixLongEnough = checkpoint.text.length >= proof.assistantPrefix.length;
+              if (recoveryDiagnostic.checkpointPrefixLongEnough) recoveryDiagnostic.checkpointPrefixMatches = createHash("sha256")
+                .update(checkpoint.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") === proof.assistantPrefix.sha256;
+            }
+            recoveryDiagnostic.checkpointHasTurnIdentity = typeof checkpoint.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(checkpoint.turnKey);
+            if (recoveryDiagnostic.checkpointHasTurnIdentity) {
+              const turns = view.turns.filter(turn => turn.turnKey === checkpoint.turnKey);
+              recoveryDiagnostic.checkpointTurnCount = boundedCount(turns);
+              if (turns.length === 1) recoveryDiagnostic.checkpointTurnIsLatest = view.turns.at(-1)?.turnKey === checkpoint.turnKey;
+            }
+          }
+        }
+        return recoveryRejected("generation-turn-not-unique");
+      }
       if (!(recoveryDiagnostic.generationIsLatest = view.turns.at(-1)?.turnKey === proof.generationTurnKey)) return recoveryRejected("generation-turn-not-latest");
       recoveryDiagnostic.freshReplyCount = boundedCount(fresh);
       const progressing = !proof.completed;
@@ -652,11 +689,55 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       recoveredGenerationIds = [...new Set([...proof.generationReplyIds, ...fresh.map(value => value.messageId)])];
       return true;
     };
+    const recoveryViewport = view => tab.playwright.locator(ui.assistantFinalReplySelector).evaluateAll((elements, { url, replyId, messageIdAttribute }) => {
+      const result = { viewportReadSucceeded: true, viewportUrlMatches: null, viewportLastReplyMatches: null,
+        scrollAncestorCount: null, scrollUnknownCount: null, scrollChainComplete: null,
+        scrollHasAbove: null, scrollHasBelow: null, scrollAtEnd: null,
+        documentHasAbove: null, documentHasBelow: null, documentAtEnd: null };
+      const last = elements.at(-1), document = last?.ownerDocument;
+      if (!last || !document) return result;
+      result.viewportUrlMatches = document.URL === url;
+      result.viewportLastReplyMatches = last.closest(`[${messageIdAttribute}]`)?.getAttribute(messageIdAttribute) === replyId;
+      if (!result.viewportUrlMatches || !result.viewportLastReplyMatches || last.isConnected !== true) return result;
+      const geometry = element => {
+        const { scrollTop: top, scrollHeight: height, clientHeight: client } = element;
+        if (![top, height, client].every(Number.isFinite) || top < 0 || client <= 0 || height < client || top > height - client + 2) return null;
+        const above = top > 2, below = height - client - top > 2;
+        return { above, below, end: !below };
+      };
+      const scrolling = document.scrollingElement, documentGeometry = scrolling && geometry(scrolling);
+      if (documentGeometry) {
+        result.documentHasAbove = documentGeometry.above; result.documentHasBelow = documentGeometry.below; result.documentAtEnd = documentGeometry.end;
+      }
+      const values = [], seen = new Set();
+      let current = last.parentElement, unknown = 0;
+      for (; current && !seen.has(current) && seen.size < 64; current = current.parentElement) {
+        seen.add(current);
+        if (current === scrolling) continue;
+        let overflow;
+        try { overflow = document.defaultView.getComputedStyle(current).overflowY; } catch { unknown += 1; continue; }
+        if (/^(?:visible|hidden|clip)$/u.test(overflow)) continue;
+        if (typeof overflow !== "string" || !/^(?:auto|scroll|overlay)$/u.test(overflow)) { unknown += 1; continue; }
+        const value = geometry(current);
+        if (value) values.push(value); else unknown += 1;
+      }
+      result.scrollAncestorCount = values.length; result.scrollUnknownCount = unknown;
+      result.scrollChainComplete = current === null && Boolean(document.documentElement && seen.has(document.documentElement));
+      const observed = key => values.some(value => value[key]) ? true : unknown || !result.scrollChainComplete ? null : false;
+      result.scrollHasAbove = observed("above"); result.scrollHasBelow = observed("below");
+      result.scrollAtEnd = values.some(value => !value.end) ? false : unknown || !result.scrollChainComplete ? null : true;
+      return result;
+    }, { url: proof.url, replyId: view.replies.at(-1)?.messageId ?? null, messageIdAttribute: ui.messageIdAttribute }, { timeoutMs: 1000 });
     const verifiedReply = async () => {
       recoveryDiagnostic = unobservedRecovery();
       if (!(recoveryDiagnostic.urlMatches = await tab.url() === proof.url)) return recoveryRejected("saved-url-changed");
       if (!(recoveryDiagnostic.temporaryInactive = await temporaryInactive(tab))) return recoveryRejected("temporary-mode-active");
-      return verifyRecoveryTexts(await snapshot(tab));
+      const view = await snapshot(tab), accepted = verifyRecoveryTexts(view);
+      if (!navigate && !accepted && recoveryDiagnostic.reason === "generation-turn-not-unique") {
+        try { Object.assign(recoveryDiagnostic, await recoveryViewport(view)); }
+        catch { recoveryDiagnostic.viewportReadSucceeded = false; }
+      }
+      return accepted;
     };
     const emptyRecoveryComposer = async () => {
       // The existing emptiness predicate, projected once with fixed failure
