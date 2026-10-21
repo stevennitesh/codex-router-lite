@@ -45,8 +45,15 @@
     "hookSha256": "58afd7f48773ef3de7747234417e220aede74939c2167a544eea3034cacd4cef"
   },
   "activation": {
-    "status": "Not activated in this record yet",
-    "requiredSequence": "Guarded deployment of the clean reviewed Router commit, coordinated runtime refresh, then normal full Codex restart before live native-read, Stop and same-chat continuation checks.",
-    "rollback": "Keep the known-working Router source, protected adapter generation and private configuration together. Older retained adapters whose external app files were removed are not runnable runtime rollback."
+    "status": "Router deployed and matching adapter installed; normal Codex restart and live verification pending",
+    "routerCommit": "7f490f1a47fffbb3810c5b67b7b83172f491af97",
+    "deploymentOperation": "8a8fb05eb00d4ee7a1ed7366ab27d3db",
+    "deploymentAccepted": true,
+    "deploymentChecks": ["switchyardHealth", "taskIdentity", "routerFullHealth", "cleanCandidate", "installManifest", "doctor", "protectedEndpoints", "processIdentity", "provenance", "installedHashes", "installedCatalog"],
+    "forceInterruption": false,
+    "switchyardBinaryAndRoutesChanged": false,
+    "coordinatedRefresh": {"mode": "applied", "routerReloaded": true, "browserRuntimeChanged": false, "adapterGeneration": "85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113", "scope": "ordinary Web conversations", "hookDefinition": "preserved", "tunnelConfiguration": "preserved"},
+    "requiredNext": "Fully quit and reopen Codex normally, then verify a real native fixture read, actual Stop and same-chat continuation. Installation alone does not establish those live claims.",
+    "rollback": "Guarded deployment retained the previous runtime and generated/router-rollback-5a4156e7 checkout. The prior immutable adapter generation 2e218573782e6192efaba1cebb0bd9395ecbf32e47d8764153228b41b0d12f7b and a protected ownership/settings/User-environment snapshot remain in private local recovery storage. The snapshot excludes the runtime key; the captured pre-change Web source remains under generated/web-refresh-20261021/baseline. Keep source, adapter and private configuration together. Older retained adapters whose external app files were removed are not runnable runtime rollback."
   }
 }
