@@ -133,7 +133,22 @@
     "regressionDiscriminator": "With a hidden Stop still mounted, the previous raw-absence predicate matched zero bodies; shared semantic readiness matched one and produced affirmative inactivity proof.",
     "validation": "122 browser tests, 274 hook/adapter/installer/runtime-refresh tests and 187 runtime/diagnostics tests passed. Source checks passed; independent selected-diff review found no actionable issues. Loopback tests ran in the normal Windows user context after sandbox-launched transport jobs stalled; no assertions were skipped or weakened.",
     "verificationSeparation": "Rendered contract, saved-chat recovery, actual native tools, live Stop and post-Stop continuation have separate checks and evidence. A pre-Send recovery failure is never counted as a Stop trial.",
-    "activation": "Pending reviewed candidate deployment and matching adapter refresh. The current trusted hook and working adapter generation remain available for rollback.",
+    "activation": "Reviewed candidate deployed and matching adapter installed. A normal Codex restart is pending before independent recovery, live Stop and continuation checks. The current trusted hook and prior working adapter remain available for rollback.",
+    "activationEvidence": {
+      "sourceCommit": "81b039056fee3e44366fc33fe009280f46ba1602",
+      "deploymentOperation": "7c907d6a1869496fac1549724313d0c3",
+      "deploymentAccepted": true,
+      "normalDeploymentDeferredForOneActiveRequest": true,
+      "forcedReplacementExplicitlyApproved": true,
+      "adapterGeneration": "f1120656214baef8711319902e004e1a2b14c3f945d020b088999340fb77c254",
+      "adapterInstalledWithoutConflicts": true,
+      "routerReloaded": true,
+      "hookDefinitionUnchanged": true,
+      "priorAdapterGenerationRetained": "d10fcd3708efa9e5f80dd82f137b17719e26e4b5e2a3a39ee1c2b8f14e4b8357",
+      "protectedRecoverySnapshotRetained": true,
+      "runtimeKeyCopied": false,
+      "codexRestartAndLiveVerificationPending": true
+    },
     "limits": "These fixture results verify the actual SDK for the tested markup cases. They do not establish deployed ChatGPT cancellation or guarantee compatibility with arbitrary future updates."
   },
   "preserved": ["Trusted Interrupt hook definition", "Originating authority and ownership fences", "Single Stop click", "Existing callback and script budgets", "Strict inactivity proof", "Adapter architecture", "Working source, adapter and private configuration rollback"]
