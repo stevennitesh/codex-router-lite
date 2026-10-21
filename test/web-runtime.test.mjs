@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test, { after } from "node:test";
 import { RouterAdmission } from "../src/router-admission.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
@@ -47,19 +51,56 @@ const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? 
 function fakeBrowser() {
   const ui = { power: 2, menu: false, chip: false, stop: false, texts: [], complete: false, sends: [], marks: 0, newTabs: 0, closes: 0, present: true, navigations: 0, reacquired: [], stopMarks: [],
     temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map(), turns: [], savedTurns: new Map() };
-  const locator = (kind, name, visibleOnly = false) => ({
-    or() { return this; },
-    getByRole: (childKind, options) => locator(childKind, options.name), locator: selector => locator("selector", selector),
-    filter({ hasText, visible }) {
-      if (visible !== undefined) return locator(kind, name, visible);
+  let completed = false;
+  Object.defineProperty(ui, "complete", { get: () => completed, set(value) { completed = value; if (value) ui.stop = false; } });
+  const locator = (kind, name, visibleOnly = false, filters = [], offset, scope) => {
+    const bodyQuery = kind === "selector" && (name === "body" || name.startsWith("xpath=//body["));
+    const generationRoots = () => {
+      const turns = ui.turns.map((turn, index) => ({
+        getAttribute: attribute => attribute === browserDom.turnKeyAttribute ? turn.key : null,
+        querySelectorAll: selector => selector === browserDom.turnStateSelector
+          ? [{ getAttribute: () => index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" }] : [],
+      }));
+      for (const key of ui.replyTurnKeys ?? []) if (key && !ui.turns.some(turn => turn.key === key)) {
+        turns.push({ getAttribute: attribute => attribute === browserDom.turnKeyAttribute ? key : null, querySelectorAll: () => [] });
+      }
+      return turns;
+    };
+    const matched = () => {
+      if (scope && !scope.fixtureCount()) return 0;
+      let count = 1;
+      if (bodyQuery && name !== "body") {
+        const key = name.match(/@data-turn-key='([^']+)'/u)?.[1], roots = generationRoots();
+        const owned = roots.filter(root => root.getAttribute(browserDom.turnKeyAttribute) === key);
+        if (owned.length !== 1 || roots.at(-1)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
+        if (name.includes(browserDom.turnStateAttribute) && owned[0]?.querySelectorAll(browserDom.turnStateSelector)[0]?.getAttribute() !== "complete") count = 0;
+      } else if (name === "Stop") count = ui.stopCount ?? 1;
+      else if (name === "Start Voice") count = ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1);
+      else if (kind === "menuitemradio") count = 0;
+      if (visibleOnly && (name === "Stop" && (!ui.stop || ui.full) || name === "Start Voice" && !(ui.idleVisible ?? (!ui.stop || ui.full)))) count = 0;
+      if (filters.some(({ has, hasNot }) => has && !has.fixtureCount() || hasNot && hasNot.fixtureCount())) count = 0;
+      return offset === undefined ? count : offset < count ? 1 : 0;
+    };
+    return {
+    fixtureCount: matched,
+    or(other) {
+      if (!bodyQuery) return this;
+      const first = this;
+      return { evaluateAll: async (callback, args) => first.fixtureCount() ? first.evaluateAll(callback, args) : other.evaluateAll(callback, args) };
+    },
+    nth: index => locator(kind, name, visibleOnly, filters, index, scope),
+    getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined, bodyQuery ? { fixtureCount: matched } : undefined), locator: selector => locator("selector", selector),
+    filter({ hasText, visible, has, hasNot }) {
+      if (visible !== undefined || has || hasNot) return locator(kind, name, visible ?? visibleOnly, [...filters, { has, hasNot }], offset, scope);
       assert.equal(kind, "selector");
       assert.equal(name, '[role="menuitemradio"]');
       return locator("family-text", hasText);
     },
-    async count() { return kind === "menuitemradio" ? 0 : 1; },
+    async count() { return matched(); },
     async isVisible() {
       if (kind === "menu") return ui.menu;
-      if (name === "Stop") return ui.stop;
+      if (name === "Stop") return ui.stop && !ui.full;
+      if (name === "Start Voice") return matched() > 0 && (ui.idleVisible ?? (!ui.stop || ui.full));
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat") return kind === "heading" ? ui.temporaryControls : ui.normalHome;
       if (name === "Turn off temporary chat") return ui.temporaryControls;
@@ -68,18 +109,22 @@ function fakeBrowser() {
       return true;
     },
     async click() {
+      if (scope) {
+        assert.equal(matched(), 1, "Conditional controls must still match their owned body at click resolution.");
+        assert.equal(await this.isVisible(), true, "The scoped control must be visible when clicked.");
+      }
       if (name === "Select ChatGPT model") ui.menu = !ui.menu;
       else if (name === "Current Codex Tools Workspace tools") ui.chip = true;
-      else if (name === "Stop") { ui.stopMarks.push(ui.marks); ui.stop = false; }
+      else if (name === "Stop") { ui.stopMarks.push(ui.marks); ui.stop = false; ui.afterStopClick?.(); }
       else if (name === "Start new chat") {
         ui.rollovers += 1; ui.chatNumber += 1; ui.full = false; ui.normalHome = true; ui.url = "https://chatgpt.com/";
-        ui.texts = []; ui.turns = []; ui.composer = ""; ui.chip = false; ui.complete = false;
+        ui.texts = []; ui.turns = []; ui.composer = ""; ui.chip = false; ui.complete = false; ui.stop = false;
       }
       else if (name === "Send") {
         const baselineIds = ui.replyElements?.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
           ?? ui.texts.map((_, index) => ui.replyIds?.[index] ?? messageId(index));
         ui.turns.push({ key: messageId(10000 + ui.sends.length), prompt: ui.composer, baselineIds });
-        ui.sends.push(ui.composer); ui.composer = ""; ui.complete = false;
+        ui.sends.push(ui.composer); ui.composer = ""; ui.complete = false; ui.stop = true;
         ui.normalHome = false;
         ui.url = `https://chatgpt.com/c/${ui.chatNumber === 1 ? "owned-conversation" : `successor-${ui.chatNumber}`}`;
         ui.savedReplies.set(ui.url, ui.texts);
@@ -93,6 +138,13 @@ function fakeBrowser() {
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
     async evaluateAll(callback, ownedChipSelector) {
+      if (bodyQuery) {
+        const body = domElement("body"), document = { body, URL: ui.url, querySelectorAll: selector => selector === browserDom.turnSelector ? generationRoots() : [] };
+        body.ownerDocument = document;
+        const value = callback(matched() ? [body] : [], ownedChipSelector);
+        ui.afterStopRead?.();
+        return value;
+      }
       if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
       if (name === "Ask ChatGPT") {
         const content = [domText(ui.composer)];
@@ -145,17 +197,19 @@ function fakeBrowser() {
           return element;
         };
         selected.push(body, control("button", "Regenerate response"));
-        if (ui.stop) selected.push(control("button", "Stop"));
+        if (ui.stop && !ui.full) selected.push(control("button", "Stop"));
         if (ui.temporaryControls) selected.push(control("button", "Turn off temporary chat"), control("h2", "Temporary chat"));
         if (ui.full) selected.push(control("div", browserDom.conversationFullText), control("button", "Start new chat"));
       }
       return callback(selected, ownedChipSelector);
     },
-  });
+  };
+  };
   const tab = { get id() { return ui.tabId; }, goto: async url => {
     ui.navigations += 1; ui.url = url; ui.normalHome = url === "https://chatgpt.com/";
     ui.texts = ui.savedReplies.get(url) ?? []; ui.composer = "";
     ui.turns = ui.savedTurns.get(url) ?? [];
+    ui.stop = ui.turns.length > 0 && !ui.complete && !ui.full;
   }, url: async () => ui.url,
     playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
@@ -175,7 +229,7 @@ function fakeBrowser() {
 }
 
 let fixtureNumber = 0;
-function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", instructions, cancelDuringWatch = false,
+function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", instructions, cancelDuringWatch = false, watcherClosure = async () => {},
   tunnelReadiness = () => Promise.resolve(), storage = syntheticStorage, mcpFactory } = {}) {
   const browser = fakeBrowser();
   const key = `router-web-runtime-test-${++fixtureNumber}`;
@@ -203,7 +257,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     watchCancellation: options => {
       const watcher = { ...options, closed: false };
       observations.watchers.push(watcher);
-      return { ready: Promise.resolve().then(() => { if (cancelDuringWatch) options.onCancel(); }), close: async () => { watcher.closed = true; } };
+      return { ready: Promise.resolve().then(() => { if (cancelDuringWatch) options.onCancel(); }), close: async () => { watcher.closed = true; await watcherClosure(watcher); } };
     },
   });
   let runtime = makeRuntime();
@@ -212,10 +266,8 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
   let payload = { model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "low" }, stream: false,
     tools: structuredClone(tools), tool_choice: toolChoice, instructions, input: [{ role: "user", content: "Read the current file using the declared tools." }] };
   let currentTurn = turnId;
-  const request = async (override = {}) => {
-    const response = await runtime.request({ ...payload, ...override }, { headers: headers(currentTurn), settings });
-    return response.json();
-  };
+  const requestResponse = (override = {}) => runtime.request({ ...payload, ...override }, { headers: headers(currentTurn), settings });
+  const request = async (override = {}) => (await requestResponse(override)).json();
   const executeBrowser = async call => {
     assert.equal(call.type, "function_call");
     assert.equal(call.namespace, "mcp__node_repl");
@@ -253,7 +305,7 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     }
     throw new Error("Browser orchestration did not reach observation.");
   };
-  return { get runtime() { return runtime; }, get broker() { return broker; }, browser, observations, settings, request, executeBrowser, answerBrowser, completeAnswer, toObserve,
+  return { get runtime() { return runtime; }, get broker() { return broker; }, browser, observations, settings, request, requestResponse, executeBrowser, answerBrowser, completeAnswer, toObserve,
     token: () => {
       const token = browser.ui.sends.at(-1)?.match(/Use turn_token (web_turn_[a-f0-9]{32}) unchanged/u)?.[1];
       assert.ok(token, "The actual browser prompt supplies its current native tool turn token.");
@@ -843,6 +895,78 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   assert.equal(h.observations.watchers.length, 2);
 });
 
+test("completed turn retirement preserves the exact final JSON and SSE response for its full request fingerprint", async t => {
+  for (const stream of [false, true]) await t.test(stream ? "SSE" : "JSON", async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    h.browser.ui.texts.push("Exact final response with Unicode: ✓ π"); h.browser.ui.complete = true;
+    const retain = (await h.answerBrowser(call)).output[0];
+    h.append(retain, outputFor(retain, await h.executeBrowser(retain)));
+    const response = await h.requestResponse({ stream }), body = await response.text(), originalHeaders = [...response.headers];
+    await new Promise(resolve => setImmediate(resolve));
+    h.observations.watchers[0].onCancel();
+    for (let index = 0; index < 3; index += 1) {
+      const replay = await h.requestResponse({ stream });
+      assert.equal(await replay.text(), body);
+      assert.deepEqual([...replay.headers], originalHeaders);
+      assert.equal(replay.status, response.status);
+    }
+    await assert.rejects(h.requestResponse({ stream, request_metadata: { changed: true } }), /turn is complete/u);
+    await assert.rejects(h.requestResponse({ stream: !stream }), /turn is complete/u);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("terminal turns release their native schema after request, watcher and checkpoint settlement", async t => {
+  if (typeof global.gc !== "function") {
+    const { stdout } = await promisify(execFile)(process.execPath, ["--expose-gc", "--test-isolation=none", "--test", "--test-name-pattern=^terminal turns release their native schema", fileURLToPath(import.meta.url)], { timeout: 30_000 });
+    assert.match(stdout, /terminal turns release their native schema: cancelled/u);
+    assert.match(stdout, /terminal turns release their native schema: completed/u);
+    return;
+  }
+  for (const completed of [false, true]) await t.test(`terminal turns release their native schema: ${completed ? "completed" : "cancelled"}`, async t => {
+    const { promise: closureAllowed, resolve: release } = Promise.withResolvers();
+    t.after(release);
+    const h = harness(t, { watcherClosure: () => closureAllowed });
+    let tools = structuredClone([nativeJs, currentRead]);
+    const schema = new WeakRef(tools[0].tools[0].parameters);
+    let response = await h.request({ tools }); tools = undefined;
+    while (JSON.parse(response.output[0].arguments).title !== "Wait for ChatGPT or its next Codex tool request") response = await h.answerBrowser(response.output[0]);
+    let terminal;
+    if (completed) {
+      h.browser.ui.texts.push("Completed owned answer"); h.browser.ui.complete = true;
+      const retain = (await h.answerBrowser(response.output[0])).output[0];
+      terminal = h.answerBrowser(retain);
+      await new Promise(resolve => setImmediate(resolve));
+    } else h.observations.watchers[0].onCancel();
+    await new Promise(resolve => setImmediate(resolve)); global.gc();
+    assert.ok(schema.deref(), "An unsettled watcher still owns the terminal turn.");
+    release();
+    if (terminal) await terminal;
+    response = undefined;
+    let collected = false;
+    for (let attempt = 0; attempt < 10 && !collected; attempt += 1) {
+      await new Promise(resolve => setImmediate(resolve)); global.gc();
+      collected = schema.deref() === undefined;
+    }
+    assert.equal(collected, true, "Retained watcher callbacks and turn replay records cannot keep the native schema alive.");
+    if (!completed) await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  });
+});
+
+test("shutdown retains custody of a cancelled watcher's unsettled close", async t => {
+  const { promise: closureAllowed, resolve: release } = Promise.withResolvers();
+  t.after(release);
+  const h = harness(t, { watcherClosure: () => closureAllowed });
+  await h.request(); h.observations.watchers[0].onCancel();
+  let closed = false;
+  const closing = h.runtime.close().then(() => { closed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closed, false);
+  release(); await closing;
+  assert.equal(closed, true);
+  assert.deepEqual(h.observations.services.slice(-2), ["tunnel-closed", "mcp-closed"]);
+});
+
 test("native cancellation retires the real broker while the next turn retains its chat and historical coding results", async t => {
   const h = harness(t);
   const { call } = await h.toObserve();
@@ -949,6 +1073,32 @@ test("completed native tool acknowledgements stop before genuinely unsent native
     { role: "assistant", content: "The completed Web answer" },
     { role: "user", content: "Current follow-up request" },
   ]);
+});
+
+test("delivery and coding acknowledgement use exact canonical transcript digests", async t => {
+  const h = harness(t);
+  h.append({ type: "message", role: "developer", content: [{ type: "input_text", text: "Current authority ✓" }, { type: "text", text: "Second block" }] },
+    { type: "function_call", call_id: "historical_native_read", namespace: "mcp__work", name: "read", arguments: '{"path":"π.txt"}' },
+    { type: "function_call_output", call_id: "historical_native_read", output: { content: [{ type: "text", text: "Historical actual output" }], structuredContent: { values: [1, 2] } } });
+  const expected = [
+    { role: "user", content: "Read the current file using the declared tools." },
+    { role: "developer", content: "Current authority ✓\nSecond block" },
+    { type: "function_call", namespace: "mcp__work", name: "read", call_id: "historical_native_read", arguments: '{"path":"π.txt"}' },
+    { type: "function_call_output", call_id: "historical_native_read", output: { content: [{ type: "text", text: "Historical actual output" }], structuredContent: { values: [1, 2] } } },
+  ];
+  const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const { call } = await h.toObserve();
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
+  const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, { answer: "Actual current result ✓", count: 2 });
+  h.append(coding, output);
+  const observe = (await h.request()).output[0]; await result;
+  expected.push({ type: coding.type, namespace: coding.namespace, name: coding.name, call_id: coding.call_id, arguments: coding.arguments },
+    { type: output.type, call_id: output.call_id, output: output.output });
+  h.append({ role: "user", content: "This item has not reached the saved Web chat." });
+  await h.completeAnswer(observe, "Confirmed result");
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
 });
 
 test("historical unpaired calls are data and do not create owned unresolved-action blocks", async t => {
@@ -1407,12 +1557,7 @@ test("retained-tab recovery rechecks ownership across SDK discovery, Stop visibi
       const get = h.browser.browser.tabs.get;
       h.browser.browser.tabs.get = async tabId => { const value = await get(tabId); replace(); return value; };
     } else if (boundary === "Stop visibility") {
-      const getByRole = h.browser.tab.playwright.getByRole;
-      h.browser.tab.playwright.getByRole = (kind, options) => {
-        const control = getByRole(kind, options), visible = control.isVisible;
-        if (options.name === "Stop") control.isVisible = async () => { const value = await visible(); replace(); return value; };
-        return control;
-      };
+      h.browser.ui.afterStopRead = replace;
     } else {
       const locator = h.browser.tab.playwright.locator;
       let reads = 0;
@@ -1437,19 +1582,13 @@ test("retained-tab recovery can discover owned replies during Stop but cannot cr
   for (const replaceReply of [false, true]) await t.test(replaceReply ? "foreign generation appeared" : "first reply appears during Stop", async t => {
     const h = harness(t); await stopBeforeRenderedReply(h);
     if (replaceReply) h.browser.ui.texts.push("The first unobserved reply");
-    const getByRole = h.browser.tab.playwright.getByRole;
-    h.browser.tab.playwright.getByRole = (kind, options) => {
-      const control = getByRole(kind, options), click = control.click;
-      if (options.name === "Stop") control.click = async () => {
-        await click();
-        if (replaceReply) { h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)]; h.browser.ui.replyTurnKeys = [null, null, messageId(998)]; }
-        else h.browser.ui.texts.push("The first reply rendered while Stop was reconciled");
-      };
-      return control;
+    h.browser.ui.afterStopClick = () => {
+      if (replaceReply) { h.browser.ui.replyIds = [messageId(0), messageId(1), messageId(3)]; h.browser.ui.replyTurnKeys = [null, null, messageId(998)]; }
+      else h.browser.ui.texts.push("The first reply rendered while Stop was reconciled");
     };
     h.newTurn(followupId, "Continue only after identifying the stopped reply.");
     const continuation = (await h.request()).output[0];
-    if (replaceReply) await assert.rejects(h.executeBrowser(continuation), /latest reply changed/iu);
+    if (replaceReply) await assert.rejects(h.executeBrowser(continuation), /confirmed browser generation is no longer unique and latest/iu);
     else {
       const output = await h.executeBrowser(continuation); h.append(continuation, outputFor(continuation, output));
       await h.toObserve();

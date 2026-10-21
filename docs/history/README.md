@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Web release simplifications and measured process, memory and hashing reductions, 2026-10-21](2026-10-21-web-release-simplifications.json)
+
 - [Stop readback diagnostics and confirmation investigation, 2026-10-21](2026-10-21-web-stop-readback.json)
 
 - [Coordinated Web runtime refresh and deterministic browser-read measurements, 2026-10-21](2026-10-21-web-runtime-refresh.json)

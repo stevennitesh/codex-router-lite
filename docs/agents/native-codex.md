@@ -14,8 +14,10 @@ Doctor operation. Version, authentication, and capture use that path; later
 operations discover afresh. Capture checks its producer's fingerprint before and
 after execution and rejects drift instead of attaching another build's identity.
 
-The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
-a separate watcher process. The freshness identity is the resolved Codex
+The managed service's existing supervisor schedules `catalog.mjs --refresh-if-stale`
+immediately and every five minutes, with one bounded refresh child at a time.
+Shutdown cancels scheduling and drains the owned child's terminal cleanup.
+The freshness identity is the resolved Codex
 binary path, file identity, reported version, and the content fingerprint of
 the current account or explicitly adopted native catalog. While signed in, the
 locked refresh stores account metadata from the fixed ChatGPT account-model
@@ -34,7 +36,7 @@ read or refresh the unused account snapshot; native authentication publication
 rules still apply to its models.
 The request is bounded, rechecks identity before writing, and preserves the
 last snapshot on network or schema failure. Publication uses the normal
-state-ownership guard, catalog lock, and rollback path. Every watcher pass
+state-ownership guard, catalog lock, and rollback path. Every scheduled pass
 derives the desired publication from the reusable capture and current local
 settings, then writes only changed catalog, announcement, or managed-agent
 output. A failed publication therefore retries on the next interval even when

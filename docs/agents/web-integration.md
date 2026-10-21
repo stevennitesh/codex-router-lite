@@ -47,6 +47,8 @@ delivery record requires full instructions;
 changed instructions explicitly supersede the earlier instructions. A successor
 chat receives full instructions. Existing rollback readers can still read these
 records and resume with their ordinary full instruction delivery.
+Checkpoint matching and construction reuse the same request-local item digests;
+the complete request fingerprint and changed-result checks remain independent.
 
 Web-route native compaction selects source excerpts locally, without requesting
 a model summary. Both standalone compaction and native V2 compaction stay local;
@@ -171,6 +173,12 @@ stop a newer turn. Revocation does not undo
 a tool that native Codex has already started. A missing or changed native rollout
 prevents the runtime from asserting cancellation authority.
 
+Terminal turns release unused prompts, declarations and browser-answer copies
+only after their request, cancellation watcher and ordered state writes settle.
+Cancelled IDs retain rejection records, and completed requests retain their exact
+final response for fingerprint-matched replay. Conversation checkpoints,
+compaction and uncertain-action evidence remain available for recovery.
+
 The private Router log's `web-mcp` entries distinguish SDK handler arrival,
 wrapper rejection, discovery, invocation start and the actual paired result.
 They retain fixed categories, timestamps and a turn-token digest, without tool
@@ -211,6 +219,11 @@ Stop verifies that the exact owned generation is unique and latest, marks its
 saved tab for handoff, then attempts the semantic Stop click at most once. Its
 locator includes that generation condition when the browser resolves the action.
 `src/web-browser-state.mjs` owns the page controls and the shared Stop predicates.
+Interrupted continuation uses those same predicates and rechecks the generation
+in its final snapshot before transferring browser ownership. Its in-binding
+receipt prevents a rejected or uncertain click from being repeated. Before Send,
+continuation requires an idle composer and has no authority to stop an unknown
+generation. Ordinary continuation omits this recovery-only program source.
 Readiness and confirmation use the same conditional semantic locator. Accessible
 names, visibility and cardinality come from the public browser SDK; Router does
 not classify those matches again from raw `aria-label` values. A hidden mounted

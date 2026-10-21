@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -414,24 +414,6 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
       && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
       && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
   };
-  const stopGeneration = async (turnIds = [options.turnId], requireActive = false) => {
-    const current = activeOwner(turnIds, requireActive);
-    const requireSavedUrl = async () => {
-      if (state.savedUrl && await state.tab.url() !== state.savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
-    };
-    await requireSavedUrl();
-    const stop = role(current?.stopButtonName ?? ui.stopButtonExactName);
-    const visible = await stop.isVisible();
-    activeOwner(turnIds, requireActive);
-    if (visible) {
-      await requireSavedUrl();
-      activeOwner(turnIds, requireActive);
-      await stop.click();
-      activeOwner(turnIds, requireActive);
-      await stop.waitFor({ state: "hidden", timeoutMs: 10000 });
-      activeOwner(turnIds, requireActive);
-    }
-  };
   const clearUnsentDraft = async () => {
     const composer = role(ui.composerName, "textbox");
     if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
@@ -443,14 +425,14 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
   const resetChat = () => {
     Object.assign(state, { hasSentMessage: false, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds"]) delete state[key];
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds", "reconciliationStop"]) delete state[key];
   };
 
   const requireBinding = () => {
     if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
     if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   };
-  return { ...view, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, stopGeneration, clearUnsentDraft, resetChat, requireBinding };
+  return { ...view, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding };
 }
 
 // Selection ships only with Send. These reads share a stable picker phase;
@@ -534,8 +516,74 @@ async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory
   return;
 }
 
-async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
-  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, stopGeneration, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+// Only interrupted continuation ships cancellation policy and its shared
+// semantic state factory; ordinary continuation retains its lifecycle guards.
+async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState) {
+  const { ui } = options;
+  const owner = activeOwner(owners, true), tab = state.tab, tabId = state.tabId, browser = state.browser,
+    savedUrl = state.savedUrl, generationTurnKey = state.generationTurnKey;
+  const confirmed = state.sendConfirmed === true;
+  const assertCurrent = () => {
+    if (activeOwner(owners, true) !== owner || state.tab !== tab || state.tabId !== tabId || tab.id !== tabId
+        || state.browser !== browser || state.savedUrl !== savedUrl || state.generationTurnKey !== generationTurnKey
+        || (state.sendConfirmed === true) !== confirmed
+        || confirmed && (!state.hasSentMessage || !state.sendAttempted || !state.sendClicked)) throw new Error("The active browser generation changed during interrupted continuation.");
+  };
+  if (!confirmed) {
+    // An unsent draft owns no browser generation. It cannot authorize Stop
+    // against an older reply or a manually started generation in this chat.
+    assertCurrent();
+    const generating = await role(owner.stopButtonName).isVisible();
+    assertCurrent();
+    const idleCount = await role(options.recoveryIdleButtonExactName).filter({ visible: true }).count();
+    assertCurrent();
+    if (generating || idleCount !== 1) throw new Error("The unsent browser turn is not idle; continuation cannot stop an unowned generation.");
+    const currentUrl = await tab.url();
+    assertCurrent();
+    if (currentUrl !== (savedUrl ?? "https://chatgpt.com/")) throw new Error("The unsent browser turn left its owned saved URL or normal home; continuation cannot clear its draft.");
+    return;
+  }
+  if (!state.hasSentMessage || !state.sendAttempted || !state.sendClicked || !savedUrl
+      || typeof generationTurnKey !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(generationTurnKey)) throw new Error("Interrupted continuation requires the exact confirmed browser generation.");
+  const browserState = createStopState(tab, { ui, generationTurnKey, stopName: owner.stopButtonName,
+    idleName: options.recoveryIdleButtonExactName });
+  let receipt = state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
+  const composerRestored = () => receipt?.acknowledged === true && receipt.idleAbsent === true;
+  const inspect = async () => {
+    const view = await browserState.inspect({ allowComposerRestored: composerRestored(), preferInactive: Boolean(receipt),
+      beforeRead: () => { assertCurrent(); return 1000; }, afterRead: assertCurrent });
+    if (view?.url !== savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
+    if (view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot stop another generation.");
+    if (!view.controlsRecognized || typeof view.stopVisible !== "boolean") throw new Error("The interrupted generation controls are unrecognized or ambiguous.");
+    return view;
+  };
+  const waitForReadiness = async locator => {
+    assertCurrent();
+    try { await locator.waitFor({ state: "visible", timeoutMs: 10000 }); }
+    catch { /* Readiness alone never proves generation inactivity. */ }
+    assertCurrent();
+  };
+  let view = await inspect();
+  if (!view.inactive && !view.stopVisible && !receipt) {
+    await waitForReadiness(browserState.ready(false).or(browserState.stop));
+    view = await inspect();
+  }
+  if (!view.inactive && view.stopVisible && !receipt) {
+    // Record dispatch before awaiting it. Reconciliation retries may read
+    // the result, but must never repeat a click whose outcome is uncertain.
+    receipt = state.reconciliationStop = { generationTurnKey, idleAbsent: view.idleAbsent === true, acknowledged: false };
+    assertCurrent();
+    try { await browserState.stop.click({ timeoutMs: 10000 }); receipt.acknowledged = true; }
+    catch { /* Only explicit completion may reconcile a rejected click. */ }
+    assertCurrent();
+    if (receipt.acknowledged) await waitForReadiness(browserState.ready(composerRestored()));
+    view = await inspect();
+  }
+  if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
+}
+
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState) {
+  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
   let verifyRecoveryTexts;
@@ -850,12 +898,14 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   }
   await state.tab.markHandoff();
   if (interrupted) {
-    await stopGeneration(owners, true);
+    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState);
     if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
     state.retained = true;
   } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
   if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
   const view = await snapshot(), texts = view.replies;
+  if (interrupted && state.sendConfirmed && (view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length !== 1
+      || view.turns.at(-1)?.turnKey !== state.generationTurnKey)) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot adopt another generation.");
   if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
   if (recovered) {
     if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
@@ -871,6 +921,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   delete state.replyId;
   delete state.generationTurnKey;
   delete state.generationReplyIds;
+  delete state.reconciliationStop;
   state.sendAttempted = false;
   state.sendClicked = false;
   state.sendConfirmed = false;
@@ -1087,7 +1138,7 @@ export function browserScript(options) {
   const compact = ["observe", "retain"].includes(options.operation);
   const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
-  if (options.operation === "continue" && options.recovery) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
+  if (options.operation === "continue" && (options.recovery || options.interruptedTurnId !== undefined)) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
@@ -1117,7 +1168,9 @@ export function browserScript(options) {
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
   const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, continue: runBrowserContinuation, rollover: runBrowserRollover, send: runBrowserSend }[options.operation];
-  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()}${options.operation === "send" ? `, ${selectBrowserModel.toString()}` : ""});`;
+  const dependencies = options.operation === "send" ? `, ${selectBrowserModel.toString()}`
+    : options.operation === "continue" && options.interruptedTurnId !== undefined ? `, ${reconcileInterruptedBrowserGeneration.toString()}, ${createStopBrowserState.toString()}` : "";
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()}${dependencies});`;
 }
 
 // This is a codec for our own producer, not a permissive JavaScript parser.

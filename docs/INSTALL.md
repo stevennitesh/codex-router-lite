@@ -40,11 +40,17 @@ claimed. External content and abandoned-operation recovery retain their own chec
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
 native Codex requests remain available during that setup interval.
-The frontend starts before the optional API forwarder, LiteLLM, Switchyard, and
-catalog watcher become ready. Their bounded supervision keeps native serving
-available during an optional-child failure. The installer still prepares Python
+The frontend starts before the optional API forwarder, LiteLLM, and Switchyard
+become ready. Their bounded supervision keeps native serving available during an
+optional-child failure. The installer still prepares Python
 dependencies; a missing or unhealthy gateway prevents GLM service, not frontend
 liveness.
+
+The existing supervisor schedules catalog freshness checks immediately and every
+five minutes. Each check uses a bounded refresh child; no separate persistent
+catalog watcher is needed. Shutdown and refresh deadlines retain custody until
+the owned process tree closes and its cleanup settles. Inconclusive cleanup
+blocks another automatic refresh.
 
 Asynchronous launch failures are handled by the child supervisor;
 startup retries wait for child closure. A configured Windows batch gateway is

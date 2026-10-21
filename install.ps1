@@ -573,8 +573,6 @@ try {
     }
     Move-Item -LiteralPath (Join-Path $NodeCandidate "node_modules") -Destination $NodeModules
     $NodeActivated = $true
-    & node src/install-plan.mjs verify-node
-    if ($LASTEXITCODE -ne 0) { throw "The activated Node dependency tree failed its import/input probe." }
     & node src/install-plan.mjs record node-deps
     if ($LASTEXITCODE -ne 0) { throw "Recording the activated Node dependency state failed." }
   }

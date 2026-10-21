@@ -198,6 +198,22 @@ test("resident source changes invalidate compact programs while independently sh
     assert.notEqual(currentSend, send);
     assert.ok(operationVariant.readBrowserProgram(currentSend));
   }
+  const continuationOptions = { ...base, operation: "continue", expectedOwnerTurnIds: [base.turnId], interruptedTurnId: base.turnId };
+  const continuation = browserScript(continuationOptions);
+  const { interruptedTurnId, ...normalContinuationOptions } = continuationOptions;
+  const normalContinuation = browserScript(normalContinuationOptions);
+  assert.doesNotMatch(normalContinuation, /function (?:reconcileInterruptedBrowserGeneration|createStopBrowserState)/u);
+  assert.equal(readBrowserProgram(continuation.replace(',"interruptedTurnId":"first-turn"', "")), null);
+  const stopVariant = await loadVariant({ state: stateSource.replace(/(export function createStopBrowserState\([^\n]*\) \{)/u, "$1\n  /* changed Stop predicate owner */") });
+  assert.equal(stopVariant.browserHelperVersion, browserHelperVersion);
+  for (const code of compact) assert.ok(stopVariant.readBrowserProgram(code));
+  assert.ok(stopVariant.readBrowserProgram(normalContinuation), "An ordinary continuation has no recovery Stop dependency.");
+  assert.equal(stopVariant.readBrowserProgram(continuation), null, "A continuation with superseded Stop predicates cannot qualify in the adapter.");
+  assert.ok(stopVariant.readBrowserProgram(stopVariant.browserScript(continuationOptions)));
+  const reconcilerVariant = await loadVariant(changeFunction("reconcileInterruptedBrowserGeneration"));
+  assert.equal(reconcilerVariant.browserHelperVersion, browserHelperVersion);
+  assert.ok(reconcilerVariant.readBrowserProgram(normalContinuation));
+  assert.equal(reconcilerVariant.readBrowserProgram(continuation), null);
 });
 
 test("compact program configuration excludes operation inputs while preserving unknown fields for exact qualification", () => {
@@ -244,7 +260,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
-    fetchCalls: 0, stopClicks: 0, reloads: 0, attachmentWaits: 0, idleButtonCount: 1, userMessages: [] };
+    fetchCalls: 0, stopClicks: 0, stopReads: 0, stopWaits: 0, stopRequests: 0, reloads: 0, attachmentWaits: 0, idleButtonCount: 1, userMessages: [] };
   let now = 0;
   const fixtureDate = fastTimers ? { now: () => now } : Date;
   const fixtureTimeout = fastTimers ? (callback, milliseconds) => {
@@ -399,7 +415,12 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ui.onSend?.();
         if (ui.sendFailure) throw new Error("Send effect uncertain");
       }
-      else if (name === "Stop") { ui.stopClicks += 1; ui.stop = false; }
+      else if (name === "Stop") {
+        ui.stopClicks += 1;
+        if (!ui.keepStopVisible) ui.stop = false;
+        await ui.onStopClick?.();
+        if (ui.stopClickError) throw ui.stopClickError;
+      }
       else if (name === "Start new chat") {
         ui.startNewChatClicks += 1;
         if (!ui.deferRolloverHome) {
@@ -477,11 +498,92 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       assert.fail(`Unobserved selector: ${name}`);
     },
   });
+  // Policy-only SDK locator model. Accessible names and visible controls are
+  // explicit fixture inputs; the installed-browser fixture covers real accname
+  // and XPath/filter behavior independently.
+  const stopControls = () => [
+    ...Array.from({ length: ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
+      name: "Stop", visible: ui.stop })),
+    ...Array.from({ length: ui.stop ? ui.idleDuringStop ?? 0 : ui.idleButtonCount }, (_, index) => ({ kind: "idle", index,
+      name: browserIdleButtonExactName, visible: true })),
+  ];
+  const stopBody = () => {
+    const root = replyRoot(), body = domElement("body", {}, root);
+    body.ownerDocument = { body, get URL() { return ui.url ?? "https://chatgpt.com/"; },
+      querySelectorAll: selector => root.querySelectorAll(selector) };
+    return body;
+  };
+  class StopPolicyLocator {
+    constructor(resolve) { this.resolve = resolve; }
+    filter(options) {
+      assert(Object.keys(options).every(key => ["has", "hasNot", "visible"].includes(key)));
+      return new StopPolicyLocator(() => this.resolve().filter(element =>
+        (options.visible === undefined || element.visible === options.visible)
+        && (!options.has || options.has.resolve().length > 0)
+        && (!options.hasNot || options.hasNot.resolve().length === 0)));
+    }
+    nth(index) { return new StopPolicyLocator(() => this.resolve().slice(index, index + 1)); }
+    or(other) { return new StopPolicyLocator(() => {
+      const result = this.resolve();
+      for (const element of other.resolve()) if (!result.some(value => value.tagName === "BODY" && element.tagName === "BODY"
+          || value.kind === element.kind && value.index === element.index)) result.push(element);
+      return result;
+    }); }
+    getByRole(kind, options) {
+      assert.equal(kind, "button"); assert.equal(options.exact, true);
+      return new StopPolicyLocator(() => this.resolve().length ? stopControls().filter(element => element.name === options.name) : []);
+    }
+    async count() {
+      ui.controlReads += 1;
+      await ui.onControlRead?.({ kind: "button", name: this.resolve()[0]?.name, method: "count" });
+      return this.resolve().length;
+    }
+    async click({ timeoutMs }) {
+      assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      ui.stopRequests += 1;
+      await ui.onStopRequest?.();
+      const matches = this.resolve();
+      if (matches.length !== 1 || matches[0].kind !== "stop" || !matches[0].visible) throw new Error("No unique guarded Stop matched.");
+      return makeLocator("button", "Stop").click();
+    }
+    async waitFor({ state, timeoutMs }) {
+      assert.equal(state, "visible"); assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      ui.stopWaits += 1;
+      await ui.onStopWait?.();
+      if (!this.resolve().some(element => element.tagName === "BODY" || element.visible)) throw new Error("Stop readiness was not observed.");
+    }
+    async evaluateAll(reader, argument, { timeoutMs }) {
+      assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      ui.stopReads += 1;
+      await ui.onStopRead?.();
+      return reader(this.resolve(), argument);
+    }
+  }
+  const stopLocator = selector => {
+    if (selector === "body") return Object.assign(new StopPolicyLocator(() => [stopBody()]), { kind: "selector", name: selector });
+    assert(selector.startsWith("xpath=//body["));
+    const key = /\[@data-turn-key='([a-f0-9-]+)'\]/u.exec(selector)?.[1];
+    assert(key);
+    return new StopPolicyLocator(() => {
+      const body = stopBody(), turns = body.querySelectorAll("[data-turn-key]"), matching = turns.filter(turn => turn.getAttribute("data-turn-key") === key);
+      const states = matching.length === 1 ? matching[0].querySelectorAll("[data-talvt-turn-state]") : [];
+      return matching.length === 1 && turns.at(-1)?.getAttribute("data-turn-key") === key
+        && (!selector.includes("data-talvt-turn-state") || states.length === 1 && states[0].getAttribute("data-talvt-turn-state") === "complete") ? [body] : [];
+    });
+  };
+  const roleLocator = (kind, options) => {
+    const result = makeLocator(kind, options.name);
+    if (kind === "button" && ["Stop", browserIdleButtonExactName].includes(options.name)) {
+      const semantic = stopLocator("body").getByRole(kind, options);
+      Object.assign(result, { resolve: semantic.resolve, filter: semantic.filter.bind(semantic), nth: semantic.nth.bind(semantic) });
+    }
+    return result;
+  };
   const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
     reload: async () => { ui.reloads += 1; ui.actions.push("reload"); await ui.onReload?.(); if (ui.reloadFailure) throw new Error("Reload failed."); },
-    playwright: { getByRole: (kind, options) => makeLocator(kind, options.name), getByText: (text, options) => {
+    playwright: { getByRole: roleLocator, getByText: (text, options) => {
       assert.equal(options.exact, true); return makeLocator("text", text);
-    }, locator: name => makeLocator("selector", name) },
+    }, locator: name => name === "body" || name.startsWith("xpath=//body[") ? stopLocator(name) : makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser",
     tabs: { list: async () => { ui.tabReads += 1; return [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])]; },
@@ -567,7 +669,7 @@ async function interruptedBeforeReplyFixture() {
   const sent = await f.run("send", { ...plugin, prompt: "Interrupted request" });
   const rendered = (content = []) => domElement("main", {},
     observedTurn(messageId(100), "Earlier request", [assistantMessage(0, "Earlier answer")]),
-    observedTurn(sent.generationTurnKey, "Interrupted request", content, { complete: false }));
+    observedTurn(sent.generationTurnKey, "Interrupted request", content, { complete: f.ui.complete }));
   f.ui.messageRoot = rendered();
   f.ui.stop = true;
   const observed = await f.run("observe");
@@ -579,6 +681,8 @@ async function interruptedBeforeReplyFixture() {
   // Starting state after native Interrupt has already stopped this generation.
   // Hook authority itself is exercised through the actual hook contract tests.
   f.ui.stop = false;
+  f.ui.complete = true;
+  f.ui.messageRoot = rendered();
   return { ...f, recovery, rendered };
 }
 
@@ -2359,18 +2463,9 @@ test("recovery refuses a surviving active owner or ambiguous saved URL before cr
 test("interrupted recovery retains the exact saved chat before reconciliation Stop and never repeats Send", async () => {
   const f = await recoverableFixture({ completed: false });
   f.loseBinding();
-  const locator = f.tab.playwright.getByRole;
-  f.tab.playwright.getByRole = (kind, options) => {
-    const result = locator(kind, options);
-    if (options.name === "Stop") {
-      const click = result.click;
-      result.click = async () => {
-        assert.equal(f.activeTurn()?.turnId, "next-turn");
-        assert.equal(f.ui.handoffs, 4, "Recovery and continuation renew retention before reconciliation Stop.");
-        return click();
-      };
-    }
-    return result;
+  f.ui.onStopRequest = () => {
+    assert.equal(f.activeTurn()?.turnId, "next-turn");
+    assert.equal(f.ui.handoffs, 4, "Recovery and continuation renew retention before reconciliation Stop.");
   };
   const continued = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, recovery: f.recovery });
   assert.equal(continued.assistantText, f.text);
@@ -2387,18 +2482,9 @@ test("interrupted recovery revalidates the latest reply after Stop changes the m
     f.ui.texts = ["A preceding reply is initially mounted", f.text];
     f.ui.replyIds = [messageId(1), f.recovery.replyId];
     f.loseBinding();
-    const locator = f.tab.playwright.getByRole;
-    f.tab.playwright.getByRole = (kind, options) => {
-      const result = locator(kind, options);
-      if (options.name === "Stop") {
-        const click = result.click;
-        result.click = async () => {
-          await click();
-          f.ui.texts = [corruptLatest ? "Changed latest reply" : f.text];
-          f.ui.replyIds = [f.recovery.replyId];
-        };
-      }
-      return result;
+    f.ui.onStopClick = () => {
+      f.ui.texts = [corruptLatest ? "Changed latest reply" : f.text];
+      f.ui.replyIds = [f.recovery.replyId];
     };
     const continuation = f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, recovery: f.recovery });
     if (corruptLatest) {
@@ -2477,15 +2563,7 @@ test("Stop cannot act on another saved conversation in the same owned tab, inclu
     f.ui.stop = true;
     const owner = f.activeTurn();
     if (duringVisibility) {
-      const getByRole = f.tab.playwright.getByRole;
-      f.tab.playwright.getByRole = (kind, options) => {
-        const locator = getByRole(kind, options);
-        if (kind === 'button' && options.name === 'Stop') {
-          const isVisible = locator.isVisible;
-          locator.isVisible = async () => { const visible = await isVisible(); f.ui.url = 'https://chatgpt.com/c/another-conversation'; return visible; };
-        }
-        return locator;
-      };
+      f.ui.onStopRead = () => { f.ui.url = 'https://chatgpt.com/c/another-conversation'; };
     } else f.ui.url = 'https://chatgpt.com/c/another-conversation';
     await assert.rejects(f.run('continue', { turnId: 'next-turn', interruptedTurnId: base.turnId }), /saved chat URL changed|not ready for continuation/);
     assert.equal(f.ui.stopClicks, 0);
@@ -2502,6 +2580,7 @@ test("interrupted continuation stops the preceding native owner and starts a new
   await f.run("send", { ...plugin, prompt: "Interrupted request" });
   f.ui.texts.push("  Partial answer\n");
   f.ui.stop = true;
+  f.ui.hiddenMountedStop = true;
   const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId, tabId: "owned-tab" });
   assert.deepEqual(result, { operation: "continue", tabId: "owned-tab", url: "https://chatgpt.com/c/owned-conversation", normal: true, conversationFull: false, interrupted: true, assistantText: "  Partial answer\n" });
   assert.equal(f.ui.stopClicks, 1, "Continuation reconciles Stop even when native Interrupt could not finish it.");
@@ -2521,6 +2600,89 @@ test("interrupted continuation stops the preceding native owner and starts a new
   assert.equal(f.ui.newTabs, 1);
 });
 
+test("interrupted continuation refuses a newer manual generation through final ownership transfer", async () => {
+  for (const replacementAt of ["initial", "action", "readback", "final-snapshot"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Owned request" });
+    const owner = f.activeTurn();
+    const replace = () => {
+      f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Owned request", [], { complete: true }),
+        observedTurn(messageId(2000), "Manual request", [assistantMessage(20, "Manual answer")], { complete: false }));
+      f.ui.stop = true;
+    };
+    f.ui.stop = true;
+    if (replacementAt === "initial") replace();
+    else if (replacementAt === "action") f.ui.onStopRequest = replace;
+    else if (replacementAt === "readback") f.ui.onStopClick = replace;
+    else f.ui.onComposerRead = replace;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /no longer unique and latest/);
+    assert.equal(f.ui.stopClicks, ["readback", "final-snapshot"].includes(replacementAt) ? 1 : 0, "Only the original generation can receive a Stop click.");
+    assert.equal(f.ui.stop, true, "The replacement generation remains active.");
+    assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.activeTurn(), owner);
+    assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("hidden Stop and an idle composer cannot establish inactivity without completion or a witnessed click transition", async () => {
+  for (const missingProof of ["no-click", "idle-already-present", "idle-not-restored"]) {
+    const f = fixture(); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Owned request" });
+    const owner = f.activeTurn();
+    f.ui.hiddenMountedStop = true;
+    f.ui.stop = missingProof !== "no-click";
+    if (missingProof === "idle-already-present") f.ui.idleDuringStop = 1;
+    if (missingProof === "idle-not-restored") f.ui.idleButtonCount = 0;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /no affirmative inactivity proof/);
+    assert.equal(f.ui.stopClicks, missingProof === "no-click" ? 0 : 1);
+    assert.equal(f.getState().sendConfirmed, true);
+    assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("an uncertain reconciliation click is not repeated and only explicit completion permits its retry", async () => {
+  const f = fixture(); await f.ready();
+  await f.run("send", { ...plugin, prompt: "Owned request" });
+  const owner = f.activeTurn();
+  f.ui.stop = true;
+  f.ui.stopClickError = new Error("Input effect is uncertain.");
+  await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /no affirmative inactivity proof/);
+  assert.equal(f.ui.stop, false);
+  assert.equal(f.ui.stopClicks, 1);
+  assert.equal(f.getState().reconciliationStop.acknowledged, false);
+  assert.equal(f.activeTurn(), owner);
+  // The original generation can still be streaming. Its retry must not issue
+  // another click merely because Stop is visible again.
+  f.ui.stop = true;
+  await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /no affirmative inactivity proof/);
+  assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1);
+  f.ui.stop = false; f.ui.complete = true;
+  const continued = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(continued.interrupted, true);
+  assert.equal(f.getState().reconciliationStop, undefined);
+  assert.equal(f.activeTurn().turnId, "next-turn");
+  assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("reconciliation rechecks native authority after each conditional read and after Stop acknowledges", async () => {
+  for (const changeAt of ["read", "click"]) {
+    const nativeContext = {}, f = fixture({ nativeContext }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Owned request" });
+    f.ui.stop = true;
+    const newer = { ...f.activeTurn(), turnId: "manual-native-owner" };
+    const replace = () => nativeContext.routerWebActiveTurns.set(base.sessionId, newer);
+    if (changeAt === "read") f.ui.onStopRead = replace;
+    else f.ui.onStopClick = replace;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /different native turn owns/);
+    assert.equal(f.activeTurn(), newer);
+    assert.equal(f.ui.stopClicks, changeAt === "read" ? 0 : 1);
+    assert.equal(f.ui.stopReads, 1, "A changed owner prevents further readback RPCs.");
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
 test("Stop before Send retains the owned tab and does not attribute an earlier assistant reply to the interrupted turn", async () => {
   const f = fixture();
   await f.ready();
@@ -2533,6 +2695,24 @@ test("Stop before Send retains the owned tab and does not attribute an earlier a
   assert.equal(f.ui.closeCount, 0);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.activeTurn()?.turnId, "next-turn");
+});
+
+test("Stop before Send never cancels an unowned generation or clears its composer", async () => {
+  for (const ownDraft of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    if (ownDraft) {
+      f.ui.sendEnabled = false;
+      await assert.rejects(f.run("send", { ...plugin, prompt: "Owned unsent draft" }), /nothing sent/);
+    }
+    const owner = f.activeTurn(), composerText = f.ui.composerText;
+    f.ui.stop = true;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId }), /cannot stop an unowned generation/);
+    assert.equal(f.ui.stop, true);
+    assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.stopRequests, 0);
+    assert.equal(f.ui.composerText, composerText);
+    assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.closeCount, 0);
+  }
 });
 
 test("continuation rejects missing, changed or foreign active ownership before stopping or sending", async () => {
@@ -2573,6 +2753,39 @@ test("interrupted continuation clears an ordinary unsent draft before the new tu
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.closeCount, 0);
+});
+
+test("unsent draft reconciliation cannot mutate a composer after handoff navigates away from its saved chat or normal home", async () => {
+  for (const initial of ["home", "saved"]) for (const destination of ["https://chatgpt.com/c/unowned-conversation", "https://chatgpt.com/"]) {
+    if (initial === "home" && destination === "https://chatgpt.com/") continue;
+    const f = fixture({ fastTimers: true }); await f.ready();
+    if (initial === "saved") {
+      await f.run("send", { ...plugin, prompt: "Previous request" });
+      f.ui.texts.push("Previous answer"); f.ui.complete = true;
+      await f.run("observe"); await f.run("retain");
+      await f.run("continue", { turnId: "unsent-turn" });
+    }
+    const owner = f.activeTurn();
+    f.ui.sendEnabled = false;
+    await assert.rejects(f.run("send", { ...plugin, turnId: owner.turnId, prompt: "Owned unsent draft" }), /nothing sent/);
+    const composerText = f.ui.composerText, mutations = [], sends = f.ui.sendClicks;
+    const getByRole = f.tab.playwright.getByRole;
+    f.tab.playwright.getByRole = (kind, options) => {
+      const locator = getByRole(kind, options), press = locator.press;
+      if (kind === "textbox" && options.name === browserDom.composerName) locator.press = async key => { mutations.push(key); return press.call(locator, key); };
+      return locator;
+    };
+    const handoff = f.tab.markHandoff;
+    f.tab.markHandoff = async () => { await handoff(); f.ui.url = destination; };
+    await assert.rejects(f.run("continue", { turnId: "next-turn", interruptedTurnId: owner.turnId }), /left its.*(?:saved URL|normal home)/);
+    assert.deepEqual(mutations, [], "A matching draft on another page cannot authorize composer input.");
+    assert.equal(f.ui.composerText, composerText);
+    assert.equal(f.getState().unsentComposerText, composerText);
+    assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.sendClicks, sends);
+    assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.stopRequests, 0);
+    assert.equal(f.ui.closeCount, 0); assert.equal(f.ui.newTabs, 1);
+  }
 });
 
 test("changed or transformed unsent drafts and uncertain Send cannot be replayed by interrupted continuation", async () => {

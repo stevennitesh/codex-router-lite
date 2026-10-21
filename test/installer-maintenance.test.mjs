@@ -358,9 +358,16 @@ function offlineNodeFixture({ stopped = false } = {}) {
     const packageRoot = path.join(f.directory, "offline-package");
     mkdirSync(packageRoot);
     const env = { ...f.environment, npm_config_cache: path.join(f.directory, "npm-cache"), npm_config_registry: "http://127.0.0.1:1" };
+    const importTrace = path.join(f.directory, "dependency-imports.jsonl");
     writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "fixture-dependency", version: "1.0.0", main: "index.cjs", scripts: { postinstall: "node postinstall.cjs" } }));
     writeFileSync(path.join(packageRoot, "postinstall.cjs"), `const fs=require('node:fs');fs.writeFileSync('installed-by-script',__dirname);if(process.env.ROUTER_FIXTURE_FAULT==='npm'&&__dirname.includes('.node-deps-candidate-'))process.exit(8);`);
-    writeFileSync(path.join(packageRoot, "index.cjs"), `const fs=require('node:fs');if(process.env.ROUTER_FIXTURE_FAULT==='import'&&__dirname.includes('.node-deps-candidate-'))throw Error('candidate import refused');if(process.env.ROUTER_FIXTURE_FAULT==='relocation'&&__dirname.includes('.node-deps-candidate-')&&fs.readFileSync(__dirname+'/installed-by-script','utf8')!==__dirname)throw Error('candidate relocation refused');module.exports={ready:true};`);
+    writeFileSync(path.join(packageRoot, "index.cjs"), `
+const fs=require('node:fs'),path=require('node:path'),fault=process.env.ROUTER_FIXTURE_FAULT,candidate=__dirname.includes('.node-deps-candidate-');
+fs.appendFileSync(${JSON.stringify(importTrace)},JSON.stringify({command:process.argv.slice(1),directory:__dirname})+'\\n');
+if(fault==='import'&&candidate)throw Error('candidate import refused');
+if(fault==='relocation'&&candidate&&fs.readFileSync(__dirname+'/installed-by-script','utf8')!==__dirname)throw Error('candidate relocation refused');
+if(fault==='activated-import'&&!candidate&&!fs.existsSync(path.join(__dirname,'../previous.txt')))throw Error('activated import refused');
+module.exports={ready:true};`);
     execFileSync(process.execPath, [npm, "pack", "--offline", "--no-audit", "--no-fund"], { cwd: packageRoot, env, encoding: "utf8", windowsHide: true });
     writeFileSync(path.join(f.source, "package.json"), JSON.stringify({ name: "codex-router-lite", type: "module", dependencies: { "fixture-dependency": "file:" + path.join(packageRoot, "fixture-dependency-1.0.0.tgz") } }));
     execFileSync(process.execPath, [npm, "install", "--package-lock-only", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"], { cwd: f.source, env, encoding: "utf8", windowsHide: true });
@@ -375,6 +382,7 @@ function offlineNodeFixture({ stopped = false } = {}) {
     f.oldNodeStamp = readFileSync(path.join(f.source, "node_modules/.codex-router-install.json"));
     f.oldPythonStamp = readFileSync(path.join(f.source, ".venv/.codex-router-install.json"));
     writeFileSync(f.trace, "");
+    writeFileSync(importTrace, "");
     const countsFile = path.join(f.directory, "service-counts.json"), liveFile = path.join(f.directory, "service-live.json");
     writeFileSync(liveFile, JSON.stringify(!stopped));
     writeFileSync(path.join(f.source, "src/service.mjs"), `
@@ -385,7 +393,7 @@ if(command==='status')console.log(JSON.stringify({installed:true,loaded:${!stopp
 if(command==='stop'||command==='install'){
  createRequire(import.meta.url)('fixture-dependency');
  c[command]++;c.previousNode=readdirSync(root).find(n=>n.startsWith('.node-deps-previous-'))||c.previousNode;c.previousPython=readdirSync(root).find(n=>n.startsWith('.venv-previous-'))||c.previousPython;
- if(command==='install'&&c.install>1)c.restoredBeforeImport=existsSync(path.join(root,'node_modules/previous.txt'))&&existsSync(path.join(root,'.venv/previous.txt'));
+ if(command==='install'&&(c.install>1||fault==='activated-import'||fault?.startsWith('record-')))c.restoredBeforeImport=existsSync(path.join(root,'node_modules/previous.txt'))&&existsSync(path.join(root,'.venv/previous.txt'));
  writeFileSync(file,JSON.stringify(c));
  if(command==='stop'){if(fault==='recovery-stop'&&c.stop===2)process.exitCode=7;else writeFileSync(live,'false');}
  if(command==='install'){writeFileSync(live,'true');if(['service','damaged','recovery-stop','unknown','listener','stopped'].includes(fault)&&c.install===1){
@@ -395,8 +403,10 @@ if(command==='stop'||command==='install'){
  }}
 }`);
     writeFileSync(path.join(f.source, "src/service-process.mjs"), `import{existsSync,readFileSync}from'node:fs';const unknown=existsSync(${JSON.stringify(path.join(f.directory, "unknown-process"))});const owned=JSON.parse(readFileSync(${JSON.stringify(liveFile)},'utf8'));console.log(JSON.stringify({status:unknown?'unknown':owned?'owned':'absent',owned:unknown?false:owned,sourceRoot:!unknown&&owned?${JSON.stringify(f.source)}:null}));`);
-    writeFileSync(path.join(f.directory, "bin/node-trace.mjs"), `import{appendFileSync,existsSync,readFileSync,writeFileSync}from'node:fs';import{spawnSync}from'node:child_process';const a=process.argv.slice(2),fault=process.env.ROUTER_FIXTURE_FAULT;appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+a.join('\\t')+'\\n');if(a[0]==='--input-type=module'&&['4202','4000'].includes(a.at(-1))){const c=existsSync(${JSON.stringify(countsFile)})?JSON.parse(readFileSync(${JSON.stringify(countsFile)},'utf8')):{};process.exit(fault==='listener'&&c.install>0&&a.at(-1)==='4000'?1:0);}if(a[0]?.endsWith('install-plan.mjs')&&a[1]==='record'&&fault==='record-'+a[2]&&!existsSync(${JSON.stringify(path.join(f.directory, "record-failed"))})){writeFileSync(${JSON.stringify(path.join(f.directory, "record-failed"))},'1');process.exit(8);}const p=spawnSync(${JSON.stringify(process.execPath)},a,{stdio:'inherit'});process.exit(p.status??1);`);
+    writeFileSync(path.join(f.directory, "bin/node-trace.mjs"), `import{appendFileSync,existsSync,mkdirSync,readFileSync,writeFileSync}from'node:fs';import{spawnSync}from'node:child_process';import path from'node:path';const a=process.argv.slice(2),fault=process.env.ROUTER_FIXTURE_FAULT;appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+a.join('\\t')+'\\n');if(a[0]==='--input-type=module'&&['4202','4000'].includes(a.at(-1))){const c=existsSync(${JSON.stringify(countsFile)})?JSON.parse(readFileSync(${JSON.stringify(countsFile)},'utf8')):{};process.exit(fault==='listener'&&c.install>0&&a.at(-1)==='4000'?1:0);}if(a[0]?.endsWith('install-plan.mjs')&&a[1]==='record'&&fault==='record-'+a[2]&&!existsSync(${JSON.stringify(path.join(f.directory, "record-failed"))})){writeFileSync(${JSON.stringify(path.join(f.directory, "record-failed"))},'1');mkdirSync(path.join(${JSON.stringify(f.source)},a[2]==='node-deps'?'node_modules':'.venv','.codex-router-install.json'));}const p=spawnSync(${JSON.stringify(process.execPath)},a,{stdio:'inherit'});process.exit(p.status??1);`);
     f.counts = () => existsSync(countsFile) ? JSON.parse(readFileSync(countsFile, "utf8")) : { stop: 0, install: 0 };
+    f.planImports = () => readFileSync(importTrace, "utf8").trim().split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line))
+      .filter(entry => entry.command[0]?.endsWith("install-plan.mjs"));
     f.assertPrevious = () => {
       assert.equal(readFileSync(path.join(f.source, "node_modules/previous.txt"), "utf8"), "previous node tree");
       assert.equal(readFileSync(path.join(f.source, ".venv/previous.txt"), "utf8"), "previous Python tree");
@@ -440,14 +450,42 @@ test("real offline Node and Python promote together, preserve npm scripts and re
     const result = f.run(["-ForceDeps"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(f.counts().stop, 1); assert.equal(f.counts().install, 1);
+    const imports = f.planImports();
+    assert.deepEqual(imports.map(entry => entry.command.slice(1, 3)), [
+      ["verify-node", path.dirname(path.dirname(imports[0].directory))],
+      ["verify-node", path.dirname(path.dirname(imports[1].directory))],
+      ["record", "node-deps"],
+    ], "candidate validation runs before and after relocation, then the active tree is verified while recording");
+    assert.notEqual(imports[0].directory, imports[1].directory);
+    assert.equal(imports[2].directory, path.join(f.source, "node_modules/fixture-dependency"));
+    assert.equal(f.calls().filter(call => call === "node\tsrc/install-plan.mjs\tverify-node").length, 0);
     assert.equal(existsSync(path.join(f.source, "node_modules/fixture-dependency/installed-by-script")), true);
     const imported = execFileSync(process.execPath, ["--input-type=module", "-e", "import{createRequire}from'node:module';console.log(createRequire(process.cwd()+'/package.json')('fixture-dependency').ready)"], { cwd: f.source, env: f.environment, encoding: "utf8" });
     assert.equal(imported.trim(), "true");
     assert.ok(!readdirSync(f.source).some(name => /^\.(?:node-deps|venv)-(?:candidate|previous|failed)-/u.test(name)));
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
+test("real offline Node activation rolls back failed active imports and stamp writes", { skip: !windows }, () => {
+  for (const fault of ["activated-import", "record-node-deps"]) {
+    const f = offlineNodeFixture();
+    try {
+      const result = f.runFault(fault);
+      assert.notEqual(result.status, 0, fault);
+      assert.match(result.stderr, fault === "activated-import" ? /activated import refused/u : /EISDIR/u);
+      assert.match(result.stderr, /Recording the activated Node dependency state failed/u);
+      assert.ok(!/dependency rollback failed/u.test(result.stderr), result.stderr);
+      f.assertPrevious();
+      assert.deepEqual(f.planImports().map(entry => entry.command[1]), ["verify-node", "verify-node", "record"]);
+      assert.equal(f.counts().stop, 1);
+      assert.equal(f.counts().install, 1);
+      assert.equal(f.counts().restoredBeforeImport, true);
+      assert.equal(f.calls().filter(call => call.startsWith("npm\t")).length, 1, "recovery uses retained tree without npm");
+    } finally { rmSync(f.directory, { recursive: true, force: true }); }
+  }
+});
+
 test("real offline dependency rollback restores trees and stamps before old service imports", { skip: !windows }, () => {
-  for (const fault of ["record-node-deps", "record-python-deps", "service", "damaged", "stopped"]) {
+  for (const fault of ["record-python-deps", "service", "damaged", "stopped"]) {
     const f = offlineNodeFixture({ stopped: fault === "stopped" });
     try {
       const result = f.runFault(fault);
@@ -457,7 +495,8 @@ test("real offline dependency rollback restores trees and stamps before old serv
       const counts = f.counts();
       assert.equal(counts.stop, fault === "service" ? 2 : fault === "stopped" ? 3 : 1, result.stderr);
       assert.equal(counts.install, fault.startsWith("record-") ? 1 : 2);
-      if (!fault.startsWith("record-")) assert.equal(counts.restoredBeforeImport, true);
+      assert.equal(counts.restoredBeforeImport, true);
+      if (fault === "record-python-deps") assert.match(result.stderr, /EISDIR/u);
       assert.equal(f.calls().filter(call => call.startsWith("npm\t")).length, 1, "recovery uses retained tree without npm");
       if (fault === "stopped") assert.equal(readFileSync(path.join(f.directory, "service-live.json"), "utf8"), "false");
     } finally { rmSync(f.directory, { recursive: true, force: true }); }

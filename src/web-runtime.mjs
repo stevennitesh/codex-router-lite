@@ -185,7 +185,34 @@ export function createInAppWebRuntime({
   writeState = writePrivateJsonAsync, stateIsProtected = privateFileIsProtected,
 } = {}) {
   const turns = new Map(), conversations = new Map(), tokenOwners = new Map();
-  const compactions = new Set();
+  const compactions = new Set(), retirements = new Set();
+  let watcherCloseError;
+  const closeWatcher = turn => {
+    if (!turn.watcherClose) {
+      turn.watcherClose = Promise.resolve().then(() => turn.watcher?.close());
+      void turn.watcherClose.catch(error => { watcherCloseError ??= error; });
+    }
+    return turn.watcherClose;
+  };
+  const retire = turn => {
+    if (turn.retired || turn.retiring || turn.starting || turn.busy || !turn.done && !turn.cancelled) return;
+    // The native request and ordered checkpoint write still own their inputs
+    // until they settle. The watcher can also retain this object through its
+    // cancellation callback, so release its fields even after removing owners.
+    turn.retiring = true;
+    const pending = Promise.allSettled([closeWatcher(turn), turn.conversation?.writeTail]).then(() => {
+      if (turn.busy) return;
+      if (turn.token) tokenOwners.delete(turn.token);
+      const retained = turn.cancelled ? { cancelled: true, error: turn.error }
+        : { done: true, model: turn.model, selection: turn.selection, replay: turn.replay };
+      for (const key of Object.keys(turn)) delete turn[key];
+      Object.assign(turn, retained, { retired: true });
+    }).finally(() => {
+      retirements.delete(pending);
+      if (!turn.retired) { turn.retiring = false; retire(turn); }
+    });
+    retirements.add(pending);
+  };
   // Use live ownership and the replay guards' actual uncertainty records.
   // Retired pending observations do not become permanent maintenance blockers.
   const maintenanceState = () => ({
@@ -350,7 +377,8 @@ export function createInAppWebRuntime({
     }
     turn.conversation.activeTurn = undefined;
     if (turn.conversation.lastTurn) void persist(turn.conversation).catch(error => { turn.error = error; });
-    void turn.watcher?.close();
+    void closeWatcher(turn);
+    retire(turn);
   };
   const ensureServices = async settings => {
     if (closing) throw fail("Router's in-app Web runtime is stopping.");
@@ -436,12 +464,12 @@ export function createInAppWebRuntime({
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
-    const current = transcript(payload), checkpoint = conversation.checkpoint;
+    const current = transcript(payload), hashes = current.map(digest), checkpoint = conversation.checkpoint;
     let history = current;
     if (checkpoint && !conversation.needsHistory) {
       const retained = compactTail(conversation, readableInput(payload));
       let common = 0;
-      while (common < checkpoint.length && common < current.length && checkpoint[common] === digest(current[common])) common += 1;
+      while (common < checkpoint.length && common < hashes.length && checkpoint[common] === hashes[common]) common += 1;
       if (retained) history = transcript({ input: retained });
       else if (common !== checkpoint.length) {
         // Readable compaction is an explicit replacement of native history. Its
@@ -455,7 +483,7 @@ export function createInAppWebRuntime({
       }
       if (knownWebAssistant(history[0], conversation)) history = history.slice(1);
     }
-    turn.promptCheckpoint = current.map(digest);
+    turn.promptCheckpoint = hashes;
     const instructions = typeof payload.instructions === "string" ? payload.instructions : null;
     turn.promptInstructionsSha256 = digest({ protocol: instructionProtocol, instructions });
     // The digest proves delivery only in its exact confirmed browser generation.
@@ -590,12 +618,12 @@ export function createInAppWebRuntime({
       const quietSnapshot = completionRevision !== undefined && pending.completionRevision === completionRevision;
       const freshAnswer = freshPostToolAnswer(turn, value);
       if (value.completed === true && quietSnapshot && value.assistantText.trim() && freshAnswer) {
-        const current = transcript(payload), checkpoint = turn.conversation.checkpoint;
+        const current = transcript(payload), hashes = current.map(digest), checkpoint = turn.conversation.checkpoint;
         compactTail(turn.conversation, readableInput(payload), turn.deliveredCoding);
-        if (checkpoint.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) {
+        if (checkpoint.every((hash, index) => hashes[index] === hash)) {
           let acknowledged = checkpoint.length;
-          while (acknowledged < current.length && turn.deliveredCoding?.has(digest(current[acknowledged]))) acknowledged += 1;
-          if (acknowledged > checkpoint.length) turn.conversation.checkpoint = current.slice(0, acknowledged).map(digest);
+          while (acknowledged < hashes.length && turn.deliveredCoding?.has(hashes[acknowledged])) acknowledged += 1;
+          if (acknowledged > checkpoint.length) turn.conversation.checkpoint = hashes.slice(0, acknowledged);
         }
         turn.finalRevision = completionRevision;
         turn.conversation.assistantText = value.assistantText;
@@ -629,7 +657,7 @@ export function createInAppWebRuntime({
       }
       turn.conversation.assistantText = value.assistantText;
       turn.done = true; turn.pending = undefined;
-      await turn.watcher.close();
+      await closeWatcher(turn);
       turn.conversation.activeTurn = undefined;
       turn.conversation.generationCompleted = true;
       turn.conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: true };
@@ -672,7 +700,7 @@ export function createInAppWebRuntime({
     } catch (error) { conversation.activeTurn = undefined; throw error; }
     const turn = { ...owner, settings, selection: model, model: payload.model, executor, tools,
       conversation, interruptedTurnId: conversation.interruptedTurnId, interruptedSendState: conversation.interruptedSendState,
-      cache: new Map(), processed: new Map(), discovered: [], startedAt: Date.now() };
+      cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
     conversation.activeTurn = owner.turnId;
     const check = () => {
       if (signal?.aborted) cancel(turn, signal.reason instanceof Error ? signal.reason : fail("Native Web request cancelled.", "web_turn_cancelled"));
@@ -686,6 +714,7 @@ export function createInAppWebRuntime({
     catch (error) {
       cancel(turn, error);
       if (!conversation.browserStarted) conversations.delete(conversationKey);
+      turn.starting = false; retire(turn);
       throw error;
     } finally { signal?.removeEventListener("abort", abort); }
     try {
@@ -693,6 +722,7 @@ export function createInAppWebRuntime({
     turn.token = registration.token; tokenOwners.set(turn.token, turn);
     return turn;
     } catch (error) { cancel(turn, error); throw error; }
+    finally { turn.starting = false; retire(turn); }
   };
   return {
     async start(settings) { await ensureServices(settings); return this.status(); },
@@ -717,7 +747,7 @@ export function createInAppWebRuntime({
       } else if (turn.preparing) turn = await turn.preparing;
       if (turn.cancelled) throw turn.error;
       if (turn.model !== payload.model || digest(turn.selection) !== digest(selection(payload))) throw fail("A native Web turn cannot change model or effort during generation.");
-      if (turn.conversation.compacting) throw fail("A native Web compaction already owns this conversation.");
+      if (turn.conversation?.compacting) throw fail("A native Web compaction already owns this conversation.");
       if (turn.busy) throw fail("This exact native Web turn already has a request in progress.");
       turn.busy = true;
       const abort = () => cancel(turn, signal.reason instanceof Error ? signal.reason : fail("Native Web request cancelled.", "web_turn_cancelled"));
@@ -726,7 +756,8 @@ export function createInAppWebRuntime({
         if (signal?.aborted) abort();
         if (turn.cancelled) throw turn.error;
         const fingerprint = digest(payload);
-        if (turn.cache.has(fingerprint)) return turn.cache.get(fingerprint).clone();
+        if (turn.replay?.fingerprint === fingerprint) return new Response(turn.replay.body, turn.replay.init);
+        if (turn.cache?.has(fingerprint)) return turn.cache.get(fingerprint).clone();
         if (turn.done) throw fail("This Web turn is complete; use a new native turn for a follow-up.");
         const input = Array.isArray(payload.input) ? payload.input : [];
         const retained = compactTail(turn.conversation, readableInput(payload));
@@ -784,11 +815,18 @@ export function createInAppWebRuntime({
           response = webResponse(payload, [call]);
         } else response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
         if (turn.cancelled) throw turn.error;
-        turn.cache.set(fingerprint, response.clone());
-        if (turn.cache.size > 8) turn.cache.delete(turn.cache.keys().next().value);
+        if (turn.done) {
+          // Preserve the exact final wire response without retaining a Response
+          // stream clone or any of the terminal turn's browser/tool state.
+          turn.replay = { fingerprint, body: await response.clone().text(),
+            init: { status: response.status, statusText: response.statusText, headers: [...response.headers] } };
+        } else {
+          turn.cache.set(fingerprint, response.clone());
+          if (turn.cache.size > 8) turn.cache.delete(turn.cache.keys().next().value);
+        }
         return response;
       } catch (error) { cancel(turn, error); throw error; }
-      finally { signal?.removeEventListener("abort", abort); turn.busy = false; }
+      finally { signal?.removeEventListener("abort", abort); turn.busy = false; retire(turn); }
     },
     maintenanceState,
     status: () => ({ started: !!services, conversations: conversations.size, activeTurns: maintenanceState().activeTurns,
@@ -800,12 +838,14 @@ export function createInAppWebRuntime({
       await Promise.allSettled([...compactions]);
       await Promise.allSettled([...turns.values()].map(turn => turn.preparing));
       for (const turn of turns.values()) if (!turn.preparing) cancel(turn);
-      await Promise.all([...turns.values()].map(turn => turn.watcher?.close()));
+      await Promise.all([...turns.values()].filter(turn => !turn.retired).map(closeWatcher));
+      await Promise.all([...retirements]);
       try { await Promise.all([...conversations.values()].map(conversation => conversation.writeTail)); }
       finally {
         const active = services ?? await servicePromise?.catch(() => undefined);
         try { await active?.tunnel.close(); } finally { await active?.mcp.close(); }
       }
+      if (watcherCloseError) throw watcherCloseError;
     },
   };
 }

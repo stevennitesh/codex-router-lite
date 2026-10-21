@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-21",
+  "kind": "Dated implementation and measurement evidence; not current runtime authority",
+  "baselineCommit": "45ddd381eee25eae92ce8308da79066a8e0e2174",
+  "preserved": [
+    "Interrupt hook",
+    "managed Stop adapter",
+    "eager Web startup",
+    "full request fingerprints",
+    "uncertain-action fences",
+    "saved context and compaction",
+    "protected working rollback"
+  ],
+  "changes": [
+    "Interrupted recovery uses shared generation-aware Stop predicates and live URL checks before draft cleanup.",
+    "Terminal turns release heavy fields after request, watcher and ordered persistence settle; exact final replay and cancellation rejection remain.",
+    "The existing supervisor schedules catalog checks, with owned-tree shutdown and deadline cleanup.",
+    "Activated Node dependencies are verified once before their stamp is written.",
+    "Checkpoint matching and construction reuse request-local transcript digests."
+  ],
+  "measurements": {
+    "runtime": {
+      "conditions": "Windows Node 24.13 --expose-gc. In-process browser/storage/tunnel fixtures. One warmup, 160 cancelled and 80 completed turns; 64 KiB schemas, 16 KiB final answers; benchmark references dropped before five GC/event-loop rounds. Exact final replay verified in both variants.",
+      "baseline": {
+        "mode": "baseline",
+        "workload": "memory",
+        "node": "v24.13.0",
+        "cancelledTurns": 160,
+        "completedTurns": 80,
+        "nativeSchemaBytes": 65536,
+        "finalAnswerBytes": 16384,
+        "heapBeforeBytes": 16457520,
+        "heapAfterBytes": 60609288,
+        "retainedHeapDeltaBytes": 44151768,
+        "cancelledSchemasAlive": 160,
+        "exactFinalReplay": true,
+        "maintenanceState": {
+          "activeTurns": 0,
+          "uncertainSends": 0,
+          "unresolvedActions": 0
+        }
+      },
+      "candidate": {
+        "mode": "candidate",
+        "workload": "memory",
+        "node": "v24.13.0",
+        "cancelledTurns": 160,
+        "completedTurns": 80,
+        "nativeSchemaBytes": 65536,
+        "finalAnswerBytes": 16384,
+        "heapBeforeBytes": 16474928,
+        "heapAfterBytes": 18944152,
+        "retainedHeapDeltaBytes": 2469224,
+        "cancelledSchemasAlive": 0,
+        "exactFinalReplay": true,
+        "maintenanceState": {
+          "activeTurns": 0,
+          "uncertainSends": 0,
+          "unresolvedActions": 0
+        }
+      },
+      "limits": "Synthetic retained heap delta is workload- and V8-specific, not a general production memory estimate."
+    },
+    "transcriptPreparation": {
+      "conditions": "Twenty follow-ups after 400-item warmup; final history 420 items, 322823 bytes. Stage-level timings include scheduler noise.",
+      "baselineMedianMs": 2.744000000000028,
+      "candidateMedianMs": 1.8571000000000595,
+      "baselineDigestCounts": [
+        802,
+        840
+      ],
+      "candidateDigestCounts": [
+        402,
+        421
+      ],
+      "limits": "No acknowledgement speedup measured in this no-tool workload; its digest counts were unchanged."
+    },
+    "install": {
+      "conditions": "Two activations per variant in baseline/candidate/candidate/baseline order, fresh offline two-package Node fixture including minimal scoped SDK exports, real npm lifecycle and install-plan traversal/import helpers, fixture Python/service/listener boundaries; timings include installer command shims and are descriptive only.",
+      "samples": [
+        {
+          "variant": "baseline",
+          "elapsedMs": 4280.0034000000005,
+          "dependencyTraversals": 4,
+          "sdkImportHelpers": 4,
+          "installPlanProcesses": 6,
+          "nodeCommands": 26
+        },
+        {
+          "variant": "candidate",
+          "elapsedMs": 3984.3718999999983,
+          "dependencyTraversals": 3,
+          "sdkImportHelpers": 3,
+          "installPlanProcesses": 5,
+          "nodeCommands": 25
+        },
+        {
+          "variant": "candidate",
+          "elapsedMs": 4189.442500000001,
+          "dependencyTraversals": 3,
+          "sdkImportHelpers": 3,
+          "installPlanProcesses": 5,
+          "nodeCommands": 25
+        },
+        {
+          "variant": "baseline",
+          "elapsedMs": 4289.461499999998,
+          "dependencyTraversals": 4,
+          "sdkImportHelpers": 4,
+          "installPlanProcesses": 6,
+          "nodeCommands": 26
+        }
+      ],
+      "limits": "Two samples per variant establish removed operations; elapsed times are descriptive only."
+    },
+    "catalog": {
+      "persistentChildren": {
+        "baseline": 4,
+        "candidate": 3
+      },
+      "priorWatcherWorkingSetBytes": 10170368,
+      "conditions": "Actual startup import, synthetic healthy frontend/API/gateway subprocesses, actual catalog refresh subprocess and real disposable descendant; transient refresh/probe processes excluded from persistent child count. No browser/provider/live service changes.",
+      "limits": "Prior watcher RSS was a single separate observation, not paired net memory or CPU savings.",
+      "deadlineRepair": {
+        "behavior": "180-second deadline and shutdown share generation-bound Windows tree cleanup. Both wait actual child close and native cleanup settlement. Inconclusive cleanup disables further automatic refreshes and remains a supervisor-stop failure. Ordinary completed refresh errors retain scheduled retry.",
+        "regressionConditions": "Controlled fake interval/deadline advancement and IPC-ready real disposable catalog/probe children. Real native tree cleanup, actual close observation, intentionally delayed proof handoff. Complete cleanup permits next check; withheld/inconclusive proof prevents it. No sleeps added; previous readiness polling replaced with IPC."
+      }
+    },
+    "browserPrograms": {
+      "nativeBrowserCallsExecuted": 0,
+      "residentHelperUnchanged": true,
+      "matchingAdapterRequired": true,
+      "rows": [
+        {
+          "operation": "bootstrap",
+          "interrupted": false,
+          "baselineBytes": 30285,
+          "candidateBytes": 29462
+        },
+        {
+          "operation": "open",
+          "interrupted": false,
+          "baselineBytes": 8940,
+          "candidateBytes": 8117
+        },
+        {
+          "operation": "send",
+          "interrupted": false,
+          "baselineBytes": 18674,
+          "candidateBytes": 17851
+        },
+        {
+          "operation": "observe",
+          "interrupted": false,
+          "baselineBytes": 2626,
+          "candidateBytes": 2626
+        },
+        {
+          "operation": "retain",
+          "interrupted": false,
+          "baselineBytes": 2625,
+          "candidateBytes": 2625
+        },
+        {
+          "operation": "continue",
+          "interrupted": false,
+          "baselineBytes": 55527,
+          "candidateBytes": 55135
+        },
+        {
+          "operation": "rollover",
+          "interrupted": false,
+          "baselineBytes": 10651,
+          "candidateBytes": 9828
+        },
+        {
+          "operation": "continue",
+          "interrupted": true,
+          "baselineBytes": 55586,
+          "candidateBytes": 63811
+        }
+      ],
+      "limits": "Source serialization only. Stronger interrupted recovery is larger; ordinary turns exclude that source. No browser latency claim."
+    }
+  },
+  "verification": {
+    "source": {
+      "command": "npm run verify:codex",
+      "context": "Normal Windows user; exact patched isolated Python lock environment",
+      "tests": 1603,
+      "passed": 1603,
+      "failed": 0,
+      "skipped": 0,
+      "catalogCompatibility": "passed"
+    },
+    "independentReview": {
+      "findings": "none remaining",
+      "resolved": [
+        "Live URL guard before unsent composer cleanup",
+        "Owned-tree cleanup for catalog deadline"
+      ],
+      "limits": "Independent source review is separate from executed tests and live verification."
+    },
+    "localTestReview": "Added and modified cases protect ongoing recovery ownership, exact replay, persistence custody, stamp rollback and process-tree nonoverlap. No one-off edit-spelling tests retained.",
+    "live": "Pending guarded activation and matching adapter restart; prior working Stop rollback retained."
+  },
+  "sourceIdentities": {
+    "src/web-browser.mjs": "2156b4fa55750966e324efbf7ecb9bd73a4b8aa85a9f211f8b9fc1b6972586f0",
+    "src/web-runtime.mjs": "5d346fb303855559dc34735ee6aa4729023858add590dd4514c45d7cbaf37ac6",
+    "src/catalog-auto-refresh.mjs": "d4d4b1a798938602079be1ff04271aad6badcad28ed2a28eb6ef338a61994f54",
+    "src/start.mjs": "3c27ab6a263a1591544b53011c1e7faabbcd93d0c6d70464b77f744d6ff373dd",
+    "install.ps1": "fae30733af43e40a2af3e980c8a41ff325f444ed8c875e49b9981811e28bae69"
+  }
+}
