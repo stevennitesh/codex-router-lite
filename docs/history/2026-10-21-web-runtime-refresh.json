@@ -45,7 +45,7 @@
     "hookSha256": "58afd7f48773ef3de7747234417e220aede74939c2167a544eea3034cacd4cef"
   },
   "activation": {
-    "status": "Router deployed and matching adapter installed; normal Codex restart and live verification pending",
+    "status": "Deployed and loaded after normal restart; native tools and same-chat continuation verified; user observed Stop with tab retained, but immediate automatic Stop confirmation remains unverified",
     "routerCommit": "7f490f1a47fffbb3810c5b67b7b83172f491af97",
     "deploymentOperation": "8a8fb05eb00d4ee7a1ed7366ab27d3db",
     "deploymentAccepted": true,
@@ -53,7 +53,36 @@
     "forceInterruption": false,
     "switchyardBinaryAndRoutesChanged": false,
     "coordinatedRefresh": {"mode": "applied", "routerReloaded": true, "browserRuntimeChanged": false, "adapterGeneration": "85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113", "scope": "ordinary Web conversations", "hookDefinition": "preserved", "tunnelConfiguration": "preserved"},
-    "requiredNext": "Fully quit and reopen Codex normally, then verify a real native fixture read, actual Stop and same-chat continuation. Installation alone does not establish those live claims.",
+    "requiredNext": "If investigating the remaining automatic Stop acknowledgement gap, distinguish invalid_controls from active_readback with fixed control counts and recognition flags. The current receipt does not distinguish these branches or establish a timeout; do not substitute repeated manual Stop trials for this missing discriminator.",
     "rollback": "Guarded deployment retained the previous runtime and generated/router-rollback-5a4156e7 checkout. The prior immutable adapter generation 2e218573782e6192efaba1cebb0bd9395ecbf32e47d8764153228b41b0d12f7b and a protected ownership/settings/User-environment snapshot remain in private local recovery storage. The snapshot excludes the runtime key; the captured pre-change Web source remains under generated/web-refresh-20261021/baseline. Keep source, adapter and private configuration together. Older retained adapters whose external app files were removed are not runnable runtime rollback."
+  },
+  "liveVerification": {
+    "route": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "adapterLoaded": "The running process selection and adapter processes matched generation 85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113 after a normal full Codex restart.",
+    "nativeRead": {"nativeTurnStatus": "completed", "commandCount": 1, "exitCode": 0, "actualPairedOutputMatched": true, "originalSessionMarkerRecalled": true, "durationMs": 46574},
+    "stop": {
+      "nativeTurnStatus": "interrupted",
+      "userConfirmedGenerationStoppedAndSameTabStayedOpen": true,
+      "receiptAtUtc": "2026-10-21T18:31:15.063Z",
+      "receiptCorrelatedToExactOriginatingTurn": true,
+      "receipt": "stop_unconfirmed",
+      "resultCode": "stop_confirmation_failed",
+      "outcome": "blocked",
+      "stage": "stop_readback_visibility",
+      "clickAttempted": true,
+      "clickError": false,
+      "stopClicked": true,
+      "retained": true,
+      "childTerminalObserved": true,
+      "scriptElapsedMs": 2144,
+      "scriptBudgetMs": 2400,
+      "callbackElapsedMs": 2528,
+      "automaticInactivityConfirmed": false,
+      "readbackLimit": "stopHidden=false can retain its pre-click default if final controls fail validation, or reflect a valid final read with Stop still visible. The receipt does not expose the discriminator; elapsed time does not prove budget exhaustion.",
+      "baselineComparison": "Current and pre-refresh createWebStopCode with equal inputs produce identical 20755-byte programs, SHA256 94868c89bf4bb190ec096195066b292f5554966a0f011d44d21af4ecfca22465. This establishes unchanged program content, not identical live browser scheduling or state."
+    },
+    "continuation": {"nativeTurnStatus": "completed", "durationMs": 20741, "expectedAcknowledgementAndOriginalMarkerMatched": true, "nativeCommandCount": 0, "savedChatUnchanged": true, "tabUnchanged": true, "bindingUnchanged": true, "generationCompleted": true, "uncertainSend": false, "unresolvedCodingCount": 0, "lastTurnCompleted": true},
+    "limits": "Durations describe one observed native-tool turn and one same-chat continuation, not a controlled latency benchmark. User-observed cancellation and successful continuation do not turn the immediate unconfirmed receipt into automatic inactivity proof. This check does not recertify the full sandbox, every Web model or subagents. No external launcher, runtime patch or other model drove the browser workflow."
   }
 }
