@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "date": "2026-10-22",
+  "evidenceKind": "App-update compatibility inspection and source-only update-flow repair; no deployment or runtime activation",
+  "sourceBase": "0e2ecdcd6fe5622fc04b9a29ad0d66dfbe4af685",
+  "nativeCodex": {
+    "desktopVersion": "26.1016.62342",
+    "desktopBuildVersion": "21477",
+    "updateStatus": "up_to_date",
+    "windowsPackage": "OpenAI.Codex_26.1016.8622.0_x64__2p2nqsd0c76g0",
+    "cli": "0.163.0-alpha.11.2",
+    "bundledAppToolsPlugin": "0.1.6",
+    "cliSignature": "Valid OpenAI signature",
+    "cliSha256": "c81ed464e5e7cafd09a5fa26af390c480bed8e9fab2a87a54b285fbd56e7122a",
+    "codeModeHost": "Present beside the current CLI; Valid OpenAI signature",
+    "codeModeHostSha256": "7200f4fe6221637670bbc4e63ad8f0e4948b2ebf474eb57e587e01f7f4759bf2",
+    "catalogModels": 17,
+    "hotfixComparison": "https://github.com/openai/codex/compare/rust-v0.163.0-alpha.11.1...rust-v0.163.0-alpha.11.2",
+    "hotfixScope": "Five commits: Windows implicit network-root read grants, MXC SDK migration, registry requirements-path override, dependency locks and release. No changed Router wire, namespace, catalog or hook contract established."
+  },
+  "observedWebUpdate": {
+    "savedBrowserVersion": "26.1016.51333",
+    "currentConfiguredBrowserVersion": "26.1016.62342",
+    "oldBrowserFilePresent": false,
+    "tunnelClientPresent": true,
+    "before": "Saved configuration reported unavailable and missing old external runtime appeared as an adapter ownership conflict.",
+    "afterReadOnlySourceCheck": "Configuration ok and enabled; browser runtime stale; adapter ownership verified; no ownership conflicts; shared current-runtime plan ready and refresh-required. One bounded apply instruction returned.",
+    "activation": "Not applied. Requires the coordinated idle-drain/adapter+browser transaction and Router reload, followed by normal Codex restart and live tools/Stop/continuation verification."
+  },
+  "sourceChanges": [
+    "Share the saved-settings projection between structural diagnostics and strict execution; missing app files do not erase enabled configuration.",
+    "Separate retained adapter ownership from external runtime availability, with probe/code-based stale, unavailable and invalid classifications.",
+    "Aggregate maintenance uses one current-runtime plan instead of validating obsolete and current signed cohorts separately; updates are detected even while old files still exist.",
+    "Existing owned install-adapter replacements use the same coordinated refresh. First install remains strict; unresolved ownership/recovery rejects.",
+    "Explicit replacement preserves supported trial-to-ordinary scope promotion within the coordinator; ordinary refresh continues to preserve scope."
+  ],
+  "preservedBoundaries": [
+    "No new watcher, per-request latest-runtime discovery, cache-age guessing, hot-swap or runtime patch.",
+    "Candidate signatures/hashes, fixed admitted generations, idle drain, locks, CAS, foreign edits, original rollback baseline and hook definition retained.",
+    "App-loaded state, hook trust and live Stop remain unknown. Retained old artifacts may reference external files already removed by the app update."
+  ],
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router",
+    "lastReviewedCommit": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
+    "currentHead": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
+    "newCommits": 0,
+    "decision": "Unchanged after network fetch; no integration."
+  },
+  "switchyardUpstream": {
+    "repository": "https://github.com/NVIDIA-NeMo/Switchyard",
+    "lockedBase": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "previouslyReviewedHead": "21075c6652152dac88a5fbc6b878ca37d7617c1c",
+    "reviewedHead": "f5b973c8b2bdada08376ba76ac8c3c572d7c4b86",
+    "freshCommitCount": 10,
+    "compare": "https://github.com/NVIDIA-NeMo/Switchyard/compare/21075c6652152dac88a5fbc6b878ca37d7617c1c...f5b973c8b2bdada08376ba76ac8c3c572d7c4b86",
+    "decision": "Retain the locked source and ordered patches. None of the ten fresh commits establishes a required fix for the current four-target native Responses route. A full pin migration is not justified by this app update.",
+    "patchApplicability": "Ordered contribution patch conflicts with reviewed upstream HEAD; the compatibility patch was not attempted because its required input layer is unavailable.",
+    "freshDispositions": [
+      {
+        "commit": "42b6fca680ccf55e091a757f2133f6af367b8b27",
+        "pullRequest": 1063,
+        "title": "drop reasoning items OpenAI cannot read from Responses requests",
+        "decision": "Defer selective hardening; no required current repair established",
+        "mechanics": "Final Responses sanitizer runs after same-format encoding, so raw preservation does not bypass it. It drops reasoning with absent/null/empty encrypted_content when store is already false, always drops recognized Switchyard Anthropic-thinking envelopes, and preserves nonempty native OpenAI ciphertext.",
+        "relevance": "The motivating Claude-to-GPT stage route is inactive in the all-native template. Router already has separate substituted-caller stateless cleanup. This upstream filter is not present in the ordered local patches.",
+        "integrationCaveat": "Upstream checks store before defaults and the Router patch's body_overrides. An unchanged backport can miss invalid reasoning when the caller omits store or sets true and the target later forces false. If adopted, inspect the effective outbound store value while preserving valid opaque native ciphertext.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/42b6fca680ccf55e091a757f2133f6af367b8b27"
+      },
+      {
+        "commit": "1f436e30cbf454997ec8240ef2c01a9b15689d25",
+        "pullRequest": 1067,
+        "title": "translation usage examples and policy documentation",
+        "decision": "Exclude from integration",
+        "relevance": "README examples and translation-policy explanation do not change retained serving behavior.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/1f436e30cbf454997ec8240ef2c01a9b15689d25"
+      },
+      {
+        "commit": "2cf1a7e507da01a2414393fdfb2df8028df0f510",
+        "pullRequest": 1049,
+        "title": "bundled model prices by default",
+        "decision": "Defer optional cost telemetry",
+        "relevance": "RoutingLog starts with bundled list-rate estimates and supports TOML overrides. This does not change routing or fix compatibility; list rates do not establish actual subscription cost and omit service-tier and other adjustments. No justification to replace the binary for this feature.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/2cf1a7e507da01a2414393fdfb2df8028df0f510"
+      },
+      {
+        "commit": "50aef9e372cafb527b91bf37cd7158bb53560bb8",
+        "pullRequest": 1071,
+        "title": "Python package documentation links",
+        "decision": "Exclude from integration",
+        "relevance": "PyPI description and packaging documentation do not affect the standalone Windows server route.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/50aef9e372cafb527b91bf37cd7158bb53560bb8"
+      },
+      {
+        "commit": "34ca48efb9ab8b3be9a26deb378466c125390022",
+        "pullRequest": 1072,
+        "title": "publish translation Rust API documentation",
+        "decision": "Exclude from integration",
+        "relevance": "Docs CI, links, and crate documentation inclusion do not change retained serving behavior.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/34ca48efb9ab8b3be9a26deb378466c125390022"
+      },
+      {
+        "commit": "7558a1d8a5f21824c6fd81ddbf73a041e1a317c9",
+        "pullRequest": 1070,
+        "title": "support OpenAI Decisions",
+        "decision": "Defer classifier architecture change",
+        "relevance": "Adds OpenAiDecisionClient, decision_clients format openai_decisions, typed question encoding, and an api.openai.com/v1/decisions example. The maintained route uses its separately patched exact OpenRouter Jev transport and four-target policy. This is an optional transport, not an app compatibility repair or a drop-in migration.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/7558a1d8a5f21824c6fd81ddbf73a041e1a317c9"
+      },
+      {
+        "commit": "fae5be0a333385df0aea7ff85007a58a7b89e033",
+        "pullRequest": 1036,
+        "title": "reject ineffective standalone stage-router knobs",
+        "decision": "Exclude inactive algorithm validation",
+        "relevance": "Rejects nondefault stage classifier triggers/message-hash fallback, warns on identical two-tier targets and ignored escalation settings. The maintained type_safe_classifier uses none of these stage/composite/escalation settings.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/fae5be0a333385df0aea7ff85007a58a7b89e033"
+      },
+      {
+        "commit": "e06530206423043445e1827225ef2ffb253ea6c9",
+        "pullRequest": 1041,
+        "title": "repair VGR user-turn holds and session handoffs",
+        "decision": "Exclude inactive VGR behavior; inspect shared affinity on any future rebase",
+        "relevance": "Adds VGR latching/shadow/handoff changes plus shared x-initiator-aware affinity. Current TypeSafe affinity retains every selected target, so the new removal branch for unlatched models does not supply a current fix. The maintained patch already has raw Responses control-item and authenticated projection detection; preserve those semantics during a future shared-affinity rebase.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/e06530206423043445e1827225ef2ffb253ea6c9"
+      },
+      {
+        "commit": "230be4eb14a80319975faec971ca77016062936a",
+        "pullRequest": 1002,
+        "title": "record agent identity in routing log",
+        "decision": "Defer optional evidence improvement",
+        "relevance": "Adds optional normalized agent/parent/delegation/role metadata to JSONL with old-record compatibility. No routing behavior changes. The current Router trace reader groups by session_id and does not surface the new keys; extracting benefit needs separately scoped consumer work.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/230be4eb14a80319975faec971ca77016062936a"
+      },
+      {
+        "commit": "f5b973c8b2bdada08376ba76ac8c3c572d7c4b86",
+        "pullRequest": 1062,
+        "title": "preserve relay per-call usage and session identity",
+        "decision": "Exclude inactive NeMo Relay plugin",
+        "relevance": "Only switchyard-nemo-relay-plugin span capture changes. Router builds switchyard-server and does not use this relay plugin. It does not replace the local native Responses usage regression coverage.",
+        "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/f5b973c8b2bdada08376ba76ac8c3c572d7c4b86"
+      }
+    ],
+    "retainedWorthwhileFollowUp": {
+      "commit": "f6441cc4a303b24aa663511f0d5ad7f53e5a3a31",
+      "pullRequest": 969,
+      "decision": "A narrow selective port remains worthwhile; not a new mandatory app fix",
+      "scope": "Responses snapshot-conflict classification and preserved same-format replay regression. The locked base still emits StreamError from snapshot_suffix; neither ordered patch changes responses/stream.rs or codecs/stream.rs. Upstream changes this invalid-provider-data case to DecodeError so contradictory preserved snapshots produce an error event. Avoid importing the unrelated full gateway/platform feature set.",
+      "status": "Source review only; no port, patch replay, build, deployment, or certification performed.",
+      "source": "https://github.com/NVIDIA-NeMo/Switchyard/commit/f6441cc4a303b24aa663511f0d5ad7f53e5a3a31"
+    },
+    "sourceLockChanged": false
+  },
+  "validation": {
+    "nativeRefresh": "maintenance/refresh-compatibility-state.ps1 -AnalyzeUpstream: signed current CLI, native catalog and 50 scoped catalog/namespace tests passed; Router healthy; no model calls.",
+    "affectedMaintenanceAndWorkflow": "77 passed, 0 failed, 0 skipped; source checks passed. Includes real coordinated fixture promotion and existing drain/CAS/compensation behavior.",
+    "configAndAdapterObservations": "58 cases:56 passed,0 failed,2 existing Windows file-symlink privilege skips; isolated synthetic state.",
+    "initialInvocationLimits": "Initial 76-case parent run:74 passed,2 failed. One warning assertion assumed no console wrapping; one outer multiagent override shadowed the test-owned file. Corrected the assertion and invocation, not production effort behavior; final 77-case run passed.",
+    "review": "Independent focused review found a trial-scope promotion regression, corrected and covered through the real coordinator. No actionable findings remained.",
+    "testValue": "Retained regression coverage for persistent configuration, deleted/changed/inaccessible dependencies, ownership refusal, first-install/replacement, scope and recovery. No completed-edit source assertions added.",
+    "notRun": [
+      "Full suite: changed scope is maintenance/configuration and unchanged serving behavior retains prior evidence.",
+      "Hosted CI",
+      "Activated Web tools, sandbox, Stop or continuation on the new app runtime"
+    ]
+  },
+  "delivery": {
+    "committed": false,
+    "pushed": false,
+    "deployed": false,
+    "runtimeRefreshApplied": false,
+    "routerReloaded": false,
+    "installedHookOrAdapterChanged": false
+  }
+}

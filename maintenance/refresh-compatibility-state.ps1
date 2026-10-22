@@ -196,6 +196,7 @@ Write-Step "ChatGPT Web configuration and Stop adapter"
 $webStatus = [pscustomobject]@{
   configurationStatus = "unavailable"; enabled = $null
   adapterState = "unknown"; adapterInstalled = $null; adapterConflictCount = $null
+  runtimeUpdateStatus = "unavailable"
 }
 try {
   $webStatusJson = & node --input-type=module -e @'
@@ -208,6 +209,7 @@ process.stdout.write(JSON.stringify({
   adapterState: ['absent', 'prepared', 'installed', 'removed'].includes(adapter?.state) ? adapter.state : 'unknown',
   adapterInstalled: typeof adapter?.installed === 'boolean' ? adapter.installed : null,
   adapterConflictCount: Array.isArray(adapter?.conflicts) ? adapter.conflicts.length : null,
+  runtimeUpdateStatus: ['current', 'refresh-required', 'manifest-required', 'ownership-conflict', 'not-configured', 'setup-required', 'unavailable'].includes(status.runtimeUpdate?.status) ? status.runtimeUpdate.status : 'unavailable',
 }));
 '@ 2>$null
   if ($LASTEXITCODE -eq 0) { $webStatus = $webStatusJson | ConvertFrom-Json }
@@ -219,13 +221,20 @@ $webAdapterInstalled = if ($webStatus.adapterInstalled -eq $true) { "true" } els
 $webAdapterConflicts = if ($null -eq $webStatus.adapterConflictCount) { "unknown" } else { [string]$webStatus.adapterConflictCount }
 Write-Host "Web configuration: configurationStatus=$($webStatus.configurationStatus); enabled=$webEnabled"
 Write-Host "Web Stop adapter: state=$($webStatus.adapterState); installed=$webAdapterInstalled; conflicts=$webAdapterConflicts"
+Write-Host "Web runtime update: $($webStatus.runtimeUpdateStatus)"
 Write-Host "Web live readiness: browserSession=unknown; appLoaded=unknown; hookTrusted=unknown."
 $webWarnings = $webStatus.configurationStatus -ne "ok"
-if ($webWarnings) {
+if ($webStatus.runtimeUpdateStatus -eq "refresh-required") {
+  $webWarnings = $true
+  Write-Warning "The owned Web installation needs a coordinated runtime refresh. Run model-router.ps1 codex web refresh-runtime --apply, then reopen Codex when requested."
+} elseif ($webStatus.runtimeUpdateStatus -eq "manifest-required") {
+  $webWarnings = $true
+  Write-Warning "Current official runtime anchors are missing or ambiguous. Inspect model-router.ps1 codex web refresh-runtime --manifest <reviewed-manifest-json> before applying a replacement."
+} elseif ($webWarnings) {
   Write-Warning "Saved Web configuration is unavailable or invalid. Inspect model-router.ps1 codex web status before reconfiguring."
 }
 $webAdapterRequired = $webStatus.enabled -ne $false -or $webStatus.adapterState -notin @("absent", "removed")
-if ($webAdapterRequired -and ($webStatus.adapterInstalled -ne $true -or $webStatus.adapterConflictCount -ne 0)) {
+if ($webAdapterRequired -and $webStatus.runtimeUpdateStatus -notin @("refresh-required", "manifest-required") -and ($webStatus.adapterInstalled -ne $true -or $webStatus.adapterConflictCount -ne 0)) {
   $webWarnings = $true
   Write-Warning "Web Stop adapter is missing, stale or its ownership is unconfirmed. Inspect model-router.ps1 codex web stop adapter-status before changing the installation."
 }

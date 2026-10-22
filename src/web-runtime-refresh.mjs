@@ -69,7 +69,7 @@ export function discoverWebRuntimeAnchors(options = {}) {
         (dependencies.assertCodexIdentity ?? assertCodexExecutableIdentity)(identity);
       } };
   } catch (cause) {
-    throw new Error(DISCOVERY_ERROR, { cause });
+    throw Object.assign(new Error(DISCOVERY_ERROR, { cause }), { code: "ERR_WEB_RUNTIME_ANCHORS" });
   }
 }
 
@@ -77,6 +77,7 @@ function context(options) {
   const dependencies = options.dependencies ?? {}, stateDir = localPath(options.stateDir ?? STATE_DIR);
   return { stateDir, settingsPath: path.join(stateDir, "chatgpt-web.json"),
     adapterOptions: { stateDir, codexHome: options.codexHome ?? CODEX_HOME,
+      allowThreadScopeChange: options.replaceAdapter === true,
       dependencies: dependencies.adapter ?? dependencies },
     private: dependencies.isPrivate ?? privateFileIsProtected,
     write: dependencies.writePrivate ?? writePrivateFile,
@@ -126,7 +127,7 @@ function prepare(ctx, options) {
     candidate: { officialCli: adapter.candidate.officialCli.path, node: adapter.candidate.node.path,
       officialNodeRepl: adapter.candidate.officialNodeRepl.path, runtimeModule: adapter.candidate.runtimeModule,
       sdkPackageJson: adapter.candidate.sdkPackageJson },
-    threadScope: adapter.threadIds === null ? "ordinary Web conversations" : "existing trial threads",
+    threadScope: adapter.candidate.threadIds === null ? "ordinary Web conversations" : "selected trial threads",
     routerRestartRequired: changed, codexRestartRequired: changed, hookDefinition: "preserved", tunnelConfiguration: "preserved",
     next: changed ? "Apply with --apply to drain Router work, refresh both runtime selections and reload Router; then fully quit and reopen Codex normally."
       : "Configured runtime selections match the current candidate; no refresh is needed." };

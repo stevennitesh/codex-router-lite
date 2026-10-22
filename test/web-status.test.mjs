@@ -18,8 +18,9 @@ function dependencies(overrides = {}) {
       browser: { runtimeModule: "fixture-runtime.mjs" }, tunnel: { id: "tunnel_fixture" } }),
     readProtocol: () => "v1",
     readKeyStatus: () => ({ configured: true, fileStatus: "present" }),
-    readAdapterStatus: () => ({ installed: true, state: "installed", conflicts: [], appLoaded: "unknown", hookTrusted: "unknown",
+    readAdapterStatus: () => ({ installed: true, ownershipVerified: true, state: "installed", conflicts: [], appLoaded: "unknown", hookTrusted: "unknown",
       restartRequired: "unknown", trustRequired: "unknown" }),
+    readRuntimePlan: async () => ({ ready: true, changed: false, routerRestartRequired: false, codexRestartRequired: false }),
     readHealth: async options => { assert.equal(options.timeoutMs, 3_000); return healthy; },
     ...overrides,
   };
@@ -45,6 +46,58 @@ test("healthy Router and installed local adapter leave Web runtime and app trust
   for (const field of ["appLoaded", "hookTrusted", "restartRequired", "trustRequired"]) assert.equal(status.stopAdapter[field], "unknown");
   for (const field of ["tunnel", "browserSession", "nativeTools", "immediateStop"]) assert.equal(status.readiness[field], "unknown");
   assert.deepEqual(status.next, []);
+  assert.equal(status.runtimeUpdate.status, "current");
+});
+
+test("maintenance diagnoses an app update through one shared read-only plan without rechecking the old runtime", async () => {
+  let plans = 0;
+  const status = await readWebMaintenanceStatus(dependencies({
+    readConfiguration: () => ({ enabled: true, runtimeStatus: "stale", runtimeIssues: ["The configured browser runtime is missing."] }),
+    readAdapterStatus: options => {
+      assert.deepEqual(options, { inspectRuntime: false });
+      return { installed: false, ownershipVerified: true, state: "installed", conflicts: [], runtimeStatus: "not-checked" };
+    },
+    readRuntimePlan: async () => { plans++; return { ready: true, changed: true, routerRestartRequired: true, codexRestartRequired: true }; },
+  }));
+  assert.equal(plans, 1); assert.equal(status.enabled, true); assert.equal(status.configurationStatus, "ok");
+  assert.deepEqual(status.runtimeUpdate, { status: "refresh-required", ready: true, routerRestartRequired: true, codexRestartRequired: true });
+  assert.equal(status.next.length, 1); assert.match(status.next[0], /refresh-runtime --apply/u);
+  assert.equal(status.next.some(action => /install-adapter|ownership condition/u.test(action)), false);
+  assert.equal(status.readiness.immediateStop, "unknown");
+});
+
+test("runtime drift is diagnosed even while the previous browser files are still present", async () => {
+  const status = await readWebMaintenanceStatus(dependencies({
+    readRuntimePlan: async () => ({ ready: true, changed: true, routerRestartRequired: true, codexRestartRequired: true }),
+  }));
+  assert.equal(status.runtimeUpdate.status, "refresh-required");
+  assert.match(status.next[0], /refresh-runtime --apply/u);
+});
+
+test("ambiguous anchors and failed verification retain different bounded update instructions", async () => {
+  for (const [code, expected] of [["ERR_WEB_RUNTIME_ANCHORS", "manifest-required"], ["ERR_SIGNATURE", "unavailable"]]) {
+    const status = await readWebMaintenanceStatus(dependencies({
+      readRuntimePlan: async () => { throw Object.assign(new Error(canary), { code }); },
+    }));
+    assert.equal(status.runtimeUpdate.status, expected); assert.equal(status.runtimeUpdate.ready, false);
+    assert.equal(JSON.stringify(status).includes(canary), false);
+    assert.equal(status.next.some(action => /--apply/u.test(action)), false);
+    assert.match(status.next[0], expected === "manifest-required" ? /--manifest/u : /validation failure/u);
+  }
+});
+
+test("ownership conflicts and unconfigured Web never attempt candidate discovery", async () => {
+  for (const branch of ["disabled", "conflict", "absent"]) {
+    const status = await readWebMaintenanceStatus(dependencies({
+      readConfiguration: () => ({ enabled: branch !== "disabled" }),
+      readAdapterStatus: () => branch === "conflict"
+        ? { state: "installed", installed: false, ownershipVerified: false, conflicts: ["Foreign hook preserved."] }
+        : { state: "absent", installed: false, ownershipVerified: false, conflicts: [] },
+      readRuntimePlan: () => assert.fail("Do not discover a candidate without a configured owned installation."),
+    }));
+    assert.equal(status.runtimeUpdate.status, branch === "disabled" ? "not-configured" : branch === "conflict" ? "ownership-conflict" : "setup-required");
+    assert.equal(status.next.some(action => /refresh-runtime --apply/u.test(action)), false);
+  }
 });
 
 test("disabled configuration does not turn absent adapter or key into required setup work", async () => {

@@ -222,19 +222,23 @@ test("repeat install is inert and thread scope promotion stages a new version wh
 test("read-only adapter status proves local ownership while restart and native trust remain unknown", t => {
   const f = fixture(t), absent = webStopAdapterStatus(f.options);
   assert.equal(absent.state, "absent"); assert.equal(absent.installed, false); assert.equal(absent.hookDefinitionOwned, false);
+  assert.equal(absent.ownershipVerified, false); assert.equal(absent.runtimeStatus, "not-checked");
   installWebStopAdapter(f.options);
   const receipt = readFileSync(f.receiptPath, "utf8"), hooks = readFileSync(f.hooksPath, "utf8"), effects = f.effects.length;
   const installed = webStopAdapterStatus(f.options);
   assert.equal(installed.installed, true); assert.equal(installed.hookDefinitionOwned, true); assert.deepEqual(installed.conflicts, []);
+  assert.equal(installed.ownershipVerified, true); assert.equal(installed.runtimeStatus, "current"); assert.deepEqual(installed.runtimeIssues, []);
   assert.equal(readFileSync(f.receiptPath, "utf8"), receipt); assert.equal(readFileSync(f.hooksPath, "utf8"), hooks);
   assert.equal(f.effects.length, effects);
   f.environment.values.CODEX_CLI_PATH = "foreign selected CLI";
   const launchConflict = webStopAdapterStatus(f.options);
   assert.equal(launchConflict.installed, false); assert.equal(launchConflict.hookDefinitionOwned, true);
+  assert.equal(launchConflict.ownershipVerified, false); assert.equal(launchConflict.runtimeStatus, "not-checked");
   f.environment.values.CODEX_CLI_PATH = installed.cliPath;
   const changed = f.hooks(); changed.hooks.Interrupt[0].hooks[0].trusted = true; writeFileSync(f.hooksPath, encode(changed));
   const conflict = webStopAdapterStatus(f.options);
   assert.equal(conflict.installed, false); assert.equal(conflict.hookDefinitionOwned, false); assert.equal(conflict.conflicts.length, 1);
+  assert.equal(conflict.ownershipVerified, false); assert.equal(conflict.runtimeStatus, "not-checked");
   writeFileSync(f.hooksPath, 'private-canary-invalid-hooks');
   const unreadable = webStopAdapterStatus(f.options);
   assert.equal(unreadable.hookDefinitionOwned, "unknown"); assert.equal(JSON.stringify(unreadable).includes("private-canary"), false);
@@ -243,6 +247,52 @@ test("read-only adapter status proves local ownership while restart and native t
   assert.equal(removed.hookDefinitionOwned, false);
   for (const status of [absent, installed, launchConflict, conflict, unreadable, removed]) for (const name of ["appLoaded", "hookTrusted", "restartRequired", "trustRequired"]) assert.equal(status[name], "unknown");
   assert.equal(installed.environmentBroadcast, undefined);
+});
+
+test("obsolete external runtime paths retain verified adapter ownership without reporting conflicts", t => {
+  const f = fixture(t); installWebStopAdapter(f.options);
+  const receipt = readFileSync(f.receiptPath, "utf8"), hooks = readFileSync(f.hooksPath, "utf8"), environment = clone(f.environment.values), effects = f.effects.length;
+  replaceOfficialRuntime(f);
+  f.dependencies.inspectSignatures = () => { throw new Error("missing files must not reach signature inspection"); };
+  const status = webStopAdapterStatus(f.options);
+  assert.equal(status.installed, false); assert.equal(status.ownershipVerified, true); assert.equal(status.hookDefinitionOwned, true);
+  assert.equal(status.runtimeStatus, "stale"); assert.equal(status.runtimeIssues.length, 5); assert.deepEqual(status.conflicts, []);
+  assert.equal(readFileSync(f.receiptPath, "utf8"), receipt); assert.equal(readFileSync(f.hooksPath, "utf8"), hooks);
+  assert.deepEqual(f.environment.values, environment); assert.equal(f.effects.length, effects);
+});
+
+test("runtime observation distinguishes invalid identities, unavailable probes and omitted inspection", async t => {
+  for (const failure of ["bytes", "signature", "directory", "denied", "helper", "omitted"]) await t.test(failure, subtest => {
+    const f = fixture(subtest); installWebStopAdapter(f.options);
+    if (failure === "bytes") writeFileSync(f.manifest.node.path, "changed official runtime");
+    if (failure === "signature") f.dependencies.inspectSignatures = paths => paths.map(file => ({ path: file, ...signature, status: "NotSigned" }));
+    if (failure === "directory") { rmSync(f.manifest.runtimeModule); mkdirSync(f.manifest.runtimeModule); }
+    if (failure === "denied") f.dependencies.probeRuntimeFile = () => ({ status: "access-denied", code: "EACCES" });
+    if (failure === "helper") f.dependencies.inspectSignatures = () => { throw Object.assign(new Error("missing signature helper, not recorded runtime"), { code: "ENOENT" }); };
+    if (failure === "omitted") f.dependencies.inspectSignatures = () => { throw new Error("signature inspection must be omitted"); };
+    const status = webStopAdapterStatus({ ...f.options, ...(failure === "omitted" ? { inspectRuntime: false } : {}) });
+    assert.equal(status.installed, false); assert.equal(status.ownershipVerified, true); assert.deepEqual(status.conflicts, []);
+    assert.equal(status.runtimeStatus, ["bytes", "signature", "directory"].includes(failure) ? "invalid" : failure === "omitted" ? "not-checked" : "unavailable");
+    assert.equal(status.runtimeIssues.length > 0, failure !== "omitted");
+    assert.ok(status.runtimeIssues.length <= 5);
+    assert.equal(JSON.stringify(status.runtimeIssues).includes("signature helper"), false, "helper exception details must not enter diagnostics");
+  });
+});
+
+test("ownership conflicts skip external runtime inspection", async t => {
+  for (const failure of ["managed", "hook", "environment"]) await t.test(failure, subtest => {
+    const f = fixture(subtest), installed = installWebStopAdapter(f.options);
+    if (failure === "managed") writeFileSync(path.join(installed.managedDirectory, "web-stop-adapter.mjs"), "changed managed bytes");
+    if (failure === "hook") { const hooks = f.hooks(); hooks.hooks.Interrupt[0].hooks[0].trusted = true; writeFileSync(f.hooksPath, encode(hooks)); }
+    if (failure === "environment") f.environment.values.CODEX_NODE_REPL_PATH = "foreign selected REPL";
+    let probes = 0, inspections = 0;
+    f.dependencies.probeRuntimeFile = () => { probes++; return { status: "missing" }; };
+    f.dependencies.inspectSignatures = () => { inspections++; throw new Error("unexpected external inspection"); };
+    const status = webStopAdapterStatus(f.options);
+    assert.equal(status.ownershipVerified, false); assert.equal(status.installed, false); assert.equal(status.runtimeStatus, "not-checked");
+    assert.equal(status.conflicts.length, 1); assert.deepEqual(status.runtimeIssues, []); assert.equal(probes, 0); assert.equal(inspections, 0);
+    assert.throws(() => installWebStopAdapter(f.options));
+  });
 });
 
 test("a verified installed snapshot upgrades when the candidate adds a local dependency and retains its original rollback", t => {

@@ -509,6 +509,11 @@ service. It uses the existing CLI identity resolver and the installer's candidat
 validation. Missing or conflicting configured anchors require an explicit
 `--manifest`; cache-directory age does not establish runtime authority.
 Refresh requires enabled saved Web settings and an existing owned adapter receipt.
+Maintenance status separates structurally valid saved settings, retained adapter
+ownership and external runtime availability. It validates the current candidate
+once through the refresh planner rather than first checking the obsolete cohort.
+An absent old runtime does not become an ownership conflict; invalid signatures,
+changed protected artifacts and foreign launch selections remain separate failures.
 Its `--manifest` input cannot bootstrap the first installation or provide a
 standalone first-install validation mode; use the collection and installation
 stages above for initial setup.
@@ -522,6 +527,10 @@ including the gaps between native HTTP requests. Older drain replies do not
 establish this proof; deploy and reload the new Router before refreshing runtime
 selections. Recovery requires the same idle proof before restoring prior state;
 new or uncertain work defers compensation and retains the refreshed generation.
+The explicit `stop install-adapter` command routes an installed, locally owned
+replacement through this same coordinator, including its manifest validation and
+browser update. Unresolved ownership or prepared recovery is rejected before
+replacement; a first install keeps its existing strict setup prerequisites.
 
 ```powershell
 .\model-router.ps1 codex web stop adapter-rollback

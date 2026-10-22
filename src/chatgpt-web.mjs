@@ -2,7 +2,7 @@ import { lstatSync } from "node:fs";
 import path from "node:path";
 
 import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
-import { readJsonFile } from "./file-probe.mjs";
+import { probeRegularFile, readJsonFile } from "./file-probe.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR, PORTS } from "./paths.mjs";
 import { buildWebBridgeModels } from "./web-models.mjs";
@@ -120,11 +120,27 @@ export function webBridgeModels() {
   const settings = readWebBridgeSettings();
   return settings.enabled ? settings.models : [];
 }
-export function webBridgeStatus() {
-  const { enabled, models, browser, tunnel, mcpPort } = readWebBridgeSettings();
+function configurationStatus({ enabled, models, browser, tunnel, mcpPort }) {
   return { enabled, localToolsConfigured: enabled, models: models.map(({ slug, displayName, supported_reasoning_levels }) => ({ slug, displayName, efforts: supported_reasoning_levels })),
     ...(browser ? { browser, tunnel, ...(mcpPort === undefined ? {} : { mcpPort }) } : {}),
     browserReadiness: "Verify ChatGPT sign-in, the exact selected model and the selected MCP connector in the Codex in-app browser; configuration alone does not prove browser or tool readiness." };
+}
+export function webBridgeStatus() { return configurationStatus(readWebBridgeSettings()); }
+
+// Diagnostics retain valid saved identity after an app update removes its old
+// files. Execution, catalog publication and startup still use the strict reader.
+export function webBridgeConfigurationStatus() {
+  const settings = readPersistedWebBridgeSettings(), status = configurationStatus(settings);
+  if (!settings.browser) return { ...status, runtimeStatus: "unavailable", runtimeIssues: ["Web bridge runtime is not configured."] };
+  const runtimeIssues = [], states = [];
+  for (const [label, file] of [["Browser runtime module", settings.browser.runtimeModule], ["Tunnel client executable", settings.tunnel.executable]]) {
+    const observed = probeRegularFile(file);
+    if (observed.status === "present") continue;
+    const state = observed.status === "invalid" || observed.code === "ENOTDIR" ? "invalid" : observed.status === "missing" ? "stale" : "unavailable";
+    states.push(state);
+    runtimeIssues.push(`${label}: ${state === "stale" ? "configured file is missing" : state === "invalid" ? "configured path is not a regular file" : "configured file could not be inspected"}.`);
+  }
+  return { ...status, runtimeStatus: ["invalid", "unavailable", "stale"].find(state => states.includes(state)) ?? "current", runtimeIssues };
 }
 
 export async function configureInAppWebBridge(config) {

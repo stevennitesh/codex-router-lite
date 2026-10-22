@@ -157,7 +157,7 @@ Write-Output "FIXTURE_DOCTOR_CALLS=$global:doctorCalls"
 Write-Output "FIXTURE_WEB_CALLS=$global:webCalls"
 Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
 `);
-    for (const mode of ["scoped", "full", "online", "skip", "skip-missing-plugin", "wrong-service", "web-disabled", "web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter", "failed-tests", "failed-scoped"]) {
+    for (const mode of ["scoped", "full", "online", "skip", "skip-missing-plugin", "wrong-service", "web-disabled", "web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter", "web-refresh-required", "web-manifest-required", "failed-tests", "failed-scoped"]) {
       // Feed ordinary Doctor's actual produced JSON through the refresh aggregation.
       const doctor = f.runDoctor({ service: mode === "wrong-service" ? "foreign" : "codex-router", degraded: [] });
       assert.equal(doctor.status, 0, doctor.stderr);
@@ -167,6 +167,7 @@ Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
         adapterState: ["web-disabled", "web-invalid-config", "web-missing-adapter"].includes(mode) ? "absent" : "installed",
         adapterInstalled: !["web-disabled", "web-invalid-config", "web-missing-adapter", "web-stale-adapter", "web-disabled-stale-adapter"].includes(mode),
         adapterConflictCount: mode.endsWith("stale-adapter") ? 1 : 0,
+        runtimeUpdateStatus: mode === "web-refresh-required" ? "refresh-required" : mode === "web-manifest-required" ? "manifest-required" : mode === "web-disabled" ? "not-configured" : "current",
         detail: "not-safe-private-web-metadata",
       };
       const skip = mode.startsWith("skip"), result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, ...(skip ? ["-SkipTests"] : []), ...(mode === "full" ? ["-FullTests"] : []), ...(mode === "online" ? ["-Online"] : [])], {
@@ -195,7 +196,7 @@ Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
         assert.match(result.stdout, /state=installed; installed=true; conflicts=0/u);
       }
       if (skip) assert.match(result.stdout, /source verification was skipped/u);
-      const webWarning = ["web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter"].includes(mode);
+      const webWarning = ["web-invalid-config", "web-stale-adapter", "web-missing-adapter", "web-disabled-stale-adapter", "web-refresh-required", "web-manifest-required"].includes(mode);
       if (mode === "wrong-service" || mode === "skip-missing-plugin" || webWarning) assert.match(result.stdout, /warnings above still require investigation/iu);
       else if (!failed) assert.doesNotMatch(result.stdout, /warnings above still require investigation/iu);
       if (mode === "web-disabled") {
@@ -204,7 +205,10 @@ Write-Output "FIXTURE_SCOPED_CALLS=$global:scopedCalls"
         assert.doesNotMatch(result.stdout, /Web Stop adapter is missing/u);
       }
       if (mode === "web-invalid-config") assert.match(result.stdout, /Saved Web configuration is unavailable or invalid/u);
-      if (webWarning) assert.match(result.stdout, /Web Stop adapter is missing, stale or its ownership is unconfirmed/u);
+      if (mode === "web-refresh-required" || mode === "web-manifest-required") {
+        assert.match(result.stdout, mode === "web-refresh-required" ? /coordinated runtime refresh[\s\S]*refresh-runtime\s+--apply/u : /runtime anchors are missing or ambiguous[\s\S]*--manifest/u);
+        assert.doesNotMatch(result.stdout, /Web Stop adapter is missing|Saved Web configuration is unavailable/u);
+      } else if (webWarning) assert.match(result.stdout, /Web Stop adapter is missing, stale or its ownership is unconfirmed/u);
       if (mode === "failed-tests") assert.match(result.stdout, /npm exited with status 7/u);
       if (mode === "failed-scoped") assert.match(result.stdout, /node exited with status 8/u);
     }

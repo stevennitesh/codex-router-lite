@@ -12,7 +12,7 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 const signature = { status: "Valid", signerSubject: 'CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC"', signerThumbprint: "fixture-signer" };
 const idleDrain = () => ({ status: "drained", webRuntime: { known: true, activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 } });
 
-function fixture(t) {
+function fixture(t, { threadIds = null } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "router-web-refresh-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (file, contents) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, contents); };
@@ -27,7 +27,7 @@ function fixture(t) {
     "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n',
   })) write(path.join(sourceDir, name), contents);
   const runtime = name => {
-    const directory = path.join(root, name), manifest = { version: 1, threadIds: null };
+    const directory = path.join(root, name), manifest = { version: 1, threadIds };
     for (const [field, basename] of [["node", "node.exe"], ["officialCli", "codex.exe"], ["officialNodeRepl", "node_repl.exe"]]) {
       const file = path.join(directory, "bin", basename), contents = `signed ${name} ${basename}`;
       write(file, contents); manifest[field] = { path: file, sha256: hash(contents), authenticode: signature };
@@ -136,6 +136,24 @@ test("coordinated refresh preserves connector, capabilities, tunnel/key, baselin
   assert.notEqual(receipt.generation, JSON.parse(before.receipt).generation);
   assert.equal(f.environment.values.CODEX_CLI_PATH, null); assert.equal(f.environment.values.CODEX_NODE_REPL_PATH, receipt.entryPath);
   assert.deepEqual(receipt.previousEnvironment, { CODEX_CLI_PATH: null, CODEX_NODE_REPL_PATH: null });
+  assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart"]);
+});
+
+test("explicit adapter replacement promotes a trial through the coordinated transaction while ordinary refresh preserves scope", async t => {
+  const f = fixture(t, { threadIds: ["01a14b65-a7a8-7b41-bd33-7c19d3c6df82"] });
+  const before = f.snapshot(), manifest = { ...f.current, threadIds: null };
+  f.write(f.manifestPath, json(manifest));
+  await assert.rejects(refreshWebRuntime({ ...f.options, manifestPath: f.manifestPath }), /preserve the installed adapter thread scope/u);
+  assert.deepEqual(f.snapshot(), before);
+  const result = await refreshWebRuntime({ ...f.options, manifestPath: f.manifestPath, apply: true, replaceAdapter: true });
+  assert.equal(result.applied, true); assert.equal(result.routerReloaded, true);
+  assert.equal(result.threadScope, "ordinary Web conversations");
+  const receipt = JSON.parse(readFileSync(f.receiptPath, "utf8"));
+  assert.equal(receipt.threadIds, null);
+  assert.deepEqual(receipt.previousEnvironment, JSON.parse(before.receipt).previousEnvironment);
+  assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks);
+  assert.equal(readFileSync(f.keyPath, "utf8"), before.key);
+  assert.equal(JSON.parse(readFileSync(f.settingsPath, "utf8")).browser.runtimeModule, f.current.runtimeModule);
   assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart"]);
 });
 

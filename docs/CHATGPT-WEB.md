@@ -152,6 +152,9 @@ their runtime identities. It preserves your connector, tunnel, runtime key and
 model capabilities. If the configured runtime is missing or ambiguous, supply a
 reviewed manifest with `--manifest 'C:\absolute\path\adapter-manifest.json'`.
 Omit `--apply` for a read-only preview when needed; a separate preview is optional.
+`codex web status` uses that same planner and reports `refresh-required` when the
+current app runtime differs, even if the old files still exist. Missing old app
+files remain a stale runtime, not lost Web configuration or foreign ownership.
 
 Applying a required refresh waits for active Router work, installs the matching
 adapter and browser configuration, and reloads Router. It does not force an
@@ -161,6 +164,8 @@ If an older Router cannot supply that proof, deploy and reload the current Route
 before applying the runtime refresh. Fully quit and reopen Codex normally when the command reports that
 the adapter needs to reload. The existing trusted Interrupt hook is retained;
 verify tools, Stop and same-chat continuation after activation.
+Replacing an already owned adapter through `web stop install-adapter <manifest>`
+also uses this coordinated refresh; first installation remains the setup path.
 
 ## Actual model and effort
 

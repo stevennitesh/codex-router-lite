@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODEX_HOME, STATE_DIR } from "./paths.mjs";
 import { privateFileIsProtected, writePrivateFile } from "./file-security.mjs";
+import { probeRegularFile } from "./file-probe.mjs";
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
 import { withDirectoryLock } from "./directory-lock.mjs";
 import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapterThreadIds } from "./web-stop-contract.mjs";
@@ -19,6 +20,7 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const sourceRoot = path.dirname(fileURLToPath(import.meta.url));
+const integrityError = message => Object.assign(new Error(message), { code: "ERR_ADAPTER_INTEGRITY" });
 
 function absolute(value) {
   if (typeof value !== "string" || !path.isAbsolute(value) || /[\0\r\n"]/u.test(value)
@@ -31,8 +33,8 @@ function regular(file, { optional = false, directory = false } = {}) {
   for (let cursor = file; ; cursor = path.dirname(cursor)) {
     try {
       const stat = lstatSync(cursor);
-      if (stat.isSymbolicLink()) throw new Error("Symbolic-link installation paths are refused.");
-      if (cursor === file && (directory ? !stat.isDirectory() : !stat.isFile())) throw new Error("Unexpected installation path type.");
+      if (stat.isSymbolicLink()) throw integrityError("Symbolic-link installation paths are refused.");
+      if (cursor === file && (directory ? !stat.isDirectory() : !stat.isFile())) throw integrityError("Unexpected installation path type.");
     } catch (error) { if (error.code !== "ENOENT" || cursor === file && !optional) throw error; }
     if (path.dirname(cursor) === cursor) return;
   }
@@ -47,7 +49,7 @@ function bytes(file, expected) {
   regular(file);
   const before = lstatSync(file), value = readFileSync(file), after = lstatSync(file);
   if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs
-      || expected !== undefined && hash(value) !== expected.toLowerCase()) throw new Error("Adapter file identity mismatch.");
+      || expected !== undefined && hash(value) !== expected.toLowerCase()) throw integrityError("Adapter file identity mismatch.");
   return value;
 }
 
@@ -84,6 +86,7 @@ function context(options = {}) {
     environment: dependencies.environment ?? { readPair: () => invokeHelper({ action: "readPair" }).values,
       compareExchangePair: (expected, values) => invokeHelper({ action: "compareExchangePair", expected, values }) },
     inspectSignatures: dependencies.inspectSignatures ?? (paths => invokeHelper({ action: "signatures", paths })),
+    probeRuntimeFile: dependencies.probeRuntimeFile ?? probeRegularFile,
     compileEntry: dependencies.compileEntry ?? compileEntry,
     write: dependencies.writePrivate ?? writePrivateFile, isPrivate: dependencies.isPrivate ?? privateFileIsProtected };
 }
@@ -123,9 +126,10 @@ function verifySignatures(ctx, identities) {
   if (!Array.isArray(signatures) || signatures.length !== identities.length) throw new Error("Incomplete official signature inspection.");
   for (const identity of identities) {
     const matches = signatures.filter(value => value.path === identity.path);
-    if (matches.length !== 1 || matches[0].status !== "Valid"
+    if (matches.length !== 1) throw new Error("Incomplete official signature inspection.");
+    if (matches[0].status !== "Valid"
         || matches[0].signerSubject !== identity.authenticode.signerSubject
-        || matches[0].signerThumbprint !== identity.authenticode.signerThumbprint) throw new Error("Official runtime signature mismatch.");
+        || matches[0].signerThumbprint !== identity.authenticode.signerThumbprint) throw integrityError("Official runtime signature mismatch.");
     bytes(identity.path, identity.sha256);
   }
 }
@@ -214,6 +218,44 @@ function verifyManaged(ctx, receipt, { external = true } = {}) {
     bytes(plan.runtimeModule, plan.runtimeHash); bytes(plan.sdkPackageJson, plan.sdkPackageHash);
   }
   return manifest;
+}
+
+function observeExternalRuntime(ctx, plan) {
+  const issues = [], states = [], signed = [];
+  const report = (label, state, detail) => { states.push(state); issues.push(`${label}: ${detail}.`); };
+  const fileState = observed => observed.status === "invalid" || observed.code === "ENOTDIR" ? "invalid" : observed.status === "missing" ? "stale" : "unavailable";
+  const files = [
+    ...["node", "officialCli", "officialNodeRepl"].map(name => ({ label: name, ...plan[name], signed: true })),
+    { label: "Browser runtime module", path: plan.runtimeModule, sha256: plan.runtimeHash },
+    { label: "MCP SDK package", path: plan.sdkPackageJson, sha256: plan.sdkPackageHash },
+  ];
+  for (const file of files) {
+    const observed = ctx.probeRuntimeFile(file.path);
+    if (observed.status !== "present") {
+      const state = fileState(observed);
+      report(file.label, state, state === "stale" ? "recorded file is missing" : state === "invalid" ? "recorded path is not a regular file" : "recorded file could not be inspected");
+      continue;
+    }
+    try {
+      bytes(file.path, file.sha256);
+      if (file.signed) signed.push(file);
+    } catch (error) {
+      // An ENOENT from a signature helper can describe its own executable. Only
+      // probing the exact recorded runtime path establishes a stale cohort.
+      const state = error.code === "ERR_ADAPTER_INTEGRITY" ? "invalid" : fileState(ctx.probeRuntimeFile(file.path));
+      report(file.label, state, state === "invalid" ? "recorded file identity is invalid" : state === "stale" ? "recorded file is missing" : "recorded file could not be verified");
+    }
+  }
+  if (signed.length) try { verifySignatures(ctx, signed); }
+  catch (error) {
+    if (error.code === "ERR_ADAPTER_INTEGRITY") report("Official runtime signatures", "invalid", "recorded signature or file identity is invalid");
+    else {
+      const missing = signed.filter(file => fileState(ctx.probeRuntimeFile(file.path)) === "stale");
+      if (missing.length) for (const file of missing) report(file.label, "stale", "recorded file is missing");
+      else report("Official runtime signatures", "unavailable", "verification could not be completed");
+    }
+  }
+  return { runtimeStatus: ["invalid", "unavailable", "stale"].find(state => states.includes(state)) ?? "current", runtimeIssues: issues };
 }
 
 function stageInputs(ctx, plan) {
@@ -373,7 +415,7 @@ function inspectRefresh(ctx, options) {
   }
   const candidate = inspectManifest(ctx, manifest);
   if (path.dirname(candidate.node.path) !== path.dirname(candidate.officialNodeRepl.path)) throw new Error("Web runtime refresh requires Node and Node REPL from the same official runtime directory.");
-  if (!same(candidate.threadIds, receipt.threadIds ?? null)) throw new Error("Runtime refresh must preserve the installed adapter thread scope.");
+  if (options.allowThreadScopeChange !== true && !same(candidate.threadIds, receipt.threadIds ?? null)) throw new Error("Runtime refresh must preserve the installed adapter thread scope.");
   return { manifest, candidate, candidateGeneration: stageInputs(ctx, candidate).generation, receipt, environment, hooksText };
 }
 
@@ -451,10 +493,13 @@ export function webStopAdapterStatus(options = {}) {
   // A local receipt owns files and launch selections. It does not establish
   // which generation an existing app loaded or the app's native hook trust.
   const runtime = { appLoaded: "unknown", hookTrusted: "unknown", restartRequired: "unknown", trustRequired: "unknown" };
-  if (!receipt) return { installed: false, state: "absent", receiptPath: ctx.receiptPath, hookDefinitionOwned: false, conflicts: [], ...runtime };
+  const unchecked = { runtimeStatus: "not-checked", runtimeIssues: [] };
+  if (!receipt) return { installed: false, state: "absent", receiptPath: ctx.receiptPath, hookDefinitionOwned: false,
+    ownershipVerified: false, conflicts: [], ...unchecked, ...runtime };
   const conflicts = [];
   const conflictMessage = error => error instanceof SyntaxError ? "Adapter JSON is invalid." : error.message;
-  try { verifyManaged(ctx, receipt, { external: receipt.state !== "removed" }); } catch (error) { conflicts.push(conflictMessage(error)); }
+  let manifest;
+  try { manifest = verifyManaged(ctx, receipt, { external: false }); } catch (error) { conflicts.push(conflictMessage(error)); }
   let hookDefinitionOwned = false;
   if (receipt.state !== "removed") {
     let document;
@@ -465,8 +510,11 @@ export function webStopAdapterStatus(options = {}) {
     } catch (error) { hookDefinitionOwned = "unknown"; conflicts.push(conflictMessage(error)); }
     if (document) try { ensureInstallOwnership(receipt, pair(ctx.environment.readPair()), document); } catch (error) { conflicts.push(error.message); }
   }
-  return { ...adapterPaths(ctx, receipt), installed: receipt.state === "installed" && conflicts.length === 0,
-    recoveryRequired: receipt.state === "prepared", hookDefinitionOwned, conflicts, ...runtime };
+  const ownershipVerified = conflicts.length === 0;
+  const external = ownershipVerified && receipt.state !== "removed" && options.inspectRuntime !== false
+    ? observeExternalRuntime(ctx, manifest.plan) : unchecked;
+  return { ...adapterPaths(ctx, receipt), installed: receipt.state === "installed" && ownershipVerified && external.runtimeStatus === "current",
+    recoveryRequired: receipt.state === "prepared", ownershipVerified, hookDefinitionOwned, conflicts, ...external, ...runtime };
 }
 
 export function rollbackWebStopAdapter(options = {}) {

@@ -45,6 +45,7 @@ function success(result) {
 
 test("first use is disabled without creating saved settings", async () => {
   assert.deepEqual(web.readWebBridgeSettings(), { version: 1, enabled: false, models: [] });
+  assert.equal(web.webBridgeConfigurationStatus().runtimeStatus, "unavailable");
   assert.equal((await web.disconnectWebBridge()).enabled, false);
   assert.equal(await web.startWebBridge(), undefined);
   assert.equal(existsSync(settingsPath), false);
@@ -59,6 +60,7 @@ test("in-app setup stores only the explicit safe configuration and advertises na
     tunnel: { id: config.tunnelId, executable: tunnelClientPath },
   });
   assert.equal(status.localToolsConfigured, true);
+  assert.deepEqual(web.webBridgeConfigurationStatus(), { ...status, runtimeStatus: "current", runtimeIssues: [] });
   assert.equal(web.webBridgeModels().length, 6);
   await web.disconnectWebBridge();
   assert.equal(savedSettings().enabled, false);
@@ -109,6 +111,7 @@ test("persisted settings project supported fields and require valid browser and 
       saveSettings({ ...value, enabled });
       const before = readFileSync(settingsPath, "utf8");
       assert.throws(() => web.readWebBridgeSettings(), Error);
+      assert.throws(() => web.webBridgeConfigurationStatus(), Error);
       await assert.rejects(web.disconnectWebBridge(), Error);
       assert.equal(readFileSync(settingsPath, "utf8"), before);
     }
@@ -128,6 +131,13 @@ test("disconnect CLI disables stale runtime assets while enabled use remains str
       const valid = savedSettings(), contents = readFileSync(asset);
       rmSync(asset);
       try {
+        const before = readFileSync(settingsPath, "utf8"), observed = web.webBridgeConfigurationStatus();
+        assert.equal(observed.enabled, true); assert.equal(observed.localToolsConfigured, true);
+        assert.equal(observed.browser.runtimeModule, runtimeModule); assert.equal(observed.tunnel.id, config.tunnelId);
+        assert.equal(observed.models.length, 6); assert.equal(observed.runtimeStatus, "stale");
+        assert.equal(observed.runtimeIssues.length, 1);
+        assert.equal(readFileSync(settingsPath, "utf8"), before, "observation must preserve enabled saved configuration");
+        assert.throws(() => web.webBridgeStatus(), /missing or is not a regular file/u);
         assert.throws(() => web.readWebBridgeSettings(), /missing or is not a regular file/u);
         assert.throws(() => web.webBridgeModels(), /missing or is not a regular file/u);
         await assert.rejects(web.startWebBridge(), /missing or is not a regular file/u);
@@ -148,6 +158,32 @@ test("disconnect CLI disables stale runtime assets while enabled use remains str
   } finally { rmSync(web.WEB_BRIDGE_TUNNEL_KEY_PATH, { force: true }); }
 });
 
+test("configuration observation distinguishes inaccessible and nonregular runtime paths without changing saved identity", async () => {
+  await web.configureInAppWebBridge(config);
+  const before = readFileSync(settingsPath, "utf8"), valid = savedSettings();
+  const directory = path.join(root, "observed-directory.mjs"), preload = path.join(root, "deny-runtime-probe.mjs");
+  mkdirSync(directory);
+  try {
+    saveSettings({ ...valid, browser: { ...valid.browser, runtimeModule: directory } });
+    const invalid = web.webBridgeConfigurationStatus();
+    assert.equal(invalid.enabled, true); assert.equal(invalid.runtimeStatus, "invalid"); assert.equal(invalid.runtimeIssues.length, 1);
+    assert.throws(() => web.readWebBridgeSettings(), /not a regular file/u);
+    writeFileSync(settingsPath, before, "utf8");
+    writeFileSync(preload, `import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
+const lstat=fs.lstatSync; fs.lstatSync=(file,...args)=>file===${JSON.stringify(runtimeModule)}
+  ? (()=>{throw Object.assign(new Error('private-probe-canary'),{code:'EACCES'});})() : lstat(file,...args);
+syncBuiltinESMExports();\n`, "utf8");
+    const observed = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, "--input-type=module", "--eval",
+      `const web=await import(${JSON.stringify(pathToFileURL(path.resolve(import.meta.dirname, "../src/chatgpt-web.mjs")).href)}); console.log(JSON.stringify(web.webBridgeConfigurationStatus()));`],
+    { env: process.env, encoding: "utf8", windowsHide: true, timeout: 15_000 });
+    const unavailable = success(observed);
+    assert.equal(unavailable.enabled, true); assert.equal(unavailable.runtimeStatus, "unavailable");
+    assert.equal(unavailable.runtimeIssues.length, 1); assert.equal(unavailable.browser.runtimeModule, runtimeModule);
+    assert.equal(observed.stdout.includes("private-probe-canary"), false);
+    assert.equal(readFileSync(settingsPath, "utf8"), before);
+  } finally { writeFileSync(settingsPath, before, "utf8"); }
+});
+
 test("invalid or unreadable saved settings fail explicitly without being disabled", async () => {
   await web.configureInAppWebBridge(config);
   const before = readFileSync(settingsPath, "utf8");
@@ -155,11 +191,13 @@ test("invalid or unreadable saved settings fail explicitly without being disable
     for (const text of ["{malformed", '{"version":2,"enabled":false}', '{"version":1,"enabled":"false"}']) {
       writeFileSync(settingsPath, text, "utf8");
       assert.throws(() => web.readWebBridgeSettings(), /existing invalid state/u);
+      assert.throws(() => web.webBridgeConfigurationStatus(), /existing invalid state/u);
       await assert.rejects(web.disconnectWebBridge(), /existing invalid state/u);
       assert.equal(readFileSync(settingsPath, "utf8"), text);
     }
     rmSync(settingsPath); mkdirSync(settingsPath);
     assert.throws(() => web.readWebBridgeSettings(), /existing invalid state/u);
+    assert.throws(() => web.webBridgeConfigurationStatus(), /existing invalid state/u);
     await assert.rejects(web.disconnectWebBridge(), /existing invalid state/u);
     rmdirSync(settingsPath);
     writeFileSync(settingsPath, before, "utf8");

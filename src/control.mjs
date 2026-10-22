@@ -117,14 +117,28 @@ async function main() {
     } else if (action === "stop") {
       const operation = value ?? "adapter-status";
       if (["install-adapter", "adapter-status", "adapter-rollback"].includes(operation)) {
+        if (!(operation === "adapter-status" && args.length <= 3
+            || operation === "adapter-rollback" && args.length === 3
+            || operation === "install-adapter" && extra && !extra.startsWith("--") && args.length === 4)) {
+          throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
+        }
         const { installWebStopAdapter, webStopAdapterStatus, rollbackWebStopAdapter } = await import("./web-stop-adapter-install.mjs");
-        if (operation === "adapter-status" && args.length <= 3) print(await webStopAdapterStatus());
-        else if (operation === "adapter-rollback" && args.length === 3) print(await rollbackWebStopAdapter());
-        else if (operation === "install-adapter" && extra && args.length === 4) {
-          const settings = readWebBridgeSettings();
-          if (!settings.enabled) throw new Error("Persistent Web Stop requires the configured in-app browser integration.");
-          print(await installWebStopAdapter({ manifestPath: path.resolve(extra) }));
-        } else throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
+        if (operation === "adapter-status") print(await webStopAdapterStatus());
+        else if (operation === "adapter-rollback") print(await rollbackWebStopAdapter());
+        else {
+          const status = await webStopAdapterStatus({ inspectRuntime: false }), manifestPath = path.resolve(extra);
+          const ownershipClear = Array.isArray(status.conflicts) && status.conflicts.length === 0 && status.recoveryRequired !== true;
+          if (status.state === "installed" && status.ownershipVerified === true && ownershipClear) {
+            const { refreshWebRuntime } = await import("./web-runtime-refresh.mjs");
+            print(await refreshWebRuntime({ apply: true, manifestPath, replaceAdapter: true }));
+          } else if (["absent", "removed"].includes(status.state) && ownershipClear) {
+            const settings = readWebBridgeSettings();
+            if (!settings.enabled) throw new Error("Persistent Web Stop requires the configured in-app browser integration.");
+            print(await installWebStopAdapter({ manifestPath }));
+          } else {
+            throw new Error("Web Stop adapter ownership or recovery is unresolved. Run web stop adapter-status and resolve the reported conflict or complete adapter recovery before installing.");
+          }
+        }
         return;
       }
       throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");

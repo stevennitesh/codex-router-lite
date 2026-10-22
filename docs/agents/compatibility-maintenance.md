@@ -26,6 +26,9 @@ without an adapter needs no Web setup. `-AnalyzeUpstream` adds detail only for u
 drift: relevant original-Router changes and a disposable Switchyard checkout to
 test the ordered patches. It does not merge, rebuild, deploy, advance the review
 baseline, or consume model quota. Omit that flag for diagnostics alone.
+Its Web status reuses the coordinated runtime planner: a valid stale installation
+reports `refresh-required` and the single apply command, while unconfirmed
+anchors and actual ownership conflicts retain separate recovery instructions.
 
 Choose source-test scope using the [common verification rules](architecture.md#verification).
 Use `-FullTests` when shared changes or an unresolved regression need the full
