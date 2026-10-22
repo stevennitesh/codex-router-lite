@@ -203,7 +203,87 @@
       "limits": "Independent source review is separate from executed tests and live verification."
     },
     "localTestReview": "Added and modified cases protect ongoing recovery ownership, exact replay, persistence custody, stamp rollback and process-tree nonoverlap. No one-off edit-spelling tests retained.",
-    "live": "Pending guarded activation and matching adapter restart; prior working Stop rollback retained."
+    "live": {
+      "sourceCommit": "3198d30c5b0ff01875ed983460d6410fdf1daad5",
+      "deploymentAcceptedAt": "2026-10-21T23:48:38.1577015Z",
+      "deploymentChecks": {
+        "switchyardHealth": true,
+        "taskIdentity": true,
+        "routerFullHealth": true,
+        "cleanCandidate": true,
+        "installManifest": true,
+        "doctor": true,
+        "protectedEndpoints": true,
+        "processIdentity": true,
+        "provenance": true,
+        "installedHashes": true,
+        "installedCatalog": true
+      },
+      "forcedInterruption": false,
+      "adapterGeneration": "03e1228e861881556b95353634b04a6c029fbb86310137f958d83a6d7eb2628c",
+      "matchingBundleObservedInActualProcesses": true,
+      "hookDefinitionUnchanged": true,
+      "protectedWorkingRollbackRetained": true,
+      "nativeSignatures": {
+        "officialNodeRepl": "Valid",
+        "officialCli": "Valid"
+      },
+      "method": "Normal Codex restart, existing saved Web conversation, official native tool execution through Router adapter and trusted Interrupt hook. No launcher, native binary patch or other model controlling the browser.",
+      "tools": {
+        "turnId": "01a1612e-d627-7dd1-b594-7a5fc12441cc",
+        "completed": true,
+        "pairedNativeActions": 3,
+        "defaultSandbox": true,
+        "exactReadPatchReadback": true,
+        "fixtureExactlyMatches": true,
+        "sameSavedUrlTabAndBinding": true,
+        "finalRetained": true,
+        "uncertainSend": false,
+        "unresolvedCoding": 0
+      },
+      "stop": {
+        "turnId": "01a16131-5706-7f53-b693-9d0a85c08665",
+        "nativeStatus": "aborted",
+        "oneConfirmedSend": true,
+        "dispatchReceiptCorrelated": true,
+        "dispatchCount": 1,
+        "receiptCount": 1,
+        "confirmed": true,
+        "childTerminalObserved": true,
+        "outcome": "cancelled",
+        "stageComplete": true,
+        "clickAttempted": true,
+        "clickError": false,
+        "stopClicked": true,
+        "stopHidden": true,
+        "generationInactive": true,
+        "retained": true,
+        "inactivityEvidence": "composer_restored",
+        "elapsedMs": 1802,
+        "nativeElapsedMs": 1849,
+        "callbackElapsedMs": 1850,
+        "uncertainSend": false,
+        "unresolvedCoding": 0
+      },
+      "continuation": {
+        "turnId": "01a16134-e587-7bd2-bb47-8edd6a1f9162",
+        "completed": true,
+        "originalMarkerAbsentFromEntireConfirmedSend": true,
+        "originalMarkerRecalled": true,
+        "sameSavedUrlTabAndBinding": true,
+        "browserOperations": [
+          "continue",
+          "send",
+          "observe",
+          "retain"
+        ],
+        "finalRetained": true,
+        "cleanCurrentLedger": true,
+        "uncertainSend": false,
+        "unresolvedCoding": 0
+      },
+      "limits": "One live sequence on the current Codex and ChatGPT UI; no guarantee against future upstream UI changes. Native sandbox policy was unchanged; this candidate rechecked read/edit/readback under default permissions rather than repeating the separate earlier outside-workspace probe."
+    }
   },
   "sourceIdentities": {
     "src/web-browser.mjs": "2156b4fa55750966e324efbf7ecb9bd73a4b8aa85a9f211f8b9fc1b6972586f0",
