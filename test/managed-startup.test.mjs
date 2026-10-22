@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import { openPort } from "./port-pool.mjs";
 import { serviceProcessOwns } from "../src/service-process.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+const bundledPython = path.join(root, ".venv", "Scripts", "python.exe");
 
 function json(response, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
@@ -61,10 +62,12 @@ async function waitForHealth(url, child) {
 
 for (const foreground of [false, true]) {
 for (const selectedProviders of [[], ["openrouter"]]) {
-for (const gatewayFails of [false, true]) {
-  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gatewayFails ? "optional spawn failure" : "healthy gateway"})`,
+for (const gateway of ["healthy gateway", "optional spawn failure", ...(!foreground && !selectedProviders.length ? ["bundled Python exit"] : [])]) {
+  const gatewayFails = gateway !== "healthy gateway";
+  const bundledFailure = gateway === "bundled Python exit";
+  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gateway})`,
     {
-      skip: process.platform !== "win32",
+      skip: process.platform !== "win32" || (bundledFailure && !existsSync(bundledPython)),
       timeout: 30_000,
     }, async t => {
       const state = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-"));
@@ -90,6 +93,18 @@ for (const gatewayFails of [false, true]) {
         gatewayCommand,
         `@echo off\r\n"${process.execPath}" "${path.join(root, "test", "managed-startup-gateway-fixture.mjs")}" %*\r\n`,
       );
+      const source = bundledFailure ? path.join(state, "source") : root;
+      if (bundledFailure) {
+        mkdirSync(path.join(source, "src"), { recursive: true });
+        for (const entrypoint of ["start.mjs", "router.mjs", "api-forwarder.mjs", "catalog.mjs"]) {
+          writeFileSync(path.join(source, "src", entrypoint), `import ${JSON.stringify(pathToFileURL(path.join(root, "src", entrypoint)).href)};`);
+        }
+        mkdirSync(path.join(source, ".venv", "Scripts"), { recursive: true });
+        copyFileSync(bundledPython, path.join(source, ".venv", "Scripts", "python.exe"));
+        // The actual Windows venv launcher exits when its recorded base Python
+        // is absent. No installed interpreter or environment is modified.
+        writeFileSync(path.join(source, ".venv", "pyvenv.cfg"), `home = ${path.join(state, "missing-base-python")}\n`);
+      }
       writeFileSync(path.join(state, "internal-secret"), "internal-startup-capability-long-enough\n");
       writeFileSync(path.join(state, "caller-secret"), "caller-startup-capability-long-enough\n");
       writeFileSync(
@@ -102,7 +117,7 @@ for (const gatewayFails of [false, true]) {
       const shell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
       const child = spawn(foreground ? shell : process.execPath, foreground
         ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "model-router.ps1"), "codex", "start", "--foreground"]
-        : [path.join(root, "src", "start.mjs")], {
+        : [path.join(source, "src", "start.mjs")], {
         cwd: root,
         env: {
           ...process.env,
@@ -110,7 +125,10 @@ for (const gatewayFails of [false, true]) {
           OPENROUTER_API_KEY: "",
           MODEL_ROUTER_STATE_DIR: state,
           CODEX_ROUTER_STATE_DIR: state,
-          MODEL_ROUTER_LITELLM_BIN: gatewayCommand,
+          CODEX_ROUTER_SOURCE_ROOT: source,
+          MODEL_ROUTER_LITELLM_BIN: bundledFailure ? "" : gatewayCommand,
+          CODEX_ROUTER_LITELLM_BIN: "",
+          ...(bundledFailure ? { CODEX_ROUTER_GATEWAY_RESTARTS: "0" } : {}),
           CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}/backend-api/codex`,
           MODEL_ROUTER_GATEWAY_PORT: String(gatewayPort),
           MODEL_ROUTER_API_PORT: String(apiPort),
@@ -133,12 +151,14 @@ for (const gatewayFails of [false, true]) {
       const healthUrl = `http://127.0.0.1:${routerPort}/${gatewayFails ? "live" : "health"}`;
       assert.equal((await waitForHealth(healthUrl, child)).ok, true);
       if (gatewayFails) {
+        const expectedFailure = bundledFailure ? /LiteLLM gateway exited before becoming healthy/u : /spawn .*ENOENT/u;
         const deadline = Date.now() + 5_000;
-        while (!child.errors().includes("spawn ") && Date.now() < deadline) {
+        while (!expectedFailure.test(child.errors()) && Date.now() < deadline) {
           assert.equal(child.exitCode, null, child.errors());
           await new Promise(resolve => setTimeout(resolve, 25));
         }
-        assert.match(child.errors(), /spawn .*ENOENT/u);
+        assert.match(child.errors(), expectedFailure);
+        if (bundledFailure) assert.match(child.errors(), /No Python at/u);
         assert.doesNotMatch(child.errors(), /Unhandled 'error' event/u);
         assert.equal(child.exitCode, null);
       }
@@ -147,7 +167,7 @@ for (const gatewayFails of [false, true]) {
       } else {
         const record = JSON.parse(readFileSync(recordPath, "utf8"));
         assert.equal(record.pid, child.pid);
-        assert.equal(serviceProcessOwns(record, { sourceRoot: root, stateDir: state }), true);
+        assert.equal(serviceProcessOwns(record, { sourceRoot: source, stateDir: state }), true);
       }
       const fullHealth = await fetch(
         `http://127.0.0.1:${routerPort}/_codex-router/caller-startup-capability-long-enough/v1/health`,

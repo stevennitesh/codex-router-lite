@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -14,6 +14,9 @@ process.env.MODEL_ROUTER_STATE_DIR = root;
 process.env.MODEL_ROUTER_MODEL_PICKER_STATE = path.join(root, "model-picker.json");
 process.env.MODEL_ROUTER_MULTI_AGENT_STATE = path.join(root, "multi-agent-settings.json");
 const web = await import("../src/chatgpt-web.mjs");
+const { withCatalogPublicationLock } = await import("../src/catalog-publication-lock.mjs");
+assert.equal(web.WEB_BRIDGE_TUNNEL_KEY_PATH, path.join(root, "chatgpt-web-runtime-key.secret"),
+  "Web configuration fixtures must own their state paths before any operation.");
 const settingsPath = path.join(root, "chatgpt-web.json");
 const runtimeModule = path.join(root, "browser-runtime.mjs");
 const tunnelClientPath = path.join(root, "tunnel-client.exe");
@@ -39,6 +42,13 @@ function success(result) {
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
+
+test("first use is disabled without creating saved settings", async () => {
+  assert.deepEqual(web.readWebBridgeSettings(), { version: 1, enabled: false, models: [] });
+  assert.equal((await web.disconnectWebBridge()).enabled, false);
+  assert.equal(await web.startWebBridge(), undefined);
+  assert.equal(existsSync(settingsPath), false);
+});
 
 test("in-app setup stores only the explicit safe configuration and advertises native browser verification", async () => {
   const status = await web.configureInAppWebBridge(config);
@@ -87,14 +97,144 @@ test("persisted settings project supported fields and require valid browser and 
   assert.deepEqual(savedSettings(), { ...valid, enabled: false }, "canonical writes drop retired fields");
   for (const value of [{ ...valid, browser: { ...valid.browser, token: "private-canary" } },
     { ...valid, tunnel: { ...valid.tunnel, key: "private-canary" } }, { ...valid, browser: undefined },
-    { ...valid, capabilities: undefined }, { ...valid, tunnel: { ...valid.tunnel, executable: "relative.exe" } }]) {
-    saveSettings(value);
-    assert.throws(() => web.readWebBridgeSettings(), Error);
+    { ...valid, capabilities: undefined }, { ...valid, capabilities: { ...capabilities, proAvailable: "yes" } },
+    { ...valid, capabilities: { ...capabilities, token: "private-canary" } },
+    { ...valid, browser: { ...valid.browser, runtimeModule: "relative.mjs" } },
+    { ...valid, browser: { ...valid.browser, runtimeModule: path.join(root, "invalid.txt") } },
+    { ...valid, browser: { ...valid.browser, pluginName: "bad\nlabel" } },
+    { ...valid, browser: { ...valid.browser, pluginAppId: "invalid" } },
+    { ...valid, tunnel: { ...valid.tunnel, id: "invalid" } },
+    { ...valid, tunnel: { ...valid.tunnel, executable: "relative.exe" } }, { ...valid, mcpPort: 4200 }]) {
+    for (const enabled of [true, false]) {
+      saveSettings({ ...value, enabled });
+      const before = readFileSync(settingsPath, "utf8");
+      assert.throws(() => web.readWebBridgeSettings(), Error);
+      await assert.rejects(web.disconnectWebBridge(), Error);
+      assert.equal(readFileSync(settingsPath, "utf8"), before);
+    }
   }
   saveSettings({ version: 1, enabled: true, ...extras, capabilities });
   assert.throws(() => web.readWebBridgeSettings(), /reconfigure with codex web browser/u);
   saveSettings(valid);
   assert.equal(web.readWebBridgeSettings().enabled, true);
+});
+
+test("disconnect CLI disables stale runtime assets while enabled use remains strict", async () => {
+  const key = "synthetic-retained-runtime-key\n";
+  writeFileSync(web.WEB_BRIDGE_TUNNEL_KEY_PATH, key, "utf8");
+  try {
+    for (const asset of [runtimeModule, tunnelClientPath]) {
+      await web.configureInAppWebBridge({ ...config, mcpPort: 17843 });
+      const valid = savedSettings(), contents = readFileSync(asset);
+      rmSync(asset);
+      try {
+        assert.throws(() => web.readWebBridgeSettings(), /missing or is not a regular file/u);
+        assert.throws(() => web.webBridgeModels(), /missing or is not a regular file/u);
+        await assert.rejects(web.startWebBridge(), /missing or is not a regular file/u);
+        await assert.rejects(web.requestWebBridge({ model: "chatgpt-web/gpt-6-sol", input: [] }), /missing or is not a regular file/u);
+        await assert.rejects(web.configureInAppWebBridge(config), /missing or is not a regular file/u);
+        assert.throws(() => web.webBridgeSettingsWithRuntime(valid, runtimeModule), /missing or is not a regular file/u);
+        saveSettings({ ...valid, secret: "retired-private-canary" });
+        const disconnected = success(control(["web", "disconnect"]));
+        assert.equal(disconnected.enabled, false);
+        assert.deepEqual(savedSettings(), { ...valid, enabled: false });
+        assert.equal(readFileSync(web.WEB_BRIDGE_TUNNEL_KEY_PATH, "utf8"), key);
+        assert.equal(web.webBridgeStatus().localToolsConfigured, false);
+        assert.deepEqual(web.webBridgeModels(), []);
+        assert.equal(await web.startWebBridge(), undefined);
+        await assert.rejects(web.requestWebBridge({ model: "chatgpt-web/gpt-6-sol", input: [] }), error => error.status === 409);
+      } finally { writeFileSync(asset, contents); }
+    }
+  } finally { rmSync(web.WEB_BRIDGE_TUNNEL_KEY_PATH, { force: true }); }
+});
+
+test("invalid or unreadable saved settings fail explicitly without being disabled", async () => {
+  await web.configureInAppWebBridge(config);
+  const before = readFileSync(settingsPath, "utf8");
+  try {
+    for (const text of ["{malformed", '{"version":2,"enabled":false}', '{"version":1,"enabled":"false"}']) {
+      writeFileSync(settingsPath, text, "utf8");
+      assert.throws(() => web.readWebBridgeSettings(), /existing invalid state/u);
+      await assert.rejects(web.disconnectWebBridge(), /existing invalid state/u);
+      assert.equal(readFileSync(settingsPath, "utf8"), text);
+    }
+    rmSync(settingsPath); mkdirSync(settingsPath);
+    assert.throws(() => web.readWebBridgeSettings(), /existing invalid state/u);
+    await assert.rejects(web.disconnectWebBridge(), /existing invalid state/u);
+    rmdirSync(settingsPath);
+    writeFileSync(settingsPath, before, "utf8");
+    const preload = path.join(root, "deny-settings-read.mjs");
+    writeFileSync(preload, `import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
+const read=fs.readFileSync; fs.readFileSync=(file,...args)=>file===${JSON.stringify(settingsPath)}
+  ? (()=>{throw Object.assign(new Error('synthetic denied read'),{code:'EACCES'});})() : read(file,...args);
+syncBuiltinESMExports();\n`, "utf8");
+    const denied = control(["web", "disconnect"], { preload });
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /existing invalid state/u);
+    assert.equal(readFileSync(settingsPath, "utf8"), before);
+  } finally { writeFileSync(settingsPath, before, "utf8"); }
+});
+
+test("runtime configuration rejects directory and symbolic-link assets", async t => {
+  await web.configureInAppWebBridge(config);
+  const before = readFileSync(settingsPath, "utf8");
+  const directory = path.join(root, "directory.mjs"); mkdirSync(directory);
+  await assert.rejects(web.configureInAppWebBridge({ ...config, runtimeModule: directory }), /not a regular file/u);
+  for (const [target, name, field] of [[runtimeModule, "linked.mjs", "runtimeModule"], [tunnelClientPath, "linked.exe", "tunnelClientPath"]]) {
+    await t.test(field, async subtest => {
+      const link = path.join(root, name);
+      try { symlinkSync(target, link, "file"); }
+      catch (error) {
+        if (error.code === "EPERM") { subtest.skip("Windows file symlink privilege is unavailable."); return; }
+        throw error;
+      }
+      await assert.rejects(web.configureInAppWebBridge({ ...config, [field]: link }), /not a regular file/u);
+      const valid = savedSettings();
+      try {
+        saveSettings({ ...valid, ...(field === "runtimeModule" ? { browser: { ...valid.browser, runtimeModule: link } }
+          : { tunnel: { ...valid.tunnel, executable: link } }) });
+        assert.throws(() => web.webBridgeModels(), /not a regular file/u);
+      } finally { saveSettings(valid); }
+    });
+  }
+  assert.equal(readFileSync(settingsPath, "utf8"), before);
+});
+
+test("configure, disconnect and catalog eligibility wait for the cooperating publication lock", async () => {
+  await web.configureInAppWebBridge(config);
+  const before = readFileSync(settingsPath, "utf8");
+  let release, entered;
+  const active = new Promise(resolve => { entered = resolve; });
+  const held = withCatalogPublicationLock(async () => { entered(); await new Promise(resolve => { release = resolve; }); });
+  await active;
+  let watcher, timer;
+  const prepared = new Promise((resolve, reject) => {
+    const observe = () => {
+      if (readdirSync(root).filter(name => name.startsWith("catalog-publication.lock.prepare-")).length === 3) resolve();
+    };
+    watcher = watch(root, observe);
+    timer = setTimeout(() => reject(new Error("Cooperating operations did not reach the held publication lock.")), 5000);
+  });
+  const configuring = web.configureInAppWebBridge({ ...config, mcpPort: 17844 });
+  const disconnecting = web.disconnectWebBridge();
+  const publishing = withCatalogPublicationLock(() => web.webBridgeModels());
+  const completed = Promise.all([configuring, disconnecting, publishing]);
+  // Register rejection custody before the barrier, and drain all queued work
+  // during cleanup even if an ownership assertion or the barrier fails.
+  completed.catch(() => {});
+  try {
+    await prepared;
+    assert.equal(readFileSync(settingsPath, "utf8"), before);
+  } finally {
+    watcher.close(); clearTimeout(timer); release();
+    await held;
+    await Promise.allSettled([configuring, disconnecting, publishing]);
+  }
+  const [configured, disconnected, models] = await completed;
+  assert.equal(configured.enabled, true);
+  assert.equal(disconnected.enabled, false);
+  assert.ok(models.length === 0 || models.length === 6, "catalog observes one complete serialized state");
+  assert.equal(savedSettings().mcpPort, 17844, "disconnect preserves whichever supported configuration it observes");
 });
 
 test("unavailable models and unsupported efforts fail locally", async () => {

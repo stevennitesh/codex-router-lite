@@ -206,12 +206,64 @@ export function supportedRoutedEfforts(route) {
     .map(level => level?.effort).filter(effort => typeof effort === "string" && effort))];
 }
 
+export const ROUTED_EFFORT_LADDER = Object.freeze(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+export const LEGACY_CODEX_EFFORTS = Object.freeze(ROUTED_EFFORT_LADDER.slice(0, 5));
+
+function hasLegacyMaxLabel(route) {
+  return route?.provider === "openrouter" &&
+    ["glm-5.3-flash", "deepseek-v4.1-flash"].includes(route.requestProfile) &&
+    EXPECTED_REQUEST_PROFILES.get(route.slug) === route.requestProfile;
+}
+
+function projectEffort(effort, vocabulary) {
+  if (vocabulary.has(effort)) return effort;
+  const start = ROUTED_EFFORT_LADDER.indexOf(effort);
+  for (let index = start - 1; index >= 0; index -= 1) {
+    if (vocabulary.has(ROUTED_EFFORT_LADDER[index])) return ROUTED_EFFORT_LADDER[index];
+  }
+  return effort;
+}
+
+function effortProjection(route, vocabulary) {
+  return new Map(supportedRoutedEfforts(route).map(effort => [effort, projectEffort(effort, vocabulary)]));
+}
+
+// Presentation retains older pickers' full-effort label. Only the four exact
+// reasoning routes interpret that label as canonical max at the send boundary.
+export function canonicalRoutedEffort(route, effort) {
+  if (effort !== "xhigh" || !hasLegacyMaxLabel(route) || supportedRoutedEfforts(route).includes(effort)) return effort;
+  const targets = [...effortProjection(route, new Set(LEGACY_CODEX_EFFORTS))]
+    .filter(([, presented]) => presented === effort).map(([canonical]) => canonical);
+  return targets.length === 1 && targets[0] === "max" ? targets[0] : effort;
+}
+
+export function projectRoutedModelEfforts(models, vocabulary) {
+  return models.map(model => {
+    if (!Array.isArray(model.reasoningLevels)) return model;
+    const projection = effortProjection(model, vocabulary);
+    if (hasLegacyMaxLabel(model) && new Set(projection.values()).size !== projection.size) {
+      throw new Error(`Ambiguous reasoning effort projection for ${model.slug}.`);
+    }
+    const levels = [], seen = new Set();
+    for (const level of model.reasoningLevels) {
+      const effort = projection.get(level.effort);
+      if (seen.has(effort)) continue;
+      seen.add(effort);
+      levels.push(effort === level.effort ? level : {...level, effort});
+    }
+    const defaultEffort = projectEffort(model.defaultEffort, vocabulary);
+    if (defaultEffort === model.defaultEffort && levels.length === model.reasoningLevels.length &&
+        levels.every((level, index) => level === model.reasoningLevels[index])) return model;
+    return {...model, reasoningLevels: levels, defaultEffort};
+  });
+}
+
 // Clearing a local override follows the route's checked-in default. Explicit
-// values must match that exact endpoint's vocabulary; they are never clamped.
+// values must match its canonical vocabulary or its single legacy max label.
 export function validateRoutedEffort(route, effort) {
   if (!route) throw new Error("An exact registered route is required for a reasoning effort.");
   if (effort === undefined || effort === null || effort === "") return undefined;
-  const value = typeof effort === "string" ? effort.trim() : effort;
+  const value = canonicalRoutedEffort(route, typeof effort === "string" ? effort.trim() : effort);
   const supported = supportedRoutedEfforts(route);
   if (!supported.includes(value)) {
     throw new Error(`Unsupported reasoning effort for ${route.slug}. Choose: ${supported.join(", ")}; clear the override to use its default.`);

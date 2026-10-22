@@ -53,7 +53,10 @@ import {
 } from "./native-auth-observation.mjs";
 import {
   LISTED_MODELS,
+  LEGACY_CODEX_EFFORTS,
   MODEL_BY_SLUG,
+  projectRoutedModelEfforts,
+  ROUTED_EFFORT_LADDER,
 } from "./routed-models.mjs";
 import { readProviderSelection } from "./provider-selection.mjs";
 import { webBridgeModels } from "./chatgpt-web.mjs";
@@ -464,59 +467,25 @@ export function nativeCatalog({
 // the only reliable signal — max and ultra joined in 0.143.0 (verified
 // against the published binaries: 0.142.5 lacks the serde variants, 0.143.0
 // carries them), and the baseline predates this router. An unknown version
-// clamps: a wrongly clamped Max still routes at full effort under the xhigh
-// label, while a wrongly emitted max is exactly the missing-picker-entry bug.
-const BASELINE_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
-const EFFORT_LADDER = [...BASELINE_EFFORTS, "max", "ultra"];
+// projects to the baseline. The four GLM/DeepSeek routes resolve their legacy
+// xhigh presentation back to canonical max before exact endpoint validation.
 const MAX_EFFORT_SINCE = [0, 143, 0];
 
 export function codexEffortVocabulary(version) {
   const match = /(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.]+)?/.exec(String(version || ""));
-  if (!match) return new Set(BASELINE_EFFORTS);
+  if (!match) return new Set(LEGACY_CODEX_EFFORTS);
   const installed = [Number(match[1]), Number(match[2]), Number(match[3])];
   for (let index = 0; index < 3; index += 1) {
-    if (installed[index] > MAX_EFFORT_SINCE[index]) return new Set(EFFORT_LADDER);
-    if (installed[index] < MAX_EFFORT_SINCE[index]) return new Set(BASELINE_EFFORTS);
+    if (installed[index] > MAX_EFFORT_SINCE[index]) return new Set(ROUTED_EFFORT_LADDER);
+    if (installed[index] < MAX_EFFORT_SINCE[index]) return new Set(LEGACY_CODEX_EFFORTS);
   }
   // Exactly the boundary release: prereleases of it may predate the variants.
-  return match[4] ? new Set(BASELINE_EFFORTS) : new Set(EFFORT_LADDER);
+  return match[4] ? new Set(LEGACY_CODEX_EFFORTS) : new Set(ROUTED_EFFORT_LADDER);
 }
 
-function clampEffort(effort, vocabulary) {
-  if (vocabulary.has(effort)) return effort;
-  const start = EFFORT_LADDER.indexOf(effort);
-  // Off-ladder values cannot be ranked, so pass them through unchanged.
-  if (start === -1) return effort;
-  for (let index = start - 1; index >= 0; index -= 1) {
-    if (vocabulary.has(EFFORT_LADDER[index])) return EFFORT_LADDER[index];
-  }
-  return effort;
-}
-
-// Registry levels are ordered lightest-first, so when a clamped level lands on
-// an effort the model already offers (xhigh + max both become xhigh), the
-// genuine entry keeps its slot and the clamped duplicate is dropped.
+// Keep this publication/compatibility-check API; effort meaning has one owner.
 export function clampModelEfforts(models, vocabulary) {
-  return models.map((model) => {
-    if (!Array.isArray(model.reasoningLevels)) return model;
-    const levels = [];
-    const seen = new Set();
-    for (const level of model.reasoningLevels) {
-      const effort = clampEffort(level.effort, vocabulary);
-      if (seen.has(effort)) continue;
-      seen.add(effort);
-      levels.push(effort === level.effort ? level : { ...level, effort });
-    }
-    const defaultEffort = clampEffort(model.defaultEffort, vocabulary);
-    if (
-      defaultEffort === model.defaultEffort &&
-      levels.length === model.reasoningLevels.length &&
-      levels.every((level, index) => level === model.reasoningLevels[index])
-    ) {
-      return model;
-    }
-    return { ...model, reasoningLevels: levels, defaultEffort };
-  });
+  return projectRoutedModelEfforts(models, vocabulary);
 }
 
 function selectedModel() {

@@ -149,12 +149,11 @@ function normalizeSchemaLiterals(schema, depth = 0) {
     const node = schema[keyword];
     if (!isPlainObject(node)) continue;
     let changed = false;
-    const rewritten = {};
-    for (const [name, child] of Object.entries(node)) {
+    const rewritten = Object.fromEntries(Object.entries(node).map(([name, child]) => {
       const sanitized = normalizeSchemaLiterals(child, depth + 1);
       if (sanitized !== child) changed = true;
-      rewritten[name] = sanitized;
-    }
+      return [name, sanitized];
+    }));
     if (changed) replace(keyword, rewritten);
   }
 

@@ -1,5 +1,5 @@
 import { safeLocalHttpError } from "./http-utils.mjs";
-import { supportedRoutedEfforts } from "./routed-models.mjs";
+import { canonicalRoutedEffort, supportedRoutedEfforts } from "./routed-models.mjs";
 
 // Measured endpoint differences apply both before translation and at final send.
 export function prepareOpenRouterEndpointRequest(payload, route) {
@@ -28,10 +28,17 @@ export function prepareOpenRouterEndpointRequest(payload, route) {
       ? next.reasoning_effort.effort
       : next.reasoning_effort;
   const levels = supportedRoutedEfforts(route);
-  if (effort !== undefined && !levels.includes(effort)) {
+  const canonical = canonicalRoutedEffort(route, effort);
+  if (canonical !== undefined && !levels.includes(canonical)) {
     throw safeLocalHttpError(`${route.displayName} supports reasoning efforts: ${levels.join(", ")}.`, {
       status: 400, code: "unsupported_reasoning_effort",
     });
+  }
+  if (canonical !== effort) {
+    if (next.reasoning !== undefined) next.reasoning = {...next.reasoning, effort: canonical};
+    else if (next.reasoning_effort && typeof next.reasoning_effort === "object") {
+      next.reasoning_effort = {...next.reasoning_effort, effort: canonical};
+    } else next.reasoning_effort = canonical;
   }
   for (const [key, value] of Object.entries(route.defaultSampling || {})) {
     if (next[key] === undefined) next[key] = value;

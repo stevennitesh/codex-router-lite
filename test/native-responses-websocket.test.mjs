@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { getEventListeners } from "node:events";
 import http from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -9,6 +10,7 @@ import test from "node:test";
 import { WebSocket } from "undici";
 
 import { handleResponsesWebSocketUpgrade } from "../src/responses-websocket.mjs";
+import { NativeResponsesWebSocket } from "../src/native-responses-websocket.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
@@ -20,7 +22,7 @@ function frame(value, rawJson = JSON.stringify(value)) {
   return Buffer.concat([header, body]);
 }
 
-async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}, prepare, fetchImpl, actualRouter = false, routerEnvironment = {}, switchyardTools = false } = {}) {
+async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}, prepare, onFinish, fetchImpl, actualRouter = false, routerEnvironment = {}, switchyardTools = false } = {}) {
   const sockets = new Set();
   const requests = [];
   const handshakes = [];
@@ -149,7 +151,7 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
         headers: arguments_.request.headers,
         payload: arguments_.payload,
         rebuildPayload: input => ({ ...arguments_.payload, input }),
-        finish: result => results.push(result),
+        finish: result => { results.push(result); onFinish?.(result); },
       };
     },
     fetchImpl: async (...args) => {
@@ -190,6 +192,216 @@ async function fixture(t, { handle, httpHandle, headers = {}, nativeOptions = {}
   return { requests, handshakes, httpHeaders, results, exchange, sockets, client, routerChild, catalogPath, routerPort,
     get httpRequests() { return httpRequests; }, get peer() { return peer; }, setAdmission: value => { admit = value; } };
 }
+
+function blockPeerOutput(peer, type) {
+  const blocked = Promise.withResolvers();
+  const socket = peer.socket;
+  const write = socket.write.bind(socket);
+  let needsDrain = false;
+  let blockedOnce = false;
+  Object.defineProperty(socket, "writableNeedDrain", { configurable: true, get: () => needsDrain });
+  socket.write = bytes => {
+    const ready = write(bytes);
+    if (!blockedOnce && bytes.includes(Buffer.from(`"type":"${type}"`))) {
+      blockedOnce = true;
+      needsDrain = true;
+      blocked.resolve();
+      return false;
+    }
+    return ready;
+  };
+  return {
+    blocked: blocked.promise,
+    drain() { needsDrain = false; socket.emit("drain"); },
+  };
+}
+
+test("native request abort releases blocked headers, idle metadata and response output before peer drain", { timeout: 10_000 }, async t => {
+  for (const stage of ["headers", "idle metadata", "response output"]) await t.test(stage, async t => {
+    const finished = Promise.withResolvers();
+    const upstreamClosed = Promise.withResolvers();
+    let controller;
+    let prepares = 0;
+    const state = await fixture(t, {
+      prepare: args => { controller = args.controller; prepares += 1; return true; },
+      onFinish: result => { if (controller?.signal.aborted) finished.resolve(result); },
+      handle: ({ socket, send, complete, id }) => {
+        socket.once("close", upstreamClosed.resolve);
+        if (stage === "idle metadata" && prepares === 1) {
+          socket.write(Buffer.concat([
+            frame({ type: "response.completed", response: { id, status: "completed", output: [] } }),
+            frame({ type: "codex.rate_limits", rate_limits: {} }),
+          ]));
+        } else if (prepares > (stage === "idle metadata" ? 2 : 1)) complete([]);
+        else {
+          send({ type: "response.output_text.delta", delta: "held" });
+          if (stage === "response output") send({ type: "response.completed", response: { id, status: "completed", output: [] } });
+        }
+      },
+    });
+    if (stage === "idle metadata") await state.exchange({});
+    const baselineFinishes = state.results.length;
+    const output = blockPeerOutput(state.peer, stage === "headers" ? "response.metadata"
+      : stage === "idle metadata" ? "codex.rate_limits" : "response.output_text.delta");
+    const first = state.exchange({});
+    await output.blocked;
+    const requestController = controller;
+    const reason = Object.assign(new Error("fixture deadline"), { status: 504, code: "ERR_ROUTER_REQUEST_TIMEOUT" });
+    requestController.abort(reason);
+    const result = await finished.promise;
+    const events = await first;
+    await state.peer.queue;
+    if (stage !== "headers") await upstreamClosed.promise;
+    assert.equal(result.status, 504);
+    assert.equal(result.outcome, "failed");
+    assert.equal(result.terminalAccepted, false);
+    assert.equal(state.results.length, baselineFinishes + 1);
+    assert.equal(state.peer.closed, false);
+    assert.equal(state.peer.socket.writableNeedDrain, true);
+    assert.equal(state.peer.nativeTransport.connection, undefined);
+    assert.equal(getEventListeners(requestController.signal, "abort").length, 0);
+    assert.equal(getEventListeners(state.peer.abortController.signal, "abort").length, 0);
+    assert.equal(state.peer.socket.listenerCount("drain"), 0);
+    assert.deepEqual(events.filter(event => ["error", "response.completed"].includes(event.type)).map(event => event.type), ["error"]);
+    const beforeNext = prepares;
+    const gateWaiting = Promise.withResolvers();
+    const onListener = name => { if (name === "drain") gateWaiting.resolve(); };
+    state.peer.socket.on("newListener", onListener);
+    const next = state.exchange({});
+    await gateWaiting.promise;
+    state.peer.socket.off("newListener", onListener);
+    assert.equal(prepares, beforeNext, "a queued turn cannot allocate while this peer needs drain");
+    output.drain();
+    assert.equal((await next).at(-1).type, "response.completed");
+    assert.equal(prepares, beforeNext + 1);
+    assert.equal(state.requests.length, (stage === "response output" ? 1 : stage === "idle metadata" ? 1 : 0) + 1,
+      "an aborted response.create is never replayed");
+  });
+});
+
+test("native accepted terminals retain outcome, usage and bounded continuation when abort wins the drain wait", { timeout: 10_000 }, async t => {
+  for (const type of ["response.completed", "response.incomplete", "response.failed", "error"]) await t.test(type, async t => {
+    let controller;
+    let terminal;
+    const finished = Promise.withResolvers();
+    const usage = { input_tokens: 7, output_tokens: 2, total_tokens: 9 };
+    const retained = { type: "message", id: "msg_retained", role: "assistant", content: [] };
+    const state = await fixture(t, {
+      prepare: args => { controller = args.controller; return true; },
+      onFinish: finished.resolve,
+      handle: ({ send, complete, id }) => {
+        if (terminal) { complete([]); return; }
+        terminal = type === "error" ? { type, status: 429, error: { type: "rate_limit_reached" } }
+          : { type, response: { id, status: type === "response.completed" ? "completed" : type === "response.incomplete" ? "incomplete" : "failed",
+            output: [retained], usage, ...(type === "response.incomplete" ? { incomplete_details: { reason: "interrupted" } } : {}) } };
+        send(terminal);
+      },
+    });
+    const output = blockPeerOutput(state.peer, type);
+    const first = state.exchange({ input: [{ role: "user", content: "initial" }] });
+    await output.blocked;
+    const requestController = controller;
+    requestController.abort(Object.assign(new Error("fixture deadline"), { status: 504, code: "ERR_ROUTER_REQUEST_TIMEOUT" }));
+    const result = await finished.promise;
+    const events = await first;
+    await state.peer.queue;
+    assert.deepEqual(events.filter(event => ["error", "response.completed", "response.failed", "response.incomplete"].includes(event.type)), [terminal]);
+    assert.equal(result.terminalAccepted, true);
+    assert.equal(result.status, ["response.completed", "response.incomplete"].includes(type) ? 200 : type === "error" ? 429 : 502);
+    assert.equal(result.outcome, type === "response.completed" ? "completed" : type === "response.incomplete" ? "interrupted" : "failed");
+    assert.deepEqual(result.usage, terminal.response?.usage);
+    assert.equal(getEventListeners(requestController.signal, "abort").length, 0);
+    assert.equal(state.results.length, 1);
+    assert.equal(state.peer.continuations.size, ["response.completed", "response.incomplete"].includes(type) ? 1 : 0);
+    output.drain();
+    if (terminal.response && type !== "response.failed") {
+      const suffix = [{ role: "user", content: "next" }];
+      await state.exchange({ previous_response_id: terminal.response.id, input: suffix });
+      assert.equal(state.requests.length, 2);
+      assert.equal(state.requests[1].previous_response_id, undefined);
+      assert.deepEqual(state.requests[1].input, [{ role: "user", content: "initial" }, retained, ...suffix]);
+    }
+  });
+});
+
+test("peer closure after native terminal acceptance cannot recreate cleared continuation state", { timeout: 5_000 }, async t => {
+  const finished = Promise.withResolvers();
+  const state = await fixture(t, { onFinish: finished.resolve });
+  const output = blockPeerOutput(state.peer, "response.completed");
+  state.client.send(JSON.stringify({ type: "response.create", model: "gpt-6.1-sol", stream: true, input: [] }));
+  await output.blocked;
+  state.peer.abort();
+  const result = await finished.promise;
+  await state.peer.queue;
+  assert.equal(result.terminalAccepted, true);
+  assert.equal(result.outcome, "completed");
+  assert.equal(result.status, 200);
+  assert.equal(state.peer.closed, true);
+  assert.equal(state.peer.continuations.size, 0);
+  assert.equal(state.results.length, 1);
+});
+
+test("native run owns aborts while connect settles and rejects pre-aborted cached connections before metadata or writes", async t => {
+  for (const fresh of [true, false]) await t.test(fresh ? "connect settles after abort" : "cached pre-abort", async () => {
+    const transport = new NativeResponsesWebSocket({});
+    const controller = new AbortController();
+    const reason = new Error("fixture abort at connect boundary");
+    const opened = Promise.withResolvers();
+    let writes = 0;
+    let destroyed = 0;
+    let metadata = 0;
+    const connection = {
+      key: JSON.stringify(["http://fixture/responses", "gpt-6.1-sol", []]),
+      headers: new Headers(), idle: [], queued: [], queuedBytes: 0,
+      fail() {}, socket: { destroy() { destroyed += 1; }, resume() {} },
+      websocket: { readyState: WebSocket.OPEN, close() {}, send() { writes += 1; } },
+    };
+    transport.connection = connection;
+    if (fresh) transport.connect = () => opened.promise;
+    else controller.abort(reason);
+    const pending = transport.run({ target: "http://fixture/responses", headers: {}, payload: { model: "gpt-6.1-sol", input: [] } }, {
+      signal: controller.signal, onHeaders: () => { metadata += 1; return true; },
+      onEvent: () => assert.fail("no event expected"),
+    });
+    if (fresh) { opened.resolve({ connection, fresh }); controller.abort(reason); }
+    await assert.rejects(pending, error => error === reason);
+    assert.equal(metadata, 0);
+    assert.equal(writes, 0);
+    assert.equal(destroyed, 1);
+    assert.equal(transport.connection, undefined);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  });
+});
+
+test("native cancellation tears down only its owned upstream once and preserves its abort reason", async () => {
+  const transport = new NativeResponsesWebSocket({});
+  const controller = new AbortController();
+  const metadataStarted = Promise.withResolvers();
+  const reason = new Error("fixture metadata cancellation");
+  let destroyed = 0;
+  const connection = {
+    headers: new Headers(), fail() {},
+    socket: { destroy() { destroyed += 1; }, resume() {} }, websocket: { close() {} },
+  };
+  transport.connection = connection;
+  transport.connect = async () => ({ connection, fresh: true });
+  const pending = transport.run({}, {
+    signal: controller.signal,
+    onEvent: () => assert.fail("no event expected"),
+    onHeaders: () => {
+      metadataStarted.resolve();
+      return new Promise(resolve => controller.signal.addEventListener("abort", () => resolve(false), { once: true }));
+    },
+  });
+  await metadataStarted.promise;
+  const newer = {};
+  transport.connection = newer;
+  controller.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  assert.equal(destroyed, 1);
+  assert.equal(transport.connection, newer);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
 
 test("native WebSocket passes real prewarming and tool continuation over one credential-preserving connection", async t => {
   const tool = { type: "function_call", id: "fc_native", call_id: "call_native", name: "fixture_tool", arguments: "{}" };

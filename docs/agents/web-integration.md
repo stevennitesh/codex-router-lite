@@ -17,6 +17,14 @@ broker, or Stop adapter. For setup, model selection and everyday use, start with
 
 `src/chatgpt-web.mjs` owns configuration and route dispatch. `src/web-models.mjs`
 owns model identity and effort mapping; the user guide lists their public controls.
+Disconnect validates and preserves supported saved configuration even when an
+old browser module or tunnel executable is gone. Disabled settings remain readable
+for status and catalog refresh; malformed or unreadable settings still fail.
+Enabled use and fresh configuration require regular runtime files. Disconnect
+disables future admission; it does not cancel an admitted turn, stop services,
+remove the adapter or delete the protected key. Refresh the catalog to remove
+published Web models and V1 roles. Configuration and catalog publication share
+the existing cooperative lock; direct edits outside that lock are not fenced.
 
 ## Saved chats and browser lifecycle
 
@@ -179,12 +187,14 @@ Cancelled IDs retain rejection records, and completed requests retain their exac
 final response for fingerprint-matched replay. Conversation checkpoints,
 compaction and uncertain-action evidence remain available for recovery.
 
-The private Router log's `web-mcp` entries distinguish SDK handler arrival,
-wrapper rejection, discovery, invocation start and the actual paired result.
-They retain fixed categories, timestamps and a turn-token digest, without tool
-arguments, outputs or credentials. Arrival occurs after HTTP/session/protocol
-validation; its absence alone does not identify a ChatGPT safety decision.
-Invocation start does not prove that native execution was accepted.
+Normal `web-mcp` logging reports errors without success-progress receipts.
+For an on-demand diagnostic run, set `CODEX_ROUTER_WEB_MCP_TRACE=1` in Router's
+launch environment before starting it. Full trace distinguishes SDK handler
+arrival, wrapper rejection, discovery, invocation start and the actual paired
+result. Receipts contain fixed categories, timestamps and a turn-token digest,
+without tool arguments, outputs or credentials. Arrival occurs after
+HTTP/session/protocol validation; its absence alone does not identify a ChatGPT
+safety decision. Invocation start does not prove native execution was accepted.
 
 ## Immediate Stop
 
@@ -340,15 +350,118 @@ path. Neither guarantees compatibility with arbitrary future updates.
 
 ## Adapter installation and rollback
 
-To install the adapter, supply a local manifest identifying the signed official
-CLI, Node and Node REPL executables, their hashes and signer identity, the browser
-runtime module, and the existing MCP SDK package. `threadIds` restricts a trial;
-`null` enables ordinary Web conversations. The adapter excludes subagent metadata.
+To install the adapter, first collect a local manifest from the current configured
+official runtime. Its version-1 shape is below; angle-bracket values describe
+fresh observations, not values to copy into an installation:
+
+```json
+{
+  "version": 1,
+  "node": {
+    "path": "C:\\<current-runtime>\\node.exe",
+    "sha256": "<fresh 64-hex SHA-256>",
+    "authenticode": {
+      "status": "Valid",
+      "signerSubject": "<observed OpenAI OpCo, LLC signer subject>",
+      "signerThumbprint": "<observed exact signer thumbprint>"
+    }
+  },
+  "officialCli": {
+    "path": "C:\\<current-runtime>\\codex.exe",
+    "sha256": "<fresh 64-hex SHA-256>",
+    "authenticode": {
+      "status": "Valid",
+      "signerSubject": "<observed OpenAI OpCo, LLC signer subject>",
+      "signerThumbprint": "<observed exact signer thumbprint>"
+    }
+  },
+  "officialNodeRepl": {
+    "path": "C:\\<current-runtime>\\node_repl.exe",
+    "sha256": "<fresh 64-hex SHA-256>",
+    "authenticode": {
+      "status": "Valid",
+      "signerSubject": "<observed OpenAI OpCo, LLC signer subject>",
+      "signerThumbprint": "<observed exact signer thumbprint>"
+    }
+  },
+  "runtimeModule": "C:\\<configured-browser>\\scripts\\browser-client.mjs",
+  "sdkPackageJson": "C:\\<matching-router-source>\\node_modules\\@modelcontextprotocol\\sdk\\package.json",
+  "threadIds": null
+}
+```
+
+Run this PowerShell recipe from the matching Router source root, with its
+dependencies installed. One Node invocation discovers the configured anchors,
+asks the existing read-only signature helper for their actual signatures, hashes
+their current bytes, and confirms that discovery is still current before saving
+`adapter-build-manifest.json` as BOM-free UTF-8. Collection writes only that local
+manifest; it does not install an adapter or change settings, hooks, environment,
+services or trust. Choose an unused output filename if keeping an earlier manifest.
+
+```powershell
+@'
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { discoverWebRuntimeAnchors } from "./src/web-runtime-refresh.mjs";
+
+const discovery = discoverWebRuntimeAnchors({ sourceRoot: process.cwd() });
+const { anchors } = discovery;
+const fields = ["node", "officialCli", "officialNodeRepl"];
+const paths = fields.map(field => anchors[field]);
+const inspection = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive",
+  "-File", path.resolve("src/web-stop-adapter-env.ps1")], {
+  input: JSON.stringify({ action: "signatures", paths }), encoding: "utf8",
+  timeout: 20000, maxBuffer: 128 * 1024, windowsHide: true,
+  env: Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "psmodulepath")),
+});
+if (inspection.error || inspection.status !== 0) throw new Error("Official signature inspection failed.");
+let signatures;
+try { signatures = JSON.parse(inspection.stdout); }
+catch { throw new Error("Official signature inspection returned invalid JSON."); }
+if (!Array.isArray(signatures) || signatures.length !== paths.length) throw new Error("Incomplete signature inspection.");
+const manifest = { version: 1 };
+for (const field of fields) {
+  const matches = signatures.filter(item => item?.path === anchors[field]);
+  const observed = matches[0];
+  if (matches.length !== 1 || observed.status !== "Valid"
+      || typeof observed.signerSubject !== "string" || !/OpenAI OpCo, LLC/u.test(observed.signerSubject)
+      || typeof observed.signerThumbprint !== "string" || !observed.signerThumbprint) {
+    throw new Error(`Expected one valid OpenAI signature for ${field}.`);
+  }
+  manifest[field] = { path: anchors[field],
+    sha256: createHash("sha256").update(readFileSync(anchors[field])).digest("hex"),
+    authenticode: { status: observed.status, signerSubject: observed.signerSubject,
+      signerThumbprint: observed.signerThumbprint } };
+}
+manifest.runtimeModule = anchors.runtimeModule;
+manifest.sdkPackageJson = anchors.sdkPackageJson;
+manifest.threadIds = null;
+discovery.assertCurrent();
+writeFileSync("adapter-build-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+'@ | node --input-type=module
+if ($LASTEXITCODE -ne 0) { throw 'Manifest collection failed; do not install a partial or older candidate.' }
+```
+
+Missing or conflicting configured anchors must stop collection. Repair the
+configuration deliberately or prepare a reviewed explicit manifest; do not select
+a cache directory by age, reuse historical hashes or thumbprints, or bypass trust
+checks. Review the resulting paths, observed signers and intended thread scope.
+`threadIds: null` enables ordinary Web conversations; for a restricted trial,
+replace it with a nonempty array of exact existing Codex thread UUIDs. The adapter
+excludes subagent metadata. Credentials and tunnel keys do not belong in this file.
+
+Collection is an observation, not approval or activation. The existing installer
+is the authoritative full path, byte, signature, SDK and scope validator. Invoke
+the separate installation stage only after that review:
 
 ```powershell
 .\model-router.ps1 codex web stop install-adapter .\adapter-build-manifest.json
-.\model-router.ps1 codex web stop adapter-status
 ```
+
+The installer returns its activation result. Use `web status` for optional
+combined diagnostics; a second `adapter-status` call is unnecessary.
 
 The installer stages its code and launcher in private durable Router state. It
 preserves the original User `CODEX_CLI_PATH` selection, including an unset value,
@@ -392,6 +505,10 @@ Node REPL command, its paired Node executable, and the configured trusted browse
 service. It uses the existing CLI identity resolver and the installer's candidate
 validation. Missing or conflicting configured anchors require an explicit
 `--manifest`; cache-directory age does not establish runtime authority.
+Refresh requires enabled saved Web settings and an existing owned adapter receipt.
+Its `--manifest` input cannot bootstrap the first installation or provide a
+standalone first-install validation mode; use the collection and installation
+stages above for initial setup.
 `--apply` coordinates adapter replacement, saved browser configuration and the
 existing guarded service restart. It preserves connector/tunnel identities,
 capabilities, runtime-key storage and the hook definition. The current generation

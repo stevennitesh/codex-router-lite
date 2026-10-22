@@ -36,6 +36,7 @@ const validators = new Map(tools.map(tool => [tool.name, validator.getValidator(
 const maxSessions = 32;
 const maxObservations = 64;
 const idleMs = 10 * 60_000;
+const diagnosticErrorStages = new Set(["invalid-arguments", "unknown-operation", "rejected"]);
 
 function reject(response, status) {
   response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -43,28 +44,29 @@ function reject(response, status) {
 }
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
-export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel,
-  onDiagnostic = receipt => console.warn(`[codex-router] web-mcp ${JSON.stringify(receipt)}`),
-} = {}) {
+export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel, onDiagnostic } = {}) {
   if (!broker || !["list", "invoke", "cancel", "beginActivity", "revision", "waitForChange"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
   if (typeof capability !== "string" || !/^[A-Za-z0-9_-]{32,256}$/u.test(capability)) throw new TypeError("Invalid Web MCP capability.");
   if (onCancel !== undefined && typeof onCancel !== "function") throw new TypeError("Invalid Web MCP cancellation callback.");
-  if (typeof onDiagnostic !== "function") throw new TypeError("Invalid Web MCP diagnostic callback.");
+  if (onDiagnostic !== undefined && typeof onDiagnostic !== "function") throw new TypeError("Invalid Web MCP diagnostic callback.");
+  const traceDiagnostics = process.env.CODEX_ROUTER_WEB_MCP_TRACE === "1" || onDiagnostic !== undefined;
+  const reportDiagnostic = onDiagnostic ?? (receipt => console.warn(`[codex-router] web-mcp ${JSON.stringify(receipt)}`));
   const path = `/${capability}/mcp`;
   const observationPath = `/${capability}/observe/`;
   const sessions = new Map(), creating = new Set(), observers = new Map();
   let closing = false, closed, observationCount = 0;
 
   const diagnostic = (stage, operation, token, isError) => {
+    if (!traceDiagnostics && isError !== true && !diagnosticErrorStages.has(stage)) return;
     try {
       // Only fixed categories and a digest of a correctly shaped private token
       // may leave this boundary. A failed logger must never affect native work.
       const turnHash = typeof token === "string" && /^web_turn_[a-f0-9]{32}$/u.test(token)
         ? createHash("sha256").update(token).digest("hex") : undefined;
-      void Promise.resolve(onDiagnostic({ at: new Date().toISOString(), operation, stage,
+      void Promise.resolve(reportDiagnostic({ at: new Date().toISOString(), operation, stage,
         ...(turnHash === undefined ? {} : { turnHash }),
         ...(isError === undefined ? {} : { isError }),
       })).catch(() => {});

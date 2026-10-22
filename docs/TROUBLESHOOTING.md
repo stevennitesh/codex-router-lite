@@ -69,10 +69,12 @@ automatic refresh cannot turn a staged account rollout into an entitlement.
 
 ## Gateway interpreter probe times out
 
-A Python interpreter probe timing out does not establish that its virtual
-environment is broken. Router warns and proceeds to the gateway's bounded
-readiness wait. A missing interpreter or a failing standard-library import still
-stops that gateway launch and requires dependency repair.
+A Python interpreter probe timing out during dependency reuse does not establish
+that its virtual environment is broken; inspect process scheduling pressure and
+the reported error before repairing dependencies. Normal startup launches the
+gateway directly and uses its bounded authenticated readiness check. It does not
+launch a separate diagnostic interpreter first. A missing or failing interpreter
+leaves the optional gateway unavailable while native serving remains available.
 
 ## Native or provider requests fail with a connect timeout
 

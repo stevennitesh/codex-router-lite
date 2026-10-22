@@ -67,7 +67,11 @@ Switchyard installation is maintainer work. Read its
 [integration boundaries](../config/switchyard/README.md), then
 [build and deployment](../config/switchyard/maintenance.md) only when that task applies.
 
-## Verify
+## Optional diagnostics
+
+The installer already waits for service readiness. No separate Doctor run or
+model test is required after every installation. Use Doctor when installation
+reports a problem or a route does not work:
 
 ```powershell
 .\model-router.ps1 codex doctor

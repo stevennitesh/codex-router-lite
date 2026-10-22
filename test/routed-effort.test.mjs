@@ -8,10 +8,88 @@ import test from "node:test";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { CHECKED_IN_MODELS, MODEL_BY_SLUG, OPENROUTER_MODELS, validateRoutedEffort } from "../src/routed-models.mjs";
 import { routedAgentDefinition } from "../src/codex-agent-catalog.mjs";
+import { clampModelEfforts, codexEffortVocabulary } from "../src/catalog.mjs";
+import { prepareOpenRouterEndpointRequest } from "../src/openrouter-endpoint-compat.mjs";
+import { prepareOpenRouterRequest } from "../src/openrouter-request.mjs";
+import { prepareRoutedRequest } from "../src/routed-request.mjs";
 import { openPort } from "./port-pool.mjs";
 import { launch, ready, stop, responseJson } from "./router-fixture.mjs";
 
 const slug = "openrouter/glm-5.3-flash-streamlake";
+const reasoningRoutes = OPENROUTER_MODELS.filter(route => route.requestProfile !== "pareto");
+const effectiveEffort = payload => payload.reasoning !== undefined ? payload.reasoning?.effort
+  : payload.reasoning_effort && typeof payload.reasoning_effort === "object" ? payload.reasoning_effort.effort : payload.reasoning_effort;
+
+test("legacy and modern catalog choices and role defaults round trip to exact canonical endpoint efforts", () => {
+  const originalRoutes = structuredClone(reasoningRoutes);
+  for (const [version, top] of [["0.142.5", "xhigh"], ["0.143.0-alpha.1", "xhigh"],
+    [undefined, "xhigh"], ["unknown", "xhigh"], ["0.143.0", "max"], ["0.144.0-beta.1", "max"], ["1.0.0", "max"]]) {
+    for (const route of reasoningRoutes) {
+      const [projected] = clampModelEfforts([route], codexEffortVocabulary(version));
+      assert.deepEqual(projected.reasoningLevels.map(level => level.effort), ["low", "high", top]);
+      assert.equal(projected.defaultEffort, route.defaultEffort === "max" ? top : "high");
+      if (top === "max") assert.equal(projected, route);
+      const roleEffort = JSON.parse(/^model_reasoning_effort = (.+)$/mu.exec(routedAgentDefinition(projected).contents)[1]);
+      assert.equal(roleEffort, projected.defaultEffort);
+      for (const effort of [...projected.reasoningLevels.map(level => level.effort), roleEffort]) {
+        const expected = effort === "xhigh" ? "max" : effort;
+        assert.equal(validateRoutedEffort(route, effort), expected);
+        const shapes = [{reasoning: {effort, summary: "auto", budget_tokens: 1000}},
+          {reasoning: {effort, summary: "auto", budget_tokens: 1000}, reasoning_effort: "medium"},
+          {reasoning_effort: effort}, {reasoning_effort: {effort, summary: "auto", budget_tokens: 1000}}];
+        for (const shape of shapes) {
+          const input = {model: route.slug, input: "Synthetic catalog round trip", ...shape}, saved = structuredClone(input);
+          const options = [{}, {compaction: true}, ...(route.searchTool ? [{hosted: true}] : [])];
+          for (const option of options) {
+            const request = option.hosted ? {...input, tools: [{type: "web_search"}]} : input;
+            const prepared = prepareRoutedRequest(request, route, option);
+            const sent = prepareOpenRouterRequest(prepared.payload);
+            assert.equal(effectiveEffort(prepared.payload), expected);
+            assert.equal(effectiveEffort(sent), expected);
+            if (shape.reasoning) assert.equal(Object.hasOwn(sent, "reasoning_effort"), false);
+            assert.deepEqual(prepareOpenRouterEndpointRequest(prepared.payload, route), prepared.payload);
+            assert.deepEqual(prepareOpenRouterEndpointRequest(sent, route), sent);
+            if (shape.reasoning || typeof shape.reasoning_effort === "object") {
+              assert.equal((sent.reasoning || sent.reasoning_effort).summary, "auto");
+              assert.equal((sent.reasoning || sent.reasoning_effort).budget_tokens, 1000);
+            }
+          }
+          for (const content of [{input: "Synthetic direct final call"}, {messages: []}]) {
+            assert.equal(effectiveEffort(prepareOpenRouterRequest({...input, ...content})), expected);
+          }
+          assert.deepEqual(input, saved);
+        }
+      }
+    }
+  }
+  assert.deepEqual(reasoningRoutes, originalRoutes);
+});
+
+test("legacy aliases require a unique canonical max on the exact registered reasoning route", () => {
+  for (const route of reasoningRoutes) {
+    const missing = {...route, reasoningLevels: route.reasoningLevels.filter(level => level.effort !== "max")};
+    assert.throws(() => validateRoutedEffort(missing, "xhigh"), /Unsupported reasoning effort/);
+    assert.throws(() => prepareOpenRouterEndpointRequest({reasoning: {effort: "xhigh"}}, missing),
+      error => error.code === "unsupported_reasoning_effort");
+    for (const extra of ["xhigh", "ultra"]) {
+      const ambiguous = {...route, reasoningLevels: [...route.reasoningLevels, {effort: extra}]};
+      assert.throws(() => clampModelEfforts([ambiguous], codexEffortVocabulary("0.142.5")), /ambiguous.*effort/i);
+      if (extra === "ultra") {
+        assert.throws(() => validateRoutedEffort(ambiguous, "xhigh"), /Unsupported reasoning effort/);
+        assert.throws(() => prepareOpenRouterEndpointRequest({reasoning_effort: "xhigh"}, ambiguous),
+          error => error.code === "unsupported_reasoning_effort");
+      } else assert.equal(validateRoutedEffort(ambiguous, "xhigh"), "xhigh");
+    }
+    const genuine = {...route, reasoningLevels: [{effort: "xhigh"}]};
+    assert.equal(validateRoutedEffort(genuine, "xhigh"), "xhigh");
+    assert.equal(prepareOpenRouterEndpointRequest({reasoning_effort: "xhigh"}, genuine).reasoning_effort, "xhigh");
+    for (const unrelated of [{...route, slug: "openrouter/synthetic"}, {...route, requestProfile: "synthetic"}]) {
+      assert.throws(() => validateRoutedEffort(unrelated, "xhigh"), /Unsupported reasoning effort/);
+    }
+  }
+  assert.equal(validateRoutedEffort(MODEL_BY_SLUG.get("switchyard/auto"), "xhigh"), "xhigh");
+  assert.throws(() => validateRoutedEffort(MODEL_BY_SLUG.get("openrouter/pareto"), "xhigh"), /Unsupported reasoning effort/);
+});
 
 test("route effort vocabulary is shared by overrides and generated default roles", () => {
   for(const route of CHECKED_IN_MODELS) {
@@ -38,6 +116,8 @@ test("actual effort CLI rejects without writing, accepts supported values and cl
       const accepted = execute(level.effort); assert.equal(accepted.status,0,accepted.stderr);
       assert.deepEqual(JSON.parse(readFileSync(settingsPath,"utf8")),{...initial,efforts:{...initial.efforts,[slug]:level.effort}});
     }
+    const legacy = execute("xhigh"); assert.equal(legacy.status,0,legacy.stderr);
+    assert.equal(JSON.parse(readFileSync(settingsPath,"utf8")).efforts[slug],"max");
     const cleared = execute(); assert.equal(cleared.status,0,cleared.stderr);
     assert.deepEqual(JSON.parse(readFileSync(settingsPath,"utf8")),initial);
   } finally {rmSync(state,{recursive:true,force:true});}
@@ -74,12 +154,15 @@ test("Router diagnoses a persisted invalid child effort before its provider hop"
       assert.match(body.error.message,/configured subagent reasoning effort/);
       assert.equal(captured.length,0);
     }
+    writeEffort("xhigh"); const aliased = await request(); await aliased.arrayBuffer();
+    assert.equal(aliased.status,200); assert.equal(captured.length,1);
+    assert.equal(captured[0].reasoning.effort,"max");
     writeEffort("high"); const response = await request(); await response.arrayBuffer();
-    assert.equal(response.status,200); assert.equal(captured.length,1);
-    assert.equal(captured[0].reasoning.effort,"high");
+    assert.equal(response.status,200); assert.equal(captured.length,2);
+    assert.equal(captured[1].reasoning.effort,"high");
     writeEffort(undefined); const cleared = await request(); await cleared.arrayBuffer();
-    assert.equal(cleared.status,200); assert.equal(captured.length,2);
-    assert.equal(captured[1].reasoning.effort,MODEL_BY_SLUG.get(slug).defaultEffort);
+    assert.equal(cleared.status,200); assert.equal(captured.length,3);
+    assert.equal(captured[2].reasoning.effort,MODEL_BY_SLUG.get(slug).defaultEffort);
   } finally {
     await stop(router); await new Promise(resolve=>hop.close(resolve)); rmSync(state,{recursive:true,force:true});
   }

@@ -100,7 +100,7 @@ async function main() {
       const status = await configureInAppWebBridge(config.value);
       await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
       print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
-        next: "Run restart-codex-router.ps1 to reload browser and tunnel settings, then model-router.ps1 codex refresh-catalog and fully reopen Codex. Web subagents require V1; configuration does not change the protocol." });
+        next: "Run restart-codex-router.ps1 to reload browser and tunnel settings, then model-router.ps1 codex refresh-catalog. Complete Stop adapter setup and hook trust before fully reopening Codex once. Web subagents require V1; configuration does not change the protocol." });
     } else if (action === "refresh-runtime") {
       let apply = false, manifestPath;
       for (let index = 2; index < args.length; index += 1) {

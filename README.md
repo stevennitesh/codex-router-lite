@@ -93,14 +93,13 @@ Python 3.10 or newer (or uv), and an installed Codex app or CLI.
 git clone https://github.com/stevennitesh/codex-router-lite.git
 Set-Location codex-router-lite
 .\install.ps1 -Target codex
-.\model-router.ps1 codex provider-key openrouter set
-.\model-router.ps1 codex doctor
 ```
 
-Enter your OpenRouter key through the protected prompt. Fully quit and reopen
-Codex to reload the model picker. Select a configured route and ask it to inspect
-one small file and run an existing check. The app should show tool calls and
-results under the chat's permissions.
+The installer checks service readiness. For OpenRouter routes, save your key with
+`.\model-router.ps1 codex provider-key openrouter set` at its protected prompt.
+Fully quit and reopen Codex to reload the model picker. Optional
+[ChatGPT Web setup](docs/CHATGPT-WEB.md) uses your signed-in browser account.
+Run `doctor` when diagnosing a problem; it is not another required install step.
 
 [Installation and updates](docs/INSTALL.md) covers managed settings, updates,
 recovery and runtime replacement. [Switchyard maintenance](config/switchyard/maintenance.md)

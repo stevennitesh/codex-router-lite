@@ -23,6 +23,52 @@ const legalCalls = [
   { mode: "delete", id: "x" },
 ];
 
+function specialKeySchema(keyword, repairName) {
+  const map = JSON.parse('{"__proto__":{"type":"string","enum":["safe"]},"constructor":{"type":"string"},"prototype":{"type":"string"},"sibling":{"type":"boolean","enum":[true]}}');
+  if (repairName) map[repairName].enum.push(42);
+  return { type: "object", properties: { value: { type: "boolean" } },
+    [keyword]: map, required: [keyword === "properties" ? "__proto__" : "value"], additionalProperties: false };
+}
+
+test("schema map repairs preserve own special keys, constraints, identity and JSON representation", () => {
+  for (const keyword of ["properties", "patternProperties", "$defs", "definitions"]) {
+    const clean = specialKeySchema(keyword);
+    assert.equal(providerToolSchema(clean), clean);
+    for (const repairName of ["sibling", "__proto__"]) {
+      const input = specialKeySchema(keyword, repairName), saved = structuredClone(input);
+      const output = providerToolSchema(input), expected = specialKeySchema(keyword);
+      assert.deepEqual(output, expected);
+      assert.deepEqual(JSON.parse(JSON.stringify(output)), expected);
+      assert.deepEqual(input, saved);
+      assert.equal(Object.getPrototypeOf(output[keyword]), Object.prototype);
+      for (const name of ["__proto__", "constructor", "prototype", "sibling"]) {
+        assert.equal(Object.hasOwn(output[keyword], name), true);
+        assert.deepEqual(Object.getOwnPropertyDescriptor(output[keyword], name), {
+          value: expected[keyword][name], enumerable: true, writable: true, configurable: true,
+        });
+        if (name !== repairName) assert.equal(output[keyword][name], input[keyword][name]);
+      }
+      assert.equal(output.required, input.required);
+      assert.equal(output.additionalProperties, false);
+      assert.equal(providerToolSchema(output), output);
+    }
+  }
+});
+
+test("own special-key definitions remain reachable by local references after a sibling repair", () => {
+  for (const keyword of ["$defs", "definitions"]) {
+    const definitions = JSON.parse('{"__proto__":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"sibling":{"type":"boolean","enum":[true,"false"]}}');
+    const schema = { [keyword]: definitions, oneOf: [{ $ref: `#/${keyword}/__proto__` }] };
+    const saved = structuredClone(schema), expected = structuredClone(schema);
+    expected.type = "object";
+    expected[keyword].sibling.enum = [true];
+    const normalized = providerToolSchema(schema);
+    assert.deepEqual(JSON.parse(JSON.stringify(normalized)), expected);
+    assert.deepEqual(schema, saved);
+    assert.equal(Object.hasOwn(normalized[keyword], "__proto__"), true);
+  }
+});
+
 test("object union branches retain every mode, required field, and duplicate property shape through external preparation and replay", () => {
   for (const keyword of ["oneOf", "anyOf"]) {
     const schema = modeSchema(keyword);
@@ -97,34 +143,42 @@ test("referenced object unions preserve local refs, definitions, and root constr
   assert.equal(hasObjectRoot(explicit), true);
 });
 
-test("plain, nested function, client tool-search, and discovered declarations share union preservation", () => {
-  const schema = modeSchema();
-  const expected = { ...structuredClone(schema), type: "object" };
-  const plain = { type: "function", name: "plain_action", parameters: schema };
-  const nested = { type: "function", function: { name: "nested_action", parameters: schema } };
-  assert.deepEqual(flattenNamespaceTools([nested]).tools[0].function.parameters, expected);
-  for (const slug of routes) {
-    const route = MODEL_BY_SLUG.get(slug);
-    const initial = prepareRoutedRequest({ input: [], tools: [plain, { type: "tool_search", execution: "client", parameters: schema }] }, route);
-    const final = prepareOpenRouterRequest(initial.payload);
-    assert.deepEqual(final.tools[0].parameters, expected);
-    assert.deepEqual(final.tools[1].parameters, expected);
-    const discovery = prepareRoutedRequest({ tools: [{ type: "tool_search", execution: "client" }], input: [
-      { type: "tool_search_call", call_id: "search", execution: "client", arguments: { query: "synthetic" } },
-      { type: "tool_search_output", call_id: "search", execution: "client", status: "completed", tools: [
-        { type: "namespace", name: "discovered", tools: [{ type: "function", name: "action", inputSchema: schema }] },
-        { type: "function", name: "discovered_plain", parameters: schema },
-      ] },
-    ] }, route);
-    const discovered = prepareOpenRouterRequest(discovery.payload).tools.filter(tool => tool.name !== "tool_search");
-    assert.equal(discovered.length, 2);
-    for (const tool of discovered) {
-      assert.deepEqual(tool.parameters, expected);
-      assert.equal(Object.hasOwn(tool, "inputSchema"), false);
+test("plain, nested function, client tool-search, and discovered declarations share schema preservation", () => {
+  const union = modeSchema();
+  const cases = [{schema: union, expected: {...structuredClone(union), type: "object"}},
+    ...["properties", "patternProperties", "$defs", "definitions"].map(keyword => ({
+      schema: specialKeySchema(keyword, "sibling"), expected: specialKeySchema(keyword),
+    }))];
+  for (const {schema, expected} of cases) {
+    const plain = { type: "function", name: "plain_action", parameters: schema };
+    const nested = { type: "function", function: { name: "nested_action", parameters: schema } };
+    assert.deepEqual(flattenNamespaceTools([nested]).tools[0].function.parameters, expected);
+    for (const slug of routes) {
+      const route = MODEL_BY_SLUG.get(slug);
+      for (const hosted of route.searchTool ? [false, true] : [false]) {
+        const searchTools = hosted ? [{type: "web_search"}] : [];
+        const initial = prepareRoutedRequest({ input: [], tools: [plain, { type: "tool_search", execution: "client", parameters: schema }, ...searchTools] }, route);
+        const final = prepareOpenRouterRequest(initial.payload);
+        assert.deepEqual(final.tools[0].parameters, expected);
+        assert.deepEqual(final.tools[1].parameters, expected);
+        const discovery = prepareRoutedRequest({ tools: [{ type: "tool_search", execution: "client" }, ...searchTools], input: [
+          { type: "tool_search_call", call_id: "search", execution: "client", arguments: { query: "synthetic" } },
+          { type: "tool_search_output", call_id: "search", execution: "client", status: "completed", tools: [
+            { type: "namespace", name: "discovered", tools: [{ type: "function", name: "action", inputSchema: schema }] },
+            { type: "function", name: "discovered_plain", parameters: schema },
+          ] },
+        ] }, route);
+        const discovered = prepareOpenRouterRequest(discovery.payload).tools.filter(tool => tool.type === "function" && tool.name !== "tool_search");
+        assert.equal(discovered.length, 2);
+        for (const tool of discovered) {
+          assert.deepEqual(tool.parameters, expected);
+          assert.equal(Object.hasOwn(tool, "inputSchema"), false);
+        }
+        const args = JSON.stringify(legalCalls[1]);
+        const restored = rewriteNamespaceFunctionCall({ type: "response.output_item.done", item: { type: "function_call", name: "discovered__action", call_id: "update", arguments: args } }, buildNamespaceLookups(discovery.namespaces));
+        assert.deepEqual(restored.item, { type: "function_call", namespace: "discovered", name: "action", call_id: "update", arguments: args });
+      }
     }
-    const args = JSON.stringify(legalCalls[1]);
-    const restored = rewriteNamespaceFunctionCall({ type: "response.output_item.done", item: { type: "function_call", name: "discovered__action", call_id: "update", arguments: args } }, buildNamespaceLookups(discovery.namespaces));
-    assert.deepEqual(restored.item, { type: "function_call", namespace: "discovered", name: "action", call_id: "update", arguments: args });
   }
 });
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requireGatewayRuntime, venvRuntimeOutcome, venvRuntimeProblem } from "../src/venv-runtime.mjs";
+import { venvRuntimeOutcome, venvRuntimeProblem } from "../src/venv-runtime.mjs";
 
-test("interpreter scheduling timeout proceeds to readiness while actual failures stop startup", () => {
+test("interpreter scheduling timeout remains inconclusive while actual failures prove a failed probe", () => {
   const seen = [];
   const spawn = (_python, args, options) => {
     seen.push({ args, timeout: options.timeout });
@@ -12,9 +12,6 @@ test("interpreter scheduling timeout proceeds to readiness while actual failures
   assert.equal(outcome.kind, "timeout");
   assert.deepEqual(seen.map(probe => probe.timeout), [10, 20]);
   assert.deepEqual(seen[0].args, ["-I", "-c", "import encodings, sys; print(sys.prefix)"]);
-  const warnings = [];
-  assert.doesNotThrow(() => requireGatewayRuntime("python", { probe: () => outcome, warn: message => warnings.push(message) }));
-  assert.match(warnings[0], /continuing to bounded gateway readiness/u);
   for (const result of [
     { error: Object.assign(new Error("missing interpreter"), { code: "ENOENT" }) },
     { status: 1, stderr: "could not import encodings" },
@@ -23,7 +20,6 @@ test("interpreter scheduling timeout proceeds to readiness while actual failures
     const failed = venvRuntimeOutcome("python", { spawn: () => { calls++; return result; } });
     assert.equal(calls, 1, "permanent failures do not spend a scheduling retry");
     assert.equal(failed.kind, "failed");
-    assert.throws(() => requireGatewayRuntime("python", { probe: () => failed, dependencyFix: "repair dependencies" }), /virtual environment is broken/u);
   }
 });
 

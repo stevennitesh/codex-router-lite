@@ -9,7 +9,12 @@ Every external route declares its output ceiling. Explicit output aliases
 (`max_output_tokens`, `max_tokens`, `max_completion_tokens`) are validated at
 front preparation and final provider preparation. Output validation is independent
 of whether a route defines sampling or an implicit output default. Explicit
-reasoning efforts use the registry's advertised vocabulary. Provider-controlled
+reasoning efforts use the registry's canonical endpoint vocabulary. Older or
+unknown Codex catalogs present `max` as `xhigh` for the four GLM/DeepSeek routes.
+The registry resolves that single legacy label to `max` before exact endpoint
+membership validation at both preparation boundaries, including scalar and
+object `reasoning_effort` callers. Other unsupported levels remain errors;
+there is no serving-time version lookup or general effort clamp. Provider-controlled
 Pareto reasoning is removed by its adapter before that validation.
 
 A present `reasoning` field takes precedence, including an object without an

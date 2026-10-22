@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -176,13 +176,26 @@ test("V1 Web roles follow picker choices across reconfiguration and V2 restores 
   assert.ok(catalog(f).some(model => model.slug === native.slug && model.multi_agent_version === "v2"));
 });
 
-test("disconnecting Web removes published models and preserves the Codex configuration", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
-  const f = fixture(t);
-  seedConnectedWeb(f);
-  await command(f, "catalog.mjs");
-  assert.ok(catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
-  await command(f, "control.mjs", ["web", "disconnect"]);
-  await command(f, "catalog.mjs");
-  assert.ok(!catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
-  assert.ok(existsSync(path.join(f.home, "config.toml")));
+test("disconnecting stale Web assets removes published models and V1 roles", { skip: process.platform !== "win32", timeout: 45000 }, async t => {
+  for (const asset of ["runtimeModule", "tunnelClientPath"]) await t.test(asset, async subtest => {
+    const f = fixture(subtest);
+    seedConnectedWeb(f);
+    await command(f, "control.mjs", ["subagents", "protocol", "v1"]);
+    await command(f, "catalog.mjs");
+    const before = readFileSync(path.join(f.home, "config.toml"), "utf8");
+    const settingsPath = path.join(f.state, "chatgpt-web.json"), saved = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const keyPath = path.join(f.state, "chatgpt-web-runtime-key.secret"), key = "synthetic retained catalog key\n";
+    writeFileSync(keyPath, key, "utf8");
+    assert.ok(catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
+    assert.equal(webRoles(f).length, buildWebBridgeModels(capabilities).length);
+    rmSync(f.configuration[asset]);
+    const result = await command(f, "control.mjs", ["web", "disconnect"]);
+    assert.equal(result.enabled, false);
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), { ...saved, enabled: false });
+    await command(f, "catalog.mjs");
+    assert.ok(!catalog(f).some(model => model.slug.startsWith("chatgpt-web/")));
+    assert.deepEqual(webRoles(f), []);
+    assert.equal(readFileSync(path.join(f.home, "config.toml"), "utf8"), before);
+    assert.equal(readFileSync(keyPath, "utf8"), key);
+  });
 });

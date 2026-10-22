@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners, once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { handleResponsesWebSocketUpgrade } from "../src/responses-websocket.mjs";
@@ -306,6 +305,119 @@ test("raw SSE event forwarding waits for socket backpressure before the terminal
   assert.deepEqual(serverEvents(socket).map(event => event.type), ["response.output_text.delta"]);
   socket.emit("drain");
   assert.deepEqual((await pending).map(event => event.type), ["response.output_text.delta", "response.completed"]);
+});
+
+test("request-aware sends distinguish accepted bytes from drain readiness and clean listeners", async t => {
+  for (const order of [["drain"], ["abort", "drain"], ["drain", "abort"], ["close", "abort"], ["abort", "close"],
+    ["close", "drain"], ["drain", "close"], ["error", "drain"], ["drain", "error"]]) {
+    await t.test(order.join(" then "), async () => {
+      let peer;
+      const socket = openPeer(() => assert.fail("no request expected"), {}, { onPeer: value => { peer = value; } });
+      const controller = new AbortController();
+      const signalListeners = getEventListeners(controller.signal, "abort").length;
+      const socketListeners = ["drain", "close", "error"].map(name => socket.listenerCount(name));
+      const write = socket.write.bind(socket);
+      socket.write = bytes => { write(bytes); socket.writableNeedDrain = true; return false; };
+      const pending = peer.sendJsonWithBackpressure({ type: "fixture" }, ' { "type": "fixture" } ', { signal: controller.signal });
+      for (const action of order) {
+        if (action === "abort") controller.abort(new Error("execution ended"));
+        else {
+          if (action === "drain") socket.writableNeedDrain = false;
+          socket.emit(action, ...(action === "error" ? [new Error("fixture reset")] : []));
+        }
+      }
+      assert.deepEqual(await pending, { accepted: true, ready: order.length === 1 && order[0] === "drain" });
+      assert.equal(getEventListeners(controller.signal, "abort").length, signalListeners);
+      assert.deepEqual(["drain", "close", "error"].map(name => socket.listenerCount(name)), socketListeners);
+      assert.ok(socket.writes[1].includes(Buffer.from(' { "type": "fixture" } ')));
+    });
+  }
+});
+
+test("accepted output keeps waiting when an earlier drain listener renews peer pressure", async () => {
+  let peer;
+  const socket = openPeer(() => assert.fail("no request expected"), {}, { onPeer: value => { peer = value; } });
+  const write = socket.write.bind(socket);
+  socket.write = bytes => { write(bytes); socket.writableNeedDrain = true; return false; };
+  socket.once("drain", () => { socket.writableNeedDrain = true; });
+  const pending = peer.sendJsonWithBackpressure({ type: "fixture" });
+  const waiting = Promise.withResolvers();
+  socket.once("newListener", name => { if (name === "drain") waiting.resolve(); });
+  socket.writableNeedDrain = false;
+  socket.emit("drain");
+  await waiting.promise;
+  socket.writableNeedDrain = false;
+  socket.emit("drain");
+  assert.deepEqual(await pending, { accepted: true, ready: true });
+  assert.equal(socket.writes.length, 2);
+  assert.equal(socket.listenerCount("drain"), 0);
+});
+
+test("response writes wait for earlier peer backpressure and recheck abort or renewed pressure", async t => {
+  for (const ending of ["abort", "close", "drain", "renewed pressure"]) await t.test(ending, async () => {
+    let peer;
+    const socket = openPeer(() => assert.fail("no request expected"), {}, { onPeer: value => { peer = value; } });
+    const controller = new AbortController();
+    socket.writableNeedDrain = true;
+    const pending = peer.sendJsonWithBackpressure({ type: "fixture" }, undefined, { signal: controller.signal });
+    assert.equal(socket.writes.length, 1);
+    if (ending === "abort") controller.abort();
+    else if (ending === "close") socket.emit("close");
+    else {
+      socket.writableNeedDrain = false;
+      socket.emit("drain");
+      if (ending === "renewed pressure") {
+        socket.writableNeedDrain = true;
+        const waiting = Promise.withResolvers();
+        socket.once("newListener", name => { if (name === "drain") waiting.resolve(); });
+        await waiting.promise;
+        assert.equal(socket.writes.length, 1);
+        socket.writableNeedDrain = false;
+        socket.emit("drain");
+      }
+    }
+    const accepted = ["drain", "renewed pressure"].includes(ending);
+    assert.deepEqual(await pending, { accepted, ready: accepted });
+    assert.equal(socket.writes.length, accepted ? 2 : 1);
+    assert.equal(socket.listenerCount("drain"), 0);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  });
+});
+
+test("pre-aborted output accepts no frame and queued admission waits for peer drain or close", async t => {
+  for (const ending of ["drain", "close", "drain then close", "drain then draining"]) await t.test(ending, async () => {
+    let peer;
+    let admissions = 0;
+    let fetches = 0;
+    let draining = false;
+    const socket = openPeer(async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({ id: "resp_gate", status: "completed", output: [] }), { headers: { "content-type": "application/json" } });
+    }, {}, { onPeer: value => { peer = value; }, admitRequest: () => {
+      admissions += 1;
+      if (draining) throw new Error("fixture service drain");
+    } });
+    const controller = new AbortController();
+    controller.abort(new Error("already ended"));
+    assert.deepEqual(await peer.sendJsonWithBackpressure({ type: "fixture" }, undefined, { signal: controller.signal }), { accepted: false, ready: false });
+    assert.equal(socket.writes.length, 1);
+    socket.writableNeedDrain = true;
+    const waiting = Promise.withResolvers();
+    socket.on("newListener", name => { if (name === "drain") waiting.resolve(); });
+    socket.emit("data", clientFrame({ type: "response.create", input: [], stream: true }));
+    await waiting.promise;
+    assert.equal(admissions, 0);
+    assert.equal(fetches, 0);
+    if (ending.startsWith("drain")) socket.writableNeedDrain = false;
+    socket.emit(ending === "close" ? "close" : "drain");
+    if (ending === "drain then close") socket.emit("close");
+    if (ending === "drain then draining") draining = true;
+    await peer.queue;
+    assert.equal(admissions, ending === "drain" || ending === "drain then draining" ? 1 : 0);
+    assert.equal(fetches, ending === "drain" ? 1 : 0);
+    assert.equal(peer.continuations.size, ending === "drain" ? 1 : 0);
+    assert.equal(socket.listenerCount("drain"), 0);
+  });
 });
 
 test("SSE relaying preserves validated raw JSON across byte-split UTF-8 and multiline data", async () => {

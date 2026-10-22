@@ -27,6 +27,7 @@ function managerFixture(scenario) {
 const scenario=${JSON.stringify(scenario)},source=${JSON.stringify(source)},trace=${JSON.stringify(trace)};
 let exists=!['missing','install-new'].includes(scenario),registered=false,killed=false,identityCalls=0;
 const note=(name,args)=>appendFileSync(trace,JSON.stringify({name,args})+'\\n');
+const taskState=scenario==='status-unknown'?'Unknown':scenario.startsWith('status-running')?'Running':'Ready';
 export function execFileSync(executable,args){const name=path.basename(executable).toLowerCase();note(name,args);
  if(name==='schtasks.exe'){
   if(args[0]==='/Delete'){
@@ -46,10 +47,10 @@ export function execFileSync(executable,args){const name=path.basename(executabl
    }
    if(scenario==='query-error')throw new Error('fixture query unavailable');
    if(scenario==='malformed-task')return '{}';
-   return JSON.stringify(exists?{exists:true,owned:scenario!=='foreign',running:false,xml:'fixture XML',sddl:'fixture SDDL'}:{exists:false});
+   return JSON.stringify(exists?{exists:true,owned:scenario!=='foreign',state:scenario==='malformed-state'?null:taskState,running:taskState==='Running',xml:'fixture XML',sddl:'fixture SDDL'}:{exists:false});
   }
   if(script.includes('Register-ScheduledTask')){exists=true;registered=true;return '';}
-  if(script.includes('.State.ToString()'))return 'ready';
+  if(script.includes('.State.ToString()'))return taskState;
   throw new Error('unexpected PowerShell fixture call');
  }
  if(name==='netstat.exe'){
@@ -73,7 +74,12 @@ export function spawnSync(_exe,args){note('process-probe',args);const script=arg
  if(scenario==='stop-command-unknown')return{status:1};
  return{status:0,stdout:'node "'+path.join(source,'src/start.mjs')+'"'};
 }
-export function execFile(){throw new Error('unexpected async helper');}
+export function execFile(executable,args,_options,callback){note(path.basename(executable).toLowerCase(),args);
+ if(scenario==='status-running-unavailable'){callback(new Error('fixture task instance query unavailable'));return;}
+ const instances=['status-running','status-running-stale','status-ready-live'].includes(scenario)?1:0;
+ const launcher=['status-running','status-ready-live','status-ready-no-instance'].includes(scenario)?1:0;
+ callback(null,instances+'|0|'+launcher);
+}
 `);
   writeFileSync(security, "import {writeFileSync} from 'node:fs';export const ensureProgramTreeReadable=()=>{};export const protectPrivateFile=()=>{};export const writePrivateFile=(p,v)=>writeFileSync(p,v);export const writePrivateJson=(p,v)=>writeFileSync(p,JSON.stringify(v));");
   writeFileSync(filesystem, `import * as fs from 'node:fs';export * from 'node:fs';export function unlinkSync(p){if(${JSON.stringify(scenario)}==='unlink-error'&&String(p).endsWith('start-codex-router-hidden.vbs'))throw new Error('fixture unlink refused');return fs.unlinkSync(p);}`);
@@ -110,7 +116,7 @@ for (const scenario of ["stop-proven", "stop-reused"]) {
     } finally { f.dispose(); }
   });
 }
-for (const scenario of ["query-error", "malformed-task", "foreign"]) {
+for (const scenario of ["query-error", "malformed-task", "malformed-state", "foreign"]) {
   for (const command of ["install", "uninstall", "status", "stop", "start", "restart"]) test(`Windows ${command} refuses ${scenario} before changing the task`, () => {
     const f = managerFixture(scenario);
     try { const result = f.run(command); assert.equal(result.error, undefined); assert.notEqual(result.status, 0);
@@ -166,6 +172,28 @@ test("fresh task installation and confirmed-absent status remain supported", () 
   finally { absent.dispose(); }
 });
 
+test("Windows status reuses its owned task state and still corroborates the live launcher", () => {
+  for (const [scenario, state, loaded] of [
+    ["owned", "ready", false],
+    ["status-unknown", "unknown", false],
+    ["status-running", "running", true],
+    ["status-running-stale", "running", false],
+    ["status-running-unavailable", "running", false],
+    ["status-ready-live", "running", true],
+    ["status-ready-no-instance", "ready", false],
+  ]) {
+    const f = managerFixture(scenario);
+    try {
+      const result = f.run("status");
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { installed: true, loaded, state }, scenario);
+      const calls = f.calls();
+      assert.equal(calls.length, 2, "one owned snapshot and one independent task/launcher query");
+      assert.equal(calls.every(call => call.name === "powershell.exe"), true);
+    } finally { f.dispose(); }
+  }
+});
+
 test("the authoritative task snapshot recognizes actual COM task absence", { skip: process.platform !== "win32" }, () => {
   const f = managerFixture("missing");
   try {
@@ -174,6 +202,42 @@ test("the authoritative task snapshot recognizes actual COM task absence", { ski
     const result = spawnSync("powershell.exe", call.args, { windowsHide: true, encoding: "utf8", timeout: 15_000,
       env: { ...process.env, CODEX_ROUTER_TASK: `Router-Absent-${path.basename(f.directory)}` } });
     assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { exists: false });
+  } finally { f.dispose(); }
+});
+
+test("the generated owned task snapshot retains its raw Scheduler state", { skip: process.platform !== "win32" }, () => {
+  const f = managerFixture("owned");
+  try {
+    assert.equal(f.run("status").status, 0);
+    const call = f.calls().find(c => c.args.at(-1).includes("$snapshot ="));
+    const prefix = `
+function New-Object { param($ComObject) if($ComObject -ne 'Schedule.Service'){throw 'unexpected COM construction'};
+ $scheduler=[pscustomobject]@{}
+ $scheduler | Add-Member -MemberType ScriptMethod -Name Connect -Value {}
+ $scheduler | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($path)
+  $folder=[pscustomobject]@{}
+  $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($name)
+   $registered=[pscustomobject]@{}
+   $registered | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value {param($flags) 'fixture SDDL'}
+   return $registered
+  }
+  return $folder
+ }
+ return $scheduler
+}
+function Get-ScheduledTask { param($TaskName)
+ [pscustomobject]@{Actions=@([pscustomobject]@{Execute='wscript.exe';Arguments='fixture action'});Principal=[pscustomobject]@{UserId=[Security.Principal.WindowsIdentity]::GetCurrent().Name};State=$env:FIXTURE_TASK_STATE}
+}
+function Export-ScheduledTask { param($TaskName) 'fixture XML' }
+`;
+    for (const state of ["Running", "Unknown"]) {
+      const result = spawnSync("powershell.exe", [...call.args.slice(0, -1), prefix + call.args.at(-1)], {
+        windowsHide: true, encoding: "utf8", timeout: 15_000,
+        env: { ...f.env, CODEX_ROUTER_TASK_EXECUTE: "wscript.exe", CODEX_ROUTER_TASK_ARGUMENT: "fixture action", FIXTURE_TASK_STATE: state },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { exists: true, owned: true, state, xml: "fixture XML", sddl: "fixture SDDL", running: state === "Running" });
+    }
   } finally { f.dispose(); }
 });
 

@@ -27,15 +27,23 @@ function safeLabel(value, label, maxLength = 512) {
   return value;
 }
 
-function existingAbsoluteFile(value, extensions, label) {
+function absoluteFilePath(value, extensions, label) {
   if (typeof value !== "string" || !path.isAbsolute(value) || /[\u0000-\u001f\u007f]/u.test(value)
       || !extensions.includes(path.extname(value).toLowerCase())) {
-    throw new Error(`Invalid ${label}; supply an absolute path to an existing ${extensions.join(" or ")} file.`);
+    throw new Error(`Invalid ${label}; supply an absolute path to a ${extensions.join(" or ")} file.`);
   }
+  return path.normalize(value);
+}
+
+function requireRuntimeFile(value, label) {
   let observed;
   try { observed = lstatSync(value); } catch { /* The configuration error below keeps file diagnostics bounded. */ }
   if (!observed?.isFile() || observed.isSymbolicLink()) throw new Error(`Invalid ${label}; the configured file is missing or is not a regular file.`);
-  return path.normalize(value);
+}
+
+function requireRuntimeFiles(configuration) {
+  requireRuntimeFile(configuration.browser.runtimeModule, "official public browser runtime module");
+  requireRuntimeFile(configuration.tunnel.executable, "tunnel client executable");
 }
 
 function inAppConfiguration(value) {
@@ -56,12 +64,12 @@ function inAppConfiguration(value) {
     models,
     capabilities: Object.fromEntries(["solAvailable", "extraHighAvailable", "proAvailable"].map(key => [key, value.capabilities[key]])),
     browser: {
-      runtimeModule: existingAbsoluteFile(value.runtimeModule, [".mjs", ".js"], "official public browser runtime module"),
+      runtimeModule: absoluteFilePath(value.runtimeModule, [".mjs", ".js"], "official public browser runtime module"),
       pluginName: safeLabel(value.pluginName, "pluginName", 128),
       pluginAppId: value.pluginAppId,
       pluginSelectionButtonName: safeLabel(value.pluginSelectionButtonName, "pluginSelectionButtonName"),
     },
-    tunnel: { id: value.tunnelId, executable: existingAbsoluteFile(value.tunnelClientPath, [".exe"], "tunnel client executable") },
+    tunnel: { id: value.tunnelId, executable: absoluteFilePath(value.tunnelClientPath, [".exe"], "tunnel client executable") },
     ...(value.mcpPort === undefined ? {} : { mcpPort: value.mcpPort }),
   };
 }
@@ -82,10 +90,14 @@ export function webBridgeSettingsWithRuntime(value, runtimeModule) {
   if (value?.version !== 1 || typeof value.enabled !== "boolean") throw new Error("Cannot refresh invalid Web bridge settings.");
   const { models: _models, ...configuration } = readInAppConfiguration({ ...value,
     browser: { ...value.browser, runtimeModule } });
+  requireRuntimeFiles(configuration);
   return { version: 1, enabled: value.enabled, ...configuration };
 }
 
-export function readWebBridgeSettings() {
+// Disabling and reading disabled state need safe persisted structure, even
+// after an app update removes the old runtime. Execution eligibility is checked
+// separately by the public reader and every fresh configuration path.
+function readPersistedWebBridgeSettings() {
   const observed = readJsonFile(settingsPath);
   if (observed.status === "missing") return { version: 1, enabled: false, models: [] };
   const value = observed.value;
@@ -98,6 +110,11 @@ export function readWebBridgeSettings() {
   return { version: 1, enabled: value.enabled, capabilities: inApp.capabilities, browser: inApp.browser,
     tunnel: inApp.tunnel, ...(inApp.mcpPort === undefined ? {} : { mcpPort: inApp.mcpPort }),
     models: inApp.models };
+}
+export function readWebBridgeSettings() {
+  const settings = readPersistedWebBridgeSettings();
+  if (settings.enabled) requireRuntimeFiles(settings);
+  return settings;
 }
 export function webBridgeModels() {
   const settings = readWebBridgeSettings();
@@ -112,6 +129,7 @@ export function webBridgeStatus() {
 
 export async function configureInAppWebBridge(config) {
   const { models: _models, ...safeConfiguration } = inAppConfiguration(config);
+  requireRuntimeFiles(safeConfiguration);
   return withCatalogPublicationLock(() => {
     writePrivateJson(settingsPath, { version: 1, enabled: true, ...safeConfiguration });
     return webBridgeStatus();
@@ -120,7 +138,7 @@ export async function configureInAppWebBridge(config) {
 
 export function disconnectWebBridge() {
   return withCatalogPublicationLock(() => {
-    const { models: _models, ...settings } = readWebBridgeSettings();
+    const { models: _models, ...settings } = readPersistedWebBridgeSettings();
     if (settings.browser) writePrivateJson(settingsPath, { ...settings, enabled: false });
     return webBridgeStatus();
   });

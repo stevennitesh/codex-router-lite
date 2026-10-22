@@ -65,6 +65,75 @@ async function fixture(t, options = {}) {
   return { broker, service, connect };
 }
 
+for (const trace of [false, true]) {
+  test(`default diagnostics ${trace ? "trace all stages when enabled at creation" : "log only errors"}`, { timeout: 10_000 }, async t => {
+    const previousTrace = process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+    t.after(() => {
+      if (previousTrace === undefined) delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+      else process.env.CODEX_ROUTER_WEB_MCP_TRACE = previousTrace;
+    });
+    if (trace) process.env.CODEX_ROUTER_WEB_MCP_TRACE = "1";
+    else delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+    const logged = [];
+    t.mock.method(console, "warn", line => logged.push(line));
+    const receipts = () => withoutDiagnosticTime(logged.map(line => {
+      const prefix = "[codex-router] web-mcp ";
+      assert.equal(line.startsWith(prefix), true);
+      return JSON.parse(line.slice(prefix.length));
+    }));
+    const { broker, service, connect } = await fixture(t, { onDiagnostic: undefined });
+    // An existing listener retains its logging policy until Router restarts.
+    if (trace) delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+    else process.env.CODEX_ROUTER_WEB_MCP_TRACE = "1";
+    const turn = register(broker, "default-diagnostics");
+    const turnHash = createHash("sha256").update(turn.token).digest("hex");
+    const { client, transport } = await connect();
+    const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+    assert.deepEqual(discovered.structuredContent.tools, broker.list(turn.token));
+    const result = call(client, turn, "read", { arguments: { marker: "private-arguments" } });
+    const [native] = await nativeCalls(broker, turn.token);
+    broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "private-native-result" }]);
+    assert.equal((await result).content[0].text, "private-native-result");
+    assert.deepEqual(receipts(), trace ? [
+      { operation: "list", stage: "received", turnHash },
+      { operation: "list", stage: "list-completed", turnHash },
+      { operation: "call", stage: "received", turnHash },
+      { operation: "call", stage: "invoke-started", turnHash },
+      { operation: "call", stage: "native-result", turnHash, isError: false },
+    ] : []);
+    logged.length = 0;
+
+    const failed = call(client, turn, "read", { arguments: { marker: "private-arguments" } });
+    const [nativeFailure] = await nativeCalls(broker, turn.token);
+    broker.complete(turn.token, [{ type: "function_call_output", call_id: nativeFailure.call_id, isError: true, output: "private-native-failure" }]);
+    assert.equal((await failed).isError, true);
+    await assert.rejects(call(client, turn, "read", { arguments: "private-invalid-arguments" }), /invalid arguments/iu);
+    await assert.rejects(client.callTool({ name: "private-unknown-operation", arguments: { turn_token: "private-malformed-token" } }), /invalid arguments/iu);
+    assert.equal((await call(client, turn, "private-undeclared-tool")).isError, true);
+    assert.deepEqual(receipts(), [
+      ...(trace ? [
+        { operation: "call", stage: "received", turnHash },
+        { operation: "call", stage: "invoke-started", turnHash },
+      ] : []),
+      { operation: "call", stage: "native-result", turnHash, isError: true },
+      ...(trace ? [{ operation: "call", stage: "received", turnHash }] : []),
+      { operation: "call", stage: "invalid-arguments", turnHash },
+      ...(trace ? [{ operation: "unknown", stage: "received" }] : []),
+      { operation: "unknown", stage: "unknown-operation" },
+      ...(trace ? [
+        { operation: "call", stage: "received", turnHash },
+        { operation: "call", stage: "invoke-started", turnHash },
+      ] : []),
+      { operation: "call", stage: "rejected", turnHash },
+    ]);
+    for (const privateValue of [turn.token, service.url, transport.sessionId, "private-"]) {
+      assert.equal(logged.join("\n").includes(privateValue), false);
+    }
+    assert.equal(finish(broker, turn.token), true);
+    assert.equal(service.status().pending, 0);
+  });
+}
+
 test("SDK HTTP client initializes, discovers current native tools, and waits for native execution", { timeout: 10_000 }, async t => {
   const receipts = [];
   const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });

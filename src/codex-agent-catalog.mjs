@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { writePrivateFile } from "./file-security.mjs";
 import { CODEX_AGENTS_DIR } from "./paths.mjs";
-import { validateRoutedEffort } from "./routed-models.mjs";
+import { MODEL_BY_SLUG, validateRoutedEffort } from "./routed-models.mjs";
 
 function safeIdentifier(value, separator) {
   return String(value)
@@ -85,7 +85,11 @@ export function routedAgentDefinition(model) {
   if (!defaultEffort) {
     throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`);
   }
-  try { validateRoutedEffort({ ...model, reasoningLevels: model.reasoningLevels || model.supported_reasoning_levels }, defaultEffort); }
+  try {
+    validateRoutedEffort({ ...model, reasoningLevels: model.reasoningLevels || model.supported_reasoning_levels }, defaultEffort);
+    const registered = MODEL_BY_SLUG.get(slug);
+    if (registered) validateRoutedEffort(registered, defaultEffort);
+  }
   catch (cause) { throw new Error(`Cannot create a routed agent without a supported default effort: ${slug}`, {cause}); }
   const contents = [
     "# Managed by Codex Router. Refresh the model catalog to update this file.",

@@ -48,8 +48,14 @@ and account eligibility; `src/chatgpt-web.mjs` owns configuration and dispatch.
 It bypasses OpenRouter preparation and native credential
 relay. Do not add it to the fixed OpenRouter registry or merge its native catalog.
 
-The registry owns `supportedRoutedEfforts` and `validateRoutedEffort`. Generated
-agent defaults and local effort overrides use the same advertised route levels.
+The registry owns canonical efforts, catalog effort projection and their bounded
+reverse mapping. Older or unknown Codex catalogs retain the `xhigh` label for
+canonical `max` on the four GLM/DeepSeek routes; a projected default must resolve
+against the actual registered route before generating a role. Distinct canonical
+levels must not become an ambiguous legacy label on those routes.
+`supportedRoutedEfforts` reports canonical levels and `validateRoutedEffort`
+returns the canonical value, so local overrides store `max` even when entered as
+the legacy label. Generated role TOML retains the caller's projected label.
 Unsupported explicit overrides fail locally; clearing an override restores the
 route's default. Add endpoint levels to its metadata rather than maintaining a
 second vocabulary in settings or agent generation.

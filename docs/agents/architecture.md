@@ -117,7 +117,7 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Catalog derivation and native authority | `src/catalog.mjs`, `src/native-catalog-source.mjs`; [native Codex](native-codex.md) |
 | Paths, overrides and state locations | `src/paths.mjs`; inspect these before runtime work |
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
-| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/windows-batch-cleanup.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
+| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/windows-batch-cleanup.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#optional-diagnostics) |
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
 | Packaged deployment acceptance | `src/deployment-acceptance.mjs`; full health and installed task/process/manifest identity for activation and rollback, without Git or Switchyard-only proof |
 | Async directory-lock lifecycle | `src/directory-lock.mjs`; catalog, overlay, caller-key, and service wrappers use complete generations with unique owner files. Release drains dispatched heartbeats; only positive owner-process exit permits recovery. Legacy or uncertain ownership requires quiescent cleanup. |

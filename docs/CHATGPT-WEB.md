@@ -17,11 +17,8 @@ After setup, choose a model ending in `(Web)` in an ordinary Codex conversation.
 Use Codex tools normally and keep working in that conversation to reuse its saved
 ChatGPT context. Stop retains the chat and tab for continuation.
 
-```powershell
-.\model-router.ps1 codex web status
-```
-
-This command combines local configuration, Router, key and adapter diagnostics.
+For troubleshooting, `model-router.ps1 codex web status` combines local
+configuration, Router, key and adapter diagnostics.
 It distinguishes observed local readiness from browser sign-in, app-loaded state
 and hook trust that still need verification in Codex. Follow a reported next action
 rather than reinstalling or restarting automatically.
@@ -73,8 +70,11 @@ the model picker:
 .\model-router.ps1 codex web browser 'C:\absolute\path\web-browser.json'
 .\restart-codex-router.ps1
 .\model-router.ps1 codex refresh-catalog
-.\model-router.ps1 codex web status
 ```
+
+The explicit catalog refresh publishes the picker before you reopen Codex;
+startup's automatic freshness check runs asynchronously. Use `web status` only
+when you need diagnostics, rather than adding it to every setup or restart.
 
 After changing browser or tunnel settings, restart Router before sending a Web
 request. Reopening Codex reloads its adapter; it does not reload Router's running
@@ -92,7 +92,8 @@ owned tunnel client loads the replacement. Inspect or remove it with:
 .\model-router.ps1 codex web tunnel-key remove
 ```
 
-Fully quit and reopen Codex, then choose a model ending in `(Web)`. Configuration
+Complete [Immediate Stop setup](#immediate-stop) below before the single final
+Codex restart, then choose a model ending in `(Web)`. Configuration
 publishes the eligible model choices while preserving previous visibility choices;
 it does not launch the browser or prove tool access. Router starts its loopback
 MCP listener and official tunnel client when an enabled in-app configuration is
@@ -139,17 +140,18 @@ and [Stop's authority and deadline](agents/web-integration.md#immediate-stop).
 
 ## Refresh after a Codex update
 
-Preview the runtime refresh before changing the installed integration:
+After an app update, apply the coordinated runtime refresh:
 
 ```powershell
-.\model-router.ps1 codex web refresh-runtime
 .\model-router.ps1 codex web refresh-runtime --apply
 ```
 
-Planning reads the configured official Node REPL and browser service and validates
+The command checks whether a refresh is needed and reads the configured official
+Node REPL and browser service to validate
 their runtime identities. It preserves your connector, tunnel, runtime key and
 model capabilities. If the configured runtime is missing or ambiguous, supply a
 reviewed manifest with `--manifest 'C:\absolute\path\adapter-manifest.json'`.
+Omit `--apply` for a read-only preview when needed; a separate preview is optional.
 
 Applying a required refresh waits for active Router work, installs the matching
 adapter and browser configuration, and reloads Router. It does not force an

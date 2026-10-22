@@ -263,15 +263,16 @@ export function stepStatus(
 ) {
   const definition = STEPS[step];
   if (!definition) throw new Error(`Unknown install step: ${step}`);
-  if (!definition.installed(root, platform, { runtimeProblem })) return "run";
   const stamp = readFile(definition.stamp(root));
   if (!stamp) return "run";
   try {
     const parsed = JSON.parse(stamp);
-    return parsed?.fingerprint === definition.fingerprint(root) ? "skip" : "run";
+    if (parsed?.fingerprint !== definition.fingerprint(root)) return "run";
   } catch {
     return "run";
   }
+  // Probe the installed runtime only when the inputs could permit a skip.
+  return definition.installed(root, platform, { runtimeProblem }) ? "skip" : "run";
 }
 
 export function recordStep(step, { root = SOURCE_ROOT } = {}) {

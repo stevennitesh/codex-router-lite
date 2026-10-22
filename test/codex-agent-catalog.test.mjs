@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { syncRoutedCodexAgents } from "../src/codex-agent-catalog.mjs";
+import { routedAgentDefinition, syncRoutedCodexAgents } from "../src/codex-agent-catalog.mjs";
 
 test("routed child pins its supported default effort instead of inheriting the parent", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "codex-router-agent-catalog-"));
@@ -50,4 +50,13 @@ test("routed child rejects a default effort outside its advertised ladder", () =
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("registered roles cannot invent a self-consistent effort ladder outside the serving registry", () => {
+  assert.throws(() => routedAgentDefinition({slug: "openrouter/glm-5.3-flash-together", defaultEffort: "medium",
+    reasoningLevels: [{effort: "medium"}]}), /supported default effort/u);
+  assert.doesNotThrow(() => routedAgentDefinition({slug: "chatgpt-web/synthetic", defaultEffort: "max",
+    reasoningLevels: [{effort: "max"}]}));
+  assert.doesNotThrow(() => routedAgentDefinition({slug: "synthetic/model", default_reasoning_level: "medium",
+    supported_reasoning_levels: [{effort: "medium"}]}));
 });

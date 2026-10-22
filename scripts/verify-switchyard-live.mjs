@@ -5,8 +5,9 @@ import { deflateSync } from "node:zlib";
 
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { nativeAccountCatalogHeaders } from "../src/codex-native-session.mjs";
-import { CALLER_SECRET_PATH, CODEX_HOME, LOG_PATH, PORTS } from "../src/paths.mjs";
+import { CALLER_SECRET_PATH, LOG_PATH, PORTS } from "../src/paths.mjs";
 import { summarizeSwitchyardSmokeEvidence } from "../src/switchyard-certification-evidence.mjs";
+import { switchyardRuntimeStatus } from "../src/switchyard-runtime.mjs";
 import { readSwitchyardConfigContract } from "./switchyard-config-contract.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -18,6 +19,22 @@ const expectedTemplateHash = createHash("sha256").update(readFileSync(
 const contract = readSwitchyardConfigContract();
 const solTarget = contract.answers.find(target => target.name === contract.defaultTarget);
 const phases = Object.fromEntries(["tool", "media", "compact"].map(name => [name, { sessionId: randomUUID() }]));
+
+function readRuntimeBinding(provenancePath) {
+  let provenance;
+  try { provenance = JSON.parse(readFileSync(provenancePath, "utf8")); }
+  catch { throw new Error("Switchyard runtime provenance is unavailable or invalid."); }
+  const fields = ["routerCommit", "upstreamCommit", "binarySha256", "routesSha256", "templateSha256"];
+  const binding = Object.fromEntries(fields.map(key => [key, provenance?.[key]]));
+  if (fields.some(key => typeof binding[key] !== "string" ||
+      !(key.endsWith("Commit") ? /^[a-f0-9]{40}$/u : /^[a-f0-9]{64}$/u).test(binding[key]))) {
+    throw new Error("Switchyard runtime provenance binding is invalid.");
+  }
+  if (binding.templateSha256 !== expectedTemplateHash) {
+    throw new Error("Switchyard runtime template binding differs from the smoke source.");
+  }
+  return binding;
+}
 
 function parseSse(text) {
   return text.split(/\r?\n/u)
@@ -148,6 +165,11 @@ function endPhase(phase) {
   phase.endedAt = new Date(Date.now() + 1).toISOString();
 }
 
+const runtime = switchyardRuntimeStatus();
+if (!runtime.ready) throw new Error("Switchyard runtime deployment files are unavailable or invalid.");
+const provenancePath = path.join(runtime.runtimeRoot, "provenance.json");
+const routingPath = path.join(runtime.runtimeRoot, "routing.jsonl");
+const initialBinding = readRuntimeBinding(provenancePath);
 const callerSecret = readFileSync(CALLER_SECRET_PATH, "utf8").trim();
 const nativeHeaders = await nativeAccountCatalogHeaders();
 if (!nativeHeaders) throw new Error("signed-in native Codex authentication is unavailable");
@@ -241,12 +263,10 @@ const nativeCompact = await post(`${base}/responses`, {
 }, phaseHeaders(phases.compact));
 endPhase(phases.compact);
 
-const installedProvenance = JSON.parse(readFileSync(
-  path.join(CODEX_HOME, "switchyard", "provenance.json"),
-  "utf8",
-));
+const installedProvenance = readRuntimeBinding(provenancePath);
+const runtimeBindingStable = Object.entries(initialBinding).every(([key, value]) => installedProvenance[key] === value);
 const routerLog = readFileSync(LOG_PATH, "utf8");
-const routingLog = readFileSync(path.join(CODEX_HOME, "switchyard", "routing.jsonl"), "utf8");
+const routingLog = readFileSync(routingPath, "utf8");
 const observations = Object.fromEntries(Object.entries(phases).map(([name, phase]) => [name,
   summarizeSwitchyardSmokeEvidence({ routerLog, routingLog, ...phase, expectedRequests: name === "tool" ? 2 : 1 }),
 ]));
@@ -321,6 +341,7 @@ const evidence = {
   limitations: [],
 };
 evidence.requiredFailures = [];
+if (!runtimeBindingStable) evidence.requiredFailures.push("runtime provenance changed during smoke");
 if (!completed(first) || !completed(second)) evidence.requiredFailures.push("tool round trip did not complete");
 if (first.value?.model !== "switchyard/auto" || second.value?.model !== "switchyard/auto") {
   evidence.requiredFailures.push("public response identity drifted");

@@ -3243,11 +3243,12 @@ function prepareNativeWebSocketRequest({ request, payload, controller, signal })
         if (workflow) workflow.consumed = clientToolOutputs(input);
         return prepareNativePayload(full).payload;
       },
-      finish({ status, outcome, outputObservation, usage: reportedUsage, firstTokenMs, latencyMs }) {
+      finish({ status, outcome, terminalAccepted, outputObservation, usage: reportedUsage, firstTokenMs, latencyMs }) {
         if (finished) return;
         finished = true;
-        const servedStatus = execution.deadlineExceeded() ? 504 : status;
-        if (workflow && servedStatus === 200 && outcome === "completed" && !signal.aborted && outputObservation) {
+        const servedStatus = !terminalAccepted && execution.deadlineExceeded() ? 504 : status;
+        if (workflow && servedStatus === 200 && outcome === "completed" &&
+            (terminalAccepted || !signal.aborted) && outputObservation) {
           routerAdmission.recordSwitchyardWorkflow({
             ...workflow, produced: clientToolCalls(outputObservation.output),
             complete: outputObservation.complete,

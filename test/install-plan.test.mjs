@@ -66,6 +66,30 @@ test("a matching stamp never skips a broken Python runtime or missing interprete
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("Python status probes the runtime only when its stamp matches the current inputs", () => {
+  const f = fixture();
+  let probes = 0;
+  const options = { root: f.root, platform: "win32", runtimeProblem: () => { probes += 1; } };
+  try {
+    const stamp = path.join(f.root, ".venv/.codex-router-install.json");
+    assert.equal(stepStatus("python-deps", options), "run");
+    assert.equal(probes, 0, "a missing stamp already requires installation");
+    for (const contents of ["{", "{}"]) {
+      writeFileSync(stamp, contents);
+      assert.equal(stepStatus("python-deps", options), "run");
+      assert.equal(probes, 0, "a malformed or incomplete stamp already requires installation");
+    }
+    recordStep("python-deps", options);
+    const lock = path.join(f.requirements, "python.txt");
+    writeFileSync(lock, `${readFileSync(lock, "utf8")}\n`);
+    assert.equal(stepStatus("python-deps", options), "run");
+    assert.equal(probes, 0, "changed dependency inputs already require installation");
+    recordStep("python-deps", options);
+    assert.equal(stepStatus("python-deps", options), "skip");
+    assert.equal(probes, 1, "a matching stamp still requires a runtime probe");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("regenerating an exact lock cannot bypass the gateway security floor or required package set", () => {
   const f = fixture();
   try {
@@ -163,6 +187,7 @@ test("Node verifier refuses each missing actual SDK ESM entry even when its Comm
   for (const entry of ["server/index.js", "server/streamableHttp.js", "types.js", "validation/ajv-provider.js"]) {
     const f = sdkNodeFixture();
     try {
+      recordStep("node-deps", { root: f.root });
       const require = createRequire(path.join(f.root, "package.json"));
       assert.equal(require(`@modelcontextprotocol/sdk/${entry}`).ready, true);
       rmSync(path.join(f.sdk, "dist/esm", entry));
@@ -177,9 +202,11 @@ test("Node SDK probe evaluates runtime modules and still enforces the complete l
   for (const scenario of ["broken import", "mismatched locked package"]) {
     const f = sdkNodeFixture();
     try {
+      recordStep("node-deps", { root: f.root });
       if (scenario === "broken import") writeFileSync(path.join(f.sdk, "dist/esm/types.js"), "throw new Error('fixture initialization failed');");
       else writeFileSync(path.join(f.dependency, "package.json"), JSON.stringify({ version: "0.0.0" }));
       assert.throws(() => verifyNodeDependencies(f.root), scenario === "broken import" ? /runtime import probe failed/u : /tree is incomplete or mismatched/u);
+      assert.equal(stepStatus("node-deps", { root: f.root }), "run");
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
 });

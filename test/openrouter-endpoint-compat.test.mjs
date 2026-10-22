@@ -90,7 +90,7 @@ test("ordinary reasoning requests reject unsupported efforts before either provi
   for (const route of [streamlake, MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-together"), ...deepseeks]) {
     const shapes = effort => [{reasoning: {effort}}, {reasoning_effort: effort},
       {reasoning_effort: {effort}}, {reasoning: {effort}, reasoning_effort: "low"}];
-    for (const effort of ["medium", "xhigh", "ultra", "none", "", null, 42]) {
+    for (const effort of ["medium", "ultra", "none", "", null, 42]) {
       for (const shape of shapes(effort)) {
         const input = {model: route.slug, input: "synthetic", ...shape};
         for (const prepare of [p => prepareRoutedRequest(p, route), prepareOpenRouterRequest]) {
@@ -106,8 +106,8 @@ test("ordinary reasoning requests reject unsupported efforts before either provi
         assert.deepEqual(input, saved);
       }
     }
-    for (const reasoning of [{}, {summary: "auto"}, {effort: "low"}]) {
-      for (const reasoning_effort of ["medium", "high", {effort: "medium"}]) {
+    for (const reasoning of [{}, {summary: "auto"}, {effort: "low"}, null, "invalid", 42]) {
+      for (const reasoning_effort of ["medium", "high", "xhigh", {effort: "medium"}, {effort: "xhigh"}]) {
         const input = {model: route.slug, input: "synthetic", reasoning, reasoning_effort};
         const saved = structuredClone(input);
         for (const prepared of [prepareRoutedRequest(input, route).payload,

@@ -22,7 +22,6 @@ import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { stopWindowsBatchChild } from "./windows-batch-cleanup.mjs";
 import { processStartIdentity } from "./process-identity.mjs";
-import { requireGatewayRuntime } from "./venv-runtime.mjs";
 import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
@@ -338,9 +337,6 @@ async function main() {
   const startGateway = () => {
     if (!existsSync(litellm)) {
       throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
-    }
-    if (usesBundledVenv) {
-      requireGatewayRuntime(litellm, { dependencyFix });
     }
     writeLiteLlmConfig();
     return run(litellm, [

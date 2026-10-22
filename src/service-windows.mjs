@@ -232,7 +232,8 @@ function taskSnapshot() {
     "  $arguments = [string]$actions[0].Arguments",
     "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_PREVIOUS_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_PREVIOUS_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
     "}",
-    "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); xml = (Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK); sddl = $registered.GetSecurityDescriptor(7); running = ($task.State.ToString() -ieq 'Running') }",
+    "$state = $task.State.ToString()",
+    "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); state = $state; xml = (Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK); sddl = $registered.GetSecurityDescriptor(7); running = ($state -ieq 'Running') }",
     "[Console]::Out.Write(($snapshot | ConvertTo-Json -Compress))",
   ].join("\n");
   const env = {
@@ -260,6 +261,7 @@ function taskSnapshot() {
       ));
       if (snapshot?.exists === false) return { exists: false };
       if (snapshot?.exists !== true || typeof snapshot.owned !== "boolean"
+        || typeof snapshot.state !== "string"
         || typeof snapshot.running !== "boolean" || typeof snapshot.xml !== "string" || !snapshot.xml
         || typeof snapshot.sddl !== "string" || !snapshot.sddl) throw new Error("Invalid task snapshot.");
       return snapshot;
@@ -654,7 +656,7 @@ if (command === "render") {
   if (snapshot.exists) {
     assertOwnedTask(snapshot);
     installed = true;
-    state = taskState() || "ready";
+    state = snapshot.state.trim().toLowerCase() || "ready";
     loaded = await taskRunning();
     if (loaded) state = "running";
   }
