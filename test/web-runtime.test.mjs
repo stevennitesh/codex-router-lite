@@ -2,20 +2,32 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
-import { RouterAdmission } from "../src/router-admission.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
-const stateDir = mkdtempSync(path.join(os.tmpdir(), "router-web-runtime-"));
-process.env.CODEX_HOME = path.join(stateDir, "codex");
-process.env.MODEL_ROUTER_STATE_DIR = stateDir;
+const fixtureParent = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.tmp");
+mkdirSync(fixtureParent, { recursive: true });
+const stateDir = mkdtempSync(path.join(fixtureParent, "router-web-runtime-"));
+const syntheticEnvironment = {
+  CODEX_HOME: path.join(stateDir, "codex"), MODEL_ROUTER_STATE_DIR: stateDir, CODEX_ROUTER_STATE_DIR: stateDir,
+  MODEL_ROUTER_MODEL_PICKER_STATE: path.join(stateDir, "model-picker.json"),
+  MODEL_ROUTER_MULTI_AGENT_STATE: path.join(stateDir, "multi-agent-settings.json"),
+};
+Object.assign(process.env, syntheticEnvironment);
+for (const [name, expected] of Object.entries(syntheticEnvironment)) {
+  assert.equal(process.env[name], expected, `${name} must be synthetic before loading any production module.`);
+  assert.ok(!path.relative(stateDir, expected).startsWith(".."));
+}
 mkdirSync(process.env.CODEX_HOME);
 after(() => rmSync(stateDir, { recursive: true, force: true }));
 
+const { RouterAdmission } = await import("../src/router-admission.mjs");
+const runtimePaths = await import("../src/paths.mjs");
+assert.equal(runtimePaths.CODEX_HOME, syntheticEnvironment.CODEX_HOME);
+assert.equal(runtimePaths.STATE_DIR, stateDir);
 const { createInAppWebRuntime, collectWebTools, webTurnIdentity } = await import("../src/web-runtime.mjs");
 const { createWebToolBroker } = await import("../src/web-tools.mjs");
 const { browserDom, parseBrowserOutput, readBrowserProgram } = await import("../src/web-browser.mjs");
@@ -230,7 +242,8 @@ function fakeBrowser() {
 
 let fixtureNumber = 0;
 function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", instructions, cancelDuringWatch = false, watcherClosure = async () => {},
-  tunnelReadiness = () => Promise.resolve(), storage = syntheticStorage, mcpFactory } = {}) {
+  tunnelReadiness = () => Promise.resolve(), tunnelClosure = async () => {}, mcpClosure = async () => {},
+  expectedCloseCode, storage = syntheticStorage, mcpFactory } = {}) {
   const browser = fakeBrowser();
   const key = `router-web-runtime-test-${++fixtureNumber}`;
   globalThis[Symbol.for(key)] = browser.agent;
@@ -248,11 +261,11 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
       if (mcpFactory) return mcpFactory(options);
       return { url: "http://127.0.0.1:40123/mcp",
         observationUrl: (token, revision) => `http://127.0.0.1:40123/${"a".repeat(64)}/observe/${token}?revision=${revision}`,
-        status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); } };
+        status: () => ({ healthy: true }), close: async () => { observations.services.push("mcp-closed"); await mcpClosure(); } };
     },
     startTunnel: async options => {
       observations.services.push("tunnel");
-      return { ready: tunnelReadiness(options), status: () => ({ healthy: true }), close: async () => { observations.services.push("tunnel-closed"); } };
+      return { ready: tunnelReadiness(options), status: () => ({ healthy: true }), close: async () => { observations.services.push("tunnel-closed"); await tunnelClosure(); } };
     },
     watchCancellation: options => {
       const watcher = { ...options, closed: false };
@@ -261,7 +274,12 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     },
   });
   let runtime = makeRuntime();
-  t.after(async () => { await runtime.close(); delete globalThis[Symbol.for(key)]; });
+  t.after(async () => {
+    try {
+      if (expectedCloseCode) await assert.rejects(runtime.close(), { code: expectedCloseCode });
+      else await runtime.close();
+    } finally { delete globalThis[Symbol.for(key)]; }
+  });
   let nativeContext = {};
   let payload = { model: "chatgpt-web/gpt-6-sol-instant", reasoning: { effort: "low" }, stream: false,
     tools: structuredClone(tools), tool_choice: toolChoice, instructions, input: [{ role: "user", content: "Read the current file using the declared tools." }] };
@@ -918,7 +936,9 @@ test("completed turn retirement preserves the exact final JSON and SSE response 
 
 test("terminal turns release their native schema after request, watcher and checkpoint settlement", async t => {
   if (typeof global.gc !== "function") {
-    const { stdout } = await promisify(execFile)(process.execPath, ["--expose-gc", "--test-isolation=none", "--test", "--test-name-pattern=^terminal turns release their native schema", fileURLToPath(import.meta.url)], { timeout: 30_000 });
+    const { stdout } = await promisify(execFile)(process.execPath, ["--expose-gc", "--test-isolation=none", "--test", "--test-name-pattern=^terminal turns release their native schema", fileURLToPath(import.meta.url)], {
+      timeout: 30_000, env: { ...process.env, ...syntheticEnvironment },
+    });
     assert.match(stdout, /terminal turns release their native schema: cancelled/u);
     assert.match(stdout, /terminal turns release their native schema: completed/u);
     return;
@@ -2288,6 +2308,150 @@ test("tunnel startup failure closes acquired services and the native cancellatio
   assert.equal(h.runtime.status().activeTurns, 0);
 });
 
+test("eager starts and native request preparation share one pending acquisition and preserve the configuration fence", async t => {
+  const { promise: readiness, resolve: ready } = Promise.withResolvers();
+  const { promise: tunnelStarted, resolve: started } = Promise.withResolvers();
+  t.after(ready);
+  const h = harness(t, { tunnelReadiness: () => { started(); return readiness; } });
+  const first = h.runtime.start(h.settings), second = h.runtime.start(h.settings), request = h.request();
+  await tunnelStarted;
+  assert.equal(h.runtime.status().started, false);
+  await assert.rejects(h.runtime.start({ ...h.settings, mcpPort: 40124 }), /Restart Router/u);
+  ready();
+  await Promise.all([first, second, request]);
+  assert.equal(h.runtime.status().started, true);
+  assert.deepEqual(h.observations.services, ["mcp", "tunnel"]);
+  assert.equal(h.observations.watchers.length, 1);
+});
+
+test("successful startup rollback preserves the original error and permits another same-configuration acquisition", async t => {
+  const original = Object.assign(new Error("Synthetic readiness failed."), { code: "web_tunnel_not_ready" });
+  let attempts = 0;
+  const h = harness(t, { tunnelReadiness: () => ++attempts === 1 ? Promise.reject(original) : Promise.resolve() });
+  await assert.rejects(h.runtime.start(h.settings), error => error === original);
+  assert.equal(h.runtime.status().started, false);
+  await assert.rejects(h.runtime.start({ ...h.settings, tunnel: { ...h.settings.tunnel, id: "different" } }), /Restart Router/u);
+  await h.runtime.start(h.settings);
+  await h.request();
+  assert.deepEqual(h.observations.services, ["mcp", "tunnel", "tunnel-closed", "mcp-closed", "mcp", "tunnel"]);
+  await h.runtime.close();
+  assert.deepEqual(h.observations.services.slice(-2), ["tunnel-closed", "mcp-closed"]);
+});
+
+test("a synchronous MCP acquisition failure releases its empty slot before retry", async t => {
+  const original = new Error("Synthetic MCP start failure.");
+  let starts = 0, closes = 0;
+  const runtime = createInAppWebRuntime({ stateDir,
+    startMcp: () => {
+      if (++starts === 1) throw original;
+      return { url: "http://127.0.0.1:40123/mcp", status: () => ({}), close: async () => { closes += 1; } };
+    },
+    startTunnel: async () => ({ ready: Promise.resolve(), status: () => ({ healthy: true }), close: async () => {} }),
+  });
+  t.after(() => runtime.close());
+  const settings = { browser: {}, tunnel: {} };
+  await assert.rejects(runtime.start(settings), error => error === original);
+  await runtime.start(settings);
+  await runtime.close();
+  assert.deepEqual({ starts, closes }, { starts: 2, closes: 1 });
+});
+
+test("failed startup release attempts every owner, keeps bounded errors and blocks duplicate acquisition", async t => {
+  for (const [tunnelCode, mcpFails, expected] of [
+    ["web_tunnel_cleanup_failed", false, "web_tunnel_cleanup_failed"],
+    ["web_tunnel_stop_failed", false, "web_tunnel_stop_failed"],
+    [undefined, true, "web_mcp_close_failed"],
+    ["unknown-private-code", true, "web_service_cleanup_failed"],
+  ]) await t.test(`${tunnelCode ?? "mcp"}, MCP failure ${mcpFails}`, async t => {
+    const privateMarker = "synthetic-private-error-details";
+    const h = harness(t, {
+      tunnelReadiness: () => Promise.reject(Object.assign(new Error(privateMarker), { code: tunnelCode ? "web_tunnel_not_ready" : privateMarker })),
+      tunnelClosure: async () => { if (tunnelCode) throw Object.assign(new Error(privateMarker), { code: tunnelCode, cause: privateMarker }); },
+      mcpClosure: async () => { if (mcpFails) throw Object.assign(new Error(privateMarker), { code: "private-mcp-code", cause: privateMarker }); },
+      expectedCloseCode: expected,
+    });
+    let retained;
+    await assert.rejects(h.request(), error => {
+      retained = error;
+      assert.equal(error.code, expected);
+      assert.equal(error.startupCode, tunnelCode ? "web_tunnel_not_ready" : "web_service_start_failed");
+      assert.deepEqual(error.cleanupCodes, [
+        ...(tunnelCode ? [{ owner: "tunnel", code: tunnelCode === "web_tunnel_cleanup_failed" ? tunnelCode : "web_tunnel_stop_failed" }] : []),
+        ...(mcpFails ? [{ owner: "mcp", code: "web_mcp_close_failed" }] : []),
+      ]);
+      assert.equal(error.cause, undefined);
+      assert.equal(`${error.message} ${JSON.stringify(error)}`.includes(privateMarker), false);
+      assert.equal(JSON.stringify(error).includes("unknown-private-code"), false);
+      return true;
+    });
+    assert.deepEqual(h.observations.services, ["mcp", "tunnel", "tunnel-closed", "mcp-closed"]);
+    await assert.rejects(h.runtime.start(h.settings), error => error === retained);
+    const closing = h.runtime.close();
+    assert.equal(h.runtime.close(), closing);
+    await assert.rejects(closing, error => error === retained);
+    await assert.rejects(h.runtime.close(), error => error === retained);
+    assert.deepEqual(h.observations.services, ["mcp", "tunnel", "tunnel-closed", "mcp-closed"]);
+    assert.equal(h.observations.watchers[0].closed, true);
+  });
+});
+
+test("a rejected tunnel rollback before returning its handle retains failed-acquisition custody", async () => {
+  let mcpStarts = 0, mcpCloses = 0, tunnelStarts = 0;
+  const runtime = createInAppWebRuntime({ stateDir,
+    startMcp: async () => { mcpStarts += 1; return { url: "http://127.0.0.1:40123/mcp", close: async () => { mcpCloses += 1; } }; },
+    startTunnel: async () => { tunnelStarts += 1; throw Object.assign(new Error("Synthetic cleanup failure."), { code: "web_tunnel_cleanup_failed" }); },
+  });
+  const settings = { browser: {}, tunnel: {} };
+  for (let attempt = 0; attempt < 2; attempt += 1) await assert.rejects(runtime.start(settings), { code: "web_tunnel_cleanup_failed" });
+  await assert.rejects(runtime.close(), { code: "web_tunnel_cleanup_failed" });
+  assert.deepEqual({ mcpStarts, mcpCloses, tunnelStarts }, { mcpStarts: 1, mcpCloses: 1, tunnelStarts: 1 });
+});
+
+test("a tunnel close failure still stops the acquired real loopback MCP listener and shutdown retains the failure", async t => {
+  let actualMcp, mcpCloses = 0;
+  t.after(async () => { await actualMcp?.close(); });
+  const h = harness(t, {
+    mcpFactory: async options => {
+      actualMcp = await startWebMcp(options);
+      assert.equal(actualMcp.status().listening, true);
+      return { ...actualMcp, close: async () => { mcpCloses += 1; await actualMcp.close(); } };
+    },
+    tunnelReadiness: () => Promise.reject(Object.assign(new Error("Synthetic not-ready failure."), { code: "web_tunnel_not_ready" })),
+    tunnelClosure: async () => { throw Object.assign(new Error("Synthetic cleanup failure."), { code: "web_tunnel_cleanup_failed" }); },
+    expectedCloseCode: "web_tunnel_cleanup_failed",
+  });
+  await assert.rejects(h.runtime.start(h.settings), { code: "web_tunnel_cleanup_failed" });
+  assert.equal(actualMcp.status().listening, false);
+  await assert.rejects(h.runtime.start(h.settings), { code: "web_tunnel_cleanup_failed" });
+  await assert.rejects(h.runtime.close(), { code: "web_tunnel_cleanup_failed" });
+  assert.equal(actualMcp.status().listening, false);
+  assert.equal(mcpCloses, 1);
+  assert.deepEqual(h.observations.services, ["mcp", "tunnel", "tunnel-closed"]);
+});
+
+test("watcher shutdown failure still releases both services after checkpoint settlement", { timeout: 5_000 }, async t => {
+  const { promise: writeStarted, resolve: started } = Promise.withResolvers();
+  const { promise: writeAllowed, resolve: release } = Promise.withResolvers();
+  t.after(release);
+  const original = Object.assign(new Error("Synthetic watcher close failure."), { code: "synthetic_watcher_close_failed" });
+  let writes = 0;
+  const h = harness(t, { watcherClosure: async () => { throw original; }, expectedCloseCode: original.code,
+    storage: { ...syntheticStorage, writeState: async (target, value) => {
+      if (++writes > 1) { started(); await writeAllowed; }
+      await syntheticStorage.writeState(target, value);
+    } },
+  });
+  const initial = await h.request();
+  const advancing = assert.rejects(h.answerBrowser(initial.output[0]), { code: "web_turn_cancelled" });
+  await writeStarted;
+  const closing = assert.rejects(h.runtime.close(), error => error === original);
+  assert.deepEqual(h.observations.services, ["mcp", "tunnel"], "Checkpoint custody remains until its write settles, including after watcher failure.");
+  release();
+  await Promise.all([advancing, closing]);
+  assert.deepEqual(h.observations.services, ["mcp", "tunnel", "tunnel-closed", "mcp-closed"]);
+  assert.equal(h.observations.watchers[0].closed, true);
+});
+
 test("a failed private checkpoint write still closes and awaits owned services", async () => {
   const failedState = path.join(stateDir, "failed-checkpoint");
   const closed = [];
@@ -2320,6 +2484,14 @@ test("shutdown aborts pending tunnel startup and releases services before return
   assert.equal(h.observations.watchers[0].closed, true);
   assert.equal(h.browser.ui.newTabs, 0);
   await assert.rejects(h.request(), /runtime is stopping/);
+});
+
+test("shutdown before scheduled eager acquisition prevents a new owner from starting", async t => {
+  const h = harness(t);
+  const startup = assert.rejects(h.runtime.start(h.settings), /runtime is stopping/u);
+  await Promise.all([startup, h.runtime.close()]);
+  assert.deepEqual(h.observations.services, []);
+  assert.equal(h.runtime.status().started, false);
 });
 
 test("missing or conflicting native executor declarations fail without fabricated browser capabilities", async t => {

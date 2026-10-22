@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { browserHelperVersion, browserScript, readBrowserProgram } from '../src/web-browser.mjs';
+import { browserHelperVersion, browserScript, parseBrowserOutput, readBrowserProgram } from '../src/web-browser.mjs';
 import { createWebToolBroker } from '../src/web-tools.mjs';
 import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
@@ -86,6 +86,12 @@ function withAuthority(params, marker) {
   result._meta['codex/sandbox-state-meta'] = clone(result._meta['codex/sandbox-state']);
   result._meta['codex/sandbox-launcher'].futureTurnAuthority = marker;
   return result;
+}
+function asSubagent(params, field = 'parent_thread_id', serialized = false) {
+  const source = clone(params), metadata = source._meta['x-codex-turn-metadata'];
+  metadata[field] = field === 'parent_thread_id' ? SESSION : 'worker';
+  if (serialized) source._meta['x-codex-turn-metadata'] = '  ' + JSON.stringify(metadata) + '\n';
+  return source;
 }
 function cached(params = ordinary()) {
   const qualified = qualifyBrowserCall(params, STOP_CONFIG.runtimeModule);
@@ -490,6 +496,238 @@ test('one actual MCP observation spans short private child reads and returns onl
   const receipt = f.receipts.find(entry => entry.code === 'observation_wait_finished');
   assert.equal(receipt.readCount, 3); assert.equal(receipt.wakeReason, 'browser_ready');
   assert.ok(!JSON.stringify(f.receipts).includes(f.turn.token));
+});
+
+test('canonical subagents hold exact read-only observations without acquiring primary Stop authority', async t => {
+  for (const field of ['parent_thread_id', 'subagent_header', 'subagent_kind']) for (const serialized of [false, true]) {
+    await t.test(`${field}, ${serialized ? 'JSON string' : 'object'}`, async subtest => {
+      subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+      let reads = 0;
+      const f = await waitingFixture(subtest, params => observationResult(params, { completed: ++reads === 3 }), { observationIntervalMs: 500 });
+      f.source = asSubagent(f.source, field, serialized);
+      assert.equal(readIdentity(f.source._meta), null);
+      assert.equal(qualifyBrowserCall(f.source, STOP_CONFIG.runtimeModule), null);
+      const answer = f.client.callTool(f.source);
+      let previousId;
+      for (let read = 0; read < 2; read++) {
+        const terminal = await f.waitForChildTerminal(message => message.result?.content && message.id !== previousId);
+        previousId = terminal.id;
+        const pending = [...f.bridge.pending.values()][0];
+        assert.equal(pending.qualified, false); assert.equal(pending.cache, null); assert.equal(pending.send, undefined);
+        assert.equal(f.bridge.cache, null); assert.equal(f.bridge.currentAuthority, undefined);
+        assert.equal(f.bridge.currentThread, undefined); assert.equal(f.bridge.currentTurn, undefined);
+        assert.equal(f.bridge.graceDeadline, undefined); assert.equal(f.bridge.cleanupGroup, null);
+        subtest.mock.timers.tick(499); await f.client.ping();
+        assert.equal(reads, read + 1);
+        subtest.mock.timers.tick(1);
+      }
+      assert.match((await answer).content[0].text, /"completed":true/u);
+      assert.equal(reads, 3); assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
+      const children = f.forwardedInner.filter(message => message.method === 'tools/call');
+      assert.equal(new Set(children.map(message => message.id)).size, 3);
+      for (const child of children) {
+        assert.match(child.id, /^router_observe_/u);
+        assert.deepEqual(child.params._meta, f.source._meta);
+        assert.equal(child.params.arguments.code, f.source.arguments.code);
+        assert.ok(child.params.arguments.timeout_ms > 0 && child.params.arguments.timeout_ms <= 29000);
+      }
+      assert.equal((await f.client.callTool(hook())).isError, true);
+      assert.equal(f.calls.length, 3); assert.equal(f.bridge.injected.size, 0);
+      assert.equal(f.receipts.some(entry => entry.code === 'authority_cached' || entry.code === 'observation_cancel_deferred'), false);
+    });
+  }
+});
+
+test('subagent held observation returns truthful terminal, renewal and broker outcomes', async t => {
+  for (const kind of ['completion', 'capacity', 'ownership loss', 'native error', 'malformed browser', 'renewal', 'broker activity', 'broker closed']) {
+    await t.test(kind, async subtest => {
+      subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+      const fields = kind === 'completion' ? { completed: true } : kind === 'capacity' ? { conversationFull: true }
+        : kind === 'ownership loss' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {};
+      const nativeError = { isError: true, content: [{ type: 'text', text: 'synthetic child failure' }] };
+      const f = await waitingFixture(subtest, params => kind === 'native error' ? nativeError
+        : kind === 'malformed browser' ? ordinaryResult : observationResult(params, fields), { observationIntervalMs: 500, observationWaitMs: 25_000 });
+      f.source = asSubagent(f.source);
+      const answer = f.client.callTool(f.source).then(result => ({ result }), error => ({ error }));
+      await f.waitForChildTerminal(message => message.result?.content);
+      if (kind === 'renewal') subtest.mock.timers.tick(25_000);
+      if (kind === 'broker activity') {
+        const invocation = f.broker.invoke(f.turn.token, { wireName: 'read', arguments: {} }).catch(() => {});
+        subtest.after(() => { f.broker.cancel(f.turn.token); return invocation; });
+      }
+      if (kind === 'broker closed') f.broker.cancel(f.turn.token);
+      const outcome = await answer;
+      if (kind === 'broker closed') assert.match(outcome.error.message, /observation channel is unavailable/u);
+      else {
+        assert.equal(outcome.error, undefined);
+        if (kind === 'native error' || kind === 'malformed browser') assert.deepEqual(outcome.result, kind === 'native error' ? nativeError : ordinaryResult);
+        else assert.equal(parseBrowserOutput(outcome.result, readBrowserProgram(f.source.arguments.code).frameToken).completed, kind === 'completion');
+      }
+      const expectedReason = ['native error', 'malformed browser'].includes(kind) ? 'browser_error'
+        : kind === 'renewal' ? 'deadline' : kind.startsWith('broker ') ? kind.replace(' ', '_') : 'browser_ready';
+      assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, expectedReason);
+      if (kind !== 'renewal') assert.equal(f.calls.length, 1);
+      assert.equal(f.bridge.cache, null); assert.equal(f.bridge.currentAuthority, undefined);
+    });
+  }
+});
+
+test('subagent broker transport failures and malformed envelopes fail closed after the real browser terminal', async t => {
+  for (const kind of ['closed socket', 'malformed JSON', 'backward revision']) await t.test(kind, async subtest => {
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const server = await observationServer(subtest, (request, response) => {
+      if (kind === 'closed socket') return request.socket.destroy();
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(kind === 'malformed JSON' ? '{' : JSON.stringify({ closed: false, revision: -1 }));
+    });
+    const f = await protocolFixture(subtest, async params => { await gate; return observationResult(params); });
+    subtest.after(release);
+    const answer = f.client.callTool(asSubagent(server.source)).then(result => ({ result }), error => ({ error }));
+    await f.waitForCall(() => true);
+    assert.equal(await brokerWake(subtest, [...f.bridge.pending.values()][0]), 'broker_error');
+    assert.equal(f.bridge.observationChildren.size, 1);
+    release();
+    const outcome = await answer;
+    assert.match(outcome.error.message, /observation channel is unavailable/u);
+    assert.equal(f.bridge.observationChildren.size, 0); assert.equal(f.calls.length, 1);
+  });
+});
+
+test('subagent hold admission preserves exact native, program, broker and configured thread boundaries', async t => {
+  for (const kind of ['no wait', 'generic JS', 'changed program', 'foreign binding', 'foreign helper', 'foreign runtime',
+    'send', 'retain', 'missing callId', 'missing sandbox', 'conflicting sandbox', 'missing session alias', 'invalid session alias',
+    'canonical alias conflict', 'invalid native flag', 'invalid canonical UUID', 'oversized canonical string', 'excluded thread',
+    'foreign broker', 'broker credentials', 'broker revision', 'broker extra query']) await t.test(kind, async subtest => {
+    const f = await waitingFixture(subtest, () => ordinaryResult, kind === 'excluded thread'
+      ? { stopConfig: { ...STOP_CONFIG, threadIds: [SESSION] } } : {});
+    const source = asSubagent(f.source), config = readBrowserProgram(source.arguments.code);
+    if (kind === 'no wait') { delete config.observationWait; source.arguments.code = browserScript(config); }
+    if (kind === 'generic JS') source.arguments.code = 'void 0';
+    if (kind === 'changed program') source.arguments.code += '\n// changed';
+    if (kind === 'foreign binding') source.arguments.code = source.arguments.code.replaceAll('routerWeb_fixtureBinding', 'routerWeb_foreignBinding');
+    if (kind === 'foreign helper') source.arguments.code = source.arguments.code.replace(browserHelperVersion, '0'.repeat(64));
+    if (kind === 'foreign runtime') source.arguments.code = browserScript({ ...config, runtimeModule: 'E:\\other-runtime.mjs' });
+    if (kind === 'send' || kind === 'retain') {
+      source.arguments.code = ordinary(TURN, kind).arguments.code;
+    }
+    if (kind === 'missing callId') delete source._meta.callId;
+    if (kind === 'missing sandbox') delete source._meta['codex/sandbox-launcher'];
+    if (kind === 'conflicting sandbox') source._meta['codex/sandbox-state-meta'].changed = true;
+    if (kind === 'missing session alias') delete source._meta.sessionId;
+    if (kind === 'invalid session alias') source._meta.sessionId = 'invalid';
+    if (kind === 'canonical alias conflict') source._meta.turnId = TURN2;
+    if (kind === 'invalid native flag') source._meta['x-codex-turn-metadata'].node_repl_disabled = 'false';
+    if (kind === 'invalid canonical UUID') source._meta['x-codex-turn-metadata'].turn_id = 'invalid';
+    if (kind === 'oversized canonical string') source._meta['x-codex-turn-metadata'] = ' '.repeat(262145) + JSON.stringify(source._meta['x-codex-turn-metadata']);
+    if (kind.startsWith('broker ') || kind === 'foreign broker') {
+      const url = new URL(config.observationWait.url);
+      if (kind === 'foreign broker') url.hostname = 'localhost';
+      if (kind === 'broker credentials') url.username = 'untrusted';
+      if (kind === 'broker revision') url.searchParams.set('revision', '01');
+      if (kind === 'broker extra query') url.searchParams.set('extra', '1');
+      source.arguments.code = browserScript({ ...config, observationWait: { url: url.href } });
+    }
+    assert.deepEqual(await f.client.callTool(source), ordinaryResult);
+    assert.deepEqual(f.calls, [source]);
+    assert.equal(f.forwardedInner.some(message => /^router_observe_/u.test(message.id)), false);
+    assert.equal(f.receipts.some(entry => entry.code === 'observation_wait_started' || entry.code === 'authority_cached'), false);
+  });
+});
+
+test('subagent cancellation immediately targets an active internal read and keeps custody until its real terminal', async t => {
+  for (const childError of [false, true]) await t.test(childError ? 'RPC terminal error' : 'browser result terminal', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const { promise: produced, resolve: didProduce } = Promise.withResolvers();
+    let reads = 0;
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+      if (++reads > 1) return observationResult(params, { completed: true });
+      await gate;
+      const result = observationResult(params); didProduce(result); return result;
+    }, { observationIntervalMs: 500 });
+    subtest.after(release);
+    const source = asSubagent(f.source), control = new AbortController();
+    const answer = f.client.callTool(source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await f.waitForCall(() => true);
+    const child = f.forwardedInner.find(message => message.method === 'tools/call');
+    assert.match(child.id, /^router_observe_/u);
+    const pending = f.bridge.observationChildren.get(child.id);
+    control.abort(); await f.waitForCancellation(() => true);
+    assert.equal(await answer, 'cancelled');
+    assert.equal(f.bridge.pending.size, 0); assert.equal(f.bridge.observationChildren.get(child.id), pending);
+    assert.equal(await pending.settled, false, 'Outer retirement does not report a real child terminal.');
+    assert.equal(pending.wait.abort.signal.aborted, true);
+    const cancelled = f.forwardedInner.filter(message => message.method === 'notifications/cancelled');
+    assert.equal(cancelled.length, 1); assert.equal(cancelled[0].params.requestId, child.id);
+    assert.equal(f.receipts.some(entry => entry.code === 'observation_cancel_deferred'), false);
+    assert.equal(f.bridge.graceDeadline, undefined);
+    // The orphan mapping blocks a successor hold and fresh primary Stop
+    // authority, while ordinary calls keep their native forwarding behavior.
+    await f.client.callTool(source);
+    await f.client.callTool(ordinary());
+    assert.equal(f.bridge.cache, null); assert.equal((await f.client.callTool(hook())).isError, true);
+    assert.equal(f.receipts.filter(entry => entry.code === 'observation_wait_started').length, 1);
+    subtest.mock.timers.tick(1000); await f.client.ping();
+    assert.equal(reads, 3); assert.equal(f.bridge.observationChildren.size, 1);
+    release(); const result = await produced;
+    // The SDK suppresses a cancelled handler's result. Pass its actual output
+    // on the fixture child wire, or its actual terminal RPC error, explicitly.
+    const terminal = childError ? { jsonrpc: '2.0', id: child.id, error: { code: -32000, message: 'synthetic child terminal' } }
+      : { jsonrpc: '2.0', id: child.id, result };
+    await f.serverWire.send(terminal);
+    await f.waitForChildTerminal(message => message.id === child.id);
+    assert.equal(f.bridge.observationChildren.size, 0);
+    subtest.mock.timers.tick(1000); await f.client.ping(); assert.equal(reads, 3);
+    await f.client.callTool(ordinary());
+    assert.equal((await f.client.callTool(hook())).isError, undefined);
+    assert.equal(f.calls.filter(params => params.arguments.code.includes('stopOwnedWebTurn')).length, 1);
+  });
+});
+
+test('subagent cancellation between reads aborts broker waiting without cancelling an idle child or scheduling again', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const f = await waitingFixture(t, params => observationResult(params), { observationIntervalMs: 500 });
+  const control = new AbortController();
+  const answer = f.client.callTool(asSubagent(f.source), undefined, { signal: control.signal }).catch(() => 'cancelled');
+  await f.waitForChildTerminal(message => message.result?.content);
+  const pending = [...f.bridge.pending.values()][0];
+  control.abort(); assert.equal(await answer, 'cancelled');
+  await f.waitForReceipt('ordinary_cancelled');
+  assert.equal(pending.wait.abort.signal.aborted, true);
+  assert.equal(f.bridge.pending.size, 0); assert.equal(f.bridge.observationChildren.size, 0);
+  t.mock.timers.tick(1000); await f.client.ping();
+  assert.equal(f.calls.length, 1); assert.equal(f.cancellations.length, 0);
+  assert.equal((await f.client.callTool(hook())).isError, true);
+});
+
+test('subagent observe, Send and retention cannot inherit or revive primary cleanup authority', async t => {
+  for (const prior of ['cold', 'primary cached', 'authority replaced', 'retired']) await t.test(prior, async subtest => {
+    const f = await protocolFixture(subtest, params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+      const config = readBrowserProgram(params.arguments.code);
+      return !config ? ordinaryResult : config.operation === 'send' ? sendResult(params) : observationResult(params, { completed: true });
+    });
+    if (prior !== 'cold') await f.client.callTool(ordinary());
+    if (prior === 'authority replaced') {
+      const generic = withAuthority(ordinary(), 'replacement policy'); generic.arguments.code = 'void 0';
+      await f.client.callTool(generic);
+    }
+    if (prior === 'retired') assert.equal((await f.client.callTool(hook())).isError, undefined);
+    const primaryAuthority = f.bridge.currentAuthority;
+    const stops = f.calls.filter(params => params.arguments.code.includes('stopOwnedWebTurn')).length;
+    const cachedCount = f.receipts.filter(entry => entry.code === 'authority_cached').length;
+    for (const operation of ['observe', 'send', 'retain']) {
+      await f.client.callTool(asSubagent(ordinary(TURN, operation)));
+      assert.equal(f.bridge.cache, null); assert.equal(f.bridge.currentAuthority, primaryAuthority);
+      assert.equal(f.bridge.graceDeadline, undefined); assert.equal(f.bridge.cleanupGroup, null);
+      const forged = hook(); forged._meta = { ...retainedMetadata(asSubagent(ordinary())._meta) };
+      assert.equal((await f.client.callTool(forged)).isError, true);
+      assert.equal((await f.client.callTool(hook())).isError, true);
+    }
+    assert.equal(f.calls.filter(params => params.arguments.code.includes('stopOwnedWebTurn')).length, stops);
+    assert.equal(f.receipts.filter(entry => entry.code === 'authority_cached').length, cachedCount);
+  });
 });
 
 test('broker activity wakes the outstanding observation before another child read is scheduled', async t => {

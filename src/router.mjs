@@ -99,7 +99,7 @@ import {
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
 import { SwitchyardNativeAttemptObserver } from "./switchyard-native-observation.mjs";
-import { markResponsesStream } from "./responses-stream-failure.mjs";
+import { acceptedResponsesTerminal, markResponsesStream } from "./responses-stream-failure.mjs";
 import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
@@ -2367,6 +2367,7 @@ async function handleResponses(request, response, requestUrl) {
   let retryUsageTransform;
   let retryEmptyCompletionGuard;
   let retryUsage;
+  let selectedPipelineCompleted = false;
   let usage;
   let estimatedInputTokens;
   let emptyCompletion = false;
@@ -2383,6 +2384,9 @@ async function handleResponses(request, response, requestUrl) {
   let observedUpstreamStatus;
   let observedTransportFailure = false;
   let switchyardWorkflow;
+  const selectedUsageObserver = () => emptyCompletionRetried ? retryUsageTransform : usageTransform;
+  const acceptedSuccessfulTerminal = () => selectedUsageObserver()?.completedResponseObserved() === true &&
+    acceptedResponsesTerminal(response)?.outcome === "completed";
   const switchyardNativeCallback = switchyardNativeAttempts.consumeAttribution(request.headers);
   bindClientAbort(request, response, () => {
     clientGone = true;
@@ -2402,7 +2406,7 @@ async function handleResponses(request, response, requestUrl) {
     delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
-    markResponsesStream(response, { model: requestedModel });
+    markResponsesStream(response, { model: requestedModel, signal: controller.signal });
     const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
     // Codex remote compaction V2 uses ordinary Responses with a terminal
     // trigger. Detect it before Web dispatch as well as native/routed dispatch.
@@ -2454,7 +2458,7 @@ async function handleResponses(request, response, requestUrl) {
       return;
     }
     // Anything without a route from here on is native GPT traffic.
-    if (!route && !compactV1) markResponsesStream(response, { model: requestedModel, minimalFailure: true });
+    if (!route && !compactV1) markResponsesStream(response, { model: requestedModel, minimalFailure: true, signal: controller.signal });
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
     if (!compactV1 && !compactV2 && !execution.nestedSwitchyardCallback) {
@@ -2797,6 +2801,7 @@ async function handleResponses(request, response, requestUrl) {
         firstPipeline.transforms,
         { leaveOpen: relayOpen },
       );
+      selectedPipelineCompleted = true;
     } catch (error) {
       if (isEmptyCompletionPreludeLimitError(error) && !clientGone) {
         emptyCompletionPreludeLimit = error.kind;
@@ -2829,7 +2834,7 @@ async function handleResponses(request, response, requestUrl) {
     // goes away, but `pipeResponse` can resolve before that event fires: the
     // response socket is already destroyed at that point. Read the state
     // directly as well so a cancel that races the close event still meters 0.
-    const completedBeforeClose = usageTransform?.completedResponseObserved() === true;
+    const completedBeforeClose = acceptedSuccessfulTerminal();
     const clientWalkedAway =
       (clientGone || (response.destroyed && !response.writableFinished)) &&
       !completedBeforeClose;
@@ -2881,6 +2886,7 @@ async function handleResponses(request, response, requestUrl) {
         assertRoutedSearchContract(route, builtSearchMode, searchContract);
       }
       emptyCompletionRetried = true;
+      selectedPipelineCompleted = false;
       if (observedNativeRequest) {
         switchyardNativeAttempts.finishAttempt(observedNativeRequest, {
           httpStatus: upstream.status,
@@ -2962,6 +2968,7 @@ async function handleResponses(request, response, requestUrl) {
               secondPipeline.transforms,
               { leaveOpen: true },
             );
+            selectedPipelineCompleted = true;
           } catch (error) {
             if (isEmptyCompletionPreludeLimitError(error) && !clientGone) {
               emptyCompletionPreludeLimit ||= error.kind;
@@ -2983,7 +2990,7 @@ async function handleResponses(request, response, requestUrl) {
             }
           }
           const retryClientWalkedAway =
-            clientGone || (response.destroyed && !response.writableFinished);
+            (clientGone || (response.destroyed && !response.writableFinished)) && !acceptedSuccessfulTerminal();
           emptyCompletionPreludeLimit ||=
             retryEmptyCompletionGuard?.preludeLimitKind?.();
           if (retryClientWalkedAway) {
@@ -3066,7 +3073,10 @@ async function handleResponses(request, response, requestUrl) {
     }
   } catch (error) {
     upstreamLatencyMs ??= Date.now() - startedAt;
-    if (execution.deadlineExceeded()) {
+    // A terminal accepted by the final writer settles the selected SSE attempt.
+    // Trailers, terminal-time closes and later deadlines cannot revoke it.
+    const acceptedCompletion = acceptedSuccessfulTerminal();
+    if (execution.deadlineExceeded() && !acceptedCompletion) {
       finalStatus = 504;
       if (!response.headersSent) {
         writeJson(response, 504, {
@@ -3109,8 +3119,9 @@ async function handleResponses(request, response, requestUrl) {
     // is a successful terminal turn on native and routed paths, not a canceled
     // generation. In particular, the WebSocket adapter cancels the HTTP body
     // at this point so a provider trailer cannot block its serialized queue.
-    if (clientGone && usageTransform?.completedResponseObserved() === true) {
+    if (acceptedCompletion) {
       finalStatus = upstreamStatus ?? response.statusCode;
+      if (!response.writableEnded && !response.destroyed) response.end();
       if (!QUIET) {
         console.error(
           `[codex-router] model=${requestedModel || "unknown"} provider=openai status=${finalStatus}${
@@ -3139,18 +3150,18 @@ async function handleResponses(request, response, requestUrl) {
   } finally {
     const status = finalStatus ?? response.statusCode;
     if (switchyardWorkflow) {
-      const observer = emptyCompletionRetried ? retryUsageTransform : usageTransform;
+      const observer = selectedUsageObserver();
       const outputObservation = observer?.responseOutputObservation();
       if (outputObservation) {
-        // The WebSocket adapter closes HTTP bodies after a verified terminal.
-        // That successful close is distinct from cancellation before completion.
-        const completedClientClose = clientGone && observer.completedResponseObserved() === true &&
-          !execution.deadlineExceeded();
+        // JSON has no dispatched SSE terminal: its complete body must finish
+        // the selected pipeline and final delivery before workflow retirement.
+        const deliveredCompletion = acceptedSuccessfulTerminal() ||
+          (observer.completedJsonResponseObserved() && selectedPipelineCompleted && response.writableFinished && !controller.signal.aborted);
         routerAdmission.recordSwitchyardWorkflow({
           ...switchyardWorkflow,
           produced: clientToolCalls(outputObservation.output),
           complete: outputObservation.complete && status >= 200 && status < 300 &&
-            (!controller.signal.aborted || completedClientClose) && observer.providerResponseObservation().outcome === "completed",
+            deliveredCompletion && observer.providerResponseObservation().outcome === "completed",
         });
       }
     }

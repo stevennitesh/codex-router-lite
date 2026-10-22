@@ -3,7 +3,8 @@ import { Readable, Transform, Writable } from "node:stream";
 import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { markResponsesStream, observeResponsesStream } from "../src/responses-stream-failure.mjs";
+import { acceptedResponsesTerminal, markResponsesStream, observeResponsesStream } from "../src/responses-stream-failure.mjs";
+import { ResponseUsageTransform } from "../src/response-usage.mjs";
 import { endStreamedResponse, pipeResponse, writeStreamErrorEvent } from "../src/http-utils.mjs";
 
 const created = { type: "response.created", sequence_number: 0,
@@ -104,10 +105,22 @@ test("a discarded pipeline cannot lend its identity to a replacement attempt", (
   const { response } = observe(Buffer.from(frame(created)));
   response.headersSent = false;
   observeResponsesStream(response, "text/event-stream");
+  assert.equal(acceptedResponsesTerminal(response), undefined);
   response.write(Buffer.from('data: {"type":"response.output_text.delta","sequence_number":1,"delta":"new attempt"}\n\n'));
   const offset = response.text().length;
   writeStreamErrorEvent(response, { code: "disconnect", message: "lost" });
   assert.equal(appended(response, offset)[0].type, "error");
+  const discarded = new ResponseSink();
+  markResponsesStream(discarded);
+  observeResponsesStream(discarded, "text/event-stream");
+  discarded.write(frame({ type: "response.completed", response: { status: "completed", output: [] } }));
+  assert.equal(acceptedResponsesTerminal(discarded).outcome, "completed");
+  discarded.headersSent = false;
+  observeResponsesStream(discarded, "text/event-stream");
+  assert.equal(acceptedResponsesTerminal(discarded), undefined);
+  discarded.write('data: {broken}\n\n');
+  discarded.write(frame({ type: "response.completed", response: { status: "completed", output: [] } }));
+  assert.equal(acceptedResponsesTerminal(discarded), undefined);
 });
 
 test("opted-in native failures retain their cause without invented metadata and settle once", () => {
@@ -187,7 +200,10 @@ test("backpressure cannot lend undelivered sequence or terminal metadata to a fa
     })()));
     // A final pass-through stage can still hold bytes in its readable buffer.
     const stage = new Transform({ transform(chunk, _encoding, callback) { callback(null, chunk); } });
-    await assert.rejects(pipeResponse(new Response(upstream, { headers: { "content-type": "text/event-stream" } }), response, new Set(), stage), /disconnect under backpressure/u);
+    const usage = new ResponseUsageTransform("text/event-stream");
+    await assert.rejects(pipeResponse(new Response(upstream, { headers: { "content-type": "text/event-stream" } }), response, new Set(), [usage, stage]), /disconnect under backpressure/u);
+    assert.equal(usage.completedResponseObserved(), terminal === "complete");
+    assert.equal(acceptedResponsesTerminal(response), undefined);
     assert.equal(response.text(), frame(created));
     assert.ok(stage.destroyed);
     assert.equal(writeStreamErrorEvent(response, { code: "disconnect", message: "lost under backpressure" }), true);
@@ -218,6 +234,7 @@ test("terminal bytes already accepted by a backpressured response still suppress
   assert.equal(response.write(frame(created)), false);
   const completed = frame({ type: "response.completed", sequence_number: 1, response: { ...created.response, status: "completed" } });
   assert.equal(response.write(completed), false);
+  assert.deepEqual(acceptedResponsesTerminal(response), { accepted: true, outcome: "completed" });
   assert.equal(response.text(), frame(created));
   assert.equal(writeStreamErrorEvent(response, { code: "trailing_disconnect", message: "disconnect" }), false);
   const finished = once(response, "finish");
@@ -225,4 +242,88 @@ test("terminal bytes already accepted by a backpressured response still suppress
   releaseWrite();
   await finished;
   assert.equal(response.text(), frame(created) + completed);
+});
+
+test("accepted completion requires dispatched unambiguous framing and unpoisoned terminal meaning", () => {
+  const completed = frame({ type: "response.completed", response: { status: "completed", output: [] } });
+  for (const prefix of ["data: {broken}\n\n", 'data: {"type":"response.created","type":"response.in_progress"}\n\n',
+    'event: response.failed\ndata: {"type":"response.output_text.delta","delta":"x"}\n\n',
+    Buffer.concat([Buffer.from('data: {"text":"'), Buffer.from([255]), Buffer.from('"}\n\n')]),
+    `data: ${"x".repeat(8 * 1024 * 1024 + 5)}\n\n`]) {
+    const response = new ResponseSink();
+    markResponsesStream(response);
+    observeResponsesStream(response, "text/event-stream");
+    response.write(prefix);
+    response.write(completed);
+    assert.equal(acceptedResponsesTerminal(response), undefined);
+  }
+  for (const [status, outcome] of [["completed", "completed"], ["incomplete", "incomplete"], ["in_progress", "stream_error"]]) {
+    const { response } = observe(Buffer.from(frame({ type: "response.completed", response: { status } }) + completed));
+    assert.deepEqual(acceptedResponsesTerminal(response), { accepted: true, outcome });
+    assert.ok(Object.isFrozen(acceptedResponsesTerminal(response)));
+  }
+  const { response } = observe(Buffer.from(completed.trimEnd()));
+  assert.equal(acceptedResponsesTerminal(response), undefined);
+  writeStreamErrorEvent(response, { code: "disconnect", message: "lost" });
+  assert.equal(acceptedResponsesTerminal(response), undefined);
+});
+
+test("completion observation keeps its 8 MiB window and the independent failure metadata ceiling", async () => {
+  const response = new ResponseSink();
+  markResponsesStream(response, { model: "fixture-model" });
+  const completed = frame({ type: "response.completed", sequence_number: 1,
+    response: { ...created.response, status: "completed", output: [], padding: "x".repeat(5 * 1024 * 1024) } });
+  await pipeResponse(new Response(frame(created) + completed, { headers: { "content-type": "text/event-stream" } }), response, new Set());
+  assert.deepEqual(acceptedResponsesTerminal(response), { accepted: true, outcome: "completed" });
+  const oversizedMetadata = new ResponseSink();
+  markResponsesStream(oversizedMetadata, { model: "fixture-model" });
+  observeResponsesStream(oversizedMetadata, "text/event-stream");
+  oversizedMetadata.write(frame(created) + frame({ type: "response.output_text.delta", sequence_number: 1, delta: "x".repeat(4 * 1024 * 1024) }));
+  const offset = oversizedMetadata.text().length;
+  writeStreamErrorEvent(oversizedMetadata, { code: "disconnect", message: "lost" });
+  assert.equal(appended(oversizedMetadata, offset)[0].type, "error");
+});
+
+test("the actual final writer accepts queued terminals before failure but rejects canceled or throwing writes", async () => {
+  const completed = frame({ type: "response.completed", response: { status: "completed", output: [] } });
+  let releaseWrite;
+  class QueuedResponse extends ResponseSink {
+    constructor() { super({ highWaterMark: 1 }); }
+    _write(chunk, encoding, callback) { super._write(chunk, encoding, () => { releaseWrite = callback; }); }
+  }
+  const response = new QueuedResponse();
+  markResponsesStream(response);
+  const source = Readable.toWeb(Readable.from((async function* () {
+    yield completed;
+    await setImmediate();
+    throw new Error("failure after queued terminal");
+  })()));
+  await assert.rejects(pipeResponse(new Response(source, { headers: { "content-type": "text/event-stream" } }), response, new Set()), /failure after queued terminal/u);
+  assert.deepEqual(acceptedResponsesTerminal(response), { accepted: true, outcome: "completed" });
+  response.destroy();
+  releaseWrite();
+  assert.equal(acceptedResponsesTerminal(response).outcome, "completed");
+  for (const cause of ["cancel", "deadline"]) {
+    const controller = new AbortController();
+    const sink = new ResponseSink();
+    markResponsesStream(sink, { signal: controller.signal });
+    const usage = new ResponseUsageTransform("text/event-stream");
+    const held = new Transform({ transform(chunk, _encoding, callback) { controller.abort(new Error(cause)); callback(null, chunk); } });
+    await pipeResponse(new Response(completed, { headers: { "content-type": "text/event-stream" } }), sink, new Set(), [usage, held]);
+    assert.equal(usage.completedResponseObserved(), true);
+    assert.equal(acceptedResponsesTerminal(sink), undefined, cause);
+  }
+  const throwing = new ResponseSink();
+  throwing.write = () => { throw new Error("synthetic final write rejection"); };
+  markResponsesStream(throwing);
+  observeResponsesStream(throwing, "text/event-stream");
+  assert.throws(() => throwing.write(completed), /synthetic final write rejection/u);
+  assert.equal(acceptedResponsesTerminal(throwing), undefined);
+  const destroyed = new ResponseSink();
+  destroyed.on("error", () => {});
+  markResponsesStream(destroyed);
+  observeResponsesStream(destroyed, "text/event-stream");
+  destroyed.destroy();
+  destroyed.write(completed);
+  assert.equal(acceptedResponsesTerminal(destroyed), undefined);
 });

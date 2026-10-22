@@ -16,13 +16,13 @@ function fixture() {
     "codex-binary.mjs": `import {codexExecutableIdentity as identity,codexAuthStatus as auth} from ${JSON.stringify(moduleUrl("codex-binary.mjs"))};
 export const codexExecutableIdentity=()=>identity({findBinary:()=>process.env.DIAGNOSTICS_VERSION==='missing-binary'?undefined:'fixture-codex.exe',fingerprintFor:()=> 'stable-fixture',versionFor:()=> process.env.DIAGNOSTICS_VERSION==='unknown'?undefined:'fixture-1.0'});
 export const codexAuthStatus=options=>auth({...options,execute:()=>''});`,
-    "file-security.mjs": "export const privateFileIsProtected=()=>true;",
+    "file-security.mjs": "export const privateFileIsProtected=()=>process.env.DIAGNOSTICS_CREDENTIAL!=='unprotected';",
     "catalog.mjs": "export const routedCatalogConfigured=()=>true;",
     "control-health.mjs": `import {readControlHealth as read} from ${JSON.stringify(moduleUrl("control-health.mjs"))};
 export const readControlHealth=()=>read({readCallerSecret:()=> 'synthetic-fixture-capability-00000000000000',fetchImpl:async()=>{if(process.env.DIAGNOSTICS_OFFLINE==='1')throw new Error('refused');return new Response(process.env.DIAGNOSTICS_BODY,{status:Number(process.env.DIAGNOSTICS_STATUS||200)});}});`,
     "provider-selection.mjs": "export const providerSelectionStatus=()=>({status:'ok',providers:[]});export const selectedConfiguredListedModels=()=>[];",
     "routed-models.mjs": "export const MODEL_BY_SLUG=new Map();export const PROVIDERS=new Map([['openrouter',{}]]);",
-    "provider-credentials.mjs": "export const credentialStatus=()=>({configured:true});export const primaryCredentialPath=()=> 'fixture-credential';",
+    "provider-credentials.mjs": "export const credentialStatus=()=>({configured:process.env.DIAGNOSTICS_CREDENTIAL!=='missing',fileStatus:process.env.DIAGNOSTICS_CREDENTIAL});export const primaryCredentialPath=()=> 'fixture-credential';",
     "switchyard-runtime.mjs": "export const switchyardRuntimeStatus=()=>({ready:true,binary:'fixture-switchyard',inaccessible:[]});",
     "windows-task-state.mjs": "export const windowsScheduledTaskState=async()=>({});export const interpretWindowsTaskState=()=>({healthy:true,detail:'fixture running'});",
   };
@@ -37,6 +37,42 @@ export const readControlHealth=()=>read({readCallerSecret:()=> 'synthetic-fixtur
   };
   return { directory, runDoctor, dispose };
 }
+
+test("Doctor's credential repair binds to the protected CLI while access failures retain ACL guidance", { skip: process.platform !== "win32" }, () => {
+  const f = fixture();
+  try {
+    const commands = [];
+    for (const mode of ["missing", "unprotected", "access-denied", "probe-failed"]) {
+      const result = f.runDoctor({ service: "codex-router", degraded: [] }, { DIAGNOSTICS_CREDENTIAL: mode });
+      assert.equal(result.status, mode === "missing" ? 0 : 1, result.stderr);
+      const credential = JSON.parse(result.stdout).find(check => check.name === "OpenRouter GLM credential");
+      if (mode === "access-denied" || mode === "probe-failed") {
+        assert.match(credential.fix, /ownership and ACLs/u); assert.match(credential.fix, /do not replace/u);
+      } else commands.push(credential.fix.replace(/^Run /u, "").replace(/\.$/u, ""));
+    }
+    const probe = path.join(f.directory, "bind-command.ps1");
+    writeFileSync(probe, `param([string]$Source,[string]$SuggestedCommand)
+$ErrorActionPreference='Stop'
+$tokens=$null; $parseErrors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$parseErrors)
+if ($parseErrors.Count -ne 0) { throw 'Invalid CLI syntax' }
+$inert=Join-Path $PSScriptRoot 'inert-cli.ps1'
+[IO.File]::WriteAllText($inert,"[CmdletBinding()]\n"+$ast.ParamBlock.Extent.Text+"\n"+'[pscustomobject]@{target=$Target;command=$Command;arguments=$CommandArguments} | ConvertTo-Json -Compress',[Text.UTF8Encoding]::new($false))
+$boundArguments=$SuggestedCommand.Split(' ')[1..4]
+& $inert @boundArguments
+`);
+    for (const command of commands) {
+      assert.equal(command.split(" ").length, 5);
+      // The real parameter declaration validates binding; the product body and
+      // protected key command are never executed.
+      const bound = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", probe, "-Source", path.join(root, "model-router.ps1"), "-SuggestedCommand", command], {
+        encoding: "utf8", windowsHide: true, timeout: 10_000,
+      });
+      assert.equal(bound.status, 0, bound.stderr || bound.error?.message);
+      assert.deepEqual(JSON.parse(bound.stdout), { target: "codex", command: "provider-key", arguments: ["openrouter", "set"] });
+    }
+  } finally { f.dispose(); }
+});
 
 test("Doctor retains the actual health projection's identity, partial and degraded meanings", () => {
   const f = fixture();

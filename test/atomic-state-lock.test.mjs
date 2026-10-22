@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, rmdirSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -15,6 +15,60 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return { root, target: path.join(root, "ownership.json"), lock: path.join(root, "ownership.json.lock") };
 }
+
+test("rename contention and recovery share a paced monotonic deadline", t => {
+  const f = fixture(t);
+  const probe = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import {syncBuiltinESMExports} from 'node:module';
+    import path from 'node:path';
+    const target=process.argv[1], lock=target+'.lock';
+    const originalRename=fs.renameSync;
+    let now=0, attempts=0, sleeps=[], mode, code, publicationError;
+    Object.defineProperty(performance,'now',{value:()=>now});
+    Atomics.wait=(_array,_index,_value,ms)=>{assert.ok(ms>0 && ms<=25);sleeps.push(ms);now+=ms;return 'timed-out';};
+    Date.now=()=>-1e12; // Wall-clock changes must not extend an acquisition.
+    fs.renameSync=(from,to)=>{
+      if(to!==lock)return originalRename(from,to);
+      if(++attempts>10)throw new Error('unbounded retry');
+      if(mode==='transient' && attempts===2)return originalRename(from,to);
+      if(mode==='recover'){
+        fs.mkdirSync(lock);
+        fs.writeFileSync(path.join(lock,'owner'),'${deadPid}\\n');
+      }
+      publicationError=Object.assign(new Error('publication blocked'),{code});
+      throw publicationError;
+    };
+    syncBuiltinESMExports();
+    const {withAtomicStateLock}=await import(${JSON.stringify(moduleUrl)});
+    for(mode of ['absent','recover']) for(code of ['EEXIST','ENOTEMPTY','EPERM','EACCES']) for(const waitMs of [0,60]){
+      now=0;attempts=0;sleeps=[];
+      assert.throws(()=>withAtomicStateLock(target,()=>assert.fail('operation admitted'),{waitMs}),/Timed out waiting/);
+      assert.equal(attempts,waitMs===0?1:3);
+      assert.deepEqual(sleeps,waitMs===0?[]:[25,25,10]);
+      assert.equal(fs.existsSync(lock),false);
+      assert.equal(fs.readdirSync(path.dirname(target)).some(name=>name.includes('.prepare-')),false);
+    }
+    mode='absent';code='EIO';attempts=0;sleeps=[];
+    assert.throws(()=>withAtomicStateLock(target,()=>{}, {waitMs:60}),{code:'EIO'});
+    assert.equal(attempts,1);assert.deepEqual(sleeps,[]);
+    mode='transient';code='EPERM';now=0;attempts=0;sleeps=[];
+    assert.equal(withAtomicStateLock(target,()=> 'published',{waitMs:60}),'published');
+    assert.equal(attempts,2);assert.deepEqual(sleeps,[25]);assert.equal(fs.existsSync(lock),false);
+    mode='file';code='EIO';now=0;attempts=0;sleeps=[];
+    fs.writeFileSync(lock,'foreign file');
+    assert.throws(()=>withAtomicStateLock(target,()=>{}, {waitMs:60}),error=>error===publicationError);
+    assert.equal(fs.readFileSync(lock,'utf8'),'foreign file');fs.unlinkSync(lock);
+    mode='recover';code='EIO';now=0;attempts=0;sleeps=[];
+    assert.throws(()=>withAtomicStateLock(target,()=>{}, {waitMs:60}),/Timed out waiting/);
+    assert.equal(attempts,3);assert.deepEqual(sleeps,[25,25,10]);assert.equal(fs.existsSync(lock),false);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", probe, f.target], {
+    encoding: "utf8", windowsHide: true, timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+});
 
 test("state locks exclude live owners, release on failure and recover old incomplete locks", t => {
   const f = fixture(t);

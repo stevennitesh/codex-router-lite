@@ -875,8 +875,11 @@ function repairToolSchemaRoot(tool) {
     : { ...tool, parameters: repaired };
 }
 
-function flattenNamespaceChild(namespace, fn, providerName) {
-  const clientSchema = fn.parameters ?? fn.inputSchema;
+function nativeChildSchema(fn) {
+  return fn.parameters ?? fn.inputSchema;
+}
+
+function flattenNamespaceChild(namespace, fn, providerName, clientSchema) {
   const parameters =
     clientSchema === undefined ? undefined : providerToolSchema(clientSchema);
   const flattened = {
@@ -943,6 +946,7 @@ export function flattenNamespaceTools(
       const names = new Set();
       for (const fn of tool.tools) {
         if (!fn?.name) continue;
+        const clientSchema = nativeChildSchema(fn);
         // Codex names function schemas `inputSchema`, while LiteLLM's
         // Responses -> Chat Completions adapter reads only `parameters`.
         // Without this alias every flattened namespace child reaches the
@@ -958,11 +962,12 @@ export function flattenNamespaceTools(
             tool.name,
             fn,
             providerNameForNative(namespaces, tool.name, fn.name),
+            clientSchema,
           ),
         );
         names.add(fn.name);
         if (tool.name === "collaboration" && fn.name === "spawn_agent") {
-          schemaStringValues(fn.inputSchema?.properties?.model, spawnAgentModels);
+          schemaStringValues(clientSchema?.properties?.model, spawnAgentModels);
         }
       }
       if (names.size > 0) {
@@ -1140,6 +1145,7 @@ function discoveredProviderTools(toolSpecs, namespaces) {
             tool.name,
             fn,
             providerNameForNative(namespaces, tool.name, fn.name),
+            nativeChildSchema(fn),
           ),
           native: { namespace: tool.name, name: fn.name },
           nativeName: fn.name,

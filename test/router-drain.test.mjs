@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { zstdDecompressSync } from "node:zlib";
 
@@ -12,6 +13,18 @@ import { launch, ready, stop } from "./router-fixture.mjs";
 
 const CALLER = "drain-caller-capability-long-enough";
 const INTERNAL = "drain-internal-capability-long-enough";
+
+function isolatedPaths(state) {
+  const environment = {
+    CODEX_HOME: path.join(state, "codex"), MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state,
+    MODEL_ROUTER_MODEL_PICKER_STATE: path.join(state, "picker.json"), MODEL_ROUTER_MULTI_AGENT_STATE: path.join(state, "multi-agent.json"),
+    MODEL_ROUTER_CODEX_AUTH: path.join(state, "absent-auth.json"), CODEX_ROUTER_NATIVE_SESSION_FALLBACK: "0",
+  };
+  for (const key of ["CODEX_HOME", "MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "MODEL_ROUTER_MODEL_PICKER_STATE", "MODEL_ROUTER_MULTI_AGENT_STATE", "MODEL_ROUTER_CODEX_AUTH"]) {
+    assert.ok(environment[key] === state || environment[key].startsWith(state + path.sep), `${key} escapes synthetic fixture`);
+  }
+  return environment;
+}
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -80,6 +93,7 @@ test("real Router callers drain buffered and SSE work, reject new work, resume, 
   const routerPort = await openPort();
   const state = mkdtempSync(path.join(os.tmpdir(), "router-drain-"));
   const router = launch("router.mjs", {
+    ...isolatedPaths(state),
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_CALLER_KEY: CALLER,
@@ -204,6 +218,7 @@ test("an admitted Switchyard request keeps only its nested callback lease and to
   writeFileSync(path.join(runtime, "routes.toml"), "# fixture\n");
   writeFileSync(path.join(state, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["switchyard"] }));
   const router = launch("router.mjs", {
+    ...isolatedPaths(state),
     CODEX_ROUTER_PORT: String(routerPort),
     CODEX_ROUTER_STATE_DIR: state,
     CODEX_ROUTER_SWITCHYARD_ROOT: runtime,
@@ -321,8 +336,18 @@ test("public completed tool continuations drain across models and current conver
     const output = (switchyard && !consumed) || (!switchyard && mode === "next-tool")
       ? [{ type: "function_call", id: `fc_${++toolIndex}`, call_id: `call_${toolIndex}`, name: "fixture", arguments: "{}" }]
       : [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }];
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ id: `resp_${toolIndex}`, status: !switchyard && mode === "incomplete" ? "incomplete" : "completed", output }));
+    if (!switchyard && mode === "invalid-sequence") {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const encode = event => `data: ${JSON.stringify(event)}\n\n`;
+      response.end(encode({ type: "response.output_text.delta", sequence_number: 1, delta: "first" }) +
+        encode({ type: "response.output_text.delta", sequence_number: 1, delta: "repeated" }) +
+        encode({ type: "response.completed", sequence_number: 2, response: { status: "completed", output } }));
+      return;
+    }
+    response.writeHead(200, !switchyard && mode === "json-headerless" ? {} :
+      { "content-type": !switchyard && mode === "json-unknown" ? "application/octet-stream" : "application/json" });
+    response.end(JSON.stringify({ id: `resp_${toolIndex}`, status: !switchyard && mode === "incomplete" ? "incomplete" : "completed", output }) +
+      (!switchyard && mode === "json-trailer" ? "{malformed}" : ""));
   });
   const port = await listen(upstream);
   const routerPort = await openPort();
@@ -333,13 +358,13 @@ test("public completed tool continuations drain across models and current conver
   writeFileSync(path.join(runtime, "routes.toml"), "# fixture\n");
   writeFileSync(path.join(state, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["switchyard", "openrouter"] }));
   const router = launch("router.mjs", {
-    CODEX_HOME: state, CODEX_ROUTER_STATE_DIR: state, MODEL_ROUTER_STATE_DIR: state,
-    MODEL_ROUTER_CODEX_AUTH: path.join(state, "absent-auth.json"), CODEX_ROUTER_NATIVE_SESSION_FALLBACK: "0",
+    ...isolatedPaths(state),
     CODEX_ROUTER_PORT: String(routerPort), CODEX_ROUTER_CALLER_KEY: CALLER, CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
     CODEX_ROUTER_SWITCHYARD_ROOT: runtime, CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
     CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${port}/v1`,
     CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${port}`, CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${port}/v1`,
     CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${port}/v1`, CODEX_ROUTER_QUIET: "1",
+    CODEX_ROUTER_REQUEST_EXECUTION_TIMEOUT_MS: "1000",
   });
   t.after(async () => {
     held?.destroy();
@@ -382,6 +407,14 @@ test("public completed tool continuations drain across models and current conver
       await cleared();
     }
   }
+  for (mode of ["json-headerless", "json-unknown"]) {
+    const metadata = { thread_id: mode, session_id: "json-format-session" };
+    const tool = await produce({}, metadata);
+    const answer = await post("gpt-6.1-sol", resultFor(tool), {}, metadata);
+    assert.equal((await answer.json()).status, "completed");
+    await cleared();
+  }
+  mode = "answer";
   const metadata = { thread_id: "metadata-only", session_id: "metadata-session" };
   let tool = await produce({}, metadata);
   mode = "nested-callback";
@@ -394,6 +427,8 @@ test("public completed tool continuations drain across models and current conver
     [[{ type: "function_call_output", call_id: "wrong-call", output: "done" }], metadata, "answer"],
     [resultFor(tool), metadata, "failure"],
     [resultFor(tool), metadata, "incomplete"],
+    [resultFor(tool), metadata, "json-trailer"],
+    [resultFor(tool), metadata, "invalid-sequence"],
   ]) {
     mode = nextMode;
     const response = await post("gpt-6.1-sol", input, {}, identity);
@@ -411,6 +446,13 @@ test("public completed tool continuations drain across models and current conver
   assert.equal((await status()).activeRequests, 0);
   assert.equal((await status()).workflowCalls, 1);
   assert.equal((await lifecycle(routerPort, "/drain", {})).status, 409);
+  const timedOut = await post("gpt-6.1-sol", resultFor(tool), {}, metadata);
+  const timedOutWire = await timedOut.text();
+  assert.match(timedOutWire, /response\.failed/u);
+  assert.match(timedOutWire, /execution deadline/u);
+  assert.equal((await status()).activeRequests, 0);
+  assert.equal((await status()).workflowCalls, 1);
+  assert.equal((await lifecycle(routerPort, "/drain", {})).status, 409);
   mode = "next-tool";
   const next = await post("gpt-6.1-sol", resultFor(tool), {}, metadata);
   tool = (await next.json()).output.find(item => item.type === "function_call");
@@ -425,4 +467,92 @@ test("public completed tool continuations drain across models and current conver
   await (await post("gpt-6.1-sol", "independent", {}, { thread_id: "independent" })).arrayBuffer();
   await cleared();
   assert.ok(seenModels.has("openrouter-deepseek-v4-1-flash-together"), [...seenModels].join(","));
+});
+
+test("accepted HTTP terminals retire consumed tools across coalesced and split provider trailers without replay", {
+  timeout: 20_000,
+}, async t => {
+  const state = mkdtempSync(path.resolve(".tmp", "router-terminal-drain-"));
+  const runtime = path.join(state, "switchyard");
+  mkdirSync(runtime);
+  writeFileSync(path.join(runtime, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "synthetic fixture; never executed");
+  writeFileSync(path.join(runtime, "routes.toml"), "# fixture\n");
+  writeFileSync(path.join(state, "enabled-providers.json"), JSON.stringify({ version: 1, providers: ["switchyard", "openrouter"] }));
+  const encode = payload => `data: ${JSON.stringify(payload)}\n\n`;
+  const tool = { type: "function_call", id: "fc_terminal", call_id: "call_terminal", name: "fixture", arguments: "{}" };
+  const answer = { type: "message", role: "assistant", content: [{ type: "output_text", text: "served answer" }] };
+  let scenario;
+  let requests = 0;
+  const failures = [];
+  const upstream = http.createServer((request, response) => {
+    (async () => {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const bytes = Buffer.concat(chunks);
+      const payload = JSON.parse((request.headers["content-encoding"] === "zstd" ? zstdDecompressSync(bytes) : bytes).toString("utf8"));
+      requests++;
+      const seed = typeof payload.input === "string";
+      const output = seed ? [tool] : scenario.doneFallback ? [] : [answer];
+      const prefix = !seed && scenario.doneFallback ? encode({ type: "response.output_item.done", item: answer }) : "";
+      const terminal = encode({ type: "response.completed", response: { id: seed ? "resp_seed" : "resp_answer", status: "completed", output,
+        usage: { input_tokens: !seed && scenario.zero ? 0 : 7, output_tokens: 2 } } });
+      const trailer = seed ? "" : scenario.trailer;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      if (!seed && scenario.split) { response.write(prefix + terminal); await setImmediate(); response.end(trailer); }
+      else response.end(prefix + terminal + trailer);
+    })().catch(error => { failures.push(error.message); response.destroy(); });
+  });
+  const port = await listen(upstream);
+  const routerPort = await openPort();
+  const environment = {
+    ...isolatedPaths(state),
+    CODEX_ROUTER_PORT: String(routerPort), CODEX_ROUTER_CALLER_KEY: CALLER, CODEX_ROUTER_INTERNAL_KEY: INTERNAL,
+    CODEX_ROUTER_SWITCHYARD_ROOT: runtime, CODEX_ROUTER_SWITCHYARD_CAPABILITY: "fixture-switchyard-capability",
+    CODEX_ROUTER_SWITCHYARD_BASE_URL: `http://127.0.0.1:${port}/v1`, CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${port}`,
+    CODEX_ROUTER_API_BASE_URL: `http://127.0.0.1:${port}/v1`, CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${port}/v1`,
+    CODEX_ROUTER_EMPTY_COMPLETION_RETRY: "1", CODEX_ROUTER_ZERO_INPUT_ESTIMATE: "1", CODEX_ROUTER_QUIET: "1",
+  };
+  const router = launch("router.mjs", environment);
+  t.after(async () => {
+    await stop(router);
+    upstream.closeAllConnections();
+    await new Promise(resolve => upstream.close(resolve));
+    rmSync(state, { recursive: true, force: true });
+  });
+  await ready(`http://127.0.0.1:${routerPort}/live`, router);
+  const status = async () => (await lifecycle(routerPort, "")).json();
+  const post = async (model, input, thread) => {
+    const response = await fetch(`${callerBaseUrl(routerPort, CALLER)}/responses`, {
+      method: "POST", headers: { authorization: "Bearer synthetic-native-session", "content-type": "application/json" },
+      body: JSON.stringify({ model, input, stream: true, client_metadata: { thread_id: thread } }),
+    });
+    assert.equal(response.status, 200);
+    return response.text();
+  };
+  const trailers = ["", "data: {malformed}\n\n", encode({ type: "response.failed" }), encode({ type: "response.incomplete" }), encode({ usage: { input_tokens: 99, output_tokens: 9 } })];
+  const scenarios = trailers.flatMap(trailer => [false, true].map(split => ({ trailer, split })));
+  scenarios.push({ trailer: encode({ usage: { input_tokens: 99 } }), zero: true }, { trailer: "", doneFallback: true });
+  for (const [index, current] of scenarios.entries()) {
+    scenario = current;
+    const beforeRequests = requests;
+    const thread = `terminal-thread-${index}`;
+    const seeded = await post("switchyard/auto", "use tool", thread);
+    assert.equal((seeded.match(/"type":"response.completed"/gu) || []).length, 1);
+    assert.equal((await status()).workflowCalls, 1);
+    const input = [tool, { type: "function_call_output", call_id: tool.call_id, output: current.zero ? "x".repeat(8000) : "done" }];
+    const wire = await post(current.zero ? "openrouter/deepseek-v4.1-flash-together" : "gpt-6.1-sol", input, thread);
+    assert.equal((wire.match(/"type":"response.completed"/gu) || []).length, 1, JSON.stringify(current));
+    assert.match(wire, /served answer/u);
+    if (current.zero) assert.match(wire, /"input_tokens":[1-9]\d{3,}/u);
+    let settled;
+    const deadline = Date.now() + 2000;
+    do { settled = await status(); if (!settled.activeRequests) break; await setImmediate(); } while (Date.now() < deadline);
+    assert.equal(settled.activeRequests, 0);
+    assert.equal(settled.workflowCalls, 0, JSON.stringify(current));
+    assert.equal(settled.indeterminateWorkflow, false);
+    assert.equal((await lifecycle(routerPort, "/drain", {})).status, 200);
+    assert.equal((await lifecycle(routerPort, "/resume", {})).status, 200);
+    assert.equal(requests - beforeRequests, 2, "seed and continuation must each be sent exactly once");
+  }
+  assert.deepEqual(failures, []);
 });

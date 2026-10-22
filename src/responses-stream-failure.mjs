@@ -1,8 +1,10 @@
 import { SseLineScanner, sseFrameFields } from "./sse-framing.mjs";
 import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
+import { responseTerminalOutcome } from "./response-usage.mjs";
 
 const contexts = new WeakMap();
 const MAX_EVENT_BYTES = 4 * 1024 * 1024;
+const MAX_TERMINAL_BYTES = 8 * 1024 * 1024 + 4;
 const TERMINALS = new Set(["response.completed", "response.failed", "response.incomplete"]);
 const ANNOUNCEMENTS = new Set(["response.created", "response.in_progress", "response.queued"]);
 
@@ -12,19 +14,26 @@ function identity(value) {
     !/[\u0000-\u001f\u007f]/u.test(value) ? value : undefined;
 }
 
-export function markResponsesStream(response, { model, minimalFailure = false } = {}) {
+export function markResponsesStream(response, { model, minimalFailure = false, signal } = {}) {
   const requestedModel = identity(model);
   if (!contexts.has(response)) {
     const write = response.write;
     response.write = function(chunk, encoding) {
       const accepting = !this.writableEnded && !this.destroyed;
       const result = Reflect.apply(write, this, arguments);
-      if (accepting) contexts.get(this)?.observer?.accept(chunk, encoding);
+      const context = contexts.get(this);
+      if (accepting) context?.observer?.accept(chunk, encoding, !context.signal?.aborted);
       return result;
     };
   }
-  contexts.set(response, { requestedModel, model: requestedModel, minimalFailure: minimalFailure === true,
-    trusted: true, terminal: false });
+  contexts.set(response, { requestedModel, model: requestedModel, minimalFailure: minimalFailure === true, signal,
+    trusted: true, terminal: false, completionInvalid: false });
+}
+
+// Logical final-egress acceptance, including writes queued under backpressure.
+// This is independent of the weaker duplicate-failure suppression flag.
+export function acceptedResponsesTerminal(response) {
+  return contexts.get(response)?.acceptedTerminal;
 }
 
 // Observe bytes accepted by the destination's write, after holding/rewriting
@@ -32,15 +41,19 @@ export function markResponsesStream(response, { model, minimalFailure = false } 
 // teardown and precede a locally appended failure. No client chunks are held.
 export function observeResponsesStream(response, contentType, { maxEventBytes = MAX_EVENT_BYTES } = {}) {
   const context = contexts.get(response);
-  if (!context || !String(contentType).toLowerCase().includes("text/event-stream")) return undefined;
+  if (!context) return undefined;
   if (!Number.isSafeInteger(maxEventBytes) || maxEventBytes < 1 || maxEventBytes > MAX_EVENT_BYTES) {
     throw new RangeError("Responses failure parse budget must be between 1 byte and 4 MiB.");
   }
   if (!response.headersSent) {
     // A discarded attempt must not supply identity for an empty-result retry.
     Object.assign(context, { id: undefined, createdAt: undefined, model: context.requestedModel,
-      modelAnnounced: false, nextSequence: undefined, trusted: true, terminal: false });
-  } else if (context.observer) context.trusted = false;
+      modelAnnounced: false, nextSequence: undefined, trusted: true, terminal: false,
+      completionInvalid: false });
+  } else if (context.observer) { context.trusted = false; context.completionInvalid = true; }
+  context.acceptedTerminal = undefined;
+  context.observer = undefined;
+  if (!String(contentType).toLowerCase().includes("text/event-stream")) return undefined;
   context.observer = new FailureMetadataObserver(context, maxEventBytes);
 }
 
@@ -59,7 +72,7 @@ class FailureMetadataObserver {
     this.#limit = limit;
   }
 
-  accept(chunk, encoding) {
+  accept(chunk, encoding, eligible) {
     if (this.#context.terminal) return;
     try {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, typeof encoding === "string" ? encoding : "utf8");
@@ -70,24 +83,25 @@ class FailureMetadataObserver {
         if (!endLine) continue;
         const blank = !this.#lineHasContent;
         this.#lineHasContent = false;
-        if (blank) this.#finishFrame();
+        if (blank) this.#finishFrame({ eligible });
         if (this.#context.terminal) break;
       }
-    } catch { this.#context.trusted = false; }
+    } catch { this.#invalidate(); }
   }
 
   #append(bytes) {
     if (this.#dropping || !bytes.length) return;
     const required = this.#bytes + bytes.length;
-    if (required > this.#limit) {
-      this.#context.trusted = false;
+    if (required > this.#limit) this.#context.trusted = false;
+    if (required > MAX_TERMINAL_BYTES) {
+      this.#invalidate();
       this.#buffer = undefined;
       this.#bytes = 0;
       this.#dropping = true;
       return;
     }
     if (!this.#buffer || this.#buffer.length < required) {
-      const buffer = Buffer.allocUnsafe(Math.min(this.#limit, Math.max(required, (this.#buffer?.length || 512) * 2)));
+      const buffer = Buffer.allocUnsafe(Math.min(MAX_TERMINAL_BYTES, Math.max(required, (this.#buffer?.length || 512) * 2)));
       this.#buffer?.copy(buffer, 0, 0, this.#bytes);
       this.#buffer = buffer;
     }
@@ -95,25 +109,38 @@ class FailureMetadataObserver {
     this.#bytes = required;
   }
 
-  #finishFrame({ partial = false } = {}) {
+  #invalidate() {
+    this.#context.trusted = false;
+    this.#context.completionInvalid = true;
+  }
+
+  #finishFrame({ partial = false, eligible = false } = {}) {
     try {
       if (!this.#dropping && this.#bytes) {
         const fields = sseFrameFields(this.#buffer.subarray(0, this.#bytes), this.#atStreamStart);
-        if (fields.hasData && fields.data !== "[DONE]") {
+        if (fields.hasData && fields.data && fields.data !== "[DONE]") {
           if (!jsonIsUnambiguousForRewrite(fields.data)) {
             // A broken stream often ends mid-JSON; that fragment announced
             // nothing. Complete ambiguous JSON can contradict prior metadata.
-            try { JSON.parse(fields.data); this.#context.trusted = false; }
-            catch { if (!partial) this.#context.trusted = false; }
+            try { JSON.parse(fields.data); this.#invalidate(); }
+            catch { if (!partial) this.#invalidate(); }
           } else {
             const payload = JSON.parse(fields.data);
             const generic = !fields.eventName || fields.eventName === "message";
-            if (!generic && fields.eventName !== payload?.type) this.#context.trusted = false;
+            if (!generic && fields.eventName !== payload?.type) this.#invalidate();
             this.#observe(payload);
+            const outcome = responseTerminalOutcome(payload);
+            if (outcome && !this.#context.acceptedTerminal && !partial) {
+              const response = payload?.response;
+              if (outcome === "completed" && (!response || typeof response !== "object" || Array.isArray(response))) this.#invalidate();
+              if (!this.#context.completionInvalid && eligible) {
+                this.#context.acceptedTerminal = Object.freeze({ accepted: true, outcome });
+              } else this.#context.completionInvalid = true;
+            }
           }
-        }
+        } else if (fields.hasData && fields.eventName && fields.eventName !== "message") this.#invalidate();
       }
-    } catch { this.#context.trusted = false; }
+    } catch { this.#invalidate(); }
     this.#atStreamStart = false;
     this.#buffer = undefined;
     this.#bytes = 0;
@@ -123,13 +150,13 @@ class FailureMetadataObserver {
   #observe(payload) {
     const context = this.#context;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      context.trusted = false;
+      this.#invalidate();
       return;
     }
     const snapshot = payload.response;
     const type = payload.type;
     if (typeof type !== "string" || !type.startsWith("response.")) {
-      if (["sequence_number", "response", "response_id"].some(key => Object.hasOwn(payload, key))) context.trusted = false;
+      if (["sequence_number", "response", "response_id"].some(key => Object.hasOwn(payload, key))) this.#invalidate();
       return;
     }
     // Codex consumes failure/incomplete even with a bad snapshot, but ignores
@@ -138,27 +165,27 @@ class FailureMetadataObserver {
     if (Object.hasOwn(payload, "sequence_number")) {
       const sequence = payload.sequence_number;
       if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence >= Number.MAX_SAFE_INTEGER ||
-          (context.nextSequence !== undefined && sequence < context.nextSequence)) context.trusted = false;
+          (context.nextSequence !== undefined && sequence < context.nextSequence)) this.#invalidate();
       else context.nextSequence = sequence + 1;
     }
     const announces = ANNOUNCEMENTS.has(type);
-    if (announces && (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || !identity(snapshot.id))) context.trusted = false;
+    if (announces && (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || !identity(snapshot.id))) this.#invalidate();
     const id = snapshot?.id ?? payload.response_id;
     if (id !== undefined) {
       const valid = identity(id);
-      if (!valid || (context.id && context.id !== valid)) context.trusted = false;
+      if (!valid || (context.id && context.id !== valid)) this.#invalidate();
       else if (announces) context.id = valid;
     }
     if (announces) {
       if (snapshot?.model !== undefined) {
         const model = identity(snapshot.model);
-        if (!model || (context.modelAnnounced && context.model !== model)) context.trusted = false;
+        if (!model || (context.modelAnnounced && context.model !== model)) this.#invalidate();
         else { context.model = model; context.modelAnnounced = true; }
       }
       if (snapshot?.created_at !== undefined) {
         const date = snapshot.created_at;
         if (!Number.isFinite(date) || date < 0 || date > Number.MAX_SAFE_INTEGER ||
-            (context.createdAt !== undefined && context.createdAt !== date)) context.trusted = false;
+            (context.createdAt !== undefined && context.createdAt !== date)) this.#invalidate();
         else context.createdAt = date;
       }
     }

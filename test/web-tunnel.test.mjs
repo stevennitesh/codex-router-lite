@@ -1,14 +1,30 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { privateFileIsProtected } from "../src/file-security.mjs";
-import { startWebTunnel } from "../src/web-tunnel.mjs";
+const fixtureParent = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.tmp");
+mkdirSync(fixtureParent, { recursive: true });
+const fixtureRoot = mkdtempSync(path.join(fixtureParent, "web-tunnel-tests-"));
+const syntheticEnvironment = {
+  CODEX_HOME: path.join(fixtureRoot, "codex"), MODEL_ROUTER_STATE_DIR: path.join(fixtureRoot, "router-state"),
+  CODEX_ROUTER_STATE_DIR: path.join(fixtureRoot, "router-state"),
+  MODEL_ROUTER_MODEL_PICKER_STATE: path.join(fixtureRoot, "model-picker.json"),
+  MODEL_ROUTER_MULTI_AGENT_STATE: path.join(fixtureRoot, "multi-agent-settings.json"),
+};
+Object.assign(process.env, syntheticEnvironment);
+for (const [name, expected] of Object.entries(syntheticEnvironment)) {
+  assert.equal(process.env[name], expected, `${name} must be synthetic before loading any production module.`);
+  assert.ok(!path.relative(fixtureRoot, expected).startsWith(".."));
+}
+mkdirSync(syntheticEnvironment.CODEX_HOME);
+after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+const { privateFileIsProtected } = await import("../src/file-security.mjs");
+const { startWebTunnel } = await import("../src/web-tunnel.mjs");
 
 const secret = "synthetic_runtime_key_not_for_public_output";
 const serverUrl = `http://127.0.0.1:17845/${"a".repeat(64)}/mcp`;
@@ -44,12 +60,12 @@ class Child extends EventEmitter {
 }
 
 async function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), "codex-web-tunnel-"));
+  const root = mkdtempSync(path.join(fixtureRoot, "codex-web-tunnel-"));
   const stateDir = path.join(root, "state");
   const keyPath = path.join(root, "runtime-key.secret");
   writeFileSync(keyPath, `${secret}\n`, { mode: 0o600 });
   const requests = [], observed = {};
-  let healthStatus = 200, readyStatus = 200, pollHealth = pollingHealth(), pollStatus = 200, tunnel;
+  let healthStatus = 200, readyStatus = 200, pollHealth = pollingHealth(), pollStatus = 200, tunnel, expectedCloseCode;
   const server = createServer((request, response) => {
     requests.push(request.url);
     if (request.url === "/health/control-plane") {
@@ -64,6 +80,7 @@ async function fixture(t) {
   const child = new Child();
   t.after(async () => {
     try { await tunnel?.close(); }
+    catch (error) { if (!expectedCloseCode) throw error; assert.equal(error.code, expectedCloseCode); }
     finally {
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
       rmSync(root, { recursive: true, force: true });
@@ -82,6 +99,7 @@ async function fixture(t) {
   };
   const options = { executable: process.execPath, tunnelId: "tunnel_native_codex", keyPath, serverUrl, stateDir, spawnImpl };
   return { root, stateDir, keyPath, requests, observed, child, options,
+    expectCloseFailure: code => { expectedCloseCode = code; },
     setHealth: (health, readiness) => { healthStatus = health; readyStatus = readiness; },
     setPolling: (value, status = 200) => { pollHealth = value; pollStatus = status; },
     async start(extra = {}) { tunnel = await startWebTunnel({ ...options, ...extra }); return tunnel; },
@@ -168,6 +186,54 @@ test("the owner waits for an actual child process to close before removing its p
   assert.equal(existsSync(configFile), false);
   assert.deepEqual(readdirSync(f.stateDir), []);
   assert.equal(readFileSync(f.keyPath, "utf8"), `${secret}\n`);
+});
+
+test("cleanup failures retain only bounded operation, errno and post-close directory state diagnostics", { timeout: 25_000 }, async t => {
+  for (const kind of ["config", "health", "unknown-entry"]) await t.test(kind, async t => {
+    const f = await fixture(t);
+    const tunnel = await f.start();
+    await tunnel.ready;
+    const ownedDirectory = path.dirname(f.observed.configFile);
+    let obstruction;
+    if (kind === "unknown-entry") {
+      obstruction = path.join(ownedDirectory, `private-name-${secret}`);
+      writeFileSync(obstruction, `${serverUrl}\n`, "utf8");
+    } else {
+      obstruction = kind === "config" ? f.observed.configFile : f.observed.healthFile;
+      rmSync(obstruction);
+      mkdirSync(obstruction);
+    }
+    f.expectCloseFailure("web_tunnel_cleanup_failed");
+    const closing = tunnel.close();
+    assert.equal(tunnel.close(), closing);
+    assert.equal(tunnel.status().running, true);
+    assert.equal(tunnel.status().cleanupFailures, undefined, "No cleanup observation precedes actual child closure.");
+    let retained;
+    await assert.rejects(closing, error => {
+      retained = error;
+      assert.equal(error.code, "web_tunnel_cleanup_failed");
+      assert.equal(error.cause, undefined);
+      assert.deepEqual(error.cleanupFailures.map(value => value.operation), [
+        ...(kind === "unknown-entry" ? [] : [`unlink-${kind}`]), "rmdir-owned",
+      ]);
+      for (const value of error.cleanupFailures) {
+        assert.deepEqual(Object.keys(value), value.operation === "rmdir-owned" ? ["operation", "errno", "directoryState"] : ["operation", "errno"]);
+        assert.ok(["EACCES", "EEXIST", "EISDIR", "ENOTEMPTY", "EPERM"].includes(value.errno));
+      }
+      assert.equal(error.cleanupFailures.at(-1).directoryState, "nonempty");
+      for (const privateValue of [secret, serverUrl, f.root, f.keyPath, obstruction]) {
+        assert.equal(`${error.message} ${JSON.stringify(error)}`.includes(privateValue), false);
+      }
+      return true;
+    });
+    assert.equal(tunnel.status().running, false);
+    assert.equal(tunnel.status().error, "web_tunnel_cleanup_failed");
+    assert.deepEqual(tunnel.status().cleanupFailures, retained.cleanupFailures);
+    assert.equal(existsSync(obstruction), true, "The owner never recursively removes unexpected directory entries.");
+    assert.equal(readFileSync(f.keyPath, "utf8"), `${secret}\n`);
+    await assert.rejects(tunnel.close(), error => error === retained);
+    assert.deepEqual(f.child.kills, ["SIGTERM"]);
+  });
 });
 
 test("liveness alone cannot resolve readiness and shutdown cancels the outstanding readiness promise", { timeout: 25_000 }, async t => {

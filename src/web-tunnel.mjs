@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, opendirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 
 import { createPrivateFile } from "./file-security.mjs";
@@ -21,6 +21,7 @@ const messages = {
   web_tunnel_cleanup_failed: "ChatGPT Web tunnel private state could not be removed.",
 };
 const failure = code => Object.assign(new Error(messages[code]), { code });
+const cleanupErrnos = new Set(["EACCES", "EBUSY", "EEXIST", "EIO", "EISDIR", "EMFILE", "ENFILE", "ENOTDIR", "ENOTEMPTY", "EPERM", "EROFS"]);
 
 function regularFile(file, maximum = Infinity) {
   const info = lstatSync(file);
@@ -71,18 +72,35 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
   if (signal?.aborted) throw failure("web_tunnel_cancelled");
 
   let directory, configFile, healthFile;
+  let cleanupFailures = [];
   const files = [];
-  const cleanup = () => {
-    let failed = false;
-    for (const file of files) {
+  const cleanupFailure = () => Object.assign(failure("web_tunnel_cleanup_failed"), {
+    cleanupFailures: cleanupFailures.map(value => ({ ...value })),
+  });
+  const cleanup = ({ childClosed = false } = {}) => {
+    cleanupFailures = [];
+    const failed = (operation, error) => {
+      if (error?.code === "ENOENT") return;
+      const value = { operation, errno: cleanupErrnos.has(error?.code) ? error.code : "other" };
+      if (operation === "rmdir-owned" && childClosed) {
+        try {
+          const entries = opendirSync(directory, { bufferSize: 1 });
+          try { value.directoryState = entries.readSync() === null ? "empty" : "nonempty"; }
+          finally { entries.closeSync(); }
+        }
+        catch { value.directoryState = "unknown"; }
+      }
+      cleanupFailures.push(value);
+    };
+    for (const { file, operation } of files) {
       try { unlinkSync(file); }
-      catch (error) { if (error?.code !== "ENOENT") failed = true; }
+      catch (error) { failed(operation, error); }
     }
     if (directory) {
       try { rmdirSync(directory); }
-      catch (error) { if (error?.code !== "ENOENT") failed = true; }
+      catch (error) { failed("rmdir-owned", error); }
     }
-    if (failed) throw failure("web_tunnel_cleanup_failed");
+    if (cleanupFailures.length) throw cleanupFailure();
   };
   try {
     mkdirSync(stateDir, { recursive: true });
@@ -111,11 +129,11 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
       "",
     ].join("\n");
     createPrivateFile(configFile, config);
-    files.push(configFile);
+    files.push({ file: configFile, operation: "unlink-config" });
     createPrivateFile(healthFile, "");
-    files.push(healthFile);
+    files.push({ file: healthFile, operation: "unlink-health" });
   } catch {
-    try { cleanup(); } catch { throw failure("web_tunnel_cleanup_failed"); }
+    cleanup();
     throw failure("web_tunnel_start_failed");
   }
 
@@ -172,11 +190,11 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
           clearTimeout(deadline);
         }
       }
-      cleanup();
+      cleanup({ childClosed });
       stopped = true;
     })().catch(error => {
       failureCode = error?.code === "web_tunnel_cleanup_failed" ? "web_tunnel_cleanup_failed" : "web_tunnel_stop_failed";
-      throw failure(failureCode);
+      throw failureCode === "web_tunnel_cleanup_failed" ? cleanupFailure() : failure(failureCode);
     });
     return closePromise;
   }
@@ -238,7 +256,7 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
     });
   } catch {
     settleReady(failure("web_tunnel_start_failed"));
-    try { cleanup(); } catch { throw failure("web_tunnel_cleanup_failed"); }
+    cleanup();
     throw failure("web_tunnel_start_failed");
   }
   signal?.addEventListener("abort", abort, { once: true });
@@ -257,6 +275,7 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
       ready: isReady,
       pid: Number.isSafeInteger(child?.pid) ? child.pid : null,
       ...(failureCode ? { error: failureCode } : {}),
+      ...(cleanupFailures.length ? { cleanupFailures: cleanupFailures.map(value => ({ ...value })) } : {}),
     }),
   };
 }

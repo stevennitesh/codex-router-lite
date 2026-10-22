@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
 import { transportErrorGraph } from "./transport-error-graph.mjs";
 
@@ -13,23 +14,37 @@ import { transportErrorGraph } from "./transport-error-graph.mjs";
 // `error-translation.mjs` uses for upstream *bodies*. The two are deliberately
 // separate: that module reads what an origin said, this one runs when nothing
 // was ever said.
-// `hostname` is set by Node's DNS and TLS errors but not by Undici's connect
-// errors, which name the address in their message instead. Read the field
-// first and fall back to the wordings actually observed in this router's log.
+// Node DNS/TLS errors expose hostname; connect errors expose address. These
+// identify a failed endpoint, which can also be a proxy, not its ownership.
 const HOST_PATTERNS = [
-  /attempted address:\s*([^\s:,)]+)/i,
-  /attempted addresses:\s*([^\s:,)]+)/i,
+  /attempted address(?:es)?:\s*(\[[^\]\s]+\]|[^\s:,)]+)/i,
   /getaddrinfo\s+\w+\s+([^\s,)]+)/i,
   /Host:\s*([^\s:,]+?)\.?\s/i,
 ];
+const CONNECT_CODES = new Set(["ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
+
+function displayHost(value) {
+  if (typeof value !== "string" || !value || value.length > 253) return undefined;
+  if (isIP(value)) return value;
+  if (value.startsWith("[") && value.endsWith("]") && isIP(value.slice(1, -1)) === 6) return value;
+  const hostname = value.endsWith(".") ? value.slice(0, -1) : value;
+  return hostname.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu.test(label))
+    ? value : undefined;
+}
 
 function transportFailureHost(nodes) {
   for (const link of nodes) {
-    if (typeof link.hostname === "string" && link.hostname) return link.hostname;
+    const hostname = displayHost(link.hostname);
+    if (hostname) return hostname;
+    if (link.syscall === "connect" && CONNECT_CODES.has(link.code)) {
+      const address = displayHost(link.address);
+      if (address && isIP(address.replace(/^\[|\]$/gu, ""))) return address;
+    }
     const message = typeof link.message === "string" ? link.message : "";
     for (const pattern of HOST_PATTERNS) {
       const match = message.match(pattern);
-      if (match?.[1]) return match[1];
+      const host = displayHost(match?.[1]);
+      if (host) return host;
     }
   }
   return undefined;
@@ -80,18 +95,15 @@ const DIAGNOSES = new Map([
 const PROXY_HINT =
   " If this network needs an outbound proxy, set NODE_USE_ENV_PROXY=1 with http_proxy/https_proxy/no_proxy and rerun install.";
 
-// The router's own gateway and forwarders live on loopback, so the same codes
-// that mean "this network cannot reach the internet" mean "a process this
-// install owns is not running" when the host is local. Advising a proxy there
-// sends the operator to reconfigure a network that is working perfectly.
-const LOCAL_HINT = " That is one of this install's own processes, not the network; run .\\install.ps1 -Target codex.";
+const LOCAL_HINT = " Check the local endpoint's service and configuration; for Router services, run .\\install.ps1 -Target codex.";
+const LOCAL_PROXY_HINT = " Check the local service or configured proxy at that endpoint.";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
 
 function localTransportHost(host) {
   if (typeof host !== "string" || !host) return false;
   const bare = host.replace(/^\[|\]$/g, "").toLowerCase();
-  return LOCAL_HOSTS.has(bare) || bare.startsWith("127.");
+  return LOCAL_HOSTS.has(bare) || (isIP(bare) === 4 && bare.startsWith("127."));
 }
 
 // Returns a `cause` fragment rather than a finished sentence, because the two
@@ -105,7 +117,7 @@ function localTransportHost(host) {
 // router bug keeps its honest generic wording instead of borrowing a network
 // cause there is no evidence for.
 function hintFor(host, diagnosis, proxyConfigured) {
-  if (localTransportHost(host)) return LOCAL_HINT;
+  if (localTransportHost(host)) return proxyConfigured ? LOCAL_PROXY_HINT : LOCAL_HINT;
   if (diagnosis.reachable || proxyConfigured) return "";
   return PROXY_HINT;
 }

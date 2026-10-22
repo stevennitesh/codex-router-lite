@@ -121,7 +121,7 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
 | Packaged deployment acceptance | `src/deployment-acceptance.mjs`; full health and installed task/process/manifest identity for activation and rollback, without Git or Switchyard-only proof |
 | Async directory-lock lifecycle | `src/directory-lock.mjs`; catalog, overlay, caller-key, and service wrappers use complete generations with unique owner files. Release drains dispatched heartbeats; only positive owner-process exit permits recovery. Legacy or uncertain ownership requires quiescent cleanup. |
-| Synchronous skill ownership lock | `src/atomic-state-lock.mjs`; complete generations have unique owner files, and recovery/release remove only their observed owner and an empty directory |
+| Synchronous skill ownership lock | `src/atomic-state-lock.mjs`; complete generations have unique owner files, recovery/release remove only their observed owner and an empty directory, and all publication retries share one paced monotonic deadline |
 | Nested transport errors | `src/transport-error-graph.mjs`; health, diagnostics, and retry retain their own eligibility rules |
 | Switchyard observation vocabulary | `src/switchyard-observation-contract.mjs`; sanitized writer and historical reader share the schema, independently of serving-policy validation |
 | Agent instructions and installed skills | [Context ownership](context-ownership.md) |
@@ -199,6 +199,9 @@ history lacks event ancestry. It still requires the actual event base to
 be an ancestor and checks the complete diff. Failed fetches, deeper missing
 history and unrelated bases retain full verification. Ordinary scope inspection
 does not fetch. Node and Python dependency audits remain unconditional.
+The Node 24 full-runtime leg provisions Python 3.12 with the hashed production
+lock and supplies its explicit interpreter to the gateway integration tests.
+The other Node leg and evidence-only runs do not provision that interpreter.
 
 `npm run check` syntax-checks root, source, test, script, and maintenance modules
 with four bounded workers, then verifies the Python lock, independent product

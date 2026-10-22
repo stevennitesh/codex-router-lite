@@ -150,6 +150,12 @@ The updater accepts this Router Lite repository as `origin`, fast-forwards only
 when the remote is ahead, and runs the installer. It refuses diverged history
 and restores the previous revision if installation fails. The read-only
 `upstream` remote is research input and is never an update target.
+Re-running the standalone bootstrap on an existing checkout also prepares the
+managed runtime before changing tracked files, then rechecks the checkout and
+installs the exact fetched commit. Preparation-only and dependency-only bootstrap
+runs use the existing checkout without advancing it. An unavailable drain contract
+blocks a full update before mutation; tracked-file `-Force` does not authorize
+interrupting active requests.
 
 After a Codex app, Codex CLI, Router upstream, or Switchyard upstream change,
 run the compatibility refresh from the source repository:

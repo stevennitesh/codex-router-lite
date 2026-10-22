@@ -26,7 +26,6 @@ if ($NoProvider -and $Providers) {
 if ($DependenciesOnly -and ($PrepareOnly -or $Providers -or $NoProvider)) {
   throw "-DependenciesOnly cannot be combined with -PrepareOnly or provider selection."
 }
-$PreviousRevision = $null
 $RepositoryUrl = if ($env:CODEX_ROUTER_REPOSITORY_URL) {
   $env:CODEX_ROUTER_REPOSITORY_URL
 } else {
@@ -102,6 +101,126 @@ function Reset-ManagedCheckout([string]$Directory) {
   if ($LASTEXITCODE -ne 0) { throw "Unable to discard the local changes in $Directory." }
 }
 
+function Get-ManagedCheckoutGitValue([string]$Directory, [string[]]$Arguments) {
+  $Output = @(& git -C $Directory @Arguments)
+  if ($LASTEXITCODE -ne 0) { throw "Unable to read Git $($Arguments -join ' ') in $Directory." }
+  return ($Output -join "`n").Trim()
+}
+
+function Set-RequestedProviders([string]$Directory, [string]$Selection, [switch]$WithoutProvider) {
+  if ($Selection) {
+    $NamedProviders = @($Selection.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $Unsupported = @($NamedProviders | Where-Object { $_ -notin @("openrouter", "switchyard") })
+    if ($Unsupported.Count -gt 0) { throw "Unsupported provider(s): $($Unsupported -join ', ')." }
+    & node (Join-Path $Directory "src\provider-selection.mjs") set @NamedProviders | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Provider selection failed with status $LASTEXITCODE." }
+  } elseif ($WithoutProvider) {
+    & node (Join-Path $Directory "src\provider-selection.mjs") set | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Provider selection failed with status $LASTEXITCODE." }
+  }
+}
+
+function Invoke-ManagedCheckoutInstaller(
+  [string]$Directory, [switch]$PrepareCatalog, [switch]$PrepareDependencies,
+  [switch]$DependencyForce, [switch]$ServiceForce
+) {
+  # A script can return without running a native command. Do not inherit the
+  # status of a previous Git or cleanup command in that case.
+  $global:LASTEXITCODE = 0
+  $InstallerArguments = @{ CheckoutInstall = $true; Target = "codex"; ForceDeps = [bool]$DependencyForce; ForceServiceReplacement = [bool]$ServiceForce }
+  if ($PrepareCatalog) { $InstallerArguments.PrepareOnly = $true }
+  if ($PrepareDependencies) { $InstallerArguments.DependenciesOnly = $true }
+  & (Join-Path $Directory "install.ps1") @InstallerArguments
+  $InstallerExitCode = $LASTEXITCODE
+  if ($InstallerExitCode -ne 0) { throw "Installer exited with status $InstallerExitCode." }
+}
+
+function Invoke-PreparedManagedCheckoutUpdate(
+  [string]$Directory, [switch]$TrackedEditForce, [switch]$ServiceForce,
+  [switch]$DependencyForce, [string]$ProviderSelection, [switch]$WithoutProvider
+) {
+  $Origin = Get-ManagedCheckoutGitValue $Directory @("remote", "get-url", "origin")
+  $AllowedOrigins = @(
+    $RepositoryUrl,
+    "https://github.com/stevennitesh/codex-router-lite",
+    "https://github.com/stevennitesh/codex-router-lite.git",
+    "git@github.com:stevennitesh/codex-router-lite.git"
+  ) | Where-Object { $_ }
+  if ($Origin -notin $AllowedOrigins) {
+    throw "$Directory has an unrecognized origin and will not be updated: $Origin"
+  }
+  $Dirty = @(Get-LocalModification $Directory)
+  if ($Dirty.Count -and -not $TrackedEditForce) { throw (Get-LocalModificationMessage $Dirty $Directory) }
+  $Branch = Get-ManagedCheckoutGitValue $Directory @("branch", "--show-current")
+  if ($Branch -and $Branch -ne "main") { throw "$Directory must be on its main branch to update." }
+  $PreviousRevision = Get-ManagedCheckoutGitValue $Directory @("rev-parse", "HEAD")
+  $Drain = Join-Path $Directory "src\service-drain.mjs"
+  $Installer = Join-Path $Directory "install.ps1"
+  if (-not (Test-Path -LiteralPath $Drain -PathType Leaf) -or -not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
+    throw "The managed checkout lacks the supported replacement preparation and installer entrypoints; it was left unchanged."
+  }
+  $ParseErrors = $null
+  $Tokens = $null
+  $InstallerAst = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$Tokens, [ref]$ParseErrors)
+  $InstallerParameters = @($InstallerAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+  if ($ParseErrors.Count -or @("CheckoutInstall", "ForceDeps", "ForceServiceReplacement", "Target" | Where-Object { $_ -notin $InstallerParameters }).Count) {
+    throw "The managed checkout does not support the guarded installer contract; it was left unchanged."
+  }
+  & git -C $Directory fetch --quiet origin main
+  if ($LASTEXITCODE -ne 0) { throw "Unable to fetch the managed checkout update." }
+  $CandidateRevision = Get-ManagedCheckoutGitValue $Directory @("rev-parse", "--verify", "origin/main^{commit}")
+  [string[]]$DrainArguments = @($Drain, "prepare")
+  if ($ServiceForce) { $DrainArguments += "--force-service-replacement" }
+  $PreparationOutput = @(& node @DrainArguments)
+  $PreparationExitCode = $LASTEXITCODE
+  if ($PreparationExitCode -ne 0) { throw "Router replacement was deferred before the managed checkout changed." }
+  try {
+    # Even an unsupported success response may have closed admission. Refuse
+    # checkout effects, but always attempt resume after a zero-status prepare.
+    try { $Preparation = ($PreparationOutput -join "`n") | ConvertFrom-Json }
+    catch { throw "Router replacement preparation did not return a supported result; the checkout was left unchanged." }
+    if ($Preparation.status -notin @("offline", "drained", "forced", "legacy-force")) {
+      throw "Router replacement preparation did not return a supported result; the checkout was left unchanged."
+    }
+    if ((Get-ManagedCheckoutGitValue $Directory @("rev-parse", "HEAD")) -ne $PreviousRevision -or
+        (Get-ManagedCheckoutGitValue $Directory @("branch", "--show-current")) -ne $Branch -or
+        (Get-ManagedCheckoutGitValue $Directory @("remote", "get-url", "origin")) -ne $Origin) {
+      throw "The checkout changed while preparing replacement; retry the update."
+    }
+    $Dirty = @(Get-LocalModification $Directory)
+    if ($Dirty.Count) {
+      if (-not $TrackedEditForce) { throw (Get-LocalModificationMessage $Dirty $Directory) }
+      Reset-ManagedCheckout $Directory
+    }
+    & git -C $Directory update-ref refs/codex-router/rollback $PreviousRevision
+    if ($LASTEXITCODE -ne 0) { throw "Unable to record the managed checkout rollback revision." }
+    try {
+      if (-not $Branch) {
+        & git -C $Directory switch main
+        if ($LASTEXITCODE -ne 0) { throw "The detached managed checkout could not be restored to main." }
+      }
+      & git -C $Directory merge --ff-only $CandidateRevision
+      if ($LASTEXITCODE -ne 0) { throw "Unable to fast-forward the managed checkout." }
+      Set-RequestedProviders $Directory $ProviderSelection -WithoutProvider:$WithoutProvider
+      Invoke-ManagedCheckoutInstaller $Directory -DependencyForce:$DependencyForce -ServiceForce:$ServiceForce
+    } catch {
+      $UpdateFailure = $_
+      try {
+        & git -C $Directory switch --detach $PreviousRevision
+        if ($LASTEXITCODE -ne 0) { throw "Unable to restore the previous managed checkout revision." }
+        Invoke-ManagedCheckoutInstaller $Directory -DependencyForce:$DependencyForce -ServiceForce:$ServiceForce
+      } catch {
+        throw "Update failed ($($UpdateFailure.Exception.Message)) and automatic rollback also failed ($($_.Exception.Message)). The previous commit is $PreviousRevision."
+      }
+      throw "Update failed ($($UpdateFailure.Exception.Message)); Codex Router was restored to $PreviousRevision."
+    }
+  } finally {
+    # Resume is best effort even after an installer failure. Its native status
+    # or PowerShell error must not replace the captured update/install outcome.
+    try { & node (Join-Path $Directory "src\service-drain.mjs") resume 2>$null | Out-Null } catch { }
+  }
+}
+
 # The installed service uses a Windows Job Object so every child is contained.
 # Prove the PowerShell capabilities needed to create it before cloning, pulling,
 # installing dependencies, changing configuration, or touching service state.
@@ -121,46 +240,12 @@ if (-not $CheckoutInstall) {
       if (-not (Test-RouterCheckout $InstallDir)) {
         throw "$InstallDir is not a Codex Router checkout."
       }
-      $Origin = (& git -C $InstallDir remote get-url origin).Trim()
-      $AllowedOrigins = @(
-        $RepositoryUrl,
-        "https://github.com/stevennitesh/codex-router-lite",
-        "https://github.com/stevennitesh/codex-router-lite.git",
-        "git@github.com:stevennitesh/codex-router-lite.git"
-      ) | Where-Object { $_ }
-      if ($Origin -notin $AllowedOrigins) {
-        throw "$InstallDir has an unrecognized origin and will not be updated: $Origin"
+      # Preparation operates on this exact generation. Advancing it requires
+      # the full replacement scope, including drain and checkout revalidation.
+      if (-not $PrepareOnly -and -not $DependenciesOnly) {
+        Invoke-PreparedManagedCheckoutUpdate $InstallDir -TrackedEditForce:$Force -ServiceForce:$ForceServiceReplacement -DependencyForce:$ForceDeps -ProviderSelection $Providers -WithoutProvider:$NoProvider
+        exit 0
       }
-      # PowerShell unrolls a one-element array on return, so re-wrap before
-      # reading .Count.
-      $Dirty = @(Get-LocalModification $InstallDir)
-      if ($Dirty.Count) {
-        if (-not $Force) { throw (Get-LocalModificationMessage $Dirty $InstallDir) }
-        Reset-ManagedCheckout $InstallDir
-      }
-      # A failed setup rolls the checkout back to a detached HEAD (see the
-      # rollback below), where `branch --show-current` prints nothing. A native
-      # command with no output yields $null, and in Windows PowerShell 5.1
-      # [string]$null stays $null, so guard explicitly before calling Trim().
-      $Branch = & git -C $InstallDir branch --show-current
-      if ($null -eq $Branch) { $Branch = "" }
-      $Branch = [string]$Branch.Trim()
-      if ($Branch -ne "main") {
-        if (-not $Branch) {
-          & git -C $InstallDir switch main 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            throw "$InstallDir is in a detached HEAD state and could not be restored to main; run 'git switch main' there and retry."
-          }
-          $Branch = & git -C $InstallDir branch --show-current
-          if ($null -eq $Branch) { $Branch = "" }
-          $Branch = [string]$Branch.Trim()
-        }
-        if ($Branch -ne "main") { throw "$InstallDir must be on its main branch to update." }
-      }
-      $PreviousRevision = (& git -C $InstallDir rev-parse HEAD).Trim()
-      & git -C $InstallDir update-ref refs/codex-router/rollback $PreviousRevision
-      & git -C $InstallDir pull --ff-only origin main
-      if ($LASTEXITCODE -ne 0) { throw "Unable to fast-forward the managed checkout." }
     } elseif (Test-Path $InstallDir) {
       throw "$InstallDir exists and is not a Codex Router checkout."
     } else {
@@ -172,22 +257,13 @@ if (-not $CheckoutInstall) {
   }
 
   if ($PrepareOnly -or $DependenciesOnly) {
-    & (Join-Path $Repository "install.ps1") -CheckoutInstall -PrepareOnly:$PrepareOnly -DependenciesOnly:$DependenciesOnly -ForceDeps:$ForceDeps -ForceServiceReplacement:$ForceServiceReplacement -Target codex
-    exit $LASTEXITCODE
+    Invoke-ManagedCheckoutInstaller $Repository -PrepareCatalog:$PrepareOnly -PrepareDependencies:$DependenciesOnly -DependencyForce:$ForceDeps -ServiceForce:$ForceServiceReplacement
+    exit 0
   }
 
-  if ($Providers) {
-    $NamedProviders = @($Providers.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $Unsupported = @($NamedProviders | Where-Object { $_ -notin @("openrouter", "switchyard") })
-    if ($Unsupported.Count -gt 0) { throw "Unsupported provider(s): $($Unsupported -join ', ')." }
-    & node (Join-Path $Repository "src\provider-selection.mjs") set @NamedProviders | Out-Null
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  } elseif ($NoProvider) {
-    & node (Join-Path $Repository "src\provider-selection.mjs") set | Out-Null
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  }
-  & (Join-Path $Repository "install.ps1") -CheckoutInstall -Target codex -ForceDeps:$ForceDeps -ForceServiceReplacement:$ForceServiceReplacement
-  exit $LASTEXITCODE
+  Set-RequestedProviders $Repository $Providers -WithoutProvider:$NoProvider
+  Invoke-ManagedCheckoutInstaller $Repository -DependencyForce:$ForceDeps -ServiceForce:$ForceServiceReplacement
+  exit 0
 }
 
 if (-not (Test-RouterCheckout $ScriptDirectory)) {

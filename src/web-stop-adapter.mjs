@@ -43,8 +43,11 @@ function observationWait(config) {
   return { url: url.href, revision: Number(url.searchParams.get('revision')) };
 }
 
-// Do not reconstruct a sandbox object or infer a launcher. Preserve every field.
-export function readIdentity(meta, threadIds = null) {
+const subagentIdentity = identity => ['parent_thread_id', 'subagent_header', 'subagent_kind']
+  .some(key => identity.canonical[key] != null);
+
+// Parse native identity integrity independently of primary-only Stop authority.
+function parseIdentity(meta, threadIds) {
   try {
     if (!validThreadIds(threadIds) || !record(meta) || !threadAllowed(meta.threadId, threadIds)) return null;
     const raw = meta['x-codex-turn-metadata'];
@@ -52,7 +55,6 @@ export function readIdentity(meta, threadIds = null) {
     const canonical = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!record(canonical) || canonical.thread_id !== meta.threadId
         || !uuid(canonical.turn_id) || !uuid(canonical.session_id)) return null;
-    if (['parent_thread_id', 'subagent_header', 'subagent_kind'].some(key => canonical[key] != null)) return null;
     for (const field of ['auto_review_enabled', 'node_repl_auto_review_required', 'node_repl_disabled']) {
       if (typeof canonical[field] !== 'boolean') return null;
     }
@@ -65,6 +67,12 @@ export function readIdentity(meta, threadIds = null) {
   } catch { return null; }
 }
 
+// Do not reconstruct a sandbox object or infer a launcher. Preserve every field.
+export function readIdentity(meta, threadIds = null) {
+  const identity = parseIdentity(meta, threadIds);
+  return identity && !subagentIdentity(identity) ? identity : null;
+}
+
 export function readSandbox(meta) {
   if (!record(meta) || !SANDBOX_KEYS.every(key => record(meta[key]))
       || !isDeepStrictEqual(meta[SANDBOX_KEYS[0]], meta[SANDBOX_KEYS[1]])) return null;
@@ -72,11 +80,11 @@ export function readSandbox(meta) {
 }
 
 // Exact regeneration is required: a marker or a lookalike script is insufficient.
-export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
+function qualifyProgram(params, runtimeModule, threadIds, readNativeIdentity) {
   try {
     if (params?.name !== 'js' || typeof params.arguments?.code !== 'string'
         || params.arguments.code.length > 1048576 || !/^call_router_web_[a-f0-9]{32}$/u.test(params._meta?.callId ?? '')) return null;
-    const identity = readIdentity(params._meta, threadIds), sandbox = readSandbox(params._meta);
+    const identity = readNativeIdentity(params._meta, threadIds), sandbox = readSandbox(params._meta);
     if (!identity || !sandbox || !own(params._meta, 'sessionId')) return null;
     const config = readBrowserProgram(params.arguments.code);
     if (!config || config.sessionId !== identity.threadId || config.turnId !== identity.turnId
@@ -86,6 +94,15 @@ export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
     else if (config.observationWait !== undefined) return null;
     return { identity, sandbox, config, observation: config.operation === 'observe' };
   } catch { return null; }
+}
+
+export function qualifyBrowserCall(params, runtimeModule, threadIds = null) {
+  return qualifyProgram(params, runtimeModule, threadIds, readIdentity);
+}
+
+function qualifyObservationCall(params, runtimeModule, threadIds) {
+  const guard = qualifyProgram(params, runtimeModule, threadIds, parseIdentity);
+  return guard?.observation && guard.config.observationWait && subagentIdentity(guard.identity) ? guard : null;
 }
 
 // Authority belongs to the originating ordinary operation. Retain the raw
@@ -265,6 +282,10 @@ export class AdapterBridge {
     if (!pending.wait) return this.sendDetached(message);
     if (pending.wait.active) this.sendDetached({ ...message, params: { ...message.params, requestId: pending.wait.childId } });
   }
+  observationChildrenOwnedBy(pending) {
+    return [...this.observationChildren].every(([id, owner]) => owner === pending
+      && this.pending.get(owner.wait?.outerId) === owner && owner.wait.active && owner.wait.childId === id);
+  }
   retirePending(id, terminalResponse) {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -322,7 +343,9 @@ export class AdapterBridge {
         return;
       }
       if (pending) {
-        this.retirePending(message.params.requestId, false); this.invalidate('ordinary_cancelled');
+        this.retirePending(message.params.requestId, false);
+        if (pending.wait) this.wakeObservation(pending, 'cancelled');
+        this.invalidate('ordinary_cancelled');
         if (pending.wait) return this.cancelPending(pending, message);
       }
       return this.child.send(message);
@@ -341,7 +364,9 @@ export class AdapterBridge {
       this.authorityDisabled = true; this.invalidate('authority_replaced');
     }
     const guard = qualifyBrowserCall(params, this.stopConfig.runtimeModule, this.stopConfig.threadIds ?? null);
-    const overlapping = this.pending.size > 0 || [...this.hooks.values()].some(entry => !entry.group.retired) || this.injected.size > 0;
+    const observation = guard ? null : qualifyObservationCall(params, this.stopConfig.runtimeModule, this.stopConfig.threadIds ?? null);
+    const overlapping = this.pending.size > 0 || [...this.hooks.values()].some(entry => !entry.group.retired)
+      || this.injected.size > 0 || !this.observationChildrenOwnedBy();
     if (overlapping || !guard?.observation) this.invalidate('scope_invalidated');
     if (guard && this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) this.invalidate('retired_turn_refused');
     else if (guard) {
@@ -365,7 +390,7 @@ export class AdapterBridge {
       }
     }
     let settle;
-    const pending = { qualified: Boolean(guard?.observation && this.cache && this.pending.size === 0), cache: this.cache,
+    const pending = { qualified: Boolean(guard?.observation && this.cache && this.pending.size === 0), cache: observation ? null : this.cache,
       settled: new Promise(resolvePromise => { settle = resolvePromise; }), settle };
     if (guard?.config.operation === 'send' && !overlapping && !this.authorityDisabled
         && !this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) {
@@ -373,11 +398,13 @@ export class AdapterBridge {
     }
     // Assignment after creation keeps the resolver distinct from Promise.resolve.
     pending.settle = settle;
+    const heldObservation = pending.qualified ? guard : observation && !overlapping && this.pending.size === 0
+      && !this.cleanupGroup && this.injected.size === 0 && this.observationChildrenOwnedBy() ? observation : null;
     this.pending.set(message.id, pending);
-    if (pending.qualified && guard.config.observationWait) {
-      const wait = observationWait(guard.config);
+    if (heldObservation?.config.observationWait) {
+      const wait = observationWait(heldObservation.config);
       const startedAt = this.now();
-      pending.wait = { ...wait, outerId: message.id, message: snapshot(message), config: guard.config,
+      pending.wait = { ...wait, outerId: message.id, message: snapshot(message), config: heldObservation.config,
         startedAt, deadlineAt: startedAt + this.observationWaitMs,
         // Renewal stops scheduling; it must not truncate a normal last read to
         // a few milliseconds and reset the official REPL's resident kernel.
@@ -607,7 +634,8 @@ export class AdapterBridge {
       return owned ? this.replyOwned(message, { ok: false, code: 'retired_turn' }) : this.child.send(message);
     }
     const scopeMatches = this.injected.size === 0 && this.pending.size <= 1
-      && [...this.pending.values()].every(value => value.qualified && value.cache === cached);
+      && [...this.pending.values()].every(value => value.qualified && value.cache === cached)
+      && this.observationChildrenOwnedBy([...this.pending.values()][0]);
     if (!decision.meta || !scopeMatches || this.authorityDisabled) {
       this.event('hook_forwarded_without_stop', { reason: !decision.meta ? decision.reason : 'observation_scope_mismatch' });
       if (matchingCurrent && decision.reason === 'hook_authority_conflict') {

@@ -103,10 +103,21 @@ function acquire(target, { waitMs = MAX_WAIT_MS } = {}) {
   mkdirSync(path.dirname(pathname), { recursive: true });
   const name = `owner-${process.pid}-${randomUUID()}`;
   const prepared = mkdtempSync(`${pathname}.prepare-`);
-  const started = Date.now();
+  const deadline = performance.now() + waitMs;
+  let owner = {};
+  let attempted = false;
   try {
     writeFileSync(path.join(prepared, name), `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
     while (true) {
+      if (attempted) {
+        const remaining = deadline - performance.now();
+        if (remaining > 0) sleep(Math.min(WAIT_MS, remaining));
+        if (performance.now() >= deadline) {
+          throw new Error(`Timed out waiting for state lock${owner.pid ? ` held by ${owner.pid}` : ""}: ${pathname}`);
+        }
+      }
+      attempted = true;
+      owner = {};
       try {
         // Publish a complete, nonempty generation. No contender can mistake a
         // partially initialized new directory for an abandoned old lock.
@@ -122,12 +133,8 @@ function acquire(target, { waitMs = MAX_WAIT_MS } = {}) {
         if (stat.isSymbolicLink()) throw new Error(`Refusing to use a symbolic-link state lock: ${pathname}`);
         if (!stat.isDirectory()) throw error;
       }
-      const owner = lockOwner(pathname);
-      if (recoverLock(pathname, owner)) continue;
-      if (Date.now() - started >= waitMs) {
-        throw new Error(`Timed out waiting for state lock${owner.pid ? ` held by ${owner.pid}` : ""}: ${pathname}`);
-      }
-      sleep(WAIT_MS);
+      owner = lockOwner(pathname);
+      recoverLock(pathname, owner);
     }
   } finally {
     // Only this invocation's private preparation path may be removed recursively.

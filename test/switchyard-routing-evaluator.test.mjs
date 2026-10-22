@@ -1,9 +1,28 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
-import {
+const root = path.resolve(import.meta.dirname, "..");
+const fixtureParent = path.join(root, ".tmp");
+mkdirSync(fixtureParent, { recursive: true });
+const fixtureRoot = mkdtempSync(path.join(fixtureParent, "switchyard-evaluator-"));
+const syntheticEnvironment = {
+  CODEX_HOME: path.join(fixtureRoot, "codex"),
+  MODEL_ROUTER_STATE_DIR: path.join(fixtureRoot, "state"),
+  CODEX_ROUTER_STATE_DIR: path.join(fixtureRoot, "state"),
+  MODEL_ROUTER_MODEL_PICKER_STATE: path.join(fixtureRoot, "model-picker.json"),
+  MODEL_ROUTER_MULTI_AGENT_STATE: path.join(fixtureRoot, "multi-agent-settings.json"),
+};
+Object.assign(process.env, syntheticEnvironment);
+for (const [name, expected] of Object.entries(syntheticEnvironment)) {
+  assert.equal(process.env[name], expected, `${name} must be synthetic before production ESM evaluation`);
+  assert.ok(!path.relative(fixtureRoot, expected).startsWith(".."));
+}
+after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+const {
   allGatesPass,
   applyPolicy,
   assertCorpus,
@@ -13,10 +32,9 @@ import {
   stableProviderBuild,
   validateEvidence,
   verifyFidelitySourceInputs,
-} from "../scripts/evaluate-switchyard-routing.mjs";
+} = await import("../scripts/evaluate-switchyard-routing.mjs");
 
 const item = { id: "D01", input: "Continue." };
-const root = path.resolve(import.meta.dirname, "..");
 
 function decisionBody(overrides = {}) {
   return {
@@ -373,4 +391,156 @@ test("offline fidelity binds both source patches and keeps its Rust fixture offl
     root, "scripts", "fixtures", "switchyard-input-fidelity.rs",
   ), "utf8");
   assert.doesNotMatch(fixture, /OPENROUTER|api_key|reqwest/u);
+});
+
+// Run the unchanged module body with synthetic imports so Git, cargo, provider
+// credentials and network operations cannot escape the subprocess boundary.
+async function probeFidelitySnapshots() {
+  const assert = (await import("node:assert/strict")).default;
+  const fs = await import("node:fs");
+  const path = (await import("node:path")).default;
+  const vm = await import("node:vm");
+  const { createHash } = await import("node:crypto");
+  const [fixtureRoot, evaluatorPath] = process.argv.slice(1);
+  for (const name of ["CODEX_HOME", "MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "MODEL_ROUTER_MODEL_PICKER_STATE", "MODEL_ROUTER_MULTI_AGENT_STATE"]) {
+    const relative = path.relative(fixtureRoot, process.env[name]);
+    assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative), name);
+  }
+  const source = fs.readFileSync(evaluatorPath, "utf8");
+  const hash = value => createHash("sha256").update(value).digest("hex");
+  const contributionBytes = Buffer.from("captured contribution é\r\n");
+  const patchBytes = Buffer.from("captured compatibility λ\r\n");
+  const fixtureBytes = Buffer.from("// synthetic offline fixture\r\n");
+  const commit = "a".repeat(40);
+  const sample = { input: "Synthetic", expected: "sol_high", acceptable: ["sol_high"], severity: "normal" };
+  const corpus = {
+    schemaVersion: 1, privateData: false, labels: ["luna_max", "sol_high", "astra_medium", "astra_xhigh"],
+    development: [{ ...sample, id: "D" }], holdout: [{ ...sample, id: "H" }],
+    fidelity: [{ id: "exact", input: [], expectedState: "synthetic" }, { id: "fallback", input: [], expectedZeroCalls: true, expectedReason: "empty_state" }],
+    gates: { maximumRetriesPerRequest: 1, minimumAcceptablePerSplit: 1 },
+  };
+  const corpusBytes = Buffer.from(`${JSON.stringify(corpus, null, 2)}\r\n`);
+  for (const scenario of ["changed", "change-restore", "cargo-failure", "snapshot-write-failure", "invalid-binding"]) {
+    const scratch = path.join(fixtureRoot, scenario);
+    const evaluator = path.join(scratch, "scripts/evaluate-switchyard-routing.mjs");
+    const contribution = path.join(scratch, "config/switchyard/patches/switchyard-typesafe-pr-762.patch");
+    const patch = path.join(scratch, "config/switchyard/patches/switchyard-codex-compat.patch");
+    const corpusPath = path.join(scratch, "corpus.json");
+    const output = path.join(scratch, "evidence.json");
+    const originals = [contribution, patch, corpusPath];
+    const buffers = [contributionBytes, patchBytes, corpusBytes];
+    for (const target of [evaluator, contribution, path.join(scratch, "scripts/fixtures/switchyard-input-fidelity.rs"), path.join(scratch, "tmp/placeholder")]) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+    }
+    fs.writeFileSync(evaluator, source);
+    fs.writeFileSync(path.join(scratch, "scripts/fixtures/switchyard-input-fidelity.rs"), fixtureBytes);
+    originals.forEach((target, index) => fs.writeFileSync(target, buffers[index]));
+    fs.writeFileSync(path.join(scratch, "config/switchyard/source.lock"), JSON.stringify({
+      commit, upstreamContribution: { sourceCommit: "b".repeat(40), patchSha256: scenario === "invalid-binding" ? "invalid" : hash(contributionBytes) }, patchSha256: hash(patchBytes),
+    }));
+    let tempRoot;
+    const snapshotWrites = [], consumed = [], commands = [];
+    const owned = target => {
+      const relative = path.relative(scratch, target);
+      assert.ok(!relative.startsWith("..") && !path.isAbsolute(relative), `filesystem access outside fixture: ${target}`);
+      return target;
+    };
+    const env = Object.fromEntries(Object.entries({
+      CODEX_HOME: "codex", MODEL_ROUTER_STATE_DIR: "state", CODEX_ROUTER_STATE_DIR: "state",
+      MODEL_ROUTER_MODEL_PICKER_STATE: "model-picker.json", MODEL_ROUTER_MULTI_AGENT_STATE: "multi-agent-settings.json",
+    }).map(([name, relative]) => [name, path.join(scratch, relative)]));
+    for (const target of Object.values(env)) owned(target);
+    const context = vm.createContext({ Buffer, process: { argv: [], env, stdout: { write() {} } } });
+    const consume = (target, index) => {
+      assert.equal(path.dirname(target), tempRoot, "snapshots stay outside the cloned source");
+      assert.ok(!originals.includes(target), "mutable originals are never subprocess inputs");
+      const bytes = fs.readFileSync(owned(target));
+      assert.deepEqual(bytes, buffers[index]);
+      consumed.push({ target, sha256: hash(bytes) });
+      if (scenario === "change-restore") fs.writeFileSync(originals[index], buffers[index]);
+    };
+    const unexpected = () => { throw new Error("unexpected credential, process or network operation"); };
+    const imports = new Map([
+      ["node:crypto", { createHash, randomBytes: unexpected }],
+      ["node:child_process", { spawn: unexpected, spawnSync(program, args, options) {
+        const command = `${program} ${args[0]}`;
+        assert.ok(["git clone", "git checkout", "git rev-parse", "git apply", "cargo --version", "cargo test"].includes(command), command);
+        commands.push(command);
+        if (command === "git clone") {
+          assert.equal(snapshotWrites.length, 3, "all captures are snapshotted before cloning");
+          snapshotWrites.forEach((target, index) => assert.deepEqual(fs.readFileSync(target), buffers[index]));
+          const tests = path.join(args.at(-1), "crates/switchyard-server/tests");
+          fs.mkdirSync(tests, { recursive: true });
+          fs.writeFileSync(path.join(tests, "server.rs"), "// synthetic server tests");
+          fs.writeFileSync(contribution, "changed contribution");
+          fs.writeFileSync(patch, "changed compatibility");
+          fs.writeFileSync(corpusPath, JSON.stringify({ ...corpus, fidelity: [...corpus.fidelity, { id: "later-case", input: [], expectedState: "later" }] }));
+        }
+        if (command === "git apply") consume(args.at(-1), consumed.length);
+        if (program === "cargo") assert.equal(options.env.OPENROUTER_API_KEY, "");
+        if (command === "cargo test") {
+          consume(options.env.SWITCHYARD_FIDELITY_CORPUS, 2);
+          assert.equal(fs.readFileSync(path.join(options.cwd, "crates/switchyard-server/tests/measurement_input_fidelity.rs"), "utf8"), `// synthetic server tests\n${fixtureBytes.toString("utf8")}`);
+        }
+        return { status: scenario === "cargo-failure" && command === "cargo test" ? 1 : 0, stderr: "", stdout: command === "git rev-parse" ? commit : command === "cargo --version" ? "synthetic cargo" : "" };
+      } }],
+      ["node:fs", {
+        mkdtempSync(prefix) { tempRoot = fs.mkdtempSync(owned(prefix)); return tempRoot; },
+        readFileSync(target, options) { return fs.readFileSync(owned(target), options); },
+        writeFileSync(target, value) {
+          owned(target);
+          if (tempRoot && path.dirname(target) === tempRoot) {
+            snapshotWrites.push(target);
+            if (scenario === "snapshot-write-failure" && snapshotWrites.length === 2) throw new Error("snapshot write refused");
+          }
+          return fs.writeFileSync(target, value);
+        },
+        rmSync(target, options) { fs.rmSync(owned(target), options); },
+      }],
+      ["node:net", { default: { createConnection: unexpected, createServer: unexpected } }],
+      ["node:os", { default: { tmpdir: () => path.join(scratch, "tmp") } }],
+      ["node:path", { default: path }],
+      ["../src/provider-credentials.mjs", { resolveProviderCredential: unexpected }],
+    ]);
+    const module = new vm.SourceTextModule(source, { context, identifier: evaluator, initializeImportMeta(meta) { meta.dirname = path.dirname(evaluator); meta.filename = evaluator; } });
+    await module.link(async specifier => {
+      assert.ok(imports.has(specifier), `unexpected dependency ${specifier}`);
+      const exports = imports.get(specifier);
+      return new vm.SyntheticModule(Object.keys(exports), function () { for (const [name, value] of Object.entries(exports)) this.setExport(name, value); }, { context });
+    });
+    await module.evaluate();
+    const run = () => module.namespace.runInputFidelitySource(path.join(scratch, "object-store"), corpusPath, output);
+    if (scenario === "invalid-binding") {
+      await assert.rejects(run, /does not bind the upstream contribution patch/u);
+      assert.equal(tempRoot, undefined);
+      assert.equal(fs.existsSync(output), false);
+    } else {
+      if (scenario.endsWith("failure")) await assert.rejects(run);
+      else await run();
+      const evidence = JSON.parse(fs.readFileSync(output, "utf8"));
+      assert.equal(evidence.status, scenario.endsWith("failure") ? "input_fidelity_failed" : "input_fidelity_passed");
+      const identities = [evidence.identities.upstreamContribution, evidence.identities.compatibilityPatch, evidence.identities.corpus];
+      identities.forEach((identity, index) => assert.equal(identity.providedSha256, hash(buffers[index])));
+      assert.equal(fs.existsSync(tempRoot), false, "temporary inputs retire after success or failure");
+      snapshotWrites.forEach(target => assert.equal(fs.existsSync(target), false));
+      if (scenario === "snapshot-write-failure") assert.deepEqual(commands, []);
+      else {
+        assert.deepEqual(commands, ["git clone", "git checkout", "git rev-parse", "git apply", "git apply", "cargo --version", "cargo test"]);
+        consumed.forEach((observation, index) => assert.equal(observation.sha256, identities[index].providedSha256));
+        if (!scenario.endsWith("failure")) {
+          assert.deepEqual([evidence.cases, evidence.exactStateCases, evidence.zeroCallFallbackCases], [2, 1, 1]);
+          originals.forEach((target, index) => assert.equal(fs.readFileSync(target).equals(buffers[index]), scenario === "change-restore"));
+        }
+      }
+    }
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+test("offline fidelity consumes captured bytes across edits and retires snapshots after faults", () => {
+  const result = spawnSync(process.execPath, [
+    "--experimental-vm-modules", "--input-type=module", "-e", `(${probeFidelitySnapshots.toString()})()`,
+    fixtureRoot, path.join(root, "scripts/evaluate-switchyard-routing.mjs"),
+  ], { env: { ...process.env, ...syntheticEnvironment }, encoding: "utf8", windowsHide: true, timeout: 20_000 });
+  assert.equal(result.status, 0, `${result.error || ""}\n${result.stderr}\n${result.stdout}`);
 });

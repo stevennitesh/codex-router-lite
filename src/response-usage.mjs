@@ -9,6 +9,17 @@ const MAX_JSON_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 const MAX_OBSERVED_OUTPUT_ITEMS = 256;
 
+function freezeObservation(value) {
+  const pending = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (!item || typeof item !== "object" || Object.isFrozen(item)) continue;
+    for (const child of Object.values(item)) pending.push(child);
+    Object.freeze(item);
+  }
+  return value;
+}
+
 // Bytes of *model-visible* request body per prompt token.
 //
 // The familiar rule is four characters per token, which is roughly where plain
@@ -324,6 +335,7 @@ export class ResponseUsageTransform extends Transform {
   #completedOutput;
   #doneOutputItems = [];
   #outputObservationOverflow = false;
+  #terminalSnapshot;
 
   constructor(contentType = "", { estimatedInputTokens, maxPendingBytes = MAX_SSE_PENDING_BYTES } = {}) {
     super();
@@ -388,16 +400,18 @@ export class ResponseUsageTransform extends Transform {
         this.#substituted = substituted ? this.#estimate : undefined;
         this.push(substituted ? Buffer.from(JSON.stringify(substituted), "utf8") : body);
       }
+      this.#freezeTerminal(payload);
       callback();
     } catch (error) { callback(error); }
   }
 
-  tokenUsage() { return this.#usage; }
-  reportedTokenUsage() { return this.#reportedUsage; }
-  providerResponseObservation() { return { ...this.#providerResponse }; }
-  substitutedInputTokens() { return this.#substituted; }
+  tokenUsage() { return this.#terminalSnapshot ? this.#terminalSnapshot.usage : this.#usage; }
+  reportedTokenUsage() { return this.#terminalSnapshot ? this.#terminalSnapshot.reportedUsage : this.#reportedUsage; }
+  providerResponseObservation() { return { ...(this.#terminalSnapshot?.providerResponse ?? this.#providerResponse) }; }
+  substitutedInputTokens() { return this.#terminalSnapshot ? this.#terminalSnapshot.substituted : this.#substituted; }
   firstTokenAt() { return this.#firstTokenAt; }
-  completedResponseObserved() { return this.#completedResponseObserved; }
+  completedResponseObserved() { return this.#terminalSnapshot?.completed ?? this.#completedResponseObserved; }
+  completedJsonResponseObserved() { return this.#terminalSnapshot?.completed === true && !this.#eventStream; }
 
   #release() {
     this.#released = true;
@@ -460,9 +474,11 @@ export class ResponseUsageTransform extends Transform {
     if (substituted) {
       this.#committed = true;
       this.#substituted = this.#estimate;
+      this.#freezeTerminal(payload);
       return Buffer.from(rewriteSseFrameData(fields, JSON.stringify(substituted)), "utf8");
     }
     if (tokenUsageFromPayload(payload)) this.#substituted = undefined;
+    this.#freezeTerminal(payload);
     return undefined;
   }
 
@@ -531,6 +547,7 @@ export class ResponseUsageTransform extends Transform {
 
   #observe(payload) {
     this.#noteFirstToken(payload);
+    if (this.#terminalSnapshot) return;
     if (payload?.type === "response.output_item.done" && payload.item) {
       if (this.#doneOutputItems.length < MAX_OBSERVED_OUTPUT_ITEMS) this.#doneOutputItems.push(payload.item);
       else this.#outputObservationOverflow = true;
@@ -568,6 +585,8 @@ export class ResponseUsageTransform extends Transform {
   }
 
   responseOutputObservation() {
+    if (this.#terminalSnapshot) return { ...this.#terminalSnapshot.output,
+      output: [...this.#terminalSnapshot.output.output] };
     if (!this.#completedResponseObserved || this.#outputObservationOverflow) return { complete: false, output: [] };
     const output = Array.isArray(this.#completedOutput) ? [...this.#completedOutput] : [];
     const known = new Set(output.map(item => item?.call_id || item?.id).filter(Boolean));
@@ -577,5 +596,14 @@ export class ResponseUsageTransform extends Transform {
       if (key) known.add(key);
     }
     return { complete: Array.isArray(this.#completedOutput) || this.#doneOutputItems.length > 0, output };
+  }
+
+  #freezeTerminal(payload) {
+    if (this.#terminalSnapshot || !responseTerminalOutcome(payload)) return;
+    this.#terminalSnapshot = freezeObservation({
+      usage: this.#usage, reportedUsage: this.#reportedUsage,
+      providerResponse: { ...this.#providerResponse }, substituted: this.#substituted,
+      completed: this.#completedResponseObserved, output: this.responseOutputObservation(),
+    });
   }
 }

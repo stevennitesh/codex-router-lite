@@ -131,6 +131,9 @@ Renewal waits for its actual result.
 Stop prevents further reads and waits for an in-flight read's actual terminal
 callback before the existing cleanup. The separate final retention check, broker
 revision fences, protected durable writes and Interrupt hook remain.
+V1 Web subagents use the same held observation wait without acquiring primary
+Stop authority. Cancellation forwards to the active native child and retains its
+mapping until the actual terminal callback; an undrained orphan blocks admission.
 
 Native tool requests are delivered independently of final-answer readability.
 Completion requires an idle owned browser turn, an answer after the latest tool

@@ -221,7 +221,41 @@ export function createInAppWebRuntime({
     unresolvedActions: [...conversations.values()].reduce((count, conversation) => count + conversation.unresolvedCoding.size, 0),
   });
   const serviceAbort = new AbortController();
-  let services, servicePromise, serviceSettings, closing = false;
+  let services, servicePromise, serviceAcquisition, serviceSettings, closePromise, closing = false;
+  const tunnelCloseCodes = new Set(["web_tunnel_cleanup_failed", "web_tunnel_stop_failed"]);
+  const startupCodes = new Set(["web_tunnel_invalid_config", "web_tunnel_start_failed", "web_tunnel_exited",
+    "web_tunnel_not_ready", "web_tunnel_auth_rejected", "web_tunnel_cancelled", ...tunnelCloseCodes]);
+  const closeServiceOwners = acquisition => {
+    if (!acquisition) return Promise.resolve();
+    acquisition.closePromise ??= (async () => {
+      const failures = [];
+      // A failed tunnel acquisition can already have failed its own rollback,
+      // before returning a handle. Preserve that custody as well.
+      if (acquisition.tunnelAcquisitionFailure) failures.push({ owner: "tunnel", code: acquisition.tunnelAcquisitionFailure });
+      for (const owner of ["tunnel", "mcp"]) if (acquisition[owner]) {
+        try { await acquisition[owner].close(); }
+        catch (error) {
+          failures.push({ owner, code: owner === "mcp" ? "web_mcp_close_failed"
+            : tunnelCloseCodes.has(error?.code) ? error.code : "web_tunnel_stop_failed" });
+        }
+      }
+      if (failures.length) {
+        const code = failures.length === 1 ? failures[0].code : "web_service_cleanup_failed";
+        const messages = {
+          web_tunnel_cleanup_failed: "ChatGPT Web tunnel private state could not be removed.",
+          web_tunnel_stop_failed: "ChatGPT Web tunnel shutdown could not be verified.",
+          web_mcp_close_failed: "ChatGPT Web MCP shutdown could not be verified.",
+          web_service_cleanup_failed: "ChatGPT Web service shutdown could not be verified.",
+        };
+        throw Object.assign(fail(messages[code], code), { cleanupCodes: failures,
+          ...(acquisition.startupCode ? { startupCode: acquisition.startupCode } : {}) });
+      }
+      if (serviceAcquisition === acquisition) {
+        services = undefined; serviceAcquisition = undefined; servicePromise = undefined;
+      }
+    })();
+    return acquisition.closePromise;
+  };
   const conversationPath = threadId => path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`);
   const persist = conversation => {
     // Retain counts for the supported rollback reader's v1 record schema.
@@ -385,23 +419,34 @@ export function createInAppWebRuntime({
     const signature = digest({ browser: settings.browser, tunnel: settings.tunnel, port: settings.mcpPort });
     if (serviceSettings && serviceSettings !== signature) throw fail("Restart Router after changing the in-app browser or tunnel configuration.");
     serviceSettings = signature;
-    if (!servicePromise) servicePromise = (async () => {
-      let mcp, tunnel;
-      try {
-        mcp = await startMcp({ broker, port: settings.mcpPort ?? 0,
-          onCancel: token => { const turn = tokenOwners.get(token); if (turn) cancel(turn); } });
-        if (closing) throw fail("Router's in-app Web runtime is stopping.");
-        tunnel = await startTunnel({ executable: settings.tunnel.executable, tunnelId: settings.tunnel.id,
-          keyPath, serverUrl: mcp.url, stateDir: path.join(stateDir, "web-in-app"), signal: serviceAbort.signal });
-        await tunnel.ready;
-        if (closing) throw fail("Router's in-app Web runtime is stopping.");
-        services = { mcp, tunnel };
-        return services;
-      } catch (error) {
-        await tunnel?.close(); await mcp?.close(); servicePromise = undefined;
-        throw error;
-      }
-    })();
+    if (!servicePromise) {
+      const acquisition = {};
+      serviceAcquisition = acquisition;
+      servicePromise = Promise.resolve().then(async () => {
+        try {
+          if (closing) throw fail("Router's in-app Web runtime is stopping.");
+          acquisition.mcp = await startMcp({ broker, port: settings.mcpPort ?? 0,
+            onCancel: token => { const turn = tokenOwners.get(token); if (turn) cancel(turn); } });
+          if (closing) throw fail("Router's in-app Web runtime is stopping.");
+          try {
+            acquisition.tunnel = await startTunnel({ executable: settings.tunnel.executable, tunnelId: settings.tunnel.id,
+              keyPath, serverUrl: acquisition.mcp.url, stateDir: path.join(stateDir, "web-in-app"), signal: serviceAbort.signal });
+          } catch (error) {
+            if (tunnelCloseCodes.has(error?.code)) acquisition.tunnelAcquisitionFailure = error.code;
+            throw error;
+          }
+          await acquisition.tunnel.ready;
+          if (closing) throw fail("Router's in-app Web runtime is stopping.");
+          services = { mcp: acquisition.mcp, tunnel: acquisition.tunnel };
+          return services;
+        } catch (error) {
+          acquisition.startupCode = startupCodes.has(error?.code) ? error.code
+            : error?.name === "AbortError" ? "web_service_start_cancelled" : "web_service_start_failed";
+          await closeServiceOwners(acquisition);
+          throw error;
+        }
+      });
+    }
     const value = await servicePromise;
     if (value.tunnel.status().healthy === false) throw fail("The Router MCP tunnel is unavailable; restore it before a new Web turn.");
     return value;
@@ -831,21 +876,28 @@ export function createInAppWebRuntime({
     maintenanceState,
     status: () => ({ started: !!services, conversations: conversations.size, activeTurns: maintenanceState().activeTurns,
       ...(services ? { mcp: services.mcp.status(), tunnel: services.tunnel.status() } : {}) }),
-    async close() {
+    close() {
+      if (closePromise) return closePromise;
       closing = true;
       serviceAbort.abort();
       for (const turn of turns.values()) if (!turn.preparing) cancel(turn);
-      await Promise.allSettled([...compactions]);
-      await Promise.allSettled([...turns.values()].map(turn => turn.preparing));
-      for (const turn of turns.values()) if (!turn.preparing) cancel(turn);
-      await Promise.all([...turns.values()].filter(turn => !turn.retired).map(closeWatcher));
-      await Promise.all([...retirements]);
-      try { await Promise.all([...conversations.values()].map(conversation => conversation.writeTail)); }
-      finally {
-        const active = services ?? await servicePromise?.catch(() => undefined);
-        try { await active?.tunnel.close(); } finally { await active?.mcp.close(); }
-      }
-      if (watcherCloseError) throw watcherCloseError;
+      closePromise = (async () => {
+        try {
+          // Startup keeps custody of handles acquired after shutdown began.
+          // Wait for its rollback before finalizing that same acquisition.
+          await servicePromise?.catch(() => undefined);
+          await Promise.allSettled([...compactions]);
+          await Promise.allSettled([...turns.values()].map(turn => turn.preparing));
+          for (const turn of turns.values()) if (!turn.preparing) cancel(turn);
+          const watchers = await Promise.allSettled([...turns.values()].filter(turn => !turn.retired).map(closeWatcher));
+          const retired = await Promise.allSettled([...retirements]);
+          const checkpoints = await Promise.allSettled([...conversations.values()].map(conversation => conversation.writeTail));
+          if (watcherCloseError) throw watcherCloseError;
+          const rejected = [...watchers, ...retired, ...checkpoints].find(result => result.status === "rejected");
+          if (rejected) throw rejected.reason;
+        } finally { await closeServiceOwners(serviceAcquisition); }
+      })();
+      return closePromise;
     },
   };
 }
