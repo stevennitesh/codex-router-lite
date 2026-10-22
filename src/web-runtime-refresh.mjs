@@ -85,7 +85,7 @@ function context(options) {
     serviceLock: dependencies.serviceLock ?? (operation => withServiceOperationLock(operation, { stateDir })),
     drain: dependencies.drain ?? prepareRouterServiceMutation,
     resume: dependencies.resume ?? resumeRouterAdmission,
-    restart: dependencies.restart ?? (async () => (await import("./service.mjs")).runServiceCommandUnlocked("restart", ["restart"])) };
+    restart: dependencies.restart ?? (async () => (await import("./service.mjs")).runServiceCommandUnlocked("restart", ["restart"], { quiet: true })) };
 }
 
 function savedSettings(ctx) {

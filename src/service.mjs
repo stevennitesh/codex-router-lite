@@ -44,6 +44,7 @@ function remainingOperationMs(limit = Number.POSITIVE_INFINITY) {
 export async function runServiceCommandUnlocked(
   command = "status",
   args = [command],
+  { quiet = false } = {},
 ) {
   const forceReplacement = args.includes(FORCE_REPLACEMENT_ARGUMENT);
   const platformArgs = args.filter((arg) => arg !== FORCE_REPLACEMENT_ARGUMENT);
@@ -80,7 +81,7 @@ export async function runServiceCommandUnlocked(
     result = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath,
         [path.join(SOURCE_ROOT, "src", script), ...platformArgs],
-        { stdio: "inherit", env: childEnvironment, windowsHide: true });
+        { stdio: quiet ? ["inherit", "ignore", "inherit"] : "inherit", env: childEnvironment, windowsHide: true });
       let failure;
       child.once("error", error => { failure = error; });
       child.once("close", status => failure ? reject(failure) : resolve({ status }));

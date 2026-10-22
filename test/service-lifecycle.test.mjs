@@ -469,23 +469,28 @@ for (const scenario of ["task-error-account", "task-error-denied", "task-error-m
   });
 }
 
-test("direct and control service entries exit naturally and propagate status after cleanup", () => {
+test("direct, control and quiet composite service entries preserve output, status and cleanup", () => {
   const directory = fixtureDirectory("control-");
   const source = path.join(directory, "source"), state = path.join(directory, "state"), rendered = path.join(directory, "rendered"), drained = path.join(directory, "drained");
   mkdirSync(path.join(source, "src"), { recursive: true }); mkdirSync(state);
-  writeFileSync(path.join(source, "src/service-windows.mjs"), `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(rendered)},'rendered');process.exitCode=Number(process.env.RENDERER_STATUS);`);
-  const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs");
+  writeFileSync(path.join(source, "src/service-windows.mjs"), `import assert from 'node:assert/strict';import {existsSync,writeFileSync} from 'node:fs';
+process.once('beforeExit',()=>{assert.equal(existsSync(${JSON.stringify(path.join(state, "service-operation.lock"))}),true,'the caller must hold its lease until the renderer closes');writeFileSync(${JSON.stringify(rendered)},'rendered');});
+console.log(JSON.stringify({state:'running'}));console.error('renderer diagnostic');process.exitCode=Number(process.env.RENDERER_STATUS);`);
+  const helpers = path.join(directory, "helpers.mjs"), loader = path.join(directory, "loader.mjs"), composite = path.join(directory, "composite.mjs");
   // beforeExit runs after Node drains its event loop and is skipped by a forced
   // process.exit, which can race native-handle teardown on Windows.
   writeFileSync(helpers, `import {writeFileSync} from 'node:fs';process.once('beforeExit',()=>writeFileSync(${JSON.stringify(drained)},'drained'));
 export async function prepareRouterServiceMutation(){if(process.env.THROW_REFUSAL==='1')throw new Error('synthetic ownership refusal');return {status:'offline'};}export async function resumeRouterAdmission(){return {};}`);
   writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&r.url===${JSON.stringify(fileUrl('src/service-drain.mjs'))})return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
+  writeFileSync(composite, `import {runServiceCommandUnlocked} from ${JSON.stringify(fileUrl('src/service.mjs'))};import {withServiceOperationLock} from ${JSON.stringify(fileUrl('src/service-operation-lock.mjs'))};
+try{const status=await withServiceOperationLock(()=>runServiceCommandUnlocked('stop',['stop'],{quiet:true}));console.log(JSON.stringify({status}));process.exitCode=status;}catch(error){console.error(error.message);process.exitCode=1;}`);
   try {
-    for (const status of [0, 7, "throw"]) for (const entry of ["direct", "control"]) {
+    for (const status of [0, 7, "throw"]) for (const entry of ["direct", "control", "composite"]) {
       rmSync(rendered, { force: true });
       rmSync(drained, { force: true });
       const result = spawnSync(process.execPath, ["--no-warnings", "--experimental-loader", pathToFileURL(loader).href,
-        path.join(root, entry === "direct" ? "src/service.mjs" : "src/control.mjs"), ...(entry === "direct" ? ["stop"] : ["service", "stop"])], {
+        entry === "composite" ? composite : path.join(root, entry === "direct" ? "src/service.mjs" : "src/control.mjs"),
+        ...(entry === "composite" ? [] : entry === "direct" ? ["stop"] : ["service", "stop"])], {
         encoding: "utf8", windowsHide: true, timeout: 15000,
         env: { ...fixtureEnv(directory), CODEX_ROUTER_SOURCE_ROOT: source,
           MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state, CODEX_ROUTER_SERVICE_PLATFORM: "win32",
@@ -493,6 +498,9 @@ export async function prepareRouterServiceMutation(){if(process.env.THROW_REFUSA
       });
       assert.equal(result.error, undefined, result.stderr);
       assert.equal(result.status, status === "throw" ? 1 : status, result.stderr);
+      assert.equal(result.stderr.trim(), status === "throw" ? "synthetic ownership refusal" : "renderer diagnostic");
+      if (status === "throw") assert.equal(result.stdout, "");
+      else assert.deepEqual(JSON.parse(result.stdout), entry === "composite" ? { status } : { state: "running" });
       assert.equal(existsSync(rendered), status !== "throw", "preflight refusal must not launch the renderer");
       assert.equal(existsSync(path.join(state, "service-operation.lock")), false, "the awaited wrapper must release before exit");
       assert.equal(existsSync(drained), true, "the CLI must let its event loop drain before exiting");
