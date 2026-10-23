@@ -472,7 +472,9 @@ test("public completed tool continuations drain across models and current conver
 test("accepted HTTP terminals retire consumed tools across coalesced and split provider trailers without replay", {
   timeout: 20_000,
 }, async t => {
-  const state = mkdtempSync(path.resolve(".tmp", "router-terminal-drain-"));
+  const scratch = path.resolve(".tmp");
+  mkdirSync(scratch, { recursive: true });
+  const state = mkdtempSync(path.join(scratch, "router-terminal-drain-"));
   const runtime = path.join(state, "switchyard");
   mkdirSync(runtime);
   writeFileSync(path.join(runtime, process.platform === "win32" ? "switchyard-server.exe" : "switchyard-server"), "synthetic fixture; never executed");

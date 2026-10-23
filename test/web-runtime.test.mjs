@@ -936,7 +936,8 @@ test("completed turn retirement preserves the exact final JSON and SSE response 
 
 test("terminal turns release their native schema after request, watcher and checkpoint settlement", async t => {
   if (typeof global.gc !== "function") {
-    const { stdout } = await promisify(execFile)(process.execPath, ["--expose-gc", "--test-isolation=none", "--test", "--test-name-pattern=^terminal turns release their native schema", fileURLToPath(import.meta.url)], {
+    // Node 22 uses the experimental spelling; newer supported versions retain it.
+    const { stdout } = await promisify(execFile)(process.execPath, ["--expose-gc", "--experimental-test-isolation=none", "--test", "--test-name-pattern=^terminal turns release their native schema", fileURLToPath(import.meta.url)], {
       timeout: 30_000, env: { ...process.env, ...syntheticEnvironment },
     });
     assert.match(stdout, /terminal turns release their native schema: cancelled/u);

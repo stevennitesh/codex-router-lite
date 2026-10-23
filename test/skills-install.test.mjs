@@ -27,7 +27,9 @@ fs.cpSync = (from,to,options) => {
   counts.copies++;
   if(options?.errorOnExist) {
     counts.publications++;
-    if(fault?.startsWith('fail-copy')) throw Object.assign(new Error('Synthetic publication failure'),{code:'EIO'});
+    if(fault?.startsWith('fail-copy') && (fault !== 'fail-copy-partial' || counts.publications > 1)) {
+      throw Object.assign(new Error('Synthetic publication failure'),{code:'EIO'});
+    }
   }
   return original.cp(from,to,options);
 };
@@ -114,7 +116,11 @@ function oldTimes(target) {
 
 test("identical owned skills preserve files, markers and durable ownership without publication", t => {
   const f = fixture(t);
+  const nestedSource = path.join(f.source,f.names[0],"references","nested");
+  mkdirSync(nestedSource,{recursive:true});
+  writeFileSync(path.join(nestedSource,"fixture.txt"),"Nested fixture content");
   assert.match(f.run("install"),new RegExp(`installed ${f.names.length} skill`));
+  assert.equal(readFileSync(path.join(f.skills,f.names[0],"references","nested","fixture.txt"),"utf8"),"Nested fixture content");
   oldTimes(f.skills); oldTimes(f.ownership);
   const before = {skills:snapshot(f.skills),ownership:snapshot(f.ownership)};
   assert.match(f.run("install"),new RegExp(`installed 0 skill.*unchanged ${f.names.length}`));
@@ -186,8 +192,9 @@ test("failed skill publication restores the exact previous Windows path and owne
   const name = f.names[0], dir = path.join(f.skills,name), sourceFile = path.join(f.source,name,"SKILL.md");
   const before = {skill:snapshot(dir),ownership:snapshot(f.ownership)};
   writeFileSync(sourceFile,readFileSync(sourceFile,"utf8")+"\nChanged fixture instructions.\n");
-  const result = f.invoke(["install"],{fault:"fail-copy",expectSuccess:false});
+  const result = f.invoke(["install"],{fault:"fail-copy-partial",expectSuccess:false});
   assert.equal(result.status,2); assert.match(result.stderr,/Synthetic publication failure/u);
+  assert.equal(result.counts.publications,2);
   assert.deepEqual({skill:snapshot(dir),ownership:snapshot(f.ownership)},before);
   assert.deepEqual(readdirSync(f.skills).sort(),f.names);
   assert.match(f.run("install"),/installed 1 skill/u);

@@ -818,7 +818,18 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
       flag: "wx",
     });
     onPublicationClaimed?.({ target });
-    cpSync(staged.content, target, { recursive: true, force: false, errorOnExist: true });
+    // The root already belongs to this publication. Copy its entries to absent
+    // child paths: newer Node versions reject an existing directory itself when
+    // errorOnExist is set. Keep each child exclusive, including a file appearing
+    // between the copy's existence check and its actual write.
+    for (const name of readdirSync(staged.content)) {
+      cpSync(path.join(staged.content, name), path.join(target, name), {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        mode: constants.COPYFILE_EXCL,
+      });
+    }
     const stagedDigest = directoryDigest(staged.content);
     const targetDigest = directoryDigest(target, { ignoreRootEntries: [PUBLISH_MARKER] });
     if (!stagedDigest || stagedDigest !== targetDigest) {

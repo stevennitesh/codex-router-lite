@@ -218,6 +218,7 @@ test("runtime configuration rejects directory and symbolic-link assets", async t
   const before = readFileSync(settingsPath, "utf8");
   const directory = path.join(root, "directory.mjs"); mkdirSync(directory);
   await assert.rejects(web.configureInAppWebBridge({ ...config, runtimeModule: directory }), /not a regular file/u);
+  assert.equal(readFileSync(settingsPath, "utf8"), before);
   for (const [target, name, field] of [[runtimeModule, "linked.mjs", "runtimeModule"], [tunnelClientPath, "linked.exe", "tunnelClientPath"]]) {
     await t.test(field, async subtest => {
       const link = path.join(root, name);
@@ -227,12 +228,13 @@ test("runtime configuration rejects directory and symbolic-link assets", async t
         throw error;
       }
       await assert.rejects(web.configureInAppWebBridge({ ...config, [field]: link }), /not a regular file/u);
+      assert.equal(readFileSync(settingsPath, "utf8"), before);
       const valid = savedSettings();
       try {
         saveSettings({ ...valid, ...(field === "runtimeModule" ? { browser: { ...valid.browser, runtimeModule: link } }
           : { tunnel: { ...valid.tunnel, executable: link } }) });
         assert.throws(() => web.webBridgeModels(), /not a regular file/u);
-      } finally { saveSettings(valid); }
+      } finally { writeFileSync(settingsPath, before, "utf8"); }
     });
   }
   assert.equal(readFileSync(settingsPath, "utf8"), before);

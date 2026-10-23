@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { EventEmitter, once } from "node:events";
 import fs from "node:fs/promises";
-import { appendFile, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, truncate, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -14,16 +15,9 @@ const FOREIGN = "01a144be-0020-74f1-bfc1-75d8f5c883fa";
 const event = (turnId = TURN) => JSON.stringify({ timestamp: "2026-10-16T23:34:35Z",
   type: "event_msg", payload: { type: "turn_aborted", turn_id: turnId, reason: "interrupted" } });
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-const waitFor = async predicate => {
-  const deadline = Date.now() + 5_000;
-  while (!predicate()) {
-    assert.ok(Date.now() < deadline, "Timed out waiting for the rollout poll.");
-    await delay(10);
-  }
-};
 
 async function fixture(t, { contents = "", create = true } = {}) {
-  const codexHome = await mkdtemp(path.join(os.tmpdir(), "router-turn-cancel-"));
+  const codexHome = await realpath(await mkdtemp(path.join(os.tmpdir(), "router-turn-cancel-")));
   const day = path.join(codexHome, "sessions", "2026", "10", "16");
   const file = path.join(day, `rollout-2026-10-16T07-44-25-${THREAD}.jsonl`);
   await mkdir(day, { recursive: true });
@@ -41,17 +35,21 @@ async function fixture(t, { contents = "", create = true } = {}) {
   } };
 }
 
-test("unchanged polls validate the pathname without reopening and growth resumes exact cancellation reads", async t => {
+test("unchanged polls validate the pathname without reopening and growth resumes exact cancellation reads", { timeout: 5_000 }, async t => {
   const fix = await fixture(t, { contents: event(FOREIGN) + "\n" });
   const originalOpen = fs.open, originalLstat = fs.lstat;
   let opened = 0, checked = 0, cancelled = 0;
+  const polls = new EventEmitter();
+  const checkedThrough = async target => {
+    while (checked < target) await once(polls, "checked");
+  };
   const openMock = t.mock.method(fs, "open", (...args) => {
     if (args[0] === fix.file) opened += 1;
     return originalOpen(...args);
   });
   const lstatMock = t.mock.method(fs, "lstat", async (...args) => {
     const stat = await originalLstat(...args);
-    if (args[0] === fix.file) checked += 1;
+    if (args[0] === fix.file) { checked += 1; polls.emit("checked"); }
     return stat;
   });
   syncBuiltinESMExports();
@@ -62,12 +60,12 @@ test("unchanged polls validate the pathname without reopening and growth resumes
   });
   const watcher = fix.watch({ onCancel: () => { cancelled += 1; } });
   await watcher.ready;
-  await waitFor(() => checked >= 4);
+  await checkedThrough(4);
   assert.equal(opened, 1, "idle polls must still check identity without acquiring a file handle");
   assert.equal(cancelled, 0);
   const previousChecks = checked;
   await appendFile(fix.file, event(FOREIGN) + "\n");
-  await waitFor(() => checked >= previousChecks + 4);
+  await checkedThrough(previousChecks + 4);
   assert.equal(opened, 2, "one growth window must be read, then unchanged polls must stop reopening");
   assert.equal(watcher.state, "watching");
   await appendFile(fix.file, event() + "\n");

@@ -660,7 +660,7 @@ test("real offline Node and Python promote together, preserve npm scripts and re
       ["record", "node-deps"],
     ], "candidate validation runs before and after relocation, then the active tree is verified while recording");
     assert.notEqual(imports[0].directory, imports[1].directory);
-    assert.equal(imports[2].directory, path.join(f.source, "node_modules/fixture-dependency"));
+    assert.equal(realpathSync.native(imports[2].directory), realpathSync.native(path.join(f.source, "node_modules/fixture-dependency")));
     assert.equal(f.calls().filter(call => call === "node\tsrc/install-plan.mjs\tverify-node").length, 0);
     assert.equal(existsSync(path.join(f.source, "node_modules/fixture-dependency/installed-by-script")), true);
     const imported = execFileSync(process.execPath, ["--input-type=module", "-e", "import{createRequire}from'node:module';console.log(createRequire(process.cwd()+'/package.json')('fixture-dependency').ready)"], { cwd: f.source, env: f.environment, encoding: "utf8" });
