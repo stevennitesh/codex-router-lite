@@ -116,6 +116,19 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
       response.end(JSON.stringify({ error: { message: "synthetic provider refusal", type: "rate_limit_error", code: "synthetic_rate_limit" } }));
       return;
     }
+    if (["length", "stop"].includes(current.mode) && body.stream) {
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const chunk of [
+        { choices: [{ index: 0, delta: { role: "assistant", content: "OK" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: current.mode }],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } },
+      ]) {
+        response.write(`data: ${JSON.stringify({ id: "chatcmpl_fixture", object: "chat.completion.chunk", created: 42,
+          model: body.model, ...chunk })}\n\n`);
+      }
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     response.writeHead(200, { "Content-Type": "application/json" });
     if (request.url.endsWith("/chat/completions")) {
       const callsTool = ["tool-call", "custom-call"].includes(current.mode);
@@ -125,8 +138,8 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
             ? '{"input":"synthetic custom input"}' : '{"word":"alice"}' } }] }
         : { role: "assistant", content: "OK" };
       response.end(JSON.stringify({ id: "chatcmpl_fixture", object: "chat.completion", created: 42,
-        model: body.model, choices: [{ index: 0, message, finish_reason: callsTool ? "tool_calls" : "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+        model: body.model, choices: [{ index: 0, message, finish_reason: callsTool ? "tool_calls" : current.mode === "length" ? "length" : "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } }));
     } else {
       response.end(JSON.stringify({ id: "resp_fixture", object: "response", status: "completed",
         output: [{ id: "msg_fixture", type: "message", role: "assistant", status: "completed",
@@ -232,6 +245,31 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
         assert.equal(captures.length, customReplay.before + 1);
         assert.ok(captures.at(-1).body.messages.some(message => message.role === "tool" && message.tool_call_id === customCall.call_id && message.content === "synthetic custom result"));
       });
+      for (const finish of ["length", "stop"]) for (const stream of [false, true]) {
+        await t.test(`${route.slug}: ${stream ? "streamed" : "nonstream"} ${finish} preserves terminal status and visible output`, async () => {
+          const current = begin(finish);
+          const response = await post({ model: route.slug, stream, max_output_tokens: 2 });
+          assert.equal(response.status, 200);
+          let result;
+          if (stream) {
+            const events = (await response.text()).split(/\r?\n/u)
+              .filter(line => line.startsWith("data: ") && line !== "data: [DONE]")
+              .map(line => JSON.parse(line.slice(6)));
+            const terminals = events.filter(event => ["response.completed", "response.incomplete", "response.failed", "error"].includes(event.type));
+            assert.equal(terminals.length, 1);
+            assert.equal(terminals[0].type, finish === "length" ? "response.incomplete" : "response.completed");
+            assert.equal(events.at(-1), terminals[0]);
+            result = terminals[0].response;
+          } else result = await response.json();
+          assert.equal(result.status, finish === "length" ? "incomplete" : "completed");
+          assert.deepEqual(result.incomplete_details ?? null, finish === "length" ? { reason: "max_output_tokens" } : null);
+          assert.equal(result.output.flatMap(item => item.content || []).filter(part => part.type === "output_text").map(part => part.text).join(""), "OK");
+          assert.equal(result.max_output_tokens, 2);
+          assert.equal(result.usage.output_tokens, 2);
+          assert.equal(captures.length, current.before + 1, "terminal outcome caused a provider replay");
+          assert.equal(captures.at(-1).body.max_tokens, 2);
+        });
+      }
       for (const stream of [true, false]) {
         await t.test(`${route.slug}: pending ${stream ? "stream acquisition" : "nonstream completion"} cancels once`, async () => {
           const current = begin("pending"), controller = new AbortController();

@@ -37,7 +37,7 @@ parallel scheduling hint. Endpoint observations and sources are recorded in the
 Router's request-local custom-tool bridge converts native custom tools to
 JSON-schema functions, states that input must parse against the supplied grammar,
 and restores completed calls to `custom_tool_call`. This avoids the ambiguous
-grammar-as-format description from the gateway. LiteLLM 1.104.0 owns GLM reasoning
+grammar-as-format description from the gateway. LiteLLM 1.106.0 owns GLM reasoning
 history replay, converting Responses reasoning to assistant `reasoning_content`.
 Router also owns namespace/collision restoration and exact provider policy.
 
