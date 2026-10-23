@@ -13,27 +13,42 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { ensureProgramTreeReadable } from "../src/file-security.mjs";
-import {
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const fixtureParent = path.join(root, ".tmp", "windows-operations");
+mkdirSync(fixtureParent, { recursive: true });
+const fixtureHome = mkdtempSync(path.join(fixtureParent, "invocation-"));
+Object.assign(process.env, {
+  CODEX_HOME: path.join(fixtureHome, "codex"),
+  MODEL_ROUTER_STATE_DIR: path.join(fixtureHome, "state"),
+  CODEX_ROUTER_STATE_DIR: path.join(fixtureHome, "state"),
+  MODEL_ROUTER_MODEL_PICKER_STATE: path.join(fixtureHome, "picker.json"),
+  MODEL_ROUTER_MULTI_AGENT_STATE: path.join(fixtureHome, "multi-agent.json"),
+});
+for (const name of ["CODEX_HOME", "MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "MODEL_ROUTER_MODEL_PICKER_STATE", "MODEL_ROUTER_MULTI_AGENT_STATE"]) {
+  assert.ok(process.env[name].startsWith(fixtureHome + path.sep), `${name} must be synthetic before module evaluation`);
+}
+after(() => rmSync(fixtureHome, { recursive: true, force: true }));
+
+const { ensureProgramTreeReadable } = await import("../src/file-security.mjs");
+const {
   buildServiceProcessState,
   serviceProcessOwns,
-} from "../src/service-process.mjs";
-import {
+} = await import("../src/service-process.mjs");
+const {
   assertServiceWriteIsolated,
   skipServiceManagerCall,
-} from "../src/service-write-guard.mjs";
-import {
+} = await import("../src/service-write-guard.mjs");
+const {
   classifyUpdateRelation,
   currentCheckoutInstaller,
   installationNeedsRefresh,
   parseArguments,
   recognizedRepositoryUrl,
-} from "../src/update.mjs";
+} = await import("../src/update.mjs");
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readScript = (name) => readFileSync(path.join(root, name), "utf8");
 
 test("checkout deployment preserves a real drain CLI failure in Windows PowerShell", { skip: process.platform !== "win32" }, () => {
@@ -202,10 +217,6 @@ test("Windows install and update retain one guarded service generation", () => {
   assert.match(installer, /\[ValidateSet\("codex"\)\]/);
   assert.match(installer, /src\/install-manifest\.mjs record[\s\S]*src\/service\.mjs install/);
   assert.match(installer, /if \(\$ServiceInstalled -and -not \$ServiceWasInstalled\)/);
-  assert.match(service, /-MultipleInstances IgnoreNew/);
-  assert.match(service, /New-ScheduledTaskTrigger -Once[\s\S]*-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
-  assert.match(service, /-StartWhenAvailable/);
-  assert.match(service, /-Trigger @\(\$logon, \$heartbeat\)/);
   assert.match(service, /ensureProgramTreeReadable\(SOURCE_ROOT\)[\s\S]*writeLaunchers\(\)/);
   assert.match(service, /if \(command === "restart"\) endTask\(\)/);
   assert.match(service, /\/\/E:VBScript \/\/B \/\/NoLogo/);

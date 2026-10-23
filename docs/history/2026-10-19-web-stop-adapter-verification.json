@@ -1,0 +1,685 @@
+{
+  "date": "2026-10-19",
+  "recordKind": "historical-verification-evidence",
+  "status": "all-ordinary-normal-restart-stop-and-continuation-verified",
+  "goal": "Native Codex Stop cancels owned ChatGPT Web generation and retains the same saved conversation and tab through a separately owned MCP adapter, using the unmodified signed official CLI.",
+  "narrowTrialIdentity": {
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "managedGeneration": "8859432bcba1e2ba200b1a29e0cf7cbfd78b83e26fe8cc93b4104986887129dd",
+    "adapterSha256": "6279335c8cb903a8f86a7f65cc12de20870569e40a39caeeb1190f6e38fbad2b",
+    "stopScriptSha256": "23d6680bbac9124ca87c50161c89d2c388096c13927f294be1ec7d516142f03b",
+    "officialCliSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "officialCliUnmodifiedAndSignatureValid": true,
+    "scope": "One allowlisted ordinary primary-model conversation; subagents excluded."
+  },
+  "narrowTrialActivation": {
+    "normalRestartLoadedManagedEntry": true,
+    "nativePatchHookDisabled": true,
+    "adapterHookTrustedAndEnabled": true,
+    "externalLauncherCount": 0,
+    "additionalModelDrivingBrowser": false,
+    "warmupOriginalMarkerRecalledWithoutResupply": true
+  },
+  "narrowTrialStop": {
+    "nativeOutcome": "interrupted",
+    "durationMs": 59595,
+    "webSends": 1,
+    "codingCalls": 0,
+    "automaticReceiptConfirmed": true,
+    "stopClicked": true,
+    "stopHiddenAfterClick": true,
+    "tabRetained": true,
+    "originatingAuthorityConsumedOnce": true,
+    "builtinCallbacksQueued": 3,
+    "adapterCleanupElapsedMs": 897,
+    "userObservedGenerationStopped": true,
+    "userObservedSameTabStayedOpen": true,
+    "sameSavedChatUrlTabAndBinding": true,
+    "uncertainSend": false
+  },
+  "narrowTrialContinuation": {
+    "completed": true,
+    "durationMs": 31964,
+    "originalMarkerRecalledWithoutResupply": true,
+    "sameSavedChatUrl": true,
+    "sameTab": true,
+    "sameBinding": true,
+    "uncertainSend": false
+  },
+  "allOrdinaryPromotion": {
+    "managedGeneration": "be2469c0f5731cfab99d669ccf27d8a2cb2ec0f749be5f4118e668bdfe65fa45",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "threadIds": null,
+    "subagentsExcluded": true,
+    "sourceBytesUnchangedFromTestedIdentity": true,
+    "configurationInstalled": true,
+    "installedStatusReadbackPassed": true,
+    "stagedConfigurationValidationPassed": true,
+    "originalRollbackBaselinePreserved": true,
+    "nativePatchOwnershipPreserved": true,
+    "runningAppLoadedPromotedGeneration": true,
+    "adapterHookStillTrustedAndEnabled": true,
+    "nativePatchHookStillDisabled": true,
+    "postPromotionNormalRestartVerified": true,
+    "officialCliUnmodifiedAndSignatureValid": true,
+    "externalLauncherCount": 0,
+    "additionalModelDrivingBrowser": false,
+    "warmupOriginalMarkerRecalledWithoutResupply": true,
+    "liveStop": {
+      "nativeOutcome": "interrupted",
+      "durationMs": 34372,
+      "webSends": 1,
+      "codingCalls": 0,
+      "automaticReceiptConfirmed": true,
+      "stopClicked": true,
+      "stopHiddenAfterClick": true,
+      "tabRetained": true,
+      "originatingAuthorityConsumedOnce": true,
+      "builtinCallbackArrivedFirstAndWaited": true,
+      "builtinCallbacksRetained": 3,
+      "adapterCleanupElapsedMs": 917,
+      "userObservedGenerationStopped": true,
+      "userObservedSameTabStayedOpen": true,
+      "sameSavedChatUrlTabAndBinding": true,
+      "uncertainSend": false
+    },
+    "continuation": {
+      "completed": true,
+      "durationMs": 14234,
+      "originalMarkerRecalledWithoutResupply": true,
+      "sameSavedChatUrl": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "ledgerCompleted": true,
+      "uncertainSend": false
+    },
+    "postPromotionLiveStopAndContinuationVerified": true
+  },
+  "localVerification": {
+    "focusedTestsPassed": 131,
+    "focusedTestsFailed": 0,
+    "scriptsCheckPassed": true,
+    "currentCodexCatalogCheckPassed": true,
+    "realEntrySmokePassed": true,
+    "fullSuiteRerunAfterFinalNarrowCorrection": false,
+    "scope": "Focused checks cover adapter authority, callback lifecycle, fixed cleanup, deadlines, installer ownership and rollback. Synthetic regressions distinguish terminal-observation cleanup behavior; this live success does not establish which polling race occurred."
+  },
+  "limits": [
+    "The all-ordinary configuration loaded after a normal restart, actual Stop passed and the following turn completed in the same saved chat, tab and binding. This was one live primary-model conversation; separate ordinary identities and subagent exclusion are covered by focused regressions.",
+    "Only the named Instant Web route at low effort was live tested. Other models and Web subagents were not certified.",
+    "The 897 ms narrow-trial and 917 ms all-ordinary measurements cover adapter cleanup callbacks, not end-to-end latency from the user's Stop gesture.",
+    "No native coding command ran in this Stop trial; it does not establish Web-to-native command sandbox enforcement or resolve the earlier hosted connector HTTP 429.",
+    "Earlier failed disposable adapters and the separate patched-native candidate remain historical evidence. This result does not retroactively validate those attempts.",
+    "The superseded native-patch installation and its rollback evidence remain available at https://github.com/stevennitesh/codex-router-lite/blob/c44baa1c56fb9716ebbe9bc9cabe16053fe48deb/docs/history/2026-10-18-native-hook-context.json."
+  ],
+  "generationContractFollowup": {
+    "status": "native-tools-sandbox-stop-and-continuation-verified",
+    "generationContractCommit": "19271e582b346ef08061c6ac7c414ef12d6adc77",
+    "deployedSourceCommit": "13e40eeb5c88937be7cfe7605f46a9997de22fe5",
+    "managedGeneration": "8e74763a7bfad2f988aec3c4815565edd1137b5628afcee42049c7858b495606",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "normalRestartLoadedMatchingAdapter": true,
+    "officialCliUnmodified": true,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingBrowser": false,
+    "ordinaryChatsEnabled": true,
+    "trustedHookDefinitionUnchanged": true,
+    "localVerification": {
+      "generationContractFullSuitePassed": 1372,
+      "generationContractCatalogCheckPassed": true,
+      "confirmationCorrectionFocusedTestsPassed": 105,
+      "sourceChecksPassed": true,
+      "scope": "The full suite covers the generation-contract candidate. After the narrow Stop-confirmation correction, affected hook, adapter and installer tests were rerun; unchanged tool-workflow evidence was reused."
+    },
+    "nativeToolWorkflow": {
+      "codingCalls": 5,
+      "pairedSuccessfulResults": 5,
+      "directNativeCommands": 4,
+      "nativePatches": 1,
+      "webSends": 1,
+      "nativeTurnCompleted": true,
+      "defaultSandbox": true,
+      "permissionEscalationUsed": false
+    },
+    "nativeSandbox": {
+      "workspaceCrud": true,
+      "preparedOutsideWriteDenied": true,
+      "outsideError": "UnauthorizedAccessException",
+      "unexpectedOutsideFileCreated": false,
+      "loopbackRouterHealthStatus": 200,
+      "probeExecutedOnce": true,
+      "pairedReceiptMatchedDisk": true,
+      "scope": "The named disposable workspace fixture, one prepared outside-directory write attempt, and local Router connectivity; not a general sandbox or Internet-isolation certification."
+    },
+    "stopConfirmation": {
+      "previousTrialClickedStopButConfirmationFailed": true,
+      "previousFailureStage": "stop_wait_hidden",
+      "previousFailureRawCauseUnknown": true,
+      "separateHalfSecondLimitRemoved": true,
+      "overallCleanupBudgetUnchanged": true,
+      "automaticReceiptConfirmedAfterNormalRestart": true,
+      "stopClicked": true,
+      "stopHidden": true,
+      "tabRetained": true,
+      "originatingAuthorityConsumedOnce": true,
+      "nativeTurnInterrupted": true,
+      "userObservedGenerationStopped": true
+    },
+    "continuation": {
+      "completed": true,
+      "durationMs": 19177,
+      "originalMarkerRecalledWithoutResupply": true,
+      "sameSavedChatUrlTabAndBinding": true,
+      "uncertainSend": false
+    },
+    "workingRollbackPairRetained": true,
+    "limits": [
+      "One initial cold recovery attempt failed before Send; a later retry and the final normal-restart preflight passed. The first readiness failure was not isolated or claimed fixed.",
+      "This live proof covers the named Instant Web primary route. Other models and Web subagents were not individually certified."
+    ]
+  },
+  "privacy": "Raw saved-chat URLs, native thread and turn identifiers, turn tokens, private prompts, tool payloads, credentials and private filesystem paths are omitted.",
+  "browserEfficiencyFollowup": {
+    "verifiedAt": "2026-10-20T02:46:12.505Z",
+    "status": "native-command-stop-and-continuation-verified-with-file-workflow-limit",
+    "deployedSourceCommit": "0b9f65c12041a4797ec0e81f2aad8631f570ed9d",
+    "managedGeneration": "cd27a496cd6e99bdde2679f16b4f5ceb527d2145ee86055e048373f94df70cf6",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "officialCliUnmodified": true,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingBrowser": false,
+    "trustedHookDefinitionUnchanged": true,
+    "ordinaryChatsEnabled": true,
+    "normalRestartLoadedAdapter": true,
+    "recoveryDeploymentNeededAnotherRestart": false,
+    "installedQualifierAcceptedExactObservationPrograms": true,
+    "implementation": {
+      "connectorModelAndSendCombined": true,
+      "compactObservationAndRetentionPrograms": true,
+      "observationReadsCurrentPageOnce": true,
+      "artificialObservationBatchSleepRemoved": true,
+      "stopUsesNativeInterruptAndActualCleanupReadback": true,
+      "pendingObservationUsesActualChildTerminalWithinExistingDeadline": true,
+      "savedGenerationRecoversLostTabBeforeReadableAnswer": true,
+      "recoveryRechecksOwnershipAndTabAfterHandoff": true
+    },
+    "matchedSyntheticMeasurement": {
+      "scenario": "identical synthetic saved-chat follow-up, three observations, fixed control arguments and prompt",
+      "browserCallsBefore": 8,
+      "browserCallsAfter": 6,
+      "argumentBytesBefore": 417723,
+      "argumentBytesAfter": 185389,
+      "argumentReductionPercent": 55.62,
+      "endToEndLatencyImprovementMeasured": false
+    },
+    "nativeCommand": {
+      "pairedSuccessfulCalls": 1,
+      "exitCode": 0,
+      "constantOutputVerified": true,
+      "extraCodingCalls": 0,
+      "fullFileReadPatchReadbackWorkflowVerified": false
+    },
+    "automaticStop": {
+      "nativeTurnInterrupted": true,
+      "completedBeforeInterrupt": false,
+      "stopClicked": true,
+      "stopHidden": true,
+      "tabRetained": true,
+      "callbackToConfirmedMs": 1222,
+      "userObservedStoppedAndSameTab": true,
+      "pendingChildAtInterrupt": false,
+      "pendingChildSettlementLiveScenarioExercised": false
+    },
+    "continuation": {
+      "completed": true,
+      "durationMs": 15854,
+      "originalMarkerRecalledWithoutResupply": true,
+      "sameSavedChatUrlTabAndBinding": true,
+      "webSends": 1,
+      "codingCalls": 0,
+      "uncertainSend": false
+    },
+    "localVerification": {
+      "initialOptimizationFullSuitePassed": 1382,
+      "callbackCorrectionAffectedTestsPassed": 400,
+      "finalRecoveryBrowserTestsPassed": 99,
+      "finalRecoveryRuntimeTestsPassed": 169,
+      "sourceChecksPassed": true,
+      "currentCatalogModelsParsed": 17,
+      "scope": "Unchanged full-suite evidence reused; each later correction reran affected checks."
+    },
+    "workingRollbackPairRetained": true,
+    "limits": [
+      "The earlier Web assistant reported a safety block before its file operation. That action was not retried; the current constant-output command does not verify the full file workflow or recertify the sandbox.",
+      "An initial Stop arrived after natural completion and was excluded from cancellation proof. The successful repeat stopped an active generation between observations; pending-child settlement has focused transport tests but was not exercised by that live Stop.",
+      "Stable answer text was not projected during the stopped generation. Actual anchored generation and Stop-control state supplied readiness; the automatic click, hidden-control readback and user observation established cancellation.",
+      "Measurements compare equivalent synthetic calls and UTF-8 bytes, not model tokens or end-to-end latency. Live response times and observation counts depend on the page and model.",
+      "Live proof covers one ordinary Instant Web conversation at low effort. Other Web routes and subagents were not individually certified."
+    ]
+  },
+  "nativeToolDebugFollowup": {
+    "verifiedAt": "2026-10-20T03:29:12.866Z",
+    "status": "file-edit-and-default-sandbox-verified-in-separate-scoped-turns",
+    "deployedSourceCommit": "0b9f65c12041a4797ec0e81f2aad8631f570ed9d",
+    "model": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "productionCodeChanged": false,
+    "officialCliHashUnchanged": true,
+    "runtimePatchUsed": false,
+    "externalLauncherUsed": false,
+    "additionalModelDrivingNativeWorkflow": false,
+    "readOnlyBrowserDiagnosisPerformedSeparately": true,
+    "sandboxOrApprovalSettingsChanged": false,
+    "comparison": {
+      "historicalFiveCallSandboxProofRecheckedAgainstPairedOutputsAndDisk": true,
+      "historicalProbeUsedProcessExecutionPolicyBypass": true,
+      "sameModelAndConfiguredNativeSandboxApprovalPolicy": true,
+      "brokerAndMcpSourceUnchanged": true,
+      "freshDiscoveryAndCorrectCurrentTokenInvocationIndependentlyObserved": true,
+      "hostedRefusalHadNoNativeCodingCall": true,
+      "hostedSpecificRejectionCodeRetained": false,
+      "delegationPresenceAloneExplainsFailure": false
+    },
+    "fileEdit": {
+      "genuineTypedNativeUserRequest": true,
+      "pairedNativeReadPatchReadback": true,
+      "firstLinePreserved": true,
+      "expectedEditedContentVerified": true,
+      "sandboxPermissions": "use_default",
+      "permissionEscalationUsed": false
+    },
+    "powerShellProbeFailure": {
+      "probeAttemptedOnce": true,
+      "exitCode": 1,
+      "receiptCreated": false,
+      "observedError": "AuthorizationManager check failed.",
+      "observedCategory": "SecurityError",
+      "processExecutionPolicyOverrideUsed": false,
+      "harmlessLoaderControlFailedInDefaultSandbox": true,
+      "identicalLoaderControlPassedInNormalUserContext": true,
+      "executionPolicyRegistryReadDeniedInDefaultSandboxControl": true,
+      "nativeFilesystemDenialProvedByThisFailure": false
+    },
+    "independentNodeSandbox": {
+      "primaryWebModelRequestedNativeExecution": true,
+      "delegatedRequestSucceeded": true,
+      "probeExecutedOnce": true,
+      "pairedSuccessfulNativeCalls": 2,
+      "actualProbeAndReceiptReadMatchedDisk": true,
+      "workspaceCrud": true,
+      "outsideWriteAttempted": true,
+      "outsideWriteDenied": true,
+      "outsideErrorCode": "EPERM",
+      "unexpectedOutsideCreate": false,
+      "sameExecutableNormalUserWriteReadControlPassed": true,
+      "loopbackNetworkStatus": 200,
+      "executionPolicyOverrideUsed": false,
+      "sandboxPermissions": "use_default",
+      "permissionEscalationUsed": false
+    },
+    "cleanup": {
+      "ownedEmptyOutsideDirectoriesRemoved": 2,
+      "nativeReceiptsPreserved": true,
+      "rollbackPreserved": true
+    },
+    "verification": {
+      "productionTestsRerun": false,
+      "reason": "Production source and dependencies unchanged; fresh native integration results and controlled fixture checks establish this scope.",
+      "currentNodeProbeSyntaxCheckPassed": true,
+      "newCurrentFiveStepSingleTurnChainClaimed": false
+    },
+    "limits": [
+      "The precise earlier hosted safety rejection remains unconfirmed: actual discovery and a valid invocation were retained, but its persisted tool text was empty and no explicit server rejection code was exposed. A subsequent directly typed file workflow and delegated Node sandbox request both succeeded without policy changes.",
+      "File editing and the fresh sandbox measurement completed in separate scoped turns. The failed child-PowerShell attempt was retained and not rerun; a new current five-action single-turn success is not claimed.",
+      "Sandbox proof covers the disposable workspace files, one prepared host-writable sibling directory and expected loopback access. It is not a general filesystem, network-isolation or other-model certification."
+    ]
+  },
+  "ordinaryWebReadinessFollowup": {
+    "recordedAt": "2026-10-20T04:33:22.246Z",
+    "status": "model-matrix-partially-verified-manual-checks-pending",
+    "deployedSourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+    "guardedDeploymentAccepted": true,
+    "selectionCorrection": {
+      "cause": "Collapsed family rows remain in the DOM; their clipped click targets can operate Power instead of selecting the family.",
+      "controlledExpandedFamilyClickPassed": true,
+      "fix": "Expand the visible family list before clicking the exact requested family, then verify family and Power before Send.",
+      "originalSelectorFailedRegression": true,
+      "fixedBrowserTestsPassed": 100,
+      "sourceChecksPassed": true,
+      "installedObserverAndRetainCodeUnchanged": true,
+      "existingAdapterQualifierAccepted": true,
+      "codexRestartRequired": false
+    },
+    "modelMatrix": {
+      "advertisedPairs": 10,
+      "currentlyPassedPairs": 9,
+      "allPassesUsedSameSavedChatAndBinding": true,
+      "allPassesRecalledOriginalMarkerWithoutResupply": true,
+      "rows": [
+        {
+          "model": "chatgpt-web/gpt-6-sol-instant",
+          "effort": "low",
+          "family": "GPT-6",
+          "power": 0,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-6-sol",
+          "effort": "medium",
+          "family": "GPT-6",
+          "power": 1,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-6-sol",
+          "effort": "high",
+          "family": "GPT-6",
+          "power": 2,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-6-sol",
+          "effort": "xhigh",
+          "family": "GPT-6",
+          "power": 3,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-5.6-sol-instant",
+          "effort": "low",
+          "family": "GPT-5.6 Sol",
+          "power": 0,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-5.6-sol",
+          "effort": "medium",
+          "family": "GPT-5.6 Sol",
+          "power": 1,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-5.6-sol",
+          "effort": "high",
+          "family": "GPT-5.6 Sol",
+          "power": 2,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-5.6-sol",
+          "effort": "xhigh",
+          "family": "GPT-5.6 Sol",
+          "power": 3,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-5.6-pro",
+          "effort": "max",
+          "family": "GPT-5.6 Sol",
+          "power": 4,
+          "passed": true
+        },
+        {
+          "model": "chatgpt-web/gpt-6-pro",
+          "effort": "max",
+          "family": "GPT-6",
+          "power": 4,
+          "passed": false
+        }
+      ],
+      "nativeConstantCommandsPassed": 4,
+      "scope": "Actual pre-Send family and Power receipts, native requested route and effort, paired native results where requested, confirmed delivery and marker recall."
+    },
+    "remainingProFailure": {
+      "model": "chatgpt-web/gpt-6-pro",
+      "effort": "max",
+      "familyAndPowerConfirmedBeforeSend": true,
+      "sendConfirmed": true,
+      "failedOperation": "observe",
+      "observedNativeError": "Timed out running CDP command 'Runtime.evaluate' for tab [number]",
+      "nativeTerminalHttpStatus": 409,
+      "nativeCodingActionsIssued": 0,
+      "unresolvedCodingActions": 0,
+      "uncertainSend": false,
+      "automaticRetryPerformed": false,
+      "modelUnavailableClaimed": false
+    },
+    "recovery": {
+      "newReadOnlyInstantTurnCompleted": true,
+      "sameSavedChatTabAndBinding": true,
+      "originalMarkerRecalledWithoutResupply": true,
+      "priorProCommandReplayed": false,
+      "nativeCodingActionsIssued": 0,
+      "conversationIdleAfterRecovery": true
+    },
+    "pendingChecks": {
+      "inFlightStop": "A candidate observation was captured, but no native Interrupt occurred before natural completion. A fresh manually coordinated run is required.",
+      "twoChatIsolation": "The first disposable second chat failed before Send and remains quarantined as unconfirmed. Replacement-chat choice is pending; its ledger was not reset.",
+      "pro6ToolWorkflow": "Family and Pro Power selection passed; native tools and final delivery remain unverified for this route after the browser observation timeout."
+    },
+    "invariants": {
+      "officialCliUnmodified": true,
+      "externalLauncherUsed": false,
+      "additionalModelDroveLiveBrowserWorkflow": false,
+      "existingHookPreserved": true,
+      "workingRollbackPreserved": true,
+      "consumedSandboxProbeRepeated": false
+    },
+    "evidenceSummarySha256": "c8f54d4380395c4b21091e7ae787f2fa844ecd20814d5365025470d05137bb53",
+    "pro6ExplicitRetry": {
+      "recordedAt": "2026-10-20T04:33:22.244Z",
+      "status": "failed-at-browser-observation",
+      "explicitlyRequestedByUser": true,
+      "model": "chatgpt-web/gpt-6-pro",
+      "effort": "max",
+      "actualFamily": "GPT-6",
+      "actualPower": 4,
+      "familyChecked": true,
+      "confirmedSends": 1,
+      "sameSavedChatTabAndBinding": true,
+      "nativeTurnDurationMs": 46522,
+      "failedOperation": "observe",
+      "failedBrowserRpcDurationMs": 1875,
+      "observedNativeError": "Timed out running CDP command \"Runtime.evaluate\" for tab [number]",
+      "nativeTerminalHttpStatus": 409,
+      "nativeCodingActionsIssued": 0,
+      "unresolvedCodingActions": 0,
+      "uncertainSend": false,
+      "originalCommandReplayed": false,
+      "furtherAutomaticRetryPerformed": false,
+      "currentOwnedBrowserStoppedOrIdleVerified": false,
+      "modelUnsupportedOrUnavailableClaimed": false,
+      "sourceOrConfigurationChanged": false,
+      "readOnlyDiagnosisUsedSeparateTemporaryTab": true,
+      "diagnosticTabClosed": true,
+      "evidenceSummarySha256": "f5ab72f5a1406f70f6c45ecf69258d2007bc3a65ff32a5833d2e9ad9170878ce"
+    }
+  },
+  "browserEfficiencyImplementation": {
+    "recordedAt": "2026-10-20T05:04:36.371Z",
+    "status": "implemented-offline-checked-matched-activation-and-live-proof-pending",
+    "baselineSourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+    "changes": [
+      "Keep all mounted turn and message identities, but reconstruct text and completion metadata only for the owned generation during observation and retention.",
+      "Use the current visible family and Power state to skip unnecessary family selection; expand and verify the visible family list when a change is needed.",
+      "Install a frozen source-versioned resident browser helper during bootstrap or normal continuation; frequent observation and retention calls carry only their bounded configuration.",
+      "Offer optional focused tool discovery by current name, namespace or description while returning complete matching schemas and preserving full catalog discovery.",
+      "Avoid unused broker declaration-return clones at the five runtime registration and update callers; authorization still rebuilds from current declarations.",
+      "Reuse verified URL reads and perform independent browser status reads concurrently between ownership and navigation checks."
+    ],
+    "offlineMeasurement": {
+      "capturedAt": "2026-10-20T04:49:40.936Z",
+      "baselineCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+      "node": "v24.13.0",
+      "scope": "Offline equal-input source comparison; synthetic DOM and complete synthetic catalog; no browser, model, native coding action, network or installed-state effect.",
+      "payloads": [
+        {
+          "operation": "bootstrap",
+          "baselineCodeBytes": 50756,
+          "candidateCodeBytes": 54641,
+          "percentSmaller": -7.654267475766412
+        },
+        {
+          "operation": "send",
+          "baselineCodeBytes": 50873,
+          "candidateCodeBytes": 36453,
+          "percentSmaller": 28.345094647455426
+        },
+        {
+          "operation": "observe",
+          "baselineCodeBytes": 18808,
+          "candidateCodeBytes": 2116,
+          "percentSmaller": 88.74946831135688
+        },
+        {
+          "operation": "retain",
+          "baselineCodeBytes": 18807,
+          "candidateCodeBytes": 2115,
+          "percentSmaller": 88.75418727069709
+        },
+        {
+          "operation": "continue",
+          "baselineCodeBytes": 50899,
+          "candidateCodeBytes": 54784,
+          "percentSmaller": -7.632762922650739
+        }
+      ],
+      "projection": {
+        "mountedTurns": 51,
+        "historicalParagraphs": 2500,
+        "baselineHistoricalTextReads": 2500,
+        "candidateHistoricalTextReads": 0,
+        "identitiesAndCurrentAnswerAndCompletionEqual": true,
+        "baselineMedianMs": 15.903500000000008,
+        "candidateMedianMs": 0.5650000000000546,
+        "sampleCount": 30
+      },
+      "discovery": {
+        "fullTools": 240,
+        "focusedTools": 1,
+        "descriptorEqualToFull": true,
+        "fullMcpEnvelopeBytes": 1547284,
+        "focusedMcpEnvelopeBytes": 6528,
+        "percentSmaller": 99.57809943100298,
+        "bothMcpRepresentationsRetained": true
+      },
+      "limits": [
+        "Payload counts are UTF-8 code/JSON bytes, not model tokens or network wire sizes.",
+        "Synthetic callback timing excludes actual DOM/browser scheduling, CDP, approvals, network and model generation.",
+        "No end-to-end latency improvement or GPT-6 Pro timeout fix is established."
+      ],
+      "measurementSha256": "f0edeeefe963db04d60a0c9dab1614107b38714f4854e2c49e273f705a4ccfc1"
+    },
+    "finishingDelayProfile": {
+      "retainedCompletions": 10,
+      "completedObservationReturnToRetainIssueMs": [
+        1464,
+        1818
+      ],
+      "retainRpcMs": [
+        89,
+        194
+      ],
+      "retainReturnToFinalAnswerMs": [
+        1455,
+        1899
+      ],
+      "finalAnswerToTaskCompleteMs": [
+        59,
+        148
+      ],
+      "totalMs": [
+        3099,
+        3697
+      ],
+      "attribution": "Native tool and harness gaps include unmeasured work; this evidence does not attribute them entirely to Router or Windows private-state writes.",
+      "decision": "Keep final retention, broker quiet-activity checks and both distinct checkpoint boundaries. Identical serialized state already skips a write. No safe duplicate completion boundary was identified."
+    },
+    "verification": {
+      "sourceChecksPassed": true,
+      "affectedBrowserTestsPassed": 108,
+      "affectedAdapterTestsPassed": 66,
+      "affectedToolAndMcpTestsPassed": 27,
+      "affectedRuntimeTestsPassed": 169,
+      "faultSensitivity": {
+        "isolatedFaultsRejected": 4,
+        "faults": [
+          "historical-body-reconstruction",
+          "historical-identity-dropped",
+          "selected-family-always-reselected",
+          "resident-version-check-omitted"
+        ],
+        "sourceRestored": true
+      },
+      "fullVerification": {
+        "command": "npm run verify:codex",
+        "passed": 1404,
+        "failed": 1,
+        "skipped": 0,
+        "fullPassClaimed": false,
+        "failure": "An existing native/external WebSocket timing-metadata integration test returned an error rather than response.completed; the original full-run assertion did not retain the error body.",
+        "focusedWebSocketRechecks": {
+          "completeFileRuns": 2,
+          "passedPerRun": 36,
+          "isolatedDiagnosticRuns": 5,
+          "allPassed": true,
+          "originalTestBytesRestored": true,
+          "affectedFixtureAndNativeTransportOwnersEqualToBaselineAfterLineEndingNormalization": true,
+          "classification": "Unclassified transient. The original assertion does not identify which of its four model/thread exchanges failed. No production or test correction retained; a full clean suite pass is not claimed."
+        }
+      },
+      "separateCurrentCatalogCheck": {
+        "command": "node scripts/check-codex-catalog-compat.mjs --current",
+        "passed": true,
+        "currentSchemaModels": 17
+      },
+      "freshSourceIntegrationReview": "No actionable findings.",
+      "changedTestValueReview": "No one-off completed-edit checks or redundant cases identified; generated-script tamper cases protect the exact adapter qualification contract."
+    },
+    "activation": {
+      "matchingAdapterRequired": true,
+      "fullCodexRestartRequired": true,
+      "existingInterruptHookDefinitionChanged": false,
+      "nativeRuntimePatchRequired": false,
+      "externalLauncherRequired": false,
+      "liveToolAndStopAndSameChatProofPending": true,
+      "firstGuardedDeployment": {
+        "candidateSourceCommit": "e6440a2d49c42af7fb137db2b3dbfcf0ce27b43c",
+        "accepted": false,
+        "exactPreviousSourceAndSwitchyardRestored": true,
+        "restoredSourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+        "managedAdapterChanged": false,
+        "cause": "The account catalog reports a different tool_mode for Astra from the other Switchyard targets. Production correctly omits the incompatible optional route; the installed catalog checker dereferenced the omitted Switchyard entry.",
+        "productionRouteAgreementAndOmissionPolicyPreserved": true,
+        "checkerCorrection": {
+          "owner": "scripts/check-codex-catalog-compat.mjs",
+          "productionPolicyChanged": false,
+          "installedModeVerifiesExpectedOmission": true,
+          "installedAndParsedIncorrectAdvertisementStillRejected": true,
+          "unrelatedMissingRoutesStillRejected": true,
+          "compatibleSwitchyardAssertionsAndDefaultStrictnessPreserved": true,
+          "focusedTestsPassed": 20,
+          "realBundledCheckPassedModels": 17,
+          "realInstalledCheckPassedModels": 23,
+          "installedCheckReportsSwitchyardSafelyOmitted": true
+        }
+      }
+    },
+    "rollback": {
+      "sourceCommit": "75ef8720be2a33be208470d97c24a7bc2e1a39fa",
+      "preservedSourceRoot": "generated/router-rollback-75ef8720",
+      "preservedManagedAdapterGeneration": "cd27a496cd6e99bdde2679f16b4f5ceb527d2145ee86055e048373f94df70cf6",
+      "originalInstallationBaselineRollbackDoesNotSelectThisLatestPair": true
+    },
+    "limits": [
+      "The measurements compare equal synthetic inputs and generated code, not live end-to-end browser or model latency.",
+      "The full validation run has one unclassified WebSocket fixture failure; focused rechecks must remain separate evidence.",
+      "The earlier GPT-6 Pro observation timeout remains unresolved by live evidence; reduced DOM work is not proof that it is fixed.",
+      "The trusted Interrupt hook, native approvals and sandbox, uncertainty ledger, final retention and rollback remain in place."
+    ]
+  }
+}

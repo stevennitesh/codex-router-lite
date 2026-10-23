@@ -19,10 +19,16 @@ in one invocation:
 It fetches repository heads, resolves and signature-checks the current Windows
 Codex build, records the bundled app-tools plugin identity when available,
 checks the current native catalog, reads Router health, and runs source checks plus
-catalog and namespace-relay tests. `-AnalyzeUpstream` adds detail only for upstream
+catalog and namespace-relay tests. It also checks saved Web configuration and
+adapter ownership: finding a new CLI does not establish that the configured Web
+runtime still exists or that the app loaded a compatible adapter. Disabled Web
+without an adapter needs no Web setup. `-AnalyzeUpstream` adds detail only for upstream
 drift: relevant original-Router changes and a disposable Switchyard checkout to
 test the ordered patches. It does not merge, rebuild, deploy, advance the review
 baseline, or consume model quota. Omit that flag for diagnostics alone.
+Its Web status reuses the coordinated runtime planner: a valid stale installation
+reports `refresh-required` and the single apply command, while unconfirmed
+anchors and actual ownership conflicts retain separate recovery instructions.
 
 Choose source-test scope using the [common verification rules](architecture.md#verification).
 Use `-FullTests` when shared changes or an unresolved regression need the full
@@ -91,6 +97,7 @@ Never copy a versioned Codex app path into source. Never print keys, bearer toke
 | Change | Read next |
 | --- | --- |
 | Native catalog, credential forwarding, app tools, namespace relay, or encrypted handoff | [Native Codex](native-codex.md) |
+| ChatGPT Web browser runtime, connector, saved context or Stop adapter | [Web integration](web-integration.md); [adapter compatibility](web-integration.md#adapter-installation-and-rollback) |
 | GLM endpoint policy, chat translation, hosted search, or Python dependency pins | [OpenRouter GLM](openrouter-glm.md) |
 | DeepSeek endpoint policy or direct Responses compatibility | [OpenRouter DeepSeek](openrouter-deepseek.md) |
 | Pareto endpoint policy or direct Responses compatibility | [Pareto](pareto.md) |
@@ -99,6 +106,14 @@ Never copy a versioned Codex app path into source. Never print keys, bearer toke
 | Exact-route subagents v2 | [Subagent certification](../SUBAGENT-CERTIFICATION.md) |
 | Windows installation or update | [Installation](../INSTALL.md) |
 | Service failure or rollback | [Troubleshooting](../TROUBLESHOOTING.md) |
+
+For stale Web runtime anchors, `model-router.ps1 codex web refresh-runtime` plans
+a coordinated refresh using the configured native runtime. Its `--apply` path
+updates the adapter and saved browser settings through their existing ownership
+and service-replacement gates. Use an explicit `--manifest` when current native
+configuration cannot identify a unique valid candidate. See
+[Web refresh](../CHATGPT-WEB.md#refresh-after-a-codex-update); live readiness still
+requires verification after the reported Codex restart.
 
 The route and provider JSON files under `config/openrouter` and `config/switchyard` own checked-in route metadata. `maintenance/windows-package.json` owns the installed file set. Generated catalogs, installed files, logs, and proof records are evidence, not source.
 

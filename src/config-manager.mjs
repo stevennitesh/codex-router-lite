@@ -14,6 +14,7 @@ import { assertCallerSecret, isManagedCallerBaseUrl, redactCallerUrl } from "./c
 import { refreshCodexCallerCapabilityContents } from "./caller-key-client-refresh.mjs";
 import { createPrivateFile, privateFileIsProtected, protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { catalogPathsEqual, readNativeCatalogSource } from "./native-catalog-source.mjs";
+import { readSubagentProtocol } from "./multi-agent-state.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import {
   BACKUP_PATH,
@@ -35,6 +36,8 @@ const providerStartMarker = "# BEGIN codex-router-provider-managed";
 const providerEndMarker = "# END codex-router-provider-managed";
 const multiAgentStartMarker = "# BEGIN codex-router-multi-agent-v2-managed";
 const multiAgentEndMarker = "# END codex-router-multi-agent-v2-managed";
+const multiAgentV1StartMarker = "# BEGIN codex-router-multi-agent-v1-managed";
+const multiAgentV1EndMarker = "# END codex-router-multi-agent-v1-managed";
 const managedAgentMaxConcurrency = 6;
 const managedRootAgentUsageHint = `## Delegated-agent waiting
 While a delegated agent has exclusive custody and an event-driven agent wait is available:
@@ -55,6 +58,7 @@ const markerPairs = [
   [startMarker, endMarker],
   [providerStartMarker, providerEndMarker, `[model_providers.${routerProviderId}]`],
   [multiAgentStartMarker, multiAgentEndMarker],
+  [multiAgentV1StartMarker, multiAgentV1EndMarker],
 ];
 
 function tomlValue(value) {
@@ -193,6 +197,18 @@ function recoverUnterminatedMultiAgentBlock(input) {
   return lines.join("\n");
 }
 
+function recoverUnterminatedV1MultiAgentBlock(input) {
+  const lines = String(input).split("\n");
+  const starts = markerIndexes(input, multiAgentV1StartMarker);
+  const ends = markerIndexes(input, multiAgentV1EndMarker);
+  if (starts.length !== 1 || ends.length !== 0) return String(input);
+  const start = starts[0];
+  if (lines[start + 1]?.trim() !== "multi_agent = true" ||
+      lines[start + 2]?.trim() !== "multi_agent_v2 = false") return String(input);
+  lines.splice(start + 3, 0, multiAgentV1EndMarker);
+  return lines.join("\n");
+}
+
 function removeMarkerPair(input, start, end, managedHeader) {
   const lines = String(input).split("\n");
   const starts = new Set(markerIndexes(input, start));
@@ -216,7 +232,7 @@ function removeMarkerPair(input, start, end, managedHeader) {
 }
 
 function removeManagedBlocks(input) {
-  const recovered = recoverUnterminatedMultiAgentBlock(recoverUnterminatedRouterRootBlock(input));
+  const recovered = recoverUnterminatedV1MultiAgentBlock(recoverUnterminatedMultiAgentBlock(recoverUnterminatedRouterRootBlock(input)));
   return markerPairs.reduce(
     (contents, [start, end, managedHeader]) =>
       removeMarkerPair(contents, start, end, managedHeader),
@@ -259,12 +275,13 @@ function cleanedConfig(contents) {
   return { rootLines: filtered, tableLines };
 }
 
-function hasMultiAgentConfig(contents) {
+function hasMultiAgentConfig(contents, { includeAgentTables = true } = {}) {
   const document = scanTomlDocument(contents);
-  const isFeature = (parts) => parts[0] === "features" && parts[1] === "multi_agent_v2";
+  const names = new Set(["multi_agent", "multi_agent_v2"]);
+  const isFeature = (parts) => parts[0] === "features" && names.has(parts[1]);
   return document.assignments.some(({ tablePath, key }) =>
-    (key.length === 1 && key[0] === "multi_agent_v2") || isFeature([...tablePath, ...key]),
-  ) || document.headers.some(({ path: parts }) => isFeature(parts) || (parts[0] === "agents" && parts.length > 1));
+    (key.length === 1 && names.has(key[0])) || isFeature([...tablePath, ...key]),
+  ) || document.headers.some(({ path: parts }) => isFeature(parts) || (includeAgentTables && parts[0] === "agents" && parts.length > 1));
 }
 
 let multiAgentV2Supported;
@@ -298,12 +315,21 @@ function installedCodexSupportsMultiAgentV2() {
   return multiAgentV2Supported;
 }
 
-function withManagedMultiAgentV2(contents) {
-  if (hasMultiAgentConfig(contents) || !installedCodexSupportsMultiAgentV2()) return contents;
+function withManagedMultiAgent(contents, { protocol = readSubagentProtocol(), explicit = false } = {}) {
+  if (hasMultiAgentConfig(contents, { includeAgentTables: !explicit })) {
+    if (explicit) throw new Error("Refusing to replace user-owned multi-agent feature settings. Remove or reconcile those settings before selecting a Router-managed protocol.");
+    return contents;
+  }
+  if (protocol === "v2" && !installedCodexSupportsMultiAgentV2()) {
+    if (explicit) throw new Error("The installed Codex binary does not support the Router-managed V2 subagent feature.");
+    return contents;
+  }
   const lines = String(contents).split("\n");
   const { headers } = scanTomlDocument(contents);
   const features = headers.find((header) => header.path.length === 1 && header.path[0] === "features");
-  const managed = [multiAgentStartMarker, managedMultiAgentV2FeatureLine(), multiAgentEndMarker];
+  const managed = protocol === "v1"
+    ? [multiAgentV1StartMarker, "multi_agent = true", "multi_agent_v2 = false", multiAgentV1EndMarker]
+    : [multiAgentStartMarker, managedMultiAgentV2FeatureLine(), multiAgentEndMarker];
   if (!features) {
     const firstTable = headers[0]?.index ?? lines.length;
     lines.splice(firstTable, 0, "", "[features]", ...managed);
@@ -314,8 +340,20 @@ function withManagedMultiAgentV2(contents) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+function protocolContents(contents, protocol) {
+  if (!["v1", "v2"].includes(protocol)) throw new Error("Subagent protocol must be v1 or v2.");
+  const recovered = recoverUnterminatedV1MultiAgentBlock(recoverUnterminatedMultiAgentBlock(contents));
+  const cleaned = [
+    [multiAgentStartMarker, multiAgentEndMarker],
+    [multiAgentV1StartMarker, multiAgentV1EndMarker],
+  ].reduce((body, [start, end]) => removeMarkerPair(body, start, end), recovered);
+  return withManagedMultiAgent(cleaned, { protocol, explicit: true });
+}
+
 function enabledContents(contents) {
   const routerBaseUrl = configuredRouterBaseUrl();
+  const ownedMultiAgent = markerIndexes(contents, multiAgentStartMarker).length > 0 ||
+    markerIndexes(contents, multiAgentV1StartMarker).length > 0;
   const cleaned = cleanedConfig(contents);
   let rootLines = trimBlankEdges(cleaned.rootLines);
   const existingBase = rootValue(rootLines, "openai_base_url");
@@ -369,7 +407,7 @@ function enabledContents(contents) {
     "requires_openai_auth = true",
     providerEndMarker,
   );
-  return withManagedMultiAgentV2(`${body.join("\n").trimEnd()}\n`);
+  return withManagedMultiAgent(`${body.join("\n").trimEnd()}\n`, { explicit: ownedMultiAgent });
 }
 
 function disabledContents(contents) {
@@ -401,6 +439,9 @@ function snapshot(contents) {
     openai_base_url: baseUrl ? redactCallerUrl(baseUrl) : null,
     model_catalog_json: catalog || null,
     config_protected: privateFileIsProtected(CONFIG_PATH),
+    subagent_protocol: readSubagentProtocol(),
+    subagent_protocol_change_requires_restart: true,
+    subagent_protocol_change_requires_new_conversation: true,
   };
 }
 
@@ -414,10 +455,11 @@ const validCommands = new Set([
   "status",
   "validate-enable",
   "caller-capability-refresh",
+  "subagent-protocol",
 ]);
 if (!validCommands.has(command)) {
   console.error(
-    "Usage: config-manager.mjs enable|disable|status|validate-enable|caller-capability-refresh",
+    "Usage: config-manager.mjs enable|disable|status|validate-enable|caller-capability-refresh|subagent-protocol <v1|v2>",
   );
   process.exit(2);
 }
@@ -433,7 +475,9 @@ if (command === "validate-enable") {
 }
 
 let next;
-if (command === "caller-capability-refresh") {
+if (command === "subagent-protocol") {
+  next = protocolContents(current, process.argv[3]);
+} else if (command === "caller-capability-refresh") {
   if (snapshot(current).mode !== "router") {
     throw new Error("Codex Router is not the active managed route; refusing caller capability refresh.");
   }
@@ -444,10 +488,12 @@ if (command === "caller-capability-refresh") {
   next = command === "enable" ? enabledContents(current) : disabledContents(current);
 }
 
-if (existsSync(CONFIG_PATH) && !existsSync(BACKUP_PATH)) {
-  createPrivateFile(BACKUP_PATH, readFileSync(CONFIG_PATH));
-} else if (existsSync(BACKUP_PATH)) {
-  protectPrivateFile(BACKUP_PATH);
+if (command !== "subagent-protocol") {
+  if (existsSync(CONFIG_PATH) && !existsSync(BACKUP_PATH)) {
+    createPrivateFile(BACKUP_PATH, readFileSync(CONFIG_PATH));
+  } else if (existsSync(BACKUP_PATH)) {
+    protectPrivateFile(BACKUP_PATH);
+  }
 }
 atomicWrite(next);
 process.stdout.write(`${JSON.stringify(snapshot(next))}\n`);

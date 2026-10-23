@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -65,6 +66,30 @@ test("a matching stamp never skips a broken Python runtime or missing interprete
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("Python status probes the runtime only when its stamp matches the current inputs", () => {
+  const f = fixture();
+  let probes = 0;
+  const options = { root: f.root, platform: "win32", runtimeProblem: () => { probes += 1; } };
+  try {
+    const stamp = path.join(f.root, ".venv/.codex-router-install.json");
+    assert.equal(stepStatus("python-deps", options), "run");
+    assert.equal(probes, 0, "a missing stamp already requires installation");
+    for (const contents of ["{", "{}"]) {
+      writeFileSync(stamp, contents);
+      assert.equal(stepStatus("python-deps", options), "run");
+      assert.equal(probes, 0, "a malformed or incomplete stamp already requires installation");
+    }
+    recordStep("python-deps", options);
+    const lock = path.join(f.requirements, "python.txt");
+    writeFileSync(lock, `${readFileSync(lock, "utf8")}\n`);
+    assert.equal(stepStatus("python-deps", options), "run");
+    assert.equal(probes, 0, "changed dependency inputs already require installation");
+    recordStep("python-deps", options);
+    assert.equal(stepStatus("python-deps", options), "skip");
+    assert.equal(probes, 1, "a matching stamp still requires a runtime probe");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("regenerating an exact lock cannot bypass the gateway security floor or required package set", () => {
   const f = fixture();
   try {
@@ -115,5 +140,73 @@ test("Node verifier refuses desired-input mismatch, omitted dependencies and bro
       if (scenario === "import") writeFileSync(path.join(f.dependency, "index.cjs"), "throw new Error('fixture broken import');");
       assert.throws(() => verifyNodeDependencies(f.root, desired.root), scenario === "input" ? /desired checkout inputs/u : scenario === "hidden" ? /missing or mismatched/u : /broken import/u);
     } finally { rmSync(f.root, { recursive: true, force: true }); rmSync(desired.root, { recursive: true, force: true }); }
+  }
+});
+
+function sdkNodeFixture() {
+  const f = nodeFixture();
+  const name = "@modelcontextprotocol/sdk", version = "1.32.1";
+  const dependency = path.join(f.root, "node_modules", name);
+  const entries = ["server/index.js", "server/streamableHttp.js", "types.js", "validation/ajv-provider.js"];
+  const manifestPath = path.join(f.root, "package.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.dependencies[name] = version;
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  for (const file of ["package-lock.json", "node_modules/.package-lock.json"]) {
+    const target = path.join(f.root, file), lock = JSON.parse(readFileSync(target, "utf8"));
+    lock.packages[`node_modules/${name}`] = { version };
+    writeFileSync(target, JSON.stringify(lock));
+  }
+  mkdirSync(dependency, { recursive: true });
+  writeFileSync(path.join(dependency, "package.json"), JSON.stringify({ name, version, type: "module", exports: {
+    "./*": { import: "./dist/esm/*", require: "./dist/cjs/*" },
+  } }));
+  for (const entry of entries) {
+    for (const variant of ["esm", "cjs"]) {
+      const target = path.join(dependency, "dist", variant, entry);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, variant === "esm" ? "export const ready = true;" : "module.exports = {ready:true};");
+    }
+  }
+  writeFileSync(path.join(dependency, "dist/cjs/package.json"), '{"type":"commonjs"}');
+  return { ...f, sdk: dependency, entries };
+}
+
+test("Node verifier accepts an exports-only SDK through the ESM subpaths used by serving", () => {
+  const f = sdkNodeFixture();
+  try {
+    const require = createRequire(path.join(f.root, "package.json"));
+    assert.throws(() => require.resolve("@modelcontextprotocol/sdk"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+    assert.equal(verifyNodeDependencies(f.root), true);
+    recordStep("node-deps", { root: f.root });
+    assert.equal(stepStatus("node-deps", { root: f.root }), "skip");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Node verifier refuses each missing actual SDK ESM entry even when its CommonJS entry remains usable", () => {
+  for (const entry of ["server/index.js", "server/streamableHttp.js", "types.js", "validation/ajv-provider.js"]) {
+    const f = sdkNodeFixture();
+    try {
+      recordStep("node-deps", { root: f.root });
+      const require = createRequire(path.join(f.root, "package.json"));
+      assert.equal(require(`@modelcontextprotocol/sdk/${entry}`).ready, true);
+      rmSync(path.join(f.sdk, "dist/esm", entry));
+      assert.equal(existsSync(path.join(f.sdk, "dist/cjs", entry)), true);
+      assert.throws(() => verifyNodeDependencies(f.root), /runtime import probe failed: @modelcontextprotocol\/sdk/u);
+      assert.equal(stepStatus("node-deps", { root: f.root }), "run");
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("Node SDK probe evaluates runtime modules and still enforces the complete locked tree", () => {
+  for (const scenario of ["broken import", "mismatched locked package"]) {
+    const f = sdkNodeFixture();
+    try {
+      recordStep("node-deps", { root: f.root });
+      if (scenario === "broken import") writeFileSync(path.join(f.sdk, "dist/esm/types.js"), "throw new Error('fixture initialization failed');");
+      else writeFileSync(path.join(f.dependency, "package.json"), JSON.stringify({ version: "0.0.0" }));
+      assert.throws(() => verifyNodeDependencies(f.root), scenario === "broken import" ? /runtime import probe failed/u : /tree is incomplete or mismatched/u);
+      assert.equal(stepStatus("node-deps", { root: f.root }), "run");
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
 });

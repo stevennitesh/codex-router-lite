@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { openPort } from "./port-pool.mjs";
 import { serviceProcessOwns } from "../src/service-process.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+const bundledPython = path.join(root, ".venv", "Scripts", "python.exe");
 
 function json(response, status, payload) {
   const body = Buffer.from(JSON.stringify(payload));
@@ -60,10 +62,12 @@ async function waitForHealth(url, child) {
 
 for (const foreground of [false, true]) {
 for (const selectedProviders of [[], ["openrouter"]]) {
-for (const gatewayFails of [false, true]) {
-  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gatewayFails ? "optional spawn failure" : "healthy gateway"})`,
+for (const gateway of ["healthy gateway", "optional spawn failure", ...(!foreground && !selectedProviders.length ? ["bundled Python exit"] : [])]) {
+  const gatewayFails = gateway !== "healthy gateway";
+  const bundledFailure = gateway === "bundled Python exit";
+  test(`${foreground ? "foreground" : "managed"} startup supports native requests without a provider key (${selectedProviders.length ? "OpenRouter selected" : "native only"}, ${gateway})`,
     {
-      skip: process.platform !== "win32",
+      skip: process.platform !== "win32" || (bundledFailure && !existsSync(bundledPython)),
       timeout: 30_000,
     }, async t => {
       const state = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-"));
@@ -89,6 +93,18 @@ for (const gatewayFails of [false, true]) {
         gatewayCommand,
         `@echo off\r\n"${process.execPath}" "${path.join(root, "test", "managed-startup-gateway-fixture.mjs")}" %*\r\n`,
       );
+      const source = bundledFailure ? path.join(state, "source") : root;
+      if (bundledFailure) {
+        mkdirSync(path.join(source, "src"), { recursive: true });
+        for (const entrypoint of ["start.mjs", "router.mjs", "api-forwarder.mjs", "catalog.mjs"]) {
+          writeFileSync(path.join(source, "src", entrypoint), `import ${JSON.stringify(pathToFileURL(path.join(root, "src", entrypoint)).href)};`);
+        }
+        mkdirSync(path.join(source, ".venv", "Scripts"), { recursive: true });
+        copyFileSync(bundledPython, path.join(source, ".venv", "Scripts", "python.exe"));
+        // The actual Windows venv launcher exits when its recorded base Python
+        // is absent. No installed interpreter or environment is modified.
+        writeFileSync(path.join(source, ".venv", "pyvenv.cfg"), `home = ${path.join(state, "missing-base-python")}\n`);
+      }
       writeFileSync(path.join(state, "internal-secret"), "internal-startup-capability-long-enough\n");
       writeFileSync(path.join(state, "caller-secret"), "caller-startup-capability-long-enough\n");
       writeFileSync(
@@ -101,7 +117,7 @@ for (const gatewayFails of [false, true]) {
       const shell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
       const child = spawn(foreground ? shell : process.execPath, foreground
         ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "model-router.ps1"), "codex", "start", "--foreground"]
-        : [path.join(root, "src", "start.mjs")], {
+        : [path.join(source, "src", "start.mjs")], {
         cwd: root,
         env: {
           ...process.env,
@@ -109,7 +125,10 @@ for (const gatewayFails of [false, true]) {
           OPENROUTER_API_KEY: "",
           MODEL_ROUTER_STATE_DIR: state,
           CODEX_ROUTER_STATE_DIR: state,
-          MODEL_ROUTER_LITELLM_BIN: gatewayCommand,
+          CODEX_ROUTER_SOURCE_ROOT: source,
+          MODEL_ROUTER_LITELLM_BIN: bundledFailure ? "" : gatewayCommand,
+          CODEX_ROUTER_LITELLM_BIN: "",
+          ...(bundledFailure ? { CODEX_ROUTER_GATEWAY_RESTARTS: "0" } : {}),
           CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${nativePort}/backend-api/codex`,
           MODEL_ROUTER_GATEWAY_PORT: String(gatewayPort),
           MODEL_ROUTER_API_PORT: String(apiPort),
@@ -132,12 +151,14 @@ for (const gatewayFails of [false, true]) {
       const healthUrl = `http://127.0.0.1:${routerPort}/${gatewayFails ? "live" : "health"}`;
       assert.equal((await waitForHealth(healthUrl, child)).ok, true);
       if (gatewayFails) {
+        const expectedFailure = bundledFailure ? /LiteLLM gateway exited before becoming healthy/u : /spawn .*ENOENT/u;
         const deadline = Date.now() + 5_000;
-        while (!child.errors().includes("spawn ") && Date.now() < deadline) {
+        while (!expectedFailure.test(child.errors()) && Date.now() < deadline) {
           assert.equal(child.exitCode, null, child.errors());
           await new Promise(resolve => setTimeout(resolve, 25));
         }
-        assert.match(child.errors(), /spawn .*ENOENT/u);
+        assert.match(child.errors(), expectedFailure);
+        if (bundledFailure) assert.match(child.errors(), /No Python at/u);
         assert.doesNotMatch(child.errors(), /Unhandled 'error' event/u);
         assert.equal(child.exitCode, null);
       }
@@ -146,7 +167,7 @@ for (const gatewayFails of [false, true]) {
       } else {
         const record = JSON.parse(readFileSync(recordPath, "utf8"));
         assert.equal(record.pid, child.pid);
-        assert.equal(serviceProcessOwns(record, { sourceRoot: root, stateDir: state }), true);
+        assert.equal(serviceProcessOwns(record, { sourceRoot: source, stateDir: state }), true);
       }
       const fullHealth = await fetch(
         `http://127.0.0.1:${routerPort}/_codex-router/caller-startup-capability-long-enough/v1/health`,
@@ -190,3 +211,120 @@ for (const gatewayFails of [false, true]) {
 }
 }
 }
+
+for (const mode of ["shutdown", "deadline", "deadline-inconclusive"]) test(mode === "shutdown"
+  ? "startup hosts catalog checks without an idle watcher and retains shutdown custody through refresh-tree cleanup"
+  : `catalog deadline retains tree custody and ${mode === "deadline" ? "retries after completed cleanup" : "blocks retries after inconclusive cleanup"}`, {
+  skip: process.platform !== "win32", timeout: 30_000,
+}, async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-catalog-startup-"));
+  const state = path.join(directory, "state"), source = path.join(directory, "source");
+  mkdirSync(state);
+  mkdirSync(path.join(source, "src"), { recursive: true });
+  writeFileSync(path.join(state, "internal-secret"), "internal-catalog-fixture-capability-long-enough\n");
+  writeFileSync(path.join(state, "caller-secret"), "caller-catalog-fixture-capability-long-enough\n");
+  writeFileSync(path.join(state, "enabled-providers.json"), JSON.stringify({ version: 1, providers: [] }));
+  const trace = path.join(directory, "refresh.json"), descendantTrace = path.join(directory, "probe-pid");
+  const descendant = path.join(directory, "probe.mjs");
+  writeFileSync(descendant, `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(descendantTrace)},String(process.pid));process.send({ready:true});setInterval(()=>{},1000);`);
+  writeFileSync(path.join(source, "src", "catalog.mjs"), `import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';const probe=spawn(process.execPath,[${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});probe.once('message',()=>process.stdout.write(JSON.stringify({event:'probe-ready',pid:process.pid})+'\\n'));writeFileSync(${JSON.stringify(trace)},JSON.stringify({pid:process.pid,args:process.argv.slice(2),managedEnvironment:process.env.MODEL_ROUTER_QUIET==='1'&&process.env.CODEX_ROUTER_INTERNAL_KEY==='internal-catalog-fixture-capability-long-enough'}));setInterval(()=>{},1000);`);
+  const url = file => pathToFileURL(file).href;
+  const health = path.join(directory, "health.mjs"), config = path.join(directory, "config.mjs");
+  writeFileSync(health, "export async function waitForHealth(){return {ok:true};}");
+  writeFileSync(config, "export function writeLiteLlmConfig(){}");
+  const cleanup = path.join(directory, "cleanup.mjs");
+  writeFileSync(cleanup, `import {readFileSync} from 'node:fs';import {stopWindowsBatchChild as real} from ${JSON.stringify(url(path.join(root, "src/windows-batch-cleanup.mjs")))};let calls=0;
+export async function stopWindowsBatchChild(child,lifecycle){const call=++calls;const receipt=await real(child,lifecycle);const pid=Number(readFileSync(${JSON.stringify(descendantTrace)},'utf8'));let descendantAlive=true;try{process.kill(pid,0);}catch(error){if(error.code!=='ESRCH')throw error;descendantAlive=false;}process.send({type:'cleanup-proof-'+call,receipt,descendantAlive});await new Promise(resolve=>{const listener=message=>{if(message.type==='release-cleanup'){process.off('message',listener);resolve();}};process.on('message',listener);});if(${mode === "deadline-inconclusive"}&&call===1)throw new Error('intentional inconclusive tree cleanup proof');return receipt;}`);
+  const loader = path.join(directory, "loader.mjs");
+  writeFileSync(loader, `const replacements=new Map(${JSON.stringify([
+    [url(path.join(root, "src/health-probe.mjs")), url(health)],
+    [url(path.join(root, "src/litellm-config.mjs")), url(config)],
+  ])});export async function resolve(s,c,n){const found=await n(s,c);const replacement=c.parentURL===${JSON.stringify(url(path.join(root, "src/start.mjs")))}?replacements.get(found.url):c.parentURL===${JSON.stringify(url(path.join(root, "src/catalog-auto-refresh.mjs")))}&&found.url===${JSON.stringify(url(path.join(root, "src/windows-batch-cleanup.mjs")))}?${JSON.stringify(url(cleanup))}:undefined;return replacement?{url:replacement,shortCircuit:true}:found;}`);
+  const controller = path.join(directory, "controller.mjs");
+  writeFileSync(controller, `import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';import path from 'node:path';import {mock} from 'node:test';import {markForegroundSupervisor} from ${JSON.stringify(url(path.join(root, "src/service-process.mjs")))};
+const actualSpawn=cp.spawn,actualExecFile=cp.execFile;let launches=[],refreshes=0,completed=false;
+cp.spawn=(command,args,options)=>{const script=path.basename(args[0]||'');if(['router.mjs','api-forwarder.mjs','catalog-auto-refresh.mjs'].includes(script)||args.includes('--config')){launches.push(script==='--config'?'gateway':script);return actualSpawn(process.execPath,['--input-type=module','-e','setInterval(()=>{},1000)'],options);}return actualSpawn(command,args,options);};
+cp.execFile=(command,args,...rest)=>{const child=actualExecFile(command,args,...rest);if(path.basename(args[0]||'')==='catalog.mjs'){const iteration=++refreshes;let output='';child.stdout.on('data',chunk=>{output+=chunk;for(let newline;(newline=output.indexOf('\\n'))!==-1;){const line=output.slice(0,newline);output=output.slice(newline+1);if(JSON.parse(line).event==='probe-ready')process.send({type:'probe-ready-'+iteration});}});child.once('close',()=>process.send({type:'refresh-closed-'+iteration,pid:child.pid}));}return child;};const actualError=console.error;console.error=(...values)=>{actualError(...values);if(String(values[0]).includes('automatic catalog refresh failed:'))process.send({type:'refresh-failed',message:String(values[0])});};syncBuiltinESMExports();markForegroundSupervisor();mock.timers.enable({apis:['setInterval','setTimeout']});
+process.on('message',message=>{if(message.type==='advance'){mock.timers.tick(message.milliseconds??30000);process.send({type:message.checkpoint,completed,launches,refreshes});}else if(message.type==='stop')process.emit('SIGTERM');else if(message.type==='finish')process.disconnect();});
+await import(${JSON.stringify(url(path.join(root, "src/start.mjs")))});completed=true;process.send({type:'import-complete',launches,refreshes});`);
+  const child = spawn(process.execPath, ["--no-warnings", "--experimental-loader", url(loader), controller], {
+    cwd: root,
+    env: {
+      ...process.env, CODEX_ROUTER_SOURCE_ROOT: source, CODEX_HOME: path.join(directory, "codex"),
+      CODEX_ROUTER_STATE_DIR: state, MODEL_ROUTER_STATE_DIR: state,
+      MODEL_ROUTER_LITELLM_BIN: process.execPath, OPENROUTER_API_KEY: "",
+      CODEX_ROUTER_CATALOG_REFRESH_MS: "10000", CODEX_ROUTER_GATEWAY_RESTARTS: "0",
+    },
+    stdio: ["ignore", "ignore", "pipe", "ipc"], windowsHide: true,
+  });
+  const messages = [], errors = [];
+  child.on("message", message => messages.push(message));
+  child.stderr.on("data", chunk => errors.push(chunk));
+  const diagnostic = () => Buffer.concat(errors).toString("utf8");
+  const message = type => new Promise((resolve, reject) => {
+    const finish = (settle, value) => {
+      child.off("message", check); child.off("close", closed);
+      t.signal.removeEventListener("abort", aborted); settle(value);
+    };
+    const closed = () => finish(reject, new Error(`catalog fixture closed before ${type}: ${diagnostic()}`));
+    const aborted = () => finish(reject, new Error(`catalog fixture timed out at ${type}: ${diagnostic()}`));
+    const check = () => {
+      const found = messages.find(value => value.type === type);
+      if (found) return finish(resolve, found);
+      if (child.exitCode !== null || child.signalCode !== null) return closed();
+      if (t.signal.aborted) return aborted();
+    };
+    child.on("message", check); child.once("close", closed);
+    t.signal.addEventListener("abort", aborted, { once: true }); check();
+  });
+  try {
+    // The real catalog fixture starts eagerly and owns a real disposable probe.
+    await message("probe-ready-1");
+    const refresh = JSON.parse(readFileSync(trace, "utf8"));
+    assert.deepEqual(refresh.args, ["--refresh-if-stale"]);
+    assert.equal(refresh.managedEnvironment, true);
+    child.send({ type: "advance", checkpoint: "active-checkpoint" });
+    const active = await message("active-checkpoint");
+    assert.equal(active.refreshes, 1, "interval ticks cannot overlap the active refresh");
+    assert.deepEqual(active.launches, ["router.mjs", "api-forwarder.mjs", "gateway"], "three persistent children; no fourth watcher process");
+    if (mode === "shutdown") child.send({ type: "stop" });
+    else child.send({ type: "advance", milliseconds: 180_000, checkpoint: "deadline-checkpoint" });
+    const proof = await message("cleanup-proof-1");
+    assert.equal(proof.descendantAlive, false, "cancellation reaps the catalog-owned probe too");
+    assert.equal((await message("refresh-closed-1")).pid, refresh.pid, "the actual refresh child has closed");
+    child.send({ type: "advance", checkpoint: "stopping-checkpoint" });
+    const stopping = await message("stopping-checkpoint");
+    assert.equal(stopping.completed, false, "supervisor import keeps custody after child close until native cleanup settles");
+    assert.equal(stopping.refreshes, 1);
+    child.send({ type: "release-cleanup" });
+    if (mode !== "shutdown") {
+      const failure = await message("refresh-failed");
+      assert.match(failure.message, mode === "deadline" ? /timed out after 180000 ms/u : /inconclusive tree cleanup proof/u);
+      child.send({ type: "advance", checkpoint: "retry-checkpoint" });
+      const retry = await message("retry-checkpoint");
+      assert.equal(retry.refreshes, mode === "deadline" ? 2 : 1,
+        "a deadline permits another check only after complete tree cleanup proof");
+      if (mode === "deadline") await message("probe-ready-2");
+      child.send({ type: "stop" });
+      if (mode === "deadline") {
+        assert.equal((await message("cleanup-proof-2")).descendantAlive, false);
+        await message("refresh-closed-2");
+        child.send({ type: "release-cleanup" });
+      }
+    }
+    const expectedRefreshes = mode === "deadline" ? 2 : 1;
+    assert.equal((await message("import-complete")).refreshes, expectedRefreshes);
+    child.send({ type: "advance", checkpoint: "stopped-checkpoint" });
+    const stopped = await message("stopped-checkpoint");
+    assert.equal(stopped.completed, true);
+    assert.equal(stopped.refreshes, expectedRefreshes, "no refresh is restarted after supervisor shutdown");
+    if (mode === "shutdown") assert.doesNotMatch(diagnostic(), /catalog refresh cleanup failed|automatic catalog refresh failed/u);
+    else if (mode === "deadline-inconclusive") assert.match(diagnostic(), /catalog refresh cleanup failed/u);
+  } finally {
+    if (child.connected) child.send({ type: "finish" });
+    await stopChild(child);
+    assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
+    assert.match(path.basename(directory), /^router-catalog-startup-/u);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

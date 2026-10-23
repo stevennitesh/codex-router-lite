@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { unlinkSync } from "node:fs";
 
 import { readControlHealth } from "./control-health.mjs";
 import {
@@ -12,21 +13,35 @@ import {
   setMultiAgentModel,
   setSubagentEffort,
   subagentSettingsSnapshot,
+  readSubagentProtocol,
+  setSubagentProtocol,
 } from "./multi-agent-state.mjs";
 import { LISTED_MODELS, MODEL_BY_SLUG } from "./routed-models.mjs";
-import { modelPickerSnapshot, setModelVisible } from "./model-picker-state.mjs";
+import { modelPickerSnapshot, setModelVisible, seedWebModelsVisible } from "./model-picker-state.mjs";
 import { runServiceCli } from "./service.mjs";
+import { readJsonFile } from "./file-probe.mjs";
+import { writePrivateFile } from "./file-security.mjs";
+import { promptForSecret } from "./secret-prompt.mjs";
+import { readWebMaintenanceStatus, webTunnelKeyStatus } from "./web-status.mjs";
+import {
+  configureInAppWebBridge,
+  disconnectWebBridge,
+  readWebBridgeSettings,
+  webBridgeModels,
+  webBridgeStatus,
+  WEB_BRIDGE_TUNNEL_KEY_PATH,
+} from "./chatgpt-web.mjs";
 
 const args = process.argv.slice(2);
-const slugs = new Set(LISTED_MODELS.map((model) => model.slug));
-
 function requireRoute(slug) {
-  if (!slugs.has(slug)) throw new Error(`Unknown routed model: ${slug}`);
-  return MODEL_BY_SLUG.get(slug);
+  const model = MODEL_BY_SLUG.get(slug) || webBridgeModels().find((model) => model.slug === slug);
+  if (!model) throw new Error(`Unknown routed model: ${slug}`);
+  return model;
 }
 
 function requireCertifiedRoute(slug) {
   const route = requireRoute(slug);
+  if (readSubagentProtocol() === "v1") return route;
   if (route.multiAgentVersion !== "v2") {
     throw new Error(`${slug} is not certified for subagents v2.`);
   }
@@ -35,6 +50,23 @@ function requireCertifiedRoute(slug) {
 
 function print(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function webTunnelKeyCommand(operation) {
+  if (operation === "status") return webTunnelKeyStatus();
+  if (operation === "set") {
+    const secret = promptForSecret("ChatGPT Web tunnel runtime key").trim();
+    if (!secret || /[\u0000-\u001f\u007f]/u.test(secret)) throw new Error("The tunnel runtime key is empty or contains control characters. Nothing was saved.");
+    writePrivateFile(WEB_BRIDGE_TUNNEL_KEY_PATH, `${secret}\n`);
+    return { configured: true, fileStatus: "present", storage: "protected file" };
+  }
+  if (operation === "remove") {
+    let removed = false;
+    try { unlinkSync(WEB_BRIDGE_TUNNEL_KEY_PATH); removed = true; }
+    catch (error) { if (error?.code !== "ENOENT") throw new Error("Cannot remove the protected ChatGPT Web tunnel key."); }
+    return { configured: false, removed };
+  }
+  throw new Error("Usage: control web tunnel-key set|status|remove (set prompts without echo; never supply a key argument)");
 }
 
 async function main() {
@@ -59,14 +91,80 @@ async function main() {
     }
     return;
   }
+  if (command === "web") {
+    if (action === "status") print(await readWebMaintenanceStatus());
+    else if (action === "browser") {
+      if (!value || args.length !== 3) throw new Error("Usage: control web browser <safe-config-json-file>");
+      const config = readJsonFile(value);
+      if (config.status !== "present") throw new Error(`Cannot read the safe in-app Web configuration JSON file (${config.status}).`);
+      const status = await configureInAppWebBridge(config.value);
+      await seedWebModelsVisible(webBridgeModels().map((model) => model.slug));
+      print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
+        next: "Run restart-codex-router.ps1 to reload browser and tunnel settings, then model-router.ps1 codex refresh-catalog. Complete Stop adapter setup and hook trust before fully reopening Codex once. Web subagents require V1; configuration does not change the protocol." });
+    } else if (action === "refresh-runtime") {
+      let apply = false, manifestPath;
+      for (let index = 2; index < args.length; index += 1) {
+        if (args[index] === "--apply" && !apply) apply = true;
+        else if (args[index] === "--manifest" && manifestPath === undefined && args[index + 1] && !args[index + 1].startsWith("--")) {
+          manifestPath = path.resolve(args[++index]);
+        } else throw new Error("Usage: control web refresh-runtime [--apply] [--manifest <adapter-manifest-json>]");
+      }
+      const { refreshWebRuntime } = await import("./web-runtime-refresh.mjs");
+      print(await refreshWebRuntime({ apply, ...(manifestPath === undefined ? {} : { manifestPath }) }));
+    } else if (action === "tunnel-key") {
+      if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
+      print(webTunnelKeyCommand(value ?? "status"));
+    } else if (action === "stop") {
+      const operation = value ?? "adapter-status";
+      if (["install-adapter", "adapter-status", "adapter-rollback"].includes(operation)) {
+        if (!(operation === "adapter-status" && args.length <= 3
+            || operation === "adapter-rollback" && args.length === 3
+            || operation === "install-adapter" && extra && !extra.startsWith("--") && args.length === 4)) {
+          throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
+        }
+        const { installWebStopAdapter, webStopAdapterStatus, rollbackWebStopAdapter } = await import("./web-stop-adapter-install.mjs");
+        if (operation === "adapter-status") print(await webStopAdapterStatus());
+        else if (operation === "adapter-rollback") print(await rollbackWebStopAdapter());
+        else {
+          const status = await webStopAdapterStatus({ inspectRuntime: false }), manifestPath = path.resolve(extra);
+          const ownershipClear = Array.isArray(status.conflicts) && status.conflicts.length === 0 && status.recoveryRequired !== true;
+          if (status.state === "installed" && status.ownershipVerified === true && ownershipClear) {
+            const { refreshWebRuntime } = await import("./web-runtime-refresh.mjs");
+            print(await refreshWebRuntime({ apply: true, manifestPath, replaceAdapter: true }));
+          } else if (["absent", "removed"].includes(status.state) && ownershipClear) {
+            const settings = readWebBridgeSettings();
+            if (!settings.enabled) throw new Error("Persistent Web Stop requires the configured in-app browser integration.");
+            print(await installWebStopAdapter({ manifestPath }));
+          } else {
+            throw new Error("Web Stop adapter ownership or recovery is unresolved. Run web stop adapter-status and resolve the reported conflict or complete adapter recovery before installing.");
+          }
+        }
+        return;
+      }
+      throw new Error("Usage: control web stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback");
+    } else if (action === "disconnect") {
+      print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
+        next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|refresh-runtime [--apply] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
+    return;
+  }
   if (command === "subagents") {
     if (action === "status") {
       const snapshot = subagentSettingsSnapshot({ diagnostic: true });
       print({
         ...(snapshot.degraded ? {} : { settings: readMultiAgentSettings() }),
         snapshot,
-        routes: LISTED_MODELS.map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
+        web: webBridgeStatus(),
+        routes: [...LISTED_MODELS, ...webBridgeModels()].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
       });
+    } else if (action === "protocol") {
+      if (value === undefined || value === "status") {
+        print({ protocol: readSubagentProtocol(), web: webBridgeStatus(),
+          webSubagentsAvailable: readSubagentProtocol() === "v1" && webBridgeModels().some(model => model.supportsSubagents !== false) });
+      } else {
+        print({ ...await setSubagentProtocol(value), web: webBridgeStatus(),
+          next: "Run model-router.ps1 codex refresh-catalog, fully quit and reopen Codex, and start a new conversation." });
+      }
     } else if (["all", "selected", "proven"].includes(action)) {
       print(await setMultiAgentMode(action));
     } else if (action === "on" || action === "off") {
@@ -76,7 +174,7 @@ async function main() {
       requireRoute(value);
       print(await setSubagentEffort(value, extra));
     } else {
-      throw new Error("Usage: control subagents status|all|selected|proven|on <route>|off <route>|effort <route> <level>");
+      throw new Error("Usage: control subagents status|protocol status|v1|v2|all|selected|proven|on <route>|off <route>|effort <route> <level>");
     }
     return;
   }
@@ -84,7 +182,7 @@ async function main() {
     process.exitCode = await runServiceCli(args.slice(1));
     return;
   }
-  throw new Error("Usage: control health|providers|picker|subagents|service");
+  throw new Error("Usage: control health|providers|picker|subagents|web|service");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

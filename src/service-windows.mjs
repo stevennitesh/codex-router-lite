@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -130,6 +131,8 @@ function schtasks(args, options = {}) {
   return execFileSync("schtasks.exe", args, {
     encoding: "utf8",
     stdio: options.quiet ? ["ignore", "ignore", "ignore"] : ["ignore", "pipe", "pipe"],
+    ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+    windowsHide: true,
   });
 }
 
@@ -201,12 +204,13 @@ function legacyTaskAction() {
   };
 }
 
-function taskSnapshot() {
+function taskSnapshot({ heartbeatStart } = {}) {
   const canonical = taskAction();
   const previous = previousTaskAction();
   const legacy = legacyTaskAction();
   const script = [
     "$ErrorActionPreference = 'Stop'",
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
     "$scheduler = New-Object -ComObject Schedule.Service",
     "$scheduler.Connect()",
     "$folder = $scheduler.GetFolder('\\')",
@@ -232,7 +236,36 @@ function taskSnapshot() {
     "  $arguments = [string]$actions[0].Arguments",
     "  $ownedAction = (($execute -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_TASK_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_PREVIOUS_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_PREVIOUS_ARGUMENT) -or ($execute -ieq $env:CODEX_ROUTER_LEGACY_EXECUTE -and $arguments -ceq $env:CODEX_ROUTER_LEGACY_ARGUMENT))",
     "}",
-    "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); xml = (Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK); sddl = $registered.GetSecurityDescriptor(7); running = ($task.State.ToString() -ieq 'Running') }",
+    "$state = $task.State.ToString()",
+    "$xml = Export-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK",
+    // Old owned definitions remain manageable even if their XML does not meet
+    // the new-install contract. Only install consumes this observation.
+    "$installedContract = $false",
+    "try {",
+    "  $definition = [xml]$xml",
+    "  $namespaces = [Xml.XmlNamespaceManager]::new($definition.NameTable)",
+    "  $namespaces.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')",
+    // Scheduler exports omit schema defaults. Only missing nodes inherit these
+    // defaults; an explicitly empty or contrary value must still fail below.
+    "  function TaskText($node, $xpath, $missing = '') { $value = $node.SelectSingleNode($xpath, $namespaces); if ($null -eq $value) { return $missing }; return $value.InnerText }",
+    "  function TaskUser($value) { if ($value -ieq $current.Name -or $value -ieq $current.User.Value) { return $true }; try { return (([Security.Principal.NTAccount]::new($value)).Translate([Security.Principal.SecurityIdentifier]).Value -ieq $current.User.Value) } catch { return $false } }",
+    "  function TaskDuration($node, $xpath, $seconds) { try { return ([Xml.XmlConvert]::ToTimeSpan((TaskText $node $xpath)).TotalSeconds -eq $seconds) } catch { return $false } }",
+    "  $root = $definition.SelectSingleNode('/t:Task', $namespaces)",
+    "  $logon = @($root.SelectNodes('t:Triggers/t:LogonTrigger', $namespaces))",
+    "  $heartbeat = @($root.SelectNodes('t:Triggers/t:TimeTrigger', $namespaces))",
+    "  $principals = @($root.SelectNodes('t:Principals/t:Principal', $namespaces))",
+    "  $actions = @($root.SelectNodes('t:Actions/*', $namespaces))",
+    "  $installedContract = ($root.SelectNodes('t:Triggers/*', $namespaces).Count -eq 2 -and $logon.Count -eq 1 -and $heartbeat.Count -eq 1 -and $principals.Count -eq 1 -and $actions.Count -eq 1)",
+    "  if ($installedContract) {",
+    "    $start = [Xml.XmlConvert]::ToDateTimeOffset((TaskText $heartbeat[0] 't:StartBoundary'))",
+    "    $expectedStart = [Xml.XmlConvert]::ToDateTimeOffset($env:CODEX_ROUTER_TASK_HEARTBEAT_START)",
+    "    $installedContract = ((TaskUser (TaskText $logon[0] 't:UserId')) -and (TaskText $logon[0] 't:Enabled' 'true') -ceq 'true' -and (TaskText $logon[0] 't:EndBoundary') -ceq '' -and (TaskText $heartbeat[0] 't:Enabled' 'true') -ceq 'true' -and $start -eq $expectedStart -and (TaskText $heartbeat[0] 't:EndBoundary') -ceq '' -and (TaskDuration $heartbeat[0] 't:Repetition/t:Interval' 60) -and (TaskDuration $heartbeat[0] 't:Repetition/t:Duration' 863913600) -and (TaskText $heartbeat[0] 't:Repetition/t:StopAtDurationEnd' 'false') -ceq 'false')",
+    "    $installedContract = ($installedContract -and (TaskUser (TaskText $principals[0] 't:UserId')) -and (TaskText $principals[0] 't:LogonType') -ceq 'InteractiveToken' -and (TaskText $principals[0] 't:RunLevel' 'LeastPrivilege') -ceq 'LeastPrivilege')",
+    "    $installedContract = ($installedContract -and $actions[0].LocalName -ceq 'Exec' -and (TaskText $actions[0] 't:Command') -ieq $env:CODEX_ROUTER_TASK_EXECUTE -and (TaskText $actions[0] 't:Arguments') -ceq $env:CODEX_ROUTER_TASK_ARGUMENT)",
+    "    $installedContract = ($installedContract -and (TaskText $root 't:Settings/t:Enabled' 'true') -ceq 'true' -and (TaskText $root 't:Settings/t:MultipleInstancesPolicy' 'IgnoreNew') -ceq 'IgnoreNew' -and (TaskText $root 't:Settings/t:StartWhenAvailable') -ceq 'true' -and (TaskText $root 't:Settings/t:DisallowStartIfOnBatteries') -ceq 'false' -and (TaskText $root 't:Settings/t:StopIfGoingOnBatteries') -ceq 'false' -and (TaskDuration $root 't:Settings/t:ExecutionTimeLimit' 0) -and (TaskDuration $root 't:Settings/t:RestartOnFailure/t:Interval' 60) -and (TaskText $root 't:Settings/t:RestartOnFailure/t:Count') -ceq '999')",
+    "  }",
+    "} catch { $installedContract = $false }",
+    "$snapshot = [ordered]@{ exists = $true; owned = ($ownedPrincipal -and $ownedAction); state = $state; xml = $xml; sddl = $registered.GetSecurityDescriptor(7); running = ($state -ieq 'Running'); installedContract = [bool]$installedContract }",
     "[Console]::Out.Write(($snapshot | ConvertTo-Json -Compress))",
   ].join("\n");
   const env = {
@@ -240,6 +273,7 @@ function taskSnapshot() {
     CODEX_ROUTER_TASK: taskName,
     CODEX_ROUTER_TASK_EXECUTE: canonical.execute,
     CODEX_ROUTER_TASK_ARGUMENT: canonical.argument,
+    CODEX_ROUTER_TASK_HEARTBEAT_START: heartbeatStart || "",
     CODEX_ROUTER_PREVIOUS_EXECUTE: previous.execute,
     CODEX_ROUTER_PREVIOUS_ARGUMENT: previous.argument,
     CODEX_ROUTER_LEGACY_EXECUTE: legacy.execute,
@@ -260,6 +294,7 @@ function taskSnapshot() {
       ));
       if (snapshot?.exists === false) return { exists: false };
       if (snapshot?.exists !== true || typeof snapshot.owned !== "boolean"
+        || typeof snapshot.state !== "string"
         || typeof snapshot.running !== "boolean" || typeof snapshot.xml !== "string" || !snapshot.xml
         || typeof snapshot.sddl !== "string" || !snapshot.sddl) throw new Error("Invalid task snapshot.");
       return snapshot;
@@ -273,6 +308,14 @@ function taskSnapshot() {
 function assertOwnedTask(snapshot) {
   if (snapshot.exists && snapshot.owned !== true) {
     throw new Error(`The ${taskName} scheduled task is not owned by this Codex Router installation; refusing to modify it.`);
+  }
+}
+
+function assertInstalledTaskContract(snapshot) {
+  if (!snapshot.exists) throw new Error(`${taskName} registration did not create a task.`);
+  assertOwnedTask(snapshot);
+  if (snapshot.installedContract !== true) {
+    throw new Error(`${taskName} registration did not preserve its heartbeat, principal, action and settings contract.`);
   }
 }
 
@@ -303,9 +346,11 @@ function restoreInstallState(snapshot, launchers) {
     return;
   }
   restoreLaunchers(launchers);
+  if (skipServiceManagerCall()) return;
+  registerTaskXml(snapshot.xml);
   const script = [
+    "$ErrorActionPreference = 'Stop'",
     "$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json",
-    "Register-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -Xml ([string]$payload.xml) -Force | Out-Null",
     "$scheduler = New-Object -ComObject Schedule.Service",
     "$scheduler.Connect()",
     "$scheduler.GetFolder('\\').GetTask($env:CODEX_ROUTER_TASK).SetSecurityDescriptor([string]$payload.sddl, 0x10)",
@@ -316,7 +361,7 @@ function restoreInstallState(snapshot, launchers) {
     {
       encoding: "utf8",
       env: { ...process.env, CODEX_ROUTER_TASK: taskName },
-      input: JSON.stringify({ xml: snapshot.xml, sddl: snapshot.sddl }),
+      input: JSON.stringify({ sddl: snapshot.sddl }),
       stdio: ["pipe", "ignore", "ignore"],
       timeout: TASK_STATE_TIMEOUT_MS,
       windowsHide: true,
@@ -327,57 +372,84 @@ function restoreInstallState(snapshot, launchers) {
   }
 }
 
-function installTask() {
-  // PowerShell is a second Task Scheduler path, independent of schtasks().
-  // Keep it behind the same mutation guard so tests cannot register or replace
-  // the user's real task.
+// Installation and snapshot restoration share both registration backends. The
+// fallback receives the same complete XML, including the watchdog heartbeat.
+function registerTaskXml(xml) {
   if (skipServiceManagerCall()) return;
-  const { execute, argument } = taskAction();
   const script = [
-    // The action strings travel through the environment so that the quotes
-    // around the launcher path never pass through powershell.exe's -Command
-    // reparse or the schtasks argument escaper.
-    "$action = New-ScheduledTaskAction -Execute $env:CODEX_ROUTER_TASK_EXECUTE -Argument $env:CODEX_ROUTER_TASK_ARGUMENT",
-    "$logon = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)",
-    "$heartbeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 9999)",
-    "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable",
-    "$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited",
-    "Register-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -Action $action -Trigger @($logon, $heartbeat) -Settings $settings -Principal $principal -Force | Out-Null",
+    "$ErrorActionPreference = 'Stop'",
+    "[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)",
+    "Register-ScheduledTask -TaskName $env:CODEX_ROUTER_TASK -Xml ([Console]::In.ReadToEnd()) -Force | Out-Null",
   ].join("; ");
   try {
     execFileSync(
       "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
       {
-        env: {
-          ...process.env,
-          CODEX_ROUTER_TASK: taskName,
-          CODEX_ROUTER_TASK_EXECUTE: execute,
-          CODEX_ROUTER_TASK_ARGUMENT: argument,
-        },
+        env: { ...process.env, CODEX_ROUTER_TASK: taskName },
+        encoding: "utf8",
+        input: xml,
         // Registration can run from the Windows app, where a console child
         // gets its own window.
         windowsHide: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["pipe", "ignore", "ignore"],
+        timeout: TASK_STATE_TIMEOUT_MS,
       },
     );
-  } catch {
-    schtasks(
-      [
-        "/Create",
-        "/TN",
-        taskName,
-        "/SC",
-        "ONLOGON",
-        "/TR",
-        `${execute} ${argument}`,
-        "/RL",
-        "LIMITED",
-        "/F",
-      ],
-      { quiet: true, mutating: true },
-    );
+  } catch (primaryError) {
+    const temporary = path.join(STATE_DIR, `task-registration-${randomUUID()}.xml`);
+    let failure;
+    try {
+      guardLauncherWrite();
+      // Scheduler exports UTF-16 XML. Retain a UTF-8 declaration in a prior
+      // snapshot too, without rewriting the document being restored.
+      const utf16 = /<\?xml\s[^?]*encoding\s*=\s*["']utf-16(?:le)?["']/iu.test(xml);
+      writePrivateFile(temporary, utf16
+        ? Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, "utf16le")])
+        : Buffer.from(xml, "utf8"));
+      schtasks(["/Create", "/TN", taskName, "/XML", temporary, "/F"], { quiet: true, mutating: true, timeoutMs: TASK_STATE_TIMEOUT_MS });
+    } catch (fallbackError) {
+      failure = new AggregateError([primaryError, fallbackError], `${taskName} XML registration failed through both Task Scheduler backends.`);
+    } finally {
+      try { unlinkSync(temporary); }
+      catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") {
+          failure = new AggregateError(failure ? [...failure.errors, cleanupError] : [cleanupError], failure
+            ? `${taskName} XML registration failed through both Task Scheduler backends and its temporary XML could not be removed.`
+            : `${taskName} was registered but its temporary XML could not be removed.`);
+        }
+      }
+    }
+    if (failure) throw failure;
   }
+}
+
+function installTask() {
+  if (skipServiceManagerCall()) return;
+  const identity = execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Out.Write([Security.Principal.WindowsIdentity]::GetCurrent().Name)"], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: TASK_STATE_TIMEOUT_MS, windowsHide: true,
+  }).trim();
+  if (!identity) throw new Error("Unable to resolve the current Windows task identity.");
+  const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
+  const user = escape(identity), { execute, argument } = taskAction();
+  const heartbeatStart = new Date().toISOString().replace(/\.\d{3}Z$/u, "Z");
+  const xml = `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled><UserId>${user}</UserId></LogonTrigger>
+    <TimeTrigger><Repetition><Interval>PT1M</Interval><Duration>P9999D</Duration><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>${heartbeatStart}</StartBoundary><Enabled>true</Enabled></TimeTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><UserId>${user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>${escape(execute)}</Command><Arguments>${escape(argument)}</Arguments></Exec></Actions>
+</Task>`;
+  registerTaskXml(xml);
+  return heartbeatStart;
 }
 
 // `schtasks /End` returns once Task Scheduler has accepted the request, not
@@ -610,10 +682,9 @@ if (command === "render") {
     // hidden run — the console window would survive until the next logon.
     endTask();
     writeLaunchers();
-    installTask();
-    const installedTask = taskSnapshot();
-    if (!installedTask.exists) throw new Error(`${taskName} registration did not create a task.`);
-    assertOwnedTask(installedTask);
+    const heartbeatStart = installTask();
+    const installedTask = taskSnapshot({ heartbeatStart });
+    assertInstalledTaskContract(installedTask);
     schtasks(["/Run", "/TN", taskName], { quiet: true, mutating: true });
   } catch (installError) {
     let restoreError;
@@ -654,7 +725,7 @@ if (command === "render") {
   if (snapshot.exists) {
     assertOwnedTask(snapshot);
     installed = true;
-    state = taskState() || "ready";
+    state = snapshot.state.trim().toLowerCase() || "ready";
     loaded = await taskRunning();
     if (loaded) state = "running";
   }

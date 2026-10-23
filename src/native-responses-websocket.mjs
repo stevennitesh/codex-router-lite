@@ -62,10 +62,10 @@ export class NativeResponsesWebSocket {
     return true;
   }
 
-  close() {
-    const connection = this.connection;
-    this.connection = undefined;
-    if (!connection) return;
+  close(connection = this.connection) {
+    if (this.connection === connection) this.connection = undefined;
+    if (!connection || connection.closed) return;
+    connection.closed = true;
     connection.fail(failure("local_router_stream_failed", "Native Responses connection closed."));
     // Destroy the owned socket on cancellation instead of waiting indefinitely
     // for a peer close handshake while a billable response keeps running.
@@ -178,18 +178,19 @@ export class NativeResponsesWebSocket {
         connection.socket?.pause();
       }
     });
-    const abort = () => this.close();
+    const abort = () => this.close(connection);
     signal.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
       connection.fail(failure("local_router_stream_failed", "Native Responses WebSocket handshake timed out."));
-      this.close();
+      this.close(connection);
     }, this.timeoutMs);
     try {
       await opened;
       signal.throwIfAborted();
       return { connection, fresh: true };
     } catch (error) {
-      this.close();
+      this.close(connection);
+      signal.throwIfAborted();
       throw error;
     } finally {
       clearTimeout(timer);
@@ -199,18 +200,26 @@ export class NativeResponsesWebSocket {
 
   async run(prepared, { signal, onEvent, onHeaders }) {
     const { connection, fresh } = await this.connect(prepared, signal);
-    if (fresh && !(await onHeaders(connection.headers))) return undefined;
-    signal.throwIfAborted();
-    const abort = () => this.close();
+    const abort = () => this.close(connection);
     signal.addEventListener("abort", abort, { once: true });
-    connection.active = true;
-    connection.activeResponseId = undefined;
-    connection.interruptSent = false;
-    connection.sent = true;
     try {
-      for (const event of connection.idle.splice(0)) {
-        if (!(await onEvent(event))) return undefined;
+      signal.throwIfAborted();
+      if (fresh && !(await onHeaders(connection.headers))) {
+        signal.throwIfAborted();
+        this.close(connection);
+        return undefined;
       }
+      signal.throwIfAborted();
+      connection.active = true;
+      connection.activeResponseId = undefined;
+      connection.interruptSent = false;
+      for (const event of connection.idle.splice(0)) {
+        const forwarded = await onEvent(event);
+        signal.throwIfAborted();
+        if (!forwarded.ready) { this.close(connection); return undefined; }
+      }
+      signal.throwIfAborted();
+      connection.sent = true;
       connection.websocket.send(prepared.encoded || JSON.stringify({ ...prepared.payload, type: "response.create" }));
       while (true) {
         signal.throwIfAborted();
@@ -233,22 +242,24 @@ export class NativeResponsesWebSocket {
         // can forward unchanged native JSON without serializing it again.
         const forwarded = await onEvent(next.event, next.rawJson);
         connection.queuedBytes -= next.bytes;
-        if (TERMINALS.has(next.event.type)) {
+        if (TERMINALS.has(next.event.type) && forwarded.accepted) {
           // Rate-limit/transport metadata may share the terminal's network
           // packet. Retain the same bounded idle metadata accepted between
           // requests; response output after a terminal remains a violation.
           const trailing = connection.queued.splice(0);
           if (trailing.some(({ event }) => !IDLE_METADATA.has(event.type)) ||
-              connection.idle.length + trailing.length > 16) this.close();
+              connection.idle.length + trailing.length > 16) this.close(connection);
           else connection.idle.push(...trailing.map(({ event }) => event));
           connection.queuedBytes = 0;
           return next.event;
         }
-        if (!forwarded) { this.close(); return undefined; }
+        signal.throwIfAborted();
+        if (!forwarded.ready) { this.close(connection); return undefined; }
         if (!connection.queued.length) connection.socket?.resume();
       }
     } catch (error) {
-      this.close();
+      this.close(connection);
+      signal.throwIfAborted();
       throw error;
     } finally {
       connection.active = false;

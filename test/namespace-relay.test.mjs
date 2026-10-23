@@ -673,39 +673,43 @@ test("unsupported SSE envelopes fail closed after a tool rewrite was committed",
   assert.match(error.message, /ambiguous function arguments/u);
 });
 
-test("response transform drops a spawn-agent model override not offered by the tool schema", async () => {
-  const { namespaces } = flattenNamespaceTools(clientRoutedTools());
-  const lookups = buildNamespaceLookups(namespaces);
-  const invalid = rewriteNamespaceResponsePayload(
-    {
-      output: [
-        {
-          type: "function_call",
-          name: "collaboration__spawn_agent",
-          arguments: JSON.stringify({ message: "verify", model: "gpt-5.6-luna" }),
-        },
-      ],
-    },
-    lookups,
-  );
-  assert.deepEqual(JSON.parse(invalid.output[0].arguments), { message: "verify" });
-
-  const valid = rewriteNamespaceResponsePayload(
-    {
-      output: [
-        {
-          type: "function_call",
-          name: "collaboration__spawn_agent",
-          arguments: JSON.stringify({ message: "verify", model: "gpt-5.6-terra" }),
-        },
-      ],
-    },
-    lookups,
-  );
-  assert.deepEqual(JSON.parse(valid.output[0].arguments), {
-    message: "verify",
-    model: "gpt-5.6-terra",
-  });
+test("spawn-agent model policy uses the same native schema as the provider declaration", async () => {
+  const schema = model => ({ type: "object", properties: { model: { enum: [model, null] } } });
+  for (const [declaration, allowed] of [
+    [{ inputSchema: schema("input-model") }, "input-model"],
+    [{ parameters: schema("parameter-model") }, "parameter-model"],
+    [{ parameters: schema("parameter-model"), inputSchema: schema("input-model") }, "parameter-model"],
+    [{ parameters: null, inputSchema: schema("input-model") }, "input-model"],
+    [{ parameters: { type: "object" }, inputSchema: schema("input-model") }, undefined],
+    [{ parameters: { type: "object", properties: { model: { anyOf: [{ const: "parameter-model" }, { type: "null" }] } } } }, "parameter-model"],
+  ]) {
+    const native = { type: "function", name: "spawn_agent", ...declaration };
+    const declarations = [{ type: "namespace", name: "collaboration", tools: [native] }];
+    const original = structuredClone(declarations);
+    const { namespaces, tools } = flattenNamespaceTools(declarations);
+    assert.deepEqual(tools[0].parameters, native.parameters ?? native.inputSchema);
+    const lookups = buildNamespaceLookups(namespaces);
+    const prepared = prepareRoutedRequest({ tools: declarations, input: [] }, MODEL_BY_SLUG.get("openrouter/deepseek-v4.1-flash-deepinfra"));
+    assert.deepEqual(prepared.payload.tools[0].parameters, tools[0].parameters);
+    assert.deepEqual(buildNamespaceLookups(prepared.namespaces).spawnAgentModels, lookups.spawnAgentModels);
+    assert.deepEqual(declarations, original);
+    for (const model of ["input-model", "parameter-model", "unsupported-model", undefined, null, 12]) {
+      const item = { type: "function_call", id: "fc_spawn", call_id: "call_spawn", name: tools[0].name,
+        arguments: JSON.stringify({ message: "verify", model }) };
+      const expected = { message: "verify", ...(model !== undefined && (typeof model !== "string" || !allowed || model === allowed) ? { model } : {}) };
+      const restored = rewriteNamespaceResponsePayload({ output: [item] }, lookups);
+      assert.deepEqual(JSON.parse(restored.output[0].arguments), expected);
+      const event = { type: "response.output_item.done", item };
+      const wire = Buffer.from(`data: ${JSON.stringify(event)}\n\n`);
+      const stream = Readable.from([...wire].map(byte => Buffer.from([byte]))).pipe(new NamespaceToolCallTransform(namespaces, "text/event-stream"));
+      const streamed = responseEventsFromSse(await collect(stream));
+      assert.deepEqual(JSON.parse(streamed[0].item.arguments), expected);
+      assert.equal(restored.output[0].namespace, "collaboration");
+      const history = aliasHistoricalFunctionNames([restored.output[0], { type: "function_call_output", call_id: item.call_id, output: "actual result" }], namespaces);
+      assert.deepEqual(JSON.parse(history[0].arguments), expected);
+      assert.equal(history[1].output, "actual result");
+    }
+  }
 });
 
 const V4A_GRAMMAR = [

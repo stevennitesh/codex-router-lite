@@ -76,7 +76,8 @@ function buildCandidate(binary, nativeOverride) {
     }),
     codexEffortVocabulary(version),
   );
-  const merged = buildMergedCatalog(native, effectiveRouted);
+  const omittedRoutes = [];
+  const merged = buildMergedCatalog(native, effectiveRouted, { omittedRoutes });
   const catalog = {
     models: applyPickerVisibility(merged, {
       nativeBaseSlugs,
@@ -89,6 +90,26 @@ function buildCandidate(binary, nativeOverride) {
   const builtGlms = routed
     .filter((model) => model.provider === "openrouter")
     .map((model) => catalog.models.find((candidate) => candidate.slug === model.slug));
+  const switchyardOmission = omittedRoutes.find((model) => model.slug === "switchyard/auto");
+  if (!builtSwitchyard) {
+    assert.ok(nativeOverride && switchyardOmission,
+      `${version} cannot publish Switchyard: ${switchyardOmission?.reason || "missing routed entry"}`);
+    console.warn(JSON.stringify({ warning: "routed_model_omitted", ...switchyardOmission }));
+  } else {
+    assertSwitchyardCompatibility(native, builtSwitchyard, version);
+  }
+  for (const builtGlm of builtGlms) {
+    assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
+    assert.equal("supports_reasoning_summaries" in builtGlm, false);
+    assert.equal("supports_parallel_tool_calls" in builtGlm, false);
+    assert.equal(builtGlm.supports_reasoning_effort_updates, false);
+    assert.deepEqual(builtGlm.experimental_supported_tools, []);
+    assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
+  }
+  return { binary, version, catalog, switchyardOmission };
+}
+
+function assertSwitchyardCompatibility(native, builtSwitchyard, version) {
   const switchyardRoute = MODEL_BY_SLUG.get("switchyard/auto");
   const compatibilityMembers = switchyardRoute.compatibilityModels.map((slug) => {
     const member = native.models.find((model) => model.slug === slug);
@@ -215,15 +236,6 @@ function buildCandidate(binary, nativeOverride) {
       `${version} does not support ${target.model} ${target.effort} for ${target.name}`,
     );
   }
-  for (const builtGlm of builtGlms) {
-    assert.equal(builtGlm.supports_reasoning_summary_parameter, false);
-    assert.equal("supports_reasoning_summaries" in builtGlm, false);
-    assert.equal("supports_parallel_tool_calls" in builtGlm, false);
-    assert.equal(builtGlm.supports_reasoning_effort_updates, false);
-    assert.deepEqual(builtGlm.experimental_supported_tools, []);
-    assert.equal("multi_agent_reasoning_effort" in builtGlm, false);
-  }
-  return { binary, version, catalog };
 }
 
 export function main(args = process.argv.slice(2)) {
@@ -254,6 +266,11 @@ export function main(args = process.argv.slice(2)) {
       return owned;
     };
     for (const model of routed) {
+      if (model.slug === source.switchyardOmission?.slug) {
+        assert.equal(checkedBySlug.has(model.slug), false,
+          `${source.version} installed catalog advertises incompatible routed entry ${model.slug}`);
+        continue;
+      }
       if (!checkedBySlug.has(model.slug)) {
         throw new Error(`${source.version} catalog is missing routed entry ${model.slug}`);
       }
@@ -272,17 +289,26 @@ export function main(args = process.argv.slice(2)) {
     );
     const bySlug = new Map(parsed.models.map((model) => [model.slug, model]));
     for (const model of routed) {
+      if (model.slug === source.switchyardOmission?.slug) {
+        assert.equal(bySlug.has(model.slug), false,
+          `${source.version} parsed catalog advertises incompatible routed entry ${model.slug}`);
+        continue;
+      }
       if (!bySlug.has(model.slug)) {
         throw new Error(`${source.version} did not parse routed catalog entry ${model.slug}`);
       }
     }
     const switchyard = bySlug.get("switchyard/auto");
-    assert.equal(switchyard.auto_compact_token_limit ?? undefined,
-      expectedBySlug.get("switchyard/auto").auto_compact_token_limit ?? undefined,
-      `${source.version} did not preserve Switchyard native compaction`);
+    if (switchyard) {
+      assert.equal(switchyard.auto_compact_token_limit ?? undefined,
+        expectedBySlug.get("switchyard/auto").auto_compact_token_limit ?? undefined,
+        `${source.version} did not preserve Switchyard native compaction`);
+    }
     process.stdout.write(
       `${source.version} parsed ${checkedCatalog.models.length} current-schema models; ` +
-        "GLM, DeepSeek, Pareto, and Switchyard compatibility passed\n",
+        (source.switchyardOmission
+          ? "GLM, DeepSeek, and Pareto compatibility passed; Switchyard safely omitted\n"
+          : "GLM, DeepSeek, Pareto, and Switchyard compatibility passed\n"),
     );
   } finally {
     rmSync(temporaryHome, { recursive: true, force: true });

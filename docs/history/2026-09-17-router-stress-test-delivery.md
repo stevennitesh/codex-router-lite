@@ -25,7 +25,7 @@ Catch protocol and lifecycle regressions that happy-path endpoint checks miss,
 without building a testing platform. Extend the existing Node test suite and
 isolated Router/provider fixtures for this personal Windows workflow. Preserve
 all endpoint contracts, native behavior, privacy boundaries and the existing
-[engineering contract](../agents/engineering-contract.md).
+[now-retired engineering contract](https://github.com/stevennitesh/codex-router-lite/blob/54e0a3a26b97bd924e75c769717d1a3a3d925226/docs/agents/engineering-contract.md).
 
 Required outcomes:
 

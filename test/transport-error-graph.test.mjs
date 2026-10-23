@@ -1,11 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createServer } from "node:net";
+import { Agent, fetch } from "undici";
 import { fetchWithRetry } from "../src/upstream-retry.mjs";
 import { describeTransportFailure } from "../src/transport-failure.mjs";
 import { waitForRouterHealth } from "../src/router-health.mjs";
 
 const refused = () => Object.assign(new Error("connection refused"),{code:"ECONNREFUSED",hostname:"localhost"});
 const wrapped = members => new TypeError("fetch failed",{cause:new AggregateError(members)});
+
+test("real HTTP/1 connect failures identify the failed local endpoint without claiming ownership", async () => {
+  const listener = createServer();
+  await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve); });
+  const { port } = listener.address();
+  await new Promise(resolve => listener.close(resolve));
+  const dispatcher = new Agent({ allowH2: false });
+  try {
+    const error = await fetch(`http://127.0.0.1:${port}`, { dispatcher }).then(() => assert.fail("closed endpoint answered"), error => error);
+    const failure = describeTransportFailure(error, { proxyConfigured: false });
+    assert.equal(failure.code, "ECONNREFUSED");
+    assert.match(failure.cause, /127\.0\.0\.1 refused/u);
+    assert.match(failure.hint, /local endpoint/u);
+    assert.doesNotMatch(failure.hint, /own processes|not the network/u);
+    assert.match(describeTransportFailure(error, { proxyConfigured: true }).hint, /local service or configured proxy/u);
+  } finally { await dispatcher.close(); }
+});
+
+test("host diagnosis accepts bounded host fields and rejects addresses carrying private data", () => {
+  const diagnose = fields => describeTransportFailure(Object.assign(new Error("connection failed"), { code: "ECONNREFUSED", ...fields }), { proxyConfigured: false });
+  for (const address of ["::1", "[::1]", "127.2.3.4"]) {
+    const result = diagnose({ address, syscall: "connect" });
+    assert.ok(result.cause.includes(address)); assert.match(result.hint, /local endpoint/u);
+  }
+  assert.match(diagnose({ hostname: "gateway.example", address: "127.0.0.1", syscall: "connect" }).cause, /gateway\.example/u);
+  assert.match(diagnose({ hostname: "127.example.invalid" }).hint, /outbound proxy/u);
+  assert.match(diagnose({ address: "127.0.0.1", syscall: "read" }).cause, /the upstream/u);
+  for (const value of ["https://user:PRIVATE@example.invalid/path", "user@PRIVATE", "host\nPRIVATE", "[::1]PRIVATE", "x".repeat(254)]) {
+    for (const key of ["hostname", "address"]) {
+      const result = diagnose({ [key]: value, syscall: "connect" });
+      assert.match(result.cause, /the upstream/u); assert.ok(!result.cause.includes("PRIVATE"));
+    }
+  }
+  assert.match(diagnose({ message: "Connect Timeout (attempted address: [::1]:4200)" }).cause, /\[::1\]/u);
+});
 async function retryOutcome(error, canRetry = () => true) {
   let attempts = 0;
   const outcome = await fetchWithRetry("http://upstream.invalid",{}, {

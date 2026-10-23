@@ -66,6 +66,14 @@ local correlation metadata, not authentication. Raw UUIDs and digest fields are
 omitted from published certification evidence; the projection adds no upstream
 headers or payload fields.
 
-Do not expose a listener on `0.0.0.0`, tunnel it, or place it on a shared network. Loopback capabilities do not protect against malicious code already running as the same Windows user.
+Keep local listeners on loopback, never `0.0.0.0` or a shared network. Do not
+tunnel Router, LiteLLM, Switchyard or management endpoints. The optional
+[ChatGPT Web integration](docs/CHATGPT-WEB.md) uses its registered official tunnel
+only for the capability-protected Web MCP endpoint. Native-tool discovery and
+invocation additionally require an active turn token and the current declared,
+allowed tools; execution retains native Codex approvals and sandbox permissions.
+The MCP listener and tunnel health endpoint remain loopback-only. Loopback
+capabilities do not protect against malicious code already running as the same
+Windows user.
 
 Report vulnerabilities through [GitHub Private Vulnerability Reporting](https://github.com/stevennitesh/codex-router-lite/security/advisories/new). Do not include secrets, full prompts, response bodies, or unredacted logs in a public issue.

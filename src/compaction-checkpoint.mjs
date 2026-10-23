@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { redactCallerUrl } from "./caller-auth.mjs";
 import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
@@ -363,6 +364,14 @@ function uniqueStrings(values, max) {
 
 function normalizedCheckpoint(value) {
   if (!plainObject(value) || value.version !== 2) return undefined;
+  const exactTail = Object.hasOwn(value, "retained_tail") || Object.hasOwn(value, "retained_tail_id");
+  let retainedTail;
+  if (exactTail) {
+    if (typeof value.retained_tail_id !== "string" || !/^cmp_[a-f0-9]{32}$/u.test(value.retained_tail_id)
+        || !Array.isArray(value.retained_tail) || !value.retained_tail.every(plainObject)) return undefined;
+    try { retainedTail = JSON.parse(JSON.stringify(value.retained_tail)); } catch { return undefined; }
+    if (!isDeepStrictEqual(retainedTail, value.retained_tail)) return undefined;
+  }
   const sourceEntries = Object.entries(plainObject(value.sources) ? value.sources : {});
   if (sourceEntries.some(([id]) => sourceNumber(id) === undefined)) return undefined;
   const sources = {};
@@ -431,6 +440,7 @@ function normalizedCheckpoint(value) {
     recent_tail: recentTail,
     recent_tail_truncated: recentTailTruncated,
     counters,
+    ...(exactTail ? { retained_tail_id: value.retained_tail_id, retained_tail: retainedTail } : {}),
   };
 }
 
@@ -475,7 +485,8 @@ export function isRouterCompactionValue(value) {
 // `recent_tail` id or missing counters, and `fitCheckpoint` is not guaranteed
 // to reach the size limit, so both encoding and rendering degrade to a
 // minimal, structurally valid checkpoint that says what was lost instead of
-// throwing out of the compaction path.
+// throwing out of the compaction path. Exact pending native items are the
+// exception: rejecting compaction preserves the caller's original history.
 const UNENCODABLE_CHECKPOINT_UNKNOWN =
   "The router could not encode a checkpoint for this compaction; earlier task state must be reconstructed from the conversation itself.";
 
@@ -497,10 +508,12 @@ function minimalCheckpoint() {
   };
 }
 
-// Always returns a checkpoint that `normalizedCheckpoint` accepts and that
-// serializes inside MAX_CHECKPOINT_BYTES.
+// Returns a valid bounded checkpoint, or rejects exact pending data that cannot
+// be preserved within MAX_CHECKPOINT_BYTES.
 function encodableCheckpoint(checkpoint) {
+  const exactTail = plainObject(checkpoint) && (Object.hasOwn(checkpoint, "retained_tail") || Object.hasOwn(checkpoint, "retained_tail_id"));
   const normalized = normalizedCheckpoint(checkpoint);
+  if (!normalized && exactTail) throw Object.assign(new Error("The exact native compaction tail is invalid; conversation history was not compacted."), { code: "invalid_web_compaction_tail", status: 400 });
   if (!normalized) return normalizedCheckpoint(minimalCheckpoint());
   if (Buffer.byteLength(JSON.stringify(normalized), "utf8") <= MAX_CHECKPOINT_BYTES) {
     return normalized;
@@ -509,20 +522,24 @@ function encodableCheckpoint(checkpoint) {
   if (fitted && Buffer.byteLength(JSON.stringify(fitted), "utf8") <= MAX_CHECKPOINT_BYTES) {
     return fitted;
   }
+  if (exactTail) throw Object.assign(new Error("The exact native compaction tail exceeds the 96 KiB checkpoint limit; conversation history was not compacted."), { code: "web_compaction_tail_too_large", status: 413 });
   return normalizedCheckpoint(minimalCheckpoint());
 }
 
-export function encodeCheckpoint(checkpoint) {
-  const encodable = encodableCheckpoint(checkpoint);
+export function encodeCheckpoint(checkpoint, { retainedTail, retainedTailId } = {}) {
+  const encodable = encodableCheckpoint(retainedTail !== undefined || retainedTailId !== undefined
+    ? { ...checkpoint, retained_tail: retainedTail, retained_tail_id: retainedTailId } : checkpoint);
   return KCR2_PREFIX + Buffer.from(JSON.stringify(encodable), "utf8").toString("base64");
 }
 
 export function renderCheckpoint(checkpoint) {
   const normalized = encodableCheckpoint(checkpoint);
+  // Exact transport data must also fit the rendered checkpoint parser's bound.
+  // Compact JSON avoids pretty-print expansion of deeply structured tool data.
   return `${CHECKPOINT_WARNING}\n\n${CHECKPOINT_BEGIN}\n${JSON.stringify(
     normalized,
     null,
-    2,
+    normalized.retained_tail === undefined ? 2 : undefined,
   )}\n${CHECKPOINT_END}`;
 }
 
@@ -695,8 +712,14 @@ function catalogIds(sources, order, priorRefs) {
 }
 
 export function prepareCompaction(input) {
-  const items = Array.isArray(input) ? input : [];
-  const prior = priorState(input);
+  const items = [];
+  const append = item => {
+    items.push(item);
+    const checkpoint = item?.type === "compaction" ? decodeCompaction(item.encrypted_content)?.checkpoint : renderedCheckpointFromMessage(item);
+    for (const retained of checkpoint?.retained_tail ?? []) append(retained);
+  };
+  for (const item of Array.isArray(input) ? input : []) append(item);
+  const prior = priorState(items);
   const sources = new Map();
   const order = [];
   const counters = { U: 1, A: 1, C: 1, R: 1 };

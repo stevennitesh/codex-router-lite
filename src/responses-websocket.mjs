@@ -347,7 +347,7 @@ function responseHeaders(response, { includeRateLimits = false } = {}) {
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-async function sendSuccessfulResponseHeaders(peer, response) {
+async function sendSuccessfulResponseHeaders(peer, response, { signal } = {}) {
   const headers = responseHeaders(response) || {};
   const turnState = headers["x-codex-turn-state"];
   if (turnState !== undefined) {
@@ -355,7 +355,7 @@ async function sendSuccessfulResponseHeaders(peer, response) {
     if (!(await peer.sendJsonWithBackpressure({
       type: "response.metadata",
       headers: { "x-codex-turn-state": turnState },
-    }))) return false;
+    }, undefined, { signal })).ready) return false;
   }
 
   const codexMetadataHeaders = {};
@@ -371,11 +371,11 @@ async function sendSuccessfulResponseHeaders(peer, response) {
     if (!(await peer.sendJsonWithBackpressure({
       type: "codex.response.metadata",
       headers: codexMetadataHeaders,
-    }))) return false;
+    }, undefined, { signal })).ready) return false;
   }
 
   for (const rateLimits of rateLimitEvents(response.headers)) {
-    if (!(await peer.sendJsonWithBackpressure(rateLimits))) return false;
+    if (!(await peer.sendJsonWithBackpressure(rateLimits, undefined, { signal })).ready) return false;
   }
 
   if (headers["x-reasoning-included"] !== undefined) {
@@ -801,24 +801,59 @@ class ResponsesWebSocketPeer {
     return this.send(0x1, Buffer.from(JSON.stringify(value), "utf8"));
   }
 
-  async sendJsonWithBackpressure(value, rawJson) {
+  writable(signal) {
+    return !this.closed && !this.socket.destroyed && this.socket.writable &&
+      !this.abortController.signal.aborted && !signal?.aborted;
+  }
+
+  waitForWritable(signal = this.abortController.signal, needsDrain = this.socket.writableNeedDrain) {
+    if (!this.writable(signal)) return Promise.resolve(false);
+    if (!needsDrain || this.socket.writableNeedDrain === false) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ready = false) => {
+        if (settled) return;
+        settled = true;
+        this.socket.off("drain", drained);
+        this.socket.off("close", stopped);
+        this.socket.off("error", stopped);
+        signal.removeEventListener("abort", stopped);
+        this.abortController.signal.removeEventListener("abort", stopped);
+        resolve(ready);
+      };
+      const stopped = () => finish(false);
+      const drained = () => finish(this.writable(signal));
+      this.socket.once("drain", drained);
+      this.socket.once("close", stopped);
+      this.socket.once("error", stopped);
+      signal.addEventListener("abort", stopped, { once: true });
+      if (signal !== this.abortController.signal) {
+        this.abortController.signal.addEventListener("abort", stopped, { once: true });
+      }
+      // Neither an already-fired abort nor a drain during registration replays
+      // its event for these listeners.
+      if (!this.writable(signal)) stopped();
+      else if (this.socket.writableNeedDrain === false) drained();
+    });
+  }
+
+  async sendJsonWithBackpressure(value, rawJson, { signal = this.abortController.signal } = {}) {
     // Upstream events are already parsed for protocol and continuation checks.
     // Forward their validated JSON without serializing large unchanged output
     // again. Locally generated metadata/errors retain ordinary serialization.
-    if (rawJson === undefined ? this.sendJson(value) : this.send(0x1, Buffer.from(rawJson, "utf8"))) return true;
-    if (this.closed || this.socket.destroyed) return false;
-    await new Promise((resolve) => {
-      const finish = () => {
-        this.socket.off("drain", finish);
-        this.socket.off("close", finish);
-        this.socket.off("error", finish);
-        resolve();
-      };
-      this.socket.once("drain", finish);
-      this.socket.once("close", finish);
-      this.socket.once("error", finish);
-    });
-    return !this.closed && !this.socket.destroyed;
+    while (this.socket.writableNeedDrain) {
+      if (!(await this.waitForWritable(signal))) return { accepted: false, ready: false };
+      if (!this.writable(signal)) return { accepted: false, ready: false };
+    }
+    if (!this.writable(signal)) return { accepted: false, ready: false };
+    const payload = Buffer.from(rawJson === undefined ? JSON.stringify(value) : rawJson, "utf8");
+    if (!this.writable(signal)) return { accepted: false, ready: false };
+    let ready = this.socket.write(encodeFrame(0x1, payload));
+    // write(false) still irrevocably accepts this frame. Only readiness for
+    // another frame is canceled by an execution deadline or peer closure.
+    if (!ready) ready = await this.waitForWritable(signal, true);
+    while (ready && this.socket.writableNeedDrain) ready = await this.waitForWritable(signal);
+    return { accepted: true, ready: ready && this.writable(signal) };
   }
 
   sendError(status, error, headers) {
@@ -1038,6 +1073,7 @@ class ResponsesWebSocketPeer {
     const startedAt = Date.now();
     let prepared;
     let terminal;
+    let terminalAccepted = false;
     let outputObservation;
     let firstTokenMs;
     let status = 502;
@@ -1110,7 +1146,7 @@ class ResponsesWebSocketPeer {
         onHeaders: (upstreamHeaders) => {
           const value = safeHeaderValue(upstreamHeaders.get("x-codex-turn-state"));
           if (value) this.turnState = { value, turnId: metadataTurnId(clientMetadata) };
-          return sendSuccessfulResponseHeaders(this, { headers: upstreamHeaders });
+          return sendSuccessfulResponseHeaders(this, { headers: upstreamHeaders }, { signal: controller.signal });
         },
         onEvent: async (event, rawJson) => {
           if (event.type === "response.completed" && !validCompletedResponse(event.response)) {
@@ -1139,9 +1175,10 @@ class ResponsesWebSocketPeer {
             event.type === "response.custom_tool_call_input.delta" ||
             event.type === "response.reasoning_summary_text.delta"
           )) firstTokenMs = Date.now() - startedAt;
-          return this.sendJsonWithBackpressure(event, rawJson);
+          return this.sendJsonWithBackpressure(event, rawJson, { signal: controller.signal });
         },
       });
+      terminalAccepted = Boolean(terminal);
       const interrupted = isInterruptedResponse(terminal);
       const completed = terminal?.type === "response.completed";
       status = completed || interrupted ? 200 : Number(terminal?.status) || 502;
@@ -1154,7 +1191,7 @@ class ResponsesWebSocketPeer {
           : reconciledContinuationOutput(terminal.response.output, outputItems);
         outputObservation = { output: outputItems, complete: !continuationOverflow };
         const outputBytes = Buffer.byteLength(JSON.stringify(outputItems), "utf8");
-        if (knownBaseline && !continuationOverflow && inputBytes + outputBytes + 32 <= this.options.maxContinuationBytes) {
+        if (!this.closed && knownBaseline && !continuationOverflow && inputBytes + outputBytes + 32 <= this.options.maxContinuationBytes) {
           this.continuations.set(terminal.response.id, { input, output: outputItems, inputBytes, outputBytes });
         }
       }
@@ -1186,11 +1223,11 @@ class ResponsesWebSocketPeer {
       this.continuations.clear();
       return true;
     } finally {
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted && !terminalAccepted) {
         status = Number(controller.signal.reason?.status) || 499;
         outcome = status === 504 ? "failed" : "canceled";
       }
-      prepared?.finish?.({ status, outcome, response: terminal?.response, outputObservation,
+      prepared?.finish?.({ status, outcome, terminalAccepted, response: terminal?.response, outputObservation,
         usage: terminal?.response?.usage, firstTokenMs, latencyMs: Date.now() - startedAt });
       this.abortController.signal.removeEventListener("abort", onClose);
       controller.abort();
@@ -1199,6 +1236,13 @@ class ResponsesWebSocketPeer {
 
   async process(request) {
     if (this.closed) return;
+    // An expired execution can release its slot while its accepted frame still
+    // needs drain. The connection owns that wait, before another admission.
+    while (this.socket.writableNeedDrain) {
+      if (!(await this.waitForWritable())) return;
+      if (!this.writable(this.abortController.signal)) return;
+    }
+    if (!this.writable(this.abortController.signal)) return;
     try {
       this.options.admitRequest?.();
     } catch {
@@ -1280,17 +1324,17 @@ class ResponsesWebSocketPeer {
       const responseId = `resp_router_prewarm_${randomUUID().replaceAll("-", "")}`;
       this.continuations.clear();
       this.continuations.set(responseId, { input: fullRequest.input, output: [] });
-      await this.sendJsonWithBackpressure({
+      if (!(await this.sendJsonWithBackpressure({
         type: "response.created",
         response: { id: responseId },
-      });
-      await this.sendJsonWithBackpressure({
+      })).ready) return;
+      if (!(await this.sendJsonWithBackpressure({
         type: "response.completed",
         response: {
           id: responseId,
           usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
         },
-      });
+      })).ready) return;
       return;
     }
 
@@ -1378,18 +1422,18 @@ class ResponsesWebSocketPeer {
         if (!(await this.sendJsonWithBackpressure({
           type: "response.created",
           response: { ...completedResponse, status: "in_progress", output: [] },
-        }))) return;
+        })).ready) return;
         for (const [outputIndex, item] of completedResponse.output.entries()) {
           if (!(await this.sendJsonWithBackpressure({
             type: "response.output_item.done",
             output_index: outputIndex,
             item,
-          }))) return;
+          })).ready) return;
         }
         if (!(await this.sendJsonWithBackpressure({
           type: "response.completed",
           response: completedResponse,
-        }))) return;
+        })).ready) return;
         this.continuations.clear();
         const continuation = continuationState(
           fullRequest.input,
@@ -1431,7 +1475,7 @@ class ResponsesWebSocketPeer {
             error.code = "local_router_protocol_error";
             throw error;
           }
-          if (!(await this.sendJsonWithBackpressure(event, data))) return false;
+          if (!(await this.sendJsonWithBackpressure(event, data)).ready) return false;
           if (event.type === "response.output_item.done" && event.item) {
             const itemBytes = Buffer.byteLength(JSON.stringify(event.item), "utf8");
             if (outputItemsBytes + itemBytes <= this.options.maxContinuationBytes) {

@@ -53,9 +53,13 @@ import {
 } from "./native-auth-observation.mjs";
 import {
   LISTED_MODELS,
+  LEGACY_CODEX_EFFORTS,
   MODEL_BY_SLUG,
+  projectRoutedModelEfforts,
+  ROUTED_EFFORT_LADDER,
 } from "./routed-models.mjs";
 import { readProviderSelection } from "./provider-selection.mjs";
+import { webBridgeModels } from "./chatgpt-web.mjs";
 
 const refresh = process.argv.includes("--refresh-native");
 const refreshIfStale = process.argv.includes("--refresh-if-stale");
@@ -463,59 +467,25 @@ export function nativeCatalog({
 // the only reliable signal — max and ultra joined in 0.143.0 (verified
 // against the published binaries: 0.142.5 lacks the serde variants, 0.143.0
 // carries them), and the baseline predates this router. An unknown version
-// clamps: a wrongly clamped Max still routes at full effort under the xhigh
-// label, while a wrongly emitted max is exactly the missing-picker-entry bug.
-const BASELINE_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
-const EFFORT_LADDER = [...BASELINE_EFFORTS, "max", "ultra"];
+// projects to the baseline. The four GLM/DeepSeek routes resolve their legacy
+// xhigh presentation back to canonical max before exact endpoint validation.
 const MAX_EFFORT_SINCE = [0, 143, 0];
 
 export function codexEffortVocabulary(version) {
   const match = /(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.]+)?/.exec(String(version || ""));
-  if (!match) return new Set(BASELINE_EFFORTS);
+  if (!match) return new Set(LEGACY_CODEX_EFFORTS);
   const installed = [Number(match[1]), Number(match[2]), Number(match[3])];
   for (let index = 0; index < 3; index += 1) {
-    if (installed[index] > MAX_EFFORT_SINCE[index]) return new Set(EFFORT_LADDER);
-    if (installed[index] < MAX_EFFORT_SINCE[index]) return new Set(BASELINE_EFFORTS);
+    if (installed[index] > MAX_EFFORT_SINCE[index]) return new Set(ROUTED_EFFORT_LADDER);
+    if (installed[index] < MAX_EFFORT_SINCE[index]) return new Set(LEGACY_CODEX_EFFORTS);
   }
   // Exactly the boundary release: prereleases of it may predate the variants.
-  return match[4] ? new Set(BASELINE_EFFORTS) : new Set(EFFORT_LADDER);
+  return match[4] ? new Set(LEGACY_CODEX_EFFORTS) : new Set(ROUTED_EFFORT_LADDER);
 }
 
-function clampEffort(effort, vocabulary) {
-  if (vocabulary.has(effort)) return effort;
-  const start = EFFORT_LADDER.indexOf(effort);
-  // Off-ladder values cannot be ranked, so pass them through unchanged.
-  if (start === -1) return effort;
-  for (let index = start - 1; index >= 0; index -= 1) {
-    if (vocabulary.has(EFFORT_LADDER[index])) return EFFORT_LADDER[index];
-  }
-  return effort;
-}
-
-// Registry levels are ordered lightest-first, so when a clamped level lands on
-// an effort the model already offers (xhigh + max both become xhigh), the
-// genuine entry keeps its slot and the clamped duplicate is dropped.
+// Keep this publication/compatibility-check API; effort meaning has one owner.
 export function clampModelEfforts(models, vocabulary) {
-  return models.map((model) => {
-    if (!Array.isArray(model.reasoningLevels)) return model;
-    const levels = [];
-    const seen = new Set();
-    for (const level of model.reasoningLevels) {
-      const effort = clampEffort(level.effort, vocabulary);
-      if (seen.has(effort)) continue;
-      seen.add(effort);
-      levels.push(effort === level.effort ? level : { ...level, effort });
-    }
-    const defaultEffort = clampEffort(model.defaultEffort, vocabulary);
-    if (
-      defaultEffort === model.defaultEffort &&
-      levels.length === model.reasoningLevels.length &&
-      levels.every((level, index) => level === model.reasoningLevels[index])
-    ) {
-      return model;
-    }
-    return { ...model, reasoningLevels: levels, defaultEffort };
-  });
+  return projectRoutedModelEfforts(models, vocabulary);
 }
 
 function selectedModel() {
@@ -1174,6 +1144,8 @@ export function promoteNativeMultiAgent(models, settings, hidden = new Set()) {
   const enabled = new Set(settings.enabled || []);
   const disabled = new Set(settings.disabled || []);
   return models.map((model) => {
+    if (settings.protocol === "v1") return model.multi_agent_version === "disabled"
+      ? model : { ...model, multi_agent_version: "v1" };
     const slug = String(model.slug);
     if (model.visibility !== "list") return model;
     if (hidden.has(slug) || disabled.has(slug)) {
@@ -1204,7 +1176,7 @@ function behaviorTemplateFor(nativeModels, model, fallback) {
 export function buildMergedCatalog(
   native,
   routedModelsList,
-  { includeNative = true, nativeSlugs, omittedRoutes = [] } = {},
+  { includeNative = true, nativeSlugs, omittedRoutes = [], webModels = [] } = {},
 ) {
   if (!validNativeCatalog(native)) {
     throw new Error("Native model catalog is invalid.");
@@ -1247,6 +1219,24 @@ export function buildMergedCatalog(
         reason: String(error instanceof Error ? error.message : error).slice(0, 500),
       });
     }
+  }
+  // Inherit the installed client's required schema, then let the bridge's
+  // account-bounded metadata own model identity, effort and limits. Reusing the
+  // external projection also removes native-only capability defaults.
+  let webPriority = Math.max(0, ...[...models.values()].map((model) => Number(model.priority) || 0)) + 1;
+  for (const model of webModels) {
+    const entry = routedModel(template, {
+      ...model,
+      displayName: model.display_name,
+      defaultEffort: model.default_reasoning_level,
+      reasoningLevels: model.supported_reasoning_levels,
+      contextWindow: model.context_window,
+      autoCompact: model.auto_compact_token_limit,
+      inputModalities: model.input_modalities || ["text"],
+      priority: webPriority++,
+      multiAgentVersion: "v1",
+    });
+    models.set(model.slug, { ...entry, ...model, multi_agent_version: "v1" });
   }
   return sortCatalogModels(models.values());
 }
@@ -1317,6 +1307,7 @@ async function publishCatalog({
   const enabledProviders = new Set(readProviderSelection());
   modelPickerSnapshot();
   const multiAgentSettings = readMultiAgentSettings();
+  const webModels = webBridgeModels();
   const nativeAccountRefresh = configuredNativeSource
     ? { status: "not-selected" }
     : await refreshNativeAccountCatalogUnlocked({
@@ -1325,6 +1316,9 @@ async function publishCatalog({
     });
   const userSlugs = new Set();
   const selectedModels = LISTED_MODELS.filter((model) => enabledProviders.has(model.provider));
+  // Web models are explicitly enabled by bridge connection, whose picker
+  // seeding preserves prior choices. A watcher must not race that opt-in by
+  // recording a hidden default for the newly connected rows.
   seedModelsHidden(selectedModels.map((model) => String(model.slug)));
   const hiddenModels = readHiddenModels();
   const pickerState = modelPickerSnapshot();
@@ -1405,6 +1399,7 @@ async function publishCatalog({
     includeNative: nativePublication !== "none",
     nativeSlugs: preservedNativeSlugs,
     omittedRoutes,
+    webModels: routedCatalog ? webModels : [],
   });
   for (const omitted of omittedRoutes) {
     process.stderr.write(`${JSON.stringify({ warning: "routed_model_omitted", ...omitted })}\n`);
@@ -1452,8 +1447,11 @@ async function publishCatalog({
     // switched off as a subagent needs its definition gone as well. Without
     // this, switching it off changes multi_agent_version and nothing else, and
     // the model still answers when it is spawned by name.
+    const webAgentModels = applyMultiAgentCapabilities(webModels, multiAgentSettings, {
+      hidden: new Set(publishedCatalog.models.filter((model) => model.visibility !== "list").map((model) => model.slug)),
+    });
     const eligibleAgents = routedCatalog
-      ? subagentEligibleModels(admittedRoutedModels, multiAgentSettings)
+      ? subagentEligibleModels([...admittedRoutedModels, ...webAgentModels], multiAgentSettings)
       : [];
     routedAgents = syncRoutedCodexAgents(eligibleAgents);
     // Removing every definition is how an operator's subagents disappear, and
@@ -1503,6 +1501,8 @@ async function publishCatalog({
     path: MERGED_CATALOG_PATH,
     models: merged.length,
     routed_models: admittedRoutedModels.length,
+    web_models: routedCatalog ? webModels.length : 0,
+    subagent_protocol: multiAgentSettings.protocol || "v2",
     omitted_routes: omittedRoutes,
     routed_agents: routedAgents.written.length,
     removed_agents: routedAgents.removed.length,

@@ -234,6 +234,53 @@ function availableCustomToolName(nativeName, visibleNames) {
   return `${stem}_${suffix}`;
 }
 
+function customToolNames(nativeNames, ordinaryTools, namespaces, maxNameLength) {
+  const visibleNames = providerVisibleToolNames(ordinaryTools);
+  const nativeToProvider = new Map();
+  const providerToNative = new Map();
+  for (const [nativeKey, native] of nativeNames) {
+    const wireName = native.namespace === undefined ? native.name : `${native.namespace}${NAMESPACE_DELIMITER}${native.name}`;
+    const availableName = availableCustomToolName(wireName, visibleNames);
+    const providerName = Number.isInteger(maxNameLength)
+      ? reserveSpecialProviderName(namespaces, `custom:${nativeKey}`, availableName)
+      : availableName;
+    visibleNames.add(providerName);
+    nativeToProvider.set(nativeKey, providerName);
+    providerToNative.set(providerName, native);
+  }
+  return { nativeToProvider, providerToNative };
+}
+
+// Share wire identity allocation with native consumers without translating
+// their schemas, custom grammar, history, or tool choices for a provider.
+// The caller validates native declarations before entering this naming pass.
+export function nativeToolWireNames(tools) {
+  const namespaces = new Map();
+  initializeNameAliases(namespaces, tools, undefined, true);
+  const toolSearchName = reserveSpecialProviderName(namespaces, "tool-search", availableToolSearchName(tools));
+  const flat = [];
+  const add = (tool, namespace) => {
+    const name = providerFunctionName(tool);
+    const native = { name, ...(namespace === undefined ? {} : { namespace }), type: tool.type };
+    flat.push({ type: tool.type, name: namespace === undefined
+      ? (tool.type === "function" ? providerNameForNative(namespaces, undefined, name) : name)
+      : providerNameForNative(namespaces, namespace, name), native });
+  };
+  for (const tool of tools) {
+    if (tool.type === "namespace") {
+      for (const child of tool.tools) if (child.name) add(child, tool.name);
+    } else if (tool.type === "tool_search") {
+      flat.push({ type: "function", name: toolSearchName, native: { type: "tool_search", name: TOOL_SEARCH_FUNCTION_NAME } });
+    } else add(tool);
+  }
+  const nativeCustom = new Map(flat.filter(tool => tool.type === "custom")
+    .map(({ native }) => [nativeToolKey(native.namespace, native.name), native]));
+  const custom = customToolNames(nativeCustom, flat.filter(tool => tool.type !== "custom"), namespaces);
+  return flat.filter(({ native }) => ["function", "custom", "tool_search"].includes(native.type))
+    .map(({ name, native }) => ({ ...native,
+      wireName: native.type === "custom" ? custom.nativeToProvider.get(nativeToolKey(native.namespace, native.name)) : name }));
+}
+
 // A custom tool's `format` is the model's only specification of the freeform
 // payload it must emit: Codex ships apply_patch's V4A dialect as a lark
 // grammar and describes the format nowhere else. A function tool has no
@@ -348,23 +395,7 @@ export function bridgeCustomTools(
   const ordinaryTools = Array.isArray(tools)
     ? tools.filter((tool) => !(tool?.type === "custom" && shouldBridge(identityOf(tool).name)))
     : tools;
-  const visibleNames = providerVisibleToolNames(ordinaryTools);
-  const nativeToProvider = new Map();
-  const providerToNative = new Map();
-  for (const [nativeKey, native] of nativeNames) {
-    const wireName = native.namespace === undefined ? native.name : `${native.namespace}${NAMESPACE_DELIMITER}${native.name}`;
-    const availableName = availableCustomToolName(wireName, visibleNames);
-    const providerName = Number.isInteger(maxNameLength)
-      ? reserveSpecialProviderName(
-          namespaces,
-          `custom:${nativeKey}`,
-          availableName,
-        )
-      : availableName;
-    visibleNames.add(providerName);
-    nativeToProvider.set(nativeKey, providerName);
-    providerToNative.set(providerName, native);
-  }
+  const { nativeToProvider, providerToNative } = customToolNames(nativeNames, ordinaryTools, namespaces, maxNameLength);
   CUSTOM_TOOL_RELAYS.set(namespaces, providerToNative);
 
   let changedTools = false;
@@ -844,8 +875,11 @@ function repairToolSchemaRoot(tool) {
     : { ...tool, parameters: repaired };
 }
 
-function flattenNamespaceChild(namespace, fn, providerName) {
-  const clientSchema = fn.parameters ?? fn.inputSchema;
+function nativeChildSchema(fn) {
+  return fn.parameters ?? fn.inputSchema;
+}
+
+function flattenNamespaceChild(namespace, fn, providerName, clientSchema) {
   const parameters =
     clientSchema === undefined ? undefined : providerToolSchema(clientSchema);
   const flattened = {
@@ -912,6 +946,7 @@ export function flattenNamespaceTools(
       const names = new Set();
       for (const fn of tool.tools) {
         if (!fn?.name) continue;
+        const clientSchema = nativeChildSchema(fn);
         // Codex names function schemas `inputSchema`, while LiteLLM's
         // Responses -> Chat Completions adapter reads only `parameters`.
         // Without this alias every flattened namespace child reaches the
@@ -927,11 +962,12 @@ export function flattenNamespaceTools(
             tool.name,
             fn,
             providerNameForNative(namespaces, tool.name, fn.name),
+            clientSchema,
           ),
         );
         names.add(fn.name);
         if (tool.name === "collaboration" && fn.name === "spawn_agent") {
-          schemaStringValues(fn.inputSchema?.properties?.model, spawnAgentModels);
+          schemaStringValues(clientSchema?.properties?.model, spawnAgentModels);
         }
       }
       if (names.size > 0) {
@@ -1109,6 +1145,7 @@ function discoveredProviderTools(toolSpecs, namespaces) {
             tool.name,
             fn,
             providerNameForNative(namespaces, tool.name, fn.name),
+            nativeChildSchema(fn),
           ),
           native: { namespace: tool.name, name: fn.name },
           nativeName: fn.name,

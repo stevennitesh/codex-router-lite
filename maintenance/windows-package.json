@@ -140,6 +140,26 @@
     "src/zai-responses-compat.mjs",
     "config/openrouter/deepseek-v4.1-flash-together.json",
     "config/openrouter/deepseek-v4.1-flash-deepinfra.json",
-    "src/openrouter-endpoint-compat.mjs"
+    "src/openrouter-endpoint-compat.mjs",
+    "src/chatgpt-web.mjs",
+    "src/web-status.mjs",
+    "src/web-models.mjs",
+    "src/web-runtime.mjs",
+    "src/web-response.mjs",
+    "src/web-tunnel.mjs",
+    "src/web-tools.mjs",
+    "src/web-tool-contract.mjs",
+    "src/web-mcp.mjs",
+    "src/web-mcp-contract.mjs",
+    "src/web-browser.mjs",
+    "src/web-browser-state.mjs",
+    "src/web-turn-cancellation.mjs",
+    "src/web-stop-hook.mjs",
+    "src/web-stop-contract.mjs",
+    "src/web-stop-adapter.mjs",
+    "src/web-stop-adapter-install.mjs",
+    "src/web-runtime-refresh.mjs",
+    "src/web-stop-adapter-env.ps1",
+    "src/web-stop-adapter-entry.cs"
   ]
 }

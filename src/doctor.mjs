@@ -47,7 +47,7 @@ export async function diagnose() {
         : "not configured",
     credentialDenied
       ? `Inspect ownership and ACLs on ${credentialPath}; do not replace the credential to mask an access failure.`
-      : "Run .\\model-router.ps1 provider-key openrouter set.",
+      : "Run .\\model-router.ps1 codex provider-key openrouter set.",
   );
 
   for (const route of openRouterRoutes) {

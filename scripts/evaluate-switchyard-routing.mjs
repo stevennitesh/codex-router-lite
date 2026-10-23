@@ -621,14 +621,20 @@ export async function runInputFidelitySource(sourceGit, corpusPath, outputPath) 
   };
   writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
   try {
+    const contributionSnapshot = path.join(tempRoot, "upstream-contribution.patch");
+    const patchSnapshot = path.join(tempRoot, "compatibility.patch");
+    const corpusSnapshot = path.join(tempRoot, "routing-corpus.json");
+    writeFileSync(contributionSnapshot, contributionBytes);
+    writeFileSync(patchSnapshot, patchBytes);
+    writeFileSync(corpusSnapshot, corpusBytes);
     checkedCommand("git", ["clone", "--no-checkout", "--shared", path.resolve(sourceGit), sourceRoot], tempRoot);
     checkedCommand("git", ["checkout", "--detach", lock.commit], sourceRoot);
     const checkout = checkedCommand("git", ["rev-parse", "HEAD"], sourceRoot);
     if (checkout !== lock.commit) throw new Error("materialized source does not match source.lock");
     evidence.identities.source.verifiedCheckout = true;
-    checkedCommand("git", ["apply", "--whitespace=nowarn", contributionPath], sourceRoot);
+    checkedCommand("git", ["apply", "--whitespace=nowarn", contributionSnapshot], sourceRoot);
     evidence.identities.upstreamContribution.applied = true;
-    checkedCommand("git", ["apply", "--whitespace=nowarn", patchPath], sourceRoot);
+    checkedCommand("git", ["apply", "--whitespace=nowarn", patchSnapshot], sourceRoot);
     evidence.identities.compatibilityPatch.applied = true;
     const testPath = path.join(sourceRoot, "crates", "switchyard-server", "tests", "measurement_input_fidelity.rs");
     const serverTestPath = path.join(sourceRoot, "crates", "switchyard-server", "tests", "server.rs");
@@ -637,7 +643,7 @@ export async function runInputFidelitySource(sourceGit, corpusPath, outputPath) 
     const env = {
       ...process.env,
       OPENROUTER_API_KEY: "",
-      SWITCHYARD_FIDELITY_CORPUS: path.resolve(corpusPath),
+      SWITCHYARD_FIDELITY_CORPUS: corpusSnapshot,
     };
     const cargoVersion = checkedCommand("cargo", ["--version"], sourceRoot, { env });
     checkedCommand("cargo", [

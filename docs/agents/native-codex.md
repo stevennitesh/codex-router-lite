@@ -14,8 +14,10 @@ Doctor operation. Version, authentication, and capture use that path; later
 operations discover afresh. Capture checks its producer's fingerprint before and
 after execution and rejects drift instead of attaching another build's identity.
 
-The managed service runs `catalog.mjs --refresh-if-stale` every five minutes in
-a separate watcher process. The freshness identity is the resolved Codex
+The managed service's existing supervisor schedules `catalog.mjs --refresh-if-stale`
+immediately and every five minutes, with one bounded refresh child at a time.
+Shutdown cancels scheduling and drains the owned child's terminal cleanup.
+The freshness identity is the resolved Codex
 binary path, file identity, reported version, and the content fingerprint of
 the current account or explicitly adopted native catalog. While signed in, the
 locked refresh stores account metadata from the fixed ChatGPT account-model
@@ -34,7 +36,7 @@ read or refresh the unused account snapshot; native authentication publication
 rules still apply to its models.
 The request is bounded, rechecks identity before writing, and preserves the
 last snapshot on network or schema failure. Publication uses the normal
-state-ownership guard, catalog lock, and rollback path. Every watcher pass
+state-ownership guard, catalog lock, and rollback path. Every scheduled pass
 derives the desired publication from the reusable capture and current local
 settings, then writes only changed catalog, announcement, or managed-agent
 output. A failed publication therefore retries on the next interval even when
@@ -80,8 +82,8 @@ backpressure and service drain apply to native WebSocket turns as well as HTTP.
 External routes, substituted native credentials and compaction triggers retain
 the HTTP preparation path.
 
-Native HTTP inference POSTs recover only from conclusive connection failures,
-within the bounded retry budget. A socket reset, header timeout or gateway 5xx
+Native HTTP inference POSTs refuse redirects and recover only from conclusive
+connection failures within the bounded retry budget. A socket reset, header timeout or gateway 5xx
 does not establish that the upstream never accepted the request, so Router
 returns that failure without automatic replay. Caller output and cancellation
 also prohibit replay. The explicit routed empty-completion repair keeps its
@@ -89,6 +91,14 @@ separate completed-response and usage-accounting policy: it requires a parsed
 completed-empty result with every prologue byte still suppressed. A pre-content
 time or byte failure has an unknown inference outcome and returns
 `precontent_limit` without another POST. Prompt-scaled prefill allowance remains.
+
+Successful native streaming Responses with no Content-Type use the expected SSE
+type; explicit upstream types and error responses remain authoritative. If a
+stream fails before trustworthy response identity and sequence metadata arrive,
+native Responses receive a minimal `response.failed` containing only failed status
+and the diagnosed safe error. Other stream consumers retain their existing error
+envelope. No response ID, sequence, output, or usage is invented, and an observed
+terminal event prevents a duplicate terminal.
 
 The WebSocket edge captures masked frames and external SSE lines incrementally,
 with allocation growing only as bytes arrive. Native request input is serialized

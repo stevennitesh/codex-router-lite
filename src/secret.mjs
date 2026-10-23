@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 
 import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
+import { withCallerKeyRotationLock } from "./caller-key-rotation-lock.mjs";
 import {
   CALLER_SECRET_PATH,
   INTERNAL_SECRET_PATH,
@@ -27,9 +29,20 @@ function secretStatus(target) {
   }
 }
 
+const targets = [INTERNAL_SECRET_PATH, CALLER_SECRET_PATH];
+function reportStatus() {
+  const [internal, caller] = targets.map(secretStatus);
+  process.stdout.write(`${JSON.stringify({ present: internal.present && caller.present, internal, caller })}\n`);
+  if (!internal.present || !caller.present) process.exitCode = 1;
+}
+
 try {
-  const targets = [INTERNAL_SECRET_PATH, CALLER_SECRET_PATH];
-  if (command === "ensure") {
+  if (command === "ensure") await withCallerKeyRotationLock(() => {
+    const stateDir = path.dirname(CALLER_SECRET_PATH);
+    const journal = probeRegularFile(path.join(stateDir, "caller-key-rotation.json"));
+    if (journal.status !== "missing") {
+      throw new Error("Caller capability rotation recovery is pending or its journal is inaccessible; recover it before initializing capabilities.");
+    }
     // Establish both generations before any mutation. An unreadable caller key
     // must not cause even a missing internal key to be initialized first.
     const statuses = targets.map(secretStatus);
@@ -42,6 +55,10 @@ try {
         );
       }
     }
+    if (statuses[1].fileStatus === "missing" && readdirSync(stateDir).some(name =>
+      ["rollback", "displaced", "new"].some(kind => name.startsWith(`${path.basename(CALLER_SECRET_PATH)}.rotate-${kind}.`)))) {
+      throw new Error("Caller capability rotation generations remain without a live capability; recover them before initializing capabilities.");
+    }
     for (let index = 0; index < targets.length; index += 1) {
       if (statuses[index].fileStatus === "missing") {
         writePrivateFile(targets[index], `${randomBytes(48).toString("base64url")}\n`);
@@ -49,10 +66,9 @@ try {
         protectPrivateFile(targets[index]);
       }
     }
-  }
-  const [internal, caller] = targets.map(secretStatus);
-  process.stdout.write(`${JSON.stringify({ present: internal.present && caller.present, internal, caller })}\n`);
-  if (!internal.present || !caller.present) process.exitCode = 1;
+    reportStatus();
+  }, { stateDir: path.dirname(CALLER_SECRET_PATH) });
+  else reportStatus();
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

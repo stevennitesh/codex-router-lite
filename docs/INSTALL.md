@@ -40,11 +40,17 @@ claimed. External content and abandoned-operation recovery retain their own chec
 The Router starts in native-only mode without an OpenRouter credential. Provider
 health reports OpenRouter as unavailable until the optional key is configured;
 native Codex requests remain available during that setup interval.
-The frontend starts before the optional API forwarder, LiteLLM, Switchyard, and
-catalog watcher become ready. Their bounded supervision keeps native serving
-available during an optional-child failure. The installer still prepares Python
+The frontend starts before the optional API forwarder, LiteLLM, and Switchyard
+become ready. Their bounded supervision keeps native serving available during an
+optional-child failure. The installer still prepares Python
 dependencies; a missing or unhealthy gateway prevents GLM service, not frontend
 liveness.
+
+The existing supervisor schedules catalog freshness checks immediately and every
+five minutes. Each check uses a bounded refresh child; no separate persistent
+catalog watcher is needed. Shutdown and refresh deadlines retain custody until
+the owned process tree closes and its cleanup settles. Inconclusive cleanup
+blocks another automatic refresh.
 
 Asynchronous launch failures are handled by the child supervisor;
 startup retries wait for child closure. A configured Windows batch gateway is
@@ -61,7 +67,11 @@ Switchyard installation is maintainer work. Read its
 [integration boundaries](../config/switchyard/README.md), then
 [build and deployment](../config/switchyard/maintenance.md) only when that task applies.
 
-## Verify
+## Optional diagnostics
+
+The installer already waits for service readiness. No separate Doctor run or
+model test is required after every installation. Use Doctor when installation
+reports a problem or a route does not work:
 
 ```powershell
 .\model-router.ps1 codex doctor
@@ -140,6 +150,12 @@ The updater accepts this Router Lite repository as `origin`, fast-forwards only
 when the remote is ahead, and runs the installer. It refuses diverged history
 and restores the previous revision if installation fails. The read-only
 `upstream` remote is research input and is never an update target.
+Re-running the standalone bootstrap on an existing checkout also prepares the
+managed runtime before changing tracked files, then rechecks the checkout and
+installs the exact fetched commit. Preparation-only and dependency-only bootstrap
+runs use the existing checkout without advancing it. An unavailable drain contract
+blocks a full update before mutation; tracked-file `-Force` does not authorize
+interrupting active requests.
 
 After a Codex app, Codex CLI, Router upstream, or Switchyard upstream change,
 run the compatibility refresh from the source repository:
@@ -243,7 +259,9 @@ selection change requires it:
 .\restart-codex-router.ps1 -InstallDir <installed-router-directory>
 ```
 
-Do not run a standalone stop. The transaction stages one generation, checks readiness, and restores the prior generation on failure.
+Do not run a standalone stop. Restart uses the existing installed files and the
+drain and ownership checks below. Deployment transactions own file staging and
+rollback; retain their recovery copies when restarting for a configuration change.
 
 ### Replacement and drain
 

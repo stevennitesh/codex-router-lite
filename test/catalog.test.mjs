@@ -538,6 +538,8 @@ test("automatic catalog refresh reacts only to native authority changes", async 
     );
     assert.equal(catalogRefreshIntervalMs("10000"), 10_000);
     assert.equal(catalogRefreshIntervalMs("9999"), 5 * 60_000);
+    assert.equal(catalogRefreshIntervalMs("2147483647"), 2_147_483_647);
+    assert.equal(catalogRefreshIntervalMs("2147483648"), 5 * 60_000);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

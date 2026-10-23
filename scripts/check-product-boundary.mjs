@@ -28,6 +28,27 @@ const retainedConfig = [
   "config/switchyard/auto.json",
   "config/switchyard/switchyard.json",
 ];
+const retainedWebRuntime = [
+  "src/chatgpt-web.mjs",
+  "src/web-status.mjs",
+  "src/web-models.mjs",
+  "src/web-runtime.mjs",
+  "src/web-response.mjs",
+  "src/web-tunnel.mjs",
+  "src/web-tools.mjs",
+  "src/web-tool-contract.mjs",
+  "src/web-mcp.mjs",
+  "src/web-mcp-contract.mjs",
+  "src/web-browser.mjs",
+  "src/web-browser-state.mjs",
+  "src/web-turn-cancellation.mjs",
+  "src/web-stop-hook.mjs",
+  "src/web-stop-contract.mjs",
+  "src/web-stop-adapter.mjs",
+  "src/web-stop-adapter-install.mjs",
+  "src/web-stop-adapter-env.ps1",
+  "src/web-stop-adapter-entry.cs",
+];
 const forbiddenPaths = [
   /^\.github\/workflows\/release\.yml$/u,
   /^docs-site\//u,
@@ -93,6 +114,7 @@ for (const file of packageManifest.files) {
 for (const file of [
   ...requiredEntrypoints,
   ...retainedConfig,
+  ...retainedWebRuntime,
   // Required by the actual installer, locked dependency preparation and version
   // reader. Source existence alone cannot prove installed package membership.
   "package.json",

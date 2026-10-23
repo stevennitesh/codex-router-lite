@@ -1,19 +1,22 @@
 # Context ownership
 
 Read when editing instructions, documentation, or runtime prompt assembly.
-`AGENTS.md` is the small repository entry map. It routes likely tasks, especially
-model/endpoint additions, to current guides; it is not an operations manual.
+[AGENTS.md](../../AGENTS.md) is the repository entry map. Load the guide for the
+task; runtime prompt sources below are conditional product owners.
 
 ## Repository context
 
-- The Router Lite system specification owns product boundaries, invariants,
-  source ownership, and common verification.
-- Model onboarding owns the integration path; endpoint guides own measured route rules.
+- The [system specification](architecture.md) owns product boundaries, invariants,
+  source ownership and [verification scope](architecture.md#verification).
+- [Model onboarding](model-onboarding.md) owns the integration path; endpoint
+  guides own measured route rules.
+- [ChatGPT Web models](../CHATGPT-WEB.md) owns setup and everyday use;
+  [Web integration](web-integration.md) owns saved context, native tools,
+  observation, Stop and adapter compatibility.
 - Debugging owns diagnosis; compatibility maintenance owns app/upstream refresh;
   installation and Switchyard guides own their runtime transactions.
-- The [engineering contract](engineering-contract.md) owns engineering discipline.
-  Tracker guidance is conditional; ordinary endpoint work does not require a
-  tracker or new ADR.
+- [Tracker guidance](issue-tracker.md) is conditional; ordinary endpoint work
+  does not require a tracker or new ADR.
 - README is the user-facing overview and links to maintainer entry points.
 - Portable technical plans and design documents may be tracked when they contain
   durable problem statements, constraints and acceptance evidence without worker
@@ -31,17 +34,11 @@ model/endpoint additions, to current guides; it is not an operations manual.
   the active task conversation. Keep them out of product guides, delivery plans
   and historical records; retain only durable technical scope, gates and evidence.
 
-Keep one authoritative owner for each rule, with concrete task triggers on inbound
-links. When moving a document, preserve useful evidence and repair inbound and
-relative links. Audit unlinked Markdown and instruction-bearing configuration too.
-Do not replace current contracts with conclusions from an old investigation.
-
-For a repository context audit, include root guides, `docs/agents`, operational
-guides, plans outside `docs/history`, history indexes, and the runtime instruction
-owners below. Check commands against their scripts and status claims against
-current source and exact-route applications. Preserve dated evidence while
-retiring superseded active instructions. A documentation cleanup does not install
-shipped skills, change model eligibility, spend provider quota, or start deployment.
+Repository context maintenance uses the applicable context-hygiene or
+repo-bootstrap skill. Keep durable requirements at the owners above; preserve
+history and repair the affected reading paths when moving or retiring a source.
+A documentation cleanup does not install shipped skills, change model eligibility,
+spend provider quota or start deployment.
 
 ## Runtime instructions
 
@@ -55,6 +52,7 @@ These are product behavior, not extra repo instructions to preload while coding:
 | Root delegation wait/cleanup hint | `src/config-manager.mjs` writes managed `multi_agent_v2.root_agent_usage_hint_text`; [native behavior](native-codex.md) |
 | Routed app/tool skills | `skills/*/SKILL.md`, installed by `src/skills-install.mjs`; companion skills are task-conditional |
 | Routed child task and completion guidance | `src/codex-agent-catalog.mjs`, generated into managed agent definitions during catalog refresh |
+| Web bridge protocol, instructions and incremental delivery | `src/web-runtime.mjs`; [context delivery](web-integration.md#instruction-delivery-and-compaction) |
 | Switchyard classifier | `config/switchyard/routes.template.toml`; [policy](../../config/switchyard/README.md#routing-policy) |
 | Optional named worker | `config/switchyard/switchyard_worker.toml`; installed only when requested |
 

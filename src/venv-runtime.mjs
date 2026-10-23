@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 
 // A timeout is inconclusive; a spawn error or bad exit proves a failed probe.
-// Startup can proceed to actual readiness without repeating this probe.
+// Installation uses this probe for virtual-environment repair and reuse decisions.
 export function venvRuntimeOutcome(
   python,
   { spawn = spawnSync, timeoutMs = 15_000, retryTimeoutMs = 45_000 } = {},
@@ -39,17 +39,7 @@ export function venvRuntimeOutcome(
   return { kind: "ok" };
 }
 
-// Doctor and install-plan retain their descriptive string API.
+// Install-plan retains its descriptive string API.
 export function venvRuntimeProblem(python, options) {
   return venvRuntimeOutcome(python, options).message;
-}
-
-export function requireGatewayRuntime(python, { probe = venvRuntimeOutcome, warn = console.warn, dependencyFix } = {}) {
-  const outcome = probe(python);
-  if (outcome.kind === "failed") {
-    throw new Error(`The LiteLLM virtual environment is broken at ${python} (${outcome.message}). ${dependencyFix}.`);
-  }
-  if (outcome.kind === "timeout") {
-    warn(`[codex-router] LiteLLM interpreter probe ${outcome.message}; continuing to bounded gateway readiness.`);
-  }
 }

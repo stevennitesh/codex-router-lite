@@ -69,10 +69,12 @@ automatic refresh cannot turn a staged account rollout into an entitlement.
 
 ## Gateway interpreter probe times out
 
-A Python interpreter probe timing out does not establish that its virtual
-environment is broken. Router warns and proceeds to the gateway's bounded
-readiness wait. A missing interpreter or a failing standard-library import still
-stops that gateway launch and requires dependency repair.
+A Python interpreter probe timing out during dependency reuse does not establish
+that its virtual environment is broken; inspect process scheduling pressure and
+the reported error before repairing dependencies. Normal startup launches the
+gateway directly and uses its bounded authenticated readiness check. It does not
+launch a separate diagnostic interpreter first. A missing or failing interpreter
+leaves the optional gateway unavailable while native serving remains available.
 
 ## Native or provider requests fail with a connect timeout
 
@@ -204,12 +206,10 @@ Start with the redacted current-generation summary:
 The trace command reports counts and continuity only. It never prints request
 bodies, headers, capabilities, or raw agent identifiers.
 
-When collecting certification evidence after the failure owner is resolved,
-use the bounded redacted view instead of copying either raw log:
-
-```powershell
-.\model-router.ps1 codex switchyard-certification-evidence --limit 20
-```
+For a combined diagnostic packet, use the bounded redacted view in
+[Switchyard runtime diagnostics](../config/switchyard/runtime.md#runtime-supervision-and-diagnosis).
+It summarizes the whole generation; it is not attributed native-child proof.
+Fresh certification uses the [runner or manual extractor](SUBAGENT-CERTIFICATION.md).
 
 ## Windows task mismatch
 

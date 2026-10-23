@@ -73,6 +73,7 @@ else if(args[0]==='--config') {
  if(mode==='invalid-json') {console.log(${JSON.stringify(canary)});process.exit(0);}
  const data=JSON.parse(readFileSync(JSON.parse(args[1].slice('model_catalog_json='.length)),'utf8'));
  if(mode==='missing-route')data.models=data.models.filter(m=>m.slug!=='switchyard/auto');
+ if(mode==='advertised-route')data.models.push({slug:'switchyard/auto'});
  if(mode==='changed-compaction')data.models.find(m=>m.slug==='switchyard/auto').auto_compact_token_limit=17;
  process.stdout.write(JSON.stringify(data));
 } else process.exit(19);
@@ -82,9 +83,9 @@ else if(args[0]==='--config') {
   const candidate = data => ({ models: applyPickerVisibility(buildMergedCatalog(data, routes), {
     nativeBaseSlugs: new Set(data.models.map(model => model.slug)), hiddenModels: new Set(), visibleModels: new Set(), hasExplicitVisibility: false,
   }) });
-  const invoke = (data, mode = "normal", installed = false, current = false) => {
+  const invoke = (data, mode = "normal", installed = false, current = false, transformCatalog = value => value) => {
     writeFileSync(nativePath, JSON.stringify(data));
-    writeFileSync(catalogPath, JSON.stringify(candidate(data)));
+    writeFileSync(catalogPath, JSON.stringify(transformCatalog(candidate(data))));
     writeFileSync(callsPath, "");
     const result = spawnSync(process.execPath, [path.join(root, "scripts/check-codex-catalog-compat.mjs"), current ? "--current" : binary,
       ...(installed ? ["--catalog", catalogPath] : [])], {
@@ -118,6 +119,40 @@ else if(args[0]==='--config') {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /compatibility passed/u);
   }
+  const incompatible = structuredClone(native);
+  incompatible.models.find(model => model.slug === "gpt-6-astra").tool_mode = "code_mode";
+  const omitted = invoke(incompatible, "normal", true);
+  assert.equal(omitted.status, 0, omitted.stderr);
+  assert.match(omitted.stdout, /Switchyard safely omitted/u);
+  assert.doesNotMatch(omitted.stdout, /Switchyard compatibility passed/u);
+  assert.match(omitted.stderr, /routed_model_omitted.*requires compatible tool_mode/u);
+  assert.equal(omitted.calls.some(call => call.args[0] === "--config"), true,
+    "an expected omission still parses the complete installed catalog with Codex");
+  for (const current of [false, true]) {
+    const strict = invoke(incompatible, "normal", false, current);
+    assert.notEqual(strict.status, 0);
+    assert.match(strict.stderr, /cannot publish Switchyard.*requires compatible tool_mode/u);
+    assert.equal(strict.calls.some(call => call.args[0] === "--config"), false);
+  }
+  const advertised = invoke(incompatible, "normal", true, false, catalog => ({
+    models: [...catalog.models, candidate(native).models.find(model => model.slug === "switchyard/auto")],
+  }));
+  assert.notEqual(advertised.status, 0);
+  assert.match(advertised.stderr, /installed catalog advertises incompatible routed entry switchyard\/auto/u);
+  assert.equal(advertised.calls.some(call => call.args[0] === "--config"), false);
+  const parsedAdvertisement = invoke(incompatible, "advertised-route", true);
+  assert.notEqual(parsedAdvertisement.status, 0);
+  assert.match(parsedAdvertisement.stderr, /parsed catalog advertises incompatible routed entry switchyard\/auto/u);
+  const missingExternal = invoke(incompatible, "normal", true, false, catalog => ({
+    models: catalog.models.filter(model => model.slug !== "openrouter/pareto"),
+  }));
+  assert.notEqual(missingExternal.status, 0);
+  assert.match(missingExternal.stderr, /catalog is missing routed entry openrouter\/pareto/u);
+  const unexpectedlyMissing = invoke(native, "normal", true, false, catalog => ({
+    models: catalog.models.filter(model => model.slug !== "switchyard/auto"),
+  }));
+  assert.notEqual(unexpectedlyMissing.status, 0);
+  assert.match(unexpectedlyMissing.stderr, /catalog is missing routed entry switchyard\/auto/u);
   for (const [mode, message] of [
     ["stderr-failure", /exit status 11/u], ["stdout-failure", /exit status 17/u],
     ["invalid-json", /invalid JSON/u], ["missing-route", /did not parse routed catalog entry/u],

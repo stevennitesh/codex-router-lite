@@ -10,6 +10,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const windows = process.platform === "win32";
 const powershell = windows ? path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe") : "powershell.exe";
 const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+function fixtureEnvironment(directory, extra = {}) {
+  const home = path.join(directory, "home"), state = path.join(home, "codex-router");
+  return { ...process.env, CODEX_HOME: home, MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state,
+    MODEL_ROUTER_MODEL_PICKER_STATE: path.join(state, "model-picker.json"),
+    MODEL_ROUTER_MULTI_AGENT_STATE: path.join(state, "multi-agent-settings.json"), ...extra };
+}
+function assertFixtureEnvironment(directory, environment) {
+  for (const name of ["CODEX_HOME", "MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "MODEL_ROUTER_MODEL_PICKER_STATE", "MODEL_ROUTER_MULTI_AGENT_STATE"]) {
+    assert.ok(path.isAbsolute(environment[name]), name);
+    const relative = path.relative(directory, environment[name]);
+    assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative), `${name} must stay inside the owned fixture`);
+  }
+}
 let compiledTool;
 function pythonFixtureTool() {
   if (compiledTool) return compiledTool.executable;
@@ -69,14 +82,11 @@ function fixture(tool, { mode = "dependencies", broken = false, failService = fa
       writeFileSync(path.join(scripts, "broken.txt"), "fixture broken stdlib");
       writeFileSync(path.join(source, ".venv/pyvenv.cfg"), `home = ${directory}\nversion = 3.12.12\n`);
     }
-    const environment = {
-      ...process.env,
+    const environment = fixtureEnvironment(directory, {
       PATH: [bin, path.join(process.env.SystemRoot, "System32"), process.env.SystemRoot].join(path.delimiter),
-      CODEX_HOME: home,
-      MODEL_ROUTER_STATE_DIR: path.join(home, "codex-router"),
-      CODEX_ROUTER_STATE_DIR: path.join(home, "codex-router"),
       ROUTER_INSTALL_TRACE: trace,
-    };
+    });
+    assertFixtureEnvironment(directory, environment);
     delete environment.PYTHONHOME;
     delete environment.PYTHONPATH;
     const errorFile = path.join(directory, "installer-error.txt"), runner = path.join(directory, "installer-runner.ps1");
@@ -322,7 +332,9 @@ test("rollback preparation reaches both current and retained installer contracts
   for (const scenario of ["new", "legacy", "failure"]) {
     const directory = mkdtempSync(path.join(os.tmpdir(), "router-rollback-preparation-"));
     try {
-      const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "test/fixtures/rollback-preparation.ps1"), "-CodeRoot", root, "-FixtureRoot", directory, "-Case", scenario], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+      const environment = fixtureEnvironment(directory);
+      assertFixtureEnvironment(directory, environment);
+      const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "test/fixtures/rollback-preparation.ps1"), "-CodeRoot", root, "-FixtureRoot", directory, "-Case", scenario], { encoding: "utf8", windowsHide: true, timeout: 10_000, env: environment });
       assert.equal(result.status, 0, result.stderr);
       const readJson = (relative) => JSON.parse(readFileSync(path.join(directory, relative), "utf8").replace(/^\uFEFF/u, ""));
       const call = readJson("previous/call.json");
@@ -351,6 +363,197 @@ test("rollback preparation reaches both current and retained installer contracts
 
 // Exercise real npm lifecycle, lock, tree and import behavior entirely offline.
 // The service, Python executable and port observations remain fixture boundaries.
+function checkoutUpdateFixture() {
+  const parent = path.join(root, ".tmp", "bootstrap-checkout-tests");
+  mkdirSync(parent, { recursive: true });
+  const directory = mkdtempSync(path.join(parent, "owned-"));
+  assert.equal(path.dirname(directory), parent);
+  const source = path.join(directory, "checkout"), remote = path.join(directory, "origin.git");
+  const trace = path.join(directory, "calls.jsonl"), gitTrace = path.join(directory, "git.jsonl");
+  const environment = fixtureEnvironment(directory, {
+    CODEX_ROUTER_SOURCE_ROOT: source, CODEX_ROUTER_REPOSITORY_URL: remote,
+    UPDATE_FIXTURE_ROOT: source, UPDATE_FIXTURE_TRACE: trace,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(directory, "gitconfig"),
+    GIT_TERMINAL_PROMPT: "0", GIT_TRACE2_EVENT: gitTrace,
+  });
+  assertFixtureEnvironment(directory, environment);
+  const git = (...args) => {
+    assert.equal(path.dirname(source), directory);
+    return execFileSync("git", ["-C", source, ...args], { env: environment, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  };
+  try {
+    mkdirSync(path.join(source, "src"), { recursive: true });
+    writeFileSync(trace, "");
+    writeFileSync(path.join(source, "package.json"), '{"name":"codex-router-lite","type":"module"}');
+    copyFileSync(path.join(root, "install.ps1"), path.join(directory, "install.ps1"));
+    copyFileSync(path.join(root, "src/update.mjs"), path.join(source, "src/update.mjs"));
+    writeFileSync(path.join(source, "src/paths.mjs"), "export const SOURCE_ROOT=process.env.UPDATE_FIXTURE_ROOT;\n");
+    writeFileSync(path.join(source, "src/install-manifest.mjs"), "export const readInstallManifest=()=>({current:{commit:process.env.UPDATE_FIXTURE_INSTALLED}});\n");
+    writeFileSync(path.join(source, "src/service-drain.mjs"), `import{execFileSync}from'node:child_process';import{appendFileSync,readFileSync,writeFileSync}from'node:fs';import path from'node:path';
+const root=process.env.UPDATE_FIXTURE_ROOT,command=process.argv[2],git=(...a)=>execFileSync('git',['-C',root,...a],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+appendFileSync(process.env.UPDATE_FIXTURE_TRACE,JSON.stringify({kind:'drain',command,head:git('rev-parse','HEAD'),branch:git('branch','--show-current'),text:readFileSync(path.join(root,'release.txt'),'utf8'),args:process.argv.slice(3)})+'\\n');
+if(command==='prepare'){
+ const mutation=process.env.UPDATE_FIXTURE_MUTATE;
+ if(mutation==='edit')writeFileSync(path.join(root,'release.txt'),'edit during prepare\\n');
+ if(mutation==='branch')git('switch','-c','concurrent');
+ if(mutation==='head')git('switch','--detach',process.env.UPDATE_FIXTURE_CANDIDATE);
+ if(mutation==='origin')git('remote','set-url','origin',process.env.CODEX_ROUTER_REPOSITORY_URL+'.changed');
+ if(mutation==='candidate')git('update-ref','refs/remotes/origin/main',process.env.UPDATE_FIXTURE_INSTALLED);
+ if(process.env.UPDATE_FIXTURE_DENY==='1'&&!process.argv.includes('--force-service-replacement'))process.exit(7);
+ if(process.env.UPDATE_FIXTURE_PREPARE==='malformed')console.log('unsupported protocol');
+ else console.log(JSON.stringify({status:process.env.UPDATE_FIXTURE_PREPARE||'drained'}));
+}else if(process.env.UPDATE_FIXTURE_RESUME_FAIL==='1')process.exitCode=9;
+`);
+    writeFileSync(path.join(source, "src/provider-selection.mjs"), `import{appendFileSync,writeFileSync}from'node:fs';import path from'node:path';appendFileSync(process.env.UPDATE_FIXTURE_TRACE,JSON.stringify({kind:'provider',args:process.argv.slice(2)})+'\\n');writeFileSync(path.join(process.env.MODEL_ROUTER_STATE_DIR,'providers.json'),'fixture selection');`);
+    writeFileSync(path.join(source, "install.ps1"), `param([switch]$CheckoutInstall,[switch]$PrepareOnly,[switch]$DependenciesOnly,[switch]$ForceDeps,[switch]$ForceServiceReplacement,[string]$Target)
+$head=(& git -C $PSScriptRoot rev-parse HEAD).Trim()
+$text=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release.txt'))
+@{kind='installer';head=$head;text=$text;checkout=[bool]$CheckoutInstall;prepare=[bool]$PrepareOnly;dependencies=[bool]$DependenciesOnly;forceDeps=[bool]$ForceDeps;force=[bool]$ForceServiceReplacement;target=$Target} | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:UPDATE_FIXTURE_TRACE -Encoding UTF8
+if($env:UPDATE_FIXTURE_FAIL_INSTALL -eq 'throw' -and $text.Trim() -eq 'B'){throw 'fixture candidate installer threw'}
+if($env:UPDATE_FIXTURE_FAIL_INSTALL -and $text.Trim() -eq 'B'){exit 13}
+if($env:UPDATE_FIXTURE_FAIL_RECOVERY -eq '1' -and $text.Trim() -eq 'A'){exit 17}
+exit 0
+`);
+    mkdirSync(environment.MODEL_ROUTER_STATE_DIR, { recursive: true });
+    git("init", "-b", "main"); git("config", "user.name", "Bootstrap fixture"); git("config", "user.email", "bootstrap@example.invalid");
+    git("config", "commit.gpgsign", "false"); git("config", "core.hooksPath", path.join(directory, "no-hooks")); git("config", "core.autocrlf", "false");
+    writeFileSync(path.join(source, "release.txt"), "A\n"); git("add", "."); git("commit", "-m", "fixture A"); const a = git("rev-parse", "HEAD");
+    writeFileSync(path.join(source, "release.txt"), "B\n"); writeFileSync(path.join(source, "new.txt"), "remote tracked file\n");
+    git("add", "."); git("commit", "-m", "fixture B"); const b = git("rev-parse", "HEAD");
+    assert.equal(path.dirname(remote), directory);
+    execFileSync("git", ["clone", "--bare", source, remote], { env: environment, windowsHide: true, stdio: "pipe" });
+    git("remote", "add", "origin", remote); git("fetch", "origin", "main"); git("update-ref", "refs/codex-router/rollback", b); git("reset", "--hard", a);
+    Object.assign(environment, { UPDATE_FIXTURE_INSTALLED: a, UPDATE_FIXTURE_CANDIDATE: b });
+    const jsonLines = file => readFileSync(file, "utf8").replaceAll("\uFEFF", "").trim().split(/\r?\n/u).filter(Boolean).map(JSON.parse);
+    const clear = () => { writeFileSync(trace, ""); writeFileSync(gitTrace, ""); };
+    const run = (args = [], extra = {}, entry = "bootstrap") => {
+      const env = { ...environment, ...extra };
+      assertFixtureEnvironment(directory, env);
+      clear();
+      return entry === "updater"
+        ? spawnSync(process.execPath, [path.join(source, "src/update.mjs"), "update", ...args], { cwd: directory, env, encoding: "utf8", windowsHide: true, timeout: 30_000 })
+        : spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(directory, "install.ps1"), "-InstallDir", source, ...args], { cwd: directory, env, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    };
+    const snapshot = () => ({ head: git("rev-parse", "HEAD"), branch: git("branch", "--show-current"), rollback: git("rev-parse", "refs/codex-router/rollback"), origin: git("remote", "get-url", "origin"),
+      files: git("ls-files", "-z").split("\0").filter(Boolean).map(file => [file, existsSync(path.join(source, file)) ? readFileSync(path.join(source, file)) : null]) });
+    const dispose = () => { assert.equal(path.dirname(directory), parent); assert.match(path.basename(directory), /^owned-/u); rmSync(directory, { recursive: true, force: true }); };
+    return { source, directory, remote, environment, a, b, git, run, snapshot, calls: () => jsonLines(trace), gitCalls: () => jsonLines(gitTrace).filter(e => e.event === "start").map(e => e.argv), dispose };
+  } catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+}
+
+test("standalone and normal deferred updates preserve forced tracked edits and detached branch", { skip: !windows }, () => {
+  for (const entry of ["bootstrap", "updater"]) for (const detached of [false, true]) {
+    const f = checkoutUpdateFixture();
+    try {
+      if (detached) f.git("switch", "--detach", f.a);
+      writeFileSync(path.join(f.source, "release.txt"), "personal edit\n");
+      const before = f.snapshot(), result = f.run([entry === "bootstrap" ? "-Force" : "--force"], { UPDATE_FIXTURE_DENY: "1" }, entry);
+      assert.notEqual(result.status, 0, result.stderr); assert.match(result.stderr, /replacement was deferred/u);
+      assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.calls().map(c => c.kind), ["drain"]);
+      assert.deepEqual(f.calls()[0].args, []);
+      assert.ok(!f.gitCalls().some(args => args.some(a => ["reset", "switch", "merge", "update-ref", "pull"].includes(a))));
+    } finally { f.dispose(); }
+  }
+});
+
+test("standalone unsupported preparation and installer contracts refuse before checkout mutation", { skip: !windows }, () => {
+  for (const fault of ["missing-drain", "missing-installer", "unsupported-installer", "unknown", "malformed", "helper-failed"]) {
+    const f = checkoutUpdateFixture();
+    try {
+      if (fault === "missing-drain") rmSync(path.join(f.source, "src/service-drain.mjs"));
+      if (fault === "missing-installer") rmSync(path.join(f.source, "install.ps1"));
+      if (fault === "unsupported-installer") writeFileSync(path.join(f.source, "install.ps1"), "param([switch]$CheckoutInstall)\nexit 0\n");
+      if (fault === "helper-failed") writeFileSync(path.join(f.source, "src/service-drain.mjs"), "process.exit(8);\n");
+      writeFileSync(path.join(f.source, "release.txt"), "personal edit\n");
+      const before = f.snapshot(), result = f.run(["-Force", "-NoProvider"], { UPDATE_FIXTURE_PREPARE: fault });
+      assert.notEqual(result.status, 0, fault); assert.deepEqual(f.snapshot(), before);
+      assert.ok(!f.calls().some(c => c.kind === "provider" || c.kind === "installer"));
+      if (["unknown", "malformed"].includes(fault)) assert.deepEqual(f.calls().map(c => c.command), ["prepare", "resume"]);
+      assert.ok(!f.gitCalls().some(args => args.some(a => ["reset", "switch", "merge", "update-ref", "pull"].includes(a))));
+    } finally { f.dispose(); }
+  }
+});
+
+test("standalone authorized update pins its candidate and propagates independent requested options", { skip: !windows }, () => {
+  const f = checkoutUpdateFixture();
+  try {
+    f.git("switch", "--detach", f.a); writeFileSync(path.join(f.source, "release.txt"), "personal edit\n");
+    writeFileSync(path.join(f.source, "keep-untracked.txt"), "personal untracked file\n");
+    const result = f.run(["-Force", "-ForceServiceReplacement", "-ForceDeps", "-Providers", "openrouter,switchyard"], { UPDATE_FIXTURE_DENY: "1", UPDATE_FIXTURE_MUTATE: "candidate", UPDATE_FIXTURE_RESUME_FAIL: "1" });
+    assert.equal(result.status, 0, result.stderr); assert.equal(f.git("rev-parse", "HEAD"), f.b); assert.equal(f.git("branch", "--show-current"), "main");
+    assert.equal(f.git("rev-parse", "refs/codex-router/rollback"), f.a);
+    assert.equal(readFileSync(path.join(f.source, "keep-untracked.txt"), "utf8"), "personal untracked file\n");
+    const calls = f.calls(); assert.deepEqual(calls.map(c => [c.kind, c.command]), [["drain", "prepare"], ["provider", undefined], ["installer", undefined], ["drain", "resume"]]);
+    assert.equal(calls[0].head, f.a); assert.equal(calls[0].text, "personal edit\n"); assert.deepEqual(calls[0].args, ["--force-service-replacement"]);
+    assert.deepEqual(calls[1].args, ["set", "openrouter", "switchyard"]);
+    assert.equal(calls[2].head, f.b); assert.equal(calls[2].force, true); assert.equal(calls[2].forceDeps, true); assert.equal(calls[2].checkout, true); assert.equal(calls[2].target, "codex");
+  } finally { f.dispose(); }
+});
+
+test("standalone rechecks changes during preparation and resumes without overwriting them", { skip: !windows }, () => {
+  for (const mutation of ["edit", "branch", "head", "origin"]) {
+    const f = checkoutUpdateFixture();
+    try {
+      const result = f.run([], { UPDATE_FIXTURE_MUTATE: mutation });
+      assert.notEqual(result.status, 0, mutation); assert.match(result.stderr, mutation === "edit" ? /local changes/u : /checkout changed/u);
+      assert.equal(f.git("rev-parse", "HEAD"), mutation === "head" ? f.b : f.a);
+      assert.equal(f.git("branch", "--show-current"), mutation === "branch" ? "concurrent" : mutation === "head" ? "" : "main");
+      assert.equal(f.git("remote", "get-url", "origin"), mutation === "origin" ? f.remote + ".changed" : f.remote);
+      assert.equal(f.git("rev-parse", "refs/codex-router/rollback"), f.b);
+      assert.equal(readFileSync(path.join(f.source, "release.txt"), "utf8"), mutation === "edit" ? "edit during prepare\n" : mutation === "head" ? "B\n" : "A\n");
+      assert.deepEqual(f.calls().map(c => c.command), ["prepare", "resume"]);
+    } finally { f.dispose(); }
+  }
+});
+
+test("standalone failed transitions restore the exact captured commit and retain original failure", { skip: !windows }, () => {
+  for (const fault of ["installer", "throw", "untracked-collision", "detached-main-diverged", "recovery"]) {
+    const f = checkoutUpdateFixture();
+    try {
+      if (fault === "untracked-collision") writeFileSync(path.join(f.source, "new.txt"), "keep my untracked file\n");
+      if (fault === "detached-main-diverged") {
+        writeFileSync(path.join(f.source, "release.txt"), "divergent main\n"); f.git("add", "."); f.git("commit", "-m", "divergent main"); f.git("switch", "--detach", f.a);
+      }
+      const result = f.run(["-ForceServiceReplacement"], { UPDATE_FIXTURE_FAIL_INSTALL: fault === "throw" ? "throw" : ["installer", "recovery"].includes(fault) ? "1" : "", UPDATE_FIXTURE_FAIL_RECOVERY: fault === "recovery" ? "1" : "0", UPDATE_FIXTURE_RESUME_FAIL: "1" });
+      assert.notEqual(result.status, 0, fault); assert.equal(f.git("rev-parse", "HEAD"), f.a); assert.equal(f.git("branch", "--show-current"), "");
+      assert.equal(readFileSync(path.join(f.source, "release.txt"), "utf8"), "A\n");
+      assert.match(result.stderr, fault === "recovery" ? /automatic rollback also failed/u : /restored to/u);
+      if (["installer", "recovery"].includes(fault)) assert.match(result.stderr, /status 13/u);
+      if (fault === "recovery") { assert.match(result.stderr, /status 17/u); assert.match(result.stderr, new RegExp(f.a, "u")); }
+      const calls = f.calls(); assert.equal(calls.at(-1).command, "resume");
+      const recovery = calls.filter(c => c.kind === "installer").at(-1); assert.equal(recovery.head, f.a); assert.equal(recovery.force, true);
+      if (fault === "untracked-collision") assert.equal(readFileSync(path.join(f.source, "new.txt"), "utf8"), "keep my untracked file\n");
+    } finally { f.dispose(); }
+  }
+});
+
+test("standalone preparation modes keep the existing generation without Git update or drain", { skip: !windows }, () => {
+  for (const mode of ["-PrepareOnly", "-DependenciesOnly"]) {
+    const f = checkoutUpdateFixture();
+    try {
+      f.git("switch", "--detach", f.a); writeFileSync(path.join(f.source, "release.txt"), "personal edit\n");
+      const before = f.snapshot(), result = f.run([mode, "-ForceDeps"]);
+      assert.equal(result.status, 0, result.stderr); assert.deepEqual(f.snapshot(), before);
+      assert.deepEqual(f.calls().map(c => c.kind), ["installer"]);
+      assert.equal(f.calls()[0].head, f.a); assert.equal(f.calls()[0].forceDeps, true);
+      assert.equal(f.calls()[0].prepare, mode === "-PrepareOnly"); assert.equal(f.calls()[0].dependencies, mode === "-DependenciesOnly");
+      assert.ok(!f.gitCalls().some(args => args.some(a => ["fetch", "reset", "switch", "merge", "update-ref", "pull"].includes(a))));
+    } finally { f.dispose(); }
+  }
+});
+
+test("standalone first clone delegates the requested installer and provider options", { skip: !windows }, () => {
+  const f = checkoutUpdateFixture();
+  try {
+    const cloned = path.join(f.directory, "first-install");
+    assert.equal(path.dirname(cloned), f.directory);
+    assertFixtureEnvironment(f.directory, f.environment);
+    const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(f.directory, "install.ps1"), "-InstallDir", cloned, "-ForceDeps", "-NoProvider"], { cwd: f.directory, env: f.environment, encoding: "utf8", windowsHide: true, timeout: 30_000 });
+    assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(path.join(cloned, "release.txt"), "utf8"), "B\n");
+    const calls = f.calls(); assert.deepEqual(calls.map(c => c.kind), ["provider", "installer"]); assert.deepEqual(calls[0].args, ["set"]); assert.equal(calls[1].head, f.b); assert.equal(calls[1].forceDeps, true);
+  } finally { f.dispose(); }
+});
+
 function offlineNodeFixture({ stopped = false } = {}) {
   const f = fixture("uv", { mode: "full" });
   try {
@@ -358,9 +561,16 @@ function offlineNodeFixture({ stopped = false } = {}) {
     const packageRoot = path.join(f.directory, "offline-package");
     mkdirSync(packageRoot);
     const env = { ...f.environment, npm_config_cache: path.join(f.directory, "npm-cache"), npm_config_registry: "http://127.0.0.1:1" };
+    const importTrace = path.join(f.directory, "dependency-imports.jsonl");
     writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "fixture-dependency", version: "1.0.0", main: "index.cjs", scripts: { postinstall: "node postinstall.cjs" } }));
     writeFileSync(path.join(packageRoot, "postinstall.cjs"), `const fs=require('node:fs');fs.writeFileSync('installed-by-script',__dirname);if(process.env.ROUTER_FIXTURE_FAULT==='npm'&&__dirname.includes('.node-deps-candidate-'))process.exit(8);`);
-    writeFileSync(path.join(packageRoot, "index.cjs"), `const fs=require('node:fs');if(process.env.ROUTER_FIXTURE_FAULT==='import'&&__dirname.includes('.node-deps-candidate-'))throw Error('candidate import refused');if(process.env.ROUTER_FIXTURE_FAULT==='relocation'&&__dirname.includes('.node-deps-candidate-')&&fs.readFileSync(__dirname+'/installed-by-script','utf8')!==__dirname)throw Error('candidate relocation refused');module.exports={ready:true};`);
+    writeFileSync(path.join(packageRoot, "index.cjs"), `
+const fs=require('node:fs'),path=require('node:path'),fault=process.env.ROUTER_FIXTURE_FAULT,candidate=__dirname.includes('.node-deps-candidate-');
+fs.appendFileSync(${JSON.stringify(importTrace)},JSON.stringify({command:process.argv.slice(1),directory:__dirname})+'\\n');
+if(fault==='import'&&candidate)throw Error('candidate import refused');
+if(fault==='relocation'&&candidate&&fs.readFileSync(__dirname+'/installed-by-script','utf8')!==__dirname)throw Error('candidate relocation refused');
+if(fault==='activated-import'&&!candidate&&!fs.existsSync(path.join(__dirname,'../previous.txt')))throw Error('activated import refused');
+module.exports={ready:true};`);
     execFileSync(process.execPath, [npm, "pack", "--offline", "--no-audit", "--no-fund"], { cwd: packageRoot, env, encoding: "utf8", windowsHide: true });
     writeFileSync(path.join(f.source, "package.json"), JSON.stringify({ name: "codex-router-lite", type: "module", dependencies: { "fixture-dependency": "file:" + path.join(packageRoot, "fixture-dependency-1.0.0.tgz") } }));
     execFileSync(process.execPath, [npm, "install", "--package-lock-only", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"], { cwd: f.source, env, encoding: "utf8", windowsHide: true });
@@ -375,6 +585,7 @@ function offlineNodeFixture({ stopped = false } = {}) {
     f.oldNodeStamp = readFileSync(path.join(f.source, "node_modules/.codex-router-install.json"));
     f.oldPythonStamp = readFileSync(path.join(f.source, ".venv/.codex-router-install.json"));
     writeFileSync(f.trace, "");
+    writeFileSync(importTrace, "");
     const countsFile = path.join(f.directory, "service-counts.json"), liveFile = path.join(f.directory, "service-live.json");
     writeFileSync(liveFile, JSON.stringify(!stopped));
     writeFileSync(path.join(f.source, "src/service.mjs"), `
@@ -385,7 +596,7 @@ if(command==='status')console.log(JSON.stringify({installed:true,loaded:${!stopp
 if(command==='stop'||command==='install'){
  createRequire(import.meta.url)('fixture-dependency');
  c[command]++;c.previousNode=readdirSync(root).find(n=>n.startsWith('.node-deps-previous-'))||c.previousNode;c.previousPython=readdirSync(root).find(n=>n.startsWith('.venv-previous-'))||c.previousPython;
- if(command==='install'&&c.install>1)c.restoredBeforeImport=existsSync(path.join(root,'node_modules/previous.txt'))&&existsSync(path.join(root,'.venv/previous.txt'));
+ if(command==='install'&&(c.install>1||fault==='activated-import'||fault?.startsWith('record-')))c.restoredBeforeImport=existsSync(path.join(root,'node_modules/previous.txt'))&&existsSync(path.join(root,'.venv/previous.txt'));
  writeFileSync(file,JSON.stringify(c));
  if(command==='stop'){if(fault==='recovery-stop'&&c.stop===2)process.exitCode=7;else writeFileSync(live,'false');}
  if(command==='install'){writeFileSync(live,'true');if(['service','damaged','recovery-stop','unknown','listener','stopped'].includes(fault)&&c.install===1){
@@ -395,8 +606,10 @@ if(command==='stop'||command==='install'){
  }}
 }`);
     writeFileSync(path.join(f.source, "src/service-process.mjs"), `import{existsSync,readFileSync}from'node:fs';const unknown=existsSync(${JSON.stringify(path.join(f.directory, "unknown-process"))});const owned=JSON.parse(readFileSync(${JSON.stringify(liveFile)},'utf8'));console.log(JSON.stringify({status:unknown?'unknown':owned?'owned':'absent',owned:unknown?false:owned,sourceRoot:!unknown&&owned?${JSON.stringify(f.source)}:null}));`);
-    writeFileSync(path.join(f.directory, "bin/node-trace.mjs"), `import{appendFileSync,existsSync,readFileSync,writeFileSync}from'node:fs';import{spawnSync}from'node:child_process';const a=process.argv.slice(2),fault=process.env.ROUTER_FIXTURE_FAULT;appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+a.join('\\t')+'\\n');if(a[0]==='--input-type=module'&&['4202','4000'].includes(a.at(-1))){const c=existsSync(${JSON.stringify(countsFile)})?JSON.parse(readFileSync(${JSON.stringify(countsFile)},'utf8')):{};process.exit(fault==='listener'&&c.install>0&&a.at(-1)==='4000'?1:0);}if(a[0]?.endsWith('install-plan.mjs')&&a[1]==='record'&&fault==='record-'+a[2]&&!existsSync(${JSON.stringify(path.join(f.directory, "record-failed"))})){writeFileSync(${JSON.stringify(path.join(f.directory, "record-failed"))},'1');process.exit(8);}const p=spawnSync(${JSON.stringify(process.execPath)},a,{stdio:'inherit'});process.exit(p.status??1);`);
+    writeFileSync(path.join(f.directory, "bin/node-trace.mjs"), `import{appendFileSync,existsSync,mkdirSync,readFileSync,writeFileSync}from'node:fs';import{spawnSync}from'node:child_process';import path from'node:path';const a=process.argv.slice(2),fault=process.env.ROUTER_FIXTURE_FAULT;appendFileSync(process.env.ROUTER_INSTALL_TRACE,'node\\t'+a.join('\\t')+'\\n');if(a[0]==='--input-type=module'&&['4202','4000'].includes(a.at(-1))){const c=existsSync(${JSON.stringify(countsFile)})?JSON.parse(readFileSync(${JSON.stringify(countsFile)},'utf8')):{};process.exit(fault==='listener'&&c.install>0&&a.at(-1)==='4000'?1:0);}if(a[0]?.endsWith('install-plan.mjs')&&a[1]==='record'&&fault==='record-'+a[2]&&!existsSync(${JSON.stringify(path.join(f.directory, "record-failed"))})){writeFileSync(${JSON.stringify(path.join(f.directory, "record-failed"))},'1');mkdirSync(path.join(${JSON.stringify(f.source)},a[2]==='node-deps'?'node_modules':'.venv','.codex-router-install.json'));}const p=spawnSync(${JSON.stringify(process.execPath)},a,{stdio:'inherit'});process.exit(p.status??1);`);
     f.counts = () => existsSync(countsFile) ? JSON.parse(readFileSync(countsFile, "utf8")) : { stop: 0, install: 0 };
+    f.planImports = () => readFileSync(importTrace, "utf8").trim().split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line))
+      .filter(entry => entry.command[0]?.endsWith("install-plan.mjs"));
     f.assertPrevious = () => {
       assert.equal(readFileSync(path.join(f.source, "node_modules/previous.txt"), "utf8"), "previous node tree");
       assert.equal(readFileSync(path.join(f.source, ".venv/previous.txt"), "utf8"), "previous Python tree");
@@ -440,14 +653,42 @@ test("real offline Node and Python promote together, preserve npm scripts and re
     const result = f.run(["-ForceDeps"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(f.counts().stop, 1); assert.equal(f.counts().install, 1);
+    const imports = f.planImports();
+    assert.deepEqual(imports.map(entry => entry.command.slice(1, 3)), [
+      ["verify-node", path.dirname(path.dirname(imports[0].directory))],
+      ["verify-node", path.dirname(path.dirname(imports[1].directory))],
+      ["record", "node-deps"],
+    ], "candidate validation runs before and after relocation, then the active tree is verified while recording");
+    assert.notEqual(imports[0].directory, imports[1].directory);
+    assert.equal(realpathSync.native(imports[2].directory), realpathSync.native(path.join(f.source, "node_modules/fixture-dependency")));
+    assert.equal(f.calls().filter(call => call === "node\tsrc/install-plan.mjs\tverify-node").length, 0);
     assert.equal(existsSync(path.join(f.source, "node_modules/fixture-dependency/installed-by-script")), true);
     const imported = execFileSync(process.execPath, ["--input-type=module", "-e", "import{createRequire}from'node:module';console.log(createRequire(process.cwd()+'/package.json')('fixture-dependency').ready)"], { cwd: f.source, env: f.environment, encoding: "utf8" });
     assert.equal(imported.trim(), "true");
     assert.ok(!readdirSync(f.source).some(name => /^\.(?:node-deps|venv)-(?:candidate|previous|failed)-/u.test(name)));
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
+test("real offline Node activation rolls back failed active imports and stamp writes", { skip: !windows }, () => {
+  for (const fault of ["activated-import", "record-node-deps"]) {
+    const f = offlineNodeFixture();
+    try {
+      const result = f.runFault(fault);
+      assert.notEqual(result.status, 0, fault);
+      assert.match(result.stderr, fault === "activated-import" ? /activated import refused/u : /EISDIR/u);
+      assert.match(result.stderr, /Recording the activated Node dependency state failed/u);
+      assert.ok(!/dependency rollback failed/u.test(result.stderr), result.stderr);
+      f.assertPrevious();
+      assert.deepEqual(f.planImports().map(entry => entry.command[1]), ["verify-node", "verify-node", "record"]);
+      assert.equal(f.counts().stop, 1);
+      assert.equal(f.counts().install, 1);
+      assert.equal(f.counts().restoredBeforeImport, true);
+      assert.equal(f.calls().filter(call => call.startsWith("npm\t")).length, 1, "recovery uses retained tree without npm");
+    } finally { rmSync(f.directory, { recursive: true, force: true }); }
+  }
+});
+
 test("real offline dependency rollback restores trees and stamps before old service imports", { skip: !windows }, () => {
-  for (const fault of ["record-node-deps", "record-python-deps", "service", "damaged", "stopped"]) {
+  for (const fault of ["record-python-deps", "service", "damaged", "stopped"]) {
     const f = offlineNodeFixture({ stopped: fault === "stopped" });
     try {
       const result = f.runFault(fault);
@@ -457,7 +698,8 @@ test("real offline dependency rollback restores trees and stamps before old serv
       const counts = f.counts();
       assert.equal(counts.stop, fault === "service" ? 2 : fault === "stopped" ? 3 : 1, result.stderr);
       assert.equal(counts.install, fault.startsWith("record-") ? 1 : 2);
-      if (!fault.startsWith("record-")) assert.equal(counts.restoredBeforeImport, true);
+      assert.equal(counts.restoredBeforeImport, true);
+      if (fault === "record-python-deps") assert.match(result.stderr, /EISDIR/u);
       assert.equal(f.calls().filter(call => call.startsWith("npm\t")).length, 1, "recovery uses retained tree without npm");
       if (fault === "stopped") assert.equal(readFileSync(path.join(f.directory, "service-live.json"), "utf8"), "false");
     } finally { rmSync(f.directory, { recursive: true, force: true }); }

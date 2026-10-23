@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "date": "2026-10-21",
+  "evidenceKind": "Coordinated Web runtime refresh and deterministic browser-read comparison",
+  "sourceBase": "5a4156e7cb112d59d2897b7b101cf4ea8fd759bd",
+  "candidateBrowserSha256": "38e992d6488d7b93394b089bc1d49bcf22c2f7e4a71d7cd936b5873b43748cfd",
+  "baselineBrowserSha256": "4d86b0e13a26ef05c76e62ccdb17cc5b36c0925aa610100826290c3cad7dac2c",
+  "changes": [
+    "Discover the current runtime from configured official Node REPL and browser anchors, with an explicit manifest fallback; never infer authority from cache age.",
+    "Coordinate idle proof, owned adapter installation, saved browser settings and Router reload under the existing service-operation lock, preserving the unchanged Interrupt hook, tunnel, key storage and account capabilities.",
+    "Include active Web turns, uncertain Sends and unresolved native actions in maintenance drain proof, including gaps between HTTP requests; reject older drain replies without that proof.",
+    "Separate picker-only configuration and version inputs from resident observation dependencies while retaining exact observation-program qualification.",
+    "Batch owned-turn, control and current-URL reads through the public semantic locator union, preserving independent ownership and navigation fences."
+  ],
+  "measurement": {
+    "environment": {"node": "v24.13.0", "platform": "win32", "arch": "x64"},
+    "harnessSha256": "8e28eeaa8ea62a42d4dbe6ce0526996ca890af690d2855618e8d38c02af27f45",
+    "fixtureSha256": "e7304f729359a421e4d56dc56084aaf61aec7195f3720e5cb9a02cdbcd765668",
+    "domFixtureSha256": "fd99e6732d78556f048b0453851c77c8a13e676d0cc30f90695c3be121620e3a",
+    "scenarios": ["active", "completed", "capacity", "capacity-active", "duplicate-generation", "foreign-url"],
+    "outputEquivalence": "Exact parsed identity, output, completion and retention equality for equal inputs; matching explicit rejection of foreign saved URLs.",
+    "sdkCommands": {
+      "activeObservation": {"before": 11, "after": 3},
+      "completedObservation": {"before": 12, "after": 3},
+      "finalRetention": {"before": 13, "after": 4}
+    },
+    "generatedProgramUtf8Bytes": {
+      "bootstrap": {"before": 26412, "after": 30308},
+      "continue": {"before": 37658, "after": 41554},
+      "send": {"before": 18661, "after": 18661},
+      "observe": {"before": 3268, "after": 2358},
+      "retain": {"before": 3267, "after": 2357}
+    },
+    "qualification": "Picker-only changes preserve helper version and acceptance of prior observe/retain programs. Ownership dependency changes invalidate both.",
+    "tradeoff": "Initial helper programs grow by 3896 bytes; each compact operation saves 910 bytes. Five compact operations offset that increase. A one-observation plus retention turn sends 2076 more generated-code bytes overall.",
+    "limits": "Synthetic command counts and generated-code bytes establish no wall-clock latency or ChatGPT token saving. They do not establish live tools, Stop or continuation readiness."
+  },
+  "validation": {
+    "sourceChecks": "npm run check passed; product boundary includes the new packaged runtime module.",
+    "catalog": "Current codex-cli 0.163.0-alpha.11 parsed 17 current-schema models; compatibility passed.",
+    "focused": ["Browser, hook and adapter: 309 passed", "Final coordinated refresh and installer: 73 passed", "Refresh CLI: 1 passed", "Router admission: 11 passed", "Web runtime: 184 passed", "ChatGPT Web integration: 15 passed"],
+    "fullSuite": "1560 tests: 1558 passed, 2 failed. The adoption fixture decoded valid TOML escapes in the workspace TEMP path; its fixture now protects those escapes while retaining legacy unknown-backslash coverage. Both affected files subsequently passed 38 tests. The unmodified native handshake 426 test passed before that correction and in 20 additional focused runs (60 handshake cases); the original full-suite failure remains unexplained. No full-suite-green claim is made.",
+    "independentReviews": "Browser batching, qualification, maintenance admission and coordinated refresh reviewed without remaining actionable findings.",
+    "installedPlan": "Read-only plan ready; matching adapter generation required, browser runtime unchanged, ordinary Web scope retained.",
+    "hookSha256": "58afd7f48773ef3de7747234417e220aede74939c2167a544eea3034cacd4cef"
+  },
+  "activation": {
+    "status": "Deployed and loaded after normal restart; native tools and same-chat continuation verified; user observed Stop with tab retained, but immediate automatic Stop confirmation remains unverified",
+    "routerCommit": "7f490f1a47fffbb3810c5b67b7b83172f491af97",
+    "deploymentOperation": "8a8fb05eb00d4ee7a1ed7366ab27d3db",
+    "deploymentAccepted": true,
+    "deploymentChecks": ["switchyardHealth", "taskIdentity", "routerFullHealth", "cleanCandidate", "installManifest", "doctor", "protectedEndpoints", "processIdentity", "provenance", "installedHashes", "installedCatalog"],
+    "forceInterruption": false,
+    "switchyardBinaryAndRoutesChanged": false,
+    "coordinatedRefresh": {"mode": "applied", "routerReloaded": true, "browserRuntimeChanged": false, "adapterGeneration": "85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113", "scope": "ordinary Web conversations", "hookDefinition": "preserved", "tunnelConfiguration": "preserved"},
+    "requiredNext": "If investigating the remaining automatic Stop acknowledgement gap, distinguish invalid_controls from active_readback with fixed control counts and recognition flags. The current receipt does not distinguish these branches or establish a timeout; do not substitute repeated manual Stop trials for this missing discriminator.",
+    "rollback": "Guarded deployment retained the previous runtime and generated/router-rollback-5a4156e7 checkout. The prior immutable adapter generation 2e218573782e6192efaba1cebb0bd9395ecbf32e47d8764153228b41b0d12f7b and a protected ownership/settings/User-environment snapshot remain in private local recovery storage. The snapshot excludes the runtime key; the captured pre-change Web source remains under generated/web-refresh-20261021/baseline. Keep source, adapter and private configuration together. Older retained adapters whose external app files were removed are not runnable runtime rollback."
+  },
+  "liveVerification": {
+    "route": "chatgpt-web/gpt-6-sol-instant",
+    "effort": "low",
+    "adapterLoaded": "The running process selection and adapter processes matched generation 85c09a6dabc9fbaf06915dd8c0af5210584d2a944930895b205be46812883113 after a normal full Codex restart.",
+    "nativeRead": {"nativeTurnStatus": "completed", "commandCount": 1, "exitCode": 0, "actualPairedOutputMatched": true, "originalSessionMarkerRecalled": true, "durationMs": 46574},
+    "stop": {
+      "nativeTurnStatus": "interrupted",
+      "userConfirmedGenerationStoppedAndSameTabStayedOpen": true,
+      "receiptAtUtc": "2026-10-21T18:31:15.063Z",
+      "receiptCorrelatedToExactOriginatingTurn": true,
+      "receipt": "stop_unconfirmed",
+      "resultCode": "stop_confirmation_failed",
+      "outcome": "blocked",
+      "stage": "stop_readback_visibility",
+      "clickAttempted": true,
+      "clickError": false,
+      "stopClicked": true,
+      "retained": true,
+      "childTerminalObserved": true,
+      "scriptElapsedMs": 2144,
+      "scriptBudgetMs": 2400,
+      "callbackElapsedMs": 2528,
+      "automaticInactivityConfirmed": false,
+      "readbackLimit": "stopHidden=false can retain its pre-click default if final controls fail validation, or reflect a valid final read with Stop still visible. The receipt does not expose the discriminator; elapsed time does not prove budget exhaustion.",
+      "baselineComparison": "Current and pre-refresh createWebStopCode with equal inputs produce identical 20755-byte programs, SHA256 94868c89bf4bb190ec096195066b292f5554966a0f011d44d21af4ecfca22465. This establishes unchanged program content, not identical live browser scheduling or state."
+    },
+    "continuation": {"nativeTurnStatus": "completed", "durationMs": 20741, "expectedAcknowledgementAndOriginalMarkerMatched": true, "nativeCommandCount": 0, "savedChatUnchanged": true, "tabUnchanged": true, "bindingUnchanged": true, "generationCompleted": true, "uncertainSend": false, "unresolvedCodingCount": 0, "lastTurnCompleted": true},
+    "limits": "Durations describe one observed native-tool turn and one same-chat continuation, not a controlled latency benchmark. User-observed cancellation and successful continuation do not turn the immediate unconfirmed receipt into automatic inactivity proof. This check does not recertify the full sandbox, every Web model or subagents. No external launcher, runtime patch or other model drove the browser workflow."
+  }
+}

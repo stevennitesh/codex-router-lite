@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertCallerSecret, callerBaseUrl, redactCallerUrl } from "./caller-auth.mjs";
 import {
-  callerCapabilityBackupPath,
-  discardCallerCapabilityBackup,
+  discardCallerCapabilityRetiredGenerations,
+  inspectCallerCapabilityRollback,
   restoreCallerCapability,
   swapCallerCapability,
 } from "./caller-key-rotation.mjs";
@@ -152,17 +152,17 @@ async function runRouterServiceMutationUnlocked(command) {
 }
 
 async function finalizeCallerKeyRotation({ journal, secretPath = CALLER_SECRET_PATH } = {}) {
-  discardCallerCapabilityBackup({ secretPath, operationId: journal.operationId });
+  discardCallerCapabilityRetiredGenerations({ secretPath, journal, committed: true });
   clearCallerKeyRotationJournal({ operationId: journal.operationId });
 }
 
-async function recoverPendingCallerKeyRotationUnlocked({
+export async function recoverPendingCallerKeyRotationUnlocked({
   secretPath = CALLER_SECRET_PATH,
   runNode = runNodeCommand,
   readServiceStatus = () => readRouterServiceStatus({ runNode }),
   readJournal = () => readCallerKeyRotationJournal(),
   restoreSecret = restoreCallerCapability,
-  discardBackup = discardCallerCapabilityBackup,
+  retireGenerations = discardCallerCapabilityRetiredGenerations,
   clearJournal = clearCallerKeyRotationJournal,
   verifyServiceKeys = verifyCallerRotation,
   verifyCurrentKey = verifyCurrentCallerCapability,
@@ -173,41 +173,19 @@ async function recoverPendingCallerKeyRotationUnlocked({
   if (!journal) return { recovered: false };
 
   if (journal.phase === "verified") {
-    const live = currentSecret(secretPath);
-    if (journal.currentSecretSha256 && secretDigest(live) !== journal.currentSecretSha256) {
-      throw new Error("Verified caller rotation journal does not match the live capability; refusing cleanup.");
-    }
-    if (!secretIsProtected(secretPath)) {
-      throw new Error("Verified caller rotation live capability is not private; refusing cleanup.");
-    }
-    discardBackup({ secretPath, operationId: journal.operationId });
-    clearJournal({ operationId: journal.operationId });
+    await retireGenerations({ secretPath, journal, committed: true, secretIsProtected });
+    await clearJournal({ operationId: journal.operationId });
     return { recovered: true, committed: true };
   }
 
   // Prove the rollback generation before touching a running service. A corrupt
   // or unprotected rollback must fail closed without taking a healthy router
   // down merely because recovery was attempted.
-  const backupPath = callerCapabilityBackupPath(secretPath, journal.operationId);
-  const backupExists = existsSync(backupPath);
-  let rollbackSecret;
-  if (backupExists) {
-    if (!secretIsProtected(backupPath)) {
-      throw new Error("Pending caller rotation rollback generation is not private; refusing recovery.");
-    }
-    rollbackSecret = currentSecret(backupPath);
-    if (secretDigest(rollbackSecret) !== journal.previousSecretSha256) {
-      throw new Error("Pending caller rotation rollback generation does not match its protected journal; refusing recovery.");
-    }
-  } else {
-    rollbackSecret = currentSecret(secretPath);
-    if (secretDigest(rollbackSecret) !== journal.previousSecretSha256) {
-      throw new Error("Pending caller rotation has no rollback generation matching the live capability; refusing recovery.");
-    }
-    if (!secretIsProtected(secretPath)) {
-      throw new Error("Pending caller rotation live rollback capability is not private; refusing recovery.");
-    }
-  }
+  const generationIdentity = {
+    secretPath, operationId: journal.operationId, previousSecretSha256: journal.previousSecretSha256,
+    currentSecretSha256: journal.currentSecretSha256, secretIsProtected,
+  };
+  const rollback = inspectCallerCapabilityRollback(generationIdentity);
 
   // Recovery owns the service lifecycle lock, so the current state is stable
   // while we inspect it. The journal records the pre-rotation intent, but a
@@ -220,14 +198,9 @@ async function recoverPendingCallerKeyRotationUnlocked({
   if (serviceRunningAtRecovery) await runServiceMutation("stop");
   const shouldRunAfterRecovery = journal.serviceWasRunning || serviceRunningAtRecovery;
 
-  let restored;
-  if (backupExists) {
-    restored = restoreSecret({ secretPath, operationId: journal.operationId });
-    if (!restored.restored || restored.currentSecret !== rollbackSecret || !secretIsProtected(secretPath)) {
-      throw new Error("Pending caller rotation could not restore a private prior capability; refusing cleanup.");
-    }
-  } else {
-    restored = { restored: false, currentSecret: rollbackSecret };
+  const restored = restoreSecret(generationIdentity);
+  if (restored.currentSecret !== rollback.rollbackSecret || !secretIsProtected(secretPath)) {
+    throw new Error("Pending caller rotation could not restore a private prior capability; refusing cleanup.");
   }
 
   await refreshTargets(journal.targets, runNode);
@@ -239,8 +212,8 @@ async function recoverPendingCallerKeyRotationUnlocked({
       await verifyCurrentKey({ currentSecret: restored.currentSecret });
     }
   }
-  discardBackup({ secretPath, operationId: journal.operationId });
-  clearJournal({ operationId: journal.operationId });
+  await retireGenerations({ secretPath, journal, secretIsProtected });
+  await clearJournal({ operationId: journal.operationId });
   return { recovered: true, committed: false };
 }
 
@@ -258,6 +231,7 @@ export async function runCallerKeyRotation({
   finalizeRotation = finalizeCallerKeyRotation,
   recoverAfterFailure = recoverPendingCallerKeyRotationUnlocked,
   verifyServiceKeys = verifyCallerRotation,
+  verifyCurrentKey = verifyCurrentCallerCapability,
   runServiceMutation = runRouterServiceMutationUnlocked,
   secretPath = CALLER_SECRET_PATH,
   assertOwnership = () => assertStateOwnership("rotate the router caller capability"),
@@ -266,7 +240,7 @@ export async function runCallerKeyRotation({
   const serviceLock = callerServiceLock(secretPath, withServiceLock);
   return withLock(() => withMutationLocks(() => serviceLock(async () => {
     await recoverPending({
-      secretPath, runNode, readServiceStatus, verifyServiceKeys, runServiceMutation,
+      secretPath, runNode, readServiceStatus, verifyServiceKeys, verifyCurrentKey, runServiceMutation,
     });
     const statuses = await readClientStatuses();
     const targets = installedTargetsFromStatus(statuses);
@@ -295,7 +269,7 @@ export async function runCallerKeyRotation({
     } catch (error) {
       let recoveryError;
       try {
-        await recoverAfterFailure({ secretPath, runNode, readServiceStatus, verifyServiceKeys, runServiceMutation });
+        await recoverAfterFailure({ secretPath, runNode, readServiceStatus, verifyServiceKeys, verifyCurrentKey, runServiceMutation });
       } catch (caught) {
         recoveryError = caught;
       }

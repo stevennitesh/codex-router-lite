@@ -28,6 +28,20 @@ jobs:
       - name: Select verification from the actual changed inputs
         id: scope
         run: node scripts/verification-scope.mjs --fetch-base
+      - uses: actions/setup-python@v7
+        if: matrix.node == '24.x' && steps.scope.outputs.scope != 'evidence'
+        with:
+          python-version: "3.12"
+      - name: Provision the hash-locked gateway interpreter
+        if: matrix.node == '24.x' && steps.scope.outputs.scope != 'evidence'
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "Gateway virtual environment creation failed" }
+          $gatewayPython = Join-Path $env:GITHUB_WORKSPACE '.venv\Scripts\python.exe'
+          if (-not (Test-Path -LiteralPath $gatewayPython -PathType Leaf)) { throw "Gateway interpreter is missing" }
+          & $gatewayPython -m pip install --require-hashes -r requirements/python.txt
+          if ($LASTEXITCODE -ne 0) { throw "Hash-locked gateway dependency installation failed" }
+          "MODEL_ROUTER_TEST_LITELLM_PYTHON=$gatewayPython" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Validate the retained Windows runtime
         if: steps.scope.outputs.scope != 'evidence'
         run: npm run verify

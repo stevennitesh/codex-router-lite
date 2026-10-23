@@ -26,6 +26,48 @@ function* fragmented(bytes, size = 64) {
   for (let offset = 0; offset < bytes.length; offset += size) yield bytes.subarray(offset, offset + size);
 }
 
+test("the first terminal freezes provider counts, output and estimate evidence across trailers", async () => {
+  const item = { type: "function_call", call_id: "call_done", name: "fixture", arguments: "{}" };
+  const encode = payload => `data: ${JSON.stringify(payload)}\n\n`;
+  const terminal = encode({ type: "response.completed", response: { status: "completed", model: "first-model",
+    service_tier: "first-tier", output: [], usage: { input_tokens: 0, output_tokens: 2 } } });
+  for (const trailer of ["data: {broken}\n\n", encode({ type: "response.failed" }), encode({ type: "response.incomplete" }),
+    encode({ type: "response.completed", response: { status: "completed", model: "trailer-model", output: [], usage: { input_tokens: 99, output_tokens: 9 } } }),
+    `data: ${"x".repeat(8 * 1024 * 1024 + 1)}\n\n`]) {
+    for (const split of [false, true]) {
+      const prefix = encode({ type: "response.output_item.done", item }) + terminal;
+      const { transform } = await run(split ? [prefix, trailer] : [prefix + trailer]);
+      assert.equal(transform.completedResponseObserved(), true);
+      assert.deepEqual(transform.reportedTokenUsage(), { inputTokens: 0, outputTokens: 2 });
+      assert.deepEqual(transform.tokenUsage(), { inputTokens: 0, outputTokens: 2, totalTokens: 2 });
+      assert.deepEqual(transform.providerResponseObservation(), { outcome: "completed", returnedModel: "first-model", returnedTier: "first-tier" });
+      assert.deepEqual(transform.responseOutputObservation(), { complete: true, output: [item] });
+      assert.ok(Object.isFrozen(transform.responseOutputObservation().output[0]));
+    }
+  }
+  const rewritten = await run([terminal, encode({ usage: { input_tokens: 99 } })], { estimatedInputTokens: 1234 });
+  assert.equal(rewritten.transform.substitutedInputTokens(), 1234);
+  assert.deepEqual(rewritten.transform.reportedTokenUsage(), { inputTokens: 0, outputTokens: 2 });
+  assert.match(rewritten.body.toString(), /"input_tokens":1234/u);
+  const unsafe = new ResponseUsageTransform("text/event-stream", { estimatedInputTokens: 1234 });
+  unsafe.on("data", () => {});
+  const failed = new Promise(resolve => unsafe.once("error", resolve));
+  unsafe.write(terminal);
+  unsafe.end("data: {broken}\n\n");
+  assert.match((await failed).message, /unsafe after substitution/u);
+  assert.equal(unsafe.completedResponseObserved(), true);
+  assert.equal(unsafe.substitutedInputTokens(), 1234);
+  for (const type of ["response.failed", "response.incomplete"]) {
+    const { transform } = await run([encode({ type }), terminal]);
+    assert.equal(transform.completedResponseObserved(), false);
+    assert.equal(transform.providerResponseObservation().outcome, type === "response.failed" ? "stream_error" : "incomplete");
+  }
+  const overflow = await run([encode({ type: "response.completed", response: { status: "completed",
+    output: Array.from({ length: 257 }, (_, index) => ({ type: "function_call", call_id: `overflow_${index}` })) } }), terminal]);
+  assert.equal(overflow.transform.completedResponseObserved(), true);
+  assert.deepEqual(overflow.transform.responseOutputObservation(), { complete: false, output: [] });
+});
+
 test("usage edits preserve ambiguous identities, exact decimals and invalid bytes", async () => {
   for (const raw of [
     '{"usage":{"input_tokens":0},"name":"first","na\\u006de":"second"}',
@@ -55,6 +97,7 @@ test("terminal observation requires complete consistent events and accepts multi
     const {body,transform} = await run(fragmented(Buffer.from(wire),1));
     assert.equal(body.toString(),wire);
     assert.equal(transform.completedResponseObserved(),true);
+    assert.equal(transform.completedJsonResponseObserved(),false);
     assert.deepEqual(transform.tokenUsage(),{inputTokens:12,outputTokens:3,totalTokens:15});
     const rewritten = await run(fragmented(Buffer.from(wire.replace('"input_tokens": 12','"input_tokens": 0')),1),{estimatedInputTokens:1234});
     assert.equal(rewritten.transform.substitutedInputTokens(),1234);
@@ -213,9 +256,10 @@ test("observation forwards incomplete chunks immediately and records first-token
 });
 
 test("fragmented JSON usage capture preserves unchanged bytes and zero-only substitution", async () => {
-  for (const input of [0, 12, null]) {
+  for (const contentType of ["application/json", "", "application/octet-stream"]) for (const input of [0, 12, null]) {
     const wire = Buffer.from(` { "status": "completed", "usage": {"input_tokens":${input},"output_tokens":3}, "text":"${"é".repeat(1024)}" } `);
-    const { body, transform } = await run(fragmented(wire, 3), { estimatedInputTokens: 123 }, "application/json");
+    const { body, transform } = await run(fragmented(wire, 3), { estimatedInputTokens: 123 }, contentType);
+    assert.equal(transform.completedJsonResponseObserved(), true);
     if (input === 0) {
       assert.equal(JSON.parse(body).usage.input_tokens, 123);
       assert.equal(JSON.parse(body).usage.total_tokens, 126);

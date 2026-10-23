@@ -1,4 +1,5 @@
 import { messagePhaseTransform } from "./message-phase.mjs";
+import { closeWebBridge, isWebBridgeModel, requestWebBridge, startWebBridge } from "./chatgpt-web.mjs";
 import { observationFields, requestObservation } from "./request-observation.mjs";
 import { readFileSync } from "node:fs";
 import { createCatalogReader } from "./catalog-reader.mjs";
@@ -98,7 +99,7 @@ import {
   switchyardHealthUrl,
 } from "./switchyard-runtime.mjs";
 import { SwitchyardNativeAttemptObserver } from "./switchyard-native-observation.mjs";
-import { markResponsesStream } from "./responses-stream-failure.mjs";
+import { acceptedResponsesTerminal, markResponsesStream } from "./responses-stream-failure.mjs";
 import {
   codexDesktopStateAsync,
   observeNativeAuthOutcome,
@@ -140,6 +141,7 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
+import { inAppWebMaintenanceState } from "./web-runtime.mjs";
 import {
   clientToolCalls,
   clientToolOutputs,
@@ -180,7 +182,7 @@ const SWITCHYARD_CAPABILITY = process.env[SWITCHYARD_CAPABILITY_ENV];
 const switchyardNativeAttempts = new SwitchyardNativeAttemptObserver({
   capability: SWITCHYARD_CAPABILITY,
 });
-const routerAdmission = new RouterAdmission();
+const routerAdmission = new RouterAdmission({ webRuntimeState: inAppWebMaintenanceState });
 const QUIET =
   process.env.CODEX_ROUTER_QUIET === "1";
 function positiveByteLimit(value, fallback) {
@@ -2277,7 +2279,7 @@ async function handleModels(response) {
   const data = catalogModels().map((model) => ({
     id: model.slug,
     object: "model",
-    owned_by: MODEL_BY_SLUG.has(model.slug)
+    owned_by: isWebBridgeModel(model.slug) ? "chatgpt-web" : MODEL_BY_SLUG.has(model.slug)
       ? providerForModel(MODEL_BY_SLUG.get(model.slug)).ownedBy
       : "openai",
   }));
@@ -2365,6 +2367,7 @@ async function handleResponses(request, response, requestUrl) {
   let retryUsageTransform;
   let retryEmptyCompletionGuard;
   let retryUsage;
+  let selectedPipelineCompleted = false;
   let usage;
   let estimatedInputTokens;
   let emptyCompletion = false;
@@ -2381,6 +2384,9 @@ async function handleResponses(request, response, requestUrl) {
   let observedUpstreamStatus;
   let observedTransportFailure = false;
   let switchyardWorkflow;
+  const selectedUsageObserver = () => emptyCompletionRetried ? retryUsageTransform : usageTransform;
+  const acceptedSuccessfulTerminal = () => selectedUsageObserver()?.completedResponseObserved() === true &&
+    acceptedResponsesTerminal(response)?.outcome === "completed";
   const switchyardNativeCallback = switchyardNativeAttempts.consumeAttribution(request.headers);
   bindClientAbort(request, response, () => {
     clientGone = true;
@@ -2400,7 +2406,29 @@ async function handleResponses(request, response, requestUrl) {
     delete payload[SWITCHYARD_TASK_PROJECTION_FIELD];
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     const registeredRoute = MODEL_BY_SLUG.get(requestedModel);
-    markResponsesStream(response, { model: requestedModel });
+    markResponsesStream(response, { model: requestedModel, signal: controller.signal });
+    const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
+    // Codex remote compaction V2 uses ordinary Responses with a terminal
+    // trigger. Detect it before Web dispatch as well as native/routed dispatch.
+    const compactV2 = Array.isArray(payload.input) && payload.input.at(-1)?.type === "compaction_trigger";
+    if (isWebBridgeModel(requestedModel)) {
+      route = { slug: requestedModel, provider: "chatgpt-web" };
+      const childEffort = configuredChildEffort(request, route);
+      if (childEffort !== undefined) payload = { ...payload, reasoning: { ...payload.reasoning, effort: childEffort } };
+      const beforeFetch = Date.now();
+      const upstream = await requestWebBridge(payload, {
+        compact: compactV1,
+        compactV2,
+        signal: controller.signal,
+        headers: request.headers,
+      });
+      upstreamLatencyMs = Date.now() - beforeFetch;
+      finalStatus = upstream.status;
+      // This backend implements the caller's Responses/tool/history contract
+      // itself. Preserve its compaction envelopes and tool identities exactly.
+      await pipeResponse(upstream, response, new Set([...HOP_BY_HOP_HEADERS, "set-cookie"]));
+      return;
+    }
     const retiredMessage = RETIRED_ROUTED_MODELS.get(requestedModel);
     if (!registeredRoute && retiredMessage) {
       writeJson(response, 400, { error: {
@@ -2430,13 +2458,7 @@ async function handleResponses(request, response, requestUrl) {
       return;
     }
     // Anything without a route from here on is native GPT traffic.
-    const compactV1 = /\/responses\/compact$/.test(requestUrl.pathname);
-    // Codex remote compaction V2 uses the ordinary Responses endpoint with a
-    // terminal trigger. Detect the protocol shape before route dispatch so the
-    // native path can also preserve the full tool results being summarized.
-    const compactV2 =
-      Array.isArray(payload.input) &&
-      payload.input.at(-1)?.type === "compaction_trigger";
+    if (!route && !compactV1) markResponsesStream(response, { model: requestedModel, minimalFailure: true, signal: controller.signal });
     const switchyard = isSwitchyardRoute(route);
     const switchyardHop = switchyard && !compactV1 && !compactV2;
     if (!compactV1 && !compactV2 && !execution.nestedSwitchyardCallback) {
@@ -2588,10 +2610,9 @@ async function handleResponses(request, response, requestUrl) {
       headers,
       body: routedBody,
       signal: controller.signal,
-      // A routed hop has a fixed loopback owner. Following 307/308 would
-      // replay the prompt and, for Switchyard, native authorization to a
-      // destination outside that route contract. Recovery uses this same policy.
-      ...(route ? { redirect: "error" } : {}),
+      // A redirect may follow an accepted inference POST. Refuse it instead
+      // of replaying the prompt or credentials at another destination.
+      redirect: "error",
     };
     const observedFetch = observedNativeRequest
       ? async (...args) => {
@@ -2703,7 +2724,15 @@ async function handleResponses(request, response, requestUrl) {
     // predicate is structural (this request, these bytes, an explicit zero),
     // so it cannot fire on a provider that reports correctly and it disables
     // itself the moment the upstream starts reporting again.
-    const upstreamContentType = upstream.headers.get("content-type") || "";
+    let upstreamContentType = upstream.headers.get("content-type") || "";
+    if (!route && upstream.ok && !compactV1 && payload.stream === true && !upstream.headers.has("content-type")) {
+      // Successful native streaming Responses can omit their Content-Type.
+      // Give both the pipeline and final-egress observer the expected type,
+      // retaining the same body stream and all explicitly supplied headers.
+      upstreamContentType = "text/event-stream; charset=utf-8";
+      upstream = responseWithBody(upstream, upstream.body);
+      upstream.headers.set("Content-Type", upstreamContentType);
+    }
     const requestPreludeMs = preludeBudgetMs({
       baseMs: EMPTY_COMPLETION_PRELUDE_MS,
       requestBytes: routedBody?.length || 0,
@@ -2772,6 +2801,7 @@ async function handleResponses(request, response, requestUrl) {
         firstPipeline.transforms,
         { leaveOpen: relayOpen },
       );
+      selectedPipelineCompleted = true;
     } catch (error) {
       if (isEmptyCompletionPreludeLimitError(error) && !clientGone) {
         emptyCompletionPreludeLimit = error.kind;
@@ -2804,7 +2834,7 @@ async function handleResponses(request, response, requestUrl) {
     // goes away, but `pipeResponse` can resolve before that event fires: the
     // response socket is already destroyed at that point. Read the state
     // directly as well so a cancel that races the close event still meters 0.
-    const completedBeforeClose = usageTransform?.completedResponseObserved() === true;
+    const completedBeforeClose = acceptedSuccessfulTerminal();
     const clientWalkedAway =
       (clientGone || (response.destroyed && !response.writableFinished)) &&
       !completedBeforeClose;
@@ -2856,6 +2886,7 @@ async function handleResponses(request, response, requestUrl) {
         assertRoutedSearchContract(route, builtSearchMode, searchContract);
       }
       emptyCompletionRetried = true;
+      selectedPipelineCompleted = false;
       if (observedNativeRequest) {
         switchyardNativeAttempts.finishAttempt(observedNativeRequest, {
           httpStatus: upstream.status,
@@ -2937,6 +2968,7 @@ async function handleResponses(request, response, requestUrl) {
               secondPipeline.transforms,
               { leaveOpen: true },
             );
+            selectedPipelineCompleted = true;
           } catch (error) {
             if (isEmptyCompletionPreludeLimitError(error) && !clientGone) {
               emptyCompletionPreludeLimit ||= error.kind;
@@ -2958,7 +2990,7 @@ async function handleResponses(request, response, requestUrl) {
             }
           }
           const retryClientWalkedAway =
-            clientGone || (response.destroyed && !response.writableFinished);
+            (clientGone || (response.destroyed && !response.writableFinished)) && !acceptedSuccessfulTerminal();
           emptyCompletionPreludeLimit ||=
             retryEmptyCompletionGuard?.preludeLimitKind?.();
           if (retryClientWalkedAway) {
@@ -3041,7 +3073,10 @@ async function handleResponses(request, response, requestUrl) {
     }
   } catch (error) {
     upstreamLatencyMs ??= Date.now() - startedAt;
-    if (execution.deadlineExceeded()) {
+    // A terminal accepted by the final writer settles the selected SSE attempt.
+    // Trailers, terminal-time closes and later deadlines cannot revoke it.
+    const acceptedCompletion = acceptedSuccessfulTerminal();
+    if (execution.deadlineExceeded() && !acceptedCompletion) {
       finalStatus = 504;
       if (!response.headersSent) {
         writeJson(response, 504, {
@@ -3084,8 +3119,9 @@ async function handleResponses(request, response, requestUrl) {
     // is a successful terminal turn on native and routed paths, not a canceled
     // generation. In particular, the WebSocket adapter cancels the HTTP body
     // at this point so a provider trailer cannot block its serialized queue.
-    if (clientGone && usageTransform?.completedResponseObserved() === true) {
+    if (acceptedCompletion) {
       finalStatus = upstreamStatus ?? response.statusCode;
+      if (!response.writableEnded && !response.destroyed) response.end();
       if (!QUIET) {
         console.error(
           `[codex-router] model=${requestedModel || "unknown"} provider=openai status=${finalStatus}${
@@ -3114,18 +3150,18 @@ async function handleResponses(request, response, requestUrl) {
   } finally {
     const status = finalStatus ?? response.statusCode;
     if (switchyardWorkflow) {
-      const observer = emptyCompletionRetried ? retryUsageTransform : usageTransform;
+      const observer = selectedUsageObserver();
       const outputObservation = observer?.responseOutputObservation();
       if (outputObservation) {
-        // The WebSocket adapter closes HTTP bodies after a verified terminal.
-        // That successful close is distinct from cancellation before completion.
-        const completedClientClose = clientGone && observer.completedResponseObserved() === true &&
-          !execution.deadlineExceeded();
+        // JSON has no dispatched SSE terminal: its complete body must finish
+        // the selected pipeline and final delivery before workflow retirement.
+        const deliveredCompletion = acceptedSuccessfulTerminal() ||
+          (observer.completedJsonResponseObserved() && selectedPipelineCompleted && response.writableFinished && !controller.signal.aborted);
         routerAdmission.recordSwitchyardWorkflow({
           ...switchyardWorkflow,
           produced: clientToolCalls(outputObservation.output),
           complete: outputObservation.complete && status >= 200 && status < 300 &&
-            (!controller.signal.aborted || completedClientClose) && observer.providerResponseObservation().outcome === "completed",
+            deliveredCompletion && observer.providerResponseObservation().outcome === "completed",
         });
       }
     }
@@ -3218,11 +3254,12 @@ function prepareNativeWebSocketRequest({ request, payload, controller, signal })
         if (workflow) workflow.consumed = clientToolOutputs(input);
         return prepareNativePayload(full).payload;
       },
-      finish({ status, outcome, outputObservation, usage: reportedUsage, firstTokenMs, latencyMs }) {
+      finish({ status, outcome, terminalAccepted, outputObservation, usage: reportedUsage, firstTokenMs, latencyMs }) {
         if (finished) return;
         finished = true;
-        const servedStatus = execution.deadlineExceeded() ? 504 : status;
-        if (workflow && servedStatus === 200 && outcome === "completed" && !signal.aborted && outputObservation) {
+        const servedStatus = !terminalAccepted && execution.deadlineExceeded() ? 504 : status;
+        if (workflow && servedStatus === 200 && outcome === "completed" &&
+            (terminalAccepted || !signal.aborted) && outputObservation) {
           routerAdmission.recordSwitchyardWorkflow({
             ...workflow, produced: clientToolCalls(outputObservation.output),
             complete: outputObservation.complete,
@@ -3662,6 +3699,9 @@ server.requestTimeout = 0;
 applyKeepAliveTimeouts(server);
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   console.error("[codex-router] listening");
+  void startWebBridge().catch(() => console.error("[codex-router] configured in-app Web MCP tunnel is unavailable; check its protected key and configuration."));
 });
 
-installGracefulShutdown(server, { label: "codex-router" });
+installGracefulShutdown(server, { label: "codex-router", exit: code => {
+  void closeWebBridge().then(() => process.exit(code), () => process.exit(93));
+} });

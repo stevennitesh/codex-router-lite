@@ -24,6 +24,7 @@ and HTTP status in sanitized evidence. Locate the earliest violated contract:
 
 | Symptom | First source and next guide |
 | --- | --- |
+| Web setup, saved-chat context, native tools or Stop | `model-router.ps1 codex web status`; [Web integration](web-integration.md) for lifecycle, broker and adapter owners |
 | Missing model, effort or deferred tools | `src/catalog.mjs`, route JSON; [native Codex](native-codex.md) |
 | HTTP 400, tool choice or replay rejected | `src/routed-request.mjs`, `src/openrouter-request.mjs`; [preparation](request-preparation.md), then the endpoint guide |
 | Wrong/missing tool or custom arguments | `src/namespace-relay.mjs`; compare declaration, produced call and replay identity together |
@@ -48,7 +49,7 @@ or test counts into a current diagnosis. When a repair changes durable behavior,
 update the maintained owner named above and keep dated investigation evidence in
 history with its historical status explicit.
 
-## Repair and close
+## Wire diagnostics
 
 An invalid Responses WebSocket message type produces
 `invalid_websocket_message_type` and a `websocket-protocol` warning. The warning
@@ -111,8 +112,13 @@ Responses stream failures retain their diagnosed cause through
 `src/responses-stream-failure.mjs`. The observer runs after the final response
 rewrites and records bounded identity, timestamp and sequence metadata without
 holding client bytes. Local failures use `response.failed` when that metadata is
-trustworthy; ambiguous or absent metadata retains the generic error. An already
-delivered terminal is never followed by another local terminal.
+trustworthy. Native streaming Responses also use a minimal `response.failed`
+when metadata is absent or ambiguous, retaining the diagnosed safe error without
+inventing identity or sequence fields. Other consumers retain the generic error
+in that case. An already delivered terminal is never followed by another local
+terminal.
+
+## Repair and close
 
 Fix the first owner that violates its contract. A compatibility transform is
 justified when the upstream wire behavior cannot be changed here; give it an exact
@@ -125,6 +131,18 @@ compaction or native/model switching. Include the relevant negative path and an
 unaffected route for shared changes. Follow [verification](architecture.md#verification).
 State what was reproduced, the repaired owner, and remaining uncertainty. Store
 dated investigation evidence separately from the maintained behavior guide.
+
+## Windows sandbox probes
+
+For a child Windows PowerShell `AuthorizationManager check failed` error, first
+distinguish script loading from execution of the probe body. The sandbox can deny
+registry reads used by PowerShell's execution-policy check. Compare a harmless
+one-line script in the default sandbox and normal user context; an absent receipt
+does not prove that an outside write was denied. Record any `-ExecutionPolicy`
+flag separately from native sandbox permissions. An already installed Node
+runtime can test filesystem boundaries without adding PowerShell script loading
+as a precondition. The [native-tool verification follow-up](../history/2026-10-19-web-stop-adapter-verification.json)
+retains the observed failure, controls and independent passing receipt.
 
 ## Git reads in a partial clone
 

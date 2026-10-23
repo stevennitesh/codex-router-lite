@@ -1,0 +1,630 @@
+{
+  "version": 1,
+  "date": "2026-10-17",
+  "evidenceKind": "Historical Windows app compatibility and bounded upstream integration review",
+  "sourceBase": "ca4b2a4d60d87c19ed305131cc32436bc6d5f960",
+  "nativeCodex": {
+    "desktopVersion": "26.1013.40934",
+    "desktopBuildVersion": "20770",
+    "updateStatus": "up_to_date",
+    "windowsPackage": "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0",
+    "cli": "0.163.0-alpha.10.2",
+    "cliSha256": "f6dbf48cb70f62649c645f26c87dc9bf84cc36986202dfad8e12fb5b8ca70312",
+    "signature": "Valid",
+    "bundledAppToolsPlugin": "0.1.6",
+    "catalogModels": 17,
+    "releaseNotes": "https://learn.chatgpt.com/docs/changelog",
+    "releaseNotesScope": "Official 0.163.0 notes; exact bundled alpha and Desktop patch behavior verified locally where stated.",
+    "officialReleaseChanges": [
+      "Instant steering and interruption of Code Mode cells and nested tool calls.",
+      "Parallel read-only tools, dynamic-tool cancellation fixes and request-local tool metadata changes.",
+      "Permission restoration, Windows runtime and shell diagnostics fixes."
+    ],
+    "browserRuntimeRepair": "Refreshed the protected bridge configuration to the current official browser module after the previous cached module was removed by the app update; connector and tunnel configuration preserved.",
+    "nativeQuotaCertificationRenewed": false
+  },
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router",
+    "reviewedFromExclusive": "85259b6725ced1c1f0f56325b0c97a7b6660a726",
+    "reviewedThroughInclusive": "eb5acc9c5dc8d87fdce8bcd428ae59d789ddeb47",
+    "commitCount": 156,
+    "stats": {
+      "nonMergeCommits": 83,
+      "mergeCommits": 73,
+      "resolutionBearingMerges": 15,
+      "topologyOnlyMerges": 58,
+      "explicitDispositionCommits": 99,
+      "categoryCounts": {
+        "already_covered": 29,
+        "deferred": 7,
+        "excluded": 57,
+        "merge_only": 57,
+        "ported": 6
+      },
+      "groups": 38
+    },
+    "completeDispositionVerified": true,
+    "groups": [
+      {
+        "category": "ported",
+        "reason": "Adapt the timer upper bound to the existing catalog cadence helper; retain existing environment and ownership.",
+        "count": 2,
+        "commits": [
+          "26ef38c9fd814f542effe513b21effe12874124b",
+          "d0855644b230171eb28cc420ca384f3cb5e42504"
+        ]
+      },
+      {
+        "category": "ported",
+        "reason": "Refuse native inference redirects; existing conclusive non-delivery retry policy already covers the remaining relevant behavior.",
+        "count": 2,
+        "commits": [
+          "0cf37ce4b7cb6f7c56f1562b5984f3b5c2612d67",
+          "304af3b14dbe48282f95636a56ccc23a9aba1373"
+        ]
+      },
+      {
+        "category": "ported",
+        "reason": "Opt native streaming Responses into minimal failure envelopes when metadata is untrusted; recognize expected successful SSE when Content-Type is absent.",
+        "count": 2,
+        "commits": [
+          "d578d9f9f67adf58b0c1695bc82f80fcaf97826b",
+          "3eaef7b7cb0c7ae8664d757a1abcb58a27f173c7"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current typed stream failures and final-egress metadata supersede the original bare DONE proposal.",
+        "count": 3,
+        "commits": [
+          "8b3eb0662c0da2b98af83c05cea2c2077fe7e99d",
+          "84f84662a8ad6fed25dee98b3c5a608633167510",
+          "d8cc61e7ca3f212bbc72e60c979a6c2dc89307af"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current process snapshots distinguish owned, foreign, absent and unknown; replacement requires verified process and listener absence.",
+        "count": 3,
+        "commits": [
+          "b28328ec0c1ff67dcbbf7e0b723b88b72f1195a3",
+          "3a96451235f53e8a7a65efc5b6eaeb43858d6f68",
+          "27341337a17b206de8b02576e2eb5eb82df6a271"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Startup-only probe allowances are already bounded; reject the weaker ACL-warning fallback and retain strict private-file writes.",
+        "count": 2,
+        "commits": [
+          "97f00824d6d3f371bb11aabce478c14eaa145a38",
+          "9b3df182af1c2acfcb61e1dfd69b5b1644f538b2"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current hashed lock already has LiteLLM 1.104.0, FastAPI 0.142.2, multidict 6.9.1, urllib3 2.8.0 and PyJWT 2.15.1.",
+        "count": 5,
+        "commits": [
+          "7f5f68fad8c916db9d23f2e54d0d465339cc5acf",
+          "b03d52252ab8bc550acf27fb0b34f3add4f1bad3",
+          "66b403f17241499514208a0a32ce722f2beefb6f",
+          "311fb47aaa9598e409ec83c31373a04f39b28e68",
+          "d89df6472515dbaaa221b589c496e51c5f4ec4c3"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Direct hosted search preserves whole action objects; pinned LiteLLM serializes complete web-search history for the chat bridge.",
+        "count": 1,
+        "commits": [
+          "0d29ccc9589d3c95a5899f1047871e50b6293c27"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Retained rewrites already guard ambiguous and lossy JSON; the upstream Zai cache-rewrite owner was retired.",
+        "count": 1,
+        "commits": [
+          "278ba839bdb173430869a99c4475b4bbcea2894b"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current directory-lock release drains pending heartbeats and uses generation-local owner files.",
+        "count": 2,
+        "commits": [
+          "15ddd916dd3182f676c74231576946f287a4ed70",
+          "87e0de711fc996cde9b7b03cae1444f1ccb8437a"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current pinned gateway has cancel-on-disconnect and the acquired-stream cleanup callback.",
+        "count": 1,
+        "commits": [
+          "bbacf0cc45e752bd57b96bebf37ce6a8d43f6f70"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Catalog refresh is already a supervised child with stop lifecycle and independently configured cadence.",
+        "count": 1,
+        "commits": [
+          "c43712e72362130b4d1e1305c2111e5671ef2579"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current WebSocket closure destroys upgraded sockets; native interruption bypasses the queue and preserves validated continuation output.",
+        "count": 4,
+        "commits": [
+          "4cc417bc0fff937eebbd91519a03f6e670e2e26f",
+          "cd83d324eda67b775cc51b5bc9e1e33669a2e3d8",
+          "3fc05733c8acfe36822364442227670624488943",
+          "b850d97d6e5c7876699fc83bc2e3a7e9ed5769fe"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current shipped skills follow task-local tool definitions and initialization instead of guessing versioned runtime paths.",
+        "count": 1,
+        "commits": [
+          "bc44fe3cb589343deba0ff8babe75ea6c4df65ab"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Exact plain aliases and request-local spawn model constraints are already preserved; upstream withheld-definition state is not retained.",
+        "count": 2,
+        "commits": [
+          "0c0b56170f5368d78645a2519c07a5854912ebf7",
+          "cce3c511ed2dc3884ad6884547b4cf495da59ee9"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Retained native WebSocket transport and inconclusive-venv readiness handling are covered. Generic provider WebSocket pools and heuristic GLM repetition guards are excluded.",
+        "count": 1,
+        "commits": [
+          "00eed6eb9f894a734eb51bb2e2b058575c6dca7a"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current provider outcomes independently gate completion, observations and compaction. Upstream ledger and UI additions are not retained.",
+        "count": 1,
+        "commits": [
+          "e08c1bf415019220e5bfab89bb66e1fd758d83ee"
+        ]
+      },
+      {
+        "category": "already_covered",
+        "reason": "Current non-streaming transforms buffer bytes before UTF-8 decoding; the defective openai-adapters owner was retired.",
+        "count": 1,
+        "commits": [
+          "7ff4b3d60df21648f70e8836ad56a696e778a854"
+        ]
+      },
+      {
+        "category": "deferred",
+        "reason": "Connector selection and explicit declaration deferral change the model-visible tool surface. No retained-route context or latency defect establishes this requirement; retain current request-local declarations and discovery. Do not restore static app-schema injection.",
+        "count": 3,
+        "commits": [
+          "6625cb0796fe3f9f63576feeaf2845245541aa3d",
+          "3c708bd2e355fbc9c6f8a4f91c8d1231fa5455ee",
+          "cc369942ea186e87bec3e44767b9dd9ebb6d2cb0"
+        ]
+      },
+      {
+        "category": "deferred",
+        "reason": "Current ingress, decoded bytes and admission are bounded. Image-history elision changes preserved input semantics and needs retained-endpoint evidence.",
+        "count": 3,
+        "commits": [
+          "3cea80e91aff773b6483135e61105f05deae50fa",
+          "3f31f9fef358c312031ca45b82c11957f78c1966",
+          "84cd25a5f5300bbb289e16bba7c0697ce1b19fdb"
+        ]
+      },
+      {
+        "category": "deferred",
+        "reason": "Exact pre-TLS-reset recovery expands safe retry eligibility. No current retained-route incident requires it; preserve the conservative existing rule.",
+        "count": 1,
+        "commits": [
+          "042a6d70dca77d9c501961bcb7a7fc727727156a"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Persistent automatic-start cooldown and reset state have no current workflow requirement; bounded child supervision is already retained.",
+        "count": 3,
+        "commits": [
+          "cfb0a3c93b365493a6e535a7901ffee12045f44f",
+          "97986177e04d0d3f1436192cb3c83357204c5a6a",
+          "3b98e666d33df11d477e57a912b73bc40807c392"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Azure VDI delegation and startup-override families are outside retained contracts; preserve current startup-only budgets and strict process proof.",
+        "count": 8,
+        "commits": [
+          "9cd490730f503c372edf68b96203c4076dda4a48",
+          "fad8d68fe5f248b18444caa61fe400e540df8f60",
+          "917b4fc9f0588c1165d22ac1648b56a975c0ea5b",
+          "092c5893f51738c1a4e2fe22eb729c116a7b1610",
+          "792357b2b509e3d860d6db0f22ed22df1841896f",
+          "92a8a0730b6ef6f2e5d89a29b47a2fc389e1d0cc",
+          "42b8b4ea8dac4a50eceefb78c78d67b2aaa15bd4",
+          "a58da7e0afa02e12e3ba9c2378e2a3fbdeb4fde1"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Harness/DSH YAML credential publication is not retained.",
+        "count": 3,
+        "commits": [
+          "ec6486eb7d0f0ef433dca94b4769c1334985d26c",
+          "1391f70c5cdb395e3c0ee18875903b8475e036ef",
+          "907ce7fd10e812e6d48ddaef67cb1eb0f371186d"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Native buffered SSE-to-JSON folding was retired; the retained native caller streams.",
+        "count": 1,
+        "commits": [
+          "20c52fe390b9753ad46e17845a5238a2fe1d6bec"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Changes belong to unretained CommandCode, Ollama, MiniMax, Devin, custom endpoints, direct DeepSeek V4 Pro, ClinePass, Anthropic, OpenCode, Grok or Claude surfaces.",
+        "count": 15,
+        "commits": [
+          "0f92771725b86338b97fa130925e595695017e80",
+          "8debfba92157495445e0e8b831c1f1ba1728f326",
+          "e03922c737a10ade3144948124c9a5aa45c0d911",
+          "1b2fa83155e29630062a6ce02bc0c3f1c06ae6d5",
+          "2f900c5ec919545044426e2edea7f8f7f6bc5fd3",
+          "78573fbfd85583b15189885edadfe9bd274aee31",
+          "c6868862cf756d82255bcdff93d57f47d111f6db",
+          "72c11ce6f39245b94197836567235d42679c51d8",
+          "215a129d1846fdbebc9a3ce73a0e6bf0c8c627f8",
+          "53386d7289c39a25631ed36963db5eb21dc3c924",
+          "2909aef3e4dec4297b68715c6403c6021b9e5bc9",
+          "12fc8adda8d557bd1b7e335d13faaccd9836f391",
+          "3b187ca68a83102a87c4e35ec5f5016fc123a22a",
+          "7e09af3bd095b4941dca6bad7b7b7b2c685ad468",
+          "d086997e0882cecf770dce8863dba925e1fa554b"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Control Center and docs-site dependency/UI owners are not shipped.",
+        "count": 2,
+        "commits": [
+          "d517159aee9e9a72166c615e679272042705bd77",
+          "6f32de5ea0a90eef1edca42006633a9eb333425e"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "POSIX/macOS distribution, AppKit, Homebrew and upstream-only CI harness changes do not affect the retained Windows product.",
+        "count": 9,
+        "commits": [
+          "65634884c0755e068a65584d5d992a82b80119c2",
+          "e5e8d670d4433bbf478e7b2820c797253a176c67",
+          "432fe2b45d34e0c0bc9e35e217f538014a559c38",
+          "a8af08016dec0cff362061175b348063e8a1e1d4",
+          "b3238e5ba0a814ac09e3915e5c59daaa5b84cfd3",
+          "c980a0ef7237e321fbab57f711fc113240108aeb",
+          "61bb264e697dd4d0f1c483a9ae7696cb79c8897a",
+          "aa9992e53940ec27c27c80cfc7aea3a370d009e9",
+          "eee06af2ba6ed28b2b5b92dbbd3a2028f55bff27"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Antigravity/POSIX credential port leases and upstream command-fixture synchronization do not match retained fixture owners.",
+        "count": 5,
+        "commits": [
+          "c5017adddacf6d40a6914080b2cccb4118ded20e",
+          "6cec25b1ea5549b875ddb9ad0359b28e63cb761e",
+          "3a1ede3b615814a1e0a641a45a7528fa2b5614ec",
+          "a4c4e9b9af8269dd13a179c222ae901249f28c47",
+          "cf3f30ac221bdb291865c708ee3a65b68458e059"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Upstream changelog fragment only.",
+        "count": 1,
+        "commits": [
+          "8bdcd9119b294b7acfd4fd73ec9f23776ea39158"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "These add diagnostics to the retired generic Responses openai-adapters validator; Lite does not retain that refusal-producing owner.",
+        "count": 2,
+        "commits": [
+          "4cf3c370ddf706fa8dd3f92a4963a5605423a5e1",
+          "d8ed72e930c49b3a2dd0c68e2865d89d27310819"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Opt-in goal repetition heuristics change output policy without retained-workflow evidence.",
+        "count": 1,
+        "commits": [
+          "b53c46b8e5f60dedf50a7b5c1c4bdfc62d2ad40a"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Legacy inline, Hy4 and Qwen reasoning-tag stripping is not used by retained routes; literal preservation is already current behavior.",
+        "count": 3,
+        "commits": [
+          "3f4a891797b260200a5e3357062c9ddc90db80d9",
+          "e665523402fa492bcf8fd35b3d6cc36662221bf8",
+          "eb5acc9c5dc8d87fdce8bcd428ae59d789ddeb47"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "A generic mutable-registry execution-plan/dependency graph is unnecessary for fixed validated route profiles and the current request-local preparation bundle.",
+        "count": 1,
+        "commits": [
+          "f04743b2a3b87a11cd5b7419905ee40004653416"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Upstream fixture expectation changes only; current Lite already rejects incomplete compaction and contradictory completion.",
+        "count": 1,
+        "commits": [
+          "d18d48b925f9ccaf333f131164270d48c8e8a881"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Playwright is not a Router Lite package dependency.",
+        "count": 1,
+        "commits": [
+          "7bb40adc248a66604b4f250fe192decb44b27980"
+        ]
+      },
+      {
+        "category": "excluded",
+        "reason": "Billed-token fallback fixes the retired provider usage ledger; no billed-token consumer remains in Lite.",
+        "count": 1,
+        "commits": [
+          "6fcb5277a41e1c0fec1f3dbcda63317cc6a797ae"
+        ]
+      },
+      {
+        "category": "merge_only",
+        "reason": "No independent combined resolution delta. Imported changes are dispositioned by their constituent commits in the other groups.",
+        "count": 57,
+        "commits": [
+          "637c46a3a61fa7402396e3f57d9e8287119639a7",
+          "65a475b5c3b4a1acd554a6bfdee2b36fd0800ef2",
+          "41bb45569cba16d64bafa897a44779e3271268e2",
+          "aec562fd9d8da4b747d3859a7b0dcbae9c8adf6b",
+          "cb1c011239c8185f4ce57435e5e62af304787451",
+          "e1cd5e381b4e4abd7c8c4cee3b810e54f2124036",
+          "734284d7bb8afa4e996c20f5d102fc8741e65cb8",
+          "8d35d89d904e34580391fd9032fe1c64c6842a0c",
+          "a1bda5065792ff0741c61286f5948e5114af8c28",
+          "493a5b6636369de54075ae8b58fc1993ac100b61",
+          "053f1b741dc89cc5b684b4df2e885cefcbdfabc7",
+          "37a773f6b4b4a768d9bfe65371e06269ab1f740a",
+          "994ec0c86988d30de36f86bb849728676e6ac6ae",
+          "c7d78c111cc8880d9c0822e5f2cf0d4e3441e264",
+          "2031aec167eeb27d0145b1ac6bc1e68262c942ab",
+          "de60f67859110f99232452342dbde829f2d411f6",
+          "8d74ee884c009e69014cc666c1792add8db03e1f",
+          "2123ac85541188a30e23fc724c5450a50faf78fb",
+          "c0b8bd20cecda3b6ae522c22ebc4b8f105d6f067",
+          "4619f5ded8855e891a9afd414a3ccc5eadd1406a",
+          "63a283fb4d37d1e94d5eb63367b055d381e09764",
+          "67ea24391c8a340d0f7240a87320a4527b7742e8",
+          "2ebfb0e8658835b6e1ab6b02a257bd1572eda066",
+          "43b7ef8f40abd96f89478522bb8b71780a93f43a",
+          "e1e89b9812e9f1f7b4ac4c32b27460d0733a25da",
+          "7d1c8a27fd09782d51f374639cfcca7ee93c6125",
+          "78e252317d556badf2d255997fa696ebded3f724",
+          "a77eb7a17069bfa587ad181c9fe55b9d87d84a50",
+          "ee93ed5256fe2c6940254f9743fabc243195d8bf",
+          "2d2b3d2ee063a16e5172c21176c74058f0be4be4",
+          "dabb8af5d2d1e033cc3bb10eef9363da2a3fed20",
+          "da1dbcb58f3a82e6a6e00db0d22ed38b5df8e75f",
+          "8f850ee61e1f298807d17faa4839a67b800afd8c",
+          "cf5acce7f8b2a0f585b32d32b5551175e8bc2cd8",
+          "d4bec214cf2c9ac9a7b38f0ba251be28a64bd2b8",
+          "7b378b0687aa8a2e22354b802ee86084133e167f",
+          "42dee35b0ab6f3a3af5105a1d2e7f539d357b6d5",
+          "a9c53d4875d7978c3b7eab76f024d4503beec929",
+          "346a13d0ae6f0d48659fb2b29e2f927d8f858a34",
+          "444a72809d1609020516e14438c2075c5f4bda8c",
+          "6a36deb77afa2b3d5e2a639311859ef5ce6b43e4",
+          "12bdc5b6552f05e768748d211db211cff26039c1",
+          "b7c2e371e10a86c335f101b9b385be9cfeeca38c",
+          "a0ceb5e6dd9c5c4322cf8405620af607f226ca95",
+          "8de7347435bd8ca0ba2ff05f009f67e50c3ac400",
+          "c22c9bf5b5373fb81872d4fe6df69e78f7fd9ca1",
+          "3c7157b29281004a12f416c6e10fb1484ca04dfd",
+          "a8ad9588bc50e2c514c71fe811515e87ae4d83fd",
+          "5135fa4f71df7afa6b54843381aed0e9ba86e5ad",
+          "6cf33f7d66202158d82b254029cf1483273008ed",
+          "089f90c94837b3b5c9f091b1fc6be0e7885f2690",
+          "6695f053c922f2814c821af07e0362578ace0622",
+          "4e7fffe2fc78031cb9d2b75d473d3fc147f53160",
+          "7912aa348569fd0bfe1d38131c6497cb62de476d",
+          "8c5c128867d3b9f1bd359b9e9491d94cd65b90e1",
+          "81ae983803537801febed02e871468fc7828381e",
+          "2dc378b97a04e5adf9265082fdfab77c8bba0e2f"
+        ]
+      }
+    ],
+    "adaptations": [
+      {
+        "upstream": "26ef38c9",
+        "owner": "src/catalog-auto-refresh.mjs",
+        "result": "Intervals above the Node signed 32-bit timer maximum use the existing five-minute default instead of overflowing into a 1 ms loop."
+      },
+      {
+        "upstream": "0cf37ce4",
+        "owner": "src/router.mjs",
+        "result": "Native inference POSTs now explicitly refuse redirects, preserving the existing no-replay policy after uncertain acceptance."
+      },
+      {
+        "upstream": "d578d9f9",
+        "owner": "src/responses-stream-failure.mjs",
+        "result": "Native streaming Responses retain safe diagnosed causes with a minimal failure when identity or sequence metadata is unavailable; successful headerless native streams receive the expected SSE type."
+      }
+    ]
+  },
+  "switchyardUpstream": {
+    "lockedCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "observedHead": "6f4e7749083a86484a0140078a42d487aed7259e",
+    "commitsAfterPin": 80,
+    "decision": "Keep the current pin, ordered patches, route configuration and binary.",
+    "contributionPatch": "Does not apply to the new upstream: Cargo.lock, libsy algorithm/state, runner configuration/tests, schema and mkdocs conflicts.",
+    "compatibilityPatch": "Not tested because the required contribution input layer does not apply.",
+    "dispositions": [
+      {
+        "commits": [
+          "38a71edb"
+        ],
+        "topic": "Credential VarError redaction",
+        "decision": "Track a small future backport; no confirmed current-path leak. Active native targets forward authorization, and the patched Jev credential loader separately redacts failures."
+      },
+      {
+        "commits": [
+          "7f0602d2"
+        ],
+        "topic": "Routing-log turn ID",
+        "decision": "Defer diagnostic enhancement; Router does not populate the new upstream header."
+      },
+      {
+        "commits": [
+          "50f635d7",
+          "b9e7ccce"
+        ],
+        "topic": "Offloaded auxiliary-call cancellation and spans",
+        "decision": "No demonstrated affected path: the current classifier awaits its provider directly and returns selection before answer generation."
+      },
+      {
+        "commits": [
+          "1cac9637",
+          "fdf6454a",
+          "7fa4b00c"
+        ],
+        "topic": "Native Decisions and Jev integration",
+        "decision": "Not a drop-in replacement: upstream chooses two relative-advantage tiers; the retained classifier chooses four labels with stricter input, endpoint, bounds and fallback policy. Requires routing-quality evaluation."
+      },
+      {
+        "commits": [
+          "f6441cc4",
+          "0ae4384b",
+          "286425ec",
+          "8e7d72be"
+        ],
+        "topic": "Normalized provider translations",
+        "decision": "Outside the retained raw native Responses path; no demonstrated missing behavior."
+      },
+      {
+        "commits": [
+          "9ce208be"
+        ],
+        "topic": "Textless-input prefill routing",
+        "decision": "Unused prefill route; retained latest-genuine-user selection and nontext fallback already protect the relevant risk."
+      },
+      {
+        "commits": [
+          "5b670a15"
+        ],
+        "topic": "Codex review route in shipped configs",
+        "decision": "Router owns the native catalog and dispatch; direct upstream deployment config is not applicable."
+      },
+      {
+        "commits": [
+          "d93bcd97",
+          "ab7d2644",
+          "12922d57"
+        ],
+        "topic": "Classifier/state, MCP content and Rust 1.99 interface changes",
+        "decision": "Substantive rebase hazards. Externalized library state does not add persistence to the managed upstream server, which starts requests with empty state."
+      },
+      {
+        "commits": [],
+        "topic": "Stage/composite/VGR, plan-execute, other platforms, bindings and development services",
+        "decision": "Outside the retained Windows four-target route."
+      }
+    ],
+    "routeOrBinaryChanged": false
+  },
+  "checks": {
+    "refresh": {
+      "command": "maintenance/refresh-compatibility-state.ps1 -AnalyzeUpstream -SkipTests",
+      "nativeCatalog": "passed",
+      "nativeSignature": "valid",
+      "runtimeHealth": "healthy",
+      "exitCode": 1,
+      "exitReason": "New Switchyard contribution patch does not apply; not a native compatibility failure."
+    },
+    "fullValidation": {
+      "command": "npm run verify:codex",
+      "node": "24.13.0",
+      "tests": 1140,
+      "pass": 1140,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "nativeCatalogModels": 17
+    },
+    "focusedRegressions": {
+      "catalog": 18,
+      "nativeForwardingAndFailure": 20,
+      "failures": 0
+    },
+    "redChecks": "Timer overflow, native stream/headerless failures and real Fetch redirect policy fail before their respective corrections. Counter-only redirect tests do not distinguish the guard on Node 24 because its Buffer redirect attempt fails internally.",
+    "currentCliSyntheticConsumer": {
+      "publicAppServerStdio": true,
+      "loopbackOnly": true,
+      "productionV2CompactionCompleted": true,
+      "emittedNoncePreserved": true,
+      "exactPendingTailPreserved": true,
+      "pendingItems": 2,
+      "genericErrorRetainedCause": false,
+      "minimalFailedRetainedCause": true,
+      "currentDeclarationsRecognized": true,
+      "cleanedUp": true
+    },
+    "dependencyAudits": {
+      "node": "npm run audit:ci: zero known vulnerabilities",
+      "python": "Pinned pip-audit 2.10.1 against the complete hashed requirements/python.txt: no known vulnerabilities"
+    },
+    "independentReview": {
+      "status": "complete",
+      "actionableFindings": 0,
+      "sourceAndTestHashesUnchangedDuringReview": true,
+      "scope": "Changed runtime owners, regression tests and maintained native/debugging contracts; no live provider or deployment proof."
+    }
+  },
+  "effects": {
+    "localSourceChanges": true,
+    "dependencyPinsChanged": false,
+    "switchyardPinChanged": false,
+    "pushPerformed": false
+  },
+  "limits": [
+    "Local verification used Node 24.13.0; hosted CI and its additional Node 22.19.0 environment were not run in this local-only checkpoint.",
+    "Synthetic public app-server and loopback tests do not certify live provider behavior, encrypted child assignment or Desktop-only tool execution.",
+    "Web manual compaction and post-compaction continuation remain pending on the repaired deployment; prior successful ordinary continuation is separate evidence.",
+    "Immediate Stop of ChatGPT Web generation remains unresolved; the new native cancellation release notes do not establish browser cleanup.",
+    "A Switchyard bump still requires deliberate ordered-patch rebasing, locked build gates, deployment acceptance and affected exact-route proof."
+  ]
+}

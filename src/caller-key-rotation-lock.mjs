@@ -18,11 +18,11 @@ export async function withCallerKeyRotationLock(operation, {
     target: callerKeyRotationLockTarget(stateDir), waitMs, retryMs, heartbeatMs,
     defaults: {waitMs:DEFAULT_WAIT_MS,retryMs:DEFAULT_RETRY_MS,heartbeatMs:DEFAULT_HEARTBEAT_MS},
     lockedError: (_wait, cause) => {
-      const error = new Error("Another caller capability rotation is still running; retry shortly.", {cause});
+      const error = new Error("Another caller capability initialization or rotation is still running; retry shortly.", {cause});
       error.code = "caller_key_rotation_locked";
       return error;
     },
     releaseErrorKey: "callerKeyRotationLockReleaseError",
-    releaseErrorMessage: error => `Caller capability rotation completed, but its lock could not be released (${error?.message}).`,
+    releaseErrorMessage: error => `Caller capability initialization or rotation completed, but its lock could not be released (${error?.message}).`,
   });
 }

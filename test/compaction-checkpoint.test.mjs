@@ -2,6 +2,51 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareCompaction, finalizeCheckpoint, renderCheckpoint, encodeCheckpoint, decodeCompaction } from "../src/compaction-checkpoint.mjs";
 
+test("readable checkpoints preserve exact pending native items through encoding, rendering and source recataloging", () => {
+  const base = finalizeCheckpoint("{}", prepareCompaction([{ role: "user", content: "Already retained request" }]));
+  const retainedTail = [
+    { role: "user", content: "New pending requirement" },
+    { type: "function_call", name: "read", call_id: "pending_call", arguments: '{ "literal": "`$ 🌙" }' },
+    { type: "function_call_output", call_id: "pending_call", output: "Actual pending tool result\nwith source whitespace" },
+  ];
+  const retainedTailId = "cmp_00112233445566778899aabbccddeeff";
+  const encrypted = encodeCheckpoint(base, { retainedTail, retainedTailId });
+  const decoded = decodeCompaction(encrypted).checkpoint;
+  assert.equal(decoded.retained_tail_id, retainedTailId);
+  assert.deepEqual(decoded.retained_tail, retainedTail);
+  assert.equal(encodeCheckpoint(decoded), encrypted);
+  for (const input of [[{ type: "compaction", encrypted_content: encrypted }], [{ role: "user", content: renderCheckpoint(decoded) }]]) {
+    const prepared = prepareCompaction(input);
+    assert.ok([...prepared.sources.values()].some(source => source.excerpt === "New pending requirement"));
+    assert.ok([...prepared.sources.values()].some(source => source.call_id === "pending_call" && source.excerpt.includes("Actual pending tool result")));
+  }
+});
+
+test("exact compaction tails reject malformed or oversized data instead of using a lossy fallback", () => {
+  const base = finalizeCheckpoint("{}", prepareCompaction([]));
+  const retainedTailId = "cmp_00112233445566778899aabbccddeeff";
+  for (const options of [{ retainedTail: [] }, { retainedTailId }, { retainedTailId, retainedTail: [null] },
+    { retainedTailId, retainedTail: [{ role: "user", content: undefined }] }]) {
+    assert.throws(() => encodeCheckpoint(base, options), { code: "invalid_web_compaction_tail" });
+  }
+  const oversized = { ...base, retained_tail_id: retainedTailId, retained_tail: [{ role: "user", content: "x".repeat(100000) }] };
+  assert.throws(() => encodeCheckpoint(oversized), { code: "web_compaction_tail_too_large", status: 413 });
+  assert.throws(() => renderCheckpoint(oversized), { code: "web_compaction_tail_too_large", status: 413 });
+  const malformed = `kcr2:${Buffer.from(JSON.stringify({ ...base, retained_tail: [] })).toString("base64")}`;
+  assert.equal(decodeCompaction(malformed), undefined);
+});
+
+test("structured exact tails render within the existing readable-checkpoint parser bound", () => {
+  const base = finalizeCheckpoint("{}", prepareCompaction([]));
+  const retainedTail = [{ type: "function_call_output", call_id: "structured_pending", output: Array.from({ length: 9000 }, () => ({ a: [] })) }];
+  const decoded = decodeCompaction(encodeCheckpoint(base, { retainedTail, retainedTailId: "cmp_00112233445566778899aabbccddeeff" })).checkpoint;
+  assert.ok(Buffer.byteLength(JSON.stringify(decoded, null, 2), "utf8") > 256 * 1024);
+  const rendered = renderCheckpoint(decoded);
+  assert.ok(Buffer.byteLength(rendered, "utf8") < 256 * 1024);
+  const prepared = prepareCompaction([{ role: "user", content: rendered }]);
+  assert.ok([...prepared.sources.values()].some(source => source.call_id === "structured_pending"));
+});
+
 test("ambiguous serialized outcomes remain returned evidence through checkpoint replay", () => {
   for (const output of [
     '{"exit_code":7,"exit_code":0}', '{"exit_code":7,"exit\\u005fcode":0}',

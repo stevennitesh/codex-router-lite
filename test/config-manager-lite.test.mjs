@@ -139,7 +139,8 @@ test("caller refresh preserves scalar spans and refuses ambiguous real authority
   ]) assert.throws(() => refreshCodexCallerCapabilityContents(invalid, nextBase, { port: 4202 }));
 });
 
-test("real caller rotation and rollback refresh multiline instructions before restoring running intent", { timeout: 30_000 }, t => {
+for (const rollback of [false, true]) {
+test(`real caller rotation and rollback refresh multiline instructions before restoring running intent (${rollback ? "rollback" : "success"})`, { timeout: 30_000 }, t => {
   const f = configFixture(t);
   const original = 'developer_instructions = """\n[documentation.example]\n# BEGIN codex-router-provider-managed\nbase_url = "http://127.0.0.1:4202/v1"\n# END codex-router-provider-managed\n"""\n';
   writeFileSync(f.config, original);
@@ -156,32 +157,75 @@ runServiceMutation:async action=>{actions.push(action);running=action!=='stop';}
 verifyServiceKeys:async()=>{verifications++;if(process.env.TEST_ROLLBACK==='1'&&verifications===1)throw new Error('synthetic verification refusal');}};
 let result,error;try{result=await runCallerKeyRotation(options);}catch(e){error=e.message;}
 process.stdout.write(JSON.stringify({result,error,actions,commands,verifications,running,secret:readFileSync(process.env.MODEL_ROUTER_STATE_DIR+'/caller-secret','utf8').trim()}));`;
-  for (const rollback of [false, true]) {
-    writePrivateFile(path.join(f.state, "caller-secret"), "a".repeat(48));
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
-      cwd: root, encoding: "utf8", windowsHide: true, timeout: 15_000,
-      env: { ...process.env, ...f.env, TEST_ROLLBACK: rollback ? "1" : "0" },
-    });
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
-    const observed = JSON.parse(result.stdout);
-    assert.equal(observed.running, true);
-    assert.equal(readFileSync(f.config, "utf8"), enabled);
-    assert.equal(existsSync(path.join(f.state, "caller-key-rotation.json")), false);
-    if (rollback) {
-      assert.match(observed.error, /synthetic verification refusal/u);
-      assert.deepEqual(observed.actions, ["stop", "start", "stop", "start"]);
-      assert.equal(observed.verifications, 2);
-      assert.equal(observed.secret, "a".repeat(48));
-      assert.deepEqual(observed.commands, ["status", "caller-capability-refresh", "caller-capability-refresh"]);
-    } else {
-      assert.equal(observed.result.rotated, true);
-      assert.deepEqual(observed.actions, ["stop", "start"]);
-      assert.equal(observed.verifications, 1);
-      assert.notEqual(observed.secret, "a".repeat(48));
-      assert.deepEqual(observed.commands, ["status", "caller-capability-refresh"]);
-    }
+  writePrivateFile(path.join(f.state, "caller-secret"), "a".repeat(48));
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    // Real journal transitions harden and verify each staging file. Each
+    // scenario has its own 30-second test budget; leave time for fixture cleanup.
+    cwd: root, encoding: "utf8", windowsHide: true, timeout: 25_000,
+    env: { ...process.env, ...f.env, TEST_ROLLBACK: rollback ? "1" : "0" },
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.running, true);
+  assert.equal(readFileSync(f.config, "utf8"), enabled);
+  assert.equal(existsSync(path.join(f.state, "caller-key-rotation.json")), false);
+  if (rollback) {
+    assert.match(observed.error, /synthetic verification refusal/u);
+    assert.deepEqual(observed.actions, ["stop", "start", "stop", "start"]);
+    assert.equal(observed.verifications, 2);
+    assert.equal(observed.secret, "a".repeat(48));
+    assert.deepEqual(observed.commands, ["status", "caller-capability-refresh", "caller-capability-refresh"]);
+  } else {
+    assert.equal(observed.result.rotated, true);
+    assert.deepEqual(observed.actions, ["stop", "start"]);
+    assert.equal(observed.verifications, 1);
+    assert.notEqual(observed.secret, "a".repeat(48));
+    assert.deepEqual(observed.commands, ["status", "caller-capability-refresh"]);
   }
+});
+}
+
+test("interrupted early rollback refreshes the real client before a fresh rotation preserves unbound generations", { timeout: 30_000 }, t => {
+  const f = configFixture(t), home = path.dirname(f.config);
+  for (const directory of [home, f.state]) writeFileSync(path.join(directory, ".credential-fixture"), "synthetic credential fixture");
+  writeFileSync(f.config, 'developer_instructions = "Synthetic recovery fixture"\n');
+  writePrivateFile(path.join(f.state, "caller-secret"), "a".repeat(48));
+  run("enable", f.env);
+  const enabled = readFileSync(f.config, "utf8");
+  const code = `import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';import {existsSync,readFileSync,renameSync} from 'node:fs';import path from 'node:path';
+import {STATE_DIR,CALLER_SECRET_PATH,CONFIG_PATH} from ${JSON.stringify(pathToFileURL(path.join(root, "src/paths.mjs")).href)};
+import {writePrivateFile,writePrivateJson} from ${JSON.stringify(pathToFileURL(path.join(root, "src/file-security.mjs")).href)};
+import {runCallerKeyRotation,runNodeCommand} from ${JSON.stringify(pathToFileURL(path.join(root, "src/caller-key.mjs")).href)};
+assert.equal(STATE_DIR,process.env.TEST_CREDENTIAL_STATE_ROOT);assert.equal(path.dirname(CALLER_SECRET_PATH),STATE_DIR);
+const op='e'.repeat(32),prior='a'.repeat(48),unbound='u'.repeat(48),backup=CALLER_SECRET_PATH+'.rotate-rollback.'+op,displaced=CALLER_SECRET_PATH+'.rotate-displaced.'+op,temporary=CALLER_SECRET_PATH+'.rotate-new.'+op;
+for(const file of [backup,displaced,temporary])assert.equal(path.dirname(file),STATE_DIR);
+renameSync(CALLER_SECRET_PATH,backup);writePrivateFile(displaced,unbound);writePrivateFile(temporary,unbound);
+writePrivateJson(path.join(STATE_DIR,'caller-key-rotation.json'),{version:1,phase:'prepared',operationId:op,targets:['codex'],serviceWasRunning:true,previousSecretSha256:createHash('sha256').update(prior).digest('hex')});
+let running=true;const commands=[],actions=[],verified=[];
+const result=await runCallerKeyRotation({assertOwnership(){},
+runNode:async(script,args)=>{assert.equal(script,'src/config-manager.mjs');const output=await runNodeCommand(script,args);commands.push(args[0]);return output;},
+readServiceStatus:async()=>({installed:true,state:running?'running':'stopped'}),runServiceMutation:async action=>{actions.push(action);running=action==='start';},
+verifyServiceKeys:async({currentSecret})=>{assert.ok(commands.at(-1)==='caller-capability-refresh');verified.push(currentSecret===prior?'prior':'next');},
+verifyCurrentKey:async({currentSecret})=>{assert.ok(currentSecret===prior);assert.equal(commands.at(-1),'caller-capability-refresh');verified.push('prior');}});
+assert.ok(result.rotated);assert.ok(readFileSync(displaced,'utf8')===unbound);assert.ok(readFileSync(temporary,'utf8')===unbound);
+assert.equal(existsSync(path.join(STATE_DIR,'caller-key-rotation.json')),false);assert.equal(readFileSync(CONFIG_PATH,'utf8'),${JSON.stringify(enabled)});
+process.stdout.write(JSON.stringify({commands,actions,verified,running}));`;
+  // The guard runs after the child environment is established and before any
+  // path-dependent production imports or protected fixture mutations.
+  const result = spawnSync(process.execPath, ["--import", pathToFileURL(path.join(root, "test/fixtures/credential-state-guard.mjs")).href, "--input-type=module", "-e", code], {
+    cwd: root, encoding: "utf8", windowsHide: true, timeout: 25_000,
+    env: { ...process.env, ...f.env, CODEX_ROUTER_STATE_DIR: f.state,
+      TEST_CREDENTIAL_STATE_ROOT: f.state, TEST_CREDENTIAL_HOME_ROOT: home },
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.running, true);
+  assert.deepEqual(observed.actions, ["stop", "start", "stop", "start"]);
+  assert.deepEqual(observed.commands, ["caller-capability-refresh", "status", "caller-capability-refresh"]);
+  assert.deepEqual(observed.verified, ["prior", "next"]);
 });
 
 test("first backup receives original bytes only after protection and failures preserve config", { timeout: 30_000 }, t => {

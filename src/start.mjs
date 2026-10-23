@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { assertCallerSecret } from "./caller-auth.mjs";
+import { startCatalogAutoRefresh } from "./catalog-auto-refresh.mjs";
 import {
   CALLER_SECRET_PATH,
   INTERNAL_SECRET_PATH,
@@ -21,7 +22,6 @@ import { writeLiteLlmConfig } from "./litellm-config.mjs";
 import { spawnableCommand } from "./spawnable-command.mjs";
 import { stopWindowsBatchChild } from "./windows-batch-cleanup.mjs";
 import { processStartIdentity } from "./process-identity.mjs";
-import { requireGatewayRuntime } from "./venv-runtime.mjs";
 import { clearServiceProcessState, shouldRecordServiceProcess, writeServiceProcessState } from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
@@ -138,6 +138,8 @@ const childLifecycles = new WeakMap();
 const pendingChildStops = new Set();
 let childCleanupFailed = false;
 let shuttingDown = false;
+let stopCatalogRefresh;
+let catalogRefreshStopped;
 
 // Every child goes through `spawnableCommand` for the one case that needs it:
 // a Windows `.cmd`/`.bat` launcher, which Node has refused to spawn without a
@@ -229,6 +231,10 @@ const SIGKILL_AFTER_MS = SHUTDOWN_DRAIN_MS + SHUTDOWN_FLUSH_MS + 2_000;
 function stopChildren() {
   if (shuttingDown) return;
   shuttingDown = true;
+  catalogRefreshStopped = stopCatalogRefresh?.().catch(error => {
+    childCleanupFailed = true;
+    console.error(`[model-router] catalog refresh cleanup failed: ${error.message}`);
+  });
   for (const child of children) {
     void stopChild(child).catch(error => console.error(`[model-router] child cleanup failed: ${error.message}`));
   }
@@ -332,9 +338,6 @@ async function main() {
     if (!existsSync(litellm)) {
       throw new Error(`LiteLLM is not installed at ${litellm}. ${dependencyFix}.`);
     }
-    if (usesBundledVenv) {
-      requireGatewayRuntime(litellm, { dependencyFix });
-    }
     writeLiteLlmConfig();
     return run(litellm, [
       ...litellmArgs,
@@ -359,16 +362,9 @@ async function main() {
       child,
     );
   supervise("LiteLLM gateway", startGateway, gatewayHealthy);
-  supervise(
-    "Catalog refresh watcher",
-    () => run(process.execPath, [path.join(SOURCE_ROOT, "src", "catalog-auto-refresh.mjs")]),
-    async (child) => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`exited during startup (code=${String(child.exitCode)}, signal=${String(child.signalCode)})`);
-      }
-    },
-  );
+  if (!shuttingDown) {
+    stopCatalogRefresh = startCatalogAutoRefresh({ env: { ...process.env, ...commonEnv } });
+  }
   const result = await waitForExit(router, frontend.label);
   if (!shuttingDown) {
     console.error(
@@ -406,6 +402,7 @@ try {
   while (pendingChildStops.size > 0) {
     await Promise.allSettled([...pendingChildStops]);
   }
+  await catalogRefreshStopped;
   if (childCleanupFailed) exitCode ||= 1;
   if (serviceProcessRecorded) {
     try {

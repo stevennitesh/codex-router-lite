@@ -23,7 +23,7 @@ The [design investigation](2026-09-20-switchyard-encrypted-handoff-design.md)
 is supporting evidence, not an implemented contract. This plan owns delivery.
 The [Switchyard specification](../../config/switchyard/README.md),
 [security contract](../../SECURITY.md), and
-[engineering contract](../agents/engineering-contract.md) remain current authority.
+[now-retired engineering contract](https://github.com/stevennitesh/codex-router-lite/blob/54e0a3a26b97bd924e75c769717d1a3a3d925226/docs/agents/engineering-contract.md) were delivery authorities.
 
 ## Required behavior
 

@@ -35,15 +35,27 @@ response boundary that requires them, not as scattered slug checks.
 | Response event repair | Existing transform owner, only if a reproduced wire defect requires it; keep request-local restoration paired |
 | Catalog behavior | `src/catalog.mjs` and catalog tests if existing metadata cannot express it; inherit native fields rather than copy a catalog |
 | Installed files and product allowlist | `maintenance/windows-package.json`, `scripts/check-product-boundary.mjs`; include new runtime files and config, retain independent checks |
-| Tests and public guidance | Endpoint regression, routing/catalog coverage, README model list and a focused endpoint guide; update [compatibility owner links](compatibility-maintenance.md#ownership-map) when needed and keep the [bug form](../../.github/ISSUE_TEMPLATE/bug.yml) model/route field as text input without a second route list |
+| Tests and public guidance | Endpoint regression, routing/catalog coverage, the [model/route table](../MODELS.md) and a focused endpoint guide; update README only when the overview changes, [compatibility owner links](compatibility-maintenance.md#ownership-map) when needed, and keep the [bug form](../../.github/ISSUE_TEMPLATE/bug.yml) model/route field as text input without a second route list |
 | Subagent eligibility | Leave uncertified routes at v1; load [certification](../SUBAGENT-CERTIFICATION.md) only when claiming v2 |
 
 Existing contracts: [GLM](openrouter-glm.md), [DeepSeek](openrouter-deepseek.md), [Pareto](pareto.md), and
 [Switchyard](../../config/switchyard/README.md). Read only the one being reused
 or changed. Their provider-specific repairs are not default settings for a new model.
 
-The registry owns `supportedRoutedEfforts` and `validateRoutedEffort`. Generated
-agent defaults and local effort overrides use the same advertised route levels.
+The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) uses native Codex execution
+through the in-app browser. `src/web-models.mjs` owns model identity, effort mapping
+and account eligibility; `src/chatgpt-web.mjs` owns configuration and dispatch.
+It bypasses OpenRouter preparation and native credential
+relay. Do not add it to the fixed OpenRouter registry or merge its native catalog.
+
+The registry owns canonical efforts, catalog effort projection and their bounded
+reverse mapping. Older or unknown Codex catalogs retain the `xhigh` label for
+canonical `max` on the four GLM/DeepSeek routes; a projected default must resolve
+against the actual registered route before generating a role. Distinct canonical
+levels must not become an ambiguous legacy label on those routes.
+`supportedRoutedEfforts` reports canonical levels and `validateRoutedEffort`
+returns the canonical value, so local overrides store `max` even when entered as
+the legacy label. Generated role TOML retains the caller's projected label.
 Unsupported explicit overrides fail locally; clearing an override restores the
 route's default. Add endpoint levels to its metadata rather than maintaining a
 second vocabulary in settings or agent generation.

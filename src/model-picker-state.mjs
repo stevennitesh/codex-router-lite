@@ -128,3 +128,23 @@ export function seedModelsHidden(slugs) {
   }
   return writePickerState({ hidden, visible, seeded, hasExplicitVisibility });
 }
+
+// Connecting the optional Web bridge is an explicit opt-in. Show its newly
+// discovered account models once, while preserving every earlier picker choice
+// when the same bridge is connected again.
+export function seedWebModelsVisible(slugs) {
+  return withCatalogPublicationLock(() => {
+    const values = [...new Set(slugs.map((slug) => String(slug || "").trim()).filter(Boolean))];
+    if (values.some((slug) => !slug.startsWith("chatgpt-web/"))) {
+      throw new Error("Only ChatGPT Web models can be enabled by bridge connection.");
+    }
+    const { hidden, visible, seeded, hasExplicitVisibility } = readPickerState();
+    const fresh = values.filter((slug) => !seeded.has(slug) && !hidden.has(slug) && !visible.has(slug));
+    if (fresh.length === 0) return modelPickerSnapshot();
+    for (const slug of fresh) {
+      visible.add(slug);
+      seeded.add(slug);
+    }
+    return writePickerState({ hidden, visible, seeded, hasExplicitVisibility });
+  });
+}

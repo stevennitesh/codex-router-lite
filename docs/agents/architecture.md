@@ -9,6 +9,16 @@ failure use [debugging](debugging.md).
 The product is Windows Codex desktop and native CLI compatibility, the explicitly
 registered OpenRouter endpoints, Switchyard over native Codex models, and exact-route
 subagents. `src/routed-models.mjs` and the route JSON own the supported model set.
+The optional [ChatGPT Web bridge](../CHATGPT-WEB.md) adds exact Web routes through
+`src/web-models.mjs` and its safe account capability snapshot. The integration
+uses Router-owned browser state, an MCP tool broker and a tunnel; native Codex
+executes browser operations and declared tools with its ordinary approvals.
+`src/web-runtime.mjs` owns the browser lifecycle; `src/chatgpt-web.mjs` owns configuration
+and route dispatch. Changes to browser context, tools or cancellation follow the
+[Web integration maintenance guide](web-integration.md). Web routes do not replace
+native catalog authority or participate in OpenRouter preparation. The explicit
+V1/V2 selector governs new-conversation collaboration, with Web roles available
+only in V1.
 A requested new model extends that set deliberately; it does not authorize other
 clients, platforms, provider discovery, fallback fleets, Router UIs, or migration systems.
 
@@ -107,11 +117,11 @@ is owned by `src/proxy-environment.mjs` and `src/fetch-transport.mjs`.
 | Catalog derivation and native authority | `src/catalog.mjs`, `src/native-catalog-source.mjs`; [native Codex](native-codex.md) |
 | Paths, overrides and state locations | `src/paths.mjs`; inspect these before runtime work |
 | Startup and managed generation | `src/start.mjs`, `src/service.mjs`, `src/service-windows.mjs`; [installation](../INSTALL.md) |
-| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/windows-batch-cleanup.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#verify) |
+| Optional-child recovery and readiness | `src/gateway-supervisor.mjs`, `src/windows-batch-cleanup.mjs`, `src/service-readiness.mjs`; [installation](../INSTALL.md#optional-diagnostics) |
 | Admission, workflow drain, and replacement classification | `src/router-admission.mjs`, `src/service-drain.mjs`, `src/deployment-classification.mjs`; [replacement policy](../INSTALL.md#replacement-and-drain) |
 | Packaged deployment acceptance | `src/deployment-acceptance.mjs`; full health and installed task/process/manifest identity for activation and rollback, without Git or Switchyard-only proof |
 | Async directory-lock lifecycle | `src/directory-lock.mjs`; catalog, overlay, caller-key, and service wrappers use complete generations with unique owner files. Release drains dispatched heartbeats; only positive owner-process exit permits recovery. Legacy or uncertain ownership requires quiescent cleanup. |
-| Synchronous skill ownership lock | `src/atomic-state-lock.mjs`; complete generations have unique owner files, and recovery/release remove only their observed owner and an empty directory |
+| Synchronous skill ownership lock | `src/atomic-state-lock.mjs`; complete generations have unique owner files, recovery/release remove only their observed owner and an empty directory, and all publication retries share one paced monotonic deadline |
 | Nested transport errors | `src/transport-error-graph.mjs`; health, diagnostics, and retry retain their own eligibility rules |
 | Switchyard observation vocabulary | `src/switchyard-observation-contract.mjs`; sanitized writer and historical reader share the schema, independently of serving-policy validation |
 | Agent instructions and installed skills | [Context ownership](context-ownership.md) |
@@ -174,6 +184,11 @@ current installed-Codex catalog check once. CI uses `npm run verify` because it
 does not have an installed Codex. An explicit executable and `--catalog <path>`
 remain available when checking a specific build or installed catalog.
 
+The full test command limits concurrent test files to four to avoid flooding
+Windows with PowerShell helpers. Runtime unit fixtures inject ordinary synthetic
+state storage; focused storage integration and file-security tests retain real
+protected writes and permission checks. Production storage defaults are unchanged.
+
 CI runs both supported Node versions for runtime candidates. For changes limited
 to known Markdown documents and historical or route proof records,
 `scripts/verification-scope.mjs` selects `npm run verify:evidence`: source checks
@@ -184,6 +199,9 @@ history lacks event ancestry. It still requires the actual event base to
 be an ancestor and checks the complete diff. Failed fetches, deeper missing
 history and unrelated bases retain full verification. Ordinary scope inspection
 does not fetch. Node and Python dependency audits remain unconditional.
+The Node 24 full-runtime leg provisions Python 3.12 with the hashed production
+lock and supplies its explicit interpreter to the gateway integration tests.
+The other Node leg and evidence-only runs do not provision that interpreter.
 
 `npm run check` syntax-checks root, source, test, script, and maintenance modules
 with four bounded workers, then verifies the Python lock, independent product
