@@ -72,8 +72,9 @@
     }
   },
   "pending": [
-    "Deploy the reviewed first-text acceptance wakeup repair and refresh its matching adapter, retaining the interrupted test ledger byte-for-byte.",
-    "Load the adapter through a normal Codex restart and obtain authorization for a clean disposable final verification chat."
+    "Load the matching adapter through a normal Codex restart.",
+    "Obtain authorization for one further disposable Web verification chat; preserve the interrupted test and its uncertain input.",
+    "Verify native tools, acceptance before Stop, actual Stop and same-chat continuation on that final candidate."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -201,7 +202,8 @@
       "preStopObservedAssistantTextLength": 0,
       "substantiveTextBeforeStop": "unknown",
       "reason": "Cancellation won before Router received and persisted substantive current-generation acceptance evidence. The existing guard refuses continuation before browser access; no replay or ledger change was attempted.",
-      "ledgerPreservation": "A stable baseline hash was recorded privately. No replay, field clearing, checkpoint replacement or ledger edit is authorized or performed."
+      "ledgerPreservation": "A stable baseline hash was recorded privately. No replay, field clearing, checkpoint replacement or ledger edit is authorized or performed.",
+      "ledgerByteForByteUnchangedAfterDeploymentAndRefresh": true
     },
     "acceptanceWakeupFinding": {
       "status": "source-confirmed prospective defect",
@@ -257,5 +259,22 @@
     "totalChecks": 11,
     "originalRollbackPreserved": true,
     "adapterUnchanged": true
+  },
+  "acceptanceWakeupDeployment": {
+    "routerCommit": "10897c7486dddc40944bf375279148cbbce302f3",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T21:29:10.3519603Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRouterAndSwitchyardRollbackPreserved": true
+  },
+  "acceptanceWakeupRuntimeRefresh": {
+    "applied": true,
+    "routerReloaded": true,
+    "adapterGeneration": "f245d2f4d7d8b14c4e0e4354021c1848630800ae649026c1b8d777a442f69e17",
+    "browserRuntimeChanged": false,
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "codexRestartRequired": true
   }
 }
