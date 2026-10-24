@@ -72,9 +72,7 @@
     }
   },
   "pending": [
-    "Load the matching adapter through a normal Codex restart.",
-    "Obtain authorization for one further disposable Web verification chat; preserve the interrupted test and its uncertain input.",
-    "Verify native tools, acceptance before Stop, actual Stop and same-chat continuation on that final candidate."
+    "Run the manual Codex Stop check while the acknowledged final verification turn is still generating, then verify same-chat continuation after that Stop. No Stop event was recorded in the completed final-candidate attempts."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -275,6 +273,75 @@
     "browserRuntimeChanged": false,
     "hookDefinition": "preserved",
     "tunnelConfiguration": "preserved",
-    "codexRestartRequired": true
+    "codexRestartRequired": true,
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlanReady": true,
+    "postRestartPlanChanged": false,
+    "postRestartAdapterGenerationMatchesCandidate": true
+  },
+  "finalCandidateWebVerification": {
+    "authorizedFreshChat": true,
+    "routerCommit": "10897c7486dddc40944bf375279148cbbce302f3",
+    "adapterGeneration": "f245d2f4d7d8b14c4e0e4354021c1848630800ae649026c1b8d777a442f69e17",
+    "execution": "The Web model itself used the native browser and connector. No external launcher, native runtime patch or other model drove the conversation.",
+    "nativeRead": {
+      "status": "passed",
+      "nativeCommandsExecuted": 1,
+      "pairedTerminalResults": 1,
+      "exitCode": 0,
+      "fixtureBytesMatched": true,
+      "terminalTrailingCrLfObserved": true,
+      "nativeTurnDurationMs": 26454
+    },
+    "initialRecall": {
+      "status": "passed",
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeTurnDurationMs": 6450
+    },
+    "textOnlyReadinessAttempt": {
+      "status": "completed-before-stop-readiness",
+      "observeCallsWithAcknowledgementPending": 6,
+      "firstSubstantiveCallbackCompleted": true,
+      "firstSubstantiveCallbackTextLength": 29899,
+      "firstSubstantiveCallbackStopVisible": false,
+      "acceptancePersisted": true,
+      "limit": "The live attempt did not expose incomplete substantive text. It does not establish the first-text wakeup branch live, or whether readable text existed in the page before that callback."
+    },
+    "secondReadAttempt": {
+      "status": "connector-safety-block-reported",
+      "nativeCommandsExecuted": 0,
+      "connectorDiscoveryRequestCount": null,
+      "connectorGatewayRequestCount": null,
+      "fixedBlockStage": null,
+      "limit": "ChatGPT reported a safety check before a successful native result. The inspected native rollout emitted no command; it does not establish the unretained connector-side block stage. No uncertain native action was retried."
+    },
+    "discoveryOnlyReadinessAttempt": {
+      "status": "acknowledged-while-generating",
+      "nativeCommandsExecuted": 0,
+      "waitWakeReason": "broker_activity",
+      "readinessAssistantTextLength": 0,
+      "readinessStopVisible": true,
+      "readinessCompleted": false,
+      "acceptancePersisted": true,
+      "uncertainSendAtReadiness": false,
+      "unresolvedCodingActionsAtReadiness": 0,
+      "nativeStopRequests": 0,
+      "nativeStopResults": 0,
+      "terminal": "Generation completed normally before any human Stop event. A completed generation is not a Stop proof."
+    },
+    "finalRecall": {
+      "status": "passed",
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeTurnDurationMs": 11777,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "acceptedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "previousInterruptedLedgerByteIdentical": true,
+    "stopVerification": "pending-human-stop-on-active-turn",
+    "postStopContinuationVerification": "pending"
   }
 }
