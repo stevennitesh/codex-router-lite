@@ -72,7 +72,7 @@
     }
   },
   "pending": [
-    "Deploy the reviewed home readiness repair, refresh its matching adapter and load it through a normal Codex restart.",
+    "Deploy the reviewed restored-first-initialization repair; the current adapter remains qualified and no Codex restart is needed for this runtime-only change.",
     "Verify native tools, actual Stop and same-chat continuation in the authorized fresh verification chat."
   ],
   "limits": [
@@ -135,6 +135,48 @@
       "currentSendQualifierAccepts": true
     },
     "adapterRefreshRequired": true,
-    "liveAfterRepair": "pending"
+    "liveAfterRepair": "The next attempt stopped before Send because the failed first initialization retained owners but no tab, saved URL or accepted checkpoint, and the normal restart removed its browser binding.",
+    "secondFailure": "Active native browser binding was lost.",
+    "secondFailureNativeCommandsExecuted": 0,
+    "initializationRecoveryRepair": {
+      "scope": "Only restored, definitely unsent first initialization with no tab, saved URL, checkpoint, generation or delivery evidence, no uncertain input, and no unresolved coding action.",
+      "behavior": "Bootstrap reuses the existing binding identity and remains idempotent until open is emitted. A surviving partial binding refuses its tab before mutation; stale and foreign tabs and drafts are preserved.",
+      "affectedTestsPassed": 547,
+      "failed": 0,
+      "sourceChecks": "passed",
+      "diffCheck": "passed",
+      "independentReview": "No actionable findings after correcting interruption before recovered open.",
+      "browserProgramsUnchanged": true,
+      "sendObserveRetainQualified": true,
+      "adapterRefreshRequired": false
+    },
+    "remainingFunctionalControlsObserved": {
+      "modelVisible": true,
+      "modelEnabled": true,
+      "temporaryChatButtonVisible": true,
+      "uniqueComposerTag": "DIV",
+      "composerContentEditable": true,
+      "composerEmpty": true,
+      "scope": "Read-only current SDK inspection of a separate empty home; not a native-tool or Stop proof. The inspection tab was closed."
+    }
+  },
+  "homeReadinessDeployment": {
+    "routerCommit": "86b10549f1f0b75f0a6a2ceff20421f3f3fdb683",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T20:25:51.9566402Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRollbackPreserved": true
+  },
+  "homeReadinessRuntimeRefresh": {
+    "applied": true,
+    "routerReloaded": true,
+    "adapterGeneration": "75067fa53a68226b7d9e38d7f00e0697623c237c9622cfd1a3a92a489dbcc8eb",
+    "browserRuntimeChanged": false,
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlanReady": true,
+    "postRestartPlanChanged": false
   }
 }

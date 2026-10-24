@@ -1532,6 +1532,90 @@ test("an emitted open with an interrupted result never creates a replacement tab
   });
 });
 
+test("a restored failed first open can reinitialize only after its native binding is lost", async t => {
+  for (const [label, lostKernel, discovery, interruptedBootstrap] of [
+    ["lost binding", true, false], ["lost binding after native discovery", true, true], ["surviving binding", false, false],
+    ["recovery bootstrap not executed", true, false, false], ["recovery bootstrap executed", true, false, true],
+  ]) await t.test(label, async t => {
+    const h = harness(t, { tools: discovery ? [search, currentRead] : [nativeJs, currentRead] });
+    const stale = fakeBrowser(), foreign = fakeBrowser();
+    stale.ui.tabId = "stale-initialization-tab";
+    foreign.ui.tabId = "foreign-user-tab"; foreign.ui.url = "https://chatgpt.com/c/foreign-chat";
+    foreign.ui.composer = "Keep the user's foreign draft.";
+    const newTab = h.browser.browser.tabs.new, goto = stale.tab.goto;
+    let created = 0;
+    h.browser.browser.tabs.new = async () => ++created === 1 ? stale.tab : newTab();
+    h.browser.browser.tabs.list = async () => [stale.tab, foreign.tab, ...(created > 1 ? [h.browser.tab] : [])]
+      .map(tab => ({ id: tab.id, url: tab === stale.tab ? stale.ui.url : tab === foreign.tab ? foreign.ui.url : h.browser.ui.url }));
+    stale.tab.goto = async url => { await goto(url); throw new Error("Initial home controls could not be read."); };
+    const nextBrowserCall = async () => {
+      const call = (await h.request()).output[0];
+      if (call.type !== "tool_search_call") return call;
+      h.append(call, outputFor(call, [nativeJs]));
+      return (await h.request()).output[0];
+    };
+    const bootstrap = await nextBrowserCall();
+    const open = (await h.answerBrowser(bootstrap)).output[0];
+    const failure = await h.executeBrowser(open).then(() => assert.fail("The first open must fail before Send."), error => error);
+    h.append(open, outputFor(open, { isError: true, content: [{ type: "text", text: failure.message }] }));
+    await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+    stale.ui.composer = "Keep the stale initialization draft.";
+    const untouched = [stale, foreign].map(({ ui }) => ({ url: ui.url, composer: ui.composer,
+      navigations: ui.navigations, closes: ui.closes, sends: [...ui.sends] }));
+    await h.restartRuntime();
+    if (lostKernel) h.loseKernel();
+    // Native discovery declarations need not be retained in the next request.
+    if (discovery) h.input().splice(0, h.input().length, ...h.input().filter(item => !["tool_search_call", "tool_search_output"].includes(item.type)));
+    h.newTurn(followupId, "Continue the never-sent initial request.");
+    let initialization = await nextBrowserCall(), nativeTurn = followupId;
+    assert.equal(JSON.parse(initialization.arguments).title, "ChatGPT Web: bootstrap");
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.deepEqual(saved.browserOwnerTurnIds, [turnId, followupId]);
+    assert.deepEqual(saved.lastTurn, { turnId: followupId, sendState: "unsent", completed: false });
+    assert.equal(saved.uncertainSend, false); assert.deepEqual(saved.unresolvedCoding, []);
+    for (const field of ["tabId", "chatUrl", "checkpoint", "generationTurnKey", "deliveredInstructionsSha256"]) assert.equal(saved[field], undefined);
+    if (interruptedBootstrap !== undefined) {
+      if (interruptedBootstrap) await h.executeBrowser(initialization);
+      h.observations.watchers.at(-1).onCancel();
+      nativeTurn = "33002233-4455-6677-8899-aabbccddeeff";
+      h.newTurn(nativeTurn, "Resume the interrupted initialization.");
+      initialization = await nextBrowserCall();
+      assert.equal(JSON.parse(initialization.arguments).title, "ChatGPT Web: bootstrap");
+      assert.equal(created, 1, "An interrupted recovery bootstrap never opens another tab.");
+    }
+    const reopened = (await h.answerBrowser(initialization)).output[0];
+    assert.equal(JSON.parse(reopened.arguments).title, "ChatGPT Web: open");
+    if (lostKernel) {
+      const send = (await h.answerBrowser(reopened)).output[0];
+      const observe = (await h.answerBrowser(send)).output[0];
+      h.browser.ui.texts.push("The initial request completed once."); h.browser.ui.complete = true;
+      const retain = (await h.answerBrowser(observe)).output[0];
+      for (const call of [send, observe, retain]) {
+        const args = JSON.parse(call.arguments), sandbox = { currentAuthority: true };
+        const native = { name: "js", arguments: args, _meta: { threadId, sessionId: threadId, callId: call.call_id,
+          "x-codex-turn-metadata": { ...metadata(nativeTurn), session_id: threadId, auto_review_enabled: true,
+            node_repl_auto_review_required: true, node_repl_disabled: false },
+          "codex/sandbox-state": sandbox, "codex/sandbox-state-meta": structuredClone(sandbox), "codex/sandbox-launcher": { opaque: true } } };
+        assert.ok(qualifyBrowserCall(native, h.settings.browser.runtimeModule), "Canonical programs retain exact adapter qualification after reinitialization.");
+      }
+      const final = await h.answerBrowser(retain);
+      assert.equal(final.output[0].content[0].text, "The initial request completed once.");
+      assert.deepEqual(sentTranscript(h), [
+        { role: "user", content: "Read the current file using the declared tools." },
+        { role: "user", content: "Continue the never-sent initial request." },
+        ...(interruptedBootstrap !== undefined ? [{ role: "user", content: "Resume the interrupted initialization." }] : []),
+      ]);
+      assert.equal(created, 2); assert.equal(h.browser.ui.sends.length, 1);
+    } else {
+      await assert.rejects(h.executeBrowser(reopened), /already owns a tab/u);
+      assert.equal(created, 1); assert.equal(h.browser.ui.sends.length, 0);
+    }
+    assert.deepEqual([stale, foreign].map(({ ui }) => ({ url: ui.url, composer: ui.composer,
+      navigations: ui.navigations, closes: ui.closes, sends: [...ui.sends] })), untouched);
+    assert.equal(new Set(h.observations.bindings).size, 1);
+  });
+});
+
 test("interrupted Send checkpoints accept omitted or partial native assistant history without resending prior input", async t => {
   for (const [label, partial, nativeAssistant] of [
     ["omitted", "A stopped Web answer", undefined],

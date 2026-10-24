@@ -85,6 +85,13 @@ its new chat.
 
 ### Ownership and recovery
 
+After a failed first initialization, a restored record may bootstrap again only
+when it has no established tab, saved URL, checkpoint, generation or delivery
+evidence, its last turn is definitely unsent, and it has no uncertain input or
+unresolved native action. Bootstrap reuses the same binding identity. If a partial
+binding still owns a tab, ordinary open refuses it rather than creating another
+tab or changing its draft. This does not replace an established saved conversation.
+
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
 Codex conversation's browser and checks the previous reply's identity and text
 prefix before continuing. If Stop preceded a readable answer, a confirmed

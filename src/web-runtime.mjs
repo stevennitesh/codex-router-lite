@@ -296,7 +296,15 @@ export function createInAppWebRuntime({
       const { replyId, assistantPrefix, completed } = value.observation;
       value.observation = { replyId, assistantPrefix, completed };
     }
-    return { ...value, browserStarted: true, persistedValue: JSON.stringify(value), unresolvedCoding: new Map(value.unresolvedCoding.map(call => [call.callId, call.outputType])),
+    // A failed first initialization has no established tab or delivery to
+    // recover. Only a restored, definitely unsent record may bootstrap again;
+    // a surviving partial binding still makes the ordinary open refuse its tab.
+    const restartInitialization = value.lastTurn.sendState === "unsent" && !value.lastTurn.completed
+      && !value.uncertainSend && !value.unresolvedCoding.length && !value.needsHistory && !value.rolloverRequired
+      && [value.tabId, value.chatUrl, value.checkpoint, value.capacityChatUrl, value.sendBaselineReplyIds,
+        value.generationTurnKey, value.generationReplyIds, value.generationCompleted,
+        value.deliveredInstructionsSha256, value.deliveredInstructionsGenerationTurnKey].every(field => field === undefined);
+    return { ...value, browserStarted: true, restartInitialization, persistedValue: JSON.stringify(value), unresolvedCoding: new Map(value.unresolvedCoding.map(call => [call.callId, call.outputType])),
       ...(!value.lastTurn.completed && value.browserOwnerTurnIds.length ? { interruptedTurnId: value.lastTurn.turnId, interruptedSendState: value.lastTurn.sendState } : {}) };
   };
   const reconcileCoding = async (conversation, payload) => {
@@ -488,8 +496,13 @@ export function createInAppWebRuntime({
         ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) } } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
     turn.browserStarted = true;
-    if (operation === "bootstrap") turn.conversation.browserStarted = true;
-    if (["open", "continue", "rollover"].includes(operation)) turn.conversation.browserOwnerTurnIds = [...new Set([...turn.conversation.browserOwnerTurnIds, turn.turnId])];
+    if (operation === "bootstrap") conversation.browserStarted = true;
+    // Bootstrap can be interrupted before open is emitted. Keep it idempotent
+    // until that tab-creating handoff may actually have reached native Codex.
+    if (operation === "open") conversation.restartInitialization = false;
+    if (["open", "continue", "rollover"].includes(operation) || operation === "bootstrap" && conversation.browserOwnerTurnIds.length) {
+      conversation.browserOwnerTurnIds = [...new Set([...conversation.browserOwnerTurnIds, turn.turnId])];
+    }
     if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; }
     conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
     turn.pending = { kind: "browser", operation, frameToken, calls: [call] };
@@ -781,6 +794,7 @@ export function createInAppWebRuntime({
     } catch (error) { conversation.activeTurn = undefined; throw error; }
     const turn = { ...owner, settings, selection: model, model: payload.model, executor, tools,
       conversation, interruptedTurnId: conversation.interruptedTurnId, interruptedSendState: conversation.interruptedSendState,
+      initialBrowserOperation: conversation.restartInitialization || !conversation.browserOwnerTurnIds.length ? "bootstrap" : "continue",
       cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
     conversation.activeTurn = owner.turnId;
     const check = () => {
@@ -867,7 +881,7 @@ export function createInAppWebRuntime({
               turn.executor = discoverBrowserExecutor(turn.tools);
               broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
-              response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
+              response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
             } else {
               broker.complete(turn.token, outputs);
               turn.deliveredCoding ??= new Set();
@@ -894,7 +908,7 @@ export function createInAppWebRuntime({
           const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query: "+mcp__node_repl js persistent JavaScript browser runtime" } };
           turn.pending = { kind: "discovery", calls: [call] };
           response = webResponse(payload, [call]);
-        } else response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
+        } else response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
         if (turn.cancelled) throw turn.error;
         if (turn.done) {
           // Preserve the exact final wire response without retaining a Response
