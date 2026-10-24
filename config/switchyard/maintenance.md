@@ -30,7 +30,9 @@ $candidate = .\maintenance\build-switchyard-candidate.ps1
 
 It reads each ordered patch once, validates those exact bytes against the lock,
 and applies invocation-owned snapshots in lock order after cloning the pinned
-source. The snapshots are removed on success or failure. It installs the pinned
+source. Long-path support is local to that clone, and its pinned checkout must
+be clean before patching. The snapshots are removed on success or failure.
+It installs the pinned
 toolchain and required components, and runs formatting, Clippy, the
 retained package tests and release build. Dependency resolution stays locked.
 Every native command must succeed before a candidate is returned. Failure removes

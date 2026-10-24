@@ -46,7 +46,19 @@ records locally; storing or forwarding them does not request Codex inference.
 ### Instruction delivery and compaction
 
 The full bridge protocol and exact current Codex instructions are sent on first
-attachment or an instruction revision. Confirmed Send records their digest and
+attachment or an instruction revision. A unique local prompt-owned DOM turn
+anchors observation and immediate Stop. It does not prove that ChatGPT accepted
+the input: optimistic turns can be followed by a site rejection and restored
+draft. Router starts ordinary observation immediately after this anchor, without
+waiting inside Send for a native tool that observation must deliver.
+
+Current-generation substantive assistant output or an authenticated current-token
+broker handler acknowledges input. Registration, declaration updates, Stop visibility
+and complete turn state do not. Until that proof, the active turn keeps its URL,
+reply baseline, generation and proposed checkpoint privately; the durable prior
+checkpoint, instruction digest and compaction aliases remain unchanged, with Send
+uncertain. Failure, cancellation or restart does not replay that uncertain input.
+Acceptance records the instruction digest and
 the owning browser generation in optional V1 ledger fields
 `deliveredInstructionsSha256` and `deliveredInstructionsGenerationTurnKey`.
 Unchanged follow-ups carry a fresh turn-token directive and the exact new
@@ -140,6 +152,16 @@ Completion requires an idle owned browser turn, an answer after the latest tool
 boundary, and unchanged broker activity across the completion read and final
 delivery. A completed page with unreadable output or no post-tool answer ends
 with a bounded error instead of waiting for the general generation deadline.
+An exact visible site **Unknown error** and **Retry** pair rejects the request only
+when it belongs to the unique latest owned generation (inside its turn or an
+adjacent control region before the composer), outside user, assistant, reasoning,
+tool and code content, and the exact submitted composer with its current generation
+marker has been restored. The submitted text is the actual settled composer after
+paste attachment conversion. A restored draft alone is ambiguous. The browser
+returns only a fixed `requestError` category; the adapter ends its held observation
+immediately and Router reports `web_request_failed` before draining queued native
+calls. Retry and draft clearing are never requested. Actual prior broker acceptance
+and native results remain acknowledged after a later site failure.
 
 ### Full conversation handoff
 
@@ -153,6 +175,12 @@ or uncertain action fails explicitly rather than replaying the request. A bounde
 checkpoint cannot guarantee retention of every older detail; its loss notices
 remain part of the handoff. A successor that also reports full fails rather than
 creating an unbounded chain of chats.
+A first input rejected by that explicit capacity signal can retain a separate
+optional V1 `capacityChatUrl` without inventing a delivered checkpoint. It is a
+strict saved URL used only for the already authorized successor flow and restart
+reconciliation, and is cleared when successor input is accepted. The accepted
+chat URL, generation and instructions retain their earlier meaning. A lost browser
+binding still cannot reconstruct an unproved rollover or overwrite a draft.
 
 ## Native tools and cancellation
 

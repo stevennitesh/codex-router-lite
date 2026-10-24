@@ -96,14 +96,14 @@ Do not enable fallback or select an unproved endpoint as an outage response. A n
 
 ### Python dependency lock
 
-Load this branch only when changing the LiteLLM or FastAPI pins.
+Load this branch when changing the Python floor or gateway dependency pins.
 `requirements/python.in` owns the direct versions; `src/install-plan.mjs`
 validates the required gateway packages, security floor, hashed lock, and
 dependency stamps. Change the input once, then regenerate the compiled lock
 from the repository root:
 
 ```powershell
-uv pip compile --python-platform windows --generate-hashes --python-version 3.10 --output-file requirements/python.txt requirements/python.in
+uv pip compile --python-platform windows --generate-hashes --python-version 3.11 --output-file requirements/python.txt requirements/python.in
 ```
 
 Run the [common source checks](architecture.md#verification) afterward. The lock
@@ -113,7 +113,7 @@ actual uv and pip branches with the hash-checked lock. Audit the complete
 production closure with the pinned auditor used by CI:
 
 ```powershell
-uvx --python 3.10 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps --require-hashes -r requirements/python.txt
+uvx --python 3.11 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps --require-hashes -r requirements/python.txt
 ```
 
 Do not suppress individual advisories to make the audit pass; update or otherwise

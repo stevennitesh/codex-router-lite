@@ -55,6 +55,32 @@ test("typed failures use final rewritten identity, sequences and the diagnosed c
   assert.deepEqual(failure.response.output, []);
 });
 
+test("local tool rejections retain a terminal classification with complete or missing metadata", () => {
+  for (const wire of [frame(created), frame({ type: "response.reasoning_summary_text.delta", delta: "synthetic prelude" })]) {
+    for (const end of [false, true]) {
+      const { response } = observe(Buffer.from(wire));
+      const offset = response.text().length;
+      const rejected = { code: "ERR_NAMESPACE_RELAY_COMMITTED_STREAM", message: "Local tool validation rejected the call.", localRejection: true };
+      if (end) endStreamedResponse(response, rejected);
+      else assert.equal(writeStreamErrorEvent(response, rejected), true);
+      const [failure] = appended(response, offset);
+      assert.equal(failure.type, "response.failed");
+      assert.equal(failure.code, rejected.code);
+      assert.deepEqual(failure.response.error, { code: "invalid_prompt", message: rejected.message });
+      if (wire === frame(created)) {
+        assert.equal(failure.sequence_number, 1);
+        assert.equal(failure.response.id, created.response.id);
+      } else {
+        assert.deepEqual(failure, { type: "response.failed", code: rejected.code,
+          response: { status: "failed", error: { code: "invalid_prompt", message: rejected.message } } });
+      }
+      assert.equal(writeStreamErrorEvent(response, rejected), false, "a rejection settles the stream once");
+      assert.equal(appended(response, offset).length, 1);
+      if (end) assert.equal(response.writableEnded, true);
+    }
+  }
+});
+
 test("BOM, multiline data and split CR/LF framing retain exact client bytes", () => {
   for (const newline of ["\n", "\r", "\r\n"]) {
     const wire = Buffer.from(`\uFEFF: heartbeat${newline}${newline}event: message${newline}data: {"type":"response.created",${newline}data: "sequence_number":0,"response":{"id":"resp_fixture","created_at":123}}${newline}${newline}`);

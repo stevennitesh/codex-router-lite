@@ -38,7 +38,7 @@ const PYTHON_LOCK = "requirements/python.txt";
 const PYTHON_LOCK_INPUT = "requirements/python.in";
 
 // The product runs on Windows, so the lock resolves only the Windows dependency
-// graph for CPython 3.10+. `pythonLockDrift` checks the platform and hash flags
+// graph for CPython 3.11+. `pythonLockDrift` checks the platform and hash flags
 // uv records in the header as well as the direct pins.
 
 function repoPath(root, relative) {
@@ -343,6 +343,9 @@ export function pythonLockDrift(root = SOURCE_ROOT) {
     if (!header.includes(flag)) {
       problems.push(`${PYTHON_LOCK} was not generated with ${flag}`);
     }
+  }
+  if (!/(?:^|\s)--python-version\s+3\.11(?:\s|$)/u.test(header)) {
+    problems.push(`${PYTHON_LOCK} was not generated with --python-version 3.11`);
   }
   if (header.includes("--universal")) {
     problems.push(`${PYTHON_LOCK} must not include the unsupported universal dependency graph`);

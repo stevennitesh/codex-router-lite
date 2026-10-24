@@ -1,24 +1,32 @@
-# switchyard/auto v2 certification
+# switchyard/auto v2 application: pending source candidate
 
-Accepted observations against Router `3bcae1da455b586a01b9ccdb15ee499dedafb8a4`
-(version 0.7.0), codex-cli 0.162.0-alpha.17.2, Windows app 26.1007.9446.0.
-Tested at 2026-10-14T03:52:51.937Z. Switchyard runtime identities are recorded in proof.json.
+The checked-in route declares subagents v1 while the changed Switchyard
+compatibility patch awaits a fresh exact-runtime proof. All runtime observations
+and all five required checks are pending. Offline qualification does not establish
+native collaboration acceptance.
+
+This source transition does not change the installed runtime or its recorded
+acceptance. The [previous accepted proof](../../../docs/history/2026-10-24-switchyard-previous-proof/proof.md)
+and its [exact runtime binding](../../../docs/history/2026-10-24-switchyard-previous-proof/proof.json)
+are archived unchanged; those observations do not certify this candidate.
+
+## Route
+
+- Routed slug: `switchyard/auto`
+- Upstream model ID: `gpt-6.1-sol`
+- Router version and tested commit: pending
+- Codex version/build and execution surface: pending
+- Test date and deployed runtime binding: pending
 
 ## Evidence
 
-[Redacted run evidence](../../../docs/history/2026-10-13-deployed-certification.json) records role `router_switchyard_auto`, effort
-`high`, output 42 from a real sandboxed command, two encrypted
-handoffs, and both markers from the same child. 3 Router requests
-completed successfully. 2 cleanup calls observed
-already-completed turns; no active turn was cancelled.
-
 | Check | Result |
 | --- | --- |
-| Streamed text and completion | pass |
-| Actual native tool and output | pass |
-| Encrypted parent-to-child relay | pass |
-| First marker | pass |
-| Same-child follow-up | pass |
+| Streamed text and completion | pending |
+| Actual native tool and output | pending |
+| Encrypted parent-to-child relay | pending |
+| First marker | pending |
+| Same-child follow-up | pending |
 
 ## Official sources
 
@@ -26,9 +34,10 @@ already-completed turns; no active turn was cancelled.
 
 ## Scope and reproduction
 
-The native CLI used session-only `windows.sandbox="mxc"`,
-workspace-write, and on-request approval. The runner did not change persistent
-configuration. This certifies the named CLI path; desktop sandbox behavior,
-arbitrary MCP tools, exhaustive schemas and model reliability are outside the run.
-Follow [certification](../../../docs/SUBAGENT-CERTIFICATION.md) for reproduction and refresh conditions.
-Raw transcripts, ciphertext and session identifiers are omitted.
+No deployment or live certification of this candidate has been performed.
+Follow [certification](../../../docs/SUBAGENT-CERTIFICATION.md#manual-desktop-or-v1-candidate-path):
+validate and commit the v1 candidate, then deploy that clean commit only when
+authorized. The authorized proof window may temporarily set source and catalog
+eligibility to v2 without an intermediate commit. Publish accepted evidence and
+the v2 declaration together in a later commit only after all five checks pass;
+restore v1 and refresh the catalog if the run fails.

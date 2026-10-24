@@ -539,10 +539,11 @@ test('canonical subagents hold exact read-only observations without acquiring pr
 });
 
 test('subagent held observation returns truthful terminal, renewal and broker outcomes', async t => {
-  for (const kind of ['completion', 'capacity', 'ownership loss', 'native error', 'malformed browser', 'renewal', 'broker activity', 'broker closed']) {
+  for (const kind of ['completion', 'capacity', 'request failure', 'ownership loss', 'native error', 'malformed browser', 'renewal', 'broker activity', 'broker closed']) {
     await t.test(kind, async subtest => {
       subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
       const fields = kind === 'completion' ? { completed: true } : kind === 'capacity' ? { conversationFull: true }
+        : kind === 'request failure' ? { requestError: 'unknown_error' }
         : kind === 'ownership loss' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {};
       const nativeError = { isError: true, content: [{ type: 'text', text: 'synthetic child failure' }] };
       const f = await waitingFixture(subtest, params => kind === 'native error' ? nativeError

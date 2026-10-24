@@ -3626,15 +3626,16 @@ const server = http.createServer((request, response) => {
         },
       });
     } else {
-      // The body is already streaming, so there is no status left to change.
-      // Destroying here reset the socket and cost the chunked terminator,
-      // which the client reported only as a decode failure. The event code
-      // stays `local_router_stream_failed`: a diagnosed cause is extra detail
-      // about the same failure, not a different one for a client to branch on.
+      // Local tool rejections must settle the committed generation instead of
+      // inviting a client to replay it as a transport failure.
+      const localRejection = error?.code === "ERR_NAMESPACE_RELAY_COMMITTED_STREAM";
       endStreamedResponse(response, {
-        message: transport
-          ? `The local router lost the upstream response stream: ${transport.cause}.${transport.hint}`
-          : undefined,
+        ...(localRejection ? { code: error.code, localRejection: true } : {}),
+        message: localRejection
+          ? error.message
+          : transport
+            ? `The local router lost the upstream response stream: ${transport.cause}.${transport.hint}`
+            : undefined,
       });
     }
   });

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import { setImmediate } from "node:timers/promises";
 import test from "node:test";
+import { WebSocket } from "undici";
 
 import { CODEX_APP_TOOL_FIXTURE } from "./fixtures/app-tool-namespace.mjs";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
@@ -424,6 +426,35 @@ function functionCallsFromSse(body) {
   return calls;
 }
 
+async function websocketResponse(port, payload) {
+  const socket = new WebSocket(`${routerBase(port).replace("http:", "ws:")}/responses`, {
+    headers: { Authorization: "Bearer CODEX_CALLER_SECRET", "openai-beta": "responses_websockets=2026-02-06" },
+  });
+  const events = [];
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", reject, { once: true });
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Routed WebSocket fixture response timed out.")), 3000);
+      socket.addEventListener("message", ({ data }) => {
+        const event = JSON.parse(data);
+        events.push(event);
+        if (["response.completed", "response.failed", "response.incomplete", "error"].includes(event.type)) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      socket.send(JSON.stringify({ type: "response.create", ...payload }));
+    });
+    await setImmediate();
+    return { status: 200, text: async () => events.map(sseEvent).join("") };
+  } finally {
+    socket.close();
+  }
+}
+
 async function scenario(
   stream = true,
   {
@@ -432,6 +463,8 @@ async function scenario(
     jsonBody = gatewayJsonBody,
     requestPayload = routedRequestPayload,
     followupPayload,
+    websocket = false,
+    resetStream = false,
   } = {},
 ) {
   const gatewayBodies = [];
@@ -446,8 +479,13 @@ async function scenario(
       const body = Buffer.from(sseBody(gatewayBody), "utf8");
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
-        "Content-Length": String(body.length),
+        ...(resetStream ? {} : { "Content-Length": String(body.length) }),
       });
+      if (resetStream) {
+        response.write(body);
+        setTimeout(() => response.destroy(), 25);
+        return;
+      }
       response.end(body);
       return;
     }
@@ -461,7 +499,9 @@ async function scenario(
   });
   try {
     await waitFor(`${routerBase(routerPort)}/models`, router);
-    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+    const response = websocket
+      ? await websocketResponse(routerPort, requestPayload(stream, model))
+      : await fetch(`${routerBase(routerPort)}/responses`, {
       method: "POST",
       headers: {
         Authorization: "Bearer CODEX_CALLER_SECRET",
@@ -487,6 +527,69 @@ async function scenario(
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);
+  }
+}
+
+for (const websocket of [false, true]) {
+  test(`provider stream reset retains server_error over ${websocket ? "WebSocket" : "HTTP"}`, async () => {
+    const result = await scenario(true, {
+      websocket,
+      resetStream: true,
+      sseBody: () => [
+        sseEvent({ type: "response.created", sequence_number: 0, response: {
+          id: "resp_reset", model: "openrouter-glm-5-3-flash-streamlake", created_at: 1791840000, status: "in_progress", output: [],
+        } }),
+        sseEvent({ type: "response.reasoning_summary_text.delta", sequence_number: 1, delta: "synthetic reasoning before reset" }),
+      ].join(""),
+    });
+    const events = responseEventsFromSse(result.clientBody);
+    const failures = events.filter(event => event.type === "response.failed");
+    assert.equal(result.gatewayBodies.length, 1, "an uncertain inference is never replayed");
+    assert.equal(failures.length, 1, result.clientBody);
+    assert.equal(failures[0].code, "local_router_stream_failed");
+    assert.equal(failures[0].response.error.code, "server_error");
+    assert.equal(failures[0].response.id, "resp_reset");
+    assert.equal(events.some(event => ["response.completed", "error"].includes(event.type)), false);
+  });
+
+  for (const metadata of [true, false]) {
+    test(`local custom tool rejection is terminal over ${websocket ? "WebSocket" : "HTTP"} with ${metadata ? "complete" : "missing"} metadata`, async () => {
+      const result = await scenario(true, {
+        websocket,
+        requestPayload: (stream, model) => ({ model, stream, input: [{ role: "user", content: "Apply a synthetic patch." }], tools: [{ type: "custom", name: "apply_patch" }] }),
+        sseBody: () => [
+          ...(metadata ? [sseEvent({ type: "response.created", sequence_number: 0, response: {
+            id: "resp_rejected", model: "openrouter-glm-5-3-flash-streamlake", created_at: 1791840000, status: "in_progress", output: [],
+          } })] : []),
+          sseEvent({ type: "response.output_item.added", sequence_number: 1, output_index: 0, item: {
+            type: "custom_tool_call", id: "call_rejected", call_id: "call_rejected", name: "apply_patch", input: "", status: "in_progress",
+          } }),
+          sseEvent({ type: "response.function_call_arguments.delta", sequence_number: 2, output_index: 0, item_id: "call_rejected", delta: JSON.stringify({ content: "first" }) }),
+          sseEvent({ type: "response.function_call_arguments.done", sequence_number: 3, output_index: 0, item_id: "call_rejected", arguments: JSON.stringify({ content: "second" }) }),
+          sseEvent({ type: "response.output_item.done", sequence_number: 4, output_index: 0, item: {
+            type: "custom_tool_call", id: "call_rejected", call_id: "call_rejected", name: "apply_patch", input: "second", status: "completed",
+          } }),
+          sseEvent({ type: "response.completed", sequence_number: 5, response: { id: "resp_rejected", status: "completed", output: [] } }),
+        ].join(""),
+      });
+      const events = responseEventsFromSse(result.clientBody);
+      assert.equal(result.gatewayBodies.length, 1, `a committed request is never replayed: ${result.clientBody}`);
+      assert.ok(events.some(event => event.type === "response.custom_tool_call_input.delta" && event.delta === "first"), "tool input was committed before the rejection");
+      const failures = events.filter(event => event.type === "response.failed");
+      assert.equal(failures.length, 1, result.clientBody);
+      const [failure] = failures;
+      assert.equal(failure.code, "ERR_NAMESPACE_RELAY_COMMITTED_STREAM");
+      assert.equal(failure.response.error.code, "invalid_prompt");
+      assert.match(failure.response.error.message, /custom tool argument deltas disagree/u);
+      assert.equal(events.some(event => ["response.custom_tool_call_input.done", "response.output_item.done", "response.completed", "error"].includes(event.type)), false, "rejected input cannot complete or execute");
+      if (metadata) {
+        assert.equal(failure.response.id, "resp_rejected");
+        assert.equal(failure.sequence_number, 3);
+      } else {
+        assert.deepEqual(failure, { type: "response.failed", code: "ERR_NAMESPACE_RELAY_COMMITTED_STREAM",
+          response: { status: "failed", error: failure.response.error } });
+      }
+    });
   }
 }
 

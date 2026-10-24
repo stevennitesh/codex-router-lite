@@ -168,7 +168,7 @@ test("resident source changes invalidate compact programs while independently sh
   const compact = ["observe", "retain"].map(operation => browserScript({ ...base, operation }));
   for (const changed of [
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
-    ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute"].map(changeDom),
+    ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
     ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
   ]) {
     const variant = await loadVariant(changed);
@@ -183,7 +183,7 @@ test("resident source changes invalidate compact programs while independently sh
   for (const [changed, sourceChanged] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-      "composerName", "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+      "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
       "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
   ]) {
     const operationVariant = await loadVariant(changed);

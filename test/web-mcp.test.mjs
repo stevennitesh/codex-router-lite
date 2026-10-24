@@ -88,8 +88,10 @@ for (const trace of [false, true]) {
     const turn = register(broker, "default-diagnostics");
     const turnHash = createHash("sha256").update(turn.token).digest("hex");
     const { client, transport } = await connect();
+    assert.equal(broker.hasClientActivity(turn.token), false, "MCP session setup is not current-token input acceptance.");
     const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
     assert.deepEqual(discovered.structuredContent.tools, broker.list(turn.token));
+    assert.equal(broker.hasClientActivity(turn.token), true, "Authenticated current-token discovery acknowledges input before a native invocation.");
     const result = call(client, turn, "read", { arguments: { marker: "private-arguments" } });
     const [native] = await nativeCalls(broker, turn.token);
     broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "private-native-result" }]);

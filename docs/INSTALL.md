@@ -7,7 +7,7 @@ Codex Router Lite supports the Windows Codex desktop app and native Codex CLI.
 - Windows 10 or Windows 11
 - Windows PowerShell 5.1 or PowerShell 7
 - Node.js 22.19 or newer
-- Python 3.10 or newer, or `uv`
+- Python 3.11 or newer, or `uv`
 - an installed Codex build
 
 Clone and install:

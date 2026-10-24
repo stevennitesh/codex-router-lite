@@ -19,7 +19,7 @@ function fixture() {
   writeFileSync(path.join(root, ".venv/pyvenv.cfg"), `home = ${root}\nversion = 3.12.12\n`);
   const setPins = (version) => {
     writeFileSync(path.join(requirements, "python.in"), `litellm[proxy]==${version}\nfastapi==0.141.1\n`);
-    writeFileSync(path.join(requirements, "python.txt"), `# uv pip compile --python-platform windows --generate-hashes\nlitellm==${version} --hash=sha256:${"a".repeat(64)}\nfastapi==0.141.1 --hash=sha256:${"b".repeat(64)}\n`);
+    writeFileSync(path.join(requirements, "python.txt"), `# uv pip compile --python-platform windows --generate-hashes --python-version 3.11\nlitellm==${version} --hash=sha256:${"a".repeat(64)}\nfastapi==0.141.1 --hash=sha256:${"b".repeat(64)}\n`);
     mkdirSync(path.join(packages, `litellm-${version}.dist-info`), { recursive: true });
     mkdirSync(path.join(packages, "fastapi-0.141.1.dist-info"), { recursive: true });
   };
@@ -53,6 +53,20 @@ test("Python direct pins own the lock and installed stamp, including changes to 
     writeFileSync(path.join(f.requirements, "python.txt"), "invalid lock\n");
     assert.equal(stepStatus("python-deps", options), "run");
     assert.ok(pythonLockDrift(f.root).length > 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the Python lock must resolve for the supported minimum interpreter", () => {
+  const f = fixture();
+  try {
+    const lock = path.join(f.requirements, "python.txt");
+    const valid = readFileSync(lock, "utf8");
+    for (const flag of ["", "--python-version 3.10", "--python-version 3.12", "--python-version 3.110"]) {
+      writeFileSync(lock, valid.replace("--python-version 3.11", flag));
+      assert.ok(pythonLockDrift(f.root).some(problem => problem.includes("--python-version 3.11")), flag);
+    }
+    writeFileSync(lock, valid);
+    assert.deepEqual(pythonLockDrift(f.root), []);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

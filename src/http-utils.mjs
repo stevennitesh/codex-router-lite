@@ -519,16 +519,15 @@ export async function finishResponse(response) {
 // silent corruption this function exists to avoid. Leading newlines are inert
 // when the stream did end cleanly: a blank line with no buffered fields
 // dispatches nothing.
-// `message` lets a caller that diagnosed the failure say so; the code stays
-// fixed, because a diagnosed cause is more detail about this same failure and
-// not a second kind of it. The default wording holds for every caller that
-// reaches here with nothing more specific -- a guessed cause is worse than an
-// honest generic one.
-export function endStreamedResponse(response, { message } = {}) {
+// Diagnosed transport failures retain the default code. A local tool rejection
+// preserves its own code and terminal classification so clients do not replay
+// a committed generation as though its transport failed.
+export function endStreamedResponse(response, { code = "local_router_stream_failed", message, localRejection = false } = {}) {
   if (!response || response.writableEnded || response.destroyed) return;
   writeStreamErrorEvent(response, {
-    code: "local_router_stream_failed",
+    code,
     message: message || "The local router lost the upstream response stream.",
+    localRejection,
   });
   response.end();
 }
@@ -540,11 +539,11 @@ export function endStreamedResponse(response, { message } = {}) {
 // the leading blank line are the same as `endStreamedResponse` above, and for
 // the same reasons; the message is always router-side text, never an upstream
 // body.
-export function writeStreamErrorEvent(response, { code, message }) {
+export function writeStreamErrorEvent(response, { code, message, localRejection = false }) {
   if (!response || response.writableEnded || response.destroyed) return false;
   if (!isEventStream(response)) return false;
   try {
-    const failure = responsesStreamFailure(response, { code, message });
+    const failure = responsesStreamFailure(response, { code, message, localRejection });
     if (failure?.terminal) {
       if (failure.closePendingFrame) response.write("\n\n");
       return false;

@@ -535,7 +535,7 @@ export class AdapterBridge {
         let value;
         try { value = parseBrowserOutput(message.result, pending.wait.config.frameToken); } catch { pending.wait.reason ??= 'browser_error'; }
         if (message.error || message.result?.isError === true) pending.wait.reason ??= 'browser_error';
-        if (value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true
+        if (value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true || value.requestError !== undefined
             || value.statusComplete === true && value.stopVisible === false || value.normal !== true
             || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) pending.wait.reason ??= 'browser_ready';
         if (this.now() >= pending.wait.deadlineAt) pending.wait.reason ??= 'deadline';

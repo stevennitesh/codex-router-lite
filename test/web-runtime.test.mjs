@@ -339,6 +339,14 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
   };
 }
 
+async function reportObservation(h, call, fields) {
+  const output = await h.executeBrowser(call);
+  const frameToken = readBrowserProgram(JSON.parse(call.arguments).code).frameToken;
+  const observed = parseBrowserOutput(output, frameToken);
+  h.append(call, outputFor(call, `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: { ...observed, ...fields } })}\nROUTER_WEB_BROWSER_${frameToken}_END`));
+  return h.request();
+}
+
 const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1].split("\nRouter generation: ")[0]);
 
 async function nativeV2Checkpoint(response) {
@@ -766,7 +774,175 @@ test("a final answer cannot bypass the required native tool policy", async t => 
   assert.equal(h.runtime.status().activeTurns, 0);
 });
 
-test("instruction revisions persist only after confirmed Send and unchanged turns carry only their exact delta", async t => {
+test("optimistic anchors and explicit request failure preserve accepted context through restart", async t => {
+  for (const prior of ["first input", "continuation", "compaction"]) await t.test(prior, async t => {
+    const h = harness(t, { instructions: "Prior accepted instructions." });
+    if (prior !== "first input") {
+      const { call } = await h.toObserve();
+      await h.completeAnswer(call, "Accepted prior answer");
+      if (prior === "compaction") {
+        h.append({ role: "user", content: "Undelivered material before native compaction." });
+        const compact = await (await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() })).json();
+        h.input().splice(0, h.input().length, ...compact.output);
+      }
+      h.newTurn(followupId, "New input that the site will reject.", { instructions: "Revised undelivered instructions." });
+    }
+    const before = prior === "first input" ? {} : JSON.parse(readFileSync(h.stateFile, "utf8"));
+    const { call } = await h.toObserve();
+    const acceptedFields = ["checkpoint", "chatUrl", "sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted",
+      "deliveredInstructionsSha256", "deliveredInstructionsGenerationTurnKey", "pendingCompaction", "activeCompaction", "observation"];
+    const anchored = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    for (const key of acceptedFields) assert.deepEqual(anchored[key], before[key], `DOM anchoring cannot advance ${key}.`);
+    assert.equal(anchored.uncertainSend, true);
+    assert.equal(anchored.lastTurn.sendState, "uncertain");
+    assert.equal(h.browserOwner().state.sendConfirmed, true, "Stop is armed before input acceptance.");
+    h.browser.ui.stop = false;
+    await assert.rejects(reportObservation(h, call, { requestError: "unknown_error", completed: false, statusComplete: false }), { code: "web_request_failed" });
+    const sends = h.browser.ui.sends.length;
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    await h.restartRuntime();
+    const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    for (const key of acceptedFields) assert.deepEqual(failed[key], before[key], `Rejected input cannot advance ${key}.`);
+    assert.equal(failed.uncertainSend, true);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "No replay after restart.");
+    await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.equal(h.browser.ui.sends.length, sends);
+  });
+});
+
+test("authentic connector discovery accepts input before any native tool completes", async t => {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  let service;
+  const h = harness(t, { mcpFactory: async options => service = await startWebMcp({ ...options, onDiagnostic: () => {} }) });
+  const { call } = await h.toObserve();
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  const client = new Client({ name: "web-input-acceptance", version: "1.0.0" });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(new URL(service.url)));
+  assert.equal(h.broker.hasClientActivity(h.token()), false);
+  const discovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: h.token() } });
+  assert.equal(discovery.isError, undefined);
+  const next = (await h.answerBrowser(call)).output[0];
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false);
+  assert.ok(accepted.checkpoint.length);
+  assert.equal(accepted.deliveredInstructionsGenerationTurnKey, accepted.generationTurnKey);
+  assert.deepEqual(h.broker.takeCalls(h.token()), []);
+  await h.completeAnswer(next, "Accepted without waiting for a native invocation.");
+});
+
+test("a first substantive answer proves receipt even with a simultaneous site error", async t => {
+  const cases = [
+    { label: "answer without broker activity", answer: "Current-generation input reached the model.", queued: false, accepted: true },
+    { label: "answer with queued native action", answer: "Current-generation input reached the model.", queued: true, accepted: true },
+    { label: "whitespace-only wrapper is not receipt proof", answer: " \n ", queued: false, accepted: false },
+  ];
+  for (const scenario of cases) await t.test(scenario.label, async t => {
+    const h = harness(t, { instructions: "Current instructions awaiting known receipt." }), { call } = await h.toObserve();
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+    let rejected;
+    if (scenario.queued) {
+      const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+      const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-first-answer-error.txt" } });
+      rejected = assert.rejects(actual, { code: "web_request_failed" });
+    } else assert.equal(h.broker.hasClientActivity(h.token()), false);
+    h.browser.ui.texts.push(scenario.answer); h.browser.ui.complete = true;
+    await assert.rejects(reportObservation(h, call, { requestError: "unknown_error" }), { code: "web_request_failed" });
+    await rejected;
+    await h.restartRuntime();
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.uncertainSend, !scenario.accepted);
+    assert.equal(saved.lastTurn.completed, false, "Receipt proof cannot turn a site error into final delivery.");
+    assert.deepEqual(saved.unresolvedCoding, []);
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    if (scenario.accepted) {
+      assert.equal(saved.checkpoint.length, 1);
+      assert.equal(saved.generationTurnKey, h.browser.ui.turns.at(-1).key);
+      assert.equal(saved.deliveredInstructionsGenerationTurnKey, saved.generationTurnKey);
+      assert.match(saved.deliveredInstructionsSha256, /^[a-f0-9]{64}$/u);
+      assert.equal(saved.generationCompleted, false);
+    } else {
+      assert.equal(saved.checkpoint, undefined);
+      assert.equal(saved.deliveredInstructionsSha256, undefined);
+    }
+    h.newTurn(followupId, "Continue only from actual known receipt.");
+    if (scenario.accepted) {
+      const continuation = (await h.request()).output[0];
+      assert.equal(readBrowserProgram(JSON.parse(continuation.arguments).code).operation, "continue");
+      assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, saved.checkpoint);
+    } else await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("request failure suppresses queued native actions and cannot erase accepted tool outcomes", async t => {
+  for (const emitted of [false, true]) await t.test(`native result emitted ${emitted}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "one-owned-action.txt" } });
+    let observe = call, saved;
+    if (emitted) {
+      const coding = (await h.answerBrowser(call)).output[0];
+      h.append(coding, outputFor(coding, "ACTUAL_NATIVE_OUTCOME"));
+      observe = (await h.request()).output[0];
+      await actual;
+      saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    } else t.after(() => actual.catch(() => {}));
+    const rejected = emitted ? undefined : assert.rejects(actual, { code: "web_request_failed" });
+    await assert.rejects(reportObservation(h, observe, { requestError: "unknown_error", completed: false, statusComplete: false }), { code: "web_request_failed" });
+    await rejected;
+    await h.restartRuntime();
+    const retained = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(retained.uncertainSend, false, "Authentic current-token activity remains accepted after a later site error.");
+    assert.deepEqual(retained.unresolvedCoding, []);
+    if (emitted) {
+      assert.deepEqual(retained.checkpoint, saved.checkpoint);
+      assert.equal(h.input().filter(item => item.output === "ACTUAL_NATIVE_OUTCOME").length, 1);
+    } else assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("late request failure during retention blocks final delivery and newly queued native actions", async t => {
+  for (const priorResult of [false, true]) for (const lateCall of [false, true]) await t.test(`prior native result ${priorResult}; late queued call ${lateCall}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    let observe = call;
+    if (priorResult) {
+      const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual-before-retain.txt" } });
+      const coding = (await h.answerBrowser(observe)).output[0];
+      h.append(coding, outputFor(coding, "ACTUAL_PRIOR_OUTCOME"));
+      observe = (await h.request()).output[0];
+      await actual;
+    }
+    h.browser.ui.texts.push("Current answer accepted before the late site error."); h.browser.ui.complete = true;
+    const retain = (await h.answerBrowser(observe)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(retain.arguments).code).operation, "retain");
+    const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    let rejected;
+    if (lateCall) {
+      const queued = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-retain-error.txt" } });
+      rejected = assert.rejects(queued, { code: "web_request_failed" });
+    }
+    await assert.rejects(reportObservation(h, retain, { requestError: "unknown_error" }), { code: "web_request_failed" });
+    await rejected;
+    await assert.rejects(h.request(), { code: "web_request_failed" });
+    await h.restartRuntime();
+    const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(failed.lastTurn.completed, false);
+    assert.equal(failed.generationCompleted, false);
+    assert.equal(failed.uncertainSend, false);
+    assert.deepEqual(failed.checkpoint, accepted.checkpoint);
+    assert.equal(failed.deliveredInstructionsSha256, accepted.deliveredInstructionsSha256);
+    assert.deepEqual(failed.unresolvedCoding, [], "Queued but un-emitted actions never become unresolved native execution.");
+    assert.equal(h.input().filter(item => item.namespace === "mcp__work").length, priorResult ? 1 : 0);
+    assert.equal(h.input().filter(item => item.output === "ACTUAL_PRIOR_OUTCOME").length, priorResult ? 1 : 0);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("instruction revisions persist only after accepted input and unchanged turns carry only their exact delta", async t => {
   const instructions = "Preserve the original user marker and current subagent tool policy.";
   const h = harness(t, { instructions });
   const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
@@ -778,13 +954,14 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
     "A browser click without its confirmed native result cannot acknowledge instructions.");
   h.append(send, outputFor(send, sent));
   let observe = (await h.request()).output[0];
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined, "An optimistic DOM anchor cannot acknowledge context.");
+  await h.completeAnswer(observe, "Original task completed");
   const revision = JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256;
   const confirmed = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(confirmed.deliveredInstructionsGenerationTurnKey, confirmed.generationTurnKey);
   assert.match(revision, /^[a-f0-9]{64}$/u);
   assert.ok(h.browser.ui.sends[0].includes(`Current Codex instructions:\n${instructions}`));
   const firstToken = h.token();
-  await h.completeAnswer(observe, "Original task completed");
   h.newTurn(followupId, "Exact continuation Δ");
   ({ call: observe } = await h.toObserve());
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Exact continuation Δ" }]);
@@ -799,14 +976,16 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   const revised = `${instructions}\n`;
   h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Use the revised instructions.", { instructions: revised });
   ({ call: observe } = await h.toObserve());
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, revision);
+  await h.completeAnswer(observe, "Revised task completed");
   const nextRevision = JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256;
   assert.notEqual(nextRevision, revision, "Even an exact whitespace change is a new instruction revision.");
   assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${revised}`));
   assert.match(h.browser.ui.sends.at(-1), /supersede all earlier Codex instructions/u);
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Use the revised instructions." }]);
-  await h.completeAnswer(observe, "Revised task completed");
   h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Proceed without the previous instructions.", { instructions: undefined });
-  await h.toObserve();
+  ({ call: observe } = await h.toObserve());
+  await h.completeAnswer(observe, "Completed with current instructions.");
   assert.notEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, nextRevision);
   assert.match(h.browser.ui.sends.at(-1), /supersede all earlier Codex instructions/u);
   assert.match(h.browser.ui.sends.at(-1), /No Codex instructions were supplied for this request/u);
@@ -837,8 +1016,8 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
   for (const lineage of ["stale", "absent"]) await t.test(lineage, async t => {
     const instructions = "Confirmed authority A.";
     const h = harness(t, { instructions }), { call } = await h.toObserve();
-    const original = JSON.parse(readFileSync(h.stateFile, "utf8"));
     await h.completeAnswer(call, "Answer under A");
+    const original = JSON.parse(readFileSync(h.stateFile, "utf8"));
     h.newTurn(followupId, "Use authority B.", { instructions: "Later authority B." });
     const { call: later } = await h.toObserve();
     await h.completeAnswer(later, "Answer under B");
@@ -852,7 +1031,8 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
     else delete saved.deliveredInstructionsGenerationTurnKey;
     writeFileSync(h.stateFile, JSON.stringify(saved), "utf8");
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Restore authority A.", { instructions });
-    await h.toObserve();
+    const { call: restoredCall } = await h.toObserve();
+    await h.completeAnswer(restoredCall, "Answer under restored A");
     assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${instructions}`));
     assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Restore authority A." }]);
     const restored = JSON.parse(readFileSync(h.stateFile, "utf8"));
@@ -1109,10 +1289,11 @@ test("delivery and coding acknowledgement use exact canonical transcript digests
   ];
   const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   const { call } = await h.toObserve();
-  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
   const read = h.broker.list(h.token()).find(tool => tool.name === "read");
   const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, { answer: "Actual current result ✓", count: 2 });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
   h.append(coding, output);
   const observe = (await h.request()).output[0]; await result;
   expected.push({ type: coding.type, namespace: coding.namespace, name: coding.name, call_id: coding.call_id, arguments: coding.arguments },
@@ -1297,6 +1478,8 @@ test("interrupted native handoffs preserve every exact possible browser owner un
     assert.equal(h.browser.ui.sends.length, 2);
     assert.equal(new Set(h.observations.bindings).size, 1);
 
+    // Accepted discovery proves delivery even when Stop precedes an answer.
+    const release = h.broker.beginActivity(h.token()); release();
     // A confirmed handoff collapses the alternatives. An earlier owner can no
     // longer authorize Stop or another handoff, even in this same binding.
     h.observations.watchers.at(-1).onCancel();
@@ -1359,6 +1542,7 @@ test("interrupted Send checkpoints accept omitted or partial native assistant hi
     const h = harness(t);
     await h.toObserve();
     if (partial) h.browser.ui.texts.push(partial);
+    const release = h.broker.beginActivity(h.token()); release();
     h.browser.ui.stop = true;
     h.observations.watchers[0].onCancel();
     if (nativeAssistant !== undefined) h.append({ role: "assistant", content: nativeAssistant });
@@ -1456,6 +1640,8 @@ async function stopBeforeRenderedReply(h, { observed = true, emptyReply = false 
   while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
   h.browser.ui.texts = ["Earlier reply", "Another earlier reply"];
   const observe = (await h.answerBrowser(response.output[0])).output[0];
+  // This recovery fixture models an accepted connector discovery before Stop.
+  const release = h.broker.beginActivity(h.token()); release();
   h.browser.ui.stop = true;
   if (emptyReply) h.browser.ui.texts.push("");
   if (observed) await h.answerBrowser(observe);
@@ -1480,7 +1666,7 @@ test("maintenance drain follows Web work through Stop and confirmed same-chat co
 
   h.newTurn(followupId, "Continue in the same chat after Stop.");
   const { call } = await h.toObserve();
-  assert.equal((await admission.drain()).reason, "web-workflow-active");
+  assert.equal((await admission.drain()).reason, "web-workflow-indeterminate");
   await h.completeAnswer(call, "Completed after confirmed same-chat recovery.");
   assert.deepEqual(h.runtime.maintenanceState(), idle);
   assert.equal((await admission.drain()).status, "drained");
@@ -1660,6 +1846,7 @@ test("unexplained native history changes reject instead of sending the whole pri
   const previousSearch = { type: "tool_search_call", call_id: "actual_previous_native_search", execution: "client", arguments: { query: "Current native tools" } };
   h.append(previousSearch, outputFor(previousSearch, [currentRead]));
   await h.toObserve();
+  const release = h.broker.beginActivity(h.token()); release();
   h.observations.watchers[0].onCancel();
   previousSearch.arguments.query = "Substituted earlier native tool query";
   h.newTurn(followupId, "Continue after changed history.");
@@ -1742,7 +1929,7 @@ test("attributed compaction preserves undelivered native items without resending
     if (mode === "restarted" || mode === "second abandoned after restart") { await h.restartRuntime(); h.loseKernel(); }
     if (mode === "abandoned") assert.deepEqual(h.input(), original);
     h.newTurn(followupId, "New request after native compaction", { instructions: "Current changed instructions remain authoritative." });
-    await h.toObserve();
+    const { call: compactObserve } = await h.toObserve();
     assert.deepEqual(sentTranscript(h), [
       { role: "user", content: rawTail[0].content },
       { type: "function_call", call_id: rawTail[1].call_id, name: rawTail[1].name, arguments: rawTail[1].arguments },
@@ -1752,8 +1939,10 @@ test("attributed compaction preserves undelivered native items without resending
     ]);
     assert.match(h.browser.ui.sends.at(-1), /Current changed instructions remain authoritative/u);
     assert.equal(h.browser.ui.sends.at(-1).includes("lossy continuation checkpoint"), false);
+    const release = h.broker.beginActivity(h.token()); release();
+    await h.answerBrowser(compactObserve);
     const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
-    assert.equal(saved.pendingCompaction, undefined, "Only confirmed Send replaces the delivery checkpoint and consumes the alias.");
+    assert.equal(saved.pendingCompaction, undefined, "Only accepted input replaces the delivery checkpoint and consumes the alias.");
     assert.equal(saved.activeCompaction, undefined);
   });
 });
@@ -1773,16 +1962,41 @@ test("confirmed capacity rejection with no answer or coding action transfers his
   assert.notEqual(h.token(), oldToken);
   assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${instructions}`));
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Read the current file using the declared tools." }]);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  await h.completeAnswer(nextObserve, "Successor answer");
   const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(saved.chatUrl, "https://chatgpt.com/c/successor-2");
   assert.deepEqual(saved.previousChatUrls, [sourceUrl]);
   assert.equal(saved.needsHistory, false);
-  await h.completeAnswer(nextObserve, "Successor answer");
   h.newTurn(followupId, "Later native delta");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later native delta" }]);
   assert.equal(h.browser.ui.sends.at(-1).includes(instructions), false);
   assert.equal(h.browser.ui.rollovers, 1);
+});
+
+test("first-input capacity rejection survives Router restart without acknowledging context", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  const rejectedUrl = h.browser.ui.url;
+  h.browser.ui.full = true;
+  const rollover = (await h.answerBrowser(call)).output[0];
+  const rejected = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(rejected.capacityChatUrl, rejectedUrl);
+  assert.equal(rejected.checkpoint, undefined);
+  assert.equal(rejected.chatUrl, undefined);
+  assert.equal(rejected.deliveredInstructionsSha256, undefined);
+  assert.equal(rejected.uncertainSend, false);
+  await h.executeBrowser(rollover);
+  await h.restartRuntime();
+  h.newTurn(followupId, "Continue after the explicit capacity rejection.");
+  const { call: next } = await h.toObserve();
+  assert.equal(h.browser.ui.rollovers, 1);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  await h.completeAnswer(next, "Accepted successor input.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.capacityChatUrl, undefined);
+  assert.deepEqual(accepted.previousChatUrls, [rejectedUrl]);
+  assert.equal(h.browser.ui.sends.length, 2);
 });
 
 test("native V2 preserves an exact pending tail after its retained-user prefix and outer identity are rewritten", async t => {

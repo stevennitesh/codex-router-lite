@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Router Send browser contract fixture</title>
+<style>
+  body { margin: 2rem auto; padding: 0 1rem; max-width: 60rem; font: 16px system-ui; color: #17212b; background: #f5f7fa; }
+  button { margin: .2rem; padding: .5rem; font: inherit; }
+  nav, #chat, [role="textbox"] { margin: 1rem 0; padding: 1rem; border: 1px solid #bac4ce; background: white; }
+  [role="textbox"] { white-space: pre-wrap; }
+  [role="alert"] { padding: 1rem; border: 1px solid #ac2626; color: #ac2626; }
+  [hidden] { display: none !important; }
+</style>
+<h1>Router Send browser contract fixture</h1>
+<p>This local fixture exercises failed and accepted Sends without messages or network access.</p>
+<nav aria-label="Fixture scenarios">
+  <button data-case="optimistic-bubble">Optimistic bubble only</button>
+  <button data-case="owned-error">Error inside owned turn</button>
+  <button data-case="sibling-error">Error after owned turn</button>
+  <button data-case="attachment-error">Restored attachment error</button>
+  <button data-case="quoted-user">Quoted error in user text</button>
+  <button data-case="quoted-assistant">Quoted error in assistant text</button>
+  <button data-case="older-error">Error in older turn</button>
+  <button data-case="draft-only">Restored draft alone</button>
+  <button data-case="edited-draft">Error with edited draft</button>
+  <button data-case="accepted-answer">Accepted answer</button>
+</nav>
+<output id="contract-status" data-case="none" data-retries="0">Choose a scenario.</output>
+<section id="chat" aria-label="Rendered chat"></section>
+<div role="textbox" contenteditable="true" aria-label="Ask ChatGPT"></div>
+<script>
+  const chat = document.querySelector('#chat');
+  const composer = document.querySelector('[role="textbox"]');
+  const status = document.querySelector('#contract-status');
+  const marker = 'Router generation: fixture-send-generation';
+  const submitted = 'Fixture request.\n' + marker;
+  const ownKey = '22222222-2222-4222-8222-222222222222';
+  function errorGroup() {
+    const group = document.createElement('div');
+    group.setAttribute('role', 'alert');
+    const text = document.createElement('span');
+    text.textContent = 'Unknown error';
+    const retry = document.createElement('button');
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => { status.dataset.retries = String(Number(status.dataset.retries) + 1); });
+    group.append(text, retry);
+    return group;
+  }
+  function turn(key, text) {
+    const element = document.createElement('article');
+    element.setAttribute('data-turn-key', key);
+    const state = document.createElement('div');
+    state.setAttribute('data-talvt-turn-state', 'complete');
+    const user = document.createElement('div');
+    user.setAttribute('data-message-author-role', 'user');
+    user.textContent = text;
+    element.append(state, user);
+    return element;
+  }
+  function answer(element, quoted) {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-chatgpt-selection-message-id', '33333333-3333-4333-8333-333333333333');
+    wrapper.setAttribute('data-message-author-role', 'assistant');
+    const markdown = document.createElement('div');
+    markdown.setAttribute('data-markdown-text-style', 'assistant-message');
+    markdown.textContent = quoted ? 'The following error is quoted.' : 'FIXTURE_ACCEPTED';
+    if (quoted) markdown.append(errorGroup());
+    wrapper.append(markdown);
+    element.append(wrapper);
+    const regenerate = document.createElement('button');
+    regenerate.setAttribute('aria-label', 'Regenerate response');
+    regenerate.textContent = 'Regenerate';
+    element.append(regenerate);
+  }
+  for (const button of document.querySelectorAll('[data-case]')) button.addEventListener('click', () => {
+    if (button.tagName !== 'BUTTON') return;
+    const name = button.dataset.case;
+    status.dataset.case = name;
+    status.dataset.retries = '0';
+    status.textContent = 'Scenario: ' + name;
+    composer.replaceChildren();
+    const old = turn('11111111-1111-4111-8111-111111111111', 'Earlier request.');
+    const current = turn(ownKey, submitted);
+    chat.replaceChildren(old, current);
+    if (name === 'older-error') old.append(errorGroup());
+    if (['owned-error', 'edited-draft'].includes(name)) current.append(errorGroup());
+    if (['sibling-error', 'attachment-error'].includes(name)) chat.append(errorGroup());
+    if (name === 'quoted-user') current.querySelector('[data-message-author-role="user"]').append(errorGroup());
+    if (name === 'quoted-assistant') answer(current, true);
+    if (name === 'accepted-answer') answer(current, false);
+    if (!['optimistic-bubble', 'accepted-answer'].includes(name)) composer.textContent = name === 'edited-draft' ? 'User edited this draft.' : submitted;
+    if (name === 'attachment-error') {
+      const attachment = document.createElement('span');
+      attachment.setAttribute('contenteditable', 'false');
+      attachment.textContent = 'Pasted text.txt';
+      composer.replaceChildren(attachment, document.createTextNode('\n' + marker));
+    }
+  });
+</script>
+</html>

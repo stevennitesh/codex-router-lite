@@ -64,8 +64,11 @@ try {
     $patches[$index].Snapshot = Resolve-Child $patchRoot ("$index.patch")
     [IO.File]::WriteAllBytes($patches[$index].Snapshot, $patches[$index].Bytes)
   }
-  Invoke-Checked "git" @("clone", "--filter=blob:none", "--no-checkout", $lock.repository, $buildRoot)
+  Invoke-Checked "git" @("clone", "--config", "core.longpaths=true", "--filter=blob:none", "--no-checkout", $lock.repository, $buildRoot)
   Invoke-Checked "git" @("-C", $buildRoot, "checkout", "--detach", $lock.commit)
+  $checkoutStatus = @(& git -C $buildRoot status --porcelain=v1 --untracked-files=all)
+  if ($LASTEXITCODE -ne 0) { throw "git checkout status exited with status $LASTEXITCODE." }
+  if ($checkoutStatus.Count -ne 0) { throw "Switchyard pinned checkout is incomplete or dirty." }
   foreach ($patch in $patches) {
     Invoke-Checked "git" @("-C", $buildRoot, "apply", "--check", $patch.Snapshot)
     Invoke-Checked "git" @("-C", $buildRoot, "apply", $patch.Snapshot)

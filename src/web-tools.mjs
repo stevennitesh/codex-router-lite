@@ -211,6 +211,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
   };
   const beginActivity = token => {
     const turn = active(token);
+    turn.hasClientActivity = true;
     turn.activity += 1;
     change(turn);
     let released = false;
@@ -225,7 +226,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     };
   };
   const rememberClosed = (token, turn, state) => {
-    closed.set(token, { state, revision: turn.revision });
+    closed.set(token, { state, revision: turn.revision, hasClientActivity: turn.hasClientActivity });
     if (closed.size > 64) closed.delete(closed.keys().next().value);
   };
   const terminate = (token, state, reason) => {
@@ -304,11 +305,12 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
       turns.set(token, { owner, names, tools: definitions, declarations: structuredClone(tools), policy,
-        calls: new Map(), callsMade: 0, revision: 0, activity: 0, waiters: new Set() });
+        calls: new Map(), callsMade: 0, revision: 0, activity: 0, hasClientActivity: false, waiters: new Set() });
       owners.set(owner, token);
       return { token };
     },
     list, update, takeCalls, beginActivity, revision, waitForChange,
+    hasClientActivity: token => observed(token).hasClientActivity,
     async invoke(token, payload, { signal } = {}) {
       const release = beginActivity(token);
       try {

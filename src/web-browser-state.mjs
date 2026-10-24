@@ -8,6 +8,7 @@ export const browserDom = Object.freeze({
   temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
   assistantFinalReplySelector: '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
   stopButtonExactName: "Stop", regenerateButtonExactName: "Regenerate response",
+  requestErrorText: "Unknown error", retryButtonExactName: "Retry",
   conversationFullText: "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.",
   startNewChatButtonName: "Start new chat",
   messageSelector: '[data-chatgpt-selection-message-id]', messageIdAttribute: "data-chatgpt-selection-message-id",

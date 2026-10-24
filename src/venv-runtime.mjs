@@ -22,7 +22,7 @@ export function venvRuntimeOutcome(
   // so it can succeed even when the venv cannot import `encodings` and every
   // real invocation fails. Isolated mode also keeps an operator's PYTHONHOME
   // or PYTHONPATH from making a healthy managed environment look damaged.
-  const probeArgs = ["-I", "-c", "import encodings, sys; print(sys.prefix)"];
+  const probeArgs = ["-I", "-c", 'import encodings, sys; sys.exit("Python 3.11 or newer is required.") if sys.version_info < (3, 11) else print(sys.prefix)'];
   let probe = spawn(python, probeArgs, { ...options, timeout: timeoutMs });
   if (probe.error?.code === "ETIMEDOUT") {
     probe = spawn(python, probeArgs, { ...options, timeout: retryTimeoutMs });
