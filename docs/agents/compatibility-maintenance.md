@@ -115,6 +115,15 @@ configuration cannot identify a unique valid candidate. See
 [Web refresh](../CHATGPT-WEB.md#refresh-after-a-codex-update); live readiness still
 requires verification after the reported Codex restart.
 
+When an app update removed the configured Web files, refresh the currently
+installed source before selecting a candidate with different dependency inputs.
+The coordinator needs that source to match its installed dependencies; catalog
+publication and startup still require valid runtime files. After deployment,
+refresh the adapter again if its resident helper changed, then reopen Codex once
+after the final generation is installed. An explicitly authorized forced HTTP
+drain can end blocking requests; known-idle Web counters still govern runtime
+replacement, including uncertain Sends and unresolved native actions.
+
 The route and provider JSON files under `config/openrouter` and `config/switchyard` own checked-in route metadata. `maintenance/windows-package.json` owns the installed file set. Generated catalogs, installed files, logs, and proof records are evidence, not source.
 
 ## When a defect is found

@@ -162,3 +162,63 @@ test("CLI web status reaches the aggregate through protected loopback health wit
   assert.equal(status.stopAdapter.state, "absent"); assert.equal(status.stopAdapter.appLoaded, "unknown");
   assert.equal((run.stdout + run.stderr).includes(canary), false); assert.equal((run.stdout + run.stderr).includes(callerKey), false);
 });
+
+test("CLI subagent diagnostics retain configured routes after an app update removes the Web runtime", t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-subagent-web-status-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const codexHome = path.join(directory, "codex"); mkdirSync(codexHome);
+  const runtimeModule = path.join(directory, "removed-browser-runtime.mjs");
+  const executable = path.join(directory, "inert-tunnel-client.exe");
+  writeFileSync(executable, "Synthetic tunnel path; never execute.\n", "utf8");
+  const settingsPath = path.join(directory, "chatgpt-web.json");
+  const settings = { version: 1, enabled: true,
+    capabilities: { solAvailable: true, extraHighAvailable: false, proAvailable: false },
+    browser: { runtimeModule, pluginName: "Router local tools", pluginAppId: "asdk_app_fixture", pluginSelectionButtonName: "Router local tools, Connectors" },
+    tunnel: { id: "tunnel_fixture", executable } };
+  writeFileSync(settingsPath, JSON.stringify(settings), "utf8");
+  const efforts = { "chatgpt-web/gpt-6-sol": "high", "switchyard/auto": "medium" };
+  writeFileSync(path.join(directory, "subagents.json"), JSON.stringify({ version: 2, mode: "proven", enabled: [], disabled: [], protocol: "v2", efforts }), "utf8");
+  const options = { env: { ...process.env, MODEL_ROUTER_STATE_DIR: directory, CODEX_HOME: codexHome,
+    MODEL_ROUTER_MULTI_AGENT_STATE: path.join(directory, "subagents.json") }, encoding: "utf8", timeout: 10_000, windowsHide: true };
+  const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "../src/control.mjs"), "subagents", "status"], options);
+  assert.equal(run.error, undefined); assert.equal(run.status, 0, run.stderr);
+  const status = JSON.parse(run.stdout);
+  assert.equal(status.web.enabled, true); assert.equal(status.web.runtimeStatus, "stale");
+  assert.deepEqual(status.web.runtimeIssues, ["Browser runtime module: configured file is missing."]);
+  assert.equal(status.snapshot.protocol, "v2"); assert.deepEqual(status.snapshot.efforts, efforts);
+  assert.equal(status.routes.find(row => row.slug === "openrouter/pareto").multiAgentVersion, "v2");
+  assert.equal(status.routes.find(row => row.slug === "switchyard/auto").multiAgentVersion, "v1");
+  const webRoutes = status.routes.filter(row => row.slug.startsWith("chatgpt-web/"));
+  assert.deepEqual(webRoutes.map(row => row.slug), ["chatgpt-web/gpt-6-sol-instant", "chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol"]);
+  assert.ok(webRoutes.every(row => row.multiAgentVersion === "v1"));
+  assert.deepEqual(status.web.models.map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })), webRoutes);
+  const strict = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+    "import assert from 'node:assert/strict';",
+    "import {readWebBridgeSettings, webBridgeModels, requestWebBridge} from " + JSON.stringify(pathToFileURL(path.resolve(import.meta.dirname, "../src/chatgpt-web.mjs")).href) + ";",
+    "assert.throws(() => readWebBridgeSettings(), /configured file is missing/);",
+    "assert.throws(() => webBridgeModels(), /configured file is missing/);",
+    "await assert.rejects(() => requestWebBridge({model:'chatgpt-web/gpt-6-sol',input:[]}), /configured file is missing/);",
+  ].join("\n")], options);
+  assert.equal(strict.error, undefined); assert.equal(strict.status, 0, strict.stderr);
+  writeFileSync(settingsPath, JSON.stringify({ ...settings, enabled: false }), "utf8");
+  const disabled = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "../src/control.mjs"), "subagents", "status"], options);
+  assert.equal(disabled.error, undefined); assert.equal(disabled.status, 0, disabled.stderr);
+  const disabledStatus = JSON.parse(disabled.stdout);
+  assert.equal(disabledStatus.web.enabled, false); assert.equal(disabledStatus.web.runtimeStatus, "stale");
+  assert.equal(disabledStatus.routes.some(row => row.slug.startsWith("chatgpt-web/")), false);
+});
+
+test("CLI subagent diagnostics reject malformed Web settings instead of reporting a disabled or ready bridge", t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "router-subagent-web-invalid-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const codexHome = path.join(directory, "codex"); mkdirSync(codexHome);
+  for (const settings of ["not json", JSON.stringify({ version: 1, enabled: false, capabilities: {} })]) {
+    writeFileSync(path.join(directory, "chatgpt-web.json"), settings, "utf8");
+    const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "../src/control.mjs"), "subagents", "status"], {
+      env: { ...process.env, MODEL_ROUTER_STATE_DIR: directory, CODEX_HOME: codexHome,
+        MODEL_ROUTER_MULTI_AGENT_STATE: path.join(directory, "subagents.json") }, encoding: "utf8", timeout: 10_000, windowsHide: true,
+    });
+    assert.equal(run.error, undefined); assert.equal(run.status, 1); assert.equal(run.stdout, "");
+    assert.match(run.stderr, /invalid state|require an in-app browser and tunnel/u);
+  }
+});

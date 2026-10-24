@@ -29,6 +29,7 @@ import {
   readWebBridgeSettings,
   webBridgeModels,
   webBridgeStatus,
+  webBridgeConfigurationStatus,
   WEB_BRIDGE_TUNNEL_KEY_PATH,
 } from "./chatgpt-web.mjs";
 
@@ -150,12 +151,12 @@ async function main() {
   }
   if (command === "subagents") {
     if (action === "status") {
-      const snapshot = subagentSettingsSnapshot({ diagnostic: true });
+      const snapshot = subagentSettingsSnapshot({ diagnostic: true }), web = webBridgeConfigurationStatus();
       print({
         ...(snapshot.degraded ? {} : { settings: readMultiAgentSettings() }),
         snapshot,
-        web: webBridgeStatus(),
-        routes: [...LISTED_MODELS, ...webBridgeModels()].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
+        web,
+        routes: [...LISTED_MODELS, ...(web.enabled ? web.models : [])].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
       });
     } else if (action === "protocol") {
       if (value === undefined || value === "status") {
