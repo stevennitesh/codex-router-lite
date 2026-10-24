@@ -20,7 +20,15 @@
     "threadScope": "ordinary Web conversations",
     "hookDefinition": "preserved",
     "tunnelConfiguration": "preserved",
-    "codexRestartRequired": true
+    "codexRestartRequired": false,
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlan": {
+      "ready": true,
+      "changed": false,
+      "adapterGenerationChanged": false,
+      "browserRuntimeChanged": false,
+      "cliSelectionChanged": false
+    }
   },
   "recoveryRetained": {
     "router": "generated/router-rollback-27d4c0d7",
@@ -64,12 +72,48 @@
     }
   },
   "pending": [
-    "Deploy the maintenance repair and recheck admission without external predraining.",
-    "Load the final adapter through a normal Codex restart, then verify Web native tools, actual Stop and same-chat continuation."
+    "Use an explicitly authorized fresh verification chat or resolve the old test checkpoint before Web native-tool, Stop and same-chat continuation checks."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
     "Three filelock security advisories remain unsuppressed under the explicit stable-LiteLLM decision.",
     "No push authorized."
-  ]
+  ],
+  "maintenanceDeployment": {
+    "routerCommit": "508d18e40e1ab23b9330b3f60cc357688b75a8e3",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T17:09:53.3338865Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRouterAndSwitchyardRollbackPreserved": true
+  },
+  "webVerification": {
+    "status": "blocked-before-send",
+    "recovery": {
+      "completed": false,
+      "newInputSent": false,
+      "reason": "The old test ledger retained an optimistic generation from the failed pre-repair Send. The reloaded saved chat has only the earlier completed reply, while the failed request draft remains in the composer.",
+      "uncertainSendRecorded": false,
+      "unresolvedCodingActions": 0
+    },
+    "protections": "No replay, draft clearing, replacement checkpoint, history rewrite or new-chat fallback was performed.",
+    "nativeTools": "not yet run",
+    "stop": "not yet run",
+    "continuation": "not yet run"
+  },
+  "validation": {
+    "evidenceSuite": {
+      "command": "npm run verify:evidence",
+      "passed": 50,
+      "failed": 0,
+      "skipped": 0
+    },
+    "repairSuite": {
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0
+    },
+    "sourceChecks": "passed",
+    "independentReview": "No actionable findings."
+  }
 }
