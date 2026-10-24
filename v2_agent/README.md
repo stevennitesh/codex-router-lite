@@ -19,11 +19,14 @@ the observations for each accepted batch:
 - accepted: [`openrouter/deepseek-v4.1-flash-deepinfra`](openrouter/deepseek-v4.1-flash-deepinfra/proof.md)
 - retired historical acceptance: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md), which does not certify Together.
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
-- draft v1 source candidate: [`switchyard/auto`](switchyard/auto/proof.md), using GPT-6.1 Sol High.
-  Its changed compatibility patch awaits a fresh exact-runtime proof. The
+- accepted: [`switchyard/auto`](switchyard/auto/proof.md), using GPT-6.1 Sol High.
+  The [snapshot-conflict repair renewal](../docs/history/2026-10-24-switchyard-snapshot-certification.json)
+  passed all five checks on deployed Router `68b596a7` with the new qualified binary.
+  One streamed request and three native child requests completed successfully;
+  the child produced output 42 and returned both markers through two encrypted
+  handoffs. This CLI/MXC proof does not certify Desktop Web tools or Stop. The
   [previous accepted proof](../docs/history/2026-10-24-switchyard-previous-proof/proof.md)
-  is archived unchanged; the source transition does not change the installed
-  runtime or its recorded acceptance. The older
+  is archived unchanged. The older
   [Sol Medium acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
   covers the retired policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.

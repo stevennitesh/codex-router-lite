@@ -3,41 +3,57 @@
   "provider": "switchyard",
   "model": "gpt-6.1-sol",
   "slug": "switchyard/auto",
-  "status": "draft",
+  "status": "accepted",
   "officialSources": [
     "https://github.com/NVIDIA-NeMo/Switchyard/blob/fbabf51c62793ed0f6af042b60e92ce1cfba083b/README.md"
   ],
-  "testedAt": "",
-  "routerVersion": "",
-  "routerCommit": "",
-  "codexVersion": "",
-  "executionSurface": "",
+  "testedAt": "2026-10-24T16:58:34.338Z",
+  "routerVersion": "0.7.0",
+  "routerCommit": "68b596a787fcf4154ff8bdb812ddaf403426e064",
+  "codexVersion": "codex-cli 0.164.0-alpha.11.1",
+  "executionSurface": "codex-cli",
   "runtimeBinding": {
-    "upstreamCommit": "",
-    "upstreamContributionCommit": "",
-    "upstreamContributionSha256": "",
-    "patchSha256": "",
-    "binarySha256": "",
-    "routerCommit": "",
-    "routesSha256": "",
-    "templateSha256": "",
-    "templateSourceSha256": ""
+    "upstreamCommit": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "upstreamContributionCommit": "92c84a0ca6dddcad1ee2a894f61642b42093b0b8",
+    "upstreamContributionSha256": "a60f30031b1ed12d421cc361f49cc31512e70d65a5104fda745722c5ffad718e",
+    "routerCommit": "68b596a787fcf4154ff8bdb812ddaf403426e064",
+    "patchSha256": "4624933246a15626025531ec8d19742a0a7254339d6c28bda91bef6a14e5bbe5",
+    "binarySha256": "e654e0cd733f77772bc6f9e777b83423b07d98119973d942fa571563deea6783",
+    "routesSha256": "9d69181ce81c689050ddf4c4fb6bc6785aef01e534a87bf665c9e925c80fc97a",
+    "templateSha256": "c5d8716c481fec0788a3a839e96dc097e9da1d7783e329d7b68f68b0b6d01b52",
+    "templateSourceSha256": "87bd709d6f701382b72504b4bc6f42e197b17a8f41d32d4b86b742cd4f55ac98"
   },
   "checks": {
     "streaming": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-24T16:58:07.084Z"
     },
     "toolCall": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-24T16:58:22.306Z",
+      "mode": "auto"
     },
     "encryptedRelay": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-24T16:58:29.832Z"
     },
     "markerReturn": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-24T16:58:24.392Z"
     },
     "sameThreadFollowUp": {
-      "outcome": "pending"
+      "outcome": "pass",
+      "status": 200,
+      "observedAt": "2026-10-24T16:58:34.309Z"
     }
-  }
+  },
+  "windowsAppVersion": "26.1021.3705.0",
+  "windowsSandbox": "mxc",
+  "sandboxPolicy": "workspace-write",
+  "approvalPolicy": "on-request",
+  "evidence": "docs/history/2026-10-24-switchyard-snapshot-certification.json"
 }

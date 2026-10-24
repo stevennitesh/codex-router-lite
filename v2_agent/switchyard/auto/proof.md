@@ -1,32 +1,24 @@
-# switchyard/auto v2 application: pending source candidate
+# switchyard/auto v2 certification
 
-The checked-in route declares subagents v1 while the changed Switchyard
-compatibility patch awaits a fresh exact-runtime proof. All runtime observations
-and all five required checks are pending. Offline qualification does not establish
-native collaboration acceptance.
-
-This source transition does not change the installed runtime or its recorded
-acceptance. The [previous accepted proof](../../../docs/history/2026-10-24-switchyard-previous-proof/proof.md)
-and its [exact runtime binding](../../../docs/history/2026-10-24-switchyard-previous-proof/proof.json)
-are archived unchanged; those observations do not certify this candidate.
-
-## Route
-
-- Routed slug: `switchyard/auto`
-- Upstream model ID: `gpt-6.1-sol`
-- Router version and tested commit: pending
-- Codex version/build and execution surface: pending
-- Test date and deployed runtime binding: pending
+Accepted observations against Router `68b596a787fcf4154ff8bdb812ddaf403426e064`
+(version 0.7.0), codex-cli 0.164.0-alpha.11.1, Windows app 26.1021.3705.0.
+Tested at 2026-10-24T16:58:34.338Z. Switchyard runtime identities are recorded in proof.json.
 
 ## Evidence
 
+[Redacted run evidence](../../../docs/history/2026-10-24-switchyard-snapshot-certification.json) records role `router_switchyard_auto`, effort
+`high`, output 42 from a real sandboxed command, two encrypted
+handoffs, and both markers from the same child. 3 Router requests
+completed successfully. 2 cleanup calls observed
+already-completed turns; no active turn was cancelled.
+
 | Check | Result |
 | --- | --- |
-| Streamed text and completion | pending |
-| Actual native tool and output | pending |
-| Encrypted parent-to-child relay | pending |
-| First marker | pending |
-| Same-child follow-up | pending |
+| Streamed text and completion | pass |
+| Actual native tool and output | pass |
+| Encrypted parent-to-child relay | pass |
+| First marker | pass |
+| Same-child follow-up | pass |
 
 ## Official sources
 
@@ -34,10 +26,9 @@ are archived unchanged; those observations do not certify this candidate.
 
 ## Scope and reproduction
 
-No deployment or live certification of this candidate has been performed.
-Follow [certification](../../../docs/SUBAGENT-CERTIFICATION.md#manual-desktop-or-v1-candidate-path):
-validate and commit the v1 candidate, then deploy that clean commit only when
-authorized. The authorized proof window may temporarily set source and catalog
-eligibility to v2 without an intermediate commit. Publish accepted evidence and
-the v2 declaration together in a later commit only after all five checks pass;
-restore v1 and refresh the catalog if the run fails.
+The native CLI used session-only `windows.sandbox="mxc"`,
+workspace-write, and on-request approval. The runner did not change persistent
+configuration. This certifies the named CLI path; desktop sandbox behavior,
+arbitrary MCP tools, exhaustive schemas and model reliability are outside the run.
+Follow [certification](../../../docs/SUBAGENT-CERTIFICATION.md) for reproduction and refresh conditions.
+Raw transcripts, ciphertext and session identifiers are omitted.

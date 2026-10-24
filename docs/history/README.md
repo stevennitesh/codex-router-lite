@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Switchyard snapshot-conflict repair native certification, 2026-10-24](2026-10-24-switchyard-snapshot-certification.json)
+
 - [Previous accepted Switchyard proof preserved before the snapshot-conflict candidate, 2026-10-24](2026-10-24-switchyard-previous-proof/proof.md)
 
 - [Windows app compatibility, selected upstream repairs and dependency review, 2026-10-24](2026-10-24-app-compatibility-review.json)
