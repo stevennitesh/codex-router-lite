@@ -116,7 +116,7 @@ function fakeBrowser() {
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat") return kind === "heading" ? ui.temporaryControls : ui.normalHome;
       if (name === "Turn off temporary chat") return ui.temporaryControls;
-      if (name === "Ready when you are.") return ui.normalHome;
+      if (kind === "heading") return false;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
     },

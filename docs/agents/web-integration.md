@@ -513,10 +513,13 @@ offline tests alone do not establish live cancellation.
 The resident helper version covers only its retained reply, view, observation and
 DOM dependencies. Picker-only labels and controls are separated from both the
 resident configuration and its version inputs. Separately shipped selection,
-Send and recovery programs do not change that helper version. The managed adapter contains an immutable browser-code
-snapshot and recognizes only exact Router observation programs. Changes to selection, Send or recovery
-can keep the existing adapter when its installed qualifier still accepts the
-generated observation code exactly. Verify that equality before deployment.
+Send and recovery programs do not change that helper version. The managed adapter
+contains an immutable browser-code snapshot and recognizes exact Router Send and
+observation programs. Send qualification acquires pending cleanup authority before
+the first observation. Changes to selection, Send or recovery can keep the existing
+adapter only when its installed qualifier still accepts the generated Send,
+observation and retention programs. Check those programs before deployment; an
+unchanged resident helper version alone does not establish adapter compatibility.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. The managed hook definition remains unchanged. Preserve a compatible

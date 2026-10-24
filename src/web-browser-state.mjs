@@ -4,7 +4,7 @@ export const browserIdleButtonExactName = "Start Voice";
 export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
-  composerName: "Ask ChatGPT", normalHeadingName: "Ready when you are.", temporaryButtonName: "Temporary chat",
+  composerName: "Ask ChatGPT", temporaryButtonName: "Temporary chat",
   temporaryToggleName: "Turn off temporary chat", temporaryHeadingName: "Temporary chat",
   assistantFinalReplySelector: '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]', sendButtonExactName: "Send",
   stopButtonExactName: "Stop", regenerateButtonExactName: "Regenerate response",

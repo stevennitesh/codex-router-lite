@@ -183,7 +183,7 @@ test("resident source changes invalidate compact programs while independently sh
   for (const [changed, sourceChanged] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-      "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+      "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
       "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
   ]) {
     const operationVariant = await loadVariant(changed);
@@ -258,7 +258,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     familyText: "GPT-6", familyClicks: 0, familyExpanded: false, familyExpansionClicks: 0, clippedFamilyClicks: 0, familySwitches: 0,
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
-    modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
+    modelButtonVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
     fetchCalls: 0, stopClicks: 0, stopReads: 0, stopWaits: 0, stopRequests: 0, reloads: 0, attachmentWaits: 0, idleButtonCount: 1, userMessages: [] };
   let now = 0;
@@ -382,8 +382,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (name === "Stop" || name === "Stop generating") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat" && kind === "button") return ui.temporaryButtonVisible && !ui.temporary;
-      if (name === "Ready when you are.") return ui.normalHeadingVisible;
       if (name === "Temporary chat" && kind === "heading") return ui.temporary && ui.temporaryHeadingVisible;
+      if (kind === "heading") return name === ui.decorativeHeading;
       if (name === "Turn off temporary chat") return ui.temporary;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
@@ -406,7 +406,6 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       else if (name === "Send") {
         ui.actions.push("send");
         ui.sendClicks += 1;
-        ui.normalHeadingVisible = false;
         if (!ui.deferSavedUrl) ui.url = "https://chatgpt.com/c/owned-conversation";
         ui.userMessages.push({ messageId: messageId(1000 + ui.sendClicks), text: ui.composerText,
           baselineIds: ui.replyElements ? ui.replyElements.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
@@ -424,7 +423,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       else if (name === "Start new chat") {
         ui.startNewChatClicks += 1;
         if (!ui.deferRolloverHome) {
-          Object.assign(ui, { url: "https://chatgpt.com/", normalHeadingVisible: true, composerText: "", texts: [], chip: false,
+          Object.assign(ui, { url: "https://chatgpt.com/", composerText: "", texts: [], chip: false,
             complete: false, stop: false, fullBanners: [], fullButtons: [] });
         }
         ui.onStartNewChat?.();
@@ -774,23 +773,36 @@ test("generated bootstrap reads the current session browser and opens a verified
   await assert.rejects(f.run("open"), /already owns/);
 });
 
-test("open observes deferred hydration of all four controls without opening or navigating again", async () => {
+test("open accepts a personalized or absent decorative home heading when the empty normal home is ready", async () => {
+  for (const heading of ["A greeting that can change", undefined]) {
+    const f = fixture({ fastTimers: true });
+    await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    f.ui.decorativeHeading = heading;
+    const result = await f.run("open");
+    assert.equal(result.normal, true);
+    assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.handoffs, 1);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.sendClicks, 0);
+  }
+});
+
+test("open observes deferred hydration of the composer and both controls without opening or navigating again", async () => {
   const f = fixture({ fastTimers: true });
   await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
   f.ui.composerVisible = false;
   f.ui.modelButtonVisible = false;
   f.ui.temporaryButtonVisible = false;
-  f.ui.normalHeadingVisible = false;
   f.ui.onWait = () => {
     assert.equal(f.activeTurn()?.state.tab, f.tab, "The owned tab is interruptible while its initial controls hydrate.");
     f.ui.composerVisible = f.ui.waitedMs >= 100;
     f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
     f.ui.temporaryButtonVisible = f.ui.waitedMs >= 300;
-    f.ui.normalHeadingVisible = f.ui.waitedMs >= 400;
   };
   const result = await f.run("open");
   assert.equal(result.normal, true);
-  assert.equal(f.ui.waitedMs, 400);
+  assert.equal(f.ui.waitedMs, 300);
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 0);
@@ -814,7 +826,7 @@ test("normal home waits for both independent temporary-mode visibility reads", {
 });
 
 test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
-  for (const control of ["composerVisible", "modelButtonVisible", "temporaryButtonVisible", "normalHeadingVisible"]) {
+  for (const control of ["composerVisible", "modelButtonVisible", "temporaryButtonVisible"]) {
     const f = fixture({ fastTimers: true });
     await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
     f.ui[control] = false;
@@ -829,8 +841,17 @@ test("a missing initial control ends open's bounded hydration wait without navig
   }
 });
 
-test("initial normal home verification cannot accept a draft, a disabled temporary toggle or active temporary mode", async () => {
-  for (const change of [ui => { ui.composerText = "Existing draft"; }, ui => { ui.temporaryButtonDisabled = true; }, ui => { ui.temporary = true; }]) {
+test("initial normal home verification rejects history, drafts, ambiguous composers, active generation, temporary mode and disabled controls", async () => {
+  for (const change of [
+    ui => { ui.texts = ["Existing answer"]; },
+    ui => { ui.composerText = "Existing draft"; },
+    ui => { ui.composerElements = [domElement("div", { contenteditable: "true" }), domElement("div", { contenteditable: "true" })]; },
+    ui => { ui.stop = true; },
+    ui => { ui.temporary = true; },
+    ui => { ui.temporary = true; ui.temporaryHeadingVisible = false; },
+    ui => { ui.temporaryButtonDisabled = true; },
+    ui => { ui.modelButtonDisabled = true; },
+  ]) {
     const f = fixture({ fastTimers: true });
     await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
     change(f.ui);
@@ -1347,7 +1368,7 @@ test("rollover waits for normal home hydration after its one click without anoth
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
   f.ui.onWait = () => {
-    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", normalHeadingVisible: true, texts: [],
+    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [],
       composerText: "", chip: false, fullBanners: [], fullButtons: [] });
   };
   const rolled = await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
@@ -1498,7 +1519,6 @@ test("observations require a fresh assistant reply and continuation retains exac
   await f.ready();
   f.ui.texts.push("Previous completed answer");
   await f.run("send", { ...plugin, prompt: "Next request" });
-  assert.equal(f.ui.normalHeadingVisible, false, "The initial home heading disappears after Send.");
   assert.equal(f.ui.url, "https://chatgpt.com/c/owned-conversation");
   f.ui.complete = true;
   assert.equal((await f.run("observe")).completed, false);
@@ -1764,7 +1784,7 @@ test("an interrupted confirmed generation without a reply restores its saved URL
     const f = await interruptedBeforeReplyFixture();
     if (loss.startsWith("restart")) f.loseBinding();
     if (loss === "restart-home") {
-      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
       delete f.ui.messageRoot;
     } else f.ui.present = false;
     f.ui.onGoto = url => {
@@ -1820,7 +1840,7 @@ test("anchored recovery before a reply cannot overwrite a different chat or a us
     else {
       f.ui.composerText = "User draft";
       if (invalid === "home-draft") {
-        Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+        Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
         delete f.ui.messageRoot;
       }
     }
@@ -1839,7 +1859,7 @@ test("saved URL recovery rechecks ownership and the destination tab after retent
     f.loseBinding();
     if (closed) f.ui.present = false;
     else {
-      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
       delete f.ui.messageRoot;
     }
     const handoff = f.tab.markHandoff;
@@ -2224,7 +2244,6 @@ test("the known tab may navigate from verified empty normal home to its exact sa
   const f = await recoverableFixture();
   f.loseBinding();
   f.ui.url = "https://chatgpt.com/";
-  f.ui.normalHeadingVisible = true;
   f.ui.texts = [];
   f.ui.onGoto = url => { assert.equal(url, f.recovery.url); f.ui.texts = [f.text]; };
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
@@ -2237,10 +2256,10 @@ test("the known tab may navigate from verified empty normal home to its exact sa
 test("recovery never overwrites unrelated conversations, drafts, noneditable content, foreign pages or sign-in pages", async () => {
   for (const change of [
     ui => { ui.url = "https://chatgpt.com/c/unrelated-conversation"; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerText = "My unsent draft"; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.stop = true; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("span", { contenteditable: "false" })); },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("img", { src: "attachment" })); },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerText = "My unsent draft"; },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.stop = true; },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("span", { contenteditable: "false" })); },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("img", { src: "attachment" })); },
     ui => { ui.url = "https://elsewhere.test/"; },
     ui => { ui.url = "https://chatgpt.com/auth/login"; },
     ui => { ui.url = "about:blank"; },

@@ -111,7 +111,7 @@ export function parseBrowserOutput(output, frameToken) {
 // Everything else, including any newly added field, remains a resident dependency.
 const operationDomKeys = new Set([
   "modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-  "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+  "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
   "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
 ]);
 const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(browserDom).filter(([key]) => !operationDomKeys.has(key))));
@@ -448,7 +448,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     if (!(await normalHomeMode(tab))) return false;
     const composer = role(ui.composerName, "textbox", tab), model = role(ui.modelButtonName, "button", tab), toggle = role(ui.temporaryButtonName, "button", tab);
     return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
-      && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
+      && await toggle.isVisible() && await toggle.isEnabled()
       && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
   };
   const clearUnsentDraft = async () => {
