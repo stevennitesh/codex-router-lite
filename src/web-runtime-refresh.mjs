@@ -106,7 +106,7 @@ function compareSettings(ctx, expected, next) {
 function confirmedIdleDrain(drain) {
   if (drain?.status === "offline") return true;
   const state = drain?.webRuntime;
-  return drain?.status === "drained" && object(state) && state.known === true
+  return ["drained", "forced"].includes(drain?.status) && object(state) && state.known === true
     && [state.activeTurns, state.uncertainSends, state.unresolvedActions].every(count => Number.isSafeInteger(count) && count === 0);
 }
 
@@ -135,6 +135,7 @@ function prepare(ctx, options) {
 }
 
 export async function refreshWebRuntime(options = {}) {
+  if (options.forceServiceReplacement === true && !options.apply) throw new Error("Forced service replacement requires --apply.");
   const ctx = context(options);
   let prepared;
   try { prepared = prepare(ctx, options); }
@@ -147,7 +148,7 @@ export async function refreshWebRuntime(options = {}) {
     if (savedSettings(ctx).text !== prepared.before.text) throw new Error("Saved Web bridge settings changed; retry runtime refresh.");
     let drain, settingsAttempted = false, restartAttempted = false, settingsRestored = true, rollbackAllowed = true;
     try {
-      drain = await ctx.drain({ force: false });
+      drain = await ctx.drain({ force: options.forceServiceReplacement === true });
       if (!confirmedIdleDrain(drain)) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
       const result = await withWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions,
         ...(options.manifestPath ? { manifestPath: localPath(options.manifestPath) } : { manifest: prepared.adapter.manifest }),
@@ -206,7 +207,7 @@ export async function refreshWebRuntime(options = {}) {
       else if (restartAttempted && settingsRestored) {
         try { recovery = await ctx.restart() === 0 ? "prior runtime reloaded" : "prior runtime reload failed"; }
         catch { recovery = "prior runtime reload failed"; }
-      } else if (drain?.status === "drained") {
+      } else if (["drained", "forced"].includes(drain?.status)) {
         try { await ctx.resume(); recovery = "admission resumed"; }
         catch { recovery = "admission resume failed"; }
       }

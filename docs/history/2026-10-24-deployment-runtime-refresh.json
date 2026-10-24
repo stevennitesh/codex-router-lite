@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "historical": true,
+  "date": "2026-10-24",
+  "deployed": {
+    "routerCommit": "68b596a787fcf4154ff8bdb812ddaf403426e064",
+    "acceptedAt": "2026-10-24T16:39:50.9355891Z",
+    "acceptance": {
+      "accepted": true,
+      "passedChecks": 11,
+      "totalChecks": 11
+    },
+    "switchyardBinarySha256": "e654e0cd733f77772bc6f9e777b83423b07d98119973d942fa571563deea6783"
+  },
+  "runtimeRefresh": {
+    "adapterGeneration": "7d38b8b73115aacadc657c2beb1f6c0bf65baf953a64487b4a5e4749213ecc79",
+    "applied": true,
+    "routerReloaded": true,
+    "browserRuntimeChanged": false,
+    "threadScope": "ordinary Web conversations",
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "codexRestartRequired": true
+  },
+  "recoveryRetained": {
+    "router": "generated/router-rollback-27d4c0d7",
+    "switchyardGeneration": ".rollback-164c215cb9ba4dff9170b38e7d32ef55",
+    "adapterGenerationsRetained": true
+  },
+  "switchyardCertification": {
+    "status": "accepted",
+    "evidence": "docs/history/2026-10-24-switchyard-snapshot-certification.json",
+    "checksPassed": 5,
+    "nativeRequests": 3,
+    "nativeRequestStatus": 200,
+    "streamingRequests": 1,
+    "toolOutput": "42",
+    "encryptedHandoffs": 2,
+    "sameChildContinuation": true,
+    "activeTurnCancelled": false,
+    "executionSurface": "codex-cli",
+    "windowsSandbox": "mxc"
+  },
+  "admissionIncident": {
+    "userObserved": "Codex connection errors; manually restarted Router.",
+    "deploymentStartupFailed": false,
+    "cause": "An external forced drain closed admission before the refresh coordinator planned its changes. The subsequent read-only discovery failed under restricted helper access, outside the coordinator compensation boundary.",
+    "boundedLogEvidence": {
+      "drainingErrors": 526,
+      "lastRequestsBeforeClosure": "2026-10-24T16:43:11Z",
+      "firstRequestsAfterRestart": "2026-10-24T16:51:37Z",
+      "startupOrListenerFailureObserved": false
+    },
+    "recovery": "Manual Router restart reopened admission. A later authorized normal-user coordinated refresh completed and normal requests resumed.",
+    "repair": "Move explicitly authorized forced draining inside the refresh coordinator after preparation and under the service lock; preserve known-idle Web requirements and resume admission on pre-restart failure after either drained or forced preparation.",
+    "validation": {
+      "affectedTestsPassed": 60,
+      "sourceChecks": "passed",
+      "diffCheck": "passed",
+      "independentReview": "No actionable findings.",
+      "limits": "Isolated fixtures establish transaction cleanup and strict Web gates; no deliberate production outage was induced.",
+      "fixtureCorrection": "The new diagnostic import required a matching inert export in the existing CLI loader stub.",
+      "windowsTestEnvironment": "Process-local TEMP/TMP under ignored .tmp after default sandbox TEMP rejected fixture rename; no skipped cases or persistent changes."
+    }
+  },
+  "pending": [
+    "Deploy the maintenance repair and recheck admission without external predraining.",
+    "Load the final adapter through a normal Codex restart, then verify Web native tools, actual Stop and same-chat continuation."
+  ],
+  "limits": [
+    "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
+    "Three filelock security advisories remain unsuppressed under the explicit stable-LiteLLM decision.",
+    "No push authorized."
+  ]
+}

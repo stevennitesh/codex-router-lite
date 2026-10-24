@@ -120,9 +120,14 @@ installed source before selecting a candidate with different dependency inputs.
 The coordinator needs that source to match its installed dependencies; catalog
 publication and startup still require valid runtime files. After deployment,
 refresh the adapter again if its resident helper changed, then reopen Codex once
-after the final generation is installed. An explicitly authorized forced HTTP
-drain can end blocking requests; known-idle Web counters still govern runtime
-replacement, including uncertain Sends and unresolved native actions.
+after the final generation is installed. When explicitly authorized to interrupt
+blocking Router requests, use
+`model-router.ps1 codex web refresh-runtime --apply --force-service-replacement`
+to keep replacement within the coordinator. The override requires `--apply`;
+known-zero Web counters still govern runtime replacement, including active turns,
+uncertain Sends and unresolved native actions. Do not run a separate forced drain
+before refresh: candidate validation must finish before admission closes, and
+the coordinator must own admission recovery if installation fails before reload.
 
 The route and provider JSON files under `config/openrouter` and `config/switchyard` own checked-in route metadata. `maintenance/windows-package.json` owns the installed file set. Generated catalogs, installed files, logs, and proof records are evidence, not source.
 

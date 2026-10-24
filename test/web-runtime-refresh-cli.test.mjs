@@ -34,6 +34,7 @@ function adapterCliFixture() {
       export function disconnectWebBridge() { throw new Error('Unexpected disconnect'); }
       export function webBridgeModels() { throw new Error('Unexpected models'); }
       export function webBridgeStatus() { throw new Error('Unexpected bridge status'); }
+      export function webBridgeConfigurationStatus() { throw new Error('Unexpected configuration status'); }
       export const WEB_BRIDGE_TUNNEL_KEY_PATH = 'unused';
     `,
   };
@@ -89,15 +90,22 @@ test("runtime refresh CLI defaults to planning and rejects ambiguous mutation ar
     const plan = run([]);
     assert.equal(plan.error, undefined);
     assert.equal(plan.status, 0, plan.stderr);
-    assert.deepEqual(JSON.parse(plan.stdout), { apply: false });
+    assert.deepEqual(JSON.parse(plan.stdout), { apply: false, forceServiceReplacement: false });
 
     const apply = run(["--manifest", "candidate.json", "--apply"]);
     assert.equal(apply.error, undefined);
     assert.equal(apply.status, 0, apply.stderr);
-    assert.deepEqual(JSON.parse(apply.stdout), { apply: true, manifestPath: path.join(directory, "candidate.json") });
+    assert.deepEqual(JSON.parse(apply.stdout), { apply: true, forceServiceReplacement: false, manifestPath: path.join(directory, "candidate.json") });
+
+    const forced = run(["--force-service-replacement", "--manifest", "candidate.json", "--apply"]);
+    assert.equal(forced.error, undefined);
+    assert.equal(forced.status, 0, forced.stderr);
+    assert.deepEqual(JSON.parse(forced.stdout), { apply: true, forceServiceReplacement: true, manifestPath: path.join(directory, "candidate.json") });
 
     for (const arguments_ of [["--apply", "--apply"], ["--manifest"], ["--manifest", "--apply"],
-      ["--manifest", "a.json", "--manifest", "b.json"], ["--force-service-replacement"], ["unexpected"]]) {
+      ["--manifest", "a.json", "--manifest", "b.json"], ["--force-service-replacement"],
+      ["--force-service-replacement", "--manifest", "candidate.json"],
+      ["--apply", "--force-service-replacement", "--force-service-replacement"], ["unexpected"]]) {
       const result = run(arguments_);
       assert.equal(result.error, undefined);
       assert.equal(result.status, 1, result.stderr);
