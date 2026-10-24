@@ -136,7 +136,12 @@ the owned turn, controls and current URL together, between independent ownership
 and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
 With the Router MCP adapter installed, one pending native observation call spans
-those short reads. A protected loopback notification wakes it on broker activity;
+those short reads. While input acceptance is pending, the first substantive
+current-generation text returns through the existing native callback even if the
+answer is unfinished. Router verifies and persists acceptance before issuing the
+next wait; later partial text does not add callbacks. A Stop receipt alone never
+acknowledges input, and cancellation before that proof is persisted remains uncertain.
+A protected loopback notification wakes the wait on broker activity;
 browser completion, capacity errors and observation failures also return it. The
 notification uses an owned Node HTTP request with its abort signal and no shared
 connection pool. This private loopback channel accepts the configured listener
@@ -527,6 +532,8 @@ the first observation. Changes to selection, Send or recovery can keep the exist
 adapter only when its installed qualifier still accepts the generated Send,
 observation and retention programs. Check those programs before deployment; an
 unchanged resident helper version alone does not establish adapter compatibility.
+Changes to the adapter's waiting behavior also require its matching rebuild and
+restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. The managed hook definition remains unchanged. Preserve a compatible

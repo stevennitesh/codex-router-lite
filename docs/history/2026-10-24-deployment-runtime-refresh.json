@@ -72,8 +72,8 @@
     }
   },
   "pending": [
-    "Deploy the reviewed restored-first-initialization repair; the current adapter remains qualified and no Codex restart is needed for this runtime-only change.",
-    "Verify native tools, actual Stop and same-chat continuation in the authorized fresh verification chat."
+    "Deploy the reviewed first-text acceptance wakeup repair and refresh its matching adapter, retaining the interrupted test ledger byte-for-byte.",
+    "Load the adapter through a normal Codex restart and obtain authorization for a clean disposable final verification chat."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -158,6 +158,76 @@
       "composerContentEditable": true,
       "composerEmpty": true,
       "scope": "Read-only current SDK inspection of a separate empty home; not a native-tool or Stop proof. The inspection tab was closed."
+    },
+    "nativeTools": {
+      "status": "passed",
+      "nativeCommandCount": 1,
+      "pairedTerminalResults": 1,
+      "exitCode": 0,
+      "fixtureOutputExact": true,
+      "defaultPermissions": true,
+      "otherNonBrowserNativeCalls": 0,
+      "execution": "The Web model requested the native command through the configured MCP connector; no external launcher, runtime patch or another model drove it."
+    },
+    "beforeStopRecall": {
+      "status": "passed",
+      "markerRecalledWithoutSupplyingIt": true,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "acceptedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "stop": {
+      "status": "adapter-confirmed",
+      "outcome": "cancelled",
+      "stage": "complete",
+      "clickAttempted": true,
+      "stopClicked": true,
+      "clickError": false,
+      "stopHidden": true,
+      "generationInactive": true,
+      "inactivityEvidence": "composer_restored",
+      "retained": true,
+      "childTerminalObserved": true,
+      "nativeDurationMs": 635,
+      "actualTabSurvival": "awaiting user confirmation"
+    },
+    "afterStopContinuation": {
+      "status": "blocked-by-uncertain-send",
+      "requestSent": false,
+      "nativeCommandsExecuted": 0,
+      "preStopObservedAssistantTextLength": 0,
+      "substantiveTextBeforeStop": "unknown",
+      "reason": "Cancellation won before Router received and persisted substantive current-generation acceptance evidence. The existing guard refuses continuation before browser access; no replay or ledger change was attempted.",
+      "ledgerPreservation": "A stable baseline hash was recorded privately. No replay, field clearing, checkpoint replacement or ledger edit is authorized or performed."
+    },
+    "acceptanceWakeupFinding": {
+      "status": "source-confirmed prospective defect",
+      "mechanism": "The managed adapter can read incomplete substantive assistant text but suppress its native callback until completion, a broker wake or renewal. Router therefore cannot promptly promote delivery from that text.",
+      "trialLimit": "The actual trial does not establish whether substantive text appeared during the gap before Stop.",
+      "repair": "Return one existing native snapshot immediately when acceptance is pending and substantive text appears; preserve exact-generation validation and resume held observation after promotion.",
+      "repairValidation": {
+        "affectedTestsPassed": 551,
+        "failed": 0,
+        "skipped": 0,
+        "sourceChecks": "passed",
+        "diffCheck": "passed",
+        "independentReview": "No actionable findings.",
+        "currentGenerationValidatedBeforePromotion": true,
+        "acceptancePersistedBeforeNextWait": true,
+        "laterPartialUpdatesHeld": true,
+        "genuineUncertainStopRefusalPreserved": true,
+        "additionalPagePolling": false,
+        "existingNativeCallbackUsed": true
+      },
+      "adapterCompatibility": {
+        "residentHelperUnchanged": true,
+        "programsWithoutHintUnchanged": true,
+        "previousAdapterAcceptsButIgnoresHint": true,
+        "matchingAdapterRefreshRequired": true
+      }
     }
   },
   "homeReadinessDeployment": {
@@ -178,5 +248,14 @@
     "normalCodexRestartUserConfirmed": true,
     "postRestartPlanReady": true,
     "postRestartPlanChanged": false
+  },
+  "initializationRecoveryDeployment": {
+    "routerCommit": "ac93467cd465696f7be1bb1d02417cc3e37ff436",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T21:03:31.3236839Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRollbackPreserved": true,
+    "adapterUnchanged": true
   }
 }

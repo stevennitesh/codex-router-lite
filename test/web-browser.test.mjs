@@ -155,6 +155,22 @@ test("browser programs round trip only with their complete exact guards, helper 
   assert.equal(readBrowserProgram("await unknown({});"), null);
 });
 
+test("input acknowledgement is a strict observe-only boolean in canonical browser programs", () => {
+  for (const inputAcknowledgementPending of [false, true]) {
+    const code = browserScript({ ...base, operation: "observe", inputAcknowledgementPending });
+    assert.equal(readBrowserProgram(code).inputAcknowledgementPending, inputAcknowledgementPending);
+    for (const invalid of ['"true"', '1', 'null', '{}']) {
+      assert.equal(readBrowserProgram(code.replace(`"inputAcknowledgementPending":${inputAcknowledgementPending}`, `"inputAcknowledgementPending":${invalid}`)), null);
+    }
+  }
+  for (const inputAcknowledgementPending of ["true", 1, null, {}]) {
+    assert.throws(() => browserScript({ ...base, operation: "observe", inputAcknowledgementPending }), /boolean observation hint/u);
+  }
+  for (const operation of ["bootstrap", "open", "send", "retain", "continue", "rollover"]) {
+    assert.throws(() => browserScript({ ...base, operation, inputAcknowledgementPending: true }), /boolean observation hint/u);
+  }
+});
+
 test("resident source changes invalidate compact programs while independently shipped operations keep their own exact qualification", async () => {
   const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
   const stateSource = readFileSync(new URL("../src/web-browser-state.mjs", import.meta.url), "utf8");

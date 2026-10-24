@@ -810,6 +810,70 @@ test("optimistic anchors and explicit request failure preserve accepted context 
   });
 });
 
+test("first incomplete assistant text persists input acceptance before another wait and permits same-chat Stop continuation", async t => {
+  const { promise: writeStarted, resolve: started } = Promise.withResolvers();
+  const { promise: writeAllowed, resolve: release } = Promise.withResolvers();
+  t.after(() => release());
+  let acceptanceWrite;
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    if (!acceptanceWrite && value.deliveredInstructionsSha256) {
+      acceptanceWrite = structuredClone(value); started(); await writeAllowed;
+    }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  let { call } = await h.toObserve();
+  const config = browserCall => readBrowserProgram(JSON.parse(browserCall.arguments).code);
+  assert.equal(config(call).inputAcknowledgementPending, true);
+  for (const answer of ["", " \n "]) {
+    if (answer) h.browser.ui.texts.push(answer);
+    call = (await h.answerBrowser(call)).output[0];
+    assert.equal(config(call).inputAcknowledgementPending, true);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  }
+  h.browser.ui.texts.push("The current input reached the model."); h.browser.ui.stop = true;
+  let nextWaitEmitted = false;
+  const advancing = h.answerBrowser(call).then(response => { nextWaitEmitted = true; return response; });
+  await writeStarted;
+  assert.equal(nextWaitEmitted, false, "The next native wait remains private until acceptance reaches durable storage.");
+  assert.equal(acceptanceWrite.uncertainSend, false);
+  assert.equal(acceptanceWrite.generationCompleted, false);
+  assert.equal(acceptanceWrite.observation.completed, false);
+  assert.equal(h.browser.ui.stop, true);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+  release();
+  const next = (await advancing).output[0];
+  assert.equal(config(next).inputAcknowledgementPending, undefined);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.checkpoint.length, 1);
+  assert.equal(saved.uncertainSend, false);
+  assert.equal(saved.deliveredInstructionsGenerationTurnKey, saved.generationTurnKey);
+  assert.equal(saved.generationCompleted, false);
+  assert.equal(saved.lastTurn.sendState, "sent");
+  const binding = saved.bindingId, url = saved.chatUrl;
+  h.observations.watchers[0].onCancel(); h.loseKernel();
+  h.newTurn(followupId, "Continue after the accepted input was stopped.");
+  const continuation = (await h.toObserve()).call;
+  const resumed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(resumed.bindingId, binding); assert.equal(resumed.chatUrl, url);
+  assert.equal(resumed.tabId, saved.tabId);
+  assert.equal(config(continuation).inputAcknowledgementPending, true, "The next Send has its own acceptance boundary.");
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue after the accepted input was stopped." }]);
+  assert.equal(h.browser.ui.sends.length, 2); assert.equal(h.browser.ui.newTabs, 1);
+  await h.completeAnswer(continuation, "Continued in the same saved chat.");
+});
+
+test("foreign-generation text cannot acknowledge pending input", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Text from a different generation cannot prove receipt.");
+  await assert.rejects(reportObservation(h, call, { generationTurnKey: followupId }), /no verified conversation evidence/u);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.uncertainSend, true);
+  assert.equal(saved.checkpoint, undefined); assert.equal(saved.deliveredInstructionsSha256, undefined);
+  h.newTurn(followupId, "Do not replay input with foreign proof.");
+  await assert.rejects(h.request(), { code: "web_send_uncertain" });
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
 test("authentic connector discovery accepts input before any native tool completes", async t => {
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
@@ -824,6 +888,7 @@ test("authentic connector discovery accepts input before any native tool complet
   const discovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: h.token() } });
   assert.equal(discovery.isError, undefined);
   const next = (await h.answerBrowser(call)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(next.arguments).code).inputAcknowledgementPending, undefined);
   const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(accepted.uncertainSend, false);
   assert.ok(accepted.checkpoint.length);

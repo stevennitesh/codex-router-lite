@@ -498,6 +498,41 @@ test('one actual MCP observation spans short private child reads and returns onl
   assert.ok(!JSON.stringify(f.receipts).includes(f.turn.token));
 });
 
+test('pending input returns its first incomplete text once, then later partial text stays in the held wait', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0, completed = false;
+  const f = await waitingFixture(t, params => observationResult(params, {
+    assistantText: ++reads === 1 ? ' \n ' : `Current-generation partial ${reads}`, completed,
+  }));
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  assert.equal(qualifyBrowserCall(f.source, STOP_CONFIG.runtimeModule).config.inputAcknowledgementPending, true);
+  const first = f.client.callTool(f.source);
+  const whitespace = await f.waitForChildTerminal(message => message.result?.content);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  const accepted = parseBrowserOutput(await first, readBrowserProgram(f.source.arguments.code).frameToken);
+  assert.equal(accepted.assistantText, 'Current-generation partial 2');
+  assert.equal(accepted.completed, false); assert.equal(accepted.stopVisible, true);
+  assert.equal(reads, 2);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
+
+  const next = clone(f.source), { inputAcknowledgementPending, ...config } = readBrowserProgram(next.arguments.code);
+  next.arguments.code = browserScript({ ...config, frameToken: 'b'.repeat(48) });
+  next._meta.callId = `call_router_web_${'b'.repeat(32)}`;
+  const held = f.client.callTool(next);
+  const partial = await f.waitForChildTerminal(message => message.result?.content && message.id !== whitespace.id
+    && message.result.content.some(item => item.text?.includes('"assistantText":"Current-generation partial 3"')));
+  t.mock.timers.tick(5);
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== partial.id
+    && message.result.content.some(item => item.text?.includes('"assistantText":"Current-generation partial 4"')));
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1, 'Later partial output cannot create another outer callback.');
+  completed = true; t.mock.timers.tick(5);
+  const final = parseBrowserOutput(await held, 'b'.repeat(48));
+  assert.equal(final.completed, true); assert.equal(reads, 5);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 2);
+  assert.deepEqual(f.receipts.filter(entry => entry.code === 'observation_wait_finished').map(entry => entry.readCount), [2, 3]);
+});
+
 test('canonical subagents hold exact read-only observations without acquiring primary Stop authority', async t => {
   for (const field of ['parent_thread_id', 'subagent_header', 'subagent_kind']) for (const serialized of [false, true]) {
     await t.test(`${field}, ${serialized ? 'JSON string' : 'object'}`, async subtest => {

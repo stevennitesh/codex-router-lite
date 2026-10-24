@@ -493,7 +493,8 @@ export function createInAppWebRuntime({
         ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt } : {}),
-        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) } } : {}),
+        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) },
+          ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
     turn.browserStarted = true;
     if (operation === "bootstrap") conversation.browserStarted = true;
