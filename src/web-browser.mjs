@@ -1123,7 +1123,8 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     await state.tab.markHandoff();
     activeOwner([options.turnId], true);
     state.retained = true;
-    delete state.submittedComposerText; delete state.generationMarker;
+    // Broker activity can reject this retention and resume the same generation.
+    // Keep its rejection evidence until continuation resets the generation.
     // Retain can execute just before native Stop discards its result. Keep the
     // exact owner available until a confirmed handoff.
     emit({ retained: true, ...observation });

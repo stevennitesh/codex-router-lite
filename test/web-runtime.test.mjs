@@ -164,6 +164,14 @@ function fakeBrowser() {
           "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
         return callback([domElement("div", { contenteditable: "true" }, ...content)], ownedChipSelector);
       }
+      if (ownedChipSelector?.observation && ui.observationRoot) {
+        const body = domElement("body", {}, ui.observationRoot);
+        body.ownerDocument = { body, URL: ui.url,
+          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
+        const selected = ui.observationRoot.querySelectorAll(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector},[aria-label]`);
+        for (const element of selected) element.getBoundingClientRect = () => ({ width: 32, height: 32 });
+        return callback([body, ...selected], ownedChipSelector);
+      }
       assert.equal(name, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]');
       const roots = ui.turns.map((turn, index) => {
         const action = { getAttribute: () => "Regenerate response", closest: () => null };
@@ -1005,6 +1013,49 @@ test("late request failure during retention blocks final delivery and newly queu
     assert.equal(h.input().filter(item => item.output === "ACTUAL_PRIOR_OUTCOME").length, priorResult ? 1 : 0);
     assert.equal(h.browser.ui.sends.length, 1);
   });
+});
+
+test("a broker fence race after retention preserves real rejection detection before queued actions or final delivery", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Current answer before concurrent broker activity."); h.browser.ui.complete = true;
+  const retain = (await h.answerBrowser(call)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(retain.arguments).code).operation, "retain");
+  const retainedFrame = await h.executeBrowser(retain);
+  const retained = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  const release = h.broker.beginActivity(h.token()); release();
+  h.append(retain, outputFor(retain, retainedFrame));
+  const resumed = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(resumed.arguments).code).operation, "observe",
+    "The changed broker revision must reject finalization and resume the same generation.");
+  const submitted = h.browser.ui.sends.at(-1), generation = h.browser.ui.turns.at(-1);
+  const error = domElement("div", { "aria-label": "Unknown error" }, domText("Unknown error"));
+  const retry = domElement("button", { "aria-label": "Retry" }, domText("Retry"));
+  const errorRegion = domElement("div", {}, error, retry);
+  error.contains = node => node === error;
+  errorRegion.contains = node => node === errorRegion || node === error || node === retry;
+  const composer = domElement("div", { role: "textbox", "aria-label": "Ask ChatGPT", contenteditable: "true" }, domText(submitted));
+  composer.innerText = submitted;
+  const answer = replyElement(h.browser.ui.texts[0], messageId(0)).parentElement;
+  const turn = domElement("section", { "data-turn-key": generation.key },
+    domElement("div", { "data-talvt-turn-state": "complete" }, domElement("div", {}, domText(submitted)), answer,
+      domElement("button", { "aria-label": "Regenerate response" })));
+  h.browser.ui.observationRoot = domElement("main", {}, turn, errorRegion, composer);
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const queued = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-retention-race.txt" } });
+  const queuedOutcome = queued.then(() => undefined, error => error);
+  await assert.rejects(h.answerBrowser(resumed), { code: "web_request_failed" });
+  assert.equal((await queuedOutcome)?.code, "web_request_failed");
+  await assert.rejects(h.request(), { code: "web_request_failed" });
+  const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(failed.generationTurnKey, generation.key);
+  assert.equal(failed.generationCompleted, false);
+  assert.equal(failed.lastTurn.completed, false);
+  assert.equal(failed.uncertainSend, false, "Prior substantive answer acceptance remains acknowledged.");
+  assert.deepEqual(failed.checkpoint, retained.checkpoint);
+  assert.deepEqual(failed.unresolvedCoding, []);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work" || item.phase === "final_answer"), false);
+  assert.equal(composer.innerText, submitted);
+  assert.equal(h.browser.ui.sends.length, 1);
 });
 
 test("instruction revisions persist only after accepted input and unchanged turns carry only their exact delta", async t => {

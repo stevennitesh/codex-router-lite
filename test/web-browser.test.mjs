@@ -360,6 +360,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
           elements.push(...matches);
         } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
+        else if (name in namedControls) elements.push(...namedControls[name]);
         else if (kind === "text") {
           const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
             ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })), { text: ui.composerText, scope: "composer" }];
@@ -3055,6 +3056,33 @@ test("batched exact-control reads reject duplicate controls and unrecognized acc
     assert.notEqual(f.getState().completed, true);
     assert.equal(f.ui.sendClicks, 1);
   }
+});
+
+test("a same-generation observation after retention still recognizes an exact restored rejected request", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  await f.run("send", { ...plugin, prompt: "Request that may be rejected after retention" });
+  f.ui.texts.push("Answer before late broker activity."); f.ui.complete = true;
+  const completed = await f.run("observe");
+  await f.run("retain");
+  const submitted = f.ui.userMessages.at(-1).text;
+  const error = domElement("div", {}, domText("Unknown error"));
+  const retry = domElement("button", {}, domText("Retry"));
+  const errorRegion = domElement("div", {}, error, retry);
+  error.contains = node => node === error;
+  errorRegion.contains = node => node === errorRegion || node === error || node === retry;
+  const composer = domElement("div", { role: "textbox", "aria-label": "Ask ChatGPT", contenteditable: "true" }, domText(submitted));
+  composer.innerText = submitted;
+  f.ui.messageRoot = domElement("main", {}, observedTurn(completed.generationTurnKey, submitted,
+    [assistantMessage(0, f.ui.texts[0])]), errorRegion, composer);
+  f.ui.observationControls = { "Unknown error": [error], Retry: [retry], "Ask ChatGPT": [composer] };
+  const reads = f.ui.observationReads;
+  const rejected = await f.run("observe");
+  assert.equal(f.ui.observationReads, reads + 1, "The resumed operation must run the current browser reader.");
+  assert.equal(rejected.generationTurnKey, completed.generationTurnKey);
+  assert.equal(rejected.requestError, "unknown_error");
+  assert.equal(composer.innerText, submitted, "Observation preserves the restored submitted draft.");
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.closeCount, 0);
 });
 
 test("observation and retention use compact resident invocations below 4 KB", () => {
