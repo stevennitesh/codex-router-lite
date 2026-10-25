@@ -73,7 +73,7 @@
   },
   "pending": [
     "The isolated ChatGPT safety refusal was investigated but not reproduced: three native reads succeeded with the same model, effort, connector and incremental instruction style. Its connector-side stage remains unknown; no causal Router change or safety-annotation downgrade is supported.",
-    "Activate the reviewed Stop-receipt handoff repair, load its matching adapter through a normal Codex restart, then run automatic native-tool, Stop and same-tab continuation verification in an approved fresh disposable chat. Preserve the failed chat and protected ledgers."
+    "Load the installed Stop-receipt handoff adapter through a normal Codex restart, then run automatic native-tool, Stop and same-tab continuation verification in an approved fresh disposable chat. Preserve the failed chat and protected ledgers."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -281,7 +281,7 @@
     "postRestartAdapterGenerationMatchesCandidate": true
   },
   "stopReceiptHandoffRepair": {
-    "status": "source-verified-awaiting-activation",
+    "status": "deployed-awaiting-normal-codex-restart-and-live-verification",
     "source": "src/web-stop-hook.mjs",
     "behavior": "Store generation-bound dispatch in the surviving binding before the SDK click, acknowledge only actual SDK success after ownership rechecks, and retain uncertainty to prevent duplicate input. Ordinary continuation consumes the same witness without requiring later DOM completion. Fresh controllers do not manufacture a continuation binding.",
     "proofContract": "A repeated hook cannot claim a prior click as its own; it stays blocked until explicit completion. The existing adapter result contract and cleanup budgets remain unchanged.",
@@ -293,6 +293,25 @@
       "independentReview": "No actionable findings against final source and paired tests.",
       "environment": "The first installer run hit sandbox default-TEMP state-lock timeouts before assertions; all 44 cases passed with process-local ignored .tmp TEMP/TMP, without installer or security changes."
     },
+    "deployment": {
+      "routerCommit": "38d1055336a2790a2f102eab4c2f22deecaae35e",
+      "acceptedAt": "2026-10-25T02:12:28.1105594Z",
+      "accepted": true,
+      "passedChecks": 11,
+      "totalChecks": 11,
+      "forceInterruptedRequests": false,
+      "originalRollbackPreserved": true
+    },
+    "runtimeRefresh": {
+      "applied": true,
+      "routerReloaded": true,
+      "adapterGeneration": "fa59c668011ca7ce6457c8686a9517a54040365f718eecf31b3cbb0bed2eea66",
+      "hookDefinition": "preserved",
+      "tunnelConfiguration": "preserved",
+      "codexRestartRequired": true
+    },
+    "protectedInterruptedLedgerByteIdentical": true,
+    "failedVerificationChatPreserved": true,
     "liveVerification": "pending"
   },
   "connectorSafetyInvestigation": {
