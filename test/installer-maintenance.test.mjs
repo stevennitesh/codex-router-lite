@@ -115,7 +115,7 @@ for (const tool of ["uv", "pip"]) {
     try {
       if (tool === "uv") {
         const directInput = path.join(f.source, "requirements/python.in");
-        writeFileSync(directInput, "litellm[proxy]==1.96.1\nfastapi==0.141.1\n");
+        writeFileSync(directInput, "litellm[proxy]==1.96.1\nfastapi==0.141.1\nfilelock==4.2.4\n");
         const refused = f.run(["-DependenciesOnly"]);
         assert.notEqual(refused.status, 0);
         assert.match(refused.stderr, /at or above 1\.96\.2/u);

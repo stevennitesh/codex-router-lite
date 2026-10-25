@@ -21,7 +21,7 @@ const internal = "sk-gateway-synthetic-internal-key-with-sufficient-length";
 const providerKey = "GATEWAY_SYNTHETIC_PROVIDER_KEY";
 const pattern = "^(?<word>[a-z]+)$";
 const gatewayBootstrap = String.raw`
-import ipaddress, sys
+import hashlib, importlib.util, ipaddress, os, pathlib, sys
 def offline_network(event, args):
     if event in ('socket.getaddrinfo', 'socket.gethostbyname'):
         host = args[0]
@@ -38,6 +38,17 @@ def offline_network(event, args):
         pass
     raise RuntimeError('offline gateway fixture forbids non-loopback network')
 sys.addaudithook(offline_network)
+# Keep tokenizer startup independent of host caches, downloads, and writes to
+# the installed package. Verify the vendored data against tiktoken's own hash.
+tokenizers = pathlib.Path(importlib.util.find_spec('litellm').origin).parent / 'litellm_core_utils' / 'tokenizers'
+rank_name = '9b5ad71b2ce5302211f9c61530b329a4922fc6a4'
+ranks = (tokenizers / rank_name).read_bytes()
+assert hashlib.sha256(ranks).hexdigest() == '223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7'
+cache = pathlib.Path(os.environ['TEMP']) / 'tiktoken'
+cache.mkdir()
+(cache / rank_name).write_bytes(ranks)
+os.environ['TIKTOKEN_CACHE_DIR'] = str(cache)
+os.environ['CUSTOM_TIKTOKEN_CACHE_DIR'] = str(cache)
 from litellm import run_server
 run_server()
 `;
@@ -59,12 +70,24 @@ async function within(promise, label, timeoutMs = 5000) {
 
 function service(command, args, cwd, env) {
   const child = spawn(command, args, { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-  let logs = "";
+  let logs = "", privateCredentialObserved = false;
   for (const stream of [child.stdout, child.stderr]) {
-    stream.on("data", bytes => { logs = (logs + bytes.toString("utf8")).slice(-65536); });
+    stream.on("data", bytes => {
+      const next = logs + bytes.toString("utf8");
+      privateCredentialObserved ||= [internal, providerKey].some(credential => next.includes(credential));
+      logs = next.slice(-65536);
+    });
   }
   child.errors = () => logs;
+  child.privateCredentialObserved = () => privateCredentialObserved;
   return child;
+}
+
+function assertNoPrivateCredentials(value, label) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  for (const credential of [internal, providerKey]) {
+    assert.equal(text.includes(credential), false, `${label} disclosed a private credential`);
+  }
 }
 
 test("pinned GLM gateway preserves schemas and cancels pending/acquired private-forwarder work", {
@@ -84,6 +107,9 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
     assert.equal(path.dirname(scratch), path.resolve(os.tmpdir()));
     assert.ok(path.basename(scratch).startsWith("router-gateway-integration-"));
     rmSync(scratch, { recursive: true, force: true });
+    for (const child of children) {
+      assert.equal(child.privateCredentialObserved(), false, "service diagnostics disclosed a private credential");
+    }
   });
   const state = path.join(scratch, "state"), home = path.join(scratch, "home"), temporary = path.join(scratch, "temp");
   for (const directory of [state, home, temporary]) mkdirSync(directory);
@@ -200,6 +226,67 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
     await ready(`http://127.0.0.1:${apiPort}/health`, forwarder, { Authorization: `Bearer ${internal}` });
     await ready(`http://127.0.0.1:${gatewayPort}/health/liveliness`, gateway, { Authorization: `Bearer ${internal}` }, { timeoutMs: 45000 });
     await ready(`${base}/models`, router);
+    await t.test("private gateway and forwarder deny missing or wrong credentials before any provider send", async () => {
+      const current = begin("unauthorized");
+      assert.equal(current.before, 0);
+      for (const [label, url, payload] of [
+        ["gateway", `http://127.0.0.1:${gatewayPort}/v1/responses`,
+          { model: routes[0].gatewayModel, input: "synthetic unauthorized request", stream: false }],
+        ["forwarder", `http://127.0.0.1:${apiPort}/v1/chat/completions`,
+          { model: routes[0].gatewayModel, messages: [{ role: "user", content: "synthetic unauthorized request" }], stream: false }],
+      ]) {
+        for (const credential of [undefined, caller]) {
+          const response = await fetch(url, { method: "POST",
+            headers: { "Content-Type": "application/json", ...(credential ? { Authorization: `Bearer ${credential}` } : {}) },
+            body: JSON.stringify(payload), signal: AbortSignal.timeout(10000) });
+          const failure = await response.text();
+          assertNoPrivateCredentials({ headers: [...response.headers], body: failure }, `${label} authentication response`);
+          assert.equal(captures.length, 0, `${label} unauthorized request reached a provider`);
+          const error = JSON.parse(failure).error;
+          if (label === "forwarder") {
+            assert.equal(response.status, 401);
+            assert.equal(error.type, "authentication_error");
+          } else {
+            // LiteLLM's private no-DB auth path can report a validation failure
+            // as 500 (missing optional Prisma) or 400 (no connected DB). Accept
+            // only these known errors or an ordinary authentication rejection;
+            // the public Router's authentication contract remains separate.
+            assert.ok(
+              (response.status === 500 && error.type === "internal_server_error" && error.message === "Internal server error")
+              || (response.status === 400 && error.type === "no_db_connection" && error.message === "No connected db.")
+              || ([401, 403].includes(response.status) && ["auth_error", "authentication_error"].includes(error.type)),
+              `unexpected private gateway authentication failure: ${failure}`,
+            );
+          }
+          assert.equal(typeof error.message, "string");
+        }
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      for (const child of children) assertNoPrivateCredentials(child.errors(), "authentication diagnostics");
+    });
+    await t.test("malformed public requests retain safe errors without private credentials or provider sends", async () => {
+      const current = begin("invalid-public-request");
+      const marker = "SYNTHETIC_PRIVATE_REQUEST_MARKER";
+      for (const [body, code] of [
+        [`{"model":"${routes[0].slug}","input":"${marker}"`, "invalid_request_json"],
+        ...[null, [], marker, 7].map(value => [JSON.stringify(value), "invalid_request_json_object"]),
+        [JSON.stringify({ model: routes[0].slug, input: marker, max_output_tokens: -1 }), "unsupported_output_limit"],
+      ]) {
+        const response = await fetch(`${base}/responses`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body, signal: AbortSignal.timeout(10000) });
+        const failure = await response.text();
+        assert.equal(response.status, 400);
+        assert.equal(JSON.parse(failure).error.code, code);
+        assertNoPrivateCredentials({ headers: [...response.headers], body: failure }, "malformed public response");
+        assert.equal(failure.includes(marker), false, "malformed public response disclosed request content");
+        assert.equal(captures.length, current.before, "malformed public request reached a provider");
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      for (const child of children) {
+        assertNoPrivateCredentials(child.errors(), "malformed public diagnostics");
+        assert.equal(child.errors().includes(marker), false, "malformed public diagnostics disclosed request content");
+      }
+    });
     for (const route of routes) {
       await t.test(`${route.slug}: schema fidelity and produced tool history`, async () => {
         const input = { model: route.slug, input: "synthetic schema request", tools };
@@ -324,6 +411,7 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
         // spoofed key can instead reach the private forwarder's 401. Preserve
         // these existing statuses while proving no provider request occurs.
         assert.ok([400, 401, 403, 500].includes(response.status), failure);
+        assertNoPrivateCredentials({ headers: [...response.headers], body: failure }, "spoof denial response");
         assert.equal(captures.length, before, "spoofed request reached a provider");
       }
       assert.equal(captures.length, before, "spoofed request reached a provider");
@@ -348,5 +436,6 @@ test("pinned GLM gateway preserves schemas and cancels pending/acquired private-
     });
     assert.ok(captures.every(capture => capture.headers.authorization === `Bearer ${providerKey}`
       && capture.headers["chatgpt-account-id"] === undefined));
+    for (const capture of captures) assertNoPrivateCredentials(capture.body, "provider payload");
   }
 });

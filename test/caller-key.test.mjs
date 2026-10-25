@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -15,9 +15,27 @@ import { privateFileIsProtected, protectPrivateFile, writePrivateFile, writePriv
 import { readCallerKeyRotationJournal, clearCallerKeyRotationJournal } from "../src/caller-key-rotation-journal.mjs";
 import { withCallerKeyRotationLock } from "../src/caller-key-rotation-lock.mjs";
 import { withModelOverlayLock } from "../src/model-overlay-lock.mjs";
+import { assertCallerSecret, assertInternalSecret, validServiceSecret } from "../src/caller-auth.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const scratch = path.join(root, "generated");
+
+test("caller and internal capabilities accept the generated-secret contract without echoing rejected keys", () => {
+  for (const value of ["a".repeat(32), "synthetic_capability-" + "z".repeat(48), randomBytes(48).toString("base64url")]) {
+    assert.equal(validServiceSecret(value), true);
+    assert.equal(assertCallerSecret(value), value);
+    assert.equal(assertInternalSecret(value), value);
+  }
+  for (const value of [undefined, null, 32, "", "sk-1234", "a".repeat(31), "invalid!" + "a".repeat(48), "a".repeat(24) + "\n" + "b".repeat(24), "a".repeat(48) + "é"]) {
+    assert.equal(validServiceSecret(value), false);
+    assert.throws(() => assertCallerSecret(value), {
+      message: "The local router caller key is missing or invalid; run .\\install.ps1 -Target codex.",
+    });
+    assert.throws(() => assertInternalSecret(value), {
+      message: "The internal service key is missing or invalid; run .\\install.ps1 -Target codex.",
+    });
+  }
+});
 
 function fixture() {
   mkdirSync(scratch, { recursive: true });
