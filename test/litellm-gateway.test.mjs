@@ -40,9 +40,10 @@ def offline_network(event, args):
 sys.addaudithook(offline_network)
 # Keep tokenizer startup independent of host caches, downloads, and writes to
 # the installed package. Verify the vendored data against tiktoken's own hash.
+# Windows wheels vendor CRLF; normalize those line endings before verification.
 tokenizers = pathlib.Path(importlib.util.find_spec('litellm').origin).parent / 'litellm_core_utils' / 'tokenizers'
 rank_name = '9b5ad71b2ce5302211f9c61530b329a4922fc6a4'
-ranks = (tokenizers / rank_name).read_bytes()
+ranks = (tokenizers / rank_name).read_bytes().replace(b'\r\n', b'\n')
 assert hashlib.sha256(ranks).hexdigest() == '223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7'
 cache = pathlib.Path(os.environ['TEMP']) / 'tiktoken'
 cache.mkdir()
