@@ -187,7 +187,7 @@ test("CLI subagent diagnostics retain configured routes after an app update remo
   assert.deepEqual(status.web.runtimeIssues, ["Browser runtime module: configured file is missing."]);
   assert.equal(status.snapshot.protocol, "v2"); assert.deepEqual(status.snapshot.efforts, efforts);
   assert.equal(status.routes.find(row => row.slug === "openrouter/pareto").multiAgentVersion, "v2");
-  assert.equal(status.routes.find(row => row.slug === "switchyard/auto").multiAgentVersion, "v1");
+  assert.equal(status.routes.find(row => row.slug === "switchyard/auto").multiAgentVersion, "v2");
   const webRoutes = status.routes.filter(row => row.slug.startsWith("chatgpt-web/"));
   assert.deepEqual(webRoutes.map(row => row.slug), ["chatgpt-web/gpt-6-sol-instant", "chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol"]);
   assert.ok(webRoutes.every(row => row.multiAgentVersion === "v1"));
