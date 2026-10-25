@@ -274,7 +274,13 @@ locator includes that generation condition when the browser resolves the action.
 `src/web-browser-state.mjs` owns the page controls and the shared Stop predicates.
 Interrupted continuation uses those same predicates and rechecks the generation
 in its final snapshot before transferring browser ownership. Its in-binding
-receipt prevents a rejected or uncertain click from being repeated. Before Send,
+receipt is shared by native Interrupt cleanup and interrupted continuation.
+Cleanup records the generation-bound dispatch before awaiting the click and
+retains acknowledgement only after SDK success and an ownership recheck. This
+preserves the witnessed composer transition for continuation even when the page
+still marks the turn incomplete, and prevents a rejected or uncertain click from
+being repeated. A fresh cleanup controller does not manufacture an ordinary
+browser binding or take a diagnostic event receipt as authority. Before Send,
 continuation requires an idle composer and has no authority to stop an unknown
 generation. Ordinary continuation omits this recovery-only program source.
 Readiness and confirmation use the same conditional semantic locator. Accessible
@@ -369,6 +375,49 @@ Run native-tool verification separately when the tool path changes. A recovery
 check does not need a native command, and a browser-contract fixture does not
 need a tool connector. Reuse passing checks while their relevant inputs remain
 unchanged; documentation edits do not require another manual Stop trial.
+
+### Automatic agent-run verification
+
+Use the maintained helper for live checks in an explicitly approved disposable
+Codex Web chat. The agent drives the existing app tools and native UI; no human
+Stop press, extra inference controller, runtime patch or special app launch is
+needed. This is an on-demand Desktop check, not a headless CI command or a check
+to add to ordinary conversation turns.
+
+```powershell
+npm run verify:web -- prepare --thread <approved-chat-id> --output generated/NEW
+npm run verify:web -- prompt --run generated/NEW/run.json --phase native
+npm run verify:web -- wait --run generated/NEW/run.json --phase native --turn <native-turn-id>
+```
+
+Preparation creates a fresh synthetic file and marker. Send the generated prompt
+to the approved chat with the native app tool, then pass its exact turn identity
+to `wait`. Repeat `prompt` and `wait` for `recall`, then `ready`. The latter uses
+read-only connector discovery before a long response, so acceptance can be proved
+even when ChatGPT does not expose readable answer text until completion.
+
+When `ready` passes, use supported computer use to inspect the selected Codex
+chat and click its native **Stop** control once. Prefer an unambiguous current
+accessibility control; otherwise use a fresh screenshot of the exact chat and
+its visible Stop control. Keep accessibility output limited to the needed native
+control; do not print an embedded ChatGPT transcript or its turn tokens. Never
+retain screen coordinates or element indices
+between runs. Clicking ChatGPT's Stop control or invoking the cleanup hook
+directly does not exercise native cancellation and cannot replace this step.
+
+Run `wait --phase stop` with that same native turn identity. Only after its
+interrupted-turn event and matching positive adapter receipt pass, send the
+`continuation` prompt and wait for its exact new turn. Require the saved chat,
+tab and binding to survive, the original marker to be recalled without supplying
+it, and no recovery/reopen, uncertain Send or unresolved native action. The
+helper writes bounded allowlisted receipts and waits on file changes; elapsed
+timeouts only bound failures. It does not replay a failed action or change keys,
+hook trust, runtime selection, protected ledgers or rollback copies.
+
+If sign-in, tool approval, an account safety block or ambiguous native UI prevents
+the next step, report that phase as blocked or failed. Do not substitute a direct
+browser cleanup or mark the check passed. Reuse completed offline and rendered
+browser checks while their relevant inputs remain unchanged.
 
 Start the fixed loopback fixture server in a normal Windows user terminal:
 

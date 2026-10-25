@@ -72,7 +72,8 @@
     }
   },
   "pending": [
-    "The intermittent ChatGPT connector safety block from the second read remains unexplained; its connector-side block stage was not retained. The initial native read succeeded, and the blocked attempt executed no native command."
+    "The isolated ChatGPT safety refusal was investigated but not reproduced: three native reads succeeded with the same model, effort, connector and incremental instruction style. Its connector-side stage remains unknown; no causal Router change or safety-annotation downgrade is supported.",
+    "Activate the reviewed Stop-receipt handoff repair, load its matching adapter through a normal Codex restart, then run automatic native-tool, Stop and same-tab continuation verification in an approved fresh disposable chat. Preserve the failed chat and protected ledgers."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -278,6 +279,45 @@
     "postRestartPlanReady": true,
     "postRestartPlanChanged": false,
     "postRestartAdapterGenerationMatchesCandidate": true
+  },
+  "stopReceiptHandoffRepair": {
+    "status": "source-verified-awaiting-activation",
+    "source": "src/web-stop-hook.mjs",
+    "behavior": "Store generation-bound dispatch in the surviving binding before the SDK click, acknowledge only actual SDK success after ownership rechecks, and retain uncertainty to prevent duplicate input. Ordinary continuation consumes the same witness without requiring later DOM completion. Fresh controllers do not manufacture a continuation binding.",
+    "proofContract": "A repeated hook cannot claim a prior click as its own; it stays blocked until explicit completion. The existing adapter result contract and cleanup budgets remain unchanged.",
+    "sourceSha256": "003cff4111034a6e3095ea858e59e967c1261d101661ea5e9cc8c0d8e0270397",
+    "validation": {
+      "browserHookAdapterStateTestsPassed": 391,
+      "installerTestsPassed": 44,
+      "counterfactual": "The real generated Stop program followed by canonical continuation failed with the original source and passed after restoring the exact candidate bytes, while DOM completion remained false, with one Stop click and no Send replay.",
+      "independentReview": "No actionable findings against final source and paired tests.",
+      "environment": "The first installer run hit sandbox default-TEMP state-lock timeouts before assertions; all 44 cases passed with process-local ignored .tmp TEMP/TMP, without installer or security changes."
+    },
+    "liveVerification": "pending"
+  },
+  "connectorSafetyInvestigation": {
+    "status": "investigated-not-reproduced",
+    "successfulPairedNativeReads": 3,
+    "refusedAttemptNativeCommandsExecuted": 0,
+    "refusedAttemptGatewayStage": null,
+    "protocolDifferenceEstablished": false,
+    "safetyAnnotationsUnchanged": true,
+    "limit": "Assistant prose cannot establish a hosted connector error or gateway stage. Existing opt-in MCP trace and structured invocation evidence are needed if the event recurs; no extra replay or retry was scheduled."
+  },
+  "automaticAgentVerification": {
+    "testedAt": "2026-10-25T01:48:11.911Z",
+    "helper": "maintenance/web-verification.mjs",
+    "executionSurface": "codex-desktop-native",
+    "stopInput": "Supported computer use clicked the actual native Codex Stop control from a fresh screenshot of the approved verification chat; no human Stop press or direct cleanup call.",
+    "nativeRead": "passed: exactly one paired successful command and exact synthetic marker",
+    "initialRecall": "passed",
+    "acceptedActiveGeneration": "passed",
+    "nativeInterruptionAndMatchingAdapterStop": "passed",
+    "continuation": "failed before Send: canonical browser continuation refused missing affirmative inactivity proof",
+    "fullRunPassed": false,
+    "protectedInterruptedLedgerAndRuntimeSnapshotsUnchanged": true,
+    "limits": "Source confirms the hook keeps its click witness locally while continuation consults state.reconciliationStop. The failed continuation emits no semantic readback, so its exact transient browser state remains unknown. No replay, ledger repair or runtime change was performed.",
+    "validation": { "focusedTestsPassed": 15, "failed": 0, "sourceChecks": "passed", "independentReview": "No actionable findings in the repaired helper." }
   },
   "finalCandidateWebVerification": {
     "authorizedFreshChat": true,

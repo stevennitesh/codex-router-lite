@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
 const replyOptions = { ui: browserDom, assistantSelector: browserDom.assistantSelector, regenerateName: browserDom.regenerateButtonExactName };
@@ -2674,6 +2676,115 @@ test("hidden Stop and an idle composer cannot establish inactivity without compl
     assert.equal(f.getState().sendConfirmed, true);
     assert.equal(f.activeTurn(), owner);
     assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+async function hookedInterruptionFixture() {
+  const nativeContext = {}, sessionId = messageId(3000), turnId = messageId(3001);
+  const f = fixture({ nativeContext, sessionId, fastTimers: true });
+  const stateDir = path.resolve("generated/web-stop-handoff-fixture"), runtimeModule = path.join(stateDir, "browser-runtime.mjs");
+  await f.run("bootstrap", { runtimeModule });
+  await f.run("open", { turnId });
+  const sent = await f.run("send", { ...plugin, turnId, prompt: "Owned interrupted request" });
+  const bindingName = Object.keys(nativeContext).find(key => key.startsWith("routerWeb_unit_test_"));
+  const ledger = { version: 1, threadId: sessionId, bindingId: bindingName.slice("routerWeb_".length),
+    browserOwnerTurnIds: [turnId], tabId: sent.tabId, chatUrl: sent.url, generationTurnKey: sent.generationTurnKey,
+    uncertainSend: false, lastTurn: { turnId, sendState: "sent", completed: false } };
+  const ledgerBefore = JSON.stringify(ledger);
+  const runStop = async () => {
+    let output;
+    const code = createWebStopCode({ stateDir, runtimeModule }, { threadId: sessionId, turnId, sessionId: messageId(3002) });
+    const fs = { lstatSync: filename => {
+      assert.equal(filename, path.join(stateDir, "web-in-app", "conversations", `${sessionId}.json`));
+      return { isFile: () => true, isSymbolicLink: () => false, dev: 1, ino: 1, size: ledgerBefore.length, mtimeMs: 1 };
+    }, readFileSync: (_filename, encoding) => { assert.equal(encoding, "utf8"); return JSON.stringify(ledger); } };
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "__publicImport", "globalThis", code.replaceAll("import(", "__publicImport("));
+    await execute({ requestMeta: { threadId: sessionId, "x-codex-turn-metadata": {
+      thread_id: sessionId, turn_id: turnId, session_id: messageId(3002) } }, write: value => { output = JSON.parse(value); } },
+    async name => { assert.equal(name, "node:fs"); return fs; }, nativeContext);
+    assert.equal(JSON.stringify(ledger), ledgerBefore, "The hook never settles or rewrites delivery acceptance.");
+    return JSON.parse(output.systemMessage.slice("ROUTER_WEB_STOP ".length));
+  };
+  const continueInterrupted = () => f.run("continue", { turnId: "next-turn", interruptedTurnId: turnId });
+  f.ui.stop = true; f.ui.hiddenMountedStop = true;
+  return { ...f, nativeContext, runStop, continueInterrupted, sent };
+}
+
+test("the generated Stop hook hands its witnessed composer restoration to canonical same-chat continuation", async () => {
+  const f = await hookedInterruptionFixture(), owner = f.activeTurn(), state = f.getState();
+  f.ui.texts.push("Partial answer before interruption");
+  const stopped = await f.runStop();
+  assert.equal(stopped.outcome, "cancelled"); assert.equal(stopped.freshController, false);
+  assert.equal(stopped.inactivityEvidence, "composer_restored"); assert.equal(stopped.readbackComplete, false);
+  assert.equal(f.getState(), state); assert.equal(f.activeTurn(), owner);
+  const receipt = state.reconciliationStop;
+  const continued = await f.continueInterrupted();
+  assert.deepEqual(receipt, { generationTurnKey: f.sent.generationTurnKey, idleAbsent: true, acknowledged: true });
+  assert.equal(continued.interrupted, true); assert.equal(continued.assistantText, "Partial answer before interruption");
+  assert.equal(continued.url, f.sent.url); assert.equal(continued.tabId, f.sent.tabId);
+  assert.equal(f.ui.complete, false, "Explicit DOM completion never arrives in this regression.");
+  assert.equal(f.getState(), state); assert.equal(f.getState().reconciliationStop, undefined);
+  assert.equal(f.activeTurn().turnId, "next-turn");
+  assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1); assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+});
+
+test("a rejected generated-hook click remains uncertain across hook and continuation retries", async () => {
+  for (const rejectedAt of ["dispatch", "acknowledgement"]) {
+    const f = await hookedInterruptionFixture(), owner = f.activeTurn();
+    if (rejectedAt === "dispatch") f.ui.onStopRequest = () => { throw new Error("Rejected before input effect."); };
+    else f.ui.stopClickError = new Error("Input effect occurred, acknowledgement rejected.");
+    const stopped = await f.runStop();
+    assert.equal(stopped.outcome, "blocked"); assert.equal(stopped.clickError, true);
+    assert.equal(f.getState().reconciliationStop.acknowledged, false);
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    // A visible Stop on the same generation cannot justify repeating an
+    // action whose input effect or acknowledgement remains uncertain.
+    f.ui.stop = true;
+    assert.equal((await f.runStop()).outcome, "blocked");
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, rejectedAt === "dispatch" ? 0 : 1);
+    assert.equal(f.activeTurn(), owner); assert.equal(f.ui.sendClicks, 1);
+    f.ui.stop = false; f.ui.complete = true;
+    assert.equal((await f.continueInterrupted()).interrupted, true);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("generated-hook receipts cannot replace missing transition proof or renewed generation activity", async () => {
+  for (const missingProof of ["no-click", "idle-already-present", "idle-not-restored", "renewed-stop"]) {
+    const f = await hookedInterruptionFixture(), owner = f.activeTurn();
+    if (missingProof === "no-click") f.ui.stop = false;
+    if (missingProof === "idle-already-present") f.ui.idleDuringStop = 1;
+    if (missingProof === "idle-not-restored") f.ui.idleButtonCount = 0;
+    const stopped = await f.runStop();
+    assert.equal(stopped.outcome, missingProof === "renewed-stop" ? "cancelled" : "blocked");
+    if (missingProof === "renewed-stop") f.ui.stop = true;
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    assert.equal(f.ui.complete, false); assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.stopRequests, missingProof === "no-click" ? 0 : 1);
+    assert.equal(f.ui.stopClicks, missingProof === "no-click" ? 0 : 1);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("a hook receipt cannot transfer continuation after its owner, generation, tab or saved URL changes", async () => {
+  for (const changed of ["owner", "receipt-generation", "generation", "tab", "url"]) {
+    const f = await hookedInterruptionFixture(), state = f.getState();
+    assert.equal((await f.runStop()).outcome, "cancelled");
+    const receipt = state.reconciliationStop;
+    if (changed === "owner") f.nativeContext.routerWebActiveTurns.set(state.sessionId, { ...f.activeTurn(), turnId: "foreign-turn" });
+    if (changed === "receipt-generation") receipt.generationTurnKey = messageId(4000);
+    if (changed === "generation") state.generationTurnKey = messageId(4000);
+    if (changed === "tab") f.ui.tabId = "foreign-tab";
+    if (changed === "url") f.ui.url = "https://chatgpt.com/c/foreign-conversation";
+    const owner = f.activeTurn();
+    await assert.rejects(f.continueInterrupted(), /different native turn|no affirmative inactivity proof|no longer unique and latest|tab is unavailable|not ready for continuation/);
+    assert.equal(f.getState(), state); assert.equal(f.activeTurn(), owner);
+    assert.equal(state.reconciliationStop, receipt);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1); assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
   }
 });
 
