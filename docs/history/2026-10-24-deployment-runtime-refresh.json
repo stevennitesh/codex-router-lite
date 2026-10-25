@@ -72,7 +72,7 @@
     }
   },
   "pending": [
-    "Run the manual Codex Stop check while the acknowledged final verification turn is still generating, then verify same-chat continuation after that Stop. No Stop event was recorded in the completed final-candidate attempts."
+    "The intermittent ChatGPT connector safety block from the second read remains unexplained; its connector-side block stage was not retained. The initial native read succeeded, and the blocked attempt executed no native command."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -341,7 +341,50 @@
       "unresolvedCodingActions": 0
     },
     "previousInterruptedLedgerByteIdentical": true,
-    "stopVerification": "pending-human-stop-on-active-turn",
-    "postStopContinuationVerification": "pending"
+    "stopVerification": "passed-native-receipt",
+    "postStopContinuationVerification": "passed",
+    "completedVerification": {
+      "stopConfirmedAt": "2026-10-25T01:24:02.149Z",
+      "userAction": "User reported pressing Codex Stop.",
+      "inputAcknowledgedBeforeStop": true,
+      "stop": {
+        "exactDispatchAndResultPaired": true,
+        "outcome": "cancelled",
+        "stage": "complete",
+        "clickAttempted": true,
+        "clickError": false,
+        "stopClicked": true,
+        "stopHidden": true,
+        "generationInactive": true,
+        "inactivityEvidence": "composer_restored",
+        "retained": true,
+        "childTerminalObserved": true,
+        "nativeElapsedMs": 1407,
+        "callbackElapsedMs": 1657,
+        "readbackStopVisible": false,
+        "readbackControlsRecognized": true,
+        "readbackComplete": false,
+        "readbackCounts": null,
+        "humanVisualConfirmation": null
+      },
+      "continuation": {
+        "completedAt": "2026-10-25T01:25:09.652Z",
+        "nativeTurnDurationMs": 9160,
+        "exactExpectedMarkerRecalled": true,
+        "sessionMarkerSuppliedInPrompt": false,
+        "nativeCommandsExecuted": 0,
+        "sameSavedChat": true,
+        "sameTab": true,
+        "sameBinding": true,
+        "operations": ["continue", "send", "observe", "retain"],
+        "recoveryBranchExecuted": false,
+        "retainedAndCompleted": true,
+        "uncertainSend": false,
+        "unresolvedCodingActions": 0
+      },
+      "priorInterruptedLedgerByteIdentical": true,
+      "hookAdapterAndRollbackPreserved": true,
+      "limit": "This live Stop follows authenticated read-only connector discovery. The earlier text-only attempt completed before its first substantive callback, so live incomplete-text wakeup remains unexercised; its affected regression tests passed separately."
+    }
   }
 }
