@@ -72,8 +72,7 @@
     }
   },
   "pending": [
-    "The isolated ChatGPT safety refusal was investigated but not reproduced: three native reads succeeded with the same model, effort, connector and incremental instruction style. Its connector-side stage remains unknown; no causal Router change or safety-annotation downgrade is supported.",
-    "Load the installed Stop-receipt handoff adapter through a normal Codex restart, then run automatic native-tool, Stop and same-tab continuation verification in an approved fresh disposable chat. Preserve the failed chat and protected ledgers."
+    "The isolated ChatGPT safety refusal was investigated but not reproduced: three native reads succeeded with the same model, effort, connector and incremental instruction style. Its connector-side stage remains unknown; no causal Router change or safety-annotation downgrade is supported."
   ],
   "limits": [
     "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
@@ -281,7 +280,7 @@
     "postRestartAdapterGenerationMatchesCandidate": true
   },
   "stopReceiptHandoffRepair": {
-    "status": "deployed-awaiting-normal-codex-restart-and-live-verification",
+    "status": "deployed-and-live-verified",
     "source": "src/web-stop-hook.mjs",
     "behavior": "Store generation-bound dispatch in the surviving binding before the SDK click, acknowledge only actual SDK success after ownership rechecks, and retain uncertainty to prevent duplicate input. Ordinary continuation consumes the same witness without requiring later DOM completion. Fresh controllers do not manufacture a continuation binding.",
     "proofContract": "A repeated hook cannot claim a prior click as its own; it stays blocked until explicit completion. The existing adapter result contract and cleanup budgets remain unchanged.",
@@ -312,7 +311,7 @@
     },
     "protectedInterruptedLedgerByteIdentical": true,
     "failedVerificationChatPreserved": true,
-    "liveVerification": "pending"
+    "liveVerification": "passed: stopReceiptHandoffAutomaticVerification"
   },
   "connectorSafetyInvestigation": {
     "status": "investigated-not-reproduced",
@@ -445,5 +444,95 @@
       "hookAdapterAndRollbackPreserved": true,
       "limit": "This live Stop follows authenticated read-only connector discovery. The earlier text-only attempt completed before its first substantive callback, so live incomplete-text wakeup remains unexercised; its affected regression tests passed separately."
     }
+  },
+  "stopReceiptHandoffAutomaticVerification": {
+    "testedAt": "2026-10-25T02:42:14.216Z",
+    "helper": "maintenance/web-verification.mjs",
+    "executionSurface": "codex-desktop-native",
+    "authorizedFreshChat": true,
+    "routerCommit": "38d1055336a2790a2f102eab4c2f22deecaae35e",
+    "adapterGeneration": "fa59c668011ca7ce6457c8686a9517a54040365f718eecf31b3cbb0bed2eea66",
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlan": {
+      "ready": true,
+      "changed": false,
+      "adapterGenerationMatchesCandidate": true,
+      "codexRestartRequired": false,
+      "hookDefinition": "preserved",
+      "tunnelConfiguration": "preserved"
+    },
+    "nativeRead": {
+      "status": "passed",
+      "nativeCommandsExecuted": 1,
+      "pairedTerminalResults": 1,
+      "exactSyntheticMarker": true,
+      "defaultPermissions": true,
+      "acceptedAndCompleted": true,
+      "nativeTurnDurationMs": 23881
+    },
+    "initialRecall": {
+      "status": "passed",
+      "exactExpectedMarkerRecalled": true,
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeCommandsExecuted": 0,
+      "acceptedAndCompleted": true,
+      "nativeTurnDurationMs": 8679
+    },
+    "acceptedActiveGeneration": {
+      "status": "passed",
+      "acceptedSend": true,
+      "currentGenerationObserved": true,
+      "stopVisible": true,
+      "completed": false,
+      "nativeCommandsExecuted": 0,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "stopInput": "Supported computer use selected the exact approved Codex chat, observed its native Stop control, and clicked it once. No human Stop press or direct browser cleanup was used.",
+    "stop": {
+      "status": "passed",
+      "nativeInterrupted": true,
+      "exactDispatchAndResultPaired": true,
+      "nativeDispatchCount": 1,
+      "adapterResultCount": 1,
+      "outcome": "cancelled",
+      "stage": "complete",
+      "freshController": false,
+      "clickAttempted": true,
+      "clickError": false,
+      "stopClicked": true,
+      "stopHidden": true,
+      "generationInactive": true,
+      "inactivityEvidence": "composer_restored",
+      "retained": true,
+      "childTerminalObserved": true,
+      "nativeElapsedMs": 942,
+      "callbackElapsedMs": 1093,
+      "readbackState": "inactive_readback",
+      "readbackStopVisible": false,
+      "readbackControlsRecognized": true,
+      "readbackComplete": false,
+      "readbackCounts": null
+    },
+    "continuation": {
+      "status": "passed",
+      "nativeCompleted": true,
+      "exactExpectedMarkerRecalled": true,
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeCommandsExecuted": 0,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "recoveryBranchExecuted": false,
+      "retainedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0,
+      "nativeTurnDurationMs": 7204
+    },
+    "fullRunPassed": true,
+    "protectedInterruptedLedgerByteIdentical": true,
+    "runtimeSnapshotsByteIdentical": true,
+    "failedVerificationChatPreserved": true,
+    "limits": "This fresh Desktop run verifies the deployed handoff repair on its selected Web route. Native cleanup and callback timings come from the matching adapter receipt; turn durations include model and tool work. The successful continuation followed affirmative inactivity while DOM completion remained false. Earlier failed runs remain historical evidence, and the isolated connector safety refusal's stage remains unknown."
   }
 }
