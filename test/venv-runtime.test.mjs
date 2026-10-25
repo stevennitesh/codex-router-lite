@@ -11,7 +11,7 @@ test("interpreter scheduling timeout remains inconclusive while actual failures 
   const outcome = venvRuntimeOutcome("python", { spawn, timeoutMs: 10, retryTimeoutMs: 20 });
   assert.equal(outcome.kind, "timeout");
   assert.deepEqual(seen.map(probe => probe.timeout), [10, 20]);
-  assert.deepEqual(seen[0].args, ["-I", "-c", "import encodings, sys; print(sys.prefix)"]);
+  assert.deepEqual(seen[0].args, ["-I", "-c", 'import encodings, sys; sys.exit("Python 3.11 or newer is required.") if sys.version_info < (3, 11) else print(sys.prefix)']);
   for (const result of [
     { error: Object.assign(new Error("missing interpreter"), { code: "ENOENT" }) },
     { status: 1, stderr: "could not import encodings" },

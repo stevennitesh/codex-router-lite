@@ -1445,7 +1445,7 @@ index 157cea55..6fe32ac0 100644
  
  // Stage-router scoring and tier selection — the shared signal-driven routing
 diff --git a/crates/libsy/src/observability.rs b/crates/libsy/src/observability.rs
-index 4779540d..2c15f551 100644
+index 4779540d..264a7d43 100644
 --- a/crates/libsy/src/observability.rs
 +++ b/crates/libsy/src/observability.rs
 @@ -78,6 +78,10 @@ pub(crate) fn run_span(algorithm: &str, request: &Request) -> Span {
@@ -2626,7 +2626,7 @@ index 045f51c8..bc4f56c1 100644
 +    }
  }
 diff --git a/crates/switchyard-server/tests/server.rs b/crates/switchyard-server/tests/server.rs
-index cd21d3c9..89aaf3ca 100644
+index cd21d3c9..9dbfa2c6 100644
 --- a/crates/switchyard-server/tests/server.rs
 +++ b/crates/switchyard-server/tests/server.rs
 @@ -9,6 +9,7 @@ use std::error::Error;
@@ -4352,6 +4352,36 @@ index c9bb8828..140f5717 100644
      let mut encoded = Vec::new();
      // Some upstream translators (Kimi K3) resolve a tool output by an explicit
      // `name`, so pair every output with the name of the call it answers.
+diff --git a/crates/switchyard-translation/src/codecs/responses/stream.rs b/crates/switchyard-translation/src/codecs/responses/stream.rs
+index 6d30a60e..2e7b0c4a 100644
+--- a/crates/switchyard-translation/src/codecs/responses/stream.rs
++++ b/crates/switchyard-translation/src/codecs/responses/stream.rs
+@@ -269,7 +269,7 @@ fn decode_responses_stream(
+                 for (position, item) in items.iter().enumerate() {
+                     if let Some(item) = item.as_object() {
+                         out.extend(decode_responses_completed_item(item, position, state));
+-                        if matches!(out.last(), Some(LlmResponseChunk::StreamError { .. })) {
++                        if matches!(out.last(), Some(LlmResponseChunk::DecodeError { .. })) {
+                             return out;
+                         }
+                     }
+@@ -789,13 +789,14 @@ fn decode_responses_completed_item(
+     Vec::new()
+ }
+ 
+-// A snapshot may extend streamed content, but cannot retract content already sent.
++// A snapshot may extend streamed content, but cannot retract content already sent. A
++// conflict is invalid provider data, so it is a `DecodeError`.
+ fn snapshot_suffix(
+     decoded: &mut String,
+     snapshot: &str,
+ ) -> Result<Option<String>, LlmResponseChunk> {
+     let Some(suffix) = snapshot.strip_prefix(decoded.as_str()) else {
+-        return Err(LlmResponseChunk::StreamError {
++        return Err(LlmResponseChunk::DecodeError {
+             message: "Responses snapshot conflicts with streamed content".to_string(),
+         });
+     };
 diff --git a/crates/switchyard-translation/tests/request_translation.rs b/crates/switchyard-translation/tests/request_translation.rs
 index 2af80f9d..478f4909 100644
 --- a/crates/switchyard-translation/tests/request_translation.rs
@@ -4393,6 +4423,90 @@ index 2af80f9d..478f4909 100644
  // Verifies nested fields cannot override the Responses format discriminator.
  #[test]
  fn chat_json_schema_response_format_ignores_nested_type_override() -> TestResult {
+diff --git a/crates/switchyard-translation/tests/stream_translation.rs b/crates/switchyard-translation/tests/stream_translation.rs
+index 26d65ada..c9de1706 100644
+--- a/crates/switchyard-translation/tests/stream_translation.rs
++++ b/crates/switchyard-translation/tests/stream_translation.rs
+@@ -203,6 +203,70 @@ fn preserved_same_format_replay_stops_after_an_error() -> TestResult {
+     Ok(())
+ }
+ 
++// A finished snapshot cannot contradict content already sent to a same-format client.
++#[test]
++fn preserved_same_format_snapshot_conflict_replays_as_an_error() -> TestResult {
++    let format = WireFormat::OpenAiResponses;
++    let cases = [
++        (
++            json!({"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "delta": "Hello"}),
++            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Goodbye"}]}),
++            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Hello world"}]}),
++        ),
++        (
++            json!({"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "{\"city\":\"Paris\""}),
++            json!({"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"London\"}"}),
++            json!({"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}),
++        ),
++    ];
++    let engine = TranslationEngine::default();
++    for (delta, conflicting, valid) in cases {
++        for completed in [false, true] {
++            for (item, conflict) in [(&conflicting, true), (&valid, false)] {
++                let snapshot = if completed {
++                    json!({"type": "response.completed", "response": {"id": "resp_1", "status": "completed", "output": [item]}})
++                } else {
++                    json!({"type": "response.output_item.done", "output_index": 0, "item": item})
++                };
++                let mut decode_state = StreamTranslationState::new(format, format);
++                let mut encode_state = StreamTranslationState::new(format, format);
++                let mut replayed = Vec::new();
++                for event in [delta.clone(), snapshot.clone()] {
++                    let preserved = engine.decode_stream_event(&mut decode_state, format, event)?;
++                    replayed.extend(engine.encode_stream_event(
++                        &mut encode_state,
++                        format,
++                        preserved,
++                    )?);
++                }
++                if conflict {
++                    assert_eq!(replayed.len(), 2, "{replayed:?}");
++                    assert_eq!(replayed[0], delta);
++                    assert_eq!(replayed[1]["type"], "error", "{replayed:?}");
++                    assert_eq!(
++                        replayed[1]["message"],
++                        "Responses snapshot conflicts with streamed content"
++                    );
++                    let trailing = engine.decode_stream_event(
++                        &mut decode_state,
++                        format,
++                        json!({"type": "response.output_text.delta", "delta": "after"}),
++                    )?;
++                    assert!(
++                        engine
++                            .encode_stream_event(&mut encode_state, format, trailing)?
++                            .is_empty()
++                    );
++                    assert!(engine.finish_stream(&mut encode_state, format)?.is_empty());
++                } else {
++                    assert_eq!(replayed, vec![delta.clone(), snapshot]);
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
+ #[test]
+ fn anthropic_errors_include_type_and_terminate_stream() -> TestResult {
+     let engine = TranslationEngine::default();
+@@ -3419,7 +3483,7 @@ fn responses_terminal_snapshots_recover_missing_output_once() -> TestResult {
+         )?;
+         assert!(matches!(
+             decoded.normalized().last(),
+-            Some(LlmResponseChunk::StreamError { .. })
++            Some(LlmResponseChunk::DecodeError { .. })
+         ));
+         assert!(
+             !decoded
 diff --git a/crates/switchyard-typesafe-client/README.md b/crates/switchyard-typesafe-client/README.md
 index 4209d031..704aab58 100644
 --- a/crates/switchyard-typesafe-client/README.md

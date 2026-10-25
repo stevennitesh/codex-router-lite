@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -116,3 +118,108 @@ test("real ACL verification works without inheriting ambient credentials", windo
   assert.equal(privateFileIsProtected(target), true);
   assert.equal(verifications, 2);
 });
+
+// These paths exist only in the mocked filesystem. Each writer reaches its
+// real cleanup boundary without launching a process or opening private state.
+function privateCleanupFixture(t, writer, race) {
+  const original = Object.assign(new Error("synthetic private-write failure"), { code: race === "collision" ? "EEXIST" : "EIO" });
+  const owned = { kind: "file", dev: 17n, ino: 2n ** 60n };
+  const foreign = { ...owned, ino: owned.ino + 1n };
+  let current = race === "collision" ? foreign : owned;
+  let hardened = false;
+  let contents = "";
+  let closed = 0;
+  let removals = 0;
+  const metadata = value => ({ ...value,
+    isFile: () => value.kind === "file",
+    isSymbolicLink: () => value.kind === "symlink",
+  });
+  const fail = () => {
+    if (race === "regular") current = foreign;
+    if (race === "device") current = { ...owned, dev: owned.dev + 1n };
+    if (race === "directory" || race === "symlink") current = { ...owned, kind: race };
+    if (race === "absent") current = undefined;
+    throw original;
+  };
+  const harden = () => {
+    assert.equal(contents, "", "private bytes must wait for hardening");
+    hardened = true;
+    if (writer === "create") fail();
+  };
+  t.mock.method(fs, "mkdirSync", () => {});
+  t.mock.method(fs, "openSync", (_target, flags, mode) => {
+    assert.equal(flags, "wx");
+    assert.equal(mode, 0o600);
+    if (race === "collision") throw original;
+    return 123;
+  });
+  t.mock.method(fs, "fstatSync", (descriptor, options) => {
+    assert.equal(descriptor, 123);
+    assert.equal(options?.bigint, true, "ownership must retain exact file IDs");
+    if (race === "unknown") throw original;
+    return metadata(owned);
+  });
+  t.mock.method(fs, "writeFileSync", (descriptor, value) => {
+    assert.equal(descriptor, 123, "write through the original descriptor");
+    assert.equal(hardened, true);
+    contents = value;
+  });
+  t.mock.method(fs, "closeSync", descriptor => { assert.equal(descriptor, 123); closed++; });
+  t.mock.method(fs, "renameSync", fail);
+  t.mock.method(fs, "lstatSync", (_target, options) => {
+    assert.equal(options?.bigint, true);
+    if (race === "inspect") throw Object.assign(new Error("unbounded synthetic detail ".repeat(1000)), { code: "EACCES" });
+    if (!current) throw Object.assign(new Error("synthetic absent path"), { code: "ENOENT" });
+    return metadata(current);
+  });
+  t.mock.method(fs, "unlinkSync", () => {
+    removals++;
+    if (race === "cleanup") throw Object.assign(new Error("unbounded synthetic detail ".repeat(1000)), { code: "EPERM" });
+    current = undefined;
+  });
+  t.mock.method(childProcess, "execFileSync", harden);
+  t.mock.method(childProcess, "spawn", () => {
+    harden();
+    const child = new EventEmitter();
+    child.stderr = new PassThrough();
+    queueMicrotask(() => child.emit("close", 0, null));
+    return child;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  return {
+    original,
+    invoke: () => writer === "create"
+      ? createPrivateFile("synthetic-private-file", "synthetic contents", { protect: harden })
+      : writer === "sync"
+        ? writePrivateFile("synthetic-private-file", "synthetic contents")
+        : writePrivateJsonAsync("synthetic-private-file", { synthetic: "contents" }),
+    result: () => ({ current, owned, foreign, closed, removals }),
+  };
+}
+
+for (const writer of ["create", "sync", "async"]) {
+  for (const race of ["regular", "device", "directory", "symlink", "absent", "owned", "cleanup", "inspect", "unknown", "collision"]) {
+    test(writer + " private cleanup preserves ownership after " + race + " failure", async t => {
+      const fixture = privateCleanupFixture(t, writer, race);
+      let failure;
+      try { await fixture.invoke(); } catch (error) { failure = error; }
+      assert.equal(failure, fixture.original, "cleanup must preserve the operation's original error");
+      const result = fixture.result();
+      assert.equal(result.closed, race === "collision" ? 0 : 1);
+      assert.equal(result.removals, ["owned", "cleanup"].includes(race) ? 1 : 0);
+      if (["absent", "owned"].includes(race)) assert.equal(result.current, undefined);
+      else assert.ok(result.current, "an unrelated or unverified object must be preserved");
+      if (race === "regular" || race === "collision") assert.equal(result.current, result.foreign);
+      if (race === "device") assert.notEqual(result.current.dev, result.owned.dev);
+      if (["directory", "symlink"].includes(race)) assert.equal(result.current.kind, race);
+      if (["absent", "owned", "collision"].includes(race)) assert.equal(failure.cleanupError, undefined);
+      else {
+        const code = race === "cleanup" ? "EPERM" : race === "inspect" ? "EACCES" : "ESTALE";
+        assert.equal(failure.cleanupError?.code, code);
+        assert.ok(failure.cleanupError.message.length < 128, "cleanup diagnostics must be bounded");
+        assert.doesNotMatch(failure.cleanupError.message, /unbounded synthetic detail/);
+      }
+    });
+  }
+}

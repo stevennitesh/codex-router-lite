@@ -23,8 +23,10 @@ export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
 // The independent LiteLLM security floor fixed CVE-2026-84377. Regenerating
 // the lock must not make an older vulnerable gateway eligible for installation.
 const LITELLM_SECURITY_FLOOR = [1, 96, 2];
+// filelock 4.2.1 fixes the lock-file vulnerabilities affecting the retired 3.x line.
+const FILELOCK_SECURITY_FLOOR = [4, 2, 1];
 
-// Pinning the two direct requirements left their whole transitive tree floating:
+// Pinning only direct requirements left their whole transitive tree floating:
 // every install re-resolved `litellm[proxy]` against PyPI and executed whatever
 // it got. `requirements/python.txt` is the hash-verified closure of the pins
 // in python.in, and both installation tools install *from that file* with
@@ -38,7 +40,7 @@ const PYTHON_LOCK = "requirements/python.txt";
 const PYTHON_LOCK_INPUT = "requirements/python.in";
 
 // The product runs on Windows, so the lock resolves only the Windows dependency
-// graph for CPython 3.10+. `pythonLockDrift` checks the platform and hash flags
+// graph for CPython 3.11+. `pythonLockDrift` checks the platform and hash flags
 // uv records in the header as well as the direct pins.
 
 function repoPath(root, relative) {
@@ -139,16 +141,20 @@ export function pythonRequirements(root = SOURCE_ROOT) {
     throw new Error(`${PYTHON_LOCK_INPUT} contains duplicate direct requirements`);
   }
   const specifiers = requirements.map((line) => line.split("==")[0]).sort();
-  if (specifiers.join(",") !== "fastapi,litellm[proxy]") {
-    throw new Error(`${PYTHON_LOCK_INPUT} must pin fastapi and litellm[proxy]`);
+  if (specifiers.join(",") !== "fastapi,filelock,litellm[proxy]") {
+    throw new Error(`${PYTHON_LOCK_INPUT} must pin fastapi, filelock and litellm[proxy]`);
   }
-  const litellm = requirements.find((line) => line.startsWith("litellm[proxy]=="));
-  const version = requirementParts(litellm).version;
-  const stable = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
-  const parts = stable?.slice(1).map(Number);
-  const difference = parts?.map((part, index) => part - LITELLM_SECURITY_FLOOR[index]).find((part) => part !== 0) ?? 0;
-  if (!stable || difference < 0) {
-    throw new Error(`LiteLLM must use a stable version at or above ${LITELLM_SECURITY_FLOOR.join(".")}`);
+  for (const [specifier, label, floor] of [
+    ["litellm[proxy]", "LiteLLM", LITELLM_SECURITY_FLOOR],
+    ["filelock", "filelock", FILELOCK_SECURITY_FLOOR],
+  ]) {
+    const requirement = requirements.find((line) => line.startsWith(`${specifier}==`));
+    const stable = /^(\d+)\.(\d+)\.(\d+)$/u.exec(requirementParts(requirement).version);
+    const parts = stable?.slice(1).map(Number);
+    const difference = parts?.map((part, index) => part - floor[index]).find((part) => part !== 0) ?? 0;
+    if (!stable || difference < 0) {
+      throw new Error(`${label} must use a stable version at or above ${floor.join(".")}`);
+    }
   }
   return requirements;
 }
@@ -343,6 +349,9 @@ export function pythonLockDrift(root = SOURCE_ROOT) {
     if (!header.includes(flag)) {
       problems.push(`${PYTHON_LOCK} was not generated with ${flag}`);
     }
+  }
+  if (!/(?:^|\s)--python-version\s+3\.11(?:\s|$)/u.test(header)) {
+    problems.push(`${PYTHON_LOCK} was not generated with --python-version 3.11`);
   }
   if (header.includes("--universal")) {
     problems.push(`${PYTHON_LOCK} must not include the unsupported universal dependency graph`);

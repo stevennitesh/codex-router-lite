@@ -836,6 +836,60 @@ test("acknowledged Stop can prove restored composer while the owned turn complet
   const parsed = readStopResult({ content: [{ type: "text", text: JSON.stringify(f.outputs.at(-1)) }] });
   assert.equal(parsed.ok, true);
   assert.equal(parsed.inactivityEvidence, "composer_restored", "The adapter accepts the actual generated hook envelope.");
+  const receipt = f.first.state.reconciliationStop, repeated = await f.run();
+  assert.equal(repeated.outcome, "blocked"); assert.equal(repeated.clickAttempted, false);
+  assert.equal(repeated.inactivityEvidence, "none");
+  const parsedRepeated = readStopResult({ content: [{ type: "text", text: JSON.stringify(f.outputs.at(-1)) }] });
+  assert.equal(parsedRepeated.ok, false); assert.equal(parsedRepeated.outcome, "blocked");
+  assert.equal(parsedRepeated.code, "stop_confirmation_failed", "A repeated hook returns a valid blocked proof, not an incomplete envelope.");
+  assert.equal(f.first.state.reconciliationStop, receipt); assert.equal(clicked(f).length, 1);
+  f.first.complete = true;
+  assert.equal((await f.run()).outcome, "already_idle");
+  assert.equal(readStopResult({ content: [{ type: "text", text: JSON.stringify(f.outputs.at(-1)) }] }).ok, true);
+  assert.equal(clicked(f).length, 1);
+});
+
+test("Stop records dispatch before the SDK call and fences acknowledgement against changed authority", async () => {
+  for (const changed of ["none", "metadata", "owner", "generation", "tab", "ledger", "receipt"]) {
+    const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+    let dispatched;
+    f.model.onCall = name => {
+      if (name === "click_request") {
+        dispatched = f.first.state.reconciliationStop;
+        assert.equal(dispatched.generationTurnKey, f.first.generationTurnKey);
+        assert.equal(dispatched.idleAbsent, true); assert.equal(dispatched.acknowledged, false);
+      }
+      if (name !== "click") return;
+      if (changed === "metadata") f.context.nodeRepl.requestMeta = f.metadata(f.model.owner, id(13));
+      if (changed === "owner") f.context.routerWebActiveTurns.set(f.model.owner, { ...f.first.active });
+      if (changed === "generation") f.first.state.generationTurnKey = id(500);
+      if (changed === "tab") f.first.tab.id = "changed-tab";
+      if (changed === "ledger") f.first.ledger.generationTurnKey = id(500);
+      if (changed === "receipt") f.first.state.reconciliationStop = { ...dispatched };
+    };
+    const result = await f.run();
+    assert.equal(clicked(f).length, 1);
+    if (changed === "none") {
+      stopped(result); assert.equal(dispatched.acknowledged, true);
+    } else {
+      assert.equal(result.outcome, "blocked"); assert.equal(dispatched.acknowledged, false);
+      assert.equal(f.first.state.reconciliationStop.acknowledged, false);
+      assert.equal(f.calls.filter(call => call.name === "generation").length, 2,
+        "Changed authority prevents another browser read or an accepted receipt.");
+    }
+  }
+});
+
+test("a fresh Stop controller never manufactures a continuation binding or durable composer receipt", async () => {
+  const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+  f.fresh(f.first);
+  const registry = f.context.routerWebActiveTurns, peer = f.context[f.second.key];
+  const result = await f.run(); stopped(result);
+  assert.equal(result.freshController, true); assert.equal(result.inactivityEvidence, "composer_restored");
+  assert.equal(f.context[f.first.key], undefined); assert.equal(registry.has(f.first.thread), false);
+  assert.equal(f.context.routerWebActiveTurns, registry); assert.equal(f.context[f.second.key], peer);
+  assert.equal((await f.run()).outcome, "blocked", "A new controller has no surviving witnessed transition.");
+  assert.equal(clicked(f).length, 1); assert.equal(f.context[f.first.key], undefined);
 });
 
 test("only a newly restored unique visible idle control after acknowledged Stop proves inactivity", async () => {

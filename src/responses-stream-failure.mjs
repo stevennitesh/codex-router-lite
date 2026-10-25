@@ -201,7 +201,7 @@ class FailureMetadataObserver {
   }
 }
 
-export function responsesStreamFailure(response, { code, message }) {
+export function responsesStreamFailure(response, { code, message, localRejection = false }) {
   const context = contexts.get(response);
   if (!context) return undefined;
   const pending = context.observer?.finishForFailure() === true;
@@ -209,18 +209,19 @@ export function responsesStreamFailure(response, { code, message }) {
   context.terminal = true;
   const safeCode = (typeof code === "string" && code || "local_router_stream_failed").slice(0, 128).toWellFormed();
   const safeMessage = (typeof message === "string" && message || "The local router lost the upstream response stream.").slice(0, 2048).toWellFormed();
+  const errorCode = localRejection === true ? "invalid_prompt" : "server_error";
   if (!context.trusted || !context.id || !context.model || context.createdAt === undefined || context.nextSequence === undefined) {
     // Codex ignores generic errors on native streams. This local failure
     // preserves the diagnosed cause without claiming an upstream snapshot.
-    if (context.minimalFailure) return { event: { type: "response.failed", code: safeCode,
-      response: { status: "failed", error: { code: "server_error", message: safeMessage } } } };
+    if (context.minimalFailure || localRejection === true) return { event: { type: "response.failed", code: safeCode,
+      response: { status: "failed", error: { code: errorCode, message: safeMessage } } } };
     return undefined;
   }
   return { event: {
     type: "response.failed", sequence_number: context.nextSequence,
     code: safeCode,
     response: { id: context.id, object: "response", created_at: context.createdAt, model: context.model,
-      status: "failed", error: { code: "server_error", message: safeMessage },
+      status: "failed", error: { code: errorCode, message: safeMessage },
       output: [], parallel_tool_calls: false, tool_choice: "none", tools: [] },
   } };
 }

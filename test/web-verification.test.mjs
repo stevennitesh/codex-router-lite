@@ -1,0 +1,291 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { browserScript } from '../src/web-browser.mjs';
+import { evaluateWebPhase, parseWebJsonLines, prepareWebVerification, waitWebVerification, watchWebEvidence, webVerificationPrompt } from '../maintenance/web-verification.mjs';
+
+const threadId = '01a16fe6-04f4-7882-abd1-7ef5b26c5b65';
+const turnId = '01a170a7-9be0-7200-98bd-045683e5f699';
+const generation = '3927100f-af8d-4e10-9570-cf7d599b2f39';
+const generationTurnKey = '5ce680b6-c314-4d8d-a4f8-37678d39c093';
+const at = '2026-10-24T22:00:01.000Z';
+const marker = 'WEB_NATIVE_MARKER_PRIVATE_CANARY';
+const baseline = { bindingId: 'unit_test', tabId: '1', chatUrl: 'https://chatgpt.com/c/private-canary' };
+const authority = { at, code: 'authority_cached', generation, threadId, turnId, authorityDigest: 'a'.repeat(64), canonicalDigest: 'b'.repeat(64) };
+const row = (type, payload) => ({ type, timestamp: at, payload });
+const jsonLines = rows => rows.map(value => JSON.stringify(value)).join('\n') + '\n';
+const writeJson = (file, value) => writeFileSync(file, JSON.stringify(value), 'utf8');
+
+function evidence(phase = 'ready') {
+  const completed = !['ready', 'stop'].includes(phase);
+  const run = { version: 1, threadId, createdAt: '2026-10-24T22:00:00.000Z', baseline: { ...baseline }, marker,
+    fixturePath: 'E:\\private\\native-fixture.txt', phases: { stop: { status: 'passed' } },
+    ready: { ...authority, generationTurnKey } };
+  const ledger = { version: 1, threadId, ...baseline, generationTurnKey, generationCompleted: completed,
+    lastTurn: { turnId, sendState: 'sent', completed }, uncertainSend: false, unresolvedCoding: [] };
+  const rows = [row('session_meta', { id: threadId }), row('event_msg', { type: 'task_started', turn_id: turnId }),
+    row('response_item', { type: 'function_call_output', id: 'd'.repeat(40), name: 'send_message_to_thread', namespace: 'codex_app',
+      output: 'PRIVATE_INCOMING_PROMPT_CANARY', internal_chat_message_metadata_passthrough: { turn_id: turnId, create_time: Date.parse(at) / 1000 } })];
+  let counter = 0;
+  const addBrowser = (operation, fields = {}) => {
+    const callId = `call_router_web_${String(++counter).padStart(32, '0')}`;
+    const token = `frame_${String(counter).padStart(16, '0')}`;
+    const options = { bindingId: baseline.bindingId, sessionId: threadId, turnId, operation, frameToken: token,
+      ...(operation === 'send' ? { prompt: 'a prompt without the private marker' } : {}),
+      ...(operation === 'continue' ? { expectedOwnerTurnIds: ['prior-turn'], interruptedTurnId: 'prior-turn' } : {}) };
+    const frame = { operation, normal: true, url: baseline.chatUrl, tabId: '1', ...fields };
+    rows.push(row('response_item', { type: 'function_call', call_id: callId, name: 'mcp__node_repl.js', arguments: JSON.stringify({ code: browserScript(options) }) }));
+    rows.push(row('response_item', { type: 'function_call_output', call_id: callId,
+      output: { content: [{ type: 'text', text: `ROUTER_WEB_BROWSER_${token}_BEGIN\n${JSON.stringify({ routerBrowser: frame })}\nROUTER_WEB_BROWSER_${token}_END` }] } }));
+    return { options, frame, output: rows.at(-1).payload, call: rows.at(-2).payload };
+  };
+  const continuation = addBrowser('continue');
+  const send = addBrowser('send', { sent: true });
+  const observation = addBrowser('observe', { generationTurnKey, completed, stopVisible: !completed });
+  if (completed) {
+    addBrowser('retain', { retained: true, completed: true, stopVisible: false });
+    rows.push(row('response_item', { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: marker }] }));
+    rows.push(row('event_msg', { type: 'task_complete', turn_id: turnId }));
+  }
+  const eventRows = [{ ...authority }];
+  if (phase === 'native') {
+    rows.splice(rows.length - 2, 0,
+      row('response_item', { type: 'function_call', call_id: 'native-command', name: 'exec_command', arguments: JSON.stringify({ cmd: `Get-Content -LiteralPath '${run.fixturePath}' -Raw -Encoding UTF8` }) }),
+      row('response_item', { type: 'function_call_output', call_id: 'native-command', output: `Chunk ID: 42\nWall time: 0.1 seconds\nProcess exited with code 0\nFinal output:\n${marker}\r\n` }));
+  }
+  if (phase === 'stop') {
+    rows.push(row('event_msg', { type: 'turn_aborted', turn_id: turnId, reason: 'interrupted' }));
+    eventRows.push({ at, code: 'stop_native_dispatched', generation, requestDigest: 'c'.repeat(64) },
+      { at, code: 'stop_confirmed', generation, requestDigest: 'c'.repeat(64), outcome: 'cancelled', stage: 'complete',
+        clickAttempted: true, clickError: false, stopClicked: true, stopHidden: true, inactivityEvidence: 'composer_restored',
+        generationInactive: true, retained: true, childTerminalObserved: true });
+  }
+  return { run, phase, turnId, sessionRows: rows, eventRows, ledger, fixtureText: `${marker}\n`, continuation, send, observation };
+}
+
+function replaceFrame(record) {
+  const text = record.output.output.content[0].text;
+  record.output.output.content[0].text = text.replace(/\n\{[^\n]+\}\n/u, `\n${JSON.stringify({ routerBrowser: record.frame })}\n`);
+}
+
+test('readiness requires accepted Send, the current generation, and canonical paired browser evidence', () => {
+  const input = evidence();
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  input.ledger.lastTurn.sendState = 'sending';
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
+  input.ledger.lastTurn.sendState = 'sent';
+  input.ledger.uncertainSend = true;
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending', 'a provisional Send awaits its actual acknowledgement');
+  input.ledger.uncertainSend = false;
+  input.observation.frame.generationTurnKey = 'stale-generation'; replaceFrame(input.observation);
+  assert.equal(evaluateWebPhase(input).receipt.currentGenerationObserved, false);
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
+});
+
+test('readiness refuses malformed delivery, duplicate calls, wrong sessions, and terminal completion', () => {
+  for (const [mutate, code] of [
+    [input => { delete input.ledger.uncertainSend; }, 'unsupported_ledger'],
+    [input => { input.sessionRows.push(input.sessionRows.find(entry => entry.payload?.type === 'function_call')); }, 'duplicate_or_invalid_call'],
+    [input => { input.sessionRows[0].payload.id = generation; }, 'session_thread_mismatch'],
+    [input => { input.sessionRows.push(row('event_msg', { type: 'task_complete', turn_id: turnId })); }, 'completed_before_native_stop'],
+    [input => { input.run.createdAt = '2026-10-24T22:00:02.000Z'; }, 'stale_turn'],
+  ]) {
+    const input = evidence(); mutate(input);
+    assert.equal(evaluateWebPhase(input).receipt.code, code);
+  }
+});
+
+test('app prompt ingress is recognized only in its exact first-item envelope; ordinary orphan outputs fail', () => {
+  assert.equal(evaluateWebPhase(evidence('native')).receipt.status, 'passed');
+  for (const mutate of [
+    input => { input.sessionRows[2].payload.namespace = 'foreign'; },
+    input => { input.sessionRows[2].payload.name = 'exec_command'; },
+    input => { input.sessionRows[2].payload.internal_chat_message_metadata_passthrough.turn_id = generation; },
+    input => { input.sessionRows.push(structuredClone(input.sessionRows[2])); },
+  ]) {
+    const input = evidence('native'); mutate(input);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'unsupported_app_prompt_ingress');
+  }
+  const orphan = evidence('native');
+  orphan.sessionRows.push(row('response_item', { type: 'function_call_output', call_id: 'orphan-native-output', output: marker }));
+  assert.equal(evaluateWebPhase(orphan).receipt.code, 'unpaired_output');
+});
+
+test('canonical browser results need no invented ok flag and real error results remain rejected', () => {
+  const input = evidence('native');
+  assert.equal(Object.hasOwn(input.observation.frame, 'ok'), false);
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  input.observation.output.output = { isError: true, content: [{ type: 'text', text: 'PRIVATE_TOOL_ERROR_CANARY' }] };
+  const failed = evaluateWebPhase(input).receipt;
+  assert.equal(failed.code, 'unsupported_browser_output');
+  assert.doesNotMatch(JSON.stringify(failed), /PRIVATE/u);
+  const requestError = evidence('ready');
+  requestError.observation.frame.requestError = 'unknown_error'; replaceFrame(requestError.observation);
+  assert.equal(evaluateWebPhase(requestError).receipt.code, 'browser_request_error');
+});
+
+test('a real native interruption and matching terminal Stop receipt are independently necessary', () => {
+  const input = evidence('stop');
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  input.sessionRows.pop();
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending', 'browser cleanup cannot stand in for native Stop');
+  input.sessionRows.push(row('event_msg', { type: 'turn_aborted', turn_id: turnId, reason: 'interrupted' }));
+  input.eventRows.pop();
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending', 'dispatch is not a terminal acknowledgement');
+});
+
+test('only the final owned Stop observation may carry the actual native interruption terminal', () => {
+  const input = evidence('stop');
+  input.observation.output.output = 'aborted by user after 47.1s';
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  input.sessionRows.pop();
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending', 'a cancellation-shaped output is not native interruption proof');
+  input.sessionRows.push(row('event_msg', { type: 'turn_aborted', turn_id: turnId, reason: 'interrupted' }));
+  input.eventRows.pop();
+  assert.equal(evaluateWebPhase(input).receipt.status, 'pending', 'a cancellation-shaped output is not adapter terminal proof');
+  const ordinary = evidence('native'); ordinary.observation.output.output = 'aborted by user after 47.1s';
+  assert.equal(evaluateWebPhase(ordinary).receipt.code, 'unsupported_browser_output');
+  const malformed = evidence('stop'); malformed.observation.output.output = 'PRIVATE_CANCEL_LOOKALIKE';
+  assert.equal(evaluateWebPhase(malformed).receipt.code, 'unsupported_browser_output');
+  const notLast = evidence('stop'); notLast.send.output.output = 'aborted by user after 47.1s';
+  assert.equal(evaluateWebPhase(notLast).receipt.code, 'unsupported_browser_output');
+});
+
+test('Stop rejects receipt mismatch, already-idle cleanup, and a result without an actual child terminal', () => {
+  for (const [key, value, code] of [
+    ['requestDigest', 'd'.repeat(64), 'stop_request_mismatch'],
+    ['outcome', 'already_idle', 'native_stop_unconfirmed'],
+    ['childTerminalObserved', false, 'native_stop_unconfirmed'],
+    ['retained', null, 'native_stop_unconfirmed'],
+  ]) {
+    const input = evidence('stop'); input.eventRows.at(-1)[key] = value;
+    assert.equal(evaluateWebPhase(input).receipt.code, code);
+  }
+  const replaced = evidence('stop');
+  replaced.eventRows.push({ ...authority, turnId: generation });
+  assert.equal(evaluateWebPhase(replaced).receipt.code, 'stop_authority_replaced');
+});
+
+test('continuation needs completed retention in the same binding and cannot reopen or recover the tab', () => {
+  const input = evidence('continuation');
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  input.continuation.frame.recovered = true; replaceFrame(input.continuation);
+  assert.equal(evaluateWebPhase(input).receipt.code, 'browser_recovery_or_rollover');
+  delete input.continuation.frame.recovered; replaceFrame(input.continuation);
+  input.ledger.tabId = 'reopened-tab';
+  assert.equal(evaluateWebPhase(input).receipt.code, 'saved_binding_changed');
+});
+
+test('native verification requires one exact paired command and its real exit/output framing', () => {
+  const input = evidence('native');
+  assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  const output = input.sessionRows.find(entry => entry.payload?.call_id === 'native-command' && entry.payload.type.endsWith('_output'));
+  output.payload.output = output.payload.output.replace('code 0', 'code 1');
+  assert.equal(evaluateWebPhase(input).receipt.code, 'native_command_output_failed');
+  input.sessionRows = input.sessionRows.filter(entry => entry.payload?.call_id !== 'native-command');
+  const result = evaluateWebPhase(input).receipt;
+  assert.equal(result.code, 'native_command_missing'); assert.equal(result.nativeCommandCount, 0);
+});
+
+test('zero-exec safety refusal cannot pass and private canaries never enter receipts', () => {
+  const input = evidence('native');
+  input.sessionRows = input.sessionRows.filter(entry => entry.payload?.call_id !== 'native-command');
+  input.sessionRows.find(entry => entry.payload?.phase === 'final_answer').payload.content[0].text = `I cannot execute commands. PRIVATE_PROVIDER_CANARY ${marker}`;
+  const receipt = evaluateWebPhase(input).receipt;
+  assert.equal(receipt.status, 'failed'); assert.equal(receipt.nativeCommandCount, 0);
+  assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE|chatgpt|unit_test|native-fixture|compiler/u);
+  const prompts = ['native', 'recall', 'ready', 'continuation'].map(phase => webVerificationPrompt(input.run, phase));
+  assert.ok(prompts.every(prompt => !prompt.includes(marker)));
+  const malformed = evidence('stop'); malformed.eventRows.at(-1).childTerminalObserved = 'PRIVATE_TERMINAL_CANARY';
+  assert.doesNotMatch(JSON.stringify(evaluateWebPhase(malformed).receipt), /PRIVATE/u);
+  assert.match(webVerificationPrompt(input.run, 'ready'), /call codex_tools_list exactly once with the query exec_command/u);
+});
+
+test('JSONL append watcher waits for a truncated line to finish without polling', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'web-evidence-')); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'evidence.jsonl'); writeFileSync(file, '');
+  let inspections = 0;
+  const result = await watchWebEvidence([file], () => {
+    inspections++;
+    const parsed = parseWebJsonLines(readFileSync(file, 'utf8'));
+    if (inspections === 1) setImmediate(() => writeFileSync(file, '{"finished":'));
+    if (inspections === 2) setImmediate(() => writeFileSync(file, '{"finished":true}\n'));
+    return { receipt: { status: parsed[0]?.finished === true ? 'passed' : 'pending' } };
+  }, { timeoutMs: 2000 });
+  assert.equal(result.receipt.status, 'passed'); assert.ok(inspections >= 3);
+  assert.throws(() => parseWebJsonLines('not-json\n'), /unsupported_jsonl/u);
+});
+
+test('missing terminal evidence reaches one failure deadline and closes its watchers', async () => {
+  let reads = 0, closes = 0;
+  await assert.rejects(watchWebEvidence(['test/evidence.jsonl'], () => { reads++; return { receipt: { status: 'pending' } }; },
+    { timeoutMs: 20, watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }) }), /evidence_deadline/u);
+  assert.equal(reads, 1); assert.equal(closes, 1);
+});
+
+test('waiting fails closed on changed installed identity and records a non-retriable sanitized receipt', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'web-phase-')); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const input = evidence('native'), run = input.run;
+  for (const [key, name] of [['rolloutPath', 'rollout.jsonl'], ['eventPath', 'events.jsonl'], ['ledgerPath', 'ledger.json'], ['fixturePath', 'fixture.txt']]) run[key] = path.join(directory, name);
+  writeFileSync(run.rolloutPath, jsonLines(input.sessionRows)); writeFileSync(run.eventPath, jsonLines(input.eventRows)); writeJson(run.ledgerPath, input.ledger); writeFileSync(run.fixturePath, marker);
+  const runtimeFile = path.join(directory, 'installed.json'); writeFileSync(runtimeFile, 'PRIVATE_RUNTIME_CANARY');
+  Object.assign(run, { phases: {}, eventOffset: 0, snapshots: [{ path: runtimeFile, sha256: 'e'.repeat(64) }], officialIdentity: {}, fixtureSha256: 'f'.repeat(64) });
+  const runPath = path.join(directory, 'run.json'); writeJson(runPath, run);
+  const result = await waitWebVerification({ runPath, phase: 'native', turnId }, { assertIdentity: () => {}, writeJson });
+  assert.equal(result.code, 'installed_identity_changed');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|installed\.json/u);
+  await assert.rejects(waitWebVerification({ runPath, phase: 'native', turnId }, { assertIdentity: () => {}, writeJson }), /phase_already_recorded_no_retry/u);
+});
+
+test('ready wait observes provisional Send then accepted Send through a change event barrier', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'web-ready-')); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const input = evidence('ready'), run = input.run;
+  for (const [key, name] of [['rolloutPath', 'rollout.jsonl'], ['eventPath', 'events.jsonl'], ['ledgerPath', 'ledger.json'], ['fixturePath', 'fixture.txt']]) run[key] = path.join(directory, name);
+  writeFileSync(run.rolloutPath, jsonLines(input.sessionRows)); writeFileSync(run.eventPath, jsonLines(input.eventRows)); writeFileSync(run.fixturePath, marker);
+  input.ledger.uncertainSend = true; input.ledger.unresolvedCoding = [{ current: 'provisional' }]; writeJson(run.ledgerPath, input.ledger);
+  Object.assign(run, { phases: { recall: { status: 'passed', turnId: generation } }, eventOffset: 0, snapshots: [], officialIdentity: {},
+    fixtureSha256: createHash('sha256').update(marker).digest('hex') });
+  const runPath = path.join(directory, 'run.json'); writeJson(runPath, run);
+  let observed = 0, notify;
+  const receipt = await waitWebVerification({ runPath, phase: 'ready', turnId, timeoutMs: 2000 }, {
+    writeJson,
+    watchFile: (_directory, callback) => { notify = callback; return Object.assign(new EventEmitter(), { close() {} }); },
+    assertIdentity: () => {
+      if (++observed !== 1) return;
+      setImmediate(() => {
+        assert.equal(JSON.parse(readFileSync(runPath, 'utf8')).phases.ready, undefined, 'provisional evidence did not persist a failure');
+        input.ledger.uncertainSend = false; input.ledger.unresolvedCoding = []; writeJson(run.ledgerPath, input.ledger);
+        notify('change', path.basename(run.ledgerPath));
+      });
+    },
+  });
+  assert.equal(observed, 2); assert.equal(receipt.status, 'passed'); assert.equal(receipt.acceptedSend, true);
+});
+
+test('prepare binds exact thread and snapshots rollback inputs without changing them', t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'web-prepare-')); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const sourceRoot = path.join(directory, 'source'), stateDir = path.join(directory, 'state'), codexHome = path.join(directory, 'home');
+  for (const sub of [path.join(sourceRoot, 'generated'), path.join(stateDir, 'web-in-app', 'conversations'), path.join(stateDir, 'web-stop-adapter', 'managed'), codexHome]) mkdirSync(sub, { recursive: true });
+  const input = evidence('recall'), ledgerFile = path.join(stateDir, 'web-in-app', 'conversations', `${threadId}.json`);
+  writeJson(ledgerFile, input.ledger);
+  const adapterFile = path.join(stateDir, 'web-stop-adapter', 'ownership.json');
+  writeJson(adapterFile, { owner: 'codex-router-web-stop-adapter-v1', version: 1, state: 'installed', generation: 'f'.repeat(64), managedDirectory: path.join(stateDir, 'web-stop-adapter', 'managed') });
+  for (const file of [path.join(stateDir, 'web-stop-adapter', 'managed', 'manifest.json'), path.join(codexHome, 'hooks.json'), path.join(stateDir, 'install.json')]) writeJson(file, { privateCanary: 'PRIVATE_ROLLBACK_CANARY' });
+  writeFileSync(path.join(stateDir, 'web-stop-adapter', 'events.jsonl'), '');
+  const rollout = path.join(directory, 'rollout.jsonl'); writeFileSync(rollout, jsonLines(input.sessionRows));
+  const before = readFileSync(ledgerFile, 'utf8'), dependencies = { sourceRoot, stateDir, codexHome, installManifestPath: path.join(stateDir, 'install.json'),
+    codexIdentity: () => ({ binary: 'official.exe', version: 'current', fingerprint: 'known' }), writeFile: writeFileSync, writeJson };
+  const output = path.join(sourceRoot, 'generated', 'fresh');
+  const result = prepareWebVerification({ threadId, output, rollout }, dependencies);
+  assert.equal(result.prepared, true); assert.equal(readFileSync(ledgerFile, 'utf8'), before);
+  const run = JSON.parse(readFileSync(result.runPath, 'utf8'));
+  assert.match(run.marker, /^WEB_NATIVE_MARKER_[a-f0-9]{32}$/u); assert.equal(run.snapshots.length, 4);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|MARKER|rollback/u);
+  assert.throws(() => prepareWebVerification({ threadId, output, rollout }, dependencies), /fresh_generated_directory_required/u);
+  input.sessionRows[0].payload.id = turnId; writeFileSync(rollout, jsonLines(input.sessionRows));
+  assert.throws(() => prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'other'), rollout }, dependencies), /session_thread_mismatch/u);
+});

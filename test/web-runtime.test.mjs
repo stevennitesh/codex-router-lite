@@ -116,7 +116,7 @@ function fakeBrowser() {
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat") return kind === "heading" ? ui.temporaryControls : ui.normalHome;
       if (name === "Turn off temporary chat") return ui.temporaryControls;
-      if (name === "Ready when you are.") return ui.normalHome;
+      if (kind === "heading") return false;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
     },
@@ -163,6 +163,14 @@ function fakeBrowser() {
         if (ui.chip) content.push(domElement("span", { "app-mention-display-name": "Current Codex Tools",
           "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
         return callback([domElement("div", { contenteditable: "true" }, ...content)], ownedChipSelector);
+      }
+      if (ownedChipSelector?.observation && ui.observationRoot) {
+        const body = domElement("body", {}, ui.observationRoot);
+        body.ownerDocument = { body, URL: ui.url,
+          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
+        const selected = ui.observationRoot.querySelectorAll(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector},[aria-label]`);
+        for (const element of selected) element.getBoundingClientRect = () => ({ width: 32, height: 32 });
+        return callback([body, ...selected], ownedChipSelector);
       }
       assert.equal(name, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]');
       const roots = ui.turns.map((turn, index) => {
@@ -337,6 +345,14 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     stateFile: path.join(runtimeStateDir, "web-in-app", "conversations", `${threadId}.json`),
     newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
+}
+
+async function reportObservation(h, call, fields) {
+  const output = await h.executeBrowser(call);
+  const frameToken = readBrowserProgram(JSON.parse(call.arguments).code).frameToken;
+  const observed = parseBrowserOutput(output, frameToken);
+  h.append(call, outputFor(call, `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: { ...observed, ...fields } })}\nROUTER_WEB_BROWSER_${frameToken}_END`));
+  return h.request();
 }
 
 const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1].split("\nRouter generation: ")[0]);
@@ -766,7 +782,283 @@ test("a final answer cannot bypass the required native tool policy", async t => 
   assert.equal(h.runtime.status().activeTurns, 0);
 });
 
-test("instruction revisions persist only after confirmed Send and unchanged turns carry only their exact delta", async t => {
+test("optimistic anchors and explicit request failure preserve accepted context through restart", async t => {
+  for (const prior of ["first input", "continuation", "compaction"]) await t.test(prior, async t => {
+    const h = harness(t, { instructions: "Prior accepted instructions." });
+    if (prior !== "first input") {
+      const { call } = await h.toObserve();
+      await h.completeAnswer(call, "Accepted prior answer");
+      if (prior === "compaction") {
+        h.append({ role: "user", content: "Undelivered material before native compaction." });
+        const compact = await (await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() })).json();
+        h.input().splice(0, h.input().length, ...compact.output);
+      }
+      h.newTurn(followupId, "New input that the site will reject.", { instructions: "Revised undelivered instructions." });
+    }
+    const before = prior === "first input" ? {} : JSON.parse(readFileSync(h.stateFile, "utf8"));
+    const { call } = await h.toObserve();
+    const acceptedFields = ["checkpoint", "chatUrl", "sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted",
+      "deliveredInstructionsSha256", "deliveredInstructionsGenerationTurnKey", "pendingCompaction", "activeCompaction", "observation"];
+    const anchored = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    for (const key of acceptedFields) assert.deepEqual(anchored[key], before[key], `DOM anchoring cannot advance ${key}.`);
+    assert.equal(anchored.uncertainSend, true);
+    assert.equal(anchored.lastTurn.sendState, "uncertain");
+    assert.equal(h.browserOwner().state.sendConfirmed, true, "Stop is armed before input acceptance.");
+    h.browser.ui.stop = false;
+    await assert.rejects(reportObservation(h, call, { requestError: "unknown_error", completed: false, statusComplete: false }), { code: "web_request_failed" });
+    const sends = h.browser.ui.sends.length;
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    await h.restartRuntime();
+    const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    for (const key of acceptedFields) assert.deepEqual(failed[key], before[key], `Rejected input cannot advance ${key}.`);
+    assert.equal(failed.uncertainSend, true);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "No replay after restart.");
+    await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.equal(h.browser.ui.sends.length, sends);
+  });
+});
+
+test("first incomplete assistant text persists input acceptance before another wait and permits same-chat Stop continuation", async t => {
+  const { promise: writeStarted, resolve: started } = Promise.withResolvers();
+  const { promise: writeAllowed, resolve: release } = Promise.withResolvers();
+  t.after(() => release());
+  let acceptanceWrite;
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    if (!acceptanceWrite && value.deliveredInstructionsSha256) {
+      acceptanceWrite = structuredClone(value); started(); await writeAllowed;
+    }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  let { call } = await h.toObserve();
+  const config = browserCall => readBrowserProgram(JSON.parse(browserCall.arguments).code);
+  assert.equal(config(call).inputAcknowledgementPending, true);
+  for (const answer of ["", " \n "]) {
+    if (answer) h.browser.ui.texts.push(answer);
+    call = (await h.answerBrowser(call)).output[0];
+    assert.equal(config(call).inputAcknowledgementPending, true);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  }
+  h.browser.ui.texts.push("The current input reached the model."); h.browser.ui.stop = true;
+  let nextWaitEmitted = false;
+  const advancing = h.answerBrowser(call).then(response => { nextWaitEmitted = true; return response; });
+  await writeStarted;
+  assert.equal(nextWaitEmitted, false, "The next native wait remains private until acceptance reaches durable storage.");
+  assert.equal(acceptanceWrite.uncertainSend, false);
+  assert.equal(acceptanceWrite.generationCompleted, false);
+  assert.equal(acceptanceWrite.observation.completed, false);
+  assert.equal(h.browser.ui.stop, true);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+  release();
+  const next = (await advancing).output[0];
+  assert.equal(config(next).inputAcknowledgementPending, undefined);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.checkpoint.length, 1);
+  assert.equal(saved.uncertainSend, false);
+  assert.equal(saved.deliveredInstructionsGenerationTurnKey, saved.generationTurnKey);
+  assert.equal(saved.generationCompleted, false);
+  assert.equal(saved.lastTurn.sendState, "sent");
+  const binding = saved.bindingId, url = saved.chatUrl;
+  h.observations.watchers[0].onCancel(); h.loseKernel();
+  h.newTurn(followupId, "Continue after the accepted input was stopped.");
+  const continuation = (await h.toObserve()).call;
+  const resumed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(resumed.bindingId, binding); assert.equal(resumed.chatUrl, url);
+  assert.equal(resumed.tabId, saved.tabId);
+  assert.equal(config(continuation).inputAcknowledgementPending, true, "The next Send has its own acceptance boundary.");
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue after the accepted input was stopped." }]);
+  assert.equal(h.browser.ui.sends.length, 2); assert.equal(h.browser.ui.newTabs, 1);
+  await h.completeAnswer(continuation, "Continued in the same saved chat.");
+});
+
+test("foreign-generation text cannot acknowledge pending input", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Text from a different generation cannot prove receipt.");
+  await assert.rejects(reportObservation(h, call, { generationTurnKey: followupId }), /no verified conversation evidence/u);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.uncertainSend, true);
+  assert.equal(saved.checkpoint, undefined); assert.equal(saved.deliveredInstructionsSha256, undefined);
+  h.newTurn(followupId, "Do not replay input with foreign proof.");
+  await assert.rejects(h.request(), { code: "web_send_uncertain" });
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("authentic connector discovery accepts input before any native tool completes", async t => {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  let service;
+  const h = harness(t, { mcpFactory: async options => service = await startWebMcp({ ...options, onDiagnostic: () => {} }) });
+  const { call } = await h.toObserve();
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  const client = new Client({ name: "web-input-acceptance", version: "1.0.0" });
+  t.after(() => client.close());
+  await client.connect(new StreamableHTTPClientTransport(new URL(service.url)));
+  assert.equal(h.broker.hasClientActivity(h.token()), false);
+  const discovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: h.token() } });
+  assert.equal(discovery.isError, undefined);
+  const next = (await h.answerBrowser(call)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(next.arguments).code).inputAcknowledgementPending, undefined);
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false);
+  assert.ok(accepted.checkpoint.length);
+  assert.equal(accepted.deliveredInstructionsGenerationTurnKey, accepted.generationTurnKey);
+  assert.deepEqual(h.broker.takeCalls(h.token()), []);
+  await h.completeAnswer(next, "Accepted without waiting for a native invocation.");
+});
+
+test("a first substantive answer proves receipt even with a simultaneous site error", async t => {
+  const cases = [
+    { label: "answer without broker activity", answer: "Current-generation input reached the model.", queued: false, accepted: true },
+    { label: "answer with queued native action", answer: "Current-generation input reached the model.", queued: true, accepted: true },
+    { label: "whitespace-only wrapper is not receipt proof", answer: " \n ", queued: false, accepted: false },
+  ];
+  for (const scenario of cases) await t.test(scenario.label, async t => {
+    const h = harness(t, { instructions: "Current instructions awaiting known receipt." }), { call } = await h.toObserve();
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+    let rejected;
+    if (scenario.queued) {
+      const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+      const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-first-answer-error.txt" } });
+      rejected = assert.rejects(actual, { code: "web_request_failed" });
+    } else assert.equal(h.broker.hasClientActivity(h.token()), false);
+    h.browser.ui.texts.push(scenario.answer); h.browser.ui.complete = true;
+    await assert.rejects(reportObservation(h, call, { requestError: "unknown_error" }), { code: "web_request_failed" });
+    await rejected;
+    await h.restartRuntime();
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.uncertainSend, !scenario.accepted);
+    assert.equal(saved.lastTurn.completed, false, "Receipt proof cannot turn a site error into final delivery.");
+    assert.deepEqual(saved.unresolvedCoding, []);
+    assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    if (scenario.accepted) {
+      assert.equal(saved.checkpoint.length, 1);
+      assert.equal(saved.generationTurnKey, h.browser.ui.turns.at(-1).key);
+      assert.equal(saved.deliveredInstructionsGenerationTurnKey, saved.generationTurnKey);
+      assert.match(saved.deliveredInstructionsSha256, /^[a-f0-9]{64}$/u);
+      assert.equal(saved.generationCompleted, false);
+    } else {
+      assert.equal(saved.checkpoint, undefined);
+      assert.equal(saved.deliveredInstructionsSha256, undefined);
+    }
+    h.newTurn(followupId, "Continue only from actual known receipt.");
+    if (scenario.accepted) {
+      const continuation = (await h.request()).output[0];
+      assert.equal(readBrowserProgram(JSON.parse(continuation.arguments).code).operation, "continue");
+      assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, saved.checkpoint);
+    } else await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("request failure suppresses queued native actions and cannot erase accepted tool outcomes", async t => {
+  for (const emitted of [false, true]) await t.test(`native result emitted ${emitted}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "one-owned-action.txt" } });
+    let observe = call, saved;
+    if (emitted) {
+      const coding = (await h.answerBrowser(call)).output[0];
+      h.append(coding, outputFor(coding, "ACTUAL_NATIVE_OUTCOME"));
+      observe = (await h.request()).output[0];
+      await actual;
+      saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    } else t.after(() => actual.catch(() => {}));
+    const rejected = emitted ? undefined : assert.rejects(actual, { code: "web_request_failed" });
+    await assert.rejects(reportObservation(h, observe, { requestError: "unknown_error", completed: false, statusComplete: false }), { code: "web_request_failed" });
+    await rejected;
+    await h.restartRuntime();
+    const retained = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(retained.uncertainSend, false, "Authentic current-token activity remains accepted after a later site error.");
+    assert.deepEqual(retained.unresolvedCoding, []);
+    if (emitted) {
+      assert.deepEqual(retained.checkpoint, saved.checkpoint);
+      assert.equal(h.input().filter(item => item.output === "ACTUAL_NATIVE_OUTCOME").length, 1);
+    } else assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("late request failure during retention blocks final delivery and newly queued native actions", async t => {
+  for (const priorResult of [false, true]) for (const lateCall of [false, true]) await t.test(`prior native result ${priorResult}; late queued call ${lateCall}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    let observe = call;
+    if (priorResult) {
+      const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual-before-retain.txt" } });
+      const coding = (await h.answerBrowser(observe)).output[0];
+      h.append(coding, outputFor(coding, "ACTUAL_PRIOR_OUTCOME"));
+      observe = (await h.request()).output[0];
+      await actual;
+    }
+    h.browser.ui.texts.push("Current answer accepted before the late site error."); h.browser.ui.complete = true;
+    const retain = (await h.answerBrowser(observe)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(retain.arguments).code).operation, "retain");
+    const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    let rejected;
+    if (lateCall) {
+      const queued = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-retain-error.txt" } });
+      rejected = assert.rejects(queued, { code: "web_request_failed" });
+    }
+    await assert.rejects(reportObservation(h, retain, { requestError: "unknown_error" }), { code: "web_request_failed" });
+    await rejected;
+    await assert.rejects(h.request(), { code: "web_request_failed" });
+    await h.restartRuntime();
+    const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(failed.lastTurn.completed, false);
+    assert.equal(failed.generationCompleted, false);
+    assert.equal(failed.uncertainSend, false);
+    assert.deepEqual(failed.checkpoint, accepted.checkpoint);
+    assert.equal(failed.deliveredInstructionsSha256, accepted.deliveredInstructionsSha256);
+    assert.deepEqual(failed.unresolvedCoding, [], "Queued but un-emitted actions never become unresolved native execution.");
+    assert.equal(h.input().filter(item => item.namespace === "mcp__work").length, priorResult ? 1 : 0);
+    assert.equal(h.input().filter(item => item.output === "ACTUAL_PRIOR_OUTCOME").length, priorResult ? 1 : 0);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("a broker fence race after retention preserves real rejection detection before queued actions or final delivery", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.browser.ui.texts.push("Current answer before concurrent broker activity."); h.browser.ui.complete = true;
+  const retain = (await h.answerBrowser(call)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(retain.arguments).code).operation, "retain");
+  const retainedFrame = await h.executeBrowser(retain);
+  const retained = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  const release = h.broker.beginActivity(h.token()); release();
+  h.append(retain, outputFor(retain, retainedFrame));
+  const resumed = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(resumed.arguments).code).operation, "observe",
+    "The changed broker revision must reject finalization and resume the same generation.");
+  const submitted = h.browser.ui.sends.at(-1), generation = h.browser.ui.turns.at(-1);
+  const error = domElement("div", { "aria-label": "Unknown error" }, domText("Unknown error"));
+  const retry = domElement("button", { "aria-label": "Retry" }, domText("Retry"));
+  const errorRegion = domElement("div", {}, error, retry);
+  error.contains = node => node === error;
+  errorRegion.contains = node => node === errorRegion || node === error || node === retry;
+  const composer = domElement("div", { role: "textbox", "aria-label": "Ask ChatGPT", contenteditable: "true" }, domText(submitted));
+  composer.innerText = submitted;
+  const answer = replyElement(h.browser.ui.texts[0], messageId(0)).parentElement;
+  const turn = domElement("section", { "data-turn-key": generation.key },
+    domElement("div", { "data-talvt-turn-state": "complete" }, domElement("div", {}, domText(submitted)), answer,
+      domElement("button", { "aria-label": "Regenerate response" })));
+  h.browser.ui.observationRoot = domElement("main", {}, turn, errorRegion, composer);
+  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const queued = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-retention-race.txt" } });
+  const queuedOutcome = queued.then(() => undefined, error => error);
+  await assert.rejects(h.answerBrowser(resumed), { code: "web_request_failed" });
+  assert.equal((await queuedOutcome)?.code, "web_request_failed");
+  await assert.rejects(h.request(), { code: "web_request_failed" });
+  const failed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(failed.generationTurnKey, generation.key);
+  assert.equal(failed.generationCompleted, false);
+  assert.equal(failed.lastTurn.completed, false);
+  assert.equal(failed.uncertainSend, false, "Prior substantive answer acceptance remains acknowledged.");
+  assert.deepEqual(failed.checkpoint, retained.checkpoint);
+  assert.deepEqual(failed.unresolvedCoding, []);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work" || item.phase === "final_answer"), false);
+  assert.equal(composer.innerText, submitted);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("instruction revisions persist only after accepted input and unchanged turns carry only their exact delta", async t => {
   const instructions = "Preserve the original user marker and current subagent tool policy.";
   const h = harness(t, { instructions });
   const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
@@ -778,13 +1070,14 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
     "A browser click without its confirmed native result cannot acknowledge instructions.");
   h.append(send, outputFor(send, sent));
   let observe = (await h.request()).output[0];
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined, "An optimistic DOM anchor cannot acknowledge context.");
+  await h.completeAnswer(observe, "Original task completed");
   const revision = JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256;
   const confirmed = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(confirmed.deliveredInstructionsGenerationTurnKey, confirmed.generationTurnKey);
   assert.match(revision, /^[a-f0-9]{64}$/u);
   assert.ok(h.browser.ui.sends[0].includes(`Current Codex instructions:\n${instructions}`));
   const firstToken = h.token();
-  await h.completeAnswer(observe, "Original task completed");
   h.newTurn(followupId, "Exact continuation Δ");
   ({ call: observe } = await h.toObserve());
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Exact continuation Δ" }]);
@@ -799,14 +1092,16 @@ test("instruction revisions persist only after confirmed Send and unchanged turn
   const revised = `${instructions}\n`;
   h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Use the revised instructions.", { instructions: revised });
   ({ call: observe } = await h.toObserve());
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, revision);
+  await h.completeAnswer(observe, "Revised task completed");
   const nextRevision = JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256;
   assert.notEqual(nextRevision, revision, "Even an exact whitespace change is a new instruction revision.");
   assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${revised}`));
   assert.match(h.browser.ui.sends.at(-1), /supersede all earlier Codex instructions/u);
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Use the revised instructions." }]);
-  await h.completeAnswer(observe, "Revised task completed");
   h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Proceed without the previous instructions.", { instructions: undefined });
-  await h.toObserve();
+  ({ call: observe } = await h.toObserve());
+  await h.completeAnswer(observe, "Completed with current instructions.");
   assert.notEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, nextRevision);
   assert.match(h.browser.ui.sends.at(-1), /supersede all earlier Codex instructions/u);
   assert.match(h.browser.ui.sends.at(-1), /No Codex instructions were supplied for this request/u);
@@ -837,8 +1132,8 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
   for (const lineage of ["stale", "absent"]) await t.test(lineage, async t => {
     const instructions = "Confirmed authority A.";
     const h = harness(t, { instructions }), { call } = await h.toObserve();
-    const original = JSON.parse(readFileSync(h.stateFile, "utf8"));
     await h.completeAnswer(call, "Answer under A");
+    const original = JSON.parse(readFileSync(h.stateFile, "utf8"));
     h.newTurn(followupId, "Use authority B.", { instructions: "Later authority B." });
     const { call: later } = await h.toObserve();
     await h.completeAnswer(later, "Answer under B");
@@ -852,7 +1147,8 @@ test("a legacy writer's later confirmed generation cannot reuse an older or unbo
     else delete saved.deliveredInstructionsGenerationTurnKey;
     writeFileSync(h.stateFile, JSON.stringify(saved), "utf8");
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Restore authority A.", { instructions });
-    await h.toObserve();
+    const { call: restoredCall } = await h.toObserve();
+    await h.completeAnswer(restoredCall, "Answer under restored A");
     assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${instructions}`));
     assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Restore authority A." }]);
     const restored = JSON.parse(readFileSync(h.stateFile, "utf8"));
@@ -1109,10 +1405,11 @@ test("delivery and coding acknowledgement use exact canonical transcript digests
   ];
   const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   const { call } = await h.toObserve();
-  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
   const read = h.broker.list(h.token()).find(tool => tool.name === "read");
   const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, { answer: "Actual current result ✓", count: 2 });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
   h.append(coding, output);
   const observe = (await h.request()).output[0]; await result;
   expected.push({ type: coding.type, namespace: coding.namespace, name: coding.name, call_id: coding.call_id, arguments: coding.arguments },
@@ -1297,6 +1594,8 @@ test("interrupted native handoffs preserve every exact possible browser owner un
     assert.equal(h.browser.ui.sends.length, 2);
     assert.equal(new Set(h.observations.bindings).size, 1);
 
+    // Accepted discovery proves delivery even when Stop precedes an answer.
+    const release = h.broker.beginActivity(h.token()); release();
     // A confirmed handoff collapses the alternatives. An earlier owner can no
     // longer authorize Stop or another handoff, even in this same binding.
     h.observations.watchers.at(-1).onCancel();
@@ -1349,6 +1648,90 @@ test("an emitted open with an interrupted result never creates a replacement tab
   });
 });
 
+test("a restored failed first open can reinitialize only after its native binding is lost", async t => {
+  for (const [label, lostKernel, discovery, interruptedBootstrap] of [
+    ["lost binding", true, false], ["lost binding after native discovery", true, true], ["surviving binding", false, false],
+    ["recovery bootstrap not executed", true, false, false], ["recovery bootstrap executed", true, false, true],
+  ]) await t.test(label, async t => {
+    const h = harness(t, { tools: discovery ? [search, currentRead] : [nativeJs, currentRead] });
+    const stale = fakeBrowser(), foreign = fakeBrowser();
+    stale.ui.tabId = "stale-initialization-tab";
+    foreign.ui.tabId = "foreign-user-tab"; foreign.ui.url = "https://chatgpt.com/c/foreign-chat";
+    foreign.ui.composer = "Keep the user's foreign draft.";
+    const newTab = h.browser.browser.tabs.new, goto = stale.tab.goto;
+    let created = 0;
+    h.browser.browser.tabs.new = async () => ++created === 1 ? stale.tab : newTab();
+    h.browser.browser.tabs.list = async () => [stale.tab, foreign.tab, ...(created > 1 ? [h.browser.tab] : [])]
+      .map(tab => ({ id: tab.id, url: tab === stale.tab ? stale.ui.url : tab === foreign.tab ? foreign.ui.url : h.browser.ui.url }));
+    stale.tab.goto = async url => { await goto(url); throw new Error("Initial home controls could not be read."); };
+    const nextBrowserCall = async () => {
+      const call = (await h.request()).output[0];
+      if (call.type !== "tool_search_call") return call;
+      h.append(call, outputFor(call, [nativeJs]));
+      return (await h.request()).output[0];
+    };
+    const bootstrap = await nextBrowserCall();
+    const open = (await h.answerBrowser(bootstrap)).output[0];
+    const failure = await h.executeBrowser(open).then(() => assert.fail("The first open must fail before Send."), error => error);
+    h.append(open, outputFor(open, { isError: true, content: [{ type: "text", text: failure.message }] }));
+    await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+    stale.ui.composer = "Keep the stale initialization draft.";
+    const untouched = [stale, foreign].map(({ ui }) => ({ url: ui.url, composer: ui.composer,
+      navigations: ui.navigations, closes: ui.closes, sends: [...ui.sends] }));
+    await h.restartRuntime();
+    if (lostKernel) h.loseKernel();
+    // Native discovery declarations need not be retained in the next request.
+    if (discovery) h.input().splice(0, h.input().length, ...h.input().filter(item => !["tool_search_call", "tool_search_output"].includes(item.type)));
+    h.newTurn(followupId, "Continue the never-sent initial request.");
+    let initialization = await nextBrowserCall(), nativeTurn = followupId;
+    assert.equal(JSON.parse(initialization.arguments).title, "ChatGPT Web: bootstrap");
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.deepEqual(saved.browserOwnerTurnIds, [turnId, followupId]);
+    assert.deepEqual(saved.lastTurn, { turnId: followupId, sendState: "unsent", completed: false });
+    assert.equal(saved.uncertainSend, false); assert.deepEqual(saved.unresolvedCoding, []);
+    for (const field of ["tabId", "chatUrl", "checkpoint", "generationTurnKey", "deliveredInstructionsSha256"]) assert.equal(saved[field], undefined);
+    if (interruptedBootstrap !== undefined) {
+      if (interruptedBootstrap) await h.executeBrowser(initialization);
+      h.observations.watchers.at(-1).onCancel();
+      nativeTurn = "33002233-4455-6677-8899-aabbccddeeff";
+      h.newTurn(nativeTurn, "Resume the interrupted initialization.");
+      initialization = await nextBrowserCall();
+      assert.equal(JSON.parse(initialization.arguments).title, "ChatGPT Web: bootstrap");
+      assert.equal(created, 1, "An interrupted recovery bootstrap never opens another tab.");
+    }
+    const reopened = (await h.answerBrowser(initialization)).output[0];
+    assert.equal(JSON.parse(reopened.arguments).title, "ChatGPT Web: open");
+    if (lostKernel) {
+      const send = (await h.answerBrowser(reopened)).output[0];
+      const observe = (await h.answerBrowser(send)).output[0];
+      h.browser.ui.texts.push("The initial request completed once."); h.browser.ui.complete = true;
+      const retain = (await h.answerBrowser(observe)).output[0];
+      for (const call of [send, observe, retain]) {
+        const args = JSON.parse(call.arguments), sandbox = { currentAuthority: true };
+        const native = { name: "js", arguments: args, _meta: { threadId, sessionId: threadId, callId: call.call_id,
+          "x-codex-turn-metadata": { ...metadata(nativeTurn), session_id: threadId, auto_review_enabled: true,
+            node_repl_auto_review_required: true, node_repl_disabled: false },
+          "codex/sandbox-state": sandbox, "codex/sandbox-state-meta": structuredClone(sandbox), "codex/sandbox-launcher": { opaque: true } } };
+        assert.ok(qualifyBrowserCall(native, h.settings.browser.runtimeModule), "Canonical programs retain exact adapter qualification after reinitialization.");
+      }
+      const final = await h.answerBrowser(retain);
+      assert.equal(final.output[0].content[0].text, "The initial request completed once.");
+      assert.deepEqual(sentTranscript(h), [
+        { role: "user", content: "Read the current file using the declared tools." },
+        { role: "user", content: "Continue the never-sent initial request." },
+        ...(interruptedBootstrap !== undefined ? [{ role: "user", content: "Resume the interrupted initialization." }] : []),
+      ]);
+      assert.equal(created, 2); assert.equal(h.browser.ui.sends.length, 1);
+    } else {
+      await assert.rejects(h.executeBrowser(reopened), /already owns a tab/u);
+      assert.equal(created, 1); assert.equal(h.browser.ui.sends.length, 0);
+    }
+    assert.deepEqual([stale, foreign].map(({ ui }) => ({ url: ui.url, composer: ui.composer,
+      navigations: ui.navigations, closes: ui.closes, sends: [...ui.sends] })), untouched);
+    assert.equal(new Set(h.observations.bindings).size, 1);
+  });
+});
+
 test("interrupted Send checkpoints accept omitted or partial native assistant history without resending prior input", async t => {
   for (const [label, partial, nativeAssistant] of [
     ["omitted", "A stopped Web answer", undefined],
@@ -1359,6 +1742,7 @@ test("interrupted Send checkpoints accept omitted or partial native assistant hi
     const h = harness(t);
     await h.toObserve();
     if (partial) h.browser.ui.texts.push(partial);
+    const release = h.broker.beginActivity(h.token()); release();
     h.browser.ui.stop = true;
     h.observations.watchers[0].onCancel();
     if (nativeAssistant !== undefined) h.append({ role: "assistant", content: nativeAssistant });
@@ -1456,6 +1840,8 @@ async function stopBeforeRenderedReply(h, { observed = true, emptyReply = false 
   while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
   h.browser.ui.texts = ["Earlier reply", "Another earlier reply"];
   const observe = (await h.answerBrowser(response.output[0])).output[0];
+  // This recovery fixture models an accepted connector discovery before Stop.
+  const release = h.broker.beginActivity(h.token()); release();
   h.browser.ui.stop = true;
   if (emptyReply) h.browser.ui.texts.push("");
   if (observed) await h.answerBrowser(observe);
@@ -1480,7 +1866,7 @@ test("maintenance drain follows Web work through Stop and confirmed same-chat co
 
   h.newTurn(followupId, "Continue in the same chat after Stop.");
   const { call } = await h.toObserve();
-  assert.equal((await admission.drain()).reason, "web-workflow-active");
+  assert.equal((await admission.drain()).reason, "web-workflow-indeterminate");
   await h.completeAnswer(call, "Completed after confirmed same-chat recovery.");
   assert.deepEqual(h.runtime.maintenanceState(), idle);
   assert.equal((await admission.drain()).status, "drained");
@@ -1660,6 +2046,7 @@ test("unexplained native history changes reject instead of sending the whole pri
   const previousSearch = { type: "tool_search_call", call_id: "actual_previous_native_search", execution: "client", arguments: { query: "Current native tools" } };
   h.append(previousSearch, outputFor(previousSearch, [currentRead]));
   await h.toObserve();
+  const release = h.broker.beginActivity(h.token()); release();
   h.observations.watchers[0].onCancel();
   previousSearch.arguments.query = "Substituted earlier native tool query";
   h.newTurn(followupId, "Continue after changed history.");
@@ -1742,7 +2129,7 @@ test("attributed compaction preserves undelivered native items without resending
     if (mode === "restarted" || mode === "second abandoned after restart") { await h.restartRuntime(); h.loseKernel(); }
     if (mode === "abandoned") assert.deepEqual(h.input(), original);
     h.newTurn(followupId, "New request after native compaction", { instructions: "Current changed instructions remain authoritative." });
-    await h.toObserve();
+    const { call: compactObserve } = await h.toObserve();
     assert.deepEqual(sentTranscript(h), [
       { role: "user", content: rawTail[0].content },
       { type: "function_call", call_id: rawTail[1].call_id, name: rawTail[1].name, arguments: rawTail[1].arguments },
@@ -1752,8 +2139,10 @@ test("attributed compaction preserves undelivered native items without resending
     ]);
     assert.match(h.browser.ui.sends.at(-1), /Current changed instructions remain authoritative/u);
     assert.equal(h.browser.ui.sends.at(-1).includes("lossy continuation checkpoint"), false);
+    const release = h.broker.beginActivity(h.token()); release();
+    await h.answerBrowser(compactObserve);
     const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
-    assert.equal(saved.pendingCompaction, undefined, "Only confirmed Send replaces the delivery checkpoint and consumes the alias.");
+    assert.equal(saved.pendingCompaction, undefined, "Only accepted input replaces the delivery checkpoint and consumes the alias.");
     assert.equal(saved.activeCompaction, undefined);
   });
 });
@@ -1773,16 +2162,41 @@ test("confirmed capacity rejection with no answer or coding action transfers his
   assert.notEqual(h.token(), oldToken);
   assert.ok(h.browser.ui.sends.at(-1).includes(`Current Codex instructions:\n${instructions}`));
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Read the current file using the declared tools." }]);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  await h.completeAnswer(nextObserve, "Successor answer");
   const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(saved.chatUrl, "https://chatgpt.com/c/successor-2");
   assert.deepEqual(saved.previousChatUrls, [sourceUrl]);
   assert.equal(saved.needsHistory, false);
-  await h.completeAnswer(nextObserve, "Successor answer");
   h.newTurn(followupId, "Later native delta");
   await h.toObserve();
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Later native delta" }]);
   assert.equal(h.browser.ui.sends.at(-1).includes(instructions), false);
   assert.equal(h.browser.ui.rollovers, 1);
+});
+
+test("first-input capacity rejection survives Router restart without acknowledging context", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  const rejectedUrl = h.browser.ui.url;
+  h.browser.ui.full = true;
+  const rollover = (await h.answerBrowser(call)).output[0];
+  const rejected = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(rejected.capacityChatUrl, rejectedUrl);
+  assert.equal(rejected.checkpoint, undefined);
+  assert.equal(rejected.chatUrl, undefined);
+  assert.equal(rejected.deliveredInstructionsSha256, undefined);
+  assert.equal(rejected.uncertainSend, false);
+  await h.executeBrowser(rollover);
+  await h.restartRuntime();
+  h.newTurn(followupId, "Continue after the explicit capacity rejection.");
+  const { call: next } = await h.toObserve();
+  assert.equal(h.browser.ui.rollovers, 1);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
+  await h.completeAnswer(next, "Accepted successor input.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.capacityChatUrl, undefined);
+  assert.deepEqual(accepted.previousChatUrls, [rejectedUrl]);
+  assert.equal(h.browser.ui.sends.length, 2);
 });
 
 test("native V2 preserves an exact pending tail after its retained-user prefix and outer identity are rewritten", async t => {

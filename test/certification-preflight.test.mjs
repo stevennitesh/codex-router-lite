@@ -97,8 +97,16 @@ test("renewal CLI emits a source assessment without needing or altering installe
   assert.equal(result.status,0,result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.slug,"switchyard/auto");
-  assert.ok(["retain","review","renew"].includes(report.decision));
-  assert.match(report.testedCommit,/^[a-f0-9]{40}$/iu);
+  const proof = JSON.parse(before);
+  if (proof.status === "draft") {
+    assert.equal(MODEL_BY_SLUG.get("switchyard/auto").multiAgentVersion, "v1");
+    assert.equal(report.decision, "review");
+    assert.equal(report.testedCommit, null, "a source draft cannot supply a tested runtime revision");
+  } else {
+    assert.equal(proof.status, "accepted");
+    assert.ok(["retain","review","renew"].includes(report.decision));
+    assert.match(report.testedCommit,/^[a-f0-9]{40}$/iu);
+  }
   assert.ok(report.limits.length>0);
   assert.equal(readFileSync(proofPath,"utf8"),before);
 });

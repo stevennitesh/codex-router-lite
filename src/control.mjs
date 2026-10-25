@@ -29,6 +29,7 @@ import {
   readWebBridgeSettings,
   webBridgeModels,
   webBridgeStatus,
+  webBridgeConfigurationStatus,
   WEB_BRIDGE_TUNNEL_KEY_PATH,
 } from "./chatgpt-web.mjs";
 
@@ -102,15 +103,18 @@ async function main() {
       print({ ...status, subagentProtocol: readSubagentProtocol(), catalogRefreshRequired: true,
         next: "Run restart-codex-router.ps1 to reload browser and tunnel settings, then model-router.ps1 codex refresh-catalog. Complete Stop adapter setup and hook trust before fully reopening Codex once. Web subagents require V1; configuration does not change the protocol." });
     } else if (action === "refresh-runtime") {
-      let apply = false, manifestPath;
+      let apply = false, forceServiceReplacement = false, manifestPath;
+      const usage = "Usage: control web refresh-runtime [--apply [--force-service-replacement]] [--manifest <adapter-manifest-json>]";
       for (let index = 2; index < args.length; index += 1) {
         if (args[index] === "--apply" && !apply) apply = true;
+        else if (args[index] === "--force-service-replacement" && !forceServiceReplacement) forceServiceReplacement = true;
         else if (args[index] === "--manifest" && manifestPath === undefined && args[index + 1] && !args[index + 1].startsWith("--")) {
           manifestPath = path.resolve(args[++index]);
-        } else throw new Error("Usage: control web refresh-runtime [--apply] [--manifest <adapter-manifest-json>]");
+        } else throw new Error(usage);
       }
+      if (forceServiceReplacement && !apply) throw new Error(usage);
       const { refreshWebRuntime } = await import("./web-runtime-refresh.mjs");
-      print(await refreshWebRuntime({ apply, ...(manifestPath === undefined ? {} : { manifestPath }) }));
+      print(await refreshWebRuntime({ apply, forceServiceReplacement, ...(manifestPath === undefined ? {} : { manifestPath }) }));
     } else if (action === "tunnel-key") {
       if (args.length > 3) throw new Error("Tunnel keys must be entered at the hidden prompt, never in command arguments.");
       print(webTunnelKeyCommand(value ?? "status"));
@@ -145,17 +149,17 @@ async function main() {
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|refresh-runtime [--apply] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
+    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|refresh-runtime [--apply [--force-service-replacement]] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
     return;
   }
   if (command === "subagents") {
     if (action === "status") {
-      const snapshot = subagentSettingsSnapshot({ diagnostic: true });
+      const snapshot = subagentSettingsSnapshot({ diagnostic: true }), web = webBridgeConfigurationStatus();
       print({
         ...(snapshot.degraded ? {} : { settings: readMultiAgentSettings() }),
         snapshot,
-        web: webBridgeStatus(),
-        routes: [...LISTED_MODELS, ...webBridgeModels()].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
+        web,
+        routes: [...LISTED_MODELS, ...(web.enabled ? web.models : [])].map(({ slug, multiAgentVersion }) => ({ slug, multiAgentVersion })),
       });
     } else if (action === "protocol") {
       if (value === undefined || value === "status") {

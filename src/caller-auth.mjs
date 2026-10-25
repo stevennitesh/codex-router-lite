@@ -4,7 +4,7 @@ const CALLER_PATH_PREFIX = "/_codex-router";
 const MINIMUM_SECRET_LENGTH = 32;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-function validCallerSecret(value) {
+export function validServiceSecret(value) {
   return (
     typeof value === "string" &&
     value.length >= MINIMUM_SECRET_LENGTH &&
@@ -13,8 +13,15 @@ function validCallerSecret(value) {
 }
 
 export function assertCallerSecret(value) {
-  if (!validCallerSecret(value)) {
+  if (!validServiceSecret(value)) {
     throw new Error("The local router caller key is missing or invalid; run .\\install.ps1 -Target codex.");
+  }
+  return value;
+}
+
+export function assertInternalSecret(value) {
+  if (!validServiceSecret(value)) {
+    throw new Error("The internal service key is missing or invalid; run .\\install.ps1 -Target codex.");
   }
   return value;
 }
@@ -69,7 +76,7 @@ function isManagedLeafBaseUrl(value, port, leaf) {
     const match = url.pathname.match(
       new RegExp(`^${CALLER_PATH_PREFIX}/([A-Za-z0-9_-]+)/${leaf}/?$`),
     );
-    return Boolean(match && validCallerSecret(match[1]));
+    return Boolean(match && validServiceSecret(match[1]));
   } catch {
     return false;
   }

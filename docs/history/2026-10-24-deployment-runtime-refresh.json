@@ -1,0 +1,538 @@
+{
+  "version": 1,
+  "historical": true,
+  "date": "2026-10-24",
+  "deployed": {
+    "routerCommit": "68b596a787fcf4154ff8bdb812ddaf403426e064",
+    "acceptedAt": "2026-10-24T16:39:50.9355891Z",
+    "acceptance": {
+      "accepted": true,
+      "passedChecks": 11,
+      "totalChecks": 11
+    },
+    "switchyardBinarySha256": "e654e0cd733f77772bc6f9e777b83423b07d98119973d942fa571563deea6783"
+  },
+  "runtimeRefresh": {
+    "adapterGeneration": "7d38b8b73115aacadc657c2beb1f6c0bf65baf953a64487b4a5e4749213ecc79",
+    "applied": true,
+    "routerReloaded": true,
+    "browserRuntimeChanged": false,
+    "threadScope": "ordinary Web conversations",
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "codexRestartRequired": false,
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlan": {
+      "ready": true,
+      "changed": false,
+      "adapterGenerationChanged": false,
+      "browserRuntimeChanged": false,
+      "cliSelectionChanged": false
+    }
+  },
+  "recoveryRetained": {
+    "router": "generated/router-rollback-27d4c0d7",
+    "switchyardGeneration": ".rollback-164c215cb9ba4dff9170b38e7d32ef55",
+    "adapterGenerationsRetained": true
+  },
+  "switchyardCertification": {
+    "status": "accepted",
+    "evidence": "docs/history/2026-10-24-switchyard-snapshot-certification.json",
+    "checksPassed": 5,
+    "nativeRequests": 3,
+    "nativeRequestStatus": 200,
+    "streamingRequests": 1,
+    "toolOutput": "42",
+    "encryptedHandoffs": 2,
+    "sameChildContinuation": true,
+    "activeTurnCancelled": false,
+    "executionSurface": "codex-cli",
+    "windowsSandbox": "mxc"
+  },
+  "admissionIncident": {
+    "userObserved": "Codex connection errors; manually restarted Router.",
+    "deploymentStartupFailed": false,
+    "cause": "An external forced drain closed admission before the refresh coordinator planned its changes. The subsequent read-only discovery failed under restricted helper access, outside the coordinator compensation boundary.",
+    "boundedLogEvidence": {
+      "drainingErrors": 526,
+      "lastRequestsBeforeClosure": "2026-10-24T16:43:11Z",
+      "firstRequestsAfterRestart": "2026-10-24T16:51:37Z",
+      "startupOrListenerFailureObserved": false
+    },
+    "recovery": "Manual Router restart reopened admission. A later authorized normal-user coordinated refresh completed and normal requests resumed.",
+    "repair": "Move explicitly authorized forced draining inside the refresh coordinator after preparation and under the service lock; preserve known-idle Web requirements and resume admission on pre-restart failure after either drained or forced preparation.",
+    "validation": {
+      "affectedTestsPassed": 60,
+      "sourceChecks": "passed",
+      "diffCheck": "passed",
+      "independentReview": "No actionable findings.",
+      "limits": "Isolated fixtures establish transaction cleanup and strict Web gates; no deliberate production outage was induced.",
+      "fixtureCorrection": "The new diagnostic import required a matching inert export in the existing CLI loader stub.",
+      "windowsTestEnvironment": "Process-local TEMP/TMP under ignored .tmp after default sandbox TEMP rejected fixture rename; no skipped cases or persistent changes."
+    }
+  },
+  "pending": [
+    "The isolated ChatGPT safety refusal was investigated but not reproduced: three native reads succeeded with the same model, effort, connector and incremental instruction style. Its connector-side stage remains unknown; no causal Router change or safety-annotation downgrade is supported."
+  ],
+  "limits": [
+    "The five-check certification covers the exact Switchyard CLI/MXC execution path; it does not establish Desktop Web tools or Stop.",
+    "Three filelock security advisories remain unsuppressed under the explicit stable-LiteLLM decision.",
+    "No push authorized."
+  ],
+  "maintenanceDeployment": {
+    "routerCommit": "508d18e40e1ab23b9330b3f60cc357688b75a8e3",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T17:09:53.3338865Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRouterAndSwitchyardRollbackPreserved": true
+  },
+  "webVerification": {
+    "status": "blocked-before-send",
+    "recovery": {
+      "completed": false,
+      "newInputSent": false,
+      "reason": "The old test ledger retained an optimistic generation from the failed pre-repair Send. The reloaded saved chat has only the earlier completed reply, while the failed request draft remains in the composer.",
+      "uncertainSendRecorded": false,
+      "unresolvedCodingActions": 0
+    },
+    "protections": "No replay, draft clearing, replacement checkpoint, history rewrite or new-chat fallback was performed.",
+    "nativeTools": "not yet run",
+    "stop": "not yet run",
+    "continuation": "not yet run"
+  },
+  "validation": {
+    "evidenceSuite": {
+      "command": "npm run verify:evidence",
+      "passed": 50,
+      "failed": 0,
+      "skipped": 0
+    },
+    "repairSuite": {
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0
+    },
+    "sourceChecks": "passed",
+    "independentReview": "No actionable findings."
+  },
+  "freshWebVerification": {
+    "authorized": true,
+    "initialStatus": "failed-before-send",
+    "nativeCommandsExecuted": 0,
+    "failure": "Empty normal ChatGPT home controls did not become ready within 10 seconds.",
+    "cause": "The home readiness predicate required a fixed decorative greeting. The current authenticated home renders a personalized greeting while retaining the required composer, model selector and normal-chat controls.",
+    "repair": "Remove only the decorative heading dependency; preserve normal-home URL, temporary-mode, usable controls, empty unique composer, absent generation and absent history requirements.",
+    "validation": {
+      "affectedTestsPassed": 349,
+      "failed": 0,
+      "sourceChecks": "passed",
+      "diffCheck": "passed",
+      "residentHelperUnchanged": true,
+      "observationAndRetentionProgramsByteIdentical": true,
+      "previousSendQualifierAccepts": false,
+      "currentSendQualifierAccepts": true
+    },
+    "adapterRefreshRequired": true,
+    "liveAfterRepair": "The next attempt stopped before Send because the failed first initialization retained owners but no tab, saved URL or accepted checkpoint, and the normal restart removed its browser binding.",
+    "secondFailure": "Active native browser binding was lost.",
+    "secondFailureNativeCommandsExecuted": 0,
+    "initializationRecoveryRepair": {
+      "scope": "Only restored, definitely unsent first initialization with no tab, saved URL, checkpoint, generation or delivery evidence, no uncertain input, and no unresolved coding action.",
+      "behavior": "Bootstrap reuses the existing binding identity and remains idempotent until open is emitted. A surviving partial binding refuses its tab before mutation; stale and foreign tabs and drafts are preserved.",
+      "affectedTestsPassed": 547,
+      "failed": 0,
+      "sourceChecks": "passed",
+      "diffCheck": "passed",
+      "independentReview": "No actionable findings after correcting interruption before recovered open.",
+      "browserProgramsUnchanged": true,
+      "sendObserveRetainQualified": true,
+      "adapterRefreshRequired": false
+    },
+    "remainingFunctionalControlsObserved": {
+      "modelVisible": true,
+      "modelEnabled": true,
+      "temporaryChatButtonVisible": true,
+      "uniqueComposerTag": "DIV",
+      "composerContentEditable": true,
+      "composerEmpty": true,
+      "scope": "Read-only current SDK inspection of a separate empty home; not a native-tool or Stop proof. The inspection tab was closed."
+    },
+    "nativeTools": {
+      "status": "passed",
+      "nativeCommandCount": 1,
+      "pairedTerminalResults": 1,
+      "exitCode": 0,
+      "fixtureOutputExact": true,
+      "defaultPermissions": true,
+      "otherNonBrowserNativeCalls": 0,
+      "execution": "The Web model requested the native command through the configured MCP connector; no external launcher, runtime patch or another model drove it."
+    },
+    "beforeStopRecall": {
+      "status": "passed",
+      "markerRecalledWithoutSupplyingIt": true,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "acceptedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "stop": {
+      "status": "adapter-confirmed",
+      "outcome": "cancelled",
+      "stage": "complete",
+      "clickAttempted": true,
+      "stopClicked": true,
+      "clickError": false,
+      "stopHidden": true,
+      "generationInactive": true,
+      "inactivityEvidence": "composer_restored",
+      "retained": true,
+      "childTerminalObserved": true,
+      "nativeDurationMs": 635,
+      "actualTabSurvival": "awaiting user confirmation"
+    },
+    "afterStopContinuation": {
+      "status": "blocked-by-uncertain-send",
+      "requestSent": false,
+      "nativeCommandsExecuted": 0,
+      "preStopObservedAssistantTextLength": 0,
+      "substantiveTextBeforeStop": "unknown",
+      "reason": "Cancellation won before Router received and persisted substantive current-generation acceptance evidence. The existing guard refuses continuation before browser access; no replay or ledger change was attempted.",
+      "ledgerPreservation": "A stable baseline hash was recorded privately. No replay, field clearing, checkpoint replacement or ledger edit is authorized or performed.",
+      "ledgerByteForByteUnchangedAfterDeploymentAndRefresh": true
+    },
+    "acceptanceWakeupFinding": {
+      "status": "source-confirmed prospective defect",
+      "mechanism": "The managed adapter can read incomplete substantive assistant text but suppress its native callback until completion, a broker wake or renewal. Router therefore cannot promptly promote delivery from that text.",
+      "trialLimit": "The actual trial does not establish whether substantive text appeared during the gap before Stop.",
+      "repair": "Return one existing native snapshot immediately when acceptance is pending and substantive text appears; preserve exact-generation validation and resume held observation after promotion.",
+      "repairValidation": {
+        "affectedTestsPassed": 551,
+        "failed": 0,
+        "skipped": 0,
+        "sourceChecks": "passed",
+        "diffCheck": "passed",
+        "independentReview": "No actionable findings.",
+        "currentGenerationValidatedBeforePromotion": true,
+        "acceptancePersistedBeforeNextWait": true,
+        "laterPartialUpdatesHeld": true,
+        "genuineUncertainStopRefusalPreserved": true,
+        "additionalPagePolling": false,
+        "existingNativeCallbackUsed": true
+      },
+      "adapterCompatibility": {
+        "residentHelperUnchanged": true,
+        "programsWithoutHintUnchanged": true,
+        "previousAdapterAcceptsButIgnoresHint": true,
+        "matchingAdapterRefreshRequired": true
+      }
+    }
+  },
+  "homeReadinessDeployment": {
+    "routerCommit": "86b10549f1f0b75f0a6a2ceff20421f3f3fdb683",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T20:25:51.9566402Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRollbackPreserved": true
+  },
+  "homeReadinessRuntimeRefresh": {
+    "applied": true,
+    "routerReloaded": true,
+    "adapterGeneration": "75067fa53a68226b7d9e38d7f00e0697623c237c9622cfd1a3a92a489dbcc8eb",
+    "browserRuntimeChanged": false,
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlanReady": true,
+    "postRestartPlanChanged": false
+  },
+  "initializationRecoveryDeployment": {
+    "routerCommit": "ac93467cd465696f7be1bb1d02417cc3e37ff436",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T21:03:31.3236839Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRollbackPreserved": true,
+    "adapterUnchanged": true
+  },
+  "acceptanceWakeupDeployment": {
+    "routerCommit": "10897c7486dddc40944bf375279148cbbce302f3",
+    "accepted": true,
+    "acceptedAt": "2026-10-24T21:29:10.3519603Z",
+    "passedChecks": 11,
+    "totalChecks": 11,
+    "originalRouterAndSwitchyardRollbackPreserved": true
+  },
+  "acceptanceWakeupRuntimeRefresh": {
+    "applied": true,
+    "routerReloaded": true,
+    "adapterGeneration": "f245d2f4d7d8b14c4e0e4354021c1848630800ae649026c1b8d777a442f69e17",
+    "browserRuntimeChanged": false,
+    "hookDefinition": "preserved",
+    "tunnelConfiguration": "preserved",
+    "codexRestartRequired": true,
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlanReady": true,
+    "postRestartPlanChanged": false,
+    "postRestartAdapterGenerationMatchesCandidate": true
+  },
+  "stopReceiptHandoffRepair": {
+    "status": "deployed-and-live-verified",
+    "source": "src/web-stop-hook.mjs",
+    "behavior": "Store generation-bound dispatch in the surviving binding before the SDK click, acknowledge only actual SDK success after ownership rechecks, and retain uncertainty to prevent duplicate input. Ordinary continuation consumes the same witness without requiring later DOM completion. Fresh controllers do not manufacture a continuation binding.",
+    "proofContract": "A repeated hook cannot claim a prior click as its own; it stays blocked until explicit completion. The existing adapter result contract and cleanup budgets remain unchanged.",
+    "sourceSha256": "003cff4111034a6e3095ea858e59e967c1261d101661ea5e9cc8c0d8e0270397",
+    "validation": {
+      "browserHookAdapterStateTestsPassed": 391,
+      "installerTestsPassed": 44,
+      "counterfactual": "The real generated Stop program followed by canonical continuation failed with the original source and passed after restoring the exact candidate bytes, while DOM completion remained false, with one Stop click and no Send replay.",
+      "independentReview": "No actionable findings against final source and paired tests.",
+      "environment": "The first installer run hit sandbox default-TEMP state-lock timeouts before assertions; all 44 cases passed with process-local ignored .tmp TEMP/TMP, without installer or security changes."
+    },
+    "deployment": {
+      "routerCommit": "38d1055336a2790a2f102eab4c2f22deecaae35e",
+      "acceptedAt": "2026-10-25T02:12:28.1105594Z",
+      "accepted": true,
+      "passedChecks": 11,
+      "totalChecks": 11,
+      "forceInterruptedRequests": false,
+      "originalRollbackPreserved": true
+    },
+    "runtimeRefresh": {
+      "applied": true,
+      "routerReloaded": true,
+      "adapterGeneration": "fa59c668011ca7ce6457c8686a9517a54040365f718eecf31b3cbb0bed2eea66",
+      "hookDefinition": "preserved",
+      "tunnelConfiguration": "preserved",
+      "codexRestartRequired": true
+    },
+    "protectedInterruptedLedgerByteIdentical": true,
+    "failedVerificationChatPreserved": true,
+    "liveVerification": "passed: stopReceiptHandoffAutomaticVerification"
+  },
+  "connectorSafetyInvestigation": {
+    "status": "investigated-not-reproduced",
+    "successfulPairedNativeReads": 3,
+    "refusedAttemptNativeCommandsExecuted": 0,
+    "refusedAttemptGatewayStage": null,
+    "protocolDifferenceEstablished": false,
+    "safetyAnnotationsUnchanged": true,
+    "limit": "Assistant prose cannot establish a hosted connector error or gateway stage. Existing opt-in MCP trace and structured invocation evidence are needed if the event recurs; no extra replay or retry was scheduled."
+  },
+  "automaticAgentVerification": {
+    "testedAt": "2026-10-25T01:48:11.911Z",
+    "helper": "maintenance/web-verification.mjs",
+    "executionSurface": "codex-desktop-native",
+    "stopInput": "Supported computer use clicked the actual native Codex Stop control from a fresh screenshot of the approved verification chat; no human Stop press or direct cleanup call.",
+    "nativeRead": "passed: exactly one paired successful command and exact synthetic marker",
+    "initialRecall": "passed",
+    "acceptedActiveGeneration": "passed",
+    "nativeInterruptionAndMatchingAdapterStop": "passed",
+    "continuation": "failed before Send: canonical browser continuation refused missing affirmative inactivity proof",
+    "fullRunPassed": false,
+    "protectedInterruptedLedgerAndRuntimeSnapshotsUnchanged": true,
+    "limits": "Source confirms the hook keeps its click witness locally while continuation consults state.reconciliationStop. The failed continuation emits no semantic readback, so its exact transient browser state remains unknown. No replay, ledger repair or runtime change was performed.",
+    "validation": { "focusedTestsPassed": 15, "failed": 0, "sourceChecks": "passed", "independentReview": "No actionable findings in the repaired helper." }
+  },
+  "finalCandidateWebVerification": {
+    "authorizedFreshChat": true,
+    "routerCommit": "10897c7486dddc40944bf375279148cbbce302f3",
+    "adapterGeneration": "f245d2f4d7d8b14c4e0e4354021c1848630800ae649026c1b8d777a442f69e17",
+    "execution": "The Web model itself used the native browser and connector. No external launcher, native runtime patch or other model drove the conversation.",
+    "nativeRead": {
+      "status": "passed",
+      "nativeCommandsExecuted": 1,
+      "pairedTerminalResults": 1,
+      "exitCode": 0,
+      "fixtureBytesMatched": true,
+      "terminalTrailingCrLfObserved": true,
+      "nativeTurnDurationMs": 26454
+    },
+    "initialRecall": {
+      "status": "passed",
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeTurnDurationMs": 6450
+    },
+    "textOnlyReadinessAttempt": {
+      "status": "completed-before-stop-readiness",
+      "observeCallsWithAcknowledgementPending": 6,
+      "firstSubstantiveCallbackCompleted": true,
+      "firstSubstantiveCallbackTextLength": 29899,
+      "firstSubstantiveCallbackStopVisible": false,
+      "acceptancePersisted": true,
+      "limit": "The live attempt did not expose incomplete substantive text. It does not establish the first-text wakeup branch live, or whether readable text existed in the page before that callback."
+    },
+    "secondReadAttempt": {
+      "status": "connector-safety-block-reported",
+      "nativeCommandsExecuted": 0,
+      "connectorDiscoveryRequestCount": null,
+      "connectorGatewayRequestCount": null,
+      "fixedBlockStage": null,
+      "limit": "ChatGPT reported a safety check before a successful native result. The inspected native rollout emitted no command; it does not establish the unretained connector-side block stage. No uncertain native action was retried."
+    },
+    "discoveryOnlyReadinessAttempt": {
+      "status": "acknowledged-while-generating",
+      "nativeCommandsExecuted": 0,
+      "waitWakeReason": "broker_activity",
+      "readinessAssistantTextLength": 0,
+      "readinessStopVisible": true,
+      "readinessCompleted": false,
+      "acceptancePersisted": true,
+      "uncertainSendAtReadiness": false,
+      "unresolvedCodingActionsAtReadiness": 0,
+      "nativeStopRequests": 0,
+      "nativeStopResults": 0,
+      "terminal": "Generation completed normally before any human Stop event. A completed generation is not a Stop proof."
+    },
+    "finalRecall": {
+      "status": "passed",
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeTurnDurationMs": 11777,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "acceptedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "previousInterruptedLedgerByteIdentical": true,
+    "stopVerification": "passed-native-receipt",
+    "postStopContinuationVerification": "passed",
+    "completedVerification": {
+      "stopConfirmedAt": "2026-10-25T01:24:02.149Z",
+      "userAction": "User reported pressing Codex Stop.",
+      "inputAcknowledgedBeforeStop": true,
+      "stop": {
+        "exactDispatchAndResultPaired": true,
+        "outcome": "cancelled",
+        "stage": "complete",
+        "clickAttempted": true,
+        "clickError": false,
+        "stopClicked": true,
+        "stopHidden": true,
+        "generationInactive": true,
+        "inactivityEvidence": "composer_restored",
+        "retained": true,
+        "childTerminalObserved": true,
+        "nativeElapsedMs": 1407,
+        "callbackElapsedMs": 1657,
+        "readbackStopVisible": false,
+        "readbackControlsRecognized": true,
+        "readbackComplete": false,
+        "readbackCounts": null,
+        "humanVisualConfirmation": null
+      },
+      "continuation": {
+        "completedAt": "2026-10-25T01:25:09.652Z",
+        "nativeTurnDurationMs": 9160,
+        "exactExpectedMarkerRecalled": true,
+        "sessionMarkerSuppliedInPrompt": false,
+        "nativeCommandsExecuted": 0,
+        "sameSavedChat": true,
+        "sameTab": true,
+        "sameBinding": true,
+        "operations": ["continue", "send", "observe", "retain"],
+        "recoveryBranchExecuted": false,
+        "retainedAndCompleted": true,
+        "uncertainSend": false,
+        "unresolvedCodingActions": 0
+      },
+      "priorInterruptedLedgerByteIdentical": true,
+      "hookAdapterAndRollbackPreserved": true,
+      "limit": "This live Stop follows authenticated read-only connector discovery. The earlier text-only attempt completed before its first substantive callback, so live incomplete-text wakeup remains unexercised; its affected regression tests passed separately."
+    }
+  },
+  "stopReceiptHandoffAutomaticVerification": {
+    "testedAt": "2026-10-25T02:42:14.216Z",
+    "helper": "maintenance/web-verification.mjs",
+    "executionSurface": "codex-desktop-native",
+    "authorizedFreshChat": true,
+    "routerCommit": "38d1055336a2790a2f102eab4c2f22deecaae35e",
+    "adapterGeneration": "fa59c668011ca7ce6457c8686a9517a54040365f718eecf31b3cbb0bed2eea66",
+    "normalCodexRestartUserConfirmed": true,
+    "postRestartPlan": {
+      "ready": true,
+      "changed": false,
+      "adapterGenerationMatchesCandidate": true,
+      "codexRestartRequired": false,
+      "hookDefinition": "preserved",
+      "tunnelConfiguration": "preserved"
+    },
+    "nativeRead": {
+      "status": "passed",
+      "nativeCommandsExecuted": 1,
+      "pairedTerminalResults": 1,
+      "exactSyntheticMarker": true,
+      "defaultPermissions": true,
+      "acceptedAndCompleted": true,
+      "nativeTurnDurationMs": 23881
+    },
+    "initialRecall": {
+      "status": "passed",
+      "exactExpectedMarkerRecalled": true,
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeCommandsExecuted": 0,
+      "acceptedAndCompleted": true,
+      "nativeTurnDurationMs": 8679
+    },
+    "acceptedActiveGeneration": {
+      "status": "passed",
+      "acceptedSend": true,
+      "currentGenerationObserved": true,
+      "stopVisible": true,
+      "completed": false,
+      "nativeCommandsExecuted": 0,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0
+    },
+    "stopInput": "Supported computer use selected the exact approved Codex chat, observed its native Stop control, and clicked it once. No human Stop press or direct browser cleanup was used.",
+    "stop": {
+      "status": "passed",
+      "nativeInterrupted": true,
+      "exactDispatchAndResultPaired": true,
+      "nativeDispatchCount": 1,
+      "adapterResultCount": 1,
+      "outcome": "cancelled",
+      "stage": "complete",
+      "freshController": false,
+      "clickAttempted": true,
+      "clickError": false,
+      "stopClicked": true,
+      "stopHidden": true,
+      "generationInactive": true,
+      "inactivityEvidence": "composer_restored",
+      "retained": true,
+      "childTerminalObserved": true,
+      "nativeElapsedMs": 942,
+      "callbackElapsedMs": 1093,
+      "readbackState": "inactive_readback",
+      "readbackStopVisible": false,
+      "readbackControlsRecognized": true,
+      "readbackComplete": false,
+      "readbackCounts": null
+    },
+    "continuation": {
+      "status": "passed",
+      "nativeCompleted": true,
+      "exactExpectedMarkerRecalled": true,
+      "sessionMarkerSuppliedInPrompt": false,
+      "nativeCommandsExecuted": 0,
+      "sameSavedChat": true,
+      "sameTab": true,
+      "sameBinding": true,
+      "recoveryBranchExecuted": false,
+      "retainedAndCompleted": true,
+      "uncertainSend": false,
+      "unresolvedCodingActions": 0,
+      "nativeTurnDurationMs": 7204
+    },
+    "fullRunPassed": true,
+    "protectedInterruptedLedgerByteIdentical": true,
+    "runtimeSnapshotsByteIdentical": true,
+    "failedVerificationChatPreserved": true,
+    "limits": "This fresh Desktop run verifies the deployed handoff repair on its selected Web route. Native cleanup and callback timings come from the matching adapter receipt; turn durations include model and tool work. The successful continuation followed affirmative inactivity while DOM completion remained false. Earlier failed runs remain historical evidence, and the isolated connector safety refusal's stage remains unknown."
+  }
+}

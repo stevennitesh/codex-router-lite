@@ -120,6 +120,8 @@ model and control over additional request fields. The patch adds and tests:
 - raw Responses item inspection so custom, computer, shell, and tool-search
   continuations retain the selected target;
 - preservation of caller `priority` on selected native answer requests;
+- rejection of terminal Responses snapshots that contradict streamed text or
+  function-call arguments, including same-format replay;
 - authenticated classifier projections that are removed before decode, raw
   preservation, observability, and upstream forwarding;
 - local-hop capability enforcement and removal; and
@@ -211,11 +213,14 @@ public `switchyard/auto` identity while routing diagnostics retain the selected
 target. The authored picker effort ladder is accepted for client compatibility;
 each target's configured effort overrides it.
 
-The GPT-6.1 Sol High policy is subagents v2 with an
-[accepted native application](../../v2_agent/switchyard/auto/proof.md).
-The previous Sol Medium acceptance is retained
-under [historical evidence](../../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md);
-it does not certify this configuration.
+The checked-in GPT-6.1 Sol High candidate declares subagents v1 and has a
+[pending native application](../../v2_agent/switchyard/auto/proof.md). Its changed
+compatibility patch needs a fresh exact-runtime proof. The
+[previous accepted proof](../../docs/history/2026-10-24-switchyard-previous-proof/proof.md)
+is archived unchanged. This source transition withholds an unverified candidate
+claim; it does not change the installed runtime or its recorded acceptance.
+The older Sol Medium acceptance remains
+[historical evidence](../../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md).
 
 The four-target policy advertises multi-agent v2 only with an accepted
 runtime-bound application under `v2_agent/switchyard/auto`. A change to the

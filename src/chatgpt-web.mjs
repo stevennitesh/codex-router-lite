@@ -121,7 +121,7 @@ export function webBridgeModels() {
   return settings.enabled ? settings.models : [];
 }
 function configurationStatus({ enabled, models, browser, tunnel, mcpPort }) {
-  return { enabled, localToolsConfigured: enabled, models: models.map(({ slug, displayName, supported_reasoning_levels }) => ({ slug, displayName, efforts: supported_reasoning_levels })),
+  return { enabled, localToolsConfigured: enabled, models: models.map(({ slug, displayName, supported_reasoning_levels, multiAgentVersion }) => ({ slug, displayName, efforts: supported_reasoning_levels, multiAgentVersion })),
     ...(browser ? { browser, tunnel, ...(mcpPort === undefined ? {} : { mcpPort }) } : {}),
     browserReadiness: "Verify ChatGPT sign-in, the exact selected model and the selected MCP connector in the Codex in-app browser; configuration alone does not prove browser or tool readiness." };
 }

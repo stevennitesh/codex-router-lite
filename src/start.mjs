@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { assertCallerSecret } from "./caller-auth.mjs";
+import { assertCallerSecret, assertInternalSecret } from "./caller-auth.mjs";
 import { startCatalogAutoRefresh } from "./catalog-auto-refresh.mjs";
 import {
   CALLER_SECRET_PATH,
@@ -90,8 +90,9 @@ if (!existsSync(INTERNAL_SECRET_PATH)) {
 if (!existsSync(CALLER_SECRET_PATH)) {
   throw new Error("Router caller key is missing; run .\\install.ps1 -Target codex.");
 }
-const internalKey = readFileSync(INTERNAL_SECRET_PATH, "utf8").trim();
-if (!internalKey) throw new Error("Internal service key is empty.");
+const internalKey = assertInternalSecret(
+  readFileSync(INTERNAL_SECRET_PATH, "utf8").trim(),
+);
 const callerKey = assertCallerSecret(
   readFileSync(CALLER_SECRET_PATH, "utf8").trim(),
 );

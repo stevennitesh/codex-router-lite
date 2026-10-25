@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
+  "lastReviewedCommit": "9945d74354ab07942f171be329cf81c9478fc5e2",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -13,9 +13,10 @@
     "6625cb07, 3c708bd2 and cc369942: connector/tool declaration deferral changes model-visible tools; no current context or latency defect warrants replacing request-local discovery",
     "3cea80e9, 3f31f9fe and 84cd25a5: image-history elision changes preserved input; retain current bounds until retained-endpoint evidence requires it",
     "042a6d70: pre-TLS reset recovery expands safe retry eligibility; defer without a retained-route incident",
-    "627357eb and 36f1578d: separate fixture process-start and HTTP-readiness instrumentation; existing bounded headers/body and exited-child coverage remains sufficient absent a retained cold-start incident"
+    "627357eb and 36f1578d: separate fixture process-start and HTTP-readiness instrumentation; existing bounded headers/body and exited-child coverage remains sufficient absent a retained cold-start incident",
+    "1eb8e468: optional persistent compatibility-layer opt-out changes policy; current GLM routes require the gateway, so retain the existing mandatory integration"
   ],
-  "reviewedAt": "2026-10-21",
+  "reviewedAt": "2026-10-24",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -31,7 +32,9 @@
       "f35327d2, 9feb6289 and merge 564edd6a: foreground Windows supervisor explicitly leaves the managed process record untouched while retaining lifecycle locking; managed start identity remains fail-closed",
       "26ef38c9 and merge d0855644: reject catalog polling intervals above the Node timer maximum using the existing default",
       "0cf37ce4 and merge 304af3b1: refuse native inference redirects without changing the conservative no-replay policy",
-      "d578d9f9 and merge 3eaef7b7: native stream failures retain their safe cause without invented metadata; infer SSE only for successful headerless native streaming Responses"
+      "d578d9f9 and merge 3eaef7b7: native stream failures retain their safe cause without invented metadata; infer SSE only for successful headerless native streaming Responses",
+      "06bdc157: descriptor-owned failed-write cleanup preserves replacement objects and empty-before-ACL ordering",
+      "915099ce: committed local tool rejection preserves code and invalid_prompt terminal classification across HTTP and WebSocket without replay"
     ],
     "alreadyCovered": [
       "637d67cf: transactional launcher installation verifies registration and rolls back failures",
@@ -48,7 +51,8 @@
       "e4c4ae0b and merge 8e83e3b9: the retained Chat-Completions route is GLM and already uses the proven message-envelope repair; Pareto and Switchyard/native paths are Responses and do not cross that bridge",
       "9b344199 and merge 4294adfa: managed periodic native catalog refresh already uses the current binary and catalog authority",
       "1972ac43 and merge d65dc169: complete-line WebSocket SSE bounds already count events independently of HTTP chunks, including partial/CRLF/EOF coverage",
-      "The 29 covered commits in 85259b67..eb5acc9c retain current stream/terminal, process proof, lock, gateway cleanup, WebSocket, namespace, dependency and UTF-8 behavior; complete dispositions are in docs/history/2026-10-17-app-compatibility-review.json"
+      "The 29 covered commits in 85259b67..eb5acc9c retain current stream/terminal, process proof, lock, gateway cleanup, WebSocket, namespace, dependency and UTF-8 behavior; complete dispositions are in docs/history/2026-10-17-app-compatibility-review.json",
+      "ef50accf and 76a82538: individual exclusive skill-file publication and Undici 8.12.3 already retained"
     ],
     "excluded": [
       "69639ad6: keep slow-starting installation conflicts with verified transactional rollback",
@@ -81,7 +85,8 @@
       "All 156 commits in 85259b67..eb5acc9c are individually accounted for by grouped full-SHA dispositions in docs/history/2026-10-17-app-compatibility-review.json, including 57 excluded changes and 57 topology-only merges; all resolution-bearing merges received explicit review",
       "9593a75a and 4d4eb5f: fixture isolation for retired subagent-explanation and support-bundle owners",
       "e9c86594: expanded test port allocation is unnecessary for current bounded Lite consumers",
-      "8c470693, 3d190c98, 292c833b and 0a0fdce1: topology-only merges; all nine commits in eb5acc9c..0a0fdce1 are dispositioned in docs/history/2026-10-21-app-compatibility-review.json"
+      "8c470693, 3d190c98, 292c833b and 0a0fdce1: topology-only merges; all nine commits in eb5acc9c..0a0fdce1 are dispositioned in docs/history/2026-10-21-app-compatibility-review.json",
+      "All 30 commits in 0a0fdce1..9945d743 are dispositioned individually in docs/history/2026-10-24-app-compatibility-review.json, including topology-only merges; no wholesale upstream merge"
     ]
   }
 }

@@ -1,8 +1,9 @@
 # v2 route applications
 
-This directory contains exact-route certification applications for models
-published as subagents v2. The records are runtime-bound historical evidence,
-not current instructions or proof of a later candidate. Keep these paths because
+This directory contains exact-route certification applications, including pending
+v1 candidates and accepted subagents v2. Accepted records are runtime-bound
+historical evidence, not current instructions or proof of a later candidate.
+Keep these paths because
 the application checker consumes them; the maintained procedure is
 [certification](../docs/SUBAGENT-CERTIFICATION.md).
 
@@ -19,8 +20,15 @@ the observations for each accepted batch:
 - retired historical acceptance: [`openrouter/glm-5.3-flash-gmicloud`](openrouter/glm-5.3-flash-gmicloud/proof.md), which does not certify Together.
 - accepted: [`openrouter/pareto`](openrouter/pareto/proof.md)
 - accepted: [`switchyard/auto`](switchyard/auto/proof.md), using GPT-6.1 Sol High.
-  Its unchanged [previous acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
-  covers the retired Sol Medium policy.
+  The [snapshot-conflict repair renewal](../docs/history/2026-10-24-switchyard-snapshot-certification.json)
+  passed all five checks on deployed Router `68b596a7` with the new qualified binary.
+  One streamed request and three native child requests completed successfully;
+  the child produced output 42 and returned both markers through two encrypted
+  handoffs. This CLI/MXC proof does not certify Desktop Web tools or Stop. The
+  [previous accepted proof](../docs/history/2026-10-24-switchyard-previous-proof/proof.md)
+  is archived unchanged. The older
+  [Sol Medium acceptance](../docs/history/2026-10-08-switchyard-sol-medium-proof/proof.md)
+  covers the retired policy.
 - retired historical acceptance: [`openrouter/union-alpha`](openrouter/union-alpha/proof.md), which does not certify Pareto.
 
 The [deployed update renewal](../docs/history/2026-10-13-deployed-certification.json)
@@ -189,5 +197,6 @@ remains separate failed evidence and does not contribute to the accepted window.
 For preparation, proof fields, acceptance, refresh conditions, and quota
 authorization, follow [certification](../docs/SUBAGENT-CERTIFICATION.md).
 The templates remain under [`_template/`](_template/proof.json).
-The application checker rejects missing, draft, mismatched, or incomplete
-applications and requires both proof files.
+The application checker requires both proof files and rejects a v2 source
+declaration without a matching accepted application. A v1 candidate may retain a
+pending draft until the authorized proof window and acceptance.

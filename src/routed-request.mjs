@@ -45,7 +45,7 @@ export function prepareRoutedRequest(payload, route, {
   const search = routedSearchCompatibility(payload, route);
   payload = search.payload;
   const hostedSearch = !compaction && search.searchMode === "hosted" && payloadHasHostedSearchIntent(payload);
-  input = normalizeProviderAppToolOutputs(input);
+  input = normalizeProviderHistory(input);
   const clientTools = compaction ? [] : restorePreflattenedToolNamespaces(payload.tools, payload.client_metadata);
   const flat = compaction
     ? { tools: [], namespaces: new Map(), flattened: false }
@@ -109,7 +109,9 @@ function normalizeOrphanAppToolOutput(item) {
   return messageItem(`[Codex app tool result: ${item.namespace}.${item.name}]\n${output}`);
 }
 
-function normalizeProviderAppToolOutputs(input) {
+function normalizeProviderHistory(input) {
   if (!Array.isArray(input)) return input;
-  return input.map(normalizeOrphanAppToolOutput);
+  // Native incremental catalogs can survive a model switch. External tool
+  // declarations come from this request, never those historical native schemas.
+  return input.filter(item => item?.type !== "additional_tools").map(normalizeOrphanAppToolOutput);
 }

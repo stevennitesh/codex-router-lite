@@ -149,12 +149,27 @@ test("real read denial refuses setup before creating the other capability", wind
   assert.equal(readFileSync(caller, "utf8"), synthetic);
 });
 
-test("invalid contents and non-absence read errors do not regenerate capabilities", windows, t => {
+for (const name of ["internal-secret", "caller-secret"]) {
+test(`invalid ${name} contents are reported without regenerating either capability`, windows, t => {
+  for (const value of ["", "sk-1234", "synthetic_invalid!_" + "a".repeat(48), "synthetic invalid_" + "a".repeat(48)]) {
+    const root = fixture(t), target = path.join(root, name);
+    const other = path.join(root, name === "internal-secret" ? "caller-secret" : "internal-secret");
+    writeFileSync(target, value);
+    const status = run(root, "status");
+    assert.equal(status.status, 1, status.stderr);
+    assert.equal(JSON.parse(status.stdout)[name === "internal-secret" ? "internal" : "caller"].fileStatus, "invalid");
+    const result = run(root, "ensure");
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /is invalid/u);
+    if (value) assert.equal((status.stdout + status.stderr + result.stdout + result.stderr).includes(value), false);
+    assert.equal(readFileSync(target, "utf8"), value);
+    assert.equal(existsSync(other), false);
+  }
+});
+}
+
+test("non-absence read errors do not regenerate capabilities", windows, t => {
   const root = fixture(t), caller = path.join(root, "caller-secret");
-  writeFileSync(caller, "invalid fixture");
-  assert.equal(run(root, "ensure").status, 1);
-  assert.equal(readFileSync(caller, "utf8"), "invalid fixture");
-  assert.equal(existsSync(path.join(root, "internal-secret")), false);
   writeFileSync(caller, synthetic);
   const preload = path.join(root, "read-error.mjs");
   for (const code of ["EIO", "ENOENT"]) {

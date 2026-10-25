@@ -49,6 +49,11 @@ surface, resolves discovery history, translates names and choices, applies the
 selected route's custom-history and parameter rules, and chooses the transport.
 Response restoration uses the returned namespace context, not a rebuilt map.
 
+Native Responses Lite `additional_tools` catalog records can remain in history
+after switching models. External preparation removes them before restoring tool
+history for ordinary turns and compaction. These records never add or replace
+the current request's tool declarations or schemas.
+
 Ordinary function arguments remain raw JSON strings during identity restoration.
 Validation checks syntax and duplicate keys without requiring numeric tokens to
 fit JavaScript `Number`. Integer spelling repair also operates on raw tokens,

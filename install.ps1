@@ -435,10 +435,10 @@ function Install-PythonEnvironment([string]$Venv, [bool]$Recreate = $false) {
     } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
       $Launcher = "python"
     } else {
-      throw "Python 3.10+ or uv is required. Install uv from https://docs.astral.sh/uv/."
+      throw "Python 3.11+ or uv is required. Install uv from https://docs.astral.sh/uv/."
     }
-    & $Launcher @LauncherArguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
-    if ($LASTEXITCODE -ne 0) { throw "Python 3.10 or newer is required." }
+    & $Launcher @LauncherArguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+    if ($LASTEXITCODE -ne 0) { throw "Python 3.11 or newer is required." }
     if ($Recreate -or -not (Test-Path -LiteralPath $EnvironmentPython -PathType Leaf)) {
       $VenvArguments = @("-m", "venv")
       if ($Recreate -or (Test-Path -LiteralPath $Venv)) { $VenvArguments += "--clear" }

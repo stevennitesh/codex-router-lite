@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
+import { validServiceSecret } from "./caller-auth.mjs";
 import { protectPrivateFile, writePrivateFile } from "./file-security.mjs";
 import { fileProbeErrorReason, probeRegularFile } from "./file-probe.mjs";
 import { withCallerKeyRotationLock } from "./caller-key-rotation-lock.mjs";
@@ -11,7 +12,6 @@ import {
 } from "./paths.mjs";
 
 const command = process.argv[2] || "status";
-const generatedSecretPattern = /^[A-Za-z0-9_-]{32,}$/;
 if (!new Set(["ensure", "status"]).has(command)) {
   console.error("Usage: secret.mjs ensure|status");
   process.exit(2);
@@ -21,7 +21,7 @@ function secretStatus(target) {
   const probe = probeRegularFile(target);
   if (probe.status !== "present") return { present: false, fileStatus: probe.status, ...(probe.code ? { code: probe.code } : {}) };
   try {
-    const present = generatedSecretPattern.test(readFileSync(target, "utf8").trim());
+    const present = validServiceSecret(readFileSync(target, "utf8").trim());
     return { present, fileStatus: present ? "present" : "invalid" };
   } catch (error) {
     const reason = fileProbeErrorReason(error);

@@ -40,6 +40,7 @@ function validConversation(value, threadId) {
     && Array.isArray(value.browserOwnerTurnIds) && value.browserOwnerTurnIds.every(owner => uuid.test(owner))
     && new Set(value.browserOwnerTurnIds).size === value.browserOwnerTurnIds.length
     && (value.tabId === undefined || nonempty(value.tabId)) && (value.chatUrl === undefined || isSavedChatUrl(value.chatUrl))
+    && (value.capacityChatUrl === undefined || isSavedChatUrl(value.capacityChatUrl) && value.rolloverRequired === true)
     && (value.deliveredInstructionsSha256 === undefined || sha256(value.deliveredInstructionsSha256) && value.checkpoint !== undefined)
     && (value.deliveredInstructionsGenerationTurnKey === undefined || uuid.test(value.deliveredInstructionsGenerationTurnKey) && value.checkpoint !== undefined)
     && (value.checkpoint === undefined
@@ -60,7 +61,7 @@ function validConversation(value, threadId) {
       && (compacted.acknowledgedTailHashes === undefined || Array.isArray(compacted.acknowledgedTailHashes) && compacted.acknowledgedTailHashes.every(sha256))
       && (compacted.protocol === undefined || compacted.protocol === "v2" && Array.isArray(compacted.inputHashes) && compacted.inputHashes.every(sha256)))
     && (value.needsHistory === undefined || typeof value.needsHistory === "boolean") && (value.rolloverRequired === undefined || typeof value.rolloverRequired === "boolean")
-    && (!value.needsHistory || value.rolloverRequired === true && isSavedChatUrl(value.chatUrl))
+    && (!value.needsHistory || value.rolloverRequired === true && isSavedChatUrl(value.capacityChatUrl ?? value.chatUrl))
     && (value.previousChatUrls === undefined || Array.isArray(value.previousChatUrls) && value.previousChatUrls.every(isSavedChatUrl))
     && (observed === undefined || record(observed) && value.checkpoint !== undefined && Number.isSafeInteger(value.sendBaseline)
       && Number.isSafeInteger(observed.replyCount) && observed.replyCount >= 0 && typeof observed.completed === "boolean"
@@ -270,7 +271,7 @@ export function createInAppWebRuntime({
       observation: conversation.observation && { ...conversation.observation,
         replyCount: conversation.sendBaselineReplyIds.length + conversation.generationReplyIds.length },
       activeCompaction: conversation.activeCompaction, pendingCompaction: conversation.pendingCompaction,
-      needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, previousChatUrls: conversation.previousChatUrls,
+      needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, capacityChatUrl: conversation.capacityChatUrl, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
       lastTurn: conversation.lastTurn };
     const serialized = JSON.stringify(value);
@@ -295,7 +296,15 @@ export function createInAppWebRuntime({
       const { replyId, assistantPrefix, completed } = value.observation;
       value.observation = { replyId, assistantPrefix, completed };
     }
-    return { ...value, browserStarted: true, persistedValue: JSON.stringify(value), unresolvedCoding: new Map(value.unresolvedCoding.map(call => [call.callId, call.outputType])),
+    // A failed first initialization has no established tab or delivery to
+    // recover. Only a restored, definitely unsent record may bootstrap again;
+    // a surviving partial binding still makes the ordinary open refuse its tab.
+    const restartInitialization = value.lastTurn.sendState === "unsent" && !value.lastTurn.completed
+      && !value.uncertainSend && !value.unresolvedCoding.length && !value.needsHistory && !value.rolloverRequired
+      && [value.tabId, value.chatUrl, value.checkpoint, value.capacityChatUrl, value.sendBaselineReplyIds,
+        value.generationTurnKey, value.generationReplyIds, value.generationCompleted,
+        value.deliveredInstructionsSha256, value.deliveredInstructionsGenerationTurnKey].every(field => field === undefined);
+    return { ...value, browserStarted: true, restartInitialization, persistedValue: JSON.stringify(value), unresolvedCoding: new Map(value.unresolvedCoding.map(call => [call.callId, call.outputType])),
       ...(!value.lastTurn.completed && value.browserOwnerTurnIds.length ? { interruptedTurnId: value.lastTurn.turnId, interruptedSendState: value.lastTurn.sendState } : {}) };
   };
   const reconcileCoding = async (conversation, payload) => {
@@ -312,7 +321,7 @@ export function createInAppWebRuntime({
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
     if (conversation.unresolvedCoding.size) throw fail("A previously emitted native coding action has no actual paired result; continuation is blocked.", "web_coding_uncertain");
   };
-  const compactTail = (conversation, raw, deliveredCoding) => {
+  const compactTail = (conversation, raw, deliveredCoding, acknowledge = true) => {
     for (const alias of [conversation.pendingCompaction, conversation.activeCompaction]) {
       if (!alias || digest(conversation.checkpoint) !== alias.deliverySha256) continue;
       let tail, prefix = [];
@@ -346,8 +355,8 @@ export function createInAppWebRuntime({
       for (const hash of deliveredCoding ?? []) if (present.has(hash) && !required.has(hash)) {
         updated.push(hash); required.set(hash, 1);
       }
-      if (updated.length > acknowledged.length) alias.acknowledgedTailHashes = updated;
-      if (alias === conversation.pendingCompaction) { conversation.activeCompaction = alias; conversation.pendingCompaction = undefined; }
+      if (acknowledge && updated.length > acknowledged.length) alias.acknowledgedTailHashes = updated;
+      if (acknowledge && alias === conversation.pendingCompaction) { conversation.activeCompaction = alias; conversation.pendingCompaction = undefined; }
       let lastOwned = -1;
       const remaining = tail.flatMap((item, index) => {
         const count = required.get(hashes[index]) ?? 0;
@@ -380,8 +389,9 @@ export function createInAppWebRuntime({
     try {
       await conversation.writeTail;
       const current = transcript(clean);
-      const retained = compactTail(conversation, raw);
+      const retained = compactTail(conversation, raw, undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
+      compactTail(conversation, raw);
       if (!conversation.checkpoint || conversation.needsHistory) return seed();
       let tail = retained;
       if (!tail && conversation.checkpoint.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) tail = raw.slice(conversation.checkpoint.length);
@@ -400,6 +410,7 @@ export function createInAppWebRuntime({
   };
   const cancel = (turn, error = fail("This native Web turn was cancelled; start a new turn.", "web_turn_cancelled")) => {
     if (turn.done || turn.cancelled) return;
+    if (turn.pendingDelivery && turn.token && broker.hasClientActivity(turn.token)) promoteDelivery(turn);
     turn.cancelled = true; turn.error = error;
     if (turn.token) broker.cancel(turn.token, error);
     // Stop revokes this turn's tools, while the saved chat remains the
@@ -478,16 +489,22 @@ export function createInAppWebRuntime({
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),
         ...(["continue", "rollover"].includes(operation) ? { expectedOwnerTurnIds: [...turn.conversation.browserOwnerTurnIds] } : {}),
         ...(operation === "continue" && conversation.needsHistory ? { needsHistory: true } : {}),
-        ...(operation === "rollover" ? { previousChatUrl: conversation.chatUrl } : {}),
+        ...(operation === "rollover" ? { previousChatUrl: conversation.capacityChatUrl ?? conversation.chatUrl } : {}),
         ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt } : {}),
-        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) } } : {}),
+        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) },
+          ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
     turn.browserStarted = true;
-    if (operation === "bootstrap") turn.conversation.browserStarted = true;
-    if (["open", "continue", "rollover"].includes(operation)) turn.conversation.browserOwnerTurnIds = [...new Set([...turn.conversation.browserOwnerTurnIds, turn.turnId])];
-    if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; turn.conversation.observation = undefined; }
+    if (operation === "bootstrap") conversation.browserStarted = true;
+    // Bootstrap can be interrupted before open is emitted. Keep it idempotent
+    // until that tab-creating handoff may actually have reached native Codex.
+    if (operation === "open") conversation.restartInitialization = false;
+    if (["open", "continue", "rollover"].includes(operation) || operation === "bootstrap" && conversation.browserOwnerTurnIds.length) {
+      conversation.browserOwnerTurnIds = [...new Set([...conversation.browserOwnerTurnIds, turn.turnId])];
+    }
+    if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; }
     conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
     turn.pending = { kind: "browser", operation, frameToken, calls: [call] };
     await persist(conversation);
@@ -512,7 +529,7 @@ export function createInAppWebRuntime({
     const current = transcript(payload), hashes = current.map(digest), checkpoint = conversation.checkpoint;
     let history = current;
     if (checkpoint && !conversation.needsHistory) {
-      const retained = compactTail(conversation, readableInput(payload));
+      const retained = compactTail(conversation, readableInput(payload), undefined, false);
       let common = 0;
       while (common < checkpoint.length && common < hashes.length && checkpoint[common] === hashes[common]) common += 1;
       if (retained) history = transcript({ input: retained });
@@ -549,7 +566,7 @@ export function createInAppWebRuntime({
   };
   const startRollover = async (turn, payload, value) => {
     const conversation = turn.conversation;
-    if (value.normal !== true || value.tabId !== conversation.tabId || value.url !== conversation.chatUrl || !isSavedChatUrl(value.url)) throw fail("The full-conversation signal does not belong to the connected saved chat.");
+    if (value.normal !== true || value.tabId !== conversation.tabId || value.url !== (conversation.capacityChatUrl ?? conversation.chatUrl) || !isSavedChatUrl(value.url)) throw fail("The full-conversation signal does not belong to the connected saved chat.");
     if (conversation.uncertainSend || conversation.unresolvedCoding.size) throw fail("An uncertain Send or native coding action blocks saved-chat rollover.", "web_capacity_uncertain");
     if (turn.rollovers) throw fail("The successor chat also reached capacity; another rollover in this native turn is blocked.", "web_conversation_full");
     // Updating the existing declaration rejects any queued or delivered MCP
@@ -564,22 +581,50 @@ export function createInAppWebRuntime({
     conversation.rolloverRequired = true;
     return emitBrowser(turn, "rollover", payload);
   };
+  // A DOM anchor authorizes observation and Stop, not context acknowledgement.
+  // Keep the current delivery private to this live turn until the model proves
+  // receipt through current output or an authenticated current-token MCP request.
+  const promoteDelivery = turn => {
+    const delivery = turn.pendingDelivery;
+    if (!delivery) return;
+    const conversation = turn.conversation;
+    turn.sendState = "sent";
+    conversation.uncertainSend = false;
+    conversation.checkpoint = delivery.checkpoint;
+    conversation.deliveredInstructionsSha256 = delivery.instructionsSha256;
+    conversation.deliveredInstructionsGenerationTurnKey = delivery.generationTurnKey;
+    conversation.pendingCompaction = undefined; conversation.activeCompaction = undefined;
+    if (conversation.needsHistory) conversation.previousChatUrls = [...(conversation.previousChatUrls ?? []), conversation.capacityChatUrl ?? conversation.chatUrl];
+    conversation.needsHistory = false; conversation.rolloverRequired = false; conversation.capacityChatUrl = undefined;
+    conversation.chatUrl = delivery.chatUrl;
+    conversation.sendBaselineReplyIds = delivery.sendBaselineReplyIds;
+    conversation.generationTurnKey = delivery.generationTurnKey;
+    conversation.generationReplyIds = delivery.generationReplyIds;
+    conversation.generationCompleted = false;
+    conversation.observation = delivery.observation;
+    conversation.assistantText = undefined;
+    conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: false };
+    turn.pendingDelivery = undefined;
+    turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.promptInstructionsSha256 = undefined;
+  };
   const acceptObservation = (turn, value) => {
+    const delivery = turn.pendingDelivery ?? turn.conversation;
     if (["duplicate-generation-turn", "generation-turn-not-latest", "generation-message-not-latest"].includes(value.replyUnavailableReason)) {
       throw fail("The saved Web generation is no longer uniquely owned and latest. Its chat is retained; queued native actions will not be delivered or replayed.", "web_generation_ownership");
     }
-    if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== turn.conversation.chatUrl
-        || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(turn.conversation.sendBaselineReplyIds)
-        || turn.conversation.generationTurnKey !== undefined && value.generationTurnKey !== turn.conversation.generationTurnKey
+    if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== delivery.chatUrl
+        || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(delivery.sendBaselineReplyIds)
+        || delivery.generationTurnKey !== undefined && value.generationTurnKey !== delivery.generationTurnKey
+        || value.requestError !== undefined && value.requestError !== "unknown_error"
         || !messageIds(value.generationReplyIds) || value.generationReplyIds.some(replyId => value.baselineReplyIds.includes(replyId))
         || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
         || (value.replyId === null ? value.assistantText !== "" || value.completed && !nonempty(value.replyUnavailableReason) : typeof value.replyId !== "string" || !uuid.test(value.replyId)
           || value.baselineReplyIds.includes(value.replyId)
           || !value.generationReplyIds.includes(value.replyId))) throw fail("The browser observation has no verified conversation evidence.");
-    turn.conversation.generationReplyIds = [...value.generationReplyIds];
+    delivery.generationReplyIds = [...value.generationReplyIds];
     turn.lastBrowserAnswer = { replyId: value.replyId, text: value.assistantText };
     const prefix = value.assistantText.slice(0, 1024);
-    if (value.replyId !== null || !turn.conversation.observation) turn.conversation.observation = { replyId: value.replyId,
+    if (value.replyId !== null || !delivery.observation) delivery.observation = { replyId: value.replyId,
       assistantPrefix: { length: prefix.length, sha256: textDigest(prefix) }, completed: value.completed && value.replyId !== null };
   };
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
@@ -595,7 +640,7 @@ export function createInAppWebRuntime({
       return startRollover(turn, payload, value);
     }
     if (operation === "rollover") {
-      if (value.rolledOver !== true || value.needsHistory !== true || value.previousChatUrl !== turn.conversation.chatUrl || value.normal !== true
+      if (value.rolledOver !== true || value.needsHistory !== true || value.previousChatUrl !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) || value.normal !== true
           || value.url !== "https://chatgpt.com/" || value.tabId !== turn.conversation.tabId) throw fail("The saved-chat successor was not established.");
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
       turn.conversation.needsHistory = true;
@@ -607,7 +652,7 @@ export function createInAppWebRuntime({
       if (operation === "continue" && value.needsHistory === true && turn.conversation.rolloverRequired && value.url === "https://chatgpt.com/") turn.conversation.needsHistory = true;
       if (value.normal !== true || !nonempty(value.tabId) || typeof value.url !== "string"
           || (turn.conversation.needsHistory ? value.url !== "https://chatgpt.com/" || value.needsHistory !== true
-            : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The owned saved ChatGPT conversation was not established.");
+            : (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) && value.url !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl))) throw fail("The owned saved ChatGPT conversation was not established.");
       turn.conversation.tabId = value.tabId;
       if (operation === "continue" && !turn.conversation.needsHistory && (value.conversationFull === true || turn.conversation.rolloverRequired)) return startRollover(turn, payload, value);
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
@@ -626,27 +671,33 @@ export function createInAppWebRuntime({
           || !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
       if (!isSavedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
-      turn.sendState = "sent";
-      turn.conversation.uncertainSend = false;
-      turn.conversation.checkpoint = turn.promptCheckpoint;
-      turn.conversation.deliveredInstructionsSha256 = turn.promptInstructionsSha256;
-      turn.conversation.deliveredInstructionsGenerationTurnKey = value.generationTurnKey;
-      turn.conversation.pendingCompaction = undefined;
-      turn.conversation.activeCompaction = undefined;
-      if (turn.conversation.needsHistory) turn.conversation.previousChatUrls = [...(turn.conversation.previousChatUrls ?? []), turn.conversation.chatUrl];
-      turn.conversation.needsHistory = false; turn.conversation.rolloverRequired = false;
-      turn.conversation.chatUrl = value.url;
-      turn.conversation.sendBaselineReplyIds = [...value.baselineReplyIds];
-      turn.conversation.generationTurnKey = value.generationTurnKey;
-      turn.conversation.generationReplyIds = [];
-      turn.conversation.generationCompleted = false;
-      turn.conversation.observation = undefined;
-      turn.conversation.assistantText = undefined;
+      if (value.normal !== true || value.tabId !== turn.conversation.tabId) throw fail("The anchored Send does not belong to the owned browser tab.");
+      turn.pendingDelivery = { chatUrl: value.url, sendBaselineReplyIds: [...value.baselineReplyIds],
+        generationTurnKey: value.generationTurnKey, generationReplyIds: [],
+        checkpoint: turn.promptCheckpoint, instructionsSha256: turn.promptInstructionsSha256 };
       return emitBrowser(turn, "observe", payload);
     }
-    if (operation === "observe") {
+    if (operation === "observe" || operation === "retain") {
       acceptObservation(turn, value);
+      // Both phases read the current generation. A late site failure must win
+      // over final delivery and any native calls queued after the completion
+      // snapshot. Either verified receipt proof remains valid even when the
+      // first substantive answer and the site error arrive in this same read.
+      if (broker.hasClientActivity(turn.token) || value.assistantText.trim()) promoteDelivery(turn);
+      if (value.requestError !== undefined) {
+        await persist(turn.conversation);
+        throw fail("ChatGPT rejected the current request. The saved chat and any actual tool outcomes are retained; Send will not be repeated.", "web_request_failed");
+      }
+    }
+    if (operation === "observe") {
       if (value.conversationFull === true) {
+        // This exact site-owned capacity rejection permits the existing successor
+        // flow, without claiming that the rejected input reached model context.
+        if (turn.pendingDelivery && !broker.hasClientActivity(turn.token) && !value.assistantText.trim()) {
+          turn.conversation.capacityChatUrl = turn.pendingDelivery.chatUrl;
+          turn.pendingDelivery = undefined;
+          turn.sendState = "unsent"; turn.conversation.uncertainSend = false;
+        }
         turn.conversation.rolloverRequired = true;
         if (!value.assistantText.trim() && !turn.codingEmitted) return startRollover(turn, payload, value);
         if (!value.completed || !value.assistantText.trim()) {
@@ -692,7 +743,6 @@ export function createInAppWebRuntime({
     }
     if (operation === "retain") {
       if (value.retained !== true) throw fail("The completed Web conversation could not be retained.");
-      acceptObservation(turn, value);
       if (!value.completed || !value.assistantText.trim() || !freshPostToolAnswer(turn, value)) return emitBrowser(turn, "observe", payload);
       if (!broker.finish(turn.token, turn.finalRevision)) {
         if (broker.beginCompletion(turn.token) === turn.finalRevision) throw fail("ChatGPT completed without the required native tool result.", "web_tool_required");
@@ -740,11 +790,12 @@ export function createInAppWebRuntime({
     try {
       await conversation.writeTail;
       transcript(payload); // Validate readable history before any browser or persistence effects.
-      const retained = compactTail(conversation, readableInput(payload));
+      const retained = compactTail(conversation, readableInput(payload), undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
     } catch (error) { conversation.activeTurn = undefined; throw error; }
     const turn = { ...owner, settings, selection: model, model: payload.model, executor, tools,
       conversation, interruptedTurnId: conversation.interruptedTurnId, interruptedSendState: conversation.interruptedSendState,
+      initialBrowserOperation: conversation.restartInitialization || !conversation.browserOwnerTurnIds.length ? "bootstrap" : "continue",
       cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
     conversation.activeTurn = owner.turnId;
     const check = () => {
@@ -805,7 +856,7 @@ export function createInAppWebRuntime({
         if (turn.cache?.has(fingerprint)) return turn.cache.get(fingerprint).clone();
         if (turn.done) throw fail("This Web turn is complete; use a new native turn for a follow-up.");
         const input = Array.isArray(payload.input) ? payload.input : [];
-        const retained = compactTail(turn.conversation, readableInput(payload));
+        const retained = compactTail(turn.conversation, readableInput(payload), undefined, false);
         for (const item of [...input, ...(retained ?? [])]) if (outputTypes.has(item?.type) && turn.processed.has(item.call_id)
             && turn.processed.get(item.call_id) !== outputDigest(item)) throw fail("A consumed native Web result changed during replay.", "web_tool_result", 400);
         let response;
@@ -831,7 +882,7 @@ export function createInAppWebRuntime({
               turn.executor = discoverBrowserExecutor(turn.tools);
               broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
-              response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
+              response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
             } else {
               broker.complete(turn.token, outputs);
               turn.deliveredCoding ??= new Set();
@@ -858,7 +909,7 @@ export function createInAppWebRuntime({
           const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query: "+mcp__node_repl js persistent JavaScript browser runtime" } };
           turn.pending = { kind: "discovery", calls: [call] };
           response = webResponse(payload, [call]);
-        } else response = await emitBrowser(turn, turn.conversation.browserOwnerTurnIds.length ? "continue" : "bootstrap", payload);
+        } else response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
         if (turn.cancelled) throw turn.error;
         if (turn.done) {
           // Preserve the exact final wire response without retaining a Response

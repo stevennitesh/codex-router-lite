@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -60,6 +61,58 @@ async function waitForHealth(url, child) {
   throw new Error(`managed startup did not become healthy: ${child.errors()}`);
 }
 
+for (const { label, value, expected } of [
+  { label: "missing", value: undefined, expected: /Internal service key is missing/u },
+  { label: "empty", value: "\n", expected: /internal service key is missing or invalid/u },
+  { label: "known default", value: "sk-1234\n", expected: /internal service key is missing or invalid/u },
+  { label: "long punctuation", value: "synthetic_invalid!_" + "a".repeat(48), expected: /internal service key is missing or invalid/u },
+  { label: "long whitespace", value: "synthetic invalid_" + "a".repeat(48), expected: /internal service key is missing or invalid/u },
+]) {
+  test(`startup rejects the ${label} internal key before child or network effects`, { timeout: 30_000 }, t => {
+    const state = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-key-"));
+    t.after(() => {
+      assert.equal(path.dirname(state), path.resolve(os.tmpdir()));
+      assert.match(path.basename(state), /^codex-router-startup-key-/u);
+      rmSync(state, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(state, ".credential-fixture"), "synthetic credential fixture");
+    const caller = "synthetic_caller_" + "c".repeat(48);
+    writeFileSync(path.join(state, "caller-secret"), caller + "\n");
+    if (value !== undefined) writeFileSync(path.join(state, "internal-secret"), value);
+    const guard = path.join(state, "startup-effects.mjs");
+    writeFileSync(guard, `import cp from 'node:child_process';import net from 'node:net';import tls from 'node:tls';import http from 'node:http';import https from 'node:https';import {syncBuiltinESMExports} from 'node:module';
+const effects=[];const reject=label=>()=>{effects.push(label);throw new Error('Unexpected startup fixture effect: '+label);};
+for(const name of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork'])cp[name]=reject('child:'+name);
+net.Socket.prototype.connect=reject('network:socket');tls.connect=reject('network:tls');
+for(const [label,module]of [['http',http],['https',https]])for(const name of ['request','get'])module[name]=reject('network:'+label+':'+name);
+globalThis.fetch=reject('network:fetch');syncBuiltinESMExports();process.once('exit',()=>process.stdout.write(JSON.stringify({effects})+'\\n'));`);
+    const result = spawnSync(process.execPath, [
+      "--import", pathToFileURL(path.join(import.meta.dirname, "fixtures/credential-state-guard.mjs")).href,
+      "--import", pathToFileURL(guard).href, "src/start.mjs",
+    ], {
+      cwd: root, encoding: "utf8", windowsHide: true, timeout: 20_000,
+      env: {
+        ...process.env, MODEL_ROUTER_TARGET: "codex", CODEX_ROUTER_SOURCE_ROOT: root,
+        CODEX_HOME: state, MODEL_ROUTER_STATE_DIR: state, CODEX_ROUTER_STATE_DIR: state,
+        TEST_CREDENTIAL_STATE_ROOT: state, TEST_CREDENTIAL_HOME_ROOT: state,
+        MODEL_ROUTER_PORT: "4202", MODEL_ROUTER_GATEWAY_PORT: "4200", MODEL_ROUTER_API_PORT: "4203",
+      },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { effects: [] });
+    assert.match(result.stderr, expected);
+    const output = result.stdout + result.stderr;
+    assert.equal(output.includes(caller), false);
+    if (value?.trim()) assert.equal(output.includes(value.trim()), false);
+    assert.equal(existsSync(path.join(state, "service-process.json")), false);
+    assert.equal(existsSync(path.join(state, "litellm.yaml")), false);
+    assert.equal(readFileSync(path.join(state, "caller-secret"), "utf8"), caller + "\n");
+    if (value === undefined) assert.equal(existsSync(path.join(state, "internal-secret")), false);
+    else assert.equal(readFileSync(path.join(state, "internal-secret"), "utf8"), value);
+  });
+}
+
 for (const foreground of [false, true]) {
 for (const selectedProviders of [[], ["openrouter"]]) {
 for (const gateway of ["healthy gateway", "optional spawn failure", ...(!foreground && !selectedProviders.length ? ["bundled Python exit"] : [])]) {
@@ -105,7 +158,8 @@ for (const gateway of ["healthy gateway", "optional spawn failure", ...(!foregro
         // is absent. No installed interpreter or environment is modified.
         writeFileSync(path.join(source, ".venv", "pyvenv.cfg"), `home = ${path.join(state, "missing-base-python")}\n`);
       }
-      writeFileSync(path.join(state, "internal-secret"), "internal-startup-capability-long-enough\n");
+      const internalKey = foreground ? "internal-startup-capability-long-enough" : randomBytes(48).toString("base64url");
+      writeFileSync(path.join(state, "internal-secret"), internalKey + "\n");
       writeFileSync(path.join(state, "caller-secret"), "caller-startup-capability-long-enough\n");
       writeFileSync(
         path.join(state, "enabled-providers.json"),

@@ -37,7 +37,7 @@ parallel scheduling hint. Endpoint observations and sources are recorded in the
 Router's request-local custom-tool bridge converts native custom tools to
 JSON-schema functions, states that input must parse against the supplied grammar,
 and restores completed calls to `custom_tool_call`. This avoids the ambiguous
-grammar-as-format description from the gateway. LiteLLM 1.106.0 owns GLM reasoning
+grammar-as-format description from the gateway. The pinned gateway owns GLM reasoning
 history replay, converting Responses reasoning to assistant `reasoning_content`.
 Router also owns namespace/collision restoration and exact provider policy.
 
@@ -96,24 +96,34 @@ Do not enable fallback or select an unproved endpoint as an outage response. A n
 
 ### Python dependency lock
 
-Load this branch only when changing the LiteLLM or FastAPI pins.
+Load this branch when changing the Python floor or gateway dependency pins.
 `requirements/python.in` owns the direct versions; `src/install-plan.mjs`
 validates the required gateway packages, security floor, hashed lock, and
 dependency stamps. Change the input once, then regenerate the compiled lock
 from the repository root:
 
 ```powershell
-uv pip compile --python-platform windows --generate-hashes --python-version 3.10 --output-file requirements/python.txt requirements/python.in
+uv pip compile --python-platform windows --generate-hashes --python-version 3.11 --output-file requirements/python.txt requirements/python.in
 ```
+
+The maintained LiteLLM 1.103.8 backport admits patched filelock without metadata
+overrides; the 1.104–1.106 release lines constrain filelock below 4. Router pins
+filelock directly and rejects versions below its 4.2.1 security floor. Startup
+validates the internal capability against the same generated-key contract as
+setup before launching children, preserving the known-default-key refusal that
+the newer gateway supplied. The qualified surface uses fixed HTTP Responses,
+one credential-free callback, disabled spend logs and no database or WebSocket
+passthrough configuration. Adding those upstream surfaces requires reassessing
+their upstream security guards; the backport is not qualified for them.
 
 Run the [common source checks](architecture.md#verification) afterward. The lock
 check rejects mismatched direct pins, unsupported compile flags, missing hashes,
-and versions below the LiteLLM security floor. Installer tests exercise the
+and versions below the LiteLLM or filelock security floors. Installer tests exercise the
 actual uv and pip branches with the hash-checked lock. Audit the complete
 production closure with the pinned auditor used by CI:
 
 ```powershell
-uvx --python 3.10 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps --require-hashes -r requirements/python.txt
+uvx --python 3.11 --from pip-audit==2.10.1 pip-audit --disable-pip --no-deps --require-hashes -r requirements/python.txt
 ```
 
 Do not suppress individual advisories to make the audit pass; update or otherwise

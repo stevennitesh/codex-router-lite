@@ -10,7 +10,7 @@ import { discoverWebRuntimeAnchors, refreshWebRuntime } from "../src/web-runtime
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
 const signature = { status: "Valid", signerSubject: 'CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC"', signerThumbprint: "fixture-signer" };
-const idleDrain = () => ({ status: "drained", webRuntime: { known: true, activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 } });
+const idleDrain = (status = "drained") => ({ status, webRuntime: { known: true, activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 } });
 
 function fixture(t, { threadIds = null } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "router-web-refresh-"));
@@ -139,6 +139,25 @@ test("coordinated refresh preserves connector, capabilities, tunnel/key, baselin
   assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart"]);
 });
 
+test("explicit forced refresh uses the coordinated drain and reloads only with known idle Web work", async t => {
+  const f = fixture(t), before = f.snapshot();
+  f.dependencies.drain = async ({ force }) => { assert.equal(force, true); f.effects.push("drain"); return idleDrain("forced"); };
+  const result = await refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true });
+  assert.equal(result.applied, true); assert.equal(result.routerReloaded, true);
+  assert.equal(JSON.parse(readFileSync(f.settingsPath, "utf8")).browser.runtimeModule, f.current.runtimeModule);
+  assert.notEqual(readFileSync(f.receiptPath, "utf8"), before.receipt);
+  assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart", "resume"].includes(value)), ["drain", "settings", "restart"]);
+});
+
+test("failed runtime planning leaves admission untouched, including before an authorized forced apply", async t => {
+  const f = fixture(t), before = f.snapshot(), effects = [...f.effects];
+  f.dependencies.adapter.inspectSignatures = () => { throw new Error("fixture signature helper permission denied"); };
+  await assert.rejects(refreshWebRuntime(f.options), /signature helper permission denied/u);
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }), /signature helper permission denied/u);
+  assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.effects, effects);
+  await assert.rejects(refreshWebRuntime({ ...f.options, forceServiceReplacement: true }), /requires --apply/u);
+});
+
 test("explicit adapter replacement promotes a trial through the coordinated transaction while ordinary refresh preserves scope", async t => {
   const f = fixture(t, { threadIds: ["01a14b65-a7a8-7b41-bd33-7c19d3c6df82"] });
   const before = f.snapshot(), manifest = { ...f.current, threadIds: null };
@@ -205,16 +224,20 @@ test("pending Router or Web work defers refresh before global mutation", async t
 });
 
 test("online refresh requires explicit known zero Web activity and resumes a legacy or invalid closed drain", async t => {
-  for (const [label, webRuntime] of [
+  for (const status of ["drained", "forced"]) for (const [label, webRuntime] of [
     ["legacy", undefined], ["unknown", { known: false, activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 }],
     ["missing-count", { known: true, activeTurns: 0, uncertainSends: 0 }],
     ["active", { known: true, activeTurns: 1, uncertainSends: 0, unresolvedActions: 0 }],
     ["uncertain", { known: true, activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 }],
+    ["unresolved", { known: true, activeTurns: 0, uncertainSends: 0, unresolvedActions: 1 }],
     ["malformed", { known: true, activeTurns: 0, uncertainSends: 0, unresolvedActions: "0" }],
-  ]) await t.test(label, async subtest => {
+  ]) await t.test(`${status}: ${label}`, async subtest => {
     const f = fixture(subtest), before = f.snapshot(), effects = f.effects.length;
-    f.dependencies.drain = async () => ({ status: "drained", ...(webRuntime === undefined ? {} : { webRuntime }) });
-    await assert.rejects(refreshWebRuntime({ ...f.options, apply: true }), /known idle Web runtime/u);
+    f.dependencies.drain = async ({ force }) => {
+      assert.equal(force, status === "forced");
+      return { status, ...(webRuntime === undefined ? {} : { webRuntime }) };
+    };
+    await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: status === "forced" }), /known idle Web runtime/u);
     assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.effects.slice(effects), ["resume"]);
   });
 });
@@ -264,12 +287,27 @@ test("candidate staging, partial activation and final receipt faults retain the 
   });
 });
 
+test("installer failure after an explicit forced drain restores admission before any Router restart", async t => {
+  const f = fixture(t), before = f.snapshot(), effects = f.effects.length;
+  f.dependencies.drain = async ({ force }) => { assert.equal(force, true); f.effects.push("drain"); return idleDrain("forced"); };
+  f.dependencies.adapter.compileEntry = () => { throw new Error("fixture compile failure after forced drain"); };
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }), /admission resumed.*compile failure/u);
+  assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual(f.effects.slice(effects).filter(value => ["drain", "environment", "settings", "restart", "resume"].includes(value)), ["drain", "resume"]);
+});
+
 test("reload failure restores exact previous generation then reloads it after a fresh idle drain", async t => {
-  const f = fixture(t), before = f.snapshot(); let calls = 0;
-  f.dependencies.restart = async () => { f.effects.push("restart"); return ++calls === 1 ? 1 : 0; };
-  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true }), /prior runtime reloaded/u);
-  assert.deepEqual(f.snapshot(), before); assert.equal(calls, 2);
-  assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart", "drain", "settings", "restart"]);
+  for (const forceServiceReplacement of [false, true]) await t.test(`initial force: ${forceServiceReplacement}`, async subtest => {
+    const f = fixture(subtest), before = f.snapshot(); let calls = 0, drains = 0;
+    f.dependencies.drain = async ({ force }) => {
+      assert.equal(force, ++drains === 1 && forceServiceReplacement);
+      f.effects.push("drain"); return idleDrain(force ? "forced" : "drained");
+    };
+    f.dependencies.restart = async () => { f.effects.push("restart"); return ++calls === 1 ? 1 : 0; };
+    await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement }), /prior runtime reloaded/u);
+    assert.deepEqual(f.snapshot(), before); assert.equal(calls, 2);
+    assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart", "drain", "settings", "restart"]);
+  });
 });
 
 test("new work after reload prevents compensation and retains the refreshed generation", async t => {

@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "date": "2026-10-24",
+  "sourceBase": "27d4c0d772211aefaa2cdcf204f79965678e81d2",
+  "evidenceKind": "App compatibility inspection and uncommitted source candidate; no deployment or runtime activation",
+  "nativeCodex": {
+    "desktopVersion": "26.1021.31345",
+    "desktopBuildVersion": "21828",
+    "windowsPackageVersion": "26.1021.3705.0",
+    "cli": "0.164.0-alpha.11.1",
+    "bundledAppToolsPlugin": "26.1021.31345",
+    "updateStatus": "up_to_date",
+    "executableSignatures": "Current CLI, Node, Node REPL and adjacent code-mode host have Valid OpenAI signatures.",
+    "currentCodeModeHost": "Present; no CODEX_CLI_PATH override is selected.",
+    "catalogModels": 17,
+    "compare": "https://github.com/openai/codex/compare/rust-v0.163.0-alpha.11.2...rust-v0.164.0-alpha.11.1",
+    "compareCoverage": "311 unique commit records verified through four API pages; selected actual diffs and exact target source reviewed. Default comparison file list is capped at 300; full diff coverage is not claimed.",
+    "dispositions": [
+      {
+        "commit": "c953dacb42d2773d0ca9cc25a01129bba2ca36a8",
+        "decision": "Incremental tools are gated on use_responses_lite; retain external false/native passthrough. Consume historical additional_tools only when preparing an external request after model switch; current payload.tools remains live authority."
+      },
+      {
+        "commit": "cc44ffb3e2008e25dd216d59fa7871a0b9434346",
+        "decision": "Dormant MCP hook startup does not replace originating-operation cleanup authority; keep adapter and Interrupt hook."
+      },
+      {
+        "commit": "70b3bb6d8814ab3f2045238b4ae14c43da99783b",
+        "decision": "New observation-only request hooks do not authorize cancellation cleanup."
+      },
+      {
+        "commit": "0df4aa67781ae45a3c97befa4db48b734afe46d9",
+        "decision": "Host-gated MCP list refresh preserves request-local declarations as Router authority."
+      },
+      {
+        "commit": "a083a1e49ea499b0dd37afa36f4d8c70d5536056",
+        "decision": "Approval cancellation provenance does not justify inferring successful cancellation or changed ownership."
+      },
+      {
+        "commit": "02c6a2d3f1a0b906f53770ad45ef61327509d551",
+        "decision": "Native mailbox handling preserves response identity; existing response.interrupt contract retained."
+      },
+      {
+        "commit": "e8aa7c1678caa9a368243d72bf0e9b7859d97f15",
+        "decision": "Background compaction receiver repair is host-owned; no Router patch."
+      },
+      {
+        "commit": "7a152fbcf9ecd32d9fb4b45edf80127ee4c8499e",
+        "decision": "Code-mode readable assignment behavior stays readable; no encrypted-handoff rewrite."
+      }
+    ]
+  },
+  "webRuntime": {
+    "savedBrowserVersion": "26.1016.62342",
+    "currentBrowserVersion": "26.1021.31345",
+    "priorExternalCohort": "Deleted old CLI, Node, Node REPL and browser module; retained adapter ownership has no conflicts.",
+    "plan": "Existing coordinator reports refresh-required; configured current cohort is unique and signed. No new discovery mechanism or native runtime patch is required.",
+    "activation": "Guarded refresh from installed main attempted once and refused one pending request after drain timeout. No selections or service files changed; admission resumed. A matching refresh and normal Codex restart remain pending.",
+    "preserved": "Existing Stop hook/adapter, saved context protections, tunnel/key settings and rollback artifacts; no retry of the uncertain failed Send."
+  },
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router",
+    "baseline": "0a0fdce15b8325b10dd3f187c0acf1beed50dda4",
+    "reviewedHead": "9945d74354ab07942f171be329cf81c9478fc5e2",
+    "commits": [
+      {
+        "commit": "06bdc15704ea327e679cef69a412a0dadd348b01",
+        "title": "fix: preserve replaced private temporaries during failed-write cleanup",
+        "disposition": "integrated",
+        "reason": "Preserve replaced private temporary objects during failed writes; adapt descriptor identity checks while preserving empty-before-ACL ordering."
+      },
+      {
+        "commit": "38b7baa6fe4181a6a6e92f06ce91e769f7ac961f",
+        "title": "ci: retry intermittent POSIX lease collision on a fresh runner",
+        "disposition": "excluded",
+        "reason": "Empty POSIX CI retry commit."
+      },
+      {
+        "commit": "8537aa8f729f0a45767ce90c8e7e3c34dc6cab2e",
+        "title": "fix: recognize generic provider readiness in subagent diagnostics",
+        "disposition": "excluded",
+        "reason": "Generic-provider subagent diagnostics have no retained owner."
+      },
+      {
+        "commit": "eebe5f207e13605ea9eb93ffb66df5533e93a37b",
+        "title": "Merge latest main for private temporary cleanup validation",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 06bdc157; synchronization with previously reviewed main."
+      },
+      {
+        "commit": "915099ce2ad037dab0e4b26a82b3d5db6e892c88",
+        "title": "fix: preserve terminal classification for rejected tool streams",
+        "disposition": "integrated",
+        "reason": "Preserve committed local tool-rejection classification through HTTP/WebSocket terminal failures without retry or fabricated metadata."
+      },
+      {
+        "commit": "d6636c2a838ddbea7c71d2a84d66cb8f4ad90b20",
+        "title": "test: verify native generations independently of idle sockets",
+        "disposition": "excluded",
+        "reason": "Login-free fixture is outside retained clients; adopted one-generation assertion in the local stream regression."
+      },
+      {
+        "commit": "1cef4c52f354aea39140554f1485023b2d673ea1",
+        "title": "fix(macos): observe startup without launching GUI query helpers",
+        "disposition": "excluded",
+        "reason": "macOS/Electron observer and release fixtures."
+      },
+      {
+        "commit": "bcf018df8f9fb7161cb6791df0184461fbb0efa6",
+        "title": "chore(deps): bump Homebrew/actions/setup-homebrew",
+        "disposition": "excluded",
+        "reason": "Homebrew workflow pin."
+      },
+      {
+        "commit": "a6f3e11e53ab2b00efe97a205bb695c8a741c2d4",
+        "title": "fix: honor picker selection when assigning login-free native aliases",
+        "disposition": "excluded",
+        "reason": "Login-free native alias publication is explicitly outside Lite's native catalog ownership."
+      },
+      {
+        "commit": "16538a235ea3a3ae5485e3558cb1be4add57e14d",
+        "title": "fix: retain exact tool output before aging and provide readback",
+        "disposition": "excluded",
+        "reason": "Exact-output archive and readback serve upstream tool-result aging, which Lite does not retain."
+      },
+      {
+        "commit": "2fbcee1820950c8cc99ed6c84fa5a70c78528581",
+        "title": "test: verify readback before expecting routed output aging",
+        "disposition": "excluded",
+        "reason": "Fixtures for the excluded tool-result archive."
+      },
+      {
+        "commit": "1eb8e46881ffd3468d9c7775ec84de36a308ed32",
+        "title": "feat: persist an optional compatibility-layer policy",
+        "disposition": "deferred",
+        "reason": "Optional persistent compatibility-layer opt-out expands policy; maintained GLM routes currently require the gateway."
+      },
+      {
+        "commit": "695c7772f05251bbf239746f6ab00551ada9b5d0",
+        "title": "feat(providers): add Atlas Cloud as a catalog-only provider",
+        "disposition": "excluded",
+        "reason": "Atlas Cloud discovery/provider family."
+      },
+      {
+        "commit": "ef50accf66f6074dccb0fa1cf921bda64fd901c9",
+        "title": "Fix ERR_FS_CP_EEXIST in skill publication on Node 26+",
+        "disposition": "already-covered",
+        "reason": "Lite already copies individual skill children with COPYFILE_EXCL."
+      },
+      {
+        "commit": "091417498fc78c92ee536ce385049a89f0d4bf57",
+        "title": "Merge pull request #1048 from jsk1004ha/fix/login-free-hidden-model-aliases",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits a6f3e11e."
+      },
+      {
+        "commit": "f9a3f720536ccb58c37a77ea2ccdf72d55a9f0d3",
+        "title": "Merge pull request #1055 from binyangzhu000-sudo/add-atlascloud-provider",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 695c7772."
+      },
+      {
+        "commit": "9a71b37027da3ee671217781a940268c71486ffa",
+        "title": "Merge pull request #1040 from Leshabeats/feat/ws-tool-failure-lifecycle",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 915099ce, d6636c2a."
+      },
+      {
+        "commit": "c9b6ec83ab576c4f009a62d28b4f0076352096cb",
+        "title": "Merge pull request #1052 from TruthNian/fix/tool-result-exact-recovery-20261022",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 16538a23, 2fbcee18."
+      },
+      {
+        "commit": "29027fa802d6375ccaf2424b3abf6d3028489b7f",
+        "title": "Merge pull request #1056 from cursor/fix-skill-publish-eexist-087c",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits ef50accf."
+      },
+      {
+        "commit": "f1e1ac93ce1001ebc6d4dda56c8d534065870b11",
+        "title": "Merge pull request #1043 from dependabot/github_actions/Homebrew/actions/setup-homebrew-4790763",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits bcf018df."
+      },
+      {
+        "commit": "2c4306f0dda22a7a8604218e831937fbb979b41f",
+        "title": "Merge pull request #1054 from cursor/compat-layer-opt-out",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 1eb8e468."
+      },
+      {
+        "commit": "488c3d605dfc4b362ebbb293f89ecc8b49545059",
+        "title": "Merge pull request #1009 from TruthNian/private-temp-cleanup-ownership",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 06bdc157, 38b7baa6, synchronization merge."
+      },
+      {
+        "commit": "f89be1c58dfc3bfb1e17de5b13a0e3013f1caf34",
+        "title": "Merge pull request #1034 from Kizuno18/fix-subagent-generic-providers",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 8537aa8f."
+      },
+      {
+        "commit": "3189ba2045ca29eec6bd7ea39cc48acbea66062c",
+        "title": "Merge pull request #1042 from TruthNian/macos-lifecycle-observer",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 1cef4c52."
+      },
+      {
+        "commit": "a8c3c64e254119de61fe861caeb850d8505fd3b7",
+        "title": "test: bound skill install workers and observe real contention",
+        "disposition": "excluded",
+        "reason": "Upstream concurrent-worker fixture is absent; Lite uses bounded spawnSync skill fixtures."
+      },
+      {
+        "commit": "10d16d54556bfc9f3aa6eec7087f11dec4743ae5",
+        "title": "Merge pull request #1057 from duolahypercho/cursor/rebase-skill-worker-cleanup-b450",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits a8c3c64e."
+      },
+      {
+        "commit": "76a825384742997835d01bf3d48edf5afbd5e612",
+        "title": "chore(deps): bump undici to 8.12.3 for high-severity advisories",
+        "disposition": "already-covered",
+        "reason": "Undici 8.12.3 is already pinned."
+      },
+      {
+        "commit": "aa51b52c9d555317fbf4053949ca3c5307af11af",
+        "title": "Merge pull request #1061 from duolahypercho/cursor/undici-8.12.3-audit",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits 76a82538."
+      },
+      {
+        "commit": "a3ead49956b84efd4f60331a74d95a11ea327ce2",
+        "title": "chore(deps-dev): bump playwright from 1.64.0 to 1.64.1",
+        "disposition": "excluded",
+        "reason": "Playwright development dependency is not a Lite dependency."
+      },
+      {
+        "commit": "9945d74354ab07942f171be329cf81c9478fc5e2",
+        "title": "Merge pull request #1045 from duolahypercho/dependabot/npm_and_yarn/playwright-1.64.1",
+        "disposition": "merge-inherits",
+        "reason": "Combined patch review found no additional resolution changes; inherits a3ead499."
+      }
+    ]
+  },
+  "switchyardUpstream": {
+    "repository": "https://github.com/NVIDIA-NeMo/Switchyard",
+    "lockedBase": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "previousReviewedHead": "f5b973c8b2bdada08376ba76ac8c3c572d7c4b86",
+    "reviewedHead": "62efb7758eeafdb0f7d1c9ba5937c48ce71ea720",
+    "totalPendingFromPin": 115,
+    "freshDispositions": [
+      {
+        "commit": "5b986f818055540612dafa0f54f359a679876077",
+        "title": "docs: make the README and quickstart library-first (#1058)",
+        "disposition": "not-integrated",
+        "reason": "Documentation/example changes."
+      },
+      {
+        "commit": "a526c5be110cb992590f5d221479d1e42d35ce8f",
+        "title": "feat(costs): add direct provider prices for Claude, Gemini, and DeepSeek (#1082)",
+        "disposition": "not-integrated",
+        "reason": "Optional price telemetry does not establish subscription cost."
+      },
+      {
+        "commit": "e1c1b03172a7de1553b12950a6ea3b539d295f3e",
+        "title": "feat(costs): add OpenRouter model prices (#1083)",
+        "disposition": "not-integrated",
+        "reason": "Optional price telemetry does not establish subscription cost."
+      },
+      {
+        "commit": "ae36dad5aab78e7d8819cd43b18028d600dac128",
+        "title": "chore: remove docs (#1134)",
+        "disposition": "not-integrated",
+        "reason": "Documentation/example changes."
+      },
+      {
+        "commit": "3a48a933de0cb5f79d15d007aae2e54f920802c5",
+        "title": "fix(vgr): restore QA verification and cloud outage fallback (#1042)",
+        "disposition": "not-integrated",
+        "reason": "VGR rewritten-history fallback: TypeSafe retains the unchanged no-rewrite branch."
+      },
+      {
+        "commit": "6bf9ca79ef5f92d9decfacb71968ed9cf2e3df14",
+        "title": "docs: explain the mechanics of libsy (#1123)",
+        "disposition": "not-integrated",
+        "reason": "Documentation/example changes."
+      },
+      {
+        "commit": "340805c3bce4649511b880cfe133e7c6ad511333",
+        "title": "feat(desktop): load desktop.toml settings and probe server health (#1084)",
+        "disposition": "not-integrated",
+        "reason": "Desktop settings/health; Router retains identity-based Windows lifecycle."
+      },
+      {
+        "commit": "50dfa7e28042f6d8df809b935b458ea3e1b80448",
+        "title": "chore: dev-server change decisions model (#1136)",
+        "disposition": "not-integrated",
+        "reason": "Development classifier/configuration; preserve exact Jev 1.13 policy."
+      },
+      {
+        "commit": "13a4e8063caf7c2b0da1e0909baf30a870317ddf",
+        "title": "feat(vgr): restore optional handoff context compaction (#1043)",
+        "disposition": "not-integrated",
+        "reason": "Inactive VGR handoff compaction."
+      },
+      {
+        "commit": "62efb7758eeafdb0f7d1c9ba5937c48ce71ea720",
+        "title": "docs: cleanup related to duplicate info and Libsy explanations (#1135)",
+        "disposition": "not-integrated",
+        "reason": "Documentation/example changes."
+      }
+    ],
+    "pinDecision": "Keep base, contribution patch and Jev policy. Upstream head conflicts with the required contribution; compatibility patch applicability to that head was not attempted.",
+    "integratedPort": "f6441cc4a303b24aa663511f0d5ad7f53e5a3a31: conflicting Responses snapshots become DecodeError and cannot replay an ordinary contradictory event; gateway custom-call/logging additions excluded.",
+    "compatibilityPatchSha256": "4624933246a15626025531ec8d19742a0a7254339d6c28bda91bef6a14e5bbe5",
+    "candidateBinarySha256": "e654e0cd733f77772bc6f9e777b83423b07d98119973d942fa571563deea6783",
+    "buildOwnerRepair": "Clone-local core.longpaths and verified clean checkout before patching. Exit-zero incomplete Windows checkout is rejected.",
+    "qualification": "Baseline conflict regression failed; 62 stream cases passed after repair; locked Rust 1.96.1 formatting, full-workspace/all-target Clippy, six retained package tests and release build passed; zero ignored tests.",
+    "initialCheckoutAnomaly": "Build began before build-owner guard was added. One unchanged Markdown blob was restored and verified against pinned Git identity before retained tests completed. No Rust source changed; final patched source matched canonical patch, binary hash was reverified, and zero tracked deletions remained.",
+    "buildOwnerRegression": "Ten isolated fixture modes passed, including real long-path local Git checkout and failed/dirty status checks before patching or Rust.",
+    "sourceEligibility": "New source candidate is v1 with a blank pending application; the exact prior accepted proof is preserved byte-for-byte under docs/history/2026-10-24-switchyard-previous-proof/. Installed main remains unchanged and certified. An authorized deployment and fresh five-check native proof must precede source v2 promotion."
+  },
+  "dependencyReview": {
+    "node": {
+      "changes": [
+        "body-parser 2.3.0 -> 2.4.0",
+        "fast-uri 3.1.8 -> 3.1.9"
+      ],
+      "scope": "Only transitive lock entries changed within existing ranges; package.json unchanged.",
+      "audit": "Zero vulnerabilities after exact npm ci."
+    },
+    "python": {
+      "minimum": "3.11, explicitly approved",
+      "gateway": "Stable LiteLLM 1.106.0 retained",
+      "filelock": "3.32.2 retained: all released stable/prerelease gateways require >=3.16.1,<4.0, while fixed filelock 4.2.1 requires Python >=3.11.",
+      "unresolvedAdvisories": [
+        "CVE-2026-112940",
+        "CVE-2026-112913",
+        "CVE-2026-112907"
+      ],
+      "resolution": "User explicitly chose stable LiteLLM and Python 3.11 with unresolved alerts; no dependency override, unsupported wheel metadata, audit ignore or suppression.",
+      "rejectedDowngrade": "Although filelock 3.20.3 has no listed OSV findings, its actual Windows FileLock uses a pathname reparse check followed by O_TRUNC open and current-offset locking. Do not discard the current descriptor-bound reparse/lock-range protections merely to clear audit metadata.",
+      "sources": [
+        "https://pypi.org/pypi/litellm/1.106.0/json",
+        "https://pypi.org/pypi/filelock/4.2.1/json",
+        "https://github.com/tox-dev/filelock/security/advisories/GHSA-v4x8-3wr5-3wq8",
+        "https://github.com/tox-dev/filelock/security/advisories/GHSA-9vhv-jxww-xfm5",
+        "https://github.com/tox-dev/filelock/security/advisories/GHSA-567q-5qvw-pf92"
+      ]
+    }
+  },
+  "validation": {
+    "compatibilityRefresh": "Signed current native identity, healthy Router, current catalog and 50 catalog/namespace tests passed; upstream refs fetched.",
+    "focusedRepairs": "33 private-file tests, 122 rejected-stream tests and 53 routed-history tests passed. Independent review found no actionable findings and independently passed 68 selected tests.",
+    "sourceGate": "Final source checks and current CLI catalog passed. The full verify:codex invocation ran 1926 tests: 1922 passed, one obsolete Pareto terminal assertion failed, three skipped. The sole test-only assertion correction then passed all six Pareto tests; unchanged full-run passes were reused. The original full invocation is not reported green.",
+    "notRun": [
+      "No live model/paid route, native handoff, Web tools, actual Stop or same-chat continuation proof in this update run.",
+      "No deployment, adapter activation, Codex restart, commit or push."
+    ],
+    "pythonQualification": "Windows Python 3.11.14: final 119-package hashed install, pip check, 12 interpreter/lock boundary tests, three installer fixtures and 25 real gateway/cleanup tests passed without skips. Exactly three filelock advisories remain; audit exits 1 without suppression.",
+    "combinedCaseOutcomes": {
+      "passed": 1923,
+      "skipped": 3,
+      "failed": 0,
+      "basis": "Full-run outcomes plus the affected-file rerun after one test-only assertion correction; no second full-suite run."
+    },
+    "skipLimits": [
+      "Native-only bundled-Python startup scenario skipped by its existing availability gate.",
+      "Two existing Windows file-symlink privilege cases unavailable."
+    ],
+    "independentReview": "No actionable findings remain across new serving/history/security/build changes, Python floor, pending certification transition, historical proof bytes and Pareto assertion. Last two archive files were raw-copied from unchanged primary to preserve exact canonical bytes."
+  }
+}

@@ -3,6 +3,7 @@ import test from "node:test";
 import { prepareRoutedRequest } from "../src/routed-request.mjs";
 import { MODEL_BY_SLUG } from "../src/routed-models.mjs";
 const route = MODEL_BY_SLUG.get("openrouter/glm-5.3-flash-streamlake");
+const externalSlugs = ["openrouter/glm-5.3-flash-streamlake", "openrouter/glm-5.3-flash-together", "openrouter/deepseek-v4.1-flash-together", "openrouter/deepseek-v4.1-flash-deepinfra", "openrouter/pareto"];
 function chatProviderToolSurface(tools) {
   const prepared = prepareRoutedRequest({ tools, input: [] }, route);
   return { tools: prepared.payload.tools, namespaces: prepared.namespaces };
@@ -10,7 +11,7 @@ function chatProviderToolSurface(tools) {
 import { buildNamespaceLookups, rewriteNamespaceFunctionCall } from "../src/namespace-relay.mjs";
 
 test("one request preparer preserves profile-specific turns and tool-disabled compaction without mutation", () => {
-  for (const slug of ["openrouter/glm-5.3-flash-streamlake", "openrouter/glm-5.3-flash-together", "openrouter/deepseek-v4.1-flash-together", "openrouter/deepseek-v4.1-flash-deepinfra", "openrouter/pareto"]) {
+  for (const slug of externalSlugs) {
     const selected = MODEL_BY_SLUG.get(slug);
     const original = { input: [
       { type: "reasoning", summary: [{ type: "summary_text", text: "Earlier reasoning" }] },
@@ -39,8 +40,58 @@ test("one request preparer preserves profile-specific turns and tool-disabled co
       assert.equal(compact.payload.reasoning.effort, "high");
     }
   }
-  assert.throws(() => prepareRoutedRequest({ input: [] }, MODEL_BY_SLUG.get("switchyard/auto")), /Native requests/);
+  const native = { input: [{ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "native_tool" }] }] };
+  const nativeSaved = structuredClone(native);
+  assert.throws(() => prepareRoutedRequest(native, MODEL_BY_SLUG.get("switchyard/auto")), /Native requests/);
+  assert.deepEqual(native, nativeSaved);
 });
+
+for (const slug of externalSlugs) {
+  test(`native model-switch tool history is consumed without granting capabilities for ${slug}`, () => {
+    const selected = MODEL_BY_SLUG.get(slug);
+    const currentTools = [
+      { type: "function", name: "read", description: "Current schema.", parameters: {
+        type: "object", properties: { current: { type: "boolean" } }, required: ["current"], additionalProperties: false,
+      } },
+      { type: "namespace", name: "mcp__fixture", tools: [{ type: "function", name: "inspect", parameters: {
+        type: "object", properties: { id: { type: "string" } }, required: ["id"],
+      } }] },
+    ];
+    const ordinaryHistory = [
+      { type: "message", role: "user", content: "Earlier native turn." },
+      { type: "message", role: "assistant", content: "Earlier answer." },
+      { type: "function_call", call_id: "call_read", name: "read", arguments: '{"current":true}' },
+      { type: "function_call_output", call_id: "call_read", output: "Synthetic result." },
+      { type: "message", role: "developer", content: "Keep this ordinary instruction." },
+      { type: "message", role: "user", content: "Continue with the external model." },
+    ];
+    const history = [
+      ordinaryHistory[0],
+      { type: "additional_tools", role: "developer", tools: [
+        { type: "function", name: "read", description: "Stale schema.", parameters: { type: "object", properties: { stale: { type: "string" } } } },
+      ] },
+      ...ordinaryHistory.slice(1, 4),
+      { type: "additional_tools", role: "developer", tools: [{ type: "function", name: "historical_only" }] },
+      ...ordinaryHistory.slice(4),
+    ];
+    for (const tools of [currentTools, [], undefined]) {
+      for (const compaction of [false, true]) {
+        const original = { input: history, tools, stream: true, previous_response_id: "native_previous" };
+        const saved = structuredClone(original);
+        const options = compaction ? { compaction: true, input: history, compactionMessages: [{ role: "user", content: "Summarize." }] } : {};
+        const expected = prepareRoutedRequest({ ...original, input: ordinaryHistory }, selected,
+          compaction ? { ...options, input: ordinaryHistory } : options);
+        const actual = prepareRoutedRequest(original, selected, options);
+        assert.equal(actual.payload.input.some(item => item.type === "additional_tools"), false);
+        assert.deepEqual(actual.payload.input, expected.payload.input, "ordinary messages, calls, results and order survive");
+        assert.deepEqual(actual.payload.tools, expected.payload.tools, "historical schemas cannot alter current declarations");
+        if (!compaction && tools === undefined) assert.equal(actual.payload.tools, undefined);
+        else assert.deepEqual(actual.payload.tools.map(tool => tool.name), !compaction && tools === currentTools ? ["read", "mcp__fixture__inspect"] : []);
+        assert.deepEqual(original, saved, "the caller's history and full current tools stay unchanged");
+      }
+    }
+  });
+}
 
 test("current app tools use the caller's namespace and schema without snapshot additions", () => {
   const parameters = { type: "object", properties: { live: { type: "boolean" } } };

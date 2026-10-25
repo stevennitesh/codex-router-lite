@@ -424,7 +424,15 @@ test("Pareto uses the authenticated direct Responses hop for native tools, repla
     const beforePartial = seen.length;
     const interrupted = await post({ tools: customTools, stream: true, max_output_tokens: 17 });
     const partialWire = await interrupted.text();
-    assert.match(partialWire, /event: error/);
+    const partialFailures = partialWire.split(/\r?\n/u)
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)))
+      .filter((event) => event.type === "response.failed");
+    assert.equal(partialFailures.length, 1);
+    assert.equal(partialFailures[0].code, "ERR_NAMESPACE_RELAY_COMMITTED_STREAM");
+    assert.equal(partialFailures[0].response.status, "failed");
+    assert.equal(partialFailures[0].response.error.code, "invalid_prompt");
+    assert.doesNotMatch(partialWire, /^event: error$/mu);
     assert.doesNotMatch(partialWire, /response\.output_item\.done|response\.completed|response\.custom_tool_call_input\.done/);
     assert.equal(seen.length, beforePartial + 1, "partial tool output must not be automatically executed again");
     const beforeFailedText = seen.length;

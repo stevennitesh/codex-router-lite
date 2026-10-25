@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -257,12 +258,39 @@ export function protectPrivateFile(target) {
   return target;
 }
 
+// Cleanup is authorized by the original descriptor's identity, not by a path
+// that may now lead to another file or through a replaced parent directory.
+function cleanupOwnedPrivateFile(target, identity, error) {
+  try {
+    const metadata = lstatSync(target, { bigint: true });
+    if (!identity || !metadata.isFile() || metadata.isSymbolicLink()
+      || metadata.dev !== identity.dev || metadata.ino !== identity.ino) {
+      throw Object.assign(new Error("The private temporary changed before cleanup; preserving it."), { code: "ESTALE" });
+    }
+    unlinkSync(target);
+  } catch (cleanupError) {
+    try {
+      if (cleanupError?.code === "ENOENT") return;
+      const code = typeof cleanupError?.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(cleanupError.code)
+        ? cleanupError.code : "ERR_PRIVATE_FILE_CLEANUP";
+      // Keep the operation's original failure. Filesystem messages can contain
+      // private paths or arbitrary injected text; retain a bounded diagnosis.
+      error.cleanupError = { code, message: code === "ESTALE"
+        ? "The private temporary changed before cleanup; preserving it."
+        : "The private temporary could not be safely removed." };
+    } catch {}
+  }
+}
+
 // The inherited ACL can be permissive until the helper finishes. Keep the file
 // empty during that interval, then write through its original descriptor.
 // Exclusive creation also prevents failure cleanup from deleting an older file.
-export function createPrivateFile(target, contents, { protect = protectPrivateFile } = {}) {
+function createPrivateContents(target, contents, protect) {
   let descriptor = openSync(target, "wx", 0o600);
+  let identity;
   try {
+    // Windows file IDs can exceed Number's exact integer range.
+    identity = fstatSync(descriptor, { bigint: true });
     protect(target);
     writeFileSync(descriptor, contents, { encoding: "utf8" });
     closeSync(descriptor);
@@ -271,9 +299,14 @@ export function createPrivateFile(target, contents, { protect = protectPrivateFi
     if (descriptor !== undefined) {
       try { closeSync(descriptor); } catch {}
     }
-    try { unlinkSync(target); } catch {}
+    cleanupOwnedPrivateFile(target, identity, error);
     throw error;
   }
+  return identity;
+}
+
+export function createPrivateFile(target, contents, { protect = protectPrivateFile } = {}) {
+  createPrivateContents(target, contents, protect);
   return target;
 }
 
@@ -283,17 +316,12 @@ export function writePrivateFile(target, contents) {
   const directory = path.dirname(target);
   mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
-  createPrivateFile(temporary, contents);
+  const identity = createPrivateContents(temporary, contents, protectPrivateFile);
   try {
     // Moving the protected staging file carries its DACL over the old target.
     renameSync(temporary, target);
   } catch (error) {
-    try {
-      const metadata = lstatSync(temporary);
-      if (metadata.isFile() && !metadata.isSymbolicLink()) unlinkSync(temporary);
-    } catch {
-      // The exclusive temporary was never created or was already moved.
-    }
+    cleanupOwnedPrivateFile(temporary, identity, error);
     throw error;
   }
   return target;
@@ -308,7 +336,9 @@ async function writePrivateFileAsync(target, contents) {
   mkdirSync(directory, { recursive: true });
   const temporary = `${target}.tmp.${process.pid}.${randomBytes(8).toString("hex")}`;
   let descriptor = openSync(temporary, "wx", 0o600);
+  let identity;
   try {
+    identity = fstatSync(descriptor, { bigint: true });
     await protectPrivateFilesWin32Async([temporary]);
     writeFileSync(descriptor, contents, { encoding: "utf8" });
     closeSync(descriptor);
@@ -318,7 +348,7 @@ async function writePrivateFileAsync(target, contents) {
     if (descriptor !== undefined) {
       try { closeSync(descriptor); } catch {}
     }
-    try { unlinkSync(temporary); } catch {}
+    cleanupOwnedPrivateFile(temporary, identity, error);
     throw error;
   }
   return target;

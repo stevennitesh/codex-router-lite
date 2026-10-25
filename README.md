@@ -87,7 +87,7 @@ local build; native GPT access remains available without an OpenRouter key.
 ## Setup
 
 Use Windows 10 or 11, PowerShell 5.1 or newer, Git, Node.js 22.19 or newer,
-Python 3.10 or newer (or uv), and an installed Codex app or CLI.
+Python 3.11 or newer (or uv), and an installed Codex app or CLI.
 
 ```powershell
 git clone https://github.com/stevennitesh/codex-router-lite.git

@@ -46,7 +46,19 @@ records locally; storing or forwarding them does not request Codex inference.
 ### Instruction delivery and compaction
 
 The full bridge protocol and exact current Codex instructions are sent on first
-attachment or an instruction revision. Confirmed Send records their digest and
+attachment or an instruction revision. A unique local prompt-owned DOM turn
+anchors observation and immediate Stop. It does not prove that ChatGPT accepted
+the input: optimistic turns can be followed by a site rejection and restored
+draft. Router starts ordinary observation immediately after this anchor, without
+waiting inside Send for a native tool that observation must deliver.
+
+Current-generation substantive assistant output or an authenticated current-token
+broker handler acknowledges input. Registration, declaration updates, Stop visibility
+and complete turn state do not. Until that proof, the active turn keeps its URL,
+reply baseline, generation and proposed checkpoint privately; the durable prior
+checkpoint, instruction digest and compaction aliases remain unchanged, with Send
+uncertain. Failure, cancellation or restart does not replay that uncertain input.
+Acceptance records the instruction digest and
 the owning browser generation in optional V1 ledger fields
 `deliveredInstructionsSha256` and `deliveredInstructionsGenerationTurnKey`.
 Unchanged follow-ups carry a fresh turn-token directive and the exact new
@@ -72,6 +84,13 @@ attachment with readable compacted history still uses that checkpoint to seed
 its new chat.
 
 ### Ownership and recovery
+
+After a failed first initialization, a restored record may bootstrap again only
+when it has no established tab, saved URL, checkpoint, generation or delivery
+evidence, its last turn is definitely unsent, and it has no uncertain input or
+unresolved native action. Bootstrap reuses the same binding identity. If a partial
+binding still owns a tab, ordinary open refuses it rather than creating another
+tab or changing its draft. This does not replace an established saved conversation.
 
 If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
 Codex conversation's browser and checks the previous reply's identity and text
@@ -117,7 +136,12 @@ the owned turn, controls and current URL together, between independent ownership
 and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
 With the Router MCP adapter installed, one pending native observation call spans
-those short reads. A protected loopback notification wakes it on broker activity;
+those short reads. While input acceptance is pending, the first substantive
+current-generation text returns through the existing native callback even if the
+answer is unfinished. Router verifies and persists acceptance before issuing the
+next wait; later partial text does not add callbacks. A Stop receipt alone never
+acknowledges input, and cancellation before that proof is persisted remains uncertain.
+A protected loopback notification wakes the wait on broker activity;
 browser completion, capacity errors and observation failures also return it. The
 notification uses an owned Node HTTP request with its abort signal and no shared
 connection pool. This private loopback channel accepts the configured listener
@@ -140,6 +164,16 @@ Completion requires an idle owned browser turn, an answer after the latest tool
 boundary, and unchanged broker activity across the completion read and final
 delivery. A completed page with unreadable output or no post-tool answer ends
 with a bounded error instead of waiting for the general generation deadline.
+An exact visible site **Unknown error** and **Retry** pair rejects the request only
+when it belongs to the unique latest owned generation (inside its turn or an
+adjacent control region before the composer), outside user, assistant, reasoning,
+tool and code content, and the exact submitted composer with its current generation
+marker has been restored. The submitted text is the actual settled composer after
+paste attachment conversion. A restored draft alone is ambiguous. The browser
+returns only a fixed `requestError` category; the adapter ends its held observation
+immediately and Router reports `web_request_failed` before draining queued native
+calls. Retry and draft clearing are never requested. Actual prior broker acceptance
+and native results remain acknowledged after a later site failure.
 
 ### Full conversation handoff
 
@@ -153,6 +187,12 @@ or uncertain action fails explicitly rather than replaying the request. A bounde
 checkpoint cannot guarantee retention of every older detail; its loss notices
 remain part of the handoff. A successor that also reports full fails rather than
 creating an unbounded chain of chats.
+A first input rejected by that explicit capacity signal can retain a separate
+optional V1 `capacityChatUrl` without inventing a delivered checkpoint. It is a
+strict saved URL used only for the already authorized successor flow and restart
+reconciliation, and is cleared when successor input is accepted. The accepted
+chat URL, generation and instructions retain their earlier meaning. A lost browser
+binding still cannot reconstruct an unproved rollover or overwrite a draft.
 
 ## Native tools and cancellation
 
@@ -234,7 +274,13 @@ locator includes that generation condition when the browser resolves the action.
 `src/web-browser-state.mjs` owns the page controls and the shared Stop predicates.
 Interrupted continuation uses those same predicates and rechecks the generation
 in its final snapshot before transferring browser ownership. Its in-binding
-receipt prevents a rejected or uncertain click from being repeated. Before Send,
+receipt is shared by native Interrupt cleanup and interrupted continuation.
+Cleanup records the generation-bound dispatch before awaiting the click and
+retains acknowledgement only after SDK success and an ownership recheck. This
+preserves the witnessed composer transition for continuation even when the page
+still marks the turn incomplete, and prevents a rejected or uncertain click from
+being repeated. A fresh cleanup controller does not manufacture an ordinary
+browser binding or take a diagnostic event receipt as authority. Before Send,
 continuation requires an idle composer and has no authority to stop an unknown
 generation. Ordinary continuation omits this recovery-only program source.
 Readiness and confirmation use the same conditional semantic locator. Accessible
@@ -329,6 +375,49 @@ Run native-tool verification separately when the tool path changes. A recovery
 check does not need a native command, and a browser-contract fixture does not
 need a tool connector. Reuse passing checks while their relevant inputs remain
 unchanged; documentation edits do not require another manual Stop trial.
+
+### Automatic agent-run verification
+
+Use the maintained helper for live checks in an explicitly approved disposable
+Codex Web chat. The agent drives the existing app tools and native UI; no human
+Stop press, extra inference controller, runtime patch or special app launch is
+needed. This is an on-demand Desktop check, not a headless CI command or a check
+to add to ordinary conversation turns.
+
+```powershell
+npm run verify:web -- prepare --thread <approved-chat-id> --output generated/NEW
+npm run verify:web -- prompt --run generated/NEW/run.json --phase native
+npm run verify:web -- wait --run generated/NEW/run.json --phase native --turn <native-turn-id>
+```
+
+Preparation creates a fresh synthetic file and marker. Send the generated prompt
+to the approved chat with the native app tool, then pass its exact turn identity
+to `wait`. Repeat `prompt` and `wait` for `recall`, then `ready`. The latter uses
+read-only connector discovery before a long response, so acceptance can be proved
+even when ChatGPT does not expose readable answer text until completion.
+
+When `ready` passes, use supported computer use to inspect the selected Codex
+chat and click its native **Stop** control once. Prefer an unambiguous current
+accessibility control; otherwise use a fresh screenshot of the exact chat and
+its visible Stop control. Keep accessibility output limited to the needed native
+control; do not print an embedded ChatGPT transcript or its turn tokens. Never
+retain screen coordinates or element indices
+between runs. Clicking ChatGPT's Stop control or invoking the cleanup hook
+directly does not exercise native cancellation and cannot replace this step.
+
+Run `wait --phase stop` with that same native turn identity. Only after its
+interrupted-turn event and matching positive adapter receipt pass, send the
+`continuation` prompt and wait for its exact new turn. Require the saved chat,
+tab and binding to survive, the original marker to be recalled without supplying
+it, and no recovery/reopen, uncertain Send or unresolved native action. The
+helper writes bounded allowlisted receipts and waits on file changes; elapsed
+timeouts only bound failures. It does not replay a failed action or change keys,
+hook trust, runtime selection, protected ledgers or rollback copies.
+
+If sign-in, tool approval, an account safety block or ambiguous native UI prevents
+the next step, report that phase as blocked or failed. Do not substitute a direct
+browser cleanup or mark the check passed. Reuse completed offline and rendered
+browser checks while their relevant inputs remain unchanged.
 
 Start the fixed loopback fixture server in a normal Windows user terminal:
 
@@ -485,10 +574,15 @@ offline tests alone do not establish live cancellation.
 The resident helper version covers only its retained reply, view, observation and
 DOM dependencies. Picker-only labels and controls are separated from both the
 resident configuration and its version inputs. Separately shipped selection,
-Send and recovery programs do not change that helper version. The managed adapter contains an immutable browser-code
-snapshot and recognizes only exact Router observation programs. Changes to selection, Send or recovery
-can keep the existing adapter when its installed qualifier still accepts the
-generated observation code exactly. Verify that equality before deployment.
+Send and recovery programs do not change that helper version. The managed adapter
+contains an immutable browser-code snapshot and recognizes exact Router Send and
+observation programs. Send qualification acquires pending cleanup authority before
+the first observation. Changes to selection, Send or recovery can keep the existing
+adapter only when its installed qualifier still accepts the generated Send,
+observation and retention programs. Check those programs before deployment; an
+unchanged resident helper version alone does not establish adapter compatibility.
+Changes to the adapter's waiting behavior also require its matching rebuild and
+restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. The managed hook definition remains unchanged. Preserve a compatible

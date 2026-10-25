@@ -111,7 +111,7 @@ export function parseBrowserOutput(output, frameToken) {
 // Everything else, including any newly added field, remains a resident dependency.
 const operationDomKeys = new Set([
   "modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-  "composerName", "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+  "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
   "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
 ]);
 const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(browserDom).filter(([key]) => !operationDomKeys.has(key))));
@@ -242,6 +242,8 @@ export function readBrowserReplies(elements, options) {
         ["stop", ui.stopButtonExactName, button], ["regenerate", ui.regenerateButtonExactName, button],
         ["temporaryToggle", ui.temporaryToggleName, button], ["temporaryHeading", ui.temporaryHeadingName, heading],
         ["fullButton", ui.startNewChatButtonName, button], ["fullBanner", ui.conversationFullText, () => true],
+        ["requestError", ui.requestErrorText, () => true], ["retry", ui.retryButtonExactName, button],
+        ["composer", ui.composerName, element => element.getAttribute("role") === "textbox" || element.getAttribute("contenteditable") === "true"],
       ];
       const recognized = new Set(), values = {};
       for (const [key, expected, kind] of groups) {
@@ -256,10 +258,41 @@ export function readBrowserReplies(elements, options) {
       const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
       const outside = key => values[key].matches.some(element => visible(element)
         && !element.closest(excluded) && !element.querySelector(excluded));
+      // The site's error pair is evidence only in this new latest generation,
+      // with the exact submitted composer restored. Quoted errors, tool output,
+      // older turns and a restored draft by itself cannot reject a request.
+      const owned = turns.filter(turn => turn.getAttribute(ui.turnKeyAttribute) === options.generationTurnKey);
+      const composers = values.composer.matches.filter(visible);
+      const content = `[data-message-author-role],${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector},pre,code,[contenteditable="true"],[role="textbox"],textarea,input`;
+      const clean = element => !element.closest(content) && !element.querySelector(content);
+      const before = (left, right) => elements.indexOf(left) >= 0 && elements.indexOf(left) < elements.indexOf(right);
+      let requestError = false;
+      if (owned.length === 1 && turns.at(-1) === owned[0] && composers.length === 1
+          && typeof options.generationMarker === "string" && options.generationMarker
+          && (owned[0].textContent ?? "").includes(options.generationMarker)
+          && typeof options.submittedComposerText === "string" && options.submittedComposerText.includes(options.generationMarker)
+          && composers[0].innerText === options.submittedComposerText) {
+        const pairs = [];
+        for (const error of values.requestError.matches.filter(element => visible(element) && clean(element))) {
+          for (const retry of values.retry.matches.filter(element => visible(element) && clean(element))) {
+            let region = error;
+            while (region && !region.contains(retry)) region = region.parentElement;
+            if (!region || !clean(region)) continue;
+            const errorTurn = error.closest(ui.turnSelector), retryTurn = retry.closest(ui.turnSelector);
+            const inTurn = errorTurn === owned[0] && retryTurn === owned[0];
+            const afterTurn = !errorTurn && !retryTurn && !region.querySelector(ui.turnSelector)
+              && before(owned[0], error) && before(owned[0], retry)
+              && before(error, composers[0]) && before(retry, composers[0]);
+            if (inTurn || afterTurn) pairs.push(region);
+          }
+        }
+        requestError = pairs.length === 1;
+      }
       projection.observation = { url: document.URL, stopVisible: values.stop.visible,
         regenerateVisible: values.regenerate.visible, regenerateCount: values.regenerate.count,
         temporaryInactive: !values.temporaryToggle.visible && !values.temporaryHeading.visible,
-        conversationFull: outside("fullBanner") && outside("fullButton") };
+        conversationFull: outside("fullBanner") && outside("fullButton"),
+        ...(requestError ? { requestError: "unknown_error" } : {}) };
     }
     return projection;
   };
@@ -357,8 +390,11 @@ function createBrowserView(state, options, replyReader, savedUrl) {
       .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
       .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
       .or(role(ui.startNewChatButtonName).filter({ visible: true }))
+      .or(state.tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true }))
+      .or(role(ui.retryButtonExactName).filter({ visible: true })).or(role(ui.composerName, "textbox"))
       .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-        generationTurnKey: state.generationTurnKey, observation: true }, { timeoutMs: 1000 });
+        generationTurnKey: state.generationTurnKey, generationMarker: state.generationMarker,
+        submittedComposerText: state.submittedComposerText, observation: true }, { timeoutMs: 1000 });
     activeOwner([options.turnId], true);
     const { url, stopVisible, temporaryInactive, conversationFull: full } = view.observation;
     if (!normalUrl(url) || !temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
@@ -377,7 +413,8 @@ function createBrowserView(state, options, replyReader, savedUrl) {
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
       baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
-      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full };
+      stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
+      ...(view.observation.requestError ? { requestError: view.observation.requestError } : {}) };
   };
   return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
 }
@@ -411,7 +448,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     if (!(await normalHomeMode(tab))) return false;
     const composer = role(ui.composerName, "textbox", tab), model = role(ui.modelButtonName, "button", tab), toggle = role(ui.temporaryButtonName, "button", tab);
     return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
-      && await toggle.isVisible() && await toggle.isEnabled() && await role(ui.normalHeadingName, "heading", tab).isVisible()
+      && await toggle.isVisible() && await toggle.isEnabled()
       && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
   };
   const clearUnsentDraft = async () => {
@@ -922,6 +959,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   delete state.generationTurnKey;
   delete state.generationReplyIds;
   delete state.reconciliationStop;
+  delete state.submittedComposerText; delete state.generationMarker;
   state.sendAttempted = false;
   state.sendClicked = false;
   state.sendConfirmed = false;
@@ -1031,6 +1069,8 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
   if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
   if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  state.generationMarker = generationMarker.trim();
+  state.submittedComposerText = state.unsentComposerText;
   state.sendClicked = true;
   await send.click();
   state.hasSentMessage = true;
@@ -1083,6 +1123,8 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     await state.tab.markHandoff();
     activeOwner([options.turnId], true);
     state.retained = true;
+    // Broker activity can reject this retention and resume the same generation.
+    // Keep its rejection evidence until continuation resets the generation.
     // Retain can execute just before native Stop discards its result. Keep the
     // exact owner available until a confirmed handoff.
     emit({ retained: true, ...observation });
@@ -1103,6 +1145,7 @@ export function browserScript(options) {
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
+  if (options.inputAcknowledgementPending !== undefined && (options.operation !== "observe" || typeof options.inputAcknowledgementPending !== "boolean")) throw failure("Input acknowledgement requires a boolean observation hint.");
   const transfersOwnership = ["continue", "rollover"].includes(options.operation);
   if (transfersOwnership && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))

@@ -375,6 +375,21 @@ test("invalid invocation shapes cannot queue tools, and tool lists are isolated 
   finish(broker, token);
 });
 
+test("client acceptance is independent of registration and declaration revisions", () => {
+  const broker = createWebToolBroker(), { token } = register(broker, [fn("read")]);
+  assert.equal(broker.hasClientActivity(token), false);
+  broker.list(token);
+  broker.update(token, { tools: [fn("read")], toolChoice: "auto" });
+  assert.ok(broker.revision(token) > 0);
+  assert.equal(broker.hasClientActivity(token), false);
+  const release = broker.beginActivity(token);
+  assert.equal(broker.hasClientActivity(token), true);
+  release();
+  assert.equal(broker.hasClientActivity(token), true);
+  broker.cancel(token);
+  assert.equal(broker.hasClientActivity(token), true, "Retirement cannot erase authentic acceptance evidence.");
+});
+
 test("completion fences reject activity that starts and settles during a browser observation", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [fn("read")]);

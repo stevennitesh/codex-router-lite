@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
 const replyOptions = { ui: browserDom, assistantSelector: browserDom.assistantSelector, regenerateName: browserDom.regenerateButtonExactName };
@@ -155,6 +157,22 @@ test("browser programs round trip only with their complete exact guards, helper 
   assert.equal(readBrowserProgram("await unknown({});"), null);
 });
 
+test("input acknowledgement is a strict observe-only boolean in canonical browser programs", () => {
+  for (const inputAcknowledgementPending of [false, true]) {
+    const code = browserScript({ ...base, operation: "observe", inputAcknowledgementPending });
+    assert.equal(readBrowserProgram(code).inputAcknowledgementPending, inputAcknowledgementPending);
+    for (const invalid of ['"true"', '1', 'null', '{}']) {
+      assert.equal(readBrowserProgram(code.replace(`"inputAcknowledgementPending":${inputAcknowledgementPending}`, `"inputAcknowledgementPending":${invalid}`)), null);
+    }
+  }
+  for (const inputAcknowledgementPending of ["true", 1, null, {}]) {
+    assert.throws(() => browserScript({ ...base, operation: "observe", inputAcknowledgementPending }), /boolean observation hint/u);
+  }
+  for (const operation of ["bootstrap", "open", "send", "retain", "continue", "rollover"]) {
+    assert.throws(() => browserScript({ ...base, operation, inputAcknowledgementPending: true }), /boolean observation hint/u);
+  }
+});
+
 test("resident source changes invalidate compact programs while independently shipped operations keep their own exact qualification", async () => {
   const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
   const stateSource = readFileSync(new URL("../src/web-browser-state.mjs", import.meta.url), "utf8");
@@ -168,7 +186,7 @@ test("resident source changes invalidate compact programs while independently sh
   const compact = ["observe", "retain"].map(operation => browserScript({ ...base, operation }));
   for (const changed of [
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
-    ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute"].map(changeDom),
+    ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
     ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
   ]) {
     const variant = await loadVariant(changed);
@@ -183,7 +201,7 @@ test("resident source changes invalidate compact programs while independently sh
   for (const [changed, sourceChanged] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-      "composerName", "normalHeadingName", "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
+      "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
       "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
   ]) {
     const operationVariant = await loadVariant(changed);
@@ -258,7 +276,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     familyText: "GPT-6", familyClicks: 0, familyExpanded: false, familyExpansionClicks: 0, clippedFamilyClicks: 0, familySwitches: 0,
     sendEnabled: true, waitedMs: 0, actions: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
-    modelButtonVisible: true, normalHeadingVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
+    modelButtonVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
     fetchCalls: 0, stopClicks: 0, stopReads: 0, stopWaits: 0, stopRequests: 0, reloads: 0, attachmentWaits: 0, idleButtonCount: 1, userMessages: [] };
   let now = 0;
@@ -342,6 +360,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
           elements.push(...matches);
         } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
+        else if (name in namedControls) elements.push(...namedControls[name]);
         else if (kind === "text") {
           const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
             ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })), { text: ui.composerText, scope: "composer" }];
@@ -382,8 +401,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (name === "Stop" || name === "Stop generating") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat" && kind === "button") return ui.temporaryButtonVisible && !ui.temporary;
-      if (name === "Ready when you are.") return ui.normalHeadingVisible;
       if (name === "Temporary chat" && kind === "heading") return ui.temporary && ui.temporaryHeadingVisible;
+      if (kind === "heading") return name === ui.decorativeHeading;
       if (name === "Turn off temporary chat") return ui.temporary;
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
@@ -406,7 +425,6 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       else if (name === "Send") {
         ui.actions.push("send");
         ui.sendClicks += 1;
-        ui.normalHeadingVisible = false;
         if (!ui.deferSavedUrl) ui.url = "https://chatgpt.com/c/owned-conversation";
         ui.userMessages.push({ messageId: messageId(1000 + ui.sendClicks), text: ui.composerText,
           baselineIds: ui.replyElements ? ui.replyElements.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
@@ -424,7 +442,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       else if (name === "Start new chat") {
         ui.startNewChatClicks += 1;
         if (!ui.deferRolloverHome) {
-          Object.assign(ui, { url: "https://chatgpt.com/", normalHeadingVisible: true, composerText: "", texts: [], chip: false,
+          Object.assign(ui, { url: "https://chatgpt.com/", composerText: "", texts: [], chip: false,
             complete: false, stop: false, fullBanners: [], fullButtons: [] });
         }
         ui.onStartNewChat?.();
@@ -774,23 +792,36 @@ test("generated bootstrap reads the current session browser and opens a verified
   await assert.rejects(f.run("open"), /already owns/);
 });
 
-test("open observes deferred hydration of all four controls without opening or navigating again", async () => {
+test("open accepts a personalized or absent decorative home heading when the empty normal home is ready", async () => {
+  for (const heading of ["A greeting that can change", undefined]) {
+    const f = fixture({ fastTimers: true });
+    await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    f.ui.decorativeHeading = heading;
+    const result = await f.run("open");
+    assert.equal(result.normal, true);
+    assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.handoffs, 1);
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.sendClicks, 0);
+  }
+});
+
+test("open observes deferred hydration of the composer and both controls without opening or navigating again", async () => {
   const f = fixture({ fastTimers: true });
   await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
   f.ui.composerVisible = false;
   f.ui.modelButtonVisible = false;
   f.ui.temporaryButtonVisible = false;
-  f.ui.normalHeadingVisible = false;
   f.ui.onWait = () => {
     assert.equal(f.activeTurn()?.state.tab, f.tab, "The owned tab is interruptible while its initial controls hydrate.");
     f.ui.composerVisible = f.ui.waitedMs >= 100;
     f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
     f.ui.temporaryButtonVisible = f.ui.waitedMs >= 300;
-    f.ui.normalHeadingVisible = f.ui.waitedMs >= 400;
   };
   const result = await f.run("open");
   assert.equal(result.normal, true);
-  assert.equal(f.ui.waitedMs, 400);
+  assert.equal(f.ui.waitedMs, 300);
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 0);
@@ -814,7 +845,7 @@ test("normal home waits for both independent temporary-mode visibility reads", {
 });
 
 test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
-  for (const control of ["composerVisible", "modelButtonVisible", "temporaryButtonVisible", "normalHeadingVisible"]) {
+  for (const control of ["composerVisible", "modelButtonVisible", "temporaryButtonVisible"]) {
     const f = fixture({ fastTimers: true });
     await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
     f.ui[control] = false;
@@ -829,8 +860,17 @@ test("a missing initial control ends open's bounded hydration wait without navig
   }
 });
 
-test("initial normal home verification cannot accept a draft, a disabled temporary toggle or active temporary mode", async () => {
-  for (const change of [ui => { ui.composerText = "Existing draft"; }, ui => { ui.temporaryButtonDisabled = true; }, ui => { ui.temporary = true; }]) {
+test("initial normal home verification rejects history, drafts, ambiguous composers, active generation, temporary mode and disabled controls", async () => {
+  for (const change of [
+    ui => { ui.texts = ["Existing answer"]; },
+    ui => { ui.composerText = "Existing draft"; },
+    ui => { ui.composerElements = [domElement("div", { contenteditable: "true" }), domElement("div", { contenteditable: "true" })]; },
+    ui => { ui.stop = true; },
+    ui => { ui.temporary = true; },
+    ui => { ui.temporary = true; ui.temporaryHeadingVisible = false; },
+    ui => { ui.temporaryButtonDisabled = true; },
+    ui => { ui.modelButtonDisabled = true; },
+  ]) {
     const f = fixture({ fastTimers: true });
     await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
     change(f.ui);
@@ -1347,7 +1387,7 @@ test("rollover waits for normal home hydration after its one click without anoth
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
   f.ui.onWait = () => {
-    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", normalHeadingVisible: true, texts: [],
+    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [],
       composerText: "", chip: false, fullBanners: [], fullButtons: [] });
   };
   const rolled = await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
@@ -1498,7 +1538,6 @@ test("observations require a fresh assistant reply and continuation retains exac
   await f.ready();
   f.ui.texts.push("Previous completed answer");
   await f.run("send", { ...plugin, prompt: "Next request" });
-  assert.equal(f.ui.normalHeadingVisible, false, "The initial home heading disappears after Send.");
   assert.equal(f.ui.url, "https://chatgpt.com/c/owned-conversation");
   f.ui.complete = true;
   assert.equal((await f.run("observe")).completed, false);
@@ -1764,7 +1803,7 @@ test("an interrupted confirmed generation without a reply restores its saved URL
     const f = await interruptedBeforeReplyFixture();
     if (loss.startsWith("restart")) f.loseBinding();
     if (loss === "restart-home") {
-      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
       delete f.ui.messageRoot;
     } else f.ui.present = false;
     f.ui.onGoto = url => {
@@ -1820,7 +1859,7 @@ test("anchored recovery before a reply cannot overwrite a different chat or a us
     else {
       f.ui.composerText = "User draft";
       if (invalid === "home-draft") {
-        Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+        Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
         delete f.ui.messageRoot;
       }
     }
@@ -1839,7 +1878,7 @@ test("saved URL recovery rechecks ownership and the destination tab after retent
     f.loseBinding();
     if (closed) f.ui.present = false;
     else {
-      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [], normalHeadingVisible: true });
+      Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [] });
       delete f.ui.messageRoot;
     }
     const handoff = f.tab.markHandoff;
@@ -2224,7 +2263,6 @@ test("the known tab may navigate from verified empty normal home to its exact sa
   const f = await recoverableFixture();
   f.loseBinding();
   f.ui.url = "https://chatgpt.com/";
-  f.ui.normalHeadingVisible = true;
   f.ui.texts = [];
   f.ui.onGoto = url => { assert.equal(url, f.recovery.url); f.ui.texts = [f.text]; };
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
@@ -2237,10 +2275,10 @@ test("the known tab may navigate from verified empty normal home to its exact sa
 test("recovery never overwrites unrelated conversations, drafts, noneditable content, foreign pages or sign-in pages", async () => {
   for (const change of [
     ui => { ui.url = "https://chatgpt.com/c/unrelated-conversation"; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerText = "My unsent draft"; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.stop = true; },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("span", { contenteditable: "false" })); },
-    ui => { ui.url = "https://chatgpt.com/"; ui.normalHeadingVisible = true; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("img", { src: "attachment" })); },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerText = "My unsent draft"; },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.stop = true; },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("span", { contenteditable: "false" })); },
+    ui => { ui.url = "https://chatgpt.com/"; ui.texts = []; ui.composerNode = domElement("div", { contenteditable: "true" }, domElement("img", { src: "attachment" })); },
     ui => { ui.url = "https://elsewhere.test/"; },
     ui => { ui.url = "https://chatgpt.com/auth/login"; },
     ui => { ui.url = "about:blank"; },
@@ -2642,6 +2680,115 @@ test("hidden Stop and an idle composer cannot establish inactivity without compl
   }
 });
 
+async function hookedInterruptionFixture() {
+  const nativeContext = {}, sessionId = messageId(3000), turnId = messageId(3001);
+  const f = fixture({ nativeContext, sessionId, fastTimers: true });
+  const stateDir = path.resolve("generated/web-stop-handoff-fixture"), runtimeModule = path.join(stateDir, "browser-runtime.mjs");
+  await f.run("bootstrap", { runtimeModule });
+  await f.run("open", { turnId });
+  const sent = await f.run("send", { ...plugin, turnId, prompt: "Owned interrupted request" });
+  const bindingName = Object.keys(nativeContext).find(key => key.startsWith("routerWeb_unit_test_"));
+  const ledger = { version: 1, threadId: sessionId, bindingId: bindingName.slice("routerWeb_".length),
+    browserOwnerTurnIds: [turnId], tabId: sent.tabId, chatUrl: sent.url, generationTurnKey: sent.generationTurnKey,
+    uncertainSend: false, lastTurn: { turnId, sendState: "sent", completed: false } };
+  const ledgerBefore = JSON.stringify(ledger);
+  const runStop = async () => {
+    let output;
+    const code = createWebStopCode({ stateDir, runtimeModule }, { threadId: sessionId, turnId, sessionId: messageId(3002) });
+    const fs = { lstatSync: filename => {
+      assert.equal(filename, path.join(stateDir, "web-in-app", "conversations", `${sessionId}.json`));
+      return { isFile: () => true, isSymbolicLink: () => false, dev: 1, ino: 1, size: ledgerBefore.length, mtimeMs: 1 };
+    }, readFileSync: (_filename, encoding) => { assert.equal(encoding, "utf8"); return JSON.stringify(ledger); } };
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "__publicImport", "globalThis", code.replaceAll("import(", "__publicImport("));
+    await execute({ requestMeta: { threadId: sessionId, "x-codex-turn-metadata": {
+      thread_id: sessionId, turn_id: turnId, session_id: messageId(3002) } }, write: value => { output = JSON.parse(value); } },
+    async name => { assert.equal(name, "node:fs"); return fs; }, nativeContext);
+    assert.equal(JSON.stringify(ledger), ledgerBefore, "The hook never settles or rewrites delivery acceptance.");
+    return JSON.parse(output.systemMessage.slice("ROUTER_WEB_STOP ".length));
+  };
+  const continueInterrupted = () => f.run("continue", { turnId: "next-turn", interruptedTurnId: turnId });
+  f.ui.stop = true; f.ui.hiddenMountedStop = true;
+  return { ...f, nativeContext, runStop, continueInterrupted, sent };
+}
+
+test("the generated Stop hook hands its witnessed composer restoration to canonical same-chat continuation", async () => {
+  const f = await hookedInterruptionFixture(), owner = f.activeTurn(), state = f.getState();
+  f.ui.texts.push("Partial answer before interruption");
+  const stopped = await f.runStop();
+  assert.equal(stopped.outcome, "cancelled"); assert.equal(stopped.freshController, false);
+  assert.equal(stopped.inactivityEvidence, "composer_restored"); assert.equal(stopped.readbackComplete, false);
+  assert.equal(f.getState(), state); assert.equal(f.activeTurn(), owner);
+  const receipt = state.reconciliationStop;
+  const continued = await f.continueInterrupted();
+  assert.deepEqual(receipt, { generationTurnKey: f.sent.generationTurnKey, idleAbsent: true, acknowledged: true });
+  assert.equal(continued.interrupted, true); assert.equal(continued.assistantText, "Partial answer before interruption");
+  assert.equal(continued.url, f.sent.url); assert.equal(continued.tabId, f.sent.tabId);
+  assert.equal(f.ui.complete, false, "Explicit DOM completion never arrives in this regression.");
+  assert.equal(f.getState(), state); assert.equal(f.getState().reconciliationStop, undefined);
+  assert.equal(f.activeTurn().turnId, "next-turn");
+  assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1); assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+});
+
+test("a rejected generated-hook click remains uncertain across hook and continuation retries", async () => {
+  for (const rejectedAt of ["dispatch", "acknowledgement"]) {
+    const f = await hookedInterruptionFixture(), owner = f.activeTurn();
+    if (rejectedAt === "dispatch") f.ui.onStopRequest = () => { throw new Error("Rejected before input effect."); };
+    else f.ui.stopClickError = new Error("Input effect occurred, acknowledgement rejected.");
+    const stopped = await f.runStop();
+    assert.equal(stopped.outcome, "blocked"); assert.equal(stopped.clickError, true);
+    assert.equal(f.getState().reconciliationStop.acknowledged, false);
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    // A visible Stop on the same generation cannot justify repeating an
+    // action whose input effect or acknowledgement remains uncertain.
+    f.ui.stop = true;
+    assert.equal((await f.runStop()).outcome, "blocked");
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, rejectedAt === "dispatch" ? 0 : 1);
+    assert.equal(f.activeTurn(), owner); assert.equal(f.ui.sendClicks, 1);
+    f.ui.stop = false; f.ui.complete = true;
+    assert.equal((await f.continueInterrupted()).interrupted, true);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("generated-hook receipts cannot replace missing transition proof or renewed generation activity", async () => {
+  for (const missingProof of ["no-click", "idle-already-present", "idle-not-restored", "renewed-stop"]) {
+    const f = await hookedInterruptionFixture(), owner = f.activeTurn();
+    if (missingProof === "no-click") f.ui.stop = false;
+    if (missingProof === "idle-already-present") f.ui.idleDuringStop = 1;
+    if (missingProof === "idle-not-restored") f.ui.idleButtonCount = 0;
+    const stopped = await f.runStop();
+    assert.equal(stopped.outcome, missingProof === "renewed-stop" ? "cancelled" : "blocked");
+    if (missingProof === "renewed-stop") f.ui.stop = true;
+    await assert.rejects(f.continueInterrupted(), /no affirmative inactivity proof/);
+    assert.equal(f.ui.complete, false); assert.equal(f.activeTurn(), owner);
+    assert.equal(f.ui.stopRequests, missingProof === "no-click" ? 0 : 1);
+    assert.equal(f.ui.stopClicks, missingProof === "no-click" ? 0 : 1);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
+test("a hook receipt cannot transfer continuation after its owner, generation, tab or saved URL changes", async () => {
+  for (const changed of ["owner", "receipt-generation", "generation", "tab", "url"]) {
+    const f = await hookedInterruptionFixture(), state = f.getState();
+    assert.equal((await f.runStop()).outcome, "cancelled");
+    const receipt = state.reconciliationStop;
+    if (changed === "owner") f.nativeContext.routerWebActiveTurns.set(state.sessionId, { ...f.activeTurn(), turnId: "foreign-turn" });
+    if (changed === "receipt-generation") receipt.generationTurnKey = messageId(4000);
+    if (changed === "generation") state.generationTurnKey = messageId(4000);
+    if (changed === "tab") f.ui.tabId = "foreign-tab";
+    if (changed === "url") f.ui.url = "https://chatgpt.com/c/foreign-conversation";
+    const owner = f.activeTurn();
+    await assert.rejects(f.continueInterrupted(), /different native turn|no affirmative inactivity proof|no longer unique and latest|tab is unavailable|not ready for continuation/);
+    assert.equal(f.getState(), state); assert.equal(f.activeTurn(), owner);
+    assert.equal(state.reconciliationStop, receipt);
+    assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1); assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0);
+  }
+});
+
 test("an uncertain reconciliation click is not repeated and only explicit completion permits its retry", async () => {
   const f = fixture(); await f.ready();
   await f.run("send", { ...plugin, prompt: "Owned request" });
@@ -2909,6 +3056,33 @@ test("batched exact-control reads reject duplicate controls and unrecognized acc
     assert.notEqual(f.getState().completed, true);
     assert.equal(f.ui.sendClicks, 1);
   }
+});
+
+test("a same-generation observation after retention still recognizes an exact restored rejected request", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  await f.run("send", { ...plugin, prompt: "Request that may be rejected after retention" });
+  f.ui.texts.push("Answer before late broker activity."); f.ui.complete = true;
+  const completed = await f.run("observe");
+  await f.run("retain");
+  const submitted = f.ui.userMessages.at(-1).text;
+  const error = domElement("div", {}, domText("Unknown error"));
+  const retry = domElement("button", {}, domText("Retry"));
+  const errorRegion = domElement("div", {}, error, retry);
+  error.contains = node => node === error;
+  errorRegion.contains = node => node === errorRegion || node === error || node === retry;
+  const composer = domElement("div", { role: "textbox", "aria-label": "Ask ChatGPT", contenteditable: "true" }, domText(submitted));
+  composer.innerText = submitted;
+  f.ui.messageRoot = domElement("main", {}, observedTurn(completed.generationTurnKey, submitted,
+    [assistantMessage(0, f.ui.texts[0])]), errorRegion, composer);
+  f.ui.observationControls = { "Unknown error": [error], Retry: [retry], "Ask ChatGPT": [composer] };
+  const reads = f.ui.observationReads;
+  const rejected = await f.run("observe");
+  assert.equal(f.ui.observationReads, reads + 1, "The resumed operation must run the current browser reader.");
+  assert.equal(rejected.generationTurnKey, completed.generationTurnKey);
+  assert.equal(rejected.requestError, "unknown_error");
+  assert.equal(composer.innerText, submitted, "Observation preserves the restored submitted draft.");
+  assert.equal(f.ui.sendClicks, 1);
+  assert.equal(f.ui.closeCount, 0);
 });
 
 test("observation and retention use compact resident invocations below 4 KB", () => {

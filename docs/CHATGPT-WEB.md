@@ -157,9 +157,16 @@ current app runtime differs, even if the old files still exist. Missing old app
 files remain a stale runtime, not lost Web configuration or foreign ownership.
 
 Applying a required refresh waits for active Router work, installs the matching
-adapter and browser configuration, and reloads Router. It does not force an
-interruption. The serving Router must support Web-aware drain checks: active
+adapter and browser configuration, and reloads Router. By default it does not
+force an interruption. Only with explicit authorization to interrupt blocking
+Router requests, add `--force-service-replacement` to the `--apply` command.
+The override is rejected without `--apply`. Run the coordinated command directly;
+do not close admission with a separate forced drain before runtime refresh.
+Candidate validation happens before the coordinator drains work, and it resumes
+admission if installation fails before reload and prior state is restored.
+The serving Router must support Web-aware drain checks: active
 generations, uncertain Sends and unresolved native actions postpone the refresh.
+The override still requires all three Web counters to be known and zero.
 If an older Router cannot supply that proof, deploy and reload the current Router
 before applying the runtime refresh. Fully quit and reopen Codex normally when the command reports that
 the adapter needs to reload. The existing trusted Interrupt hook is retained;

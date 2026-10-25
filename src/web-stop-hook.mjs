@@ -187,10 +187,13 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       stopName: config.stopButtonExactName, idleName: config.idleButtonExactName });
     const { stop, ready } = browserState;
     const readAllowanceMs = 200;
+    let receipt = !absent && state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
+    // Prior receipts prevent repeated input and survive for continuation.
+    // This hook's public result claims only its own witnessed transition.
     let allowComposerRestored = false;
     const inspectGeneration = async (reserve = 0) => {
       clearReadback();
-      const view = await browserState.inspect({ allowComposerRestored, preferInactive: diagnostic.clickAttempted,
+      const view = await browserState.inspect({ allowComposerRestored, preferInactive: Boolean(receipt),
         beforeRead: () => {
           assertCurrent(reserve);
           const timeoutMs = Math.min(1000, Math.floor(deadline - Date.now() - reserve));
@@ -250,16 +253,20 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // generation after handoff before considering the one semantic Stop click.
     stage = "mutation_url";
     let observation = await inspectGeneration(200);
-    if (!observation.inactive && !observation.visible) {
+    if (!observation.inactive && !observation.visible && !receipt) {
       stage = "stop_visibility";
       await waitForReadiness(ready(false).or(stop));
       observation = await inspectGeneration();
     }
     if (!observation.inactive) {
-      if (observation.visible) {
+      if (observation.visible && !receipt) {
         stage = "stop_click";
         assertCurrent(1000);
-        const composerAbsentBeforeClick = observation.idleAbsent === true;
+        // Share the same generation-bound dispatch receipt with ordinary
+        // continuation. An uncertain action must not be clicked again there
+        // or by another hook; a fresh controller never acquires a binding.
+        receipt = { generationTurnKey, idleAbsent: observation.idleAbsent === true, acknowledged: false };
+        if (!absent) state.reconciliationStop = receipt;
         diagnostic.clickAttempted = true;
         try {
           await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - 200) });
@@ -272,9 +279,12 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         // A click attempt invalidates the earlier observation, even when the
         // acknowledgement or following read cannot complete within the budget.
         clearReadback();
+        assertCurrent();
+        if (!absent && state.reconciliationStop !== receipt) deny("owner_changed");
+        if (diagnostic.stopClicked) receipt.acknowledged = true;
         assertCurrent(readAllowanceMs);
         stage = "stop_readback_visibility";
-        allowComposerRestored = diagnostic.stopClicked && !diagnostic.clickError && composerAbsentBeforeClick;
+        allowComposerRestored = receipt.acknowledged && receipt.idleAbsent;
         if (!diagnostic.clickError) await waitForReadiness(ready(allowComposerRestored));
         observation = await inspectGeneration();
         if (diagnostic.clickError && !observation.inactive) deny("browser_operation_failed");
