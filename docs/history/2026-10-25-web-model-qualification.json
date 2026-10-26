@@ -1,7 +1,8 @@
 {
   "version": 1,
-  "status": "candidate-awaiting-activation-and-route-recheck",
-  "deployedSourceCommit": "29e00a79bb8cac203a9fb00f5519e0f583e95753",
+  "status": "activated-partial-qualification-persistence-repair-in-progress",
+  "deployedSourceCommit": "6914c371c95623c4a5958588e8b9103f25c45faa",
+  "preRepairSourceCommit": "29e00a79bb8cac203a9fb00f5519e0f583e95753",
   "executionSurface": "ordinary Windows Codex Web conversation, official unmodified runtime",
   "externalLauncherUsed": false,
   "nativeRuntimePatched": false,
@@ -13,6 +14,26 @@
     "independentReview": "No actionable production findings; stale hook-preservation wording corrected.",
     "installedRefreshPreview": "ready, matching owned legacy hook recognized, hookDefinitionChanged true",
     "nativeAndGatewayRegressionScope": "Unchanged pre-repair gateway verification reused; this run checked the complete Web test group."
+  },
+  "persistenceRecoveryValidation": {
+    "sourceChecks": "passed", "webTestsPassed": 913, "webTestsSkipped": 2,
+    "webRuntimeTestsPassed": 237, "faultAndCancellationRegressionsPassed": 8,
+    "skips": "Unchanged Windows file symlink privilege limitation in two configuration-path cases",
+    "scope": "Private snapshot recovery, original failure replay, finalization ownership and unchanged full Web integration checks. The initial host ACL stall remains unlocalized."
+  },
+  "postActivation": {
+    "normalRestartAndHookReview": "User confirmed; actual adapter process and protected artifacts match the deployed candidate.",
+    "gpt6ProMax": {
+      "nativeRead": "passed", "recall": "passed", "stop": "confirmed", "sameChatContinuation": "passed", "freshPostStopNativeRead": "passed",
+      "stopScriptElapsedMs": 3558, "stopDispatches": 1, "inactivityEvidence": "composer_restored", "childTerminalObserved": true,
+      "receipts": ["generated/web-models-20261025-candidate-gpt6-pro/run.json", "generated/web-models-20261025-candidate-gpt6-pro-post-stop/run.json"]
+    },
+    "gpt56ProMax": {
+      "nativeRead": "failed-with-zero-native-commands", "currentTokenDiscovery": "accepted", "browserReply": "completed-with-blocked-execution-answer",
+      "nativeDelivery": "failed-private-file-ACL-timeout", "stop": "not-tested", "sameChatContinuation": "not-tested",
+      "receipt": "generated/web-models-20261025-candidate-gpt56-pro/run.json",
+      "limits": "The browser did not expose a fixed failure category separating host refusal from model interpretation. A later harmless Instant request also failed before browser admission on the retained failed persistence promise."
+    }
   },
   "liveObservationsBeforeRepair": [
     { "model": "chatgpt-web/gpt-6-sol-instant", "effort": "low", "nativeRead": "passed", "stop": "confirmed", "sameChatContinuation": "passed" },
@@ -26,18 +47,19 @@
     "verification": "The helper rejected app-owned instruction envelopes prepended when changing models, and its earlier receipts did not bind an exact model and effort. The repair accepts only observed bounded envelopes and verifies native model/effort plus successful pre-Send browser family/Power.",
     "visibleAuthority": "Large model-switch instruction payloads became pasted-text attachments. The visible message retained only the generation marker. A completed Pro turn's token was subsequently reused in rejected discovery requests after newer tokens had been supplied. Keep the current broker token in a separate visible directive appended after paste settlement; retain the full transcript and exact draft checks.",
     "staleTokenErrors": "The MCP handler used one generic failure envelope for known inactive-token rejection before admission and errors after possible invocation. Distinguish only the proven pre-admission category. Do not expose another token, remap requests, retry native actions or weaken tool annotations.",
-    "proStop": "Both Pro routes acknowledged one Stop click but still showed active controls at the 2400ms script bound. An isolated GPT-6 Pro repeat with its owned tab visible reproduced the failure. The same generation later showed Stopped thinking and the idle composer without a second Stop or continuation. The new shared contract allows condition-driven confirmation within a ten-second hook deadline; time alone never proves success."
+    "proStop": "Both Pro routes acknowledged one Stop click but still showed active controls at the 2400ms script bound. An isolated GPT-6 Pro repeat with its owned tab visible reproduced the failure. The same generation later showed Stopped thinking and the idle composer without a second Stop or continuation. The new shared contract allows condition-driven confirmation within a ten-second hook deadline; time alone never proves success.",
+    "persistenceRecovery": "A private ACL helper timeout caused one checkpoint write to reject. Its optimistic snapshot cache and rejected write tail then blocked later native turns even after storage recovered. A new turn now explicitly reflushes the latest in-memory snapshot before browser work; old-turn replay retains the original failure. Final delivery becomes terminal only after its checkpoint is durable. The original host ACL stall was not reproduced, and file permissions or helper deadlines were not weakened."
   },
   "preserved": ["exact native approvals and sandbox", "one-click Stop authority", "same saved chat and tab", "context and uncertain-action protections", "working installed adapter and rollback"],
   "pendingAfterCandidateActivation": [
     "Exact-route native tools, Stop and same-chat continuation on the repaired candidate, including both Pro routes.",
     "Current live High and Extra High checks for both Thinking families. All ten registry model/effort selections have generated-browser coverage; those fixtures do not replace live account checks.",
-    "Review and trust the changed ten-second Interrupt hook, then normally restart Codex to load the matching adapter."
+    "Recover failed private-state persistence before admitting further live requests; preserve failed runs and distinguish typed-user and delegated probes."
   ],
   "limits": [
     "Host safety refusals and a reported unavailable execution relay do not establish one common cause; no native action was replayed after an uncertain execution.",
     "The earliest helper failures remain preserved. Their later reanalysis does not change those original receipts.",
-    "Existing live observations apply to the deployed pre-repair source, not to the unactivated working-tree candidate.",
+    "The pre-repair observations apply only to their recorded source. Post-activation results are listed separately and do not qualify untested model/effort pairs.",
     "No claim of Web-subagent immediate cancellation or media upload is added."
   ]
 }

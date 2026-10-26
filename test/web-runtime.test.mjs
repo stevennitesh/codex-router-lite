@@ -424,6 +424,225 @@ test("checkpoint writes finish before native actions and a cancelled turn's succ
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).lastTurn.turnId, followupId);
 });
 
+test("a new turn reflushes a failed completion checkpoint before continuing the same saved chat", { timeout: 5_000 }, async t => {
+  const failure = Object.assign(new Error("Synthetic private checkpoint failure."), { code: "synthetic_checkpoint_failed" });
+  const { promise: reflushStarted, resolve: started } = Promise.withResolvers();
+  const { promise: reflushAllowed, resolve: release } = Promise.withResolvers();
+  t.after(release);
+  const writes = [];
+  let completedWrites = 0;
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    writes.push(structuredClone(value));
+    if (value.lastTurn.completed && value.lastTurn.turnId === turnId) {
+      if (++completedWrites === 1) throw failure;
+      started(); await reflushAllowed;
+    }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const { call } = await h.toObserve();
+  h.browser.ui.texts.push("The browser completed this answer."); h.browser.ui.complete = true;
+  const retained = (await h.answerBrowser(call)).output[0];
+  const previous = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  await assert.rejects(h.answerBrowser(retained), error => error === failure);
+  const failedWrites = writes.length;
+  await assert.rejects(h.request(), error => error === failure);
+  assert.equal(writes.length, failedWrites, "The failed native turn and cancellation do not retry its checkpoint or browser action.");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).lastTurn.completed, false);
+
+  h.newTurn(followupId, "Continue with a separate current request.");
+  const next = h.request();
+  await reflushStarted;
+  assert.equal(h.observations.watchers.length, 1, "The new turn cannot acquire a watcher or browser work before the prior snapshot is durable.");
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(writes.at(-1).lastTurn.turnId, turnId);
+  release();
+  assert.equal(JSON.parse((await next).output[0].arguments).title, "ChatGPT Web: continue");
+  const resumed = (await h.toObserve()).call;
+  await h.completeAnswer(resumed, "The new request completed in the saved chat.");
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.bindingId, previous.bindingId);
+  assert.equal(saved.chatUrl, previous.chatUrl);
+  assert.equal(saved.tabId, previous.tabId);
+  assert.equal(saved.lastTurn.turnId, followupId);
+  assert.equal(saved.lastTurn.completed, true);
+  assert.equal(h.browser.ui.newTabs, 1);
+  assert.equal(h.browser.ui.sends.length, 2, "Only the distinct new request is sent.");
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue with a separate current request." }]);
+});
+
+test("a persistent checkpoint failure rejects each new turn before acquiring browser work", async t => {
+  const failure = Object.assign(new Error("Synthetic persistent checkpoint failure."), { code: "synthetic_checkpoint_failed" });
+  let failedWrites = 0;
+  const h = harness(t, { expectedCloseCode: failure.code, storage: { ...syntheticStorage, writeState: async (target, value) => {
+    if (value.lastTurn.completed) { failedWrites += 1; throw failure; }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const { call } = await h.toObserve();
+  h.browser.ui.texts.push("Completed browser answer with unavailable storage."); h.browser.ui.complete = true;
+  const retained = (await h.answerBrowser(call)).output[0];
+  await assert.rejects(h.answerBrowser(retained), error => error === failure);
+  const operations = h.observations.nativeOperations.length;
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Invalid history cannot trigger a storage recovery write.");
+  await assert.rejects(h.request({ input: [{ role: "user", content: [{ type: "input_image" }] }] }), { code: "web_input_unsupported" });
+  assert.equal(failedWrites, 1);
+  for (const nextTurn of [followupId, "33002233-4455-6677-8899-aabbccddeeff"]) {
+    h.newTurn(nextTurn, "A fresh request still requires durable private state.");
+    await assert.rejects(h.request(), error => error === failure);
+  }
+  assert.equal(failedWrites, 3, "Each new turn makes one explicit storage attempt; cancellation and same-turn replay make none.");
+  assert.equal(h.observations.watchers.length, 1);
+  assert.equal(h.observations.nativeOperations.length, operations);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("a cancelled turn's failed pending write is reflushed before its successor can persist", { timeout: 5_000 }, async t => {
+  const failure = Object.assign(new Error("Synthetic cancelled checkpoint failure."), { code: "synthetic_checkpoint_failed" });
+  const failedWrite = Promise.withResolvers(), allowFailure = Promise.withResolvers();
+  const reflush = Promise.withResolvers(), allowReflush = Promise.withResolvers();
+  t.after(() => { allowFailure.resolve(); allowReflush.resolve(); });
+  const writes = [];
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    writes.push(structuredClone(value));
+    if (writes.length === 1) {
+      failedWrite.resolve(); await allowFailure.promise; throw failure;
+    }
+    if (writes.length === 2) {
+      reflush.resolve(); await allowReflush.promise;
+    }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const first = assert.rejects(h.request(), error => error === failure);
+  await failedWrite.promise;
+  h.observations.watchers[0].onCancel();
+  h.newTurn(followupId, "Continue after all earlier checkpoint writes settle.");
+  const next = h.request();
+  assert.equal(writes.length, 1, "The successor cannot overtake the failed pending write.");
+  allowFailure.resolve();
+  await reflush.promise;
+  assert.equal(h.observations.watchers.length, 1);
+  assert.deepEqual(writes.map(value => value.lastTurn.turnId), [turnId, turnId]);
+  allowReflush.resolve();
+  await first;
+  assert.equal(JSON.parse((await next).output[0].arguments).title, "ChatGPT Web: bootstrap");
+  assert.deepEqual(writes.map(value => value.lastTurn.turnId), [turnId, turnId, followupId],
+    "The latest successor checkpoint follows the explicit recovery write and is never overwritten by the old failure.");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).lastTurn.turnId, followupId);
+  assert.equal(h.browser.ui.sends.length, 0, "Storage recovery has not executed or replayed a Send.");
+});
+
+test("a cancelled finalizer cannot overwrite its successor after watcher closure", { timeout: 5_000 }, async t => {
+  for (const failCancellationWrite of [false, true]) await t.test(`cancellation write fails ${failCancellationWrite}`, async t => {
+    const failure = Object.assign(new Error("Synthetic cancelled checkpoint failure."), { code: "synthetic_checkpoint_failed" });
+    const watchClose = Promise.withResolvers(), allowWatchClose = Promise.withResolvers();
+    const cancellationWrite = Promise.withResolvers();
+    t.after(() => allowWatchClose.resolve());
+    let armed = false, watcherCloses = 0;
+    const writes = [];
+    const h = harness(t, { watcherClosure: async () => {
+      if (++watcherCloses === 1) { watchClose.resolve(); await allowWatchClose.promise; }
+    }, storage: { ...syntheticStorage, writeState: async (target, value) => {
+      writes.push(structuredClone(value));
+      if (armed && !value.lastTurn.completed) {
+        armed = false; cancellationWrite.resolve();
+        if (failCancellationWrite) throw failure;
+      }
+      await syntheticStorage.writeState(target, value);
+    } } });
+    const { call } = await h.toObserve();
+    h.browser.ui.texts.push("The first completed answer frame."); h.browser.ui.complete = true;
+    const retained = (await h.answerBrowser(call)).output[0];
+    // The final read observes a newer answer before watcher closure. A
+    // cancellation checkpoint must retain that read without completing it.
+    h.browser.ui.texts[0] = "The final retained answer frame.";
+    armed = true;
+    const finishing = assert.rejects(h.answerBrowser(retained), error => failCancellationWrite
+      ? error === failure : error.code === "web_turn_cancelled");
+    await watchClose.promise;
+    h.observations.watchers[0].onCancel();
+    await cancellationWrite.promise;
+    h.newTurn(followupId, "Continue while the cancelled finalizer still owns its watcher close.");
+    const continuing = (await h.request()).output[0];
+    const send = (await h.answerBrowser(continuing)).output[0];
+    assert.equal(JSON.parse(send.arguments).title, "ChatGPT Web: send");
+    const successor = readFileSync(h.stateFile, "utf8");
+    assert.deepEqual(JSON.parse(successor).lastTurn, { turnId: followupId, sendState: "uncertain", completed: false });
+    assert.equal(JSON.parse(successor).uncertainSend, true);
+    assert.equal(JSON.parse(successor).generationCompleted, false);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Do not acquire the successor's saved conversation.");
+    await assert.rejects(h.request(), /already owns this native conversation/u);
+    allowWatchClose.resolve();
+    await finishing;
+    assert.equal(readFileSync(h.stateFile, "utf8"), successor, "The cancelled finalizer cannot replace any successor metadata.");
+    assert.equal(writes.filter(value => value.lastTurn.turnId === turnId && value.lastTurn.completed).length, 0);
+    h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "The successor still owns the conversation after old finalization settles.");
+    await assert.rejects(h.request(), /already owns this native conversation/u);
+    assert.equal(h.observations.watchers.length, 2);
+    assert.equal(h.runtime.maintenanceState().activeTurns, 1);
+    assert.equal(h.browser.ui.sends.length, 1, "The cancelled turn's Send is never replayed.");
+  });
+});
+
+test("final checkpoint persistence retains ownership and late cancellation cannot release a successor", { timeout: 5_000 }, async t => {
+  const finalWrite = Promise.withResolvers(), allowFinalWrite = Promise.withResolvers();
+  t.after(() => allowFinalWrite.resolve());
+  const writes = [];
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    writes.push(structuredClone(value));
+    if (value.lastTurn.turnId === turnId && value.lastTurn.completed) {
+      finalWrite.resolve(); await allowFinalWrite.promise;
+    }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const { call } = await h.toObserve();
+  h.browser.ui.texts.push("A completed browser answer awaiting its final checkpoint."); h.browser.ui.complete = true;
+  const retained = (await h.answerBrowser(call)).output[0];
+  const finishing = assert.rejects(h.answerBrowser(retained), { code: "web_turn_cancelled" });
+  await finalWrite.promise;
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Durable finalization still owns the conversation.");
+  await assert.rejects(h.request(), /already owns this native conversation/u);
+  assert.equal(h.observations.watchers.length, 1);
+  h.observations.watchers[0].onCancel();
+  h.newTurn(followupId, "Wait for the cancelled final checkpoint to settle before continuing.");
+  const next = h.request();
+  h.observations.watchers[0].onCancel();
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "A late cancellation cannot release the waiting successor.");
+  await assert.rejects(h.request(), /already owns this native conversation/u);
+  assert.equal(h.observations.watchers.length, 1);
+  assert.equal(writes.at(-1).lastTurn.turnId, turnId);
+  allowFinalWrite.resolve();
+  await finishing;
+  const continuing = (await next).output[0];
+  assert.equal(JSON.parse(continuing.arguments).title, "ChatGPT Web: continue");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).lastTurn.turnId, followupId);
+  h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Finalization cannot release the admitted successor either.");
+  await assert.rejects(h.request(), /already owns this native conversation/u);
+  assert.equal(h.observations.watchers.length, 2);
+  assert.equal(h.runtime.maintenanceState().activeTurns, 1);
+  assert.equal(writes.filter(value => value.lastTurn.turnId === turnId && value.lastTurn.completed).length, 1,
+    "The known browser completion stays durable without another old-turn write after cancellation.");
+});
+
+test("reflushing a failed checkpoint preserves an uncertain Send and blocks continuation", async t => {
+  const failure = Object.assign(new Error("Synthetic uncertain checkpoint failure."), { code: "synthetic_checkpoint_failed" });
+  let failed = false;
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    if (!failed && value.uncertainSend) { failed = true; throw failure; }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const bootstrap = (await h.request()).output[0];
+  const open = (await h.answerBrowser(bootstrap)).output[0];
+  await assert.rejects(h.answerBrowser(open), error => error === failure);
+  const operations = h.observations.nativeOperations.length;
+  h.newTurn(followupId, "Do not replay an uncertain input while recovering storage.");
+  await assert.rejects(h.request(), { code: "web_send_uncertain" });
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.uncertainSend, true);
+  assert.deepEqual(saved.lastTurn, { turnId, sendState: "uncertain", completed: false });
+  assert.equal(h.observations.watchers.length, 1);
+  assert.equal(h.observations.nativeOperations.length, operations);
+  assert.equal(h.browser.ui.sends.length, 0);
+});
+
 test("default conversation storage protects its checkpoint and reloads the same binding after restart", async t => {
   const h = harness(t, { storage: {} });
   const first = (await h.request()).output[0];

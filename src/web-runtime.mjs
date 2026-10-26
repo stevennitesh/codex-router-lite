@@ -420,7 +420,7 @@ export function createInAppWebRuntime({
       turn.conversation.interruptedTurnId = turn.turnId;
       turn.conversation.interruptedSendState = turn.sendState ?? "unsent";
     }
-    turn.conversation.activeTurn = undefined;
+    if (turn.conversation.activeTurn === turn.turnId) turn.conversation.activeTurn = undefined;
     if (turn.conversation.lastTurn) void persist(turn.conversation).catch(error => { turn.error = error; });
     void closeWatcher(turn);
     retire(turn);
@@ -751,12 +751,17 @@ export function createInAppWebRuntime({
         return calls.length ? emitCoding(turn, calls, payload) : emitBrowser(turn, "observe", payload);
       }
       turn.conversation.assistantText = value.assistantText;
-      turn.done = true; turn.pending = undefined;
+      turn.pending = undefined;
+      // Cancellation can admit a successor during either wait. Keep ownership
+      // until durable completion, and never finalize after that cancellation.
       await closeWatcher(turn);
-      turn.conversation.activeTurn = undefined;
+      if (turn.cancelled) throw turn.error;
       turn.conversation.generationCompleted = true;
       turn.conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: true };
       await persist(turn.conversation);
+      if (turn.cancelled) throw turn.error;
+      turn.done = true;
+      if (turn.conversation.activeTurn === turn.turnId) turn.conversation.activeTurn = undefined;
       turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.promptInstructionsSha256 = undefined; turn.tools = []; turn.discovered = []; turn.processed.clear(); turn.deliveredCoding?.clear();
       turn.cache.clear();
       return webResponse(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
@@ -788,8 +793,18 @@ export function createInAppWebRuntime({
     }
     conversation.activeTurn = owner.turnId;
     try {
-      await conversation.writeTail;
       transcript(payload); // Validate readable history before any browser or persistence effects.
+      const previousWrite = conversation.writeTail;
+      try { await previousWrite; }
+      catch {
+        // Only a new native turn may reflush a failed checkpoint. Cancellation
+        // keeps observing that failure, and a later queued write retains its
+        // own snapshot and place in the chain.
+        if (conversation.writeTail === previousWrite) {
+          conversation.persistedValue = undefined;
+          await persist(conversation);
+        } else await conversation.writeTail;
+      }
       const retained = compactTail(conversation, readableInput(payload), undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
     } catch (error) { conversation.activeTurn = undefined; throw error; }

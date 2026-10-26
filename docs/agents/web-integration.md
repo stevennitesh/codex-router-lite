@@ -43,6 +43,11 @@ native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
 records locally; storing or forwarding them does not request Codex inference.
 
+A failed private checkpoint fails the owning native turn. A later new turn must
+successfully save the latest in-memory checkpoint before browser work resumes;
+replaying the failed turn does not retry it. Continued storage failure remains
+an error, and uncertain Send or native-action records retain their guards.
+
 ### Instruction delivery and compaction
 
 The full bridge protocol and exact current Codex instructions are sent on first
