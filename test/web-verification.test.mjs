@@ -72,6 +72,29 @@ function replaceFrame(record) {
   record.output.output.content[0].text = text.replace(/\n\{[^\n]+\}\n/u, `\n${JSON.stringify({ routerBrowser: record.frame })}\n`);
 }
 
+function withModelIdentity(input, { model = 'chatgpt-web/gpt-6-sol', effort = 'medium', family = 'GPT-6', power = 1 } = {}) {
+  Object.assign(input.run, { model, effort, selection: { family, power } });
+  const context = row('turn_context', { turn_id: turnId, model, effort });
+  input.sessionRows.splice(2, 0, context);
+  for (const record of [input.continuation, input.send]) {
+    Object.assign(record.options, { modelFamily: family, power });
+    record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
+  }
+  input.context = context;
+  return input;
+}
+
+function addModelSwitchPrefix(input, { hostSkills = false } = {}) {
+  const shapes = [['model_switch.instructions'], [...(hostSkills ? ['host_skills.instructions'] : []), 'collaboration_mode.instructions']];
+  const prefix = shapes.map((kinds, index) => row('response_item', {
+    type: 'message', id: `switch-${index}`, role: 'developer', content: kinds.map(() => ({ type: 'input_text', text: 'PRIVATE_SWITCH_CANARY' })),
+    internal_chat_message_metadata_passthrough: { turn_id: turnId, create_time: Date.parse(at) / 1000,
+      content_item_kinds: kinds, content_item_metadata: kinds.map(() => ({})) },
+  }));
+  input.sessionRows.splice(2, 0, ...prefix);
+  return prefix;
+}
+
 test('readiness requires accepted Send, the current generation, and canonical paired browser evidence', () => {
   const input = evidence();
   assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
@@ -113,6 +136,90 @@ test('app prompt ingress is recognized only in its exact first-item envelope; or
   const orphan = evidence('native');
   orphan.sessionRows.push(row('response_item', { type: 'function_call_output', call_id: 'orphan-native-output', output: marker }));
   assert.equal(evaluateWebPhase(orphan).receipt.code, 'unpaired_output');
+});
+
+test('a model-switch prefix permits the exact following ingress and rejects changed or extra envelopes', () => {
+  for (const hostSkills of [false, true]) {
+    const input = withModelIdentity(evidence('native'));
+    addModelSwitchPrefix(input, { hostSkills });
+    assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+  }
+  for (const mutate of [
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.turn_id = generation; },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.content_item_kinds = ['PRIVATE_UNKNOWN_KIND']; },
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.content_item_kinds = ['model_switch.instructions']; },
+    prefix => { prefix[0].payload.content[0].type = 'output_text'; },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.create_time = null; },
+  ]) {
+    const invalid = withModelIdentity(evidence('native')), prefix = addModelSwitchPrefix(invalid);
+    mutate(prefix);
+    const receipt = evaluateWebPhase(invalid).receipt;
+    assert.equal(receipt.code, 'unsupported_app_model_switch_prefix');
+    assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE/u);
+  }
+  const truncated = withModelIdentity(evidence('native')); addModelSwitchPrefix(truncated); truncated.sessionRows.splice(3, 1);
+  assert.equal(evaluateWebPhase(truncated).receipt.code, 'unsupported_app_prompt_ingress');
+  const extra = withModelIdentity(evidence('native')), prefix = addModelSwitchPrefix(extra);
+  extra.sessionRows.splice(4, 0, structuredClone(prefix[1]));
+  assert.equal(evaluateWebPhase(extra).receipt.code, 'unsupported_app_model_switch_prefix');
+  for (const mutate of [
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.content_item_kinds.reverse(); },
+    prefix => { prefix[1].payload.content.pop(); },
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.content_item_metadata.pop(); },
+  ]) {
+    const invalid = withModelIdentity(evidence('native')), expanded = addModelSwitchPrefix(invalid, { hostSkills: true });
+    mutate(expanded);
+    assert.equal(evaluateWebPhase(invalid).receipt.code, 'unsupported_app_model_switch_prefix');
+  }
+  const duplicate = withModelIdentity(evidence('native')); addModelSwitchPrefix(duplicate);
+  duplicate.sessionRows.push(structuredClone(duplicate.sessionRows.find(entry => entry.payload?.name === 'send_message_to_thread')));
+  assert.equal(evaluateWebPhase(duplicate).receipt.code, 'unsupported_app_prompt_ingress');
+});
+
+test('every phase with an expected route proves the selected native model, effort and pre-Send browser selection', () => {
+  for (const phase of ['native', 'recall', 'ready', 'stop', 'continuation']) {
+    for (const identity of [{}, { model: 'chatgpt-web/gpt-6-pro', effort: 'max', family: 'GPT-6', power: 4 }]) {
+      const input = withModelIdentity(evidence(phase), identity), receipt = evaluateWebPhase(input).receipt;
+      assert.equal(receipt.status, 'passed', `${phase}: ${receipt.code}`);
+      assert.equal(receipt.expectedModel, input.run.model); assert.equal(receipt.observedModel, input.run.model);
+      assert.equal(receipt.expectedEffort, input.run.effort); assert.equal(receipt.observedEffort, input.run.effort);
+      assert.equal(receipt.expectedFamily, input.run.selection.family); assert.equal(receipt.observedFamily, input.run.selection.family);
+      assert.equal(receipt.expectedPower, input.run.selection.power); assert.equal(receipt.observedPower, input.run.selection.power);
+      assert.equal(receipt.nativeModelVerified, true); assert.equal(receipt.browserSelectionVerified, true);
+      input.context.payload.effort = 'low';
+      assert.equal(evaluateWebPhase(input).receipt.code, 'native_model_or_effort_mismatch');
+    }
+  }
+});
+
+test('model evidence rejects wrong or ambiguous native identity and mismatched browser family or Power', () => {
+  for (const mutate of [
+    input => { input.context.payload.model = 'chatgpt-web/gpt-5.6-sol'; },
+    input => { input.context.payload.effort = 'high'; },
+    input => { input.context.payload.turn_id = generation; },
+    input => { delete input.context.payload.effort; },
+    input => { input.context.payload.model = 'PRIVATE_MODEL_CANARY'; input.context.payload.effort = 'PRIVATE_EFFORT_CANARY'; },
+  ]) {
+    const input = withModelIdentity(evidence('native')); mutate(input);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.code, 'native_model_or_effort_mismatch');
+    assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE/u);
+  }
+  const duplicated = withModelIdentity(evidence('native')); duplicated.sessionRows.push(structuredClone(duplicated.context));
+  assert.equal(evaluateWebPhase(duplicated).receipt.code, 'ambiguous_native_model_context');
+  for (const operation of ['continuation', 'send']) for (const mutation of [{ modelFamily: 'GPT-5.6 Sol' }, { power: 4 }]) {
+    const input = withModelIdentity(evidence('native')), record = input[operation];
+    Object.assign(record.options, mutation); record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
+    assert.equal(evaluateWebPhase(input).receipt.code, 'browser_model_or_power_mismatch');
+  }
+  const missing = withModelIdentity(evidence('native'));
+  missing.sessionRows = missing.sessionRows.filter(entry => entry !== missing.context);
+  assert.equal(evaluateWebPhase(missing).receipt.code, 'native_model_context_missing');
+  const awaiting = withModelIdentity(evidence('ready'));
+  awaiting.sessionRows = awaiting.sessionRows.filter(entry => entry !== awaiting.context);
+  assert.equal(evaluateWebPhase(awaiting).receipt.status, 'pending', 'an unfinished context append waits on the existing event barrier');
+  const invalidExpected = withModelIdentity(evidence('native')); invalidExpected.run.selection.power = 2;
+  assert.equal(evaluateWebPhase(invalidExpected).receipt.code, 'expected_selection_mismatch');
 });
 
 test('canonical browser results need no invented ok flag and real error results remain rejected', () => {
@@ -286,6 +393,17 @@ test('prepare binds exact thread and snapshots rollback inputs without changing 
   assert.match(run.marker, /^WEB_NATIVE_MARKER_[a-f0-9]{32}$/u); assert.equal(run.snapshots.length, 4);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|MARKER|rollback/u);
   assert.throws(() => prepareWebVerification({ threadId, output, rollout }, dependencies), /fresh_generated_directory_required/u);
+  for (const options of [{ model: 'chatgpt-web/gpt-6-pro' }, { effort: 'max' }]) {
+    assert.throws(() => prepareWebVerification({ threadId, output, rollout, ...options }, dependencies), /model_and_effort_required_together/u);
+  }
+  for (const [model, effort] of [['chatgpt-web/gpt-6-pro', 'medium'], ['PRIVATE_UNKNOWN_MODEL', 'max'], ['chatgpt-web/gpt-6-pro', 'toString']]) {
+    assert.throws(() => prepareWebVerification({ threadId, output, rollout, model, effort }, dependencies), /unsupported_model_or_effort/u);
+  }
+  const selected = prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'selected'), rollout,
+    model: 'chatgpt-web/gpt-6-pro', effort: 'max' }, dependencies);
+  const selectedRun = JSON.parse(readFileSync(selected.runPath, 'utf8'));
+  assert.deepEqual([selectedRun.model, selectedRun.effort, selectedRun.selection], ['chatgpt-web/gpt-6-pro', 'max', { family: 'GPT-6', power: 4 }]);
+  assert.equal(readFileSync(ledgerFile, 'utf8'), before);
   input.sessionRows[0].payload.id = turnId; writeFileSync(rollout, jsonLines(input.sessionRows));
   assert.throws(() => prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'other'), rollout }, dependencies), /session_thread_mismatch/u);
 });

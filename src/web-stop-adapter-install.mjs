@@ -17,6 +17,14 @@ const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-browser.mjs", "
 const SHA = /^[a-f0-9]{64}$/iu;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+// The only supported hook-definition transition is the previously shipped
+// three-second definition to the current contract. Never adopt other edits.
+const PREVIOUS_ADAPTER_HOOK = { type: "mcp_tool", server: "node_repl", tool: "router_web_interrupt", input: {
+  hook_event_name: "${hook_event_name}", session_id: "${session_id}", turn_id: "${turn_id}" },
+  timeout: 3, statusMessage: HOOK_ID };
+const supportedHook = hook => same(hook, createAdapterHook()) || same(hook, PREVIOUS_ADAPTER_HOOK);
+const receiptOwnsHook = (receipt, hook) => same(hook, receipt.hook)
+  || receipt.state === "prepared" && receipt.priorHook !== undefined && same(hook, receipt.priorHook);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const sourceRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -168,7 +176,10 @@ function loadReceipt(ctx) {
       || receipt.entryPath !== path.join(receipt.managedDirectory, "entry.exe")
       || receipt.configPath !== path.join(receipt.managedDirectory, "config.json") || !SHA.test(receipt.managedManifestSha256 ?? "")
       || receipt.hooksPath !== ctx.hooksPath || !(receipt.previousHooksText === null || typeof receipt.previousHooksText === "string")
-      || !same(receipt.hook, createAdapterHook()) || !object(receipt.created)
+      || !supportedHook(receipt.hook)
+      || receipt.priorHook !== undefined && !(receipt.state === "prepared" && same(receipt.hook, createAdapterHook())
+        && same(receipt.priorHook, PREVIOUS_ADAPTER_HOOK))
+      || !object(receipt.created)
       || typeof receipt.created.hooks !== "boolean" || typeof receipt.created.interrupt !== "boolean") throw new Error("Invalid or foreign adapter ownership receipt.");
   receipt.environment = pair(receipt.environment); receipt.previousEnvironment = pair(receipt.previousEnvironment);
   receipt.priorEnvironment = pair(receipt.priorEnvironment);
@@ -307,7 +318,7 @@ function ensureInstallOwnership(receipt, environment, document) {
   }
   for (const name of ENV_NAMES) if (environment[name] !== receipt.environment[name]
       && !(receipt.state === "prepared" && [receipt.priorEnvironment[name], receipt.previousEnvironment[name]].includes(environment[name]))) throw new Error("User adapter environment changed; preserving foreign value.");
-  if (found.length > 1 || found.length === 1 && !same(found[0].hook, receipt.hook)
+  if (found.length > 1 || found.length === 1 && !receiptOwnsHook(receipt, found[0].hook)
       || found.length === 0 && receipt.state === "installed") throw new Error("The managed adapter hook was changed or removed.");
   return found[0] ?? null;
 }
@@ -350,7 +361,9 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
     if (!ctx.isPrivate(ctx.eventsPath)) throw new Error("Adapter event receipt is not private.");
     const existing = previous && previous.state !== "removed";
     const created = existing ? previous.created : { hooks: document.hooks === undefined, interrupt: document.hooks?.Interrupt === undefined };
+    const hookDefinitionChanged = !found || !same(found.hook, hook);
     if (!found) { document.hooks ??= {}; document.hooks.Interrupt ??= []; document.hooks.Interrupt.push({ hooks: [hook] }); }
+    else if (hookDefinitionChanged) document.hooks.Interrupt[found.entryIndex].hooks[found.hookIndex] = hook;
     const nextHooksText = same(document, parseHooks(beforeHooksText)) ? beforeHooksText : json(document);
     // The official CLI is a verified compatibility record, not a Router launch
     // override. Also release a still-owned legacy pin to the original baseline.
@@ -362,9 +375,10 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
       previousHooksText: existing ? previous.previousHooksText : beforeHooksText, threadIds: plan.threadIds };
     const installedText = json(installed);
     if (previous?.state === "installed" && same({ ...previous, text: undefined }, { ...installed, text: undefined })
-        && same(beforeEnvironment, desired) && beforeHooksText === nextHooksText) return installResult(ctx, installed, null);
-    const preparedText = json({ ...installed, state: "prepared", priorEnvironment: beforeEnvironment });
-    if (refreshTransaction) Object.assign(refreshTransaction, { desired, preparedText, installedText });
+        && same(beforeEnvironment, desired) && beforeHooksText === nextHooksText) return installResult(ctx, installed, null, false);
+    const preparedText = json({ ...installed, state: "prepared", priorEnvironment: beforeEnvironment,
+      ...(found && !same(found.hook, hook) ? { priorHook: found.hook } : {}) });
+    if (refreshTransaction) Object.assign(refreshTransaction, { desired, preparedText, installedText, nextHooksText });
     // Durable private baseline precedes both the hook file and User overrides.
     writeCompared(ctx, ctx.receiptPath, previous?.text ?? null, preparedText);
     const transaction = { beforeEnvironment, desired, beforeHooksText, nextHooksText, preparedText, installedText };
@@ -375,7 +389,7 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
       if (!same(pair(ctx.environment.readPair()), desired)) throw new Error("Adapter User environment activation readback failed.");
       writeCompared(ctx, ctx.receiptPath, preparedText, installedText);
     } catch (error) { restoreFailedInstall(ctx, transaction, error); }
-    return installResult(ctx, installed, result.broadcast);
+    return installResult(ctx, installed, result.broadcast, hookDefinitionChanged);
 }
 
 export function installWebStopAdapter(options = {}) {
@@ -424,6 +438,7 @@ export function inspectWebStopAdapterRuntimeRefresh(options = {}) {
   return { manifest: observed.manifest, candidate: observed.candidate, candidateGeneration: observed.candidateGeneration, generation: observed.receipt.generation,
     threadIds: observed.receipt.threadIds ?? null, receiptSha256: hash(observed.receipt.text),
     hooksSha256: hash(observed.hooksText ?? ""), environment: observed.environment,
+    hookDefinitionChanged: !same(observed.receipt.hook, createAdapterHook()),
     cliSelectionChanged: observed.environment.CODEX_CLI_PATH !== observed.receipt.previousEnvironment.CODEX_CLI_PATH };
 }
 
@@ -457,10 +472,13 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
         if (!same(pair(ctx.environment.readPair()), restored)) throw new Error("Environment restoration readback failed.");
       } catch { failures.push("User environment restoration failed."); }
       try {
-        // Refresh never changes an existing hook definition or trust; retain a
-        // concurrent foreign edit while restoring only the exact owned bytes.
+        // Restore the legacy hook only while the exact published replacement
+        // remains owned. Concurrent edits are never overwritten.
         const current = readText(ctx.hooksPath);
-        if (current !== before.hooksText) failures.push("Foreign hooks changes preserved.");
+        if (current !== before.hooksText) {
+          if (current === transaction.nextHooksText) writeCompared(ctx, ctx.hooksPath, current, before.hooksText);
+          else failures.push("Foreign hooks changes preserved.");
+        }
       } catch { failures.push("Hook restoration verification failed."); }
       try {
         const current = readText(ctx.receiptPath);
@@ -484,8 +502,9 @@ function adapterPaths(ctx, receipt) {
     threadIds: receipt.threadIds };
 }
 
-function installResult(ctx, receipt, broadcast) {
-  return { ...adapterPaths(ctx, receipt), installed: true, restartRequired: true, trustRequired: true, environmentBroadcast: broadcast };
+function installResult(ctx, receipt, broadcast, hookDefinitionChanged) {
+  return { ...adapterPaths(ctx, receipt), installed: true, restartRequired: true, trustRequired: true,
+    hookDefinitionChanged, environmentBroadcast: broadcast };
 }
 
 export function webStopAdapterStatus(options = {}) {
@@ -506,7 +525,7 @@ export function webStopAdapterStatus(options = {}) {
     try {
       document = parseHooks(readText(ctx.hooksPath));
       const found = findHooks(document);
-      hookDefinitionOwned = found.length === 1 && same(found[0].hook, receipt.hook);
+      hookDefinitionOwned = found.length === 1 && receiptOwnsHook(receipt, found[0].hook);
     } catch (error) { hookDefinitionOwned = "unknown"; conflicts.push(conflictMessage(error)); }
     if (document) try { ensureInstallOwnership(receipt, pair(ctx.environment.readPair()), document); } catch (error) { conflicts.push(error.message); }
   }
@@ -532,7 +551,7 @@ export function rollbackWebStopAdapter(options = {}) {
       else if (current[name] !== receipt.previousEnvironment[name]) conflicts.push(`${name} changed; foreign value preserved.`);
     }
     const beforeHooksText = readText(ctx.hooksPath), document = parseHooks(beforeHooksText), found = findHooks(document);
-    if (found.length === 1 && same(found[0].hook, receipt.hook)) {
+    if (found.length === 1 && receiptOwnsHook(receipt, found[0].hook)) {
       const entry = document.hooks.Interrupt[found[0].entryIndex]; entry.hooks.splice(found[0].hookIndex, 1);
       if (!entry.hooks.length && Object.keys(entry).length === 1) document.hooks.Interrupt.splice(found[0].entryIndex, 1);
     } else if (found.length) conflicts.push("Adapter hook changed; foreign hook preserved.");
@@ -549,7 +568,9 @@ export function rollbackWebStopAdapter(options = {}) {
     if (!same(current, restored)) result = ctx.environment.compareExchangePair(current, restored);
     if (!same(pair(ctx.environment.readPair()), restored)) throw new Error("Adapter User environment rollback readback failed.");
     const state = conflicts.length ? "prepared" : "removed";
-    writeCompared(ctx, ctx.receiptPath, preparedText, json({ ...next, state }));
+    const completed = { ...next, state };
+    if (state === "removed") delete completed.priorHook;
+    writeCompared(ctx, ctx.receiptPath, preparedText, json(completed));
     return { installed: false, changed: !same(current, restored) || nextHooksText !== beforeHooksText, state,
       restartRequired: true, retainedManagedFiles: true, managedDirectory: receipt.managedDirectory, conflicts,
       environmentBroadcast: result.broadcast };

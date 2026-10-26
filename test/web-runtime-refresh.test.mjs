@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { installWebStopAdapter, rollbackWebStopAdapter } from "../src/web-stop-adapter-install.mjs";
 import { discoverWebRuntimeAnchors, refreshWebRuntime } from "../src/web-runtime-refresh.mjs";
+import { createAdapterHook } from "../src/web-stop-contract.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -85,6 +86,13 @@ function fixture(t, { threadIds = null } = {}) {
     adapterOptions, dependencies, environment, effects, write, saveConfig, snapshot };
 }
 
+function retainLegacyHook(f) {
+  const receipt = JSON.parse(readFileSync(f.receiptPath, "utf8")), hooks = JSON.parse(readFileSync(f.hooksPath, "utf8"));
+  const hook = { ...createAdapterHook(), timeout: 3 };
+  receipt.hook = hook; hooks.hooks.Interrupt[0].hooks[0] = hook;
+  f.write(f.receiptPath, json(receipt)); f.write(f.hooksPath, json(hooks));
+}
+
 test("runtime refresh plans from exact official MCP anchors with no mutation even when old app files are deleted", async t => {
   const f = fixture(t), before = f.snapshot(), effects = [...f.effects], generations = readdirSync(path.dirname(f.receiptPath));
   const plan = await refreshWebRuntime(f.options);
@@ -129,6 +137,8 @@ test("coordinated refresh preserves connector, capabilities, tunnel/key, baselin
   const result = await refreshWebRuntime({ ...f.options, apply: true });
   assert.equal(result.applied, true); assert.equal(result.routerReloaded, true); assert.equal(result.codexRestartRequired, true);
   assert.equal(result.routerRestartRequired, false);
+  assert.equal(result.hookDefinitionChanged, false); assert.equal(result.hookDefinition, "preserved");
+  assert.match(result.next, /Existing hook trust is retained/u);
   const settings = JSON.parse(readFileSync(f.settingsPath, "utf8"));
   assert.deepEqual(settings, { ...f.settings, browser: { ...f.settings.browser, runtimeModule: f.current.runtimeModule } });
   assert.equal(readFileSync(f.keyPath, "utf8"), before.key); assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks);
@@ -137,6 +147,42 @@ test("coordinated refresh preserves connector, capabilities, tunnel/key, baselin
   assert.equal(f.environment.values.CODEX_CLI_PATH, null); assert.equal(f.environment.values.CODEX_NODE_REPL_PATH, receipt.entryPath);
   assert.deepEqual(receipt.previousEnvironment, { CODEX_CLI_PATH: null, CODEX_NODE_REPL_PATH: null });
   assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart"]);
+});
+
+test("legacy hook migration is planned even with current runtimes and requires a fresh trust review", async t => {
+  const f = fixture(t); await refreshWebRuntime({ ...f.options, apply: true }); retainLegacyHook(f);
+  const before = f.snapshot(), plan = await refreshWebRuntime(f.options);
+  assert.equal(plan.changed, true); assert.equal(plan.browserRuntimeChanged, false); assert.equal(plan.adapterGenerationChanged, false);
+  assert.equal(plan.hookDefinitionChanged, true); assert.equal(plan.hookDefinition, "modified");
+  assert.match(plan.next, /Review and trust the modified Router Interrupt hook/u);
+  assert.deepEqual(f.snapshot(), before);
+  const result = await refreshWebRuntime({ ...f.options, apply: true });
+  assert.equal(result.applied, true); assert.equal(result.routerReloaded, true); assert.equal(result.codexRestartRequired, true);
+  assert.equal(result.hookDefinitionChanged, true); assert.equal(result.hookDefinition, "modified");
+  assert.match(result.next, /Review and trust the modified Router Interrupt hook/u);
+  assert.doesNotMatch(result.next, /trust is retained/u);
+  const hook = JSON.parse(readFileSync(f.hooksPath, "utf8")).hooks.Interrupt[0].hooks[0];
+  assert.deepEqual(hook, createAdapterHook()); assert.equal(Object.hasOwn(hook, "trusted"), false);
+  assert.deepEqual(f.environment.values, before.environment);
+  assert.deepEqual(JSON.parse(readFileSync(f.receiptPath, "utf8")).previousEnvironment, JSON.parse(before.receipt).previousEnvironment);
+});
+
+test("a coordinated refresh failure restores exact legacy hook bytes and ownership", async t => {
+  const f = fixture(t); retainLegacyHook(f); const before = f.snapshot();
+  f.dependencies.writePrivate = () => { throw new Error("fixture migration settings failure"); };
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true }), /fixture migration settings failure/u);
+  assert.deepEqual(f.snapshot(), before);
+});
+
+test("failed legacy-hook refresh preserves a concurrent hooks edit during compensation", async t => {
+  const f = fixture(t); retainLegacyHook(f); let foreignHooks, restarts = 0;
+  f.dependencies.restart = async () => {
+    if (++restarts !== 1) return 0;
+    const hooks = JSON.parse(readFileSync(f.hooksPath, "utf8")); hooks.foreign = "concurrent hooks edit";
+    foreignHooks = json(hooks); f.write(f.hooksPath, foreignHooks); return 1;
+  };
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true }), /rollback incomplete: Foreign hooks changes preserved/u);
+  assert.equal(readFileSync(f.hooksPath, "utf8"), foreignHooks);
 });
 
 test("explicit forced refresh uses the coordinated drain and reloads only with known idle Web work", async t => {

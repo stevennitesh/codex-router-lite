@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import test from "node:test";
 
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+
 import { collectWebTools } from "../src/web-runtime.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
 
@@ -18,7 +20,7 @@ test("MCP invocation waits for actual native Codex output and retains namespaced
   const original = [{ type: "namespace", name: "mcp__files", tools: [fn("read", { inputSchema: { type: "object", properties: { path: { type: "string" } } }, parameters: undefined })] }];
   const before = structuredClone(original);
   const { token } = register(broker, original);
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   assert.equal(tools[0].wireName, "mcp__files__read");
   assert.deepEqual(tools[0].parameters, original[0].tools[0].inputSchema);
   const args = { path: "actual.txt" };
@@ -45,7 +47,7 @@ test("MCP invocation waits for actual native Codex output and retains namespaced
 test("function, namespaced custom exec, and search retain distinct native call shapes", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [fn("read"), { type: "namespace", name: "functions", tools: [custom("exec")] }, search]);
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   const raw = "text('literal `$ value');\n";
   const calls = tools.map(tool => broker.invoke(token, { wireName: tool.wireName, ...(tool.kind === "custom" ? { input: raw } : { arguments: { query: "files" } }) }));
   const items = broker.takeCalls(token);
@@ -61,7 +63,8 @@ test("function, namespaced custom exec, and search retain distinct native call s
   assert.deepEqual(items[2].arguments, { query: "files" });
   broker.complete(token, items.map(item => output(item, item.type === "tool_search_call" ? [fn("new_tool")] : "ok")));
   const results = await Promise.all(calls);
-  assert.deepEqual(results[2].structuredContent.tools, [fn("new_tool")]);
+  assert.deepEqual(JSON.parse(results[2].content[0].text).tools, [fn("new_tool")]);
+  assert.equal(results[2].structuredContent, undefined);
   assert.equal(finish(broker, token), true);
 });
 
@@ -75,13 +78,16 @@ test("collected declarations retain wire names, native schemas, and call identit
   ] });
   assert.equal(collected.filter(tool => tool.type === "namespace" && tool.name === "a").length, 1);
   const { token } = register(broker, collected);
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   assert.deepEqual(tools.map(tool => tool.wireName), [
     "a__b_6d90aa992468", "a__b_20826aea0401", "a__b", "tool_search", "codex_tool_search_1",
     "codex_custom_tool_search", "codex_custom_tool_search_1", "codex_custom_a__b",
   ]);
   assert.deepEqual(tools[0].parameters, parameters);
   assert.deepEqual(tools[2].format, custom("b").format);
+  assert.deepEqual(broker.list(token, { names: ["a__b"] }).tools, [tools[2]], "Exact wire names take precedence over colliding native aliases.");
+  assert.deepEqual(broker.list(token, { query: "a__b" }).tools, [tools[2]]);
+  assert.deepEqual(broker.list(token, { names: ["a.b"] }).tools, [tools[1], tools[2]], "A native-qualified identity may retain distinct function and custom kinds.");
   const results = tools.map(tool => broker.invoke(token, { wireName: tool.wireName, ...(tool.kind === "custom" ? { input: "raw" } : {}) }));
   const items = broker.takeCalls(token);
   assert.deepEqual(items.map(item => [item.type, item.name, item.namespace]), [
@@ -146,10 +152,10 @@ test("only current declarations authorize dynamic discovery and wire identities 
   // Discovery content alone does not manufacture a callable declaration.
   await assert.rejects(broker.invoke(token, { wireName: "new_tool" }), /not declared/);
   broker.update(token, { tools: [fn("a__b"), fn("new_tool")] });
-  const firstRegistry = broker.list(token);
+  const firstRegistry = broker.list(token).tools;
   const old = firstRegistry.find(tool => tool.name === "a__b");
   broker.update(token, { tools: [{ type: "namespace", name: "a", tools: [fn("b")] }, fn("new_tool")] });
-  const nextRegistry = broker.list(token);
+  const nextRegistry = broker.list(token).tools;
   assert.notEqual(nextRegistry.find(tool => tool.name === "b").wireName, old.wireName);
   await assert.rejects(broker.invoke(token, { wireName: old.wireName }), /not declared/);
   const next = broker.invoke(token, { wireName: "new_tool" });
@@ -162,7 +168,7 @@ test("only current declarations authorize dynamic discovery and wire identities 
 test("tool choice blocks unauthorized tools and required choices prevent a no-tool final", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [fn("read"), fn("write")], { toolChoice: { type: "function", name: "read" } });
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   assert.deepEqual(tools.map(tool => tool.name), ["read"]);
   assert.equal(finish(broker, token), false);
   await assert.rejects(broker.invoke(token, { wireName: "write" }), /not declared and allowed/);
@@ -172,7 +178,7 @@ test("tool choice blocks unauthorized tools and required choices prevent a no-to
   await result;
   assert.equal(finish(broker, token), true);
   const none = register(broker, [fn("read")], { toolChoice: "none" });
-  assert.deepEqual(broker.list(none.token), []);
+  assert.deepEqual(broker.list(none.token).tools, []);
   await assert.rejects(broker.invoke(none.token, { wireName: "read" }));
   finish(broker, none.token);
   assert.throws(() => register(broker, [], { toolChoice: "required" }), { code: "unsupported_tool_choice" });
@@ -188,7 +194,7 @@ test("unchanged registries reevaluate mutable current policy and preserve pendin
   broker.update(token, { tools: structuredClone(declarations), toolChoice: policy });
   assert.equal(broker.revision(token), before + 1);
   assert.equal(broker.finish(token, before), false);
-  assert.deepEqual(broker.list(token).map(tool => tool.name), ["write"]);
+  assert.deepEqual(broker.list(token).tools.map(tool => tool.name), ["write"]);
   await assert.rejects(broker.invoke(token, { wireName: "read" }), /not declared and allowed/u);
   assert.equal(finish(broker, token), false, "Required policy still applies on the unchanged declaration path.");
   const result = broker.invoke(token, { wireName: "write" });
@@ -200,9 +206,9 @@ test("unchanged registries reevaluate mutable current policy and preserve pendin
   const revision = broker.revision(token);
   assert.throws(() => broker.update(token, { tools: declarations, toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
   assert.equal(broker.revision(token), revision);
-  assert.deepEqual(broker.list(token).map(tool => tool.name), ["write"]);
+  assert.deepEqual(broker.list(token).tools.map(tool => tool.name), ["write"]);
   broker.update(token, { tools: declarations, toolChoice: "none" });
-  assert.deepEqual(broker.list(token), []);
+  assert.deepEqual(broker.list(token).tools, []);
   assert.equal(finish(broker, token), true);
 });
 
@@ -213,24 +219,24 @@ test("caller and discovery mutations cannot change accepted schemas until a succ
   })] }];
   const original = structuredClone(declarations);
   const { token } = register(broker, declarations);
-  const before = broker.list(token);
+  const before = broker.list(token).tools;
   broker.update(token, { tools: structuredClone(original) });
   declarations[0].tools[0].format.definition = "start: /changed/";
   declarations[0].tools[1].parameters.properties.marker.enum[0] = "changed";
-  assert.deepEqual(broker.list(token), before, "Input mutation cannot alter the private accepted snapshot.");
+  assert.deepEqual(broker.list(token).tools, before, "Input mutation cannot alter the private accepted snapshot.");
   broker.update(token, { tools: declarations });
-  const changed = broker.list(token);
+  const changed = broker.list(token).tools;
   assert.deepEqual(changed.map(tool => tool.wireName), before.map(tool => tool.wireName));
   assert.equal(changed[0].format.definition, "start: /changed/");
   assert.deepEqual(changed[1].parameters.properties.marker.enum, ["changed"]);
   changed[0].format.definition = "start: /discovery mutation/";
   changed[1].parameters.properties.marker.enum[0] = "discovery mutation";
   broker.update(token, { tools: structuredClone(declarations) });
-  assert.equal(broker.list(token)[0].format.definition, "start: /changed/");
-  assert.deepEqual(broker.list(token)[1].parameters.properties.marker.enum, ["changed"]);
+  assert.equal(broker.list(token).tools[0].format.definition, "start: /changed/");
+  assert.deepEqual(broker.list(token).tools[1].parameters.properties.marker.enum, ["changed"]);
   declarations[0].tools[1].parameters.properties.marker.enum[0] = "unaccepted";
   assert.throws(() => broker.update(token, { tools: declarations, toolChoice: { type: "function", name: "missing" } }), { code: "unsupported_tool_choice" });
-  assert.deepEqual(broker.list(token)[1].parameters.properties.marker.enum, ["changed"]);
+  assert.deepEqual(broker.list(token).tools[1].parameters.properties.marker.enum, ["changed"]);
   assert.equal(finish(broker, token), true);
 });
 
@@ -238,14 +244,14 @@ test("allowed_tools resolves exact namespaces and excludes sibling tools", async
   const broker = createWebToolBroker();
   const declarations = [{ type: "namespace", name: "one", tools: [fn("read")] }, { type: "namespace", name: "two", tools: [fn("read")] }];
   const { token } = register(broker, declarations, { toolChoice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "read", namespace: "two" }] } });
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   assert.deepEqual(tools.map(tool => tool.namespace), ["two"]);
   await assert.rejects(broker.invoke(token, { wireName: "one__read" }));
   finish(broker, token);
   assert.throws(() => register(broker, declarations, { toolChoice: { type: "function", name: "read" } }), { code: "unsupported_tool_choice" });
 });
 
-test("focused discovery ranks case-insensitive identity and description matches without truncating declarations", () => {
+test("focused discovery excludes the fuzzy tail after exact matches and retains complete declarations", () => {
   const broker = createWebToolBroker();
   const parameters = { type: "object", properties: { path: { type: "string", enum: ["native.txt"] } }, required: ["path"], additionalProperties: false };
   const { token } = register(broker, [
@@ -253,37 +259,155 @@ test("focused discovery ranks case-insensitive identity and description matches 
     { type: "namespace", name: "mcp__read", tools: [fn("fetch")] },
     { type: "namespace", name: "functions", tools: [custom("exec")] },
   ]);
-  const tools = broker.list(token);
-  assert.deepEqual(broker.list(token, { query: " ReAd " }).map(tool => tool.name), ["read", "reader", "read_more", "pre_read", "fetch", "alpha"]);
-  assert.deepEqual(broker.list(token, { query: "MCP__READ" }).map(tool => tool.wireName), ["mcp__read__fetch"]);
-  assert.deepEqual(broker.list(token, { query: "MCP__READ__FETCH" }), tools.filter(tool => tool.name === "fetch"));
-  const [read] = broker.list(token, { query: "read" });
+  const tools = broker.list(token).tools;
+  assert.deepEqual(broker.list(token, { query: " ReAd " }).tools.map(tool => tool.name), ["read"]);
+  assert.deepEqual(broker.list(token, { query: "rea" }).tools.map(tool => tool.name), ["reader", "read", "read_more", "pre_read", "fetch", "alpha"]);
+  assert.deepEqual(broker.list(token, { query: "MCP__READ" }).tools.map(tool => tool.wireName), ["mcp__read__fetch"]);
+  assert.deepEqual(broker.list(token, { query: "MCP__READ__FETCH" }).tools, tools.filter(tool => tool.name === "fetch"));
+  const [read] = broker.list(token, { query: "read" }).tools;
   assert.deepEqual(read.parameters, parameters);
   read.parameters.properties.path.enum[0] = "mutated";
-  assert.deepEqual(broker.list(token, { query: "read" })[0].parameters, parameters);
-  assert.deepEqual(broker.list(token, { query: "ExEc" })[0].format, custom("exec").format);
-  assert.deepEqual(broker.list(token, { query: "missing" }), []);
-  assert.deepEqual(broker.list(token), tools);
-  for (const query of ["", " ", 1, "x".repeat(1025)]) assert.throws(() => broker.list(token, { query }), { code: "invalid_web_tool_call" });
+  assert.deepEqual(broker.list(token, { query: "read" }).tools[0].parameters, parameters);
+  assert.deepEqual(broker.list(token, { query: "ExEc" }).tools[0].format, custom("exec").format);
+  assert.deepEqual(broker.list(token, { query: "missing" }).tools, []);
+  assert.deepEqual(broker.list(token).tools, tools);
+  for (const query of ["", " ", 1, "x".repeat(1025)]) assert.throws(() => broker.list(token, { query }).tools, { code: "invalid_web_tool_call" });
   assert.equal(finish(broker, token), true);
+});
+
+test("discovery bounds catalog pages, reports honest totals, and batches exact identities without fuzzy matches", t => {
+  const broker = createWebToolBroker();
+  const parameters = { type: "object", properties: Object.fromEntries(Array.from({ length: 45 }, (_, index) => [`field_${index}`, { type: "string", description: `Complete native field ${index}` }])) };
+  const declarations = [...Array.from({ length: 70 }, (_, index) => fn(`read_${index}`, { parameters })),
+    { type: "namespace", name: "functions", tools: [custom("exec")] }];
+  const { token } = register(broker, declarations);
+  const first = broker.list(token);
+  assert.equal(first.tools.length, 8);
+  assert.equal(first.total, 71);
+  assert.equal(typeof first.nextCursor, "string");
+  assert.equal(first.nextCursor.includes(token), false, "A cursor must not expose turn authority.");
+  const all = [...first.tools];
+  let cursor = first.nextCursor;
+  while (cursor !== undefined) {
+    const page = broker.list(token, { cursor, limit: 32 });
+    assert.equal(page.total, 71);
+    assert.ok(page.tools.length <= 32);
+    all.push(...page.tools);
+    cursor = page.nextCursor;
+  }
+  assert.deepEqual(all.map(tool => tool.name), [...Array.from({ length: 70 }, (_, index) => `read_${index}`), "exec"]);
+  assert.deepEqual(all[69].parameters, parameters, "A page limit never truncates a selected schema.");
+  assert.deepEqual(all[70].format, custom("exec").format);
+  const exactQuery = broker.list(token, { query: "read_1" });
+  assert.deepEqual(exactQuery.tools.map(tool => tool.name), ["read_1"]);
+  const bodyBytes = result => Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), "utf8");
+  const mirrored = tools => ({ content: [{ type: "text", text: JSON.stringify({ tools }) }], structuredContent: { tools } });
+  const canonical = page => ({ content: [{ type: "text", text: JSON.stringify(page) }] });
+  const oldExact = all.filter(tool => tool.name.includes("read_1"));
+  const catalogBefore = bodyBytes(mirrored(all)), catalogAfter = bodyBytes(canonical(first));
+  const exactBefore = bodyBytes(mirrored(oldExact)), exactAfter = bodyBytes(canonical(exactQuery));
+  assert.ok(catalogAfter < catalogBefore);
+  assert.ok(exactAfter < exactBefore);
+  t.diagnostic(`Synthetic JSON-RPC discovery body, 70 functions with 45 schema properties each plus one custom grammar: catalog mirrored all 71=${catalogBefore} bytes; canonical page 8 of 71=${catalogAfter} bytes; query read_1 mirrored 11 fuzzy/exact=${exactBefore} bytes; canonical exact 1=${exactAfter} bytes.`);
+  const exact = broker.list(token, { names: ["READ_1", "functions.exec", "read_4", "not_declared"] });
+  assert.deepEqual(exact.tools.map(tool => tool.name), ["read_1", "read_4", "exec"]);
+  assert.equal(exact.total, 3);
+  assert.equal(exact.nextCursor, undefined);
+  assert.deepEqual(broker.list(token, { names: [all[70].wireName] }).tools, [all[70]]);
+  const fuzzy = broker.list(token, { query: "read_" });
+  assert.equal(fuzzy.tools.length, 8);
+  assert.equal(fuzzy.total, 70);
+  for (const options of [
+    { limit: 0 }, { limit: 33 }, { limit: 1.5 }, { limit: "8" },
+    { names: [] }, { names: "read_1" }, { names: [""] }, { names: [null] },
+    { names: ["x".repeat(1025)] }, { names: Array(33).fill("read_1") }, { names: ["read_1"], query: "read" },
+  ]) assert.throws(() => broker.list(token, options), { code: "invalid_web_tool_call" });
+  assert.equal(finish(broker, token), true);
+});
+
+test("discovery cursors survive activity and unchanged updates but reject other selections, turns, and accepted changes", async () => {
+  const broker = createWebToolBroker();
+  const declarations = Array.from({ length: 12 }, (_, index) => fn(`read_${index}`));
+  const { token } = register(broker, declarations);
+  const options = { query: "read_", limit: 2 };
+  const first = broker.list(token, options), cursor = first.nextCursor;
+  const expected = broker.list(token, { ...options, cursor });
+  const release = broker.beginActivity(token);
+  release();
+  const result = broker.invoke(token, { wireName: "read_0" });
+  const [call] = broker.takeCalls(token);
+  broker.complete(token, [output(call, "unchanged catalog")]);
+  await result;
+  broker.update(token, { tools: structuredClone(declarations), toolChoice: "auto" });
+  assert.deepEqual(broker.list(token, { query: " READ_ ", limit: 2, cursor }), expected);
+  assert.deepEqual(broker.list(token, options), first, "An unchanged update retains the exact pagination version.");
+  const other = broker.register({ threadId: "other", turnId: "turn", tools: declarations });
+  for (const [current, selection] of [
+    [token, { query: "read" }], [token, {}], [token, { names: ["read_0", "read_1"] }], [other.token, options],
+  ]) assert.throws(() => broker.list(current, { ...selection, cursor }), { code: "invalid_web_tool_cursor" });
+  for (const malformed of [null, "", 1, "0.invalid", `${cursor}x`, `999${cursor}`, cursor.replace(/.$/u, "!")]) {
+    assert.throws(() => broker.list(token, { ...options, cursor: malformed }), { code: "invalid_web_tool_cursor" });
+  }
+  const exact = { names: ["read_0", "read_1", "read_2"], limit: 1 };
+  const exactFirst = broker.list(token, exact);
+  assert.deepEqual(broker.list(token, { names: ["READ_2", "read_0", "read_1"], limit: 1, cursor: exactFirst.nextCursor }).tools.map(tool => tool.name), ["read_1"]);
+  assert.throws(() => broker.list(token, { names: ["read_0", "read_2"], cursor: exactFirst.nextCursor }), { code: "invalid_web_tool_cursor" });
+  const changed = structuredClone(declarations);
+  changed[10].parameters.properties.updated = { const: true };
+  broker.update(token, { tools: changed });
+  assert.throws(() => broker.list(token, { ...options, cursor }), { code: "invalid_web_tool_cursor" });
+  broker.update(token, { tools: declarations });
+  assert.throws(() => broker.list(token, { ...options, cursor }), { code: "invalid_web_tool_cursor" }, "Restoring a prior catalog does not revive its old cursors.");
+  const auto = broker.list(token, options);
+  broker.update(token, { tools: declarations, toolChoice: "required" });
+  assert.throws(() => broker.list(token, { ...options, cursor: auto.nextCursor }), { code: "invalid_web_tool_cursor" });
+  broker.update(token, { tools: changed });
+  const revised = broker.list(token, options);
+  broker.update(token, { tools: changed, toolChoice: { type: "allowed_tools", mode: "auto", tools: [
+    { type: "function", name: "read_1" }, { type: "function", name: "read_2" },
+  ] } });
+  assert.throws(() => broker.list(token, { ...options, cursor: revised.nextCursor }), { code: "invalid_web_tool_cursor" });
+  assert.deepEqual(broker.list(token, { names: ["read_0", "read_1"] }).tools.map(tool => tool.name), ["read_1"]);
+  assert.equal(broker.list(token).total, 2);
+  assert.equal(finish(broker, token), true);
+  const replacement = register(broker, declarations);
+  assert.throws(() => broker.list(token, { ...options, cursor }), { code: "web_tool_turn_closed" });
+  assert.throws(() => broker.list(replacement.token, { ...options, cursor }), { code: "invalid_web_tool_cursor" });
+  assert.deepEqual(broker.takeCalls(replacement.token), []);
+  finish(broker, replacement.token);
+  finish(broker, other.token);
+});
+
+test("active-turn checks expose only whether the exact capability is still alive", () => {
+  const broker = createWebToolBroker();
+  const first = register(broker, [fn("read")]);
+  assert.equal(broker.isActive(first.token), true);
+  assert.equal(broker.isActive("unknown"), false);
+  assert.equal(broker.isActive(undefined), false);
+  finish(broker, first.token);
+  assert.equal(broker.isActive(first.token), false);
+  const replacement = register(broker, [fn("read")]);
+  assert.equal(broker.isActive(replacement.token), true);
+  broker.cancel(replacement.token);
+  assert.equal(broker.isActive(replacement.token), false);
 });
 
 test("focused discovery uses current allowed schemas and cannot authorize a removed or replacement turn tool", async () => {
   const broker = createWebToolBroker();
   const first = register(broker, [fn("read"), fn("write")], { toolChoice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "read" }] } });
-  assert.deepEqual(broker.list(first.token, { query: "write" }), []);
-  const [old] = broker.list(first.token, { query: "read" });
+  assert.deepEqual(broker.list(first.token, { query: "write" }).tools, []);
+  const [old] = broker.list(first.token, { query: "read" }).tools;
   const parameters = { type: "object", properties: { revision: { const: 2 } }, required: ["revision"] };
   broker.update(first.token, { tools: [fn("read", { parameters })] });
-  assert.equal(broker.list(first.token, { query: "read" })[0].wireName, old.wireName);
-  assert.deepEqual(broker.list(first.token, { query: "read" })[0].parameters, parameters);
+  assert.equal(broker.list(first.token, { query: "read" }).tools[0].wireName, old.wireName);
+  assert.deepEqual(broker.list(first.token, { query: "read" }).tools[0].parameters, parameters);
   broker.update(first.token, { tools: [fn("write")] });
-  assert.deepEqual(broker.list(first.token, { query: "read" }), []);
+  assert.deepEqual(broker.list(first.token, { query: "read" }).tools, []);
   await assert.rejects(broker.invoke(first.token, { wireName: old.wireName }), /not declared and allowed/);
   assert.equal(finish(broker, first.token), true);
   const replacement = register(broker, [fn("write")]);
-  assert.throws(() => broker.list(first.token, { query: "write" }), { code: "web_tool_turn_closed" });
-  assert.throws(() => broker.list("unknown", { query: "write" }), { code: "web_tool_turn_closed" });
+  assert.throws(() => broker.list(first.token, { query: "write" }).tools, { code: "web_tool_turn_closed" });
+  assert.throws(() => broker.list("unknown", { query: "write" }).tools, { code: "web_tool_turn_closed" });
   await assert.rejects(broker.invoke(replacement.token, { wireName: old.wireName }), /not declared and allowed/);
   assert.deepEqual(broker.takeCalls(replacement.token), []);
   assert.equal(finish(broker, replacement.token), true);
@@ -314,6 +438,48 @@ test("normal tool errors and multimodal native outputs return through MCP withou
     { type: "resource_link", uri: "https://example.invalid/native.png", name: "Native tool image", mimeType: "image/*" },
     { type: "audio", data: "YWJj", mimeType: "audio/wav" },
   ], isError: true });
+  finish(broker, token);
+});
+
+test("Router-created object and search results use one complete JSON representation while upstream MCP envelopes retain their meaning", async t => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [fn("read"), search]);
+  const value = { rows: Array.from({ length: 20 }, (_, index) => ({ index, text: `Complete synthetic row ${index} 🌙`, details: "x".repeat(100) })), isError: true };
+  const result = broker.invoke(token, { wireName: "read" });
+  const [call] = broker.takeCalls(token);
+  broker.complete(token, [output(call, JSON.stringify(value))]);
+  const canonical = await result;
+  assert.deepEqual(canonical, { content: [{ type: "text", text: JSON.stringify(value) }], isError: true });
+  assert.deepEqual(CallToolResultSchema.parse(canonical), canonical, "The current SDK accepts the canonical text-only result.");
+  const protocolBody = payload => Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result: payload }), "utf8");
+  const duplicatedBytes = protocolBody({ ...canonical, structuredContent: value }).byteLength;
+  const canonicalBytes = protocolBody(canonical).byteLength;
+  assert.ok(canonicalBytes < duplicatedBytes);
+  t.diagnostic(`Synthetic JSON-RPC object result body, 20 rows each with index, Unicode text and 100-byte details: mirrored=${duplicatedBytes} bytes; canonical=${canonicalBytes} bytes.`);
+  const searchResult = broker.invoke(token, { wireName: "tool_search" });
+  const [searchCall] = broker.takeCalls(token);
+  const searchOutput = output(searchCall, [fn("discovered")]);
+  broker.complete(token, [searchOutput]);
+  const searched = await searchResult;
+  assert.deepEqual(searched, { content: [{ type: "text", text: JSON.stringify(searchOutput) }] });
+  assert.deepEqual(CallToolResultSchema.parse(searched), searched);
+  const envelopes = [
+    { content: [{ type: "text", text: "Human explanation differs from structured data." }], structuredContent: { code: "denied" }, isError: true, _meta: { audit: "native" } },
+    { structuredContent: { actual: "structured-only native result" }, _meta: { audit: "native" } },
+  ];
+  for (const envelope of envelopes) {
+    const upstream = broker.invoke(token, { wireName: "read" });
+    const [upstreamCall] = broker.takeCalls(token);
+    broker.complete(token, [output(upstreamCall, envelope)]);
+    const received = await upstream;
+    assert.deepEqual(received, { content: [], ...envelope });
+    assert.deepEqual(CallToolResultSchema.parse(received), received);
+  }
+  const ordinary = { structuredContent: { schema: "ordinary native data" }, rows: [1, 2], description: "keep sibling fields" };
+  const ordinaryResult = broker.invoke(token, { wireName: "read" });
+  const [ordinaryCall] = broker.takeCalls(token);
+  broker.complete(token, [output(ordinaryCall, ordinary)]);
+  assert.deepEqual(await ordinaryResult, { content: [{ type: "text", text: JSON.stringify(ordinary) }] });
   finish(broker, token);
 });
 
@@ -362,9 +528,9 @@ test("MCP cancellation or timeout retires the whole capability without late disp
 test("invalid invocation shapes cannot queue tools, and tool lists are isolated snapshots", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [fn("read"), custom("patch")]);
-  const snapshot = broker.list(token);
+  const snapshot = broker.list(token).tools;
   snapshot[0].name = "write";
-  assert.equal(broker.list(token)[0].name, "read");
+  assert.equal(broker.list(token).tools[0].name, "read");
   for (const payload of [
     { wireName: "missing" }, { wireName: "read", input: "raw" }, { wireName: "read", arguments: [] },
     { wireName: "read", arguments: new Date(0) },
@@ -378,7 +544,7 @@ test("invalid invocation shapes cannot queue tools, and tool lists are isolated 
 test("client acceptance is independent of registration and declaration revisions", () => {
   const broker = createWebToolBroker(), { token } = register(broker, [fn("read")]);
   assert.equal(broker.hasClientActivity(token), false);
-  broker.list(token);
+  broker.list(token).tools;
   broker.update(token, { tools: [fn("read")], toolChoice: "auto" });
   assert.ok(broker.revision(token) > 0);
   assert.equal(broker.hasClientActivity(token), false);
@@ -498,6 +664,66 @@ test("observation cancellation and deadline remove their subscription without re
   assert.deepEqual(await changed, { revision: revision + 1, closed: false });
   assert.equal(getEventListeners(wake.signal, "abort").length, 0);
   assert.equal(finish(broker, token), true);
+});
+
+test("actionable observations coalesce repeated discovery while retaining raw completion and ordinary observation fences", async () => {
+  const broker = createWebToolBroker(), { token } = register(broker, [fn("read")]);
+  const initial = broker.waitForChange(token, 0, { actionableOnly: true });
+  const firstRelease = broker.beginActivity(token);
+  assert.deepEqual(await initial, { revision: 1, closed: false }, "First authentic acceptance always wakes observation.");
+  firstRelease();
+  const before = broker.revision(token);
+  let woke = false;
+  const pending = broker.waitForChange(token, before, { actionableOnly: true });
+  void pending.then(() => { woke = true; });
+  const ordinary = broker.waitForChange(token, before);
+  for (let index = 0; index < 8; index += 1) {
+    const release = broker.beginActivity(token);
+    broker.list(token);
+    release();
+  }
+  await Promise.resolve();
+  assert.equal(woke, false);
+  assert.equal(broker.revision(token), before + 16);
+  assert.deepEqual(await ordinary, { revision: before + 1, closed: false });
+  assert.deepEqual(broker.takeCalls(token), []);
+  const invoked = broker.invoke(token, { wireName: "read" });
+  assert.deepEqual(await pending, { revision: before + 18, closed: false }, "A real native enqueue must wake after coalesced discovery.");
+  const [call] = broker.takeCalls(token);
+  broker.complete(token, [output(call, "actual output")]);
+  await invoked;
+  const fence = broker.beginCompletion(token);
+  const release = broker.beginActivity(token);
+  assert.equal(broker.beginCompletion(token), undefined);
+  release();
+  assert.equal(broker.finish(token, fence), false, "A discovery spanning a completed-page snapshot still requires a new quiet read.");
+  assert.equal(broker.finish(token, undefined), false);
+  assert.notEqual(broker.beginCompletion(token), fence);
+  assert.equal(finish(broker, token), true);
+});
+
+test("actionable observations cannot lose earlier actions and retain cancellation, deadline, catalog and retirement semantics", async () => {
+  const broker = createWebToolBroker(), { token } = register(broker, [fn("read")]);
+  const release = broker.beginActivity(token);
+  release();
+  assert.deepEqual(await broker.waitForChange(token, 0, { actionableOnly: true }), { revision: 2, closed: false });
+  const before = broker.revision(token);
+  const deadline = broker.waitForChange(token, before, { actionableOnly: true, timeoutMs: 1 });
+  const repeated = broker.beginActivity(token);
+  repeated();
+  assert.deepEqual(await deadline, { revision: before, closed: false }, "A coalesced revision must still be reported as a deadline.");
+  const controller = new AbortController();
+  controller.abort(new Error("observer left"));
+  await assert.rejects(broker.waitForChange(token, before, { actionableOnly: true, signal: controller.signal }), /observer left/u);
+  const pending = broker.waitForChange(token, before, { actionableOnly: true });
+  broker.update(token, { tools: [fn("write")] });
+  assert.deepEqual(await pending, { revision: before + 3, closed: false }, "An accepted catalog change remains actionable.");
+  const current = broker.revision(token);
+  const closed = broker.waitForChange(token, current, { actionableOnly: true });
+  finish(broker, token);
+  assert.deepEqual(await closed, { revision: current, closed: true });
+  assert.deepEqual(await broker.waitForChange(token, current, { actionableOnly: true }), { revision: current, closed: true });
+  assert.throws(() => broker.waitForChange(token, current, { actionableOnly: "yes" }), { code: "invalid_web_tool_call" });
 });
 
 test("retirement wakes observers and old observers cannot bind to a replacement turn", async () => {

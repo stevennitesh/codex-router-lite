@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { nativeToolWireNames } from "./namespace-relay.mjs";
-import { webMcpQueryLimit } from "./web-mcp-contract.mjs";
+import { webMcpDiscoveryDefaultLimit, webMcpDiscoveryMaxLimit, webMcpQueryLimit } from "./web-mcp-contract.mjs";
 import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
 
 const hostedTools = new Set(["web_search", "web_search_preview", "image_generation"]);
@@ -103,6 +103,11 @@ function choicePolicy(choice, tools) {
   return { allowed: new Set([resolve(choice)]), required: true };
 }
 
+function discoveryVersion(tools, policy) {
+  return createHash("sha256").update(JSON.stringify({ tools: [...tools.values()],
+    allowed: [...policy.allowed].sort(), required: policy.required })).digest("hex");
+}
+
 function nativeCall(tool, payload) {
   const representation = webToolKinds[tool.kind];
   const callId = `call_${randomUUID().replaceAll("-", "")}`;
@@ -153,13 +158,13 @@ function mcpResult(output) {
       if (record(parsed)) value = parsed;
     } catch { /* Ordinary native text is not a JSON envelope. */ }
   }
-  const envelope = record(value) && Array.isArray(value.content) ? value : undefined;
-  const content = envelope ? envelope.content.map(contentBlock)
+  const envelope = record(value) && (Array.isArray(value.content) || record(value.structuredContent)
+    && Object.keys(value).every(key => ["structuredContent", "isError", "_meta"].includes(key))) ? value : undefined;
+  const content = envelope ? (envelope.content ?? []).map(contentBlock)
     : Array.isArray(value) ? value.map(contentBlock)
       : [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }];
-  const structured = envelope?.structuredContent ?? (record(value) && !envelope ? value : undefined);
   return { content,
-    ...(structured === undefined ? {} : { structuredContent: structuredClone(structured) }),
+    ...(envelope?.structuredContent === undefined ? {} : { structuredContent: structuredClone(envelope.structuredContent) }),
     ...(output.isError === true || value?.isError === true
       || output.status === "failed" ? { isError: true } : {}),
     ...(envelope?._meta === undefined ? {} : { _meta: structuredClone(envelope._meta) }) };
@@ -178,42 +183,54 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     return turn;
   };
   const notify = (turn, retired = false) => {
-    for (const waiter of turn.waiters) waiter.resolve({ revision: turn.revision, closed: retired });
+    for (const waiter of turn.waiters) {
+      if (retired || !waiter.actionableOnly || turn.actionableRevision > waiter.previous) {
+        waiter.resolve({ revision: turn.revision, closed: retired });
+      }
+    }
   };
-  const change = turn => { turn.revision += 1; notify(turn); };
+  const change = (turn, actionable = true) => {
+    turn.revision += 1;
+    if (actionable) turn.actionableRevision = turn.revision;
+    notify(turn);
+  };
   const observed = token => {
     const turn = turns.get(token) ?? closed.get(token);
     if (!turn) throw failure("Web tool turn is invalid or already closed.", "web_tool_turn_closed", 409);
     return turn;
   };
   const revision = token => observed(token).revision;
-  const waitForChange = (token, previous, { signal, timeoutMs = 25_000 } = {}) => {
-    if (!Number.isSafeInteger(previous) || previous < 0 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 25_000) {
+  const waitForChange = (token, previous, { signal, timeoutMs = 25_000, actionableOnly = false } = {}) => {
+    if (!Number.isSafeInteger(previous) || previous < 0 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 25_000
+      || typeof actionableOnly !== "boolean") {
       throw failure("Invalid Web tool observation.");
     }
     const turn = observed(token);
     if (previous > turn.revision) throw failure("Invalid Web tool observation revision.");
     if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new DOMException("Web tool observation cancelled.", "AbortError"));
-    if (turns.get(token) !== turn || turn.revision !== previous) return Promise.resolve({ revision: turn.revision, closed: turns.get(token) !== turn });
+    if (turns.get(token) !== turn || (actionableOnly ? turn.actionableRevision : turn.revision) > previous) {
+      return Promise.resolve({ revision: turn.revision, closed: turns.get(token) !== turn });
+    }
     // Comparing and subscribing happen in one synchronous turn. A revision
     // change between the caller's read and this subscription cannot be lost.
     return new Promise((resolve, reject) => {
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); turn.waiters.delete(waiter); };
-      const waiter = { resolve: value => { cleanup(); resolve(value); } };
+      const waiter = { previous, actionableOnly, resolve: value => { cleanup(); resolve(value); } };
       const abort = () => {
         cleanup();
         reject(signal.reason instanceof Error ? signal.reason : new DOMException("Web tool observation cancelled.", "AbortError"));
       };
-      const timer = setTimeout(() => waiter.resolve({ revision: turn.revision, closed: false }), timeoutMs);
+      const timer = setTimeout(() => waiter.resolve({ revision: actionableOnly ? previous : turn.revision, closed: false }), timeoutMs);
       turn.waiters.add(waiter);
       signal?.addEventListener("abort", abort, { once: true });
     });
   };
   const beginActivity = token => {
     const turn = active(token);
+    const firstAcceptance = !turn.hasClientActivity;
     turn.hasClientActivity = true;
     turn.activity += 1;
-    change(turn);
+    change(turn, firstAcceptance);
     let released = false;
     return () => {
       if (released) return;
@@ -222,7 +239,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       // cannot mutate a replacement turn or make the old capability live again.
       if (turns.get(token) !== turn) return;
       turn.activity -= 1;
-      change(turn);
+      change(turn, false);
     };
   };
   const rememberClosed = (token, turn, state) => {
@@ -252,30 +269,64 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     }
     return batch.map(call => structuredClone(call.item));
   };
-  const list = (token, { query } = {}) => {
+  const list = (token, { query, names, limit = webMcpDiscoveryDefaultLimit, cursor } = {}) => {
     const turn = active(token);
     if (query !== undefined && (typeof query !== "string" || !query.trim() || query.length > webMcpQueryLimit)) {
       throw failure(`Web tool discovery query must be a nonempty string of at most ${webMcpQueryLimit} characters.`);
     }
+    if (names !== undefined && (query !== undefined || !Array.isArray(names) || !names.length || names.length > webMcpDiscoveryMaxLimit
+      || names.some(name => typeof name !== "string" || !name.trim() || name.length > webMcpQueryLimit))) {
+      throw failure(`Web tool discovery names must contain 1 through ${webMcpDiscoveryMaxLimit} exact identities and cannot be combined with query.`);
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > webMcpDiscoveryMaxLimit) {
+      throw failure(`Web tool discovery limit must be an integer from 1 through ${webMcpDiscoveryMaxLimit}.`);
+    }
     const needle = query?.trim().toLowerCase();
+    const exactNames = names === undefined ? undefined : new Set(names.map(name => name.trim().toLowerCase()));
+    const selection = JSON.stringify(exactNames === undefined ? ["query", needle ?? null] : ["names", [...exactNames].sort()]);
+    const cursorFor = offset => `${offset}.${createHmac("sha256", turn.cursorKey)
+      .update(JSON.stringify([turn.discoveryVersion, turn.discoveryGeneration, selection, offset])).digest("base64url")}`;
+    let offset = 0;
+    if (cursor !== undefined) {
+      const parts = typeof cursor === "string" && /^([1-9][0-9]{0,15})\.[A-Za-z0-9_-]{43}$/u.exec(cursor);
+      offset = parts ? Number(parts[1]) : NaN;
+      if (!Number.isSafeInteger(offset) || cursor !== cursorFor(offset)) {
+        throw failure("Web tool discovery cursor is invalid for this active turn, selection, or catalog.", "invalid_web_tool_cursor", 409);
+      }
+    }
     const matches = [];
+    const wireNames = new Set([...turn.tools.keys()].map(name => name.toLowerCase()));
     for (const tool of turn.tools.values()) {
       if (!turn.policy.allowed.has(tool.wireName)) continue;
       let rank = 0;
+      const wireName = tool.wireName.toLowerCase();
+      const nativeName = (tool.namespace === undefined ? tool.name : `${tool.namespace}.${tool.name}`).toLowerCase();
+      // An exact wire identity takes precedence over a native alias that was
+      // reassigned a collision-safe wire name. Authorization still filters it.
+      const identities = [wireName, ...(wireNames.has(nativeName) ? [] : [nativeName])];
+      if (exactNames !== undefined && !identities.some(name => exactNames.has(name))) continue;
+      if (needle !== undefined && wireNames.has(needle) && wireName !== needle) continue;
       if (needle !== undefined) {
-        const names = [tool.wireName, tool.name, tool.namespace].filter(value => value !== undefined).map(value => value.toLowerCase());
-        rank = names.some(value => value === needle) ? 0
-          : names.some(value => value.startsWith(needle)) ? 1
-            : names.some(value => value.includes(needle)) ? 2
+        const searchable = [...identities, tool.name.toLowerCase(), ...(tool.namespace === undefined ? [] : [tool.namespace.toLowerCase()])];
+        rank = searchable.some(value => value === needle) ? 0
+          : searchable.some(value => value.startsWith(needle)) ? 1
+            : searchable.some(value => value.includes(needle)) ? 2
               : tool.description.toLowerCase().includes(needle) ? 3 : -1;
         if (rank < 0) continue;
       }
       matches.push({ tool, rank });
     }
-    // Stable sorting retains declaration order for equal matches. Only selected
-    // current declarations are cloned; discovery never grants authorization.
-    if (needle !== undefined) matches.sort((one, two) => one.rank - two.rank);
-    return matches.map(({ tool }) => structuredClone(tool));
+    // Exact identities exclude the fuzzy tail. Stable sorting retains current
+    // declaration order within each rank; only a bounded page is cloned.
+    const selected = needle !== undefined && matches.some(match => match.rank === 0)
+      ? matches.filter(match => match.rank === 0) : matches;
+    if (needle !== undefined) selected.sort((one, two) => one.rank - two.rank);
+    if (offset && offset >= selected.length) {
+      throw failure("Web tool discovery cursor is invalid for this active turn, selection, or catalog.", "invalid_web_tool_cursor", 409);
+    }
+    const end = Math.min(offset + limit, selected.length);
+    return { tools: selected.slice(offset, end).map(({ tool }) => structuredClone(tool)), total: selected.length,
+      ...(end < selected.length ? { nextCursor: cursorFor(end) } : {}) };
   };
   const update = (token, { tools, toolChoice = "auto" }) => {
     const turn = active(token);
@@ -287,11 +338,18 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     const next = unchanged ? turn.tools : registry(tools, nextNames);
     const policy = choicePolicy(toolChoice, next);
     const accepted = unchanged ? turn.declarations : structuredClone(tools);
+    let changedCatalog = false;
+    if (!unchanged || !isDeepStrictEqual(policy, turn.policy)) {
+      const nextVersion = discoveryVersion(next, policy);
+      changedCatalog = nextVersion !== turn.discoveryVersion;
+      if (changedCatalog) turn.discoveryGeneration += 1;
+      turn.discoveryVersion = nextVersion;
+    }
     turn.names = nextNames;
     turn.tools = next;
     turn.declarations = accepted;
     turn.policy = policy;
-    change(turn);
+    change(turn, changedCatalog);
   };
   return {
     register({ threadId, turnId, tools = [], toolChoice = "auto" }) {
@@ -305,11 +363,13 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       const policy = choicePolicy(toolChoice, definitions);
       const token = `web_turn_${randomUUID().replaceAll("-", "")}`;
       turns.set(token, { owner, names, tools: definitions, declarations: structuredClone(tools), policy,
-        calls: new Map(), callsMade: 0, revision: 0, activity: 0, hasClientActivity: false, waiters: new Set() });
+        discoveryVersion: discoveryVersion(definitions, policy), discoveryGeneration: 0, cursorKey: randomUUID(),
+        calls: new Map(), callsMade: 0, revision: 0, actionableRevision: 0, activity: 0, hasClientActivity: false, waiters: new Set() });
       owners.set(owner, token);
       return { token };
     },
     list, update, takeCalls, beginActivity, revision, waitForChange,
+    isActive: token => turns.has(token),
     hasClientActivity: token => observed(token).hasClientActivity,
     async invoke(token, payload, { signal } = {}) {
       const release = beginActivity(token);

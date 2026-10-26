@@ -43,6 +43,11 @@ native history added since the last confirmed Send. ChatGPT owns the saved
 conversation's reasoning context. Codex retains its transcript and tool execution
 records locally; storing or forwarding them does not request Codex inference.
 
+A failed private checkpoint fails the owning native turn. A later new turn must
+successfully save the latest in-memory checkpoint before browser work resumes;
+replaying the failed turn does not retry it. Continued storage failure remains
+an error, and uncertain Send or native-action records retain their guards.
+
 ### Instruction delivery and compaction
 
 The full bridge protocol and exact current Codex instructions are sent on first
@@ -67,6 +72,11 @@ delivery record requires full instructions;
 changed instructions explicitly supersede the earlier instructions. A successor
 chat receives full instructions. Existing rollback readers can still read these
 records and resume with their ordinary full instruction delivery.
+After paste settlement, Send appends the current tool-token directive beside the
+generation marker in the visible composer. This keeps the current authority out
+of an automatically created text attachment without discarding its context. The
+structured token comes from the current broker registration, never from parsing
+historical transcript text; exact draft checks cover both visible additions.
 Checkpoint matching and construction reuse the same request-local item digests;
 the complete request fingerprint and changed-result checks remain independent.
 
@@ -120,18 +130,30 @@ answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
 answer. Missing or ambiguous turn/message identities fail explicitly.
 
-Bootstrap and ordinary continuation install a versioned browser helper in the
-native Node REPL binding. Observation and final retention invoke that helper with
-a small operation request instead of repeating its source. Its source digest,
-frozen controller and exact binding are checked before invocation. A missing or
-changed helper fails explicitly; ordinary continuation can restore it without
-replaying Send. The helper runs in the native REPL, not injected page code.
-Other browser programs serialize only the runners needed by their operation;
-recovery, selection and Send retain their separate lifecycle checkpoints.
+Bootstrap installs separately versioned observer and mutation helpers in the
+native Node REPL binding. Observation, retention, ordinary continuation and Send
+invoke them with compact operation requests and selector overrides. Source
+digests, frozen controllers and exact state bindings are checked before use.
+Picker and Send dependencies do not change the observer digest. If a continuation
+finds a missing or stale helper, it returns a fixed no-action receipt before
+accessing the page. Only that receipt permits one full continuation installation
+and the existing recovery checks. A second receipt, a changed receipt or a missing
+Send helper fails explicitly; Send is never retried. These helpers run in the
+native REPL, not injected page code. Open and rollover retain their direct
+lifecycle programs, and all mutations retain their existing ownership, draft,
+generation and uncertain-action checks.
 
 Each reply snapshot retains mounted turn/message identities and order, while
 reconstructing answer text and completion details only for the owned generation.
-Recovery still reads the historical proof it needs. A semantic locator union reads
+Send baselines read identities without historical answer bodies. New-turn
+anchoring reads the candidate marker, then independently verifies global
+uniqueness and latest-turn ownership. Ordinary continuation reads the owned
+generation; recovery still reads the historical proof it needs. A bounded locator
+wait establishes anchor readiness without repeatedly scanning full history.
+Readiness alone does not acknowledge input or establish ownership.
+Mutation checks share a coherent semantic read within each phase; checks before
+and after model selection or handoff remain separate fresh observations.
+A semantic locator union reads
 the owned turn, controls and current URL together, between independent ownership
 and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
@@ -141,8 +163,13 @@ current-generation text returns through the existing native callback even if the
 answer is unfinished. Router verifies and persists acceptance before issuing the
 next wait; later partial text does not add callbacks. A Stop receipt alone never
 acknowledges input, and cancellation before that proof is persisted remains uncertain.
-A protected loopback notification wakes the wait on broker activity;
-browser completion, capacity errors and observation failures also return it. The
+A protected loopback notification wakes the wait on first input acceptance,
+native tool transitions, catalog/policy changes or turn retirement. Subsequent
+read-only discovery and unchanged declaration updates do not force another native
+browser round trip. All activity still advances the independent completion fence;
+quiet completion must pass a fresh read after activity settles. Ordinary broker
+observers retain their complete revision stream. Browser completion, capacity
+errors and observation failures also end the wait. The
 notification uses an owned Node HTTP request with its abort signal and no shared
 connection pool. This private loopback channel accepts the configured listener
 port without browser Fetch port restrictions; failed or malformed broker
@@ -197,12 +224,24 @@ binding still cannot reconstruct an unproved rollover or overwrite a draft.
 ## Native tools and cancellation
 
 The connector discovers only tools declared and allowed for the current native
-Codex request. Its `codex_tools_list` operation accepts an optional `query` matching
-the current wire name, native name, namespace or description, ignoring case.
-Exact names rank first, followed by name prefixes, name substrings and description
-matches. Omit the query for the full catalog. Focused results retain each selected
-tool's complete current schema or custom grammar; discovery does not grant tool
-authorization. Prefer a focused query for the tool needed by the current action.
+Codex request. Its `codex_tools_list` operation accepts `names` for exact wire or
+`namespace.name` identities, or a case-insensitive `query` matching current names,
+namespaces and descriptions. An exact query match excludes fuzzy matches;
+otherwise prefixes, name substrings and descriptions determine the order. Results
+contain `tools`, `total` and, when needed, `nextCursor`. Pages default to eight
+definitions, with `limit` bounded from one to 32. Omit both selections to page
+through the catalog. Cursors belong to the active token, selection and accepted
+catalog/policy generation; ordinary activity and unchanged declarations do not
+invalidate them. Restart discovery after a catalog or allowed-tool change.
+Each selected tool retains its complete schema or custom grammar; discovery does
+not grant authorization. Prefer exact identities or a focused query.
+Reuse a discovered definition within the active Codex turn while declarations
+remain unchanged. Inspect one response representation instead of printing both
+text and structured content or unrelated registry entries. Router-created JSON
+results use one text representation; original MCP envelopes retain their content,
+structured data, errors and metadata. Independent reads can use an existing
+discovered tool's batch facility; native approval, result and cancellation checks
+remain in force.
 Web registration shares collision-safe wire naming with the provider relay while
 retaining original native schemas and grammars. It does not run provider schema
 translation to derive those identities.
@@ -215,6 +254,25 @@ An unchanged declaration set reuses its private accepted registry. Each update
 still evaluates current tool choice and advances its broker revision; changed
 schemas rebuild the registry without reassigning reserved wire identities.
 
+The loopback MCP listener retains at most 32 SDK sessions. Admission reclaims
+expired sessions immediately and, under pressure, the least recently used fully
+inactive session. An HTTP upload or response, accepted handler, unresolved native
+result or live broker-turn association prevents reclamation. The periodic reaper
+uses the same rule. Session expiry returns HTTP 404 before accepting an action;
+the client must initialize a new session. Router does not retry a native action
+to repair a connection. Closing a client connection alone does not necessarily
+terminate its server-side session. Local capacity errors record only fixed
+categories and aggregate counts, so an external connector rate limit remains a
+separate diagnosis.
+
+Changing the gateway input schema also requires [refreshing the existing ChatGPT
+connector's metadata](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata)
+after deployment. Router's catalog and adapter refreshes do
+not update that hosted metadata. In the connector settings, use Refresh and verify
+that `names`, `limit` and `cursor` are advertised before qualifying these arguments
+in a disposable conversation and an existing saved-chat continuation. Keep the
+saved-chat mapping and working rollback intact throughout activation.
+
 Native cancellation retires the exact Web turn and revokes further connector tool
 access; cancelled or timed-out tool calls are not replayed. Router preserves the
 session's tab identity and marks the verified tab for retention before generation.
@@ -226,11 +284,28 @@ prevents the runtime from asserting cancellation authority.
 
 Terminal turns release unused prompts, declarations and browser-answer copies
 only after their request, cancellation watcher and ordered state writes settle.
+Intermediate and final replay records retain the exact serialized reply body and
+metadata once, with at most eight intermediate records. Each caller gets an
+independent response body and headers. Replays do not regenerate IDs or events,
+repeat native actions, or bypass changed-result checks; final retirement releases
+the intermediate records.
+Web responses already contain complete outputs. Their SSE framing sends complete
+function/custom inputs in item and terminal events, without synthetic argument
+deltas or repeated field-done bodies. Message text retains its progress event;
+item and terminal events retain full content. Native identities, raw inputs,
+namespaces, tool-search framing, sequential event numbers and unknown usage keep
+their existing meaning. JSON replies use the same validated output items.
 Cancelled IDs retain rejection records, and completed requests retain their exact
 final response for fingerprint-matched replay. Conversation checkpoints,
 compaction and uncertain-action evidence remain available for recovery.
 
 Normal `web-mcp` logging reports errors without success-progress receipts.
+HTTP capacity rejections emit `admission-rejected` receipts before tool dispatch,
+with a fixed `session-capacity` or `observation-capacity` reason, HTTP status and
+aggregate session, creation, pending-call and observation counts. They contain
+no request bodies, session identities or private tokens. Correlate these receipts
+with a connector's reported HTTP error before attributing a 429 to Router;
+an upstream error envelope alone does not identify which capacity was reached.
 For an on-demand diagnostic run, set `CODEX_ROUTER_WEB_MCP_TRACE=1` in Router's
 launch environment before starting it. Full trace distinguishes SDK handler
 arrival, wrapper rejection, discovery, invocation start and the actual paired
@@ -238,6 +313,10 @@ result. Receipts contain fixed categories, timestamps and a turn-token digest,
 without tool arguments, outputs or credentials. Arrival occurs after
 HTTP/session/protocol validation; its absence alone does not identify a ChatGPT
 safety decision. Invocation start does not prove native execution was accepted.
+The fixed `turn-not-active` diagnostic means the supplied token was rejected
+before admission; no invocation from that request was accepted. It does not
+disclose another turn's token or authorize replay. Failures after admission keep
+their generic uncertainty response, even if they carry the same internal code.
 
 ## Immediate Stop
 
@@ -252,7 +331,11 @@ The optional Router MCP adapter retains the actual originating browser operation
 metadata for fixed cleanup in the same official Node REPL child. It preserves
 opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
-Interrupt hook calls the adapter's own callback with a three-second timeout.
+Interrupt hook calls the adapter's own callback with a ten-second timeout.
+The shared contract reserves transport headroom within that deadline and waits
+on the same inactivity predicate after one Stop click. Fast transitions return
+immediately; the longer failure bound allows Pro's controls to settle after
+cancellation. Elapsed time never supplies confirmation.
 Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
 keep their original messages and cancellation scope; their arrival or forwarding
 does not expire the originating authority before the trusted callback arrives.
@@ -389,6 +472,14 @@ npm run verify:web -- prepare --thread <approved-chat-id> --output generated/NEW
 npm run verify:web -- prompt --run generated/NEW/run.json --phase native
 npm run verify:web -- wait --run generated/NEW/run.json --phase native --turn <native-turn-id>
 ```
+
+For model qualification, prepare with `--model <exact-web-slug> --effort <level>`.
+Supply both together. Each phase then requires the native turn's exact model and
+effort and the matching browser family and Power in its successful Send. Use that
+same model and effort when sending every phase; a passing Instant run does not
+qualify a Thinking or Pro route. Receipts retain only registry-known identities
+and bounded selection values. The helper accepts the app's leading model-switch
+instruction envelopes without treating them as tool results.
 
 Preparation creates a fresh synthetic file and marker. Send the generated prompt
 to the approved chat with the native app tool, then pass its exact turn identity
@@ -574,8 +665,12 @@ offline tests alone do not establish live cancellation.
 The resident helper version covers only its retained reply, view, observation and
 DOM dependencies. Picker-only labels and controls are separated from both the
 resident configuration and its version inputs. Separately shipped selection,
-Send and recovery programs do not change that helper version. The managed adapter
-contains an immutable browser-code snapshot and recognizes exact Router Send and
+Send and recovery programs do not change that helper version. The resident
+controller captures frozen default selectors once. Compact observation
+and retention programs carry only differing selectors; each call merges them
+without changing those defaults. Program decoding expands the effective selectors
+only after exact source qualification, preserving Stop checks and custom overrides.
+The managed adapter contains an immutable browser-code snapshot and recognizes exact Router Send and
 observation programs. Send qualification acquires pending cleanup authority before
 the first observation. Changes to selection, Send or recovery can keep the existing
 adapter only when its installed qualifier still accepts the generated Send,
@@ -585,7 +680,9 @@ Changes to the adapter's waiting behavior also require its matching rebuild and
 restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
-restart. The managed hook definition remains unchanged. Preserve a compatible
+restart. An unchanged managed hook retains its trust. The exact owned older
+three-second hook is updated to the current ten-second definition; review and
+trust that changed definition in Codex before verifying Stop. Preserve a compatible
 Router source, adapter generation and private configuration for rollback;
 rolling back launch selections alone restores the original installation baseline.
 
@@ -613,7 +710,9 @@ standalone first-install validation mode; use the collection and installation
 stages above for initial setup.
 `--apply` coordinates adapter replacement, saved browser configuration and the
 existing guarded service restart. It preserves connector/tunnel identities,
-capabilities, runtime-key storage and the hook definition. The current generation
+capabilities and runtime-key storage. It preserves an unchanged hook definition;
+`hookDefinitionChanged` identifies the owned hook update requiring renewed trust.
+The current generation
 remains fixed during admitted calls, and failed refreshes preserve or restore
 still-owned prior state. A reported Codex restart is needed to load the new adapter.
 Online refresh requires explicit known-idle Web counters from the serving Router,

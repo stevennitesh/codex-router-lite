@@ -118,18 +118,20 @@ function prepare(ctx, options) {
   const nextValue = webBridgeSettingsWithRuntime(before.value, adapter.candidate.runtimeModule), nextText = json(nextValue);
   // Formatting and retired ignored fields alone do not require a rewrite.
   const settingsChanged = before.value.browser?.runtimeModule !== nextValue.browser.runtimeModule;
-  const changed = settingsChanged || adapter.generation !== adapter.candidateGeneration || adapter.cliSelectionChanged;
+  const changed = settingsChanged || adapter.generation !== adapter.candidateGeneration || adapter.cliSelectionChanged || adapter.hookDefinitionChanged;
   const plan = { mode: "plan", ready: true, changed,
     browserRuntimeChanged: settingsChanged, adapterGenerationChanged: adapter.generation !== adapter.candidateGeneration,
     cliSelectionChanged: adapter.cliSelectionChanged,
+    hookDefinitionChanged: adapter.hookDefinitionChanged,
     currentAdapterGeneration: adapter.generation, candidateAdapterGeneration: adapter.candidateGeneration,
     currentBrowserRuntime: before.value.browser?.runtimeModule,
     candidate: { officialCli: adapter.candidate.officialCli.path, node: adapter.candidate.node.path,
       officialNodeRepl: adapter.candidate.officialNodeRepl.path, runtimeModule: adapter.candidate.runtimeModule,
       sdkPackageJson: adapter.candidate.sdkPackageJson },
     threadScope: adapter.candidate.threadIds === null ? "ordinary Web conversations" : "selected trial threads",
-    routerRestartRequired: changed, codexRestartRequired: changed, hookDefinition: "preserved", tunnelConfiguration: "preserved",
+    routerRestartRequired: changed, codexRestartRequired: changed, hookDefinition: adapter.hookDefinitionChanged ? "modified" : "preserved", tunnelConfiguration: "preserved",
     next: changed ? "Apply with --apply to drain Router work, refresh both runtime selections and reload Router; then fully quit and reopen Codex normally."
+      + (adapter.hookDefinitionChanged ? " Review and trust the modified Router Interrupt hook in Codex before verifying Stop." : "")
       : "Configured runtime selections match the current candidate; no refresh is needed." };
   return { before, nextText: settingsChanged ? nextText : before.text, adapter, discovery, plan };
 }
@@ -200,7 +202,9 @@ export async function refreshWebRuntime(options = {}) {
       });
       return { ...prepared.plan, mode: "applied", applied: true, routerRestartRequired: false,
         routerReloaded: true, adapterGeneration: path.basename(result.managedDirectory),
-        next: "Fully quit and reopen Codex normally to load the refreshed adapter. Existing hook trust is retained; verify Stop and same-chat continuation." };
+        next: result.hookDefinitionChanged
+          ? "Fully quit and reopen Codex normally to load the refreshed adapter. Review and trust the modified Router Interrupt hook in Codex, then verify Stop and same-chat continuation."
+          : "Fully quit and reopen Codex normally to load the refreshed adapter. Existing hook trust is retained; verify Stop and same-chat continuation." };
     } catch (cause) {
       let recovery = "not needed";
       if (!rollbackAllowed) recovery = "refreshed runtime retained; rollback deferred; admission not resumed";

@@ -65,19 +65,13 @@ function* events(response) {
       ...(item.type === "message" ? { content: [] } : item.type === "function_call" ? { arguments: "" }
         : item.type === "custom_tool_call" ? { input: "" } : {}) };
     yield { type: "response.output_item.added", output_index, item: added };
-    if (item.type === "function_call") {
-      yield { type: "response.function_call_arguments.delta", ...identity, delta: item.arguments };
-      yield { type: "response.function_call_arguments.done", ...identity, arguments: item.arguments };
-    } else if (item.type === "custom_tool_call") {
-      yield { type: "response.custom_tool_call_input.delta", ...identity, call_id: item.call_id, delta: item.input };
-      yield { type: "response.custom_tool_call_input.done", ...identity, call_id: item.call_id, input: item.input };
-    } else if (item.type === "message") {
+    // Web output is already complete. Native tool dispatch consumes item.done;
+    // repeating whole argument/input fields as synthetic deltas adds no progress.
+    if (item.type === "message") {
       for (const [content_index, part] of item.content.entries()) {
         const contentIdentity = { ...identity, content_index };
         yield { type: "response.content_part.added", ...contentIdentity, part: { ...part, text: "" } };
         yield { type: "response.output_text.delta", ...contentIdentity, delta: part.text };
-        yield { type: "response.output_text.done", ...contentIdentity, text: part.text };
-        yield { type: "response.content_part.done", ...contentIdentity, part };
       }
     }
     yield { type: "response.output_item.done", output_index, item };
@@ -88,19 +82,26 @@ function* events(response) {
 // These items already carry their native tool identity. The response envelope
 // adds framing only; no provider namespace translation or tool execution occurs.
 export function webResponse(payload, output, { responseId = id("resp"), createdAt = Math.floor(Date.now() / 1_000) } = {}) {
+  const { body, init } = webResponseRecord(payload, output, { responseId, createdAt });
+  return new Response(body, init);
+}
+
+// Runtime replay retains this serialized record, avoiding a Response body decode
+// and another UTF-8 encode for every already-framed reply.
+export function webResponseRecord(payload, output, { responseId = id("resp"), createdAt = Math.floor(Date.now() / 1_000) } = {}) {
   if (!nonempty(payload?.model) || !nonempty(responseId) || !Number.isSafeInteger(createdAt) || createdAt < 0) {
     throw failure("Web response requires a model, response identity and Unix creation time.");
   }
   const response = { id: responseId, object: "response", created_at: createdAt, status: "completed",
     model: payload.model, output: completedOutput(output), usage: null, error: null };
-  return responseEnvelope(payload, response);
+  return responseRecord(payload, response);
 }
 
-function responseEnvelope(payload, response) {
-  if (payload.stream !== true) return new Response(json(response), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+function responseRecord(payload, response) {
+  if (payload.stream !== true) return { body: json(response), init: { headers: { "content-type": "application/json", "cache-control": "no-store" } } };
   let sequence = 0;
   const wire = [...events(response)].map(event => `event: ${event.type}\ndata: ${json({ ...event, sequence_number: sequence++ })}\n\n`).join("") + "data: [DONE]\n\n";
-  return new Response(wire, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
+  return { body: wire, init: { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } } };
 }
 
 // Local compaction is deliberately lossy. Keep actual Router-extracted source
@@ -144,8 +145,11 @@ export function webCompactOutput(payload, { retainedTail = [], compactV2 = false
 
 export function webCompactResponse(payload, { retainedTail = [], compactV2 = false,
   output = webCompactOutput(payload, { retainedTail, compactV2 }) } = {}) {
-  if (compactV2) return responseEnvelope({ ...payload, stream: payload.stream !== false }, { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1_000),
-    status: "completed", model: payload.model, output, usage: null, error: null });
+  if (compactV2) {
+    const { body, init } = responseRecord({ ...payload, stream: payload.stream !== false }, { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1_000),
+      status: "completed", model: payload.model, output, usage: null, error: null });
+    return new Response(body, init);
+  }
   return new Response(json({ output }),
     { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }
