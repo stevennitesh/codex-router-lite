@@ -94,17 +94,28 @@ function fakeBrowser() {
       return offset === undefined ? count : offset < count ? 1 : 0;
     };
     return {
+    kind, name,
     fixtureCount: matched,
     or(other) {
       if (!bodyQuery) return this;
       const first = this;
-      return { evaluateAll: async (callback, args) => first.fixtureCount() ? first.evaluateAll(callback, args) : other.evaluateAll(callback, args) };
+      const selections = [first, other];
+      return {
+        or(next) { selections.push(next); return this; },
+        async evaluateAll(callback, args) {
+          if (!args?.mutation) return first.fixtureCount() ? first.evaluateAll(callback, args) : other.evaluateAll(callback, args);
+          const elements = [];
+          for (const selection of selections) elements.push(...await selection.evaluateAll(values => values, args));
+          return callback([...new Set(elements)], args);
+        },
+      };
     },
     nth: index => locator(kind, name, visibleOnly, filters, index, scope),
     getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined, bodyQuery ? { fixtureCount: matched } : undefined), locator: selector => locator("selector", selector),
     filter({ hasText, visible, has, hasNot }) {
       if (visible !== undefined || has || hasNot) return locator(kind, name, visible ?? visibleOnly, [...filters, { has, hasNot }], offset, scope);
       assert.equal(kind, "selector");
+      if (name === browserDom.turnSelector) return locator(kind, name, visibleOnly, [...filters, { hasText }], offset, scope);
       assert.equal(name, '[role="menuitemradio"]');
       return locator("family-text", hasText);
     },
@@ -148,21 +159,41 @@ function fakeBrowser() {
     async isEnabled() { return true; },
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
-    async waitFor({ state }) { assert.equal(await this.isVisible(), state === "visible"); },
+    async waitFor({ state }) {
+      if (state === "attached") {
+        assert.equal(kind, "selector"); assert.equal(name, browserDom.turnSelector);
+        const candidates = ui.turns.filter(turn => filters.every(filter => (filter.hasText === undefined || turn.prompt.includes(filter.hasText))
+          && (!filter.hasNot || !filter.hasNot.name.includes(`='${turn.key}'`))));
+        assert.equal(candidates.length, 1);
+        assert.match(candidates[0].key, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu);
+      } else assert.equal(await this.isVisible(), state === "visible");
+    },
     async evaluateAll(callback, ownedChipSelector) {
       if (bodyQuery) {
-        const body = domElement("body"), document = { body, URL: ui.url, querySelectorAll: selector => selector === browserDom.turnSelector ? generationRoots() : [] };
+        const body = domElement("body"), document = { body, URL: ui.url, querySelectorAll: selector => selector === browserDom.turnSelector ? generationRoots() : [],
+          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
         body.ownerDocument = document;
         const value = callback(matched() ? [body] : [], ownedChipSelector);
         ui.afterStopRead?.();
         return value;
+      }
+      if (ownedChipSelector?.mutation && ["Stop", "Turn off temporary chat", "Temporary chat"].includes(name)) {
+        const present = name === "Stop" ? ui.stop && !ui.full : ui.temporaryControls;
+        return callback(present ? [domElement(kind === "heading" ? "h2" : "button", { "aria-label": name })] : [], ownedChipSelector);
       }
       if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
       if (name === "Ask ChatGPT") {
         const content = [domText(ui.composer)];
         if (ui.chip) content.push(domElement("span", { "app-mention-display-name": "Current Codex Tools",
           "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
-        return callback([domElement("div", { contenteditable: "true" }, ...content)], ownedChipSelector);
+        const composer = domElement("div", { contenteditable: "true" }, ...content);
+        composer.innerText = ui.composer;
+        return callback([composer], ownedChipSelector);
+      }
+      if (ownedChipSelector?.mutation && name.startsWith("span[app-mention")) {
+        const chip = domElement("span", { "app-mention-display-name": "Current Codex Tools", "app-mention-path": "app://asdk_current_tools", contenteditable: "false" });
+        chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
+        return callback(ui.chip ? [chip] : [], ownedChipSelector);
       }
       if (ownedChipSelector?.observation && ui.observationRoot) {
         const body = domElement("body", {}, ui.observationRoot);
@@ -172,7 +203,7 @@ function fakeBrowser() {
         for (const element of selected) element.getBoundingClientRect = () => ({ width: 32, height: 32 });
         return callback([body, ...selected], ownedChipSelector);
       }
-      assert.equal(name, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]');
+      assert.ok([browserDom.turnSelector, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]'].includes(name));
       const roots = ui.turns.map((turn, index) => {
         const action = { getAttribute: () => "Regenerate response", closest: () => null };
         const root = { nodeType: 1, tagName: "DIV", textContent: turn.prompt, fixtureMarkdown: [],
@@ -206,6 +237,9 @@ function fakeBrowser() {
         element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
       }
       let selected = [...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])];
+      if (name === browserDom.turnSelector) selected = roots;
+      if (ownedChipSelector?.mutation) selected = selected.filter(element => element.matches(browserDom.turnSelector)
+        || element.matches(ownedChipSelector.assistantSelector));
       if (ownedChipSelector?.observation) {
         selected = selected.filter(element => element.matches("[data-turn-key]") || element.matches(ownedChipSelector.assistantSelector));
         const body = domElement("body"), document = { body, URL: ui.url,
@@ -354,6 +388,117 @@ async function reportObservation(h, call, fields) {
   h.append(call, outputFor(call, `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: { ...observed, ...fields } })}\nROUTER_WEB_BROWSER_${frameToken}_END`));
   return h.request();
 }
+
+async function fullContinuationAfterMiss(h, call) {
+  const config = readBrowserProgram(JSON.parse(call.arguments).code);
+  assert.equal(config.operation, "continue");
+  assert.equal(config.fullContinuation, undefined);
+  const output = await h.executeBrowser(call);
+  assert.deepEqual(parseBrowserOutput(output, config.frameToken), { operation: "continue", needsFullContinuation: true, noActions: true });
+  h.append(call, outputFor(call, output));
+  const full = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(full.arguments).code).fullContinuation, true);
+  return full;
+}
+
+function browserReceipt(call, value, frameToken = readBrowserProgram(JSON.parse(call.arguments).code).frameToken) {
+  return `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: value })}\nROUTER_WEB_BROWSER_${frameToken}_END`;
+}
+
+test("warm Continue and Send reuse the installed mutation cache while lost kernels get one bounded full install", async t => {
+  for (const lostKernel of [false, true]) await t.test(lostKernel ? "lost kernel" : "warm cache", async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Original completed answer");
+    const originalCache = h.browserOwner().state.residentMutation;
+    if (lostKernel) h.loseKernel();
+    h.newTurn(followupId, "Only this follow-up should be sent.");
+    let continuation = (await h.request()).output[0];
+    const fast = readBrowserProgram(JSON.parse(continuation.arguments).code);
+    assert.equal(fast.fullContinuation, undefined);
+    assert.ok(Buffer.byteLength(continuation.arguments, "utf8") < 10000);
+    if (lostKernel) {
+      const before = [h.browser.ui.marks, h.browser.ui.newTabs, h.browser.ui.navigations, h.browser.ui.sends.length];
+      continuation = await fullContinuationAfterMiss(h, continuation);
+      assert.deepEqual([h.browser.ui.marks, h.browser.ui.newTabs, h.browser.ui.navigations, h.browser.ui.sends.length], before);
+      assert.equal((await h.request()).output[0].call_id, continuation.call_id, "The full-install handoff is replayed by identity until its actual result.");
+    }
+    const send = (await h.answerBrowser(continuation)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
+    assert.ok(Buffer.byteLength(send.arguments, "utf8") < 10000);
+    assert.equal(h.browser.ui.sends.length, 1);
+    if (!lostKernel) assert.equal(h.browserOwner().state.residentMutation, originalCache);
+    const observe = (await h.answerBrowser(send)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(observe.arguments).code).operation, "observe");
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only this follow-up should be sent." }]);
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("only an exact current no-action receipt permits one full Continue and never a Send retry", async t => {
+  const receipt = { operation: "continue", needsFullContinuation: true, noActions: true };
+  for (const [name, stage, value, foreignNonce] of [
+    ["extra field", "continue", { ...receipt, normal: true }],
+    ["actions not excluded", "continue", { ...receipt, noActions: false }],
+    ["full install not requested", "continue", { ...receipt, needsFullContinuation: false }],
+    ["missing action proof", "continue", { operation: "continue", needsFullContinuation: true }],
+    ["wrong nonce", "continue", receipt, true],
+    ["Send requests install", "send", { ...receipt, operation: "send" }],
+    ["second install request", "full", receipt],
+  ]) await t.test(name, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Completed answer");
+    h.newTurn(followupId, "Continue only from verified custody.");
+    let pending = (await h.request()).output[0];
+    if (stage === "send") pending = (await h.answerBrowser(pending)).output[0];
+    if (stage === "full") {
+      h.loseKernel();
+      pending = await fullContinuationAfterMiss(h, pending);
+    }
+    h.append(pending, outputFor(pending, browserReceipt(pending, value, foreignNonce ? "f".repeat(48) : undefined)));
+    await assert.rejects(h.request(), { code: "web_browser_output_shape" });
+    assert.equal(h.browser.ui.sends.length, 1);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("a failed fast Send cannot retry after its cache is lost or native execution fails", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  await h.completeAnswer(call, "Completed answer");
+  h.newTurn(followupId, "An uncertain native Send must never replay.");
+  const continuation = (await h.request()).output[0];
+  const send = (await h.answerBrowser(continuation)).output[0];
+  delete h.browserOwner().state.residentMutation;
+  await assert.rejects(h.executeBrowser(send), /mutation cache was lost or changed/u);
+  h.append(send, outputFor(send, { isError: true, content: [{ type: "text", text: "Native mutation cache unavailable." }] }));
+  await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Do not repeat the unconfirmed Send.");
+  await assert.rejects(h.request(), { code: "web_send_uncertain" });
+  assert.equal(h.browser.ui.sends.length, 1);
+  assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("cancellation during a full-continuation handoff preserves exact owners and resumes without repeating Send", async t => {
+  for (const executed of [false, true]) await t.test(`full install executed ${executed}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Completed before native restart");
+    h.loseKernel();
+    h.newTurn(followupId, "The first unsent follow-up.");
+    const full = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+    if (executed) await h.executeBrowser(full);
+    h.observations.watchers.at(-1).onCancel();
+    await h.restartRuntime();
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "The next unsent follow-up.");
+    await h.toObserve();
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.newTabs, 1);
+    assert.equal(h.browser.ui.closes, 0);
+    assert.deepEqual(sentTranscript(h), [
+      { role: "user", content: "The first unsent follow-up." },
+      { role: "user", content: "The next unsent follow-up." },
+    ]);
+  });
+});
 
 const sentTranscript = (h, index = -1) => JSON.parse(h.browser.ui.sends.at(index).split("Conversation transcript:\n")[1].split("\nRouter generation: ")[0]);
 
@@ -811,7 +956,7 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
   assert.equal(h.browser.ui.marks, 2, "The owned tab is retained at open and immediately before Send.");
   h.browser.ui.stop = true;
   const token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   assert.deepEqual(read.parameters, currentRead.tools[0].parameters);
   const mcpResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt", limit: 3 } });
   let resolved = false;
@@ -846,7 +991,7 @@ test("a queued MCP invocation routes after UI-only observation and resolves only
 test("one Send carries commentary, actual native execution and a final answer under a new message identity", async t => {
   const h = harness(t), { call } = await h.toObserve();
   h.browser.ui.texts.push("I will inspect the requested file."); h.browser.ui.stop = true;
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const coding = (await h.answerBrowser(call)).output[0];
   assert.equal(coding.namespace, "mcp__work");
@@ -871,7 +1016,7 @@ test("orphan connector widgets cannot block native calls or become the answer th
   h.browser.ui.orphanMarkdownBefore = [widget("A connector widget before the saved messages")];
   h.browser.ui.orphanMarkdownAfter = [widget("A connector widget after the saved messages")];
   const { call } = await h.toObserve();
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "widget-safe.txt" } });
   const coding = (await h.answerBrowser(call)).output[0];
   assert.equal(coding.namespace, "mcp__work");
@@ -889,7 +1034,7 @@ test("lost generation ownership aborts queued MCP work before native delivery or
     const h = harness(t), { call } = await h.toObserve();
     h.browser.ui.texts.push("A message outside the owned generation."); h.browser.ui.replyTurnKeys = [messageId(999)];
     h.browser.ui.complete = true;
-    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
     const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-execute.txt" } });
     const aborted = assert.rejects(actual, { code: "web_generation_ownership" });
     const frame = await h.executeBrowser(call);
@@ -919,7 +1064,7 @@ test("MCP activity between the browser read and final delivery forces a fresh an
     let pending = call;
     if (boundary === "retention") pending = (await h.answerBrowser(call)).output[0];
     const frame = await h.executeBrowser(pending);
-    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
     const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "late.txt" } });
     h.append(pending, outputFor(pending, frame));
     const coding = (await h.request()).output[0];
@@ -955,7 +1100,7 @@ test("completed pages fail promptly when unreadable or missing a post-tool final
     let observe = call;
     if (withTool) {
       h.browser.ui.texts.push("I will read the file."); h.browser.ui.stop = true;
-      const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+      const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
       const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "read-once.txt" } });
       const coding = (await h.answerBrowser(observe)).output[0];
       h.append(coding, outputFor(coding, "KNOWN_NATIVE_OUTPUT"));
@@ -980,7 +1125,7 @@ test("new native activity resets the bounded completed-but-unreadable wait", asy
   h.browser.ui.complete = true;
   let observe = call;
   for (let index = 0; index < 2; index += 1) observe = (await h.answerBrowser(observe)).output[0];
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "once.txt" } });
   const coding = (await h.answerBrowser(observe)).output[0];
   assert.equal(coding.namespace, "mcp__work");
@@ -1135,7 +1280,7 @@ test("a first substantive answer proves receipt even with a simultaneous site er
     assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
     let rejected;
     if (scenario.queued) {
-      const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+      const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
       const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-first-answer-error.txt" } });
       rejected = assert.rejects(actual, { code: "web_request_failed" });
     } else assert.equal(h.broker.hasClientActivity(h.token()), false);
@@ -1171,7 +1316,7 @@ test("a first substantive answer proves receipt even with a simultaneous site er
 test("request failure suppresses queued native actions and cannot erase accepted tool outcomes", async t => {
   for (const emitted of [false, true]) await t.test(`native result emitted ${emitted}`, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
     const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "one-owned-action.txt" } });
     let observe = call, saved;
     if (emitted) {
@@ -1199,7 +1344,7 @@ test("request failure suppresses queued native actions and cannot erase accepted
 test("late request failure during retention blocks final delivery and newly queued native actions", async t => {
   for (const priorResult of [false, true]) for (const lateCall of [false, true]) await t.test(`prior native result ${priorResult}; late queued call ${lateCall}`, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
     let observe = call;
     if (priorResult) {
       const actual = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual-before-retain.txt" } });
@@ -1259,7 +1404,7 @@ test("a broker fence race after retention preserves real rejection detection bef
     domElement("div", { "data-talvt-turn-state": "complete" }, domElement("div", {}, domText(submitted)), answer,
       domElement("button", { "aria-label": "Regenerate response" })));
   h.browser.ui.observationRoot = domElement("main", {}, turn, errorRegion, composer);
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const queued = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "must-not-emit-after-retention-race.txt" } });
   const queuedOutcome = queued.then(() => undefined, error => error);
   await assert.rejects(h.answerBrowser(resumed), { code: "web_request_failed" });
@@ -1418,7 +1563,7 @@ test("native request replay preserves call IDs and follow-up NEW turns reuse the
   const { call: nextObserve } = await h.toObserve();
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(new Set(h.observations.bindings).size, 1);
-  assert.equal(h.observations.nativeOperations.filter(operation => operation === "continue").length, 1);
+  assert.equal(h.observations.nativeOperations.filter(operation => operation === "continue").length, 2, "Lost REPL state requires one no-action probe and one full continuation.");
   assert.equal(h.browser.ui.sends.length, 2);
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Follow up in this same chat." }]);
   assert.equal(h.browser.ui.power, 2);
@@ -1442,18 +1587,66 @@ test("completed turn retirement preserves the exact final JSON and SSE response 
     h.browser.ui.texts.push("Exact final response with Unicode: ✓ π"); h.browser.ui.complete = true;
     const retain = (await h.answerBrowser(call)).output[0];
     h.append(retain, outputFor(retain, await h.executeBrowser(retain)));
-    const response = await h.requestResponse({ stream }), body = await response.text(), originalHeaders = [...response.headers];
+    const intermediate = { stream: false, input: [...h.input().slice(0, -2)] };
+    const response = await h.requestResponse({ stream }), body = Buffer.from(await response.arrayBuffer()), originalHeaders = [...response.headers];
+    response.headers.set("content-type", "caller-mutated");
     await new Promise(resolve => setImmediate(resolve));
     h.observations.watchers[0].onCancel();
     for (let index = 0; index < 3; index += 1) {
       const replay = await h.requestResponse({ stream });
-      assert.equal(await replay.text(), body);
+      assert.deepEqual(Buffer.from(await replay.arrayBuffer()), body);
       assert.deepEqual([...replay.headers], originalHeaders);
       assert.equal(replay.status, response.status);
+      assert.equal(replay.statusText, response.statusText);
     }
+    await assert.rejects(h.requestResponse(intermediate), /turn is complete/u);
     await assert.rejects(h.requestResponse({ stream, request_metadata: { changed: true } }), /turn is complete/u);
     await assert.rejects(h.requestResponse({ stream: !stream }), /turn is complete/u);
     assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("intermediate replay preserves exact JSON and SSE bytes across independent consumers and bounded eviction", async t => {
+  for (const stream of [false, true]) await t.test(stream ? "SSE" : "JSON", async t => {
+    const h = harness(t), replies = [];
+    for (let index = 0; index < 11; index += 1) {
+      const payload = { stream, input: [...h.input()] };
+      const original = await h.requestResponse(payload);
+      const headers = [...original.headers], status = original.status, statusText = original.statusText;
+      // Leave the original body unread while consuming a replay in full.
+      const body = Buffer.from(await (await h.requestResponse(payload)).arrayBuffer());
+      const envelope = stream ? JSON.parse(body.toString("utf8").match(/event: response.completed\ndata: ([^\n]+)/u)[1]).response
+        : JSON.parse(body.toString("utf8"));
+      replies.push({ payload, body, headers, status, statusText });
+      if (index === 0) {
+        original.headers.set("content-type", "caller-mutated");
+        const reader = original.body.getReader(), chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        chunk.value.fill(0);
+        // Abandon a read body and mutate its chunk; neither can change replay.
+        await reader.cancel();
+        const parsed = stream ? envelope : JSON.parse(body.toString("utf8"));
+        parsed.output[0].arguments = "caller-mutated";
+        const replay = await h.requestResponse(payload);
+        assert.deepEqual(Buffer.from(await replay.arrayBuffer()), body);
+        assert.deepEqual([...replay.headers], headers);
+      } else assert.deepEqual(Buffer.from(await original.arrayBuffer()), body);
+      const call = stream ? JSON.parse(body.toString("utf8").match(/event: response.completed\ndata: ([^\n]+)/u)[1]).response.output[0]
+        : JSON.parse(body.toString("utf8")).output[0];
+      if (index < 10) h.append(call, outputFor(call, await h.executeBrowser(call)));
+    }
+    const operations = [...h.observations.nativeOperations];
+    for (const retained of replies.slice(-8)) {
+      const replay = await h.requestResponse(retained.payload);
+      assert.deepEqual(Buffer.from(await replay.arrayBuffer()), retained.body);
+      assert.deepEqual([...replay.headers], retained.headers);
+      assert.equal(replay.status, retained.status);
+      assert.equal(replay.statusText, retained.statusText);
+    }
+    assert.deepEqual(h.observations.nativeOperations, operations, "Cache hits do not execute or regenerate native work.");
+    await assert.rejects(h.requestResponse(replies.at(-9).payload), { code: "web_tool_result", status: 409 });
+    await assert.rejects(h.requestResponse(replies.at(-1).payload), { code: "web_tool_result", status: 409 });
+    assert.deepEqual(h.observations.nativeOperations, operations, "Eviction and cancellation never reissue a native action.");
   });
 });
 
@@ -1515,7 +1708,7 @@ test("native cancellation retires the real broker while the next turn retains it
   const h = harness(t);
   const { call } = await h.toObserve();
   const token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const pending = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const rejection = assert.rejects(pending, { code: "web_turn_cancelled" });
   h.browser.ui.texts.push("Reading the actual requested file."); h.browser.ui.stop = true;
@@ -1558,7 +1751,7 @@ test("a private saved-chat mapping survives Router and browser restart with delt
   h.append({ role: "user", content: privatePrompt });
   const { call } = await h.toObserve();
   const oldToken = h.token(), oldBroker = h.broker;
-  const read = oldBroker.list(oldToken).find(tool => tool.name === "read");
+  const read = oldBroker.list(oldToken).tools.find(tool => tool.name === "read");
   const actual = oldBroker.invoke(oldToken, { wireName: read.wireName, arguments: { path: "private-tool-argument.txt" } });
   const coding = (await h.answerBrowser(call)).output[0];
   h.append(coding, outputFor(coding, "private actual tool result"));
@@ -1584,7 +1777,7 @@ test("a private saved-chat mapping survives Router and browser restart with delt
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only new native material follows restart." }]);
   assert.equal(h.browser.ui.sends.at(-1).includes(privatePrompt), false);
   assert.equal(h.browser.ui.sends.at(-1).includes(oldToken), false);
-  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
+  assert.deepEqual(h.broker.list(h.token()).tools.find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
 });
 
 test("manually closing the saved tab reopens its URL and preserves delta delivery while the REPL survives", async t => {
@@ -1603,7 +1796,7 @@ test("manually closing the saved tab reopens its URL and preserves delta deliver
 
 test("completed native tool acknowledgements stop before genuinely unsent native material", async t => {
   const h = harness(t), { call } = await h.toObserve(), token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const actual = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "already-delivered.txt" } });
   const coding = (await h.answerBrowser(call)).output[0];
   h.append(coding, outputFor(coding, "Already delivered actual tool result"));
@@ -1633,7 +1826,7 @@ test("delivery and coding acknowledgement use exact canonical transcript digests
   const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   const { call } = await h.toObserve();
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, undefined);
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, { answer: "Actual current result ✓", count: 2 });
   assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, expected.map(hash));
@@ -1748,7 +1941,7 @@ test("a completed generation keeps its exact final reply proof across a failed p
   await h.restartRuntime(); h.loseKernel();
   h.browser.ui.composer = ""; h.browser.ui.replyIds = [messageId(999)];
   h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Retry the new work.");
-  const retry = (await h.request()).output[0];
+  const retry = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).generationCompleted, true);
   await assert.rejects(h.executeBrowser(retry), /saved chat reply or composer changed/);
   assert.equal(h.browser.ui.sends.length, 1);
@@ -1768,7 +1961,7 @@ test("runtime recovery passes saved evidence and refuses changed session, reply 
     h.observations.watchers[0].onCancel(); h.loseKernel();
     mutate(h);
     h.newTurn(followupId, "Recover only with unchanged observed evidence.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     await assert.rejects(h.executeBrowser(continuation), /recovery|saved chat|active browser/iu);
     assert.equal(h.browser.ui.stop, true);
     assert.deepEqual(h.browser.ui.stopMarks, []);
@@ -2006,7 +2199,7 @@ test("owned unresolved coding blocks across restart until a late actual result a
   const h = harness(t);
   const admission = new RouterAdmission({ webRuntimeState: () => h.runtime.maintenanceState() });
   const { call } = await h.toObserve();
-  const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+  const token = h.token(), read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const pending = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "unknown.txt" } });
   const rejection = assert.rejects(pending, { code: "web_turn_cancelled" });
   const coding = (await h.answerBrowser(call)).output[0];
@@ -2112,7 +2305,7 @@ test("a confirmed interrupted Send without observed text recovers its exact reta
     await h.restartRuntime();
     const priorCheckpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
     h.newTurn(followupId, "Continue in the same chat.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(pending.lastTurn.sendState, "unsent");
     assert.deepEqual(pending.checkpoint, priorCheckpoint);
@@ -2138,7 +2331,7 @@ test("a confirmed interrupted generation recovers its saved chat after its tab i
     await h.restartRuntime();
     const priorCheckpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
     h.newTurn(followupId, "Continue in the recovered saved chat.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(pending.lastTurn.sendState, "unsent");
     assert.deepEqual(pending.checkpoint, priorCheckpoint);
@@ -2170,7 +2363,7 @@ test("retained-tab recovery rejects foreign chats, ambiguous replies and drafts 
     const h = harness(t);
     await stopBeforeRenderedReply(h, { emptyReply }); mutate(h);
     h.newTurn(followupId, "Continue only in the retained chat.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     await assert.rejects(h.executeBrowser(continuation), label === "changed saved URL"
       ? /known tab is not an empty normal ChatGPT home/iu
       : /saved chat reply or composer/iu);
@@ -2204,7 +2397,7 @@ test("retained-tab recovery rechecks ownership across SDK discovery, Stop visibi
       };
     }
     h.newTurn(followupId, "A newer owner must win.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     await assert.rejects(h.executeBrowser(continuation), /different native turn/iu);
     assert.equal(h.browserOwner(), foreign);
     assert.equal(h.browser.ui.sends.length, 1); assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
@@ -2221,7 +2414,7 @@ test("retained-tab recovery can discover owned replies during Stop but cannot cr
       else h.browser.ui.texts.push("The first reply rendered while Stop was reconciled");
     };
     h.newTurn(followupId, "Continue only after identifying the stopped reply.");
-    const continuation = (await h.request()).output[0];
+    const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
     if (replaceReply) await assert.rejects(h.executeBrowser(continuation), /confirmed browser generation is no longer unique and latest/iu);
     else {
       const output = await h.executeBrowser(continuation); h.append(continuation, outputFor(continuation, output));
@@ -2238,7 +2431,7 @@ test("failed pre-Send recovery preserves its confirmed checkpoint across an unse
   const checkpoint = JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint;
   h.browser.ui.composer = "A draft temporarily blocks recovery.";
   h.newTurn(followupId, "First new native instruction.");
-  const continuation = (await h.request()).output[0];
+  const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
   const failure = await h.executeBrowser(continuation).then(() => assert.fail("The draft must block recovery."), error => error);
   h.append(continuation, outputFor(continuation, { isError: true, content: [{ type: "text", text: failure.message }] }));
   await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
@@ -2261,7 +2454,7 @@ test("an interrupted unsent turn without a confirmed checkpoint cannot recover o
   await h.executeBrowser(open);
   h.observations.watchers[0].onCancel(); h.loseKernel();
   h.newTurn(followupId, "An unacknowledged open is still uncertain.");
-  const continuation = (await h.request()).output[0];
+  const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
   await assert.rejects(h.executeBrowser(continuation), /binding was lost/u);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.navigations, 1);
@@ -2286,7 +2479,7 @@ test("unexplained native history changes reject instead of sending the whole pri
 test("readable compaction preserves native evidence and current instructions in the retained chat", async t => {
   const h = harness(t);
   const { call } = await h.toObserve();
-  const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+  const token = h.token(), read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt" } });
   const coding = (await h.answerBrowser(call)).output[0];
   h.append(coding, outputFor(coding, "Actual file contents retained as native evidence."));
@@ -2307,7 +2500,7 @@ test("readable compaction preserves native evidence and current instructions in 
   assert.match(h.browser.ui.sends.at(-1), /Current native instructions still apply/u);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(new Set(h.observations.bindings).size, 1);
-  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
+  assert.deepEqual(h.broker.list(h.token()).tools.find(tool => tool.name === "read").parameters, currentRead.tools[0].parameters);
   h.observations.watchers.at(-1).onCancel();
   const opaqueTurn = "33002233-4455-6677-8899-aabbccddeeff";
   h.input().splice(0, h.input().length, { type: "compaction", encrypted_content: "opaque-native-checkpoint" });
@@ -2322,7 +2515,7 @@ test("attributed compaction preserves undelivered native items without resending
     const h = harness(t), { call } = await h.toObserve();
     let observe = call;
     if (mode === "owned coding") {
-      const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+      const token = h.token(), read = h.broker.list(token).tools.find(tool => tool.name === "read");
       const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "owned-completed-result.txt" } });
       const owned = (await h.answerBrowser(observe)).output[0];
       h.append(owned, outputFor(owned, "Owned actual result already delivered to Web"));
@@ -2523,7 +2716,7 @@ test("native V2 forwards changed or clipped retained-prefix material instead of 
 test("native V2 carries a pending coding result without delivering it until the ordinary request", async t => {
   for (const mode of ["used", "abandoned", "recompacted", "restarted", "later owned batch", "undelivered native tail", "canceled"]) await t.test(mode, async t => {
   const h = harness(t), { call } = await h.toObserve();
-  const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
   const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "pending-v2.txt" } });
   let settled = false, deliveries = 0;
   void result.then(() => { settled = true; }, () => {});
@@ -2592,7 +2785,7 @@ test("native V2 carries a pending coding result without delivering it until the 
 test("native V2 acknowledges actual coding across refreshed context and recompaction without hiding later native work", async t => {
   for (const mode of ["completed", "restart prefix-form record", "later native answer"]) await t.test(mode, async t => {
     const h = harness(t), { call } = await h.toObserve();
-    const read = h.broker.list(h.token()).find(tool => tool.name === "read");
+    const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
     const result = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "recompacted-owned-result.txt" } });
     let deliveries = 0, settled = false;
     const complete = h.broker.complete.bind(h.broker);
@@ -2655,7 +2848,7 @@ test("native V2 compacts after a failed open and completed same-chat native turn
 
   const completeCodingTurn = async text => {
     const { call } = await h.toObserve(), token = h.token();
-    const read = h.broker.list(token).find(tool => tool.name === "read");
+    const read = h.broker.list(token).tools.find(tool => tool.name === "read");
     const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "same-chat.txt" } });
     const coding = (await h.answerBrowser(call)).output[0], output = outputFor(coding, `Actual native result: ${text}`);
     h.append(coding, output);
@@ -2748,7 +2941,7 @@ test("capacity after an answer or native action never automatically repeats that
     const h = harness(t), { call } = await h.toObserve();
     let observe = call;
     if (codingAction) {
-      const token = h.token(), read = h.broker.list(token).find(tool => tool.name === "read");
+      const token = h.token(), read = h.broker.list(token).tools.find(tool => tool.name === "read");
       const actual = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual-capacity-action.txt" } });
       const coding = (await h.answerBrowser(observe)).output[0];
       h.append(coding, outputFor(coding, "Actual completed native effect"));
@@ -2781,7 +2974,7 @@ test("an interrupted rollover handoff reconciles execution and retains the empty
     if (lostKernel) { await h.restartRuntime(); h.loseKernel(); }
     h.newTurn(followupId, "Continue after the successor was opened.");
     if (lostKernel) {
-      const continuation = (await h.request()).output[0];
+      const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
       await assert.rejects(h.executeBrowser(continuation), /binding was lost/u);
       assert.equal(h.browser.ui.sends.length, 1);
     } else {
@@ -2799,7 +2992,7 @@ test("an interrupted rollover handoff reconciles execution and retains the empty
 
 test("a queued native tool invocation blocks automatic capacity transfer before any action is emitted", async t => {
   const h = harness(t), { call } = await h.toObserve(), token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const queued = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "must-not-execute.txt" } });
   const rejected = assert.rejects(queued, { code: "web_tools_pending" });
   h.browser.ui.full = true;
@@ -2856,7 +3049,7 @@ test("browser executor discovery uses actual client search results and preserves
   assert.equal(bootstrap.namespace, "mcp__node_repl");
   assert.equal(bootstrap.name, "js");
   const { call } = await h.toObserve();
-  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
+  assert.deepEqual(h.broker.list(h.token()).tools.find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
   await h.completeAnswer(call, "Discovered current native tools.");
   h.newTurn(followupId, "Use the same discovered native tools in this turn.");
   // The follow-up still declares only client search and the read tool. Its
@@ -2864,14 +3057,14 @@ test("browser executor discovery uses actual client search results and preserves
   await h.toObserve();
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.observations.nativeOperations.at(-2), "continue");
-  assert.deepEqual(h.broker.list(h.token()).find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
+  assert.deepEqual(h.broker.list(h.token()).tools.find(tool => tool.namespace === "mcp__node_repl").parameters, actualNative.tools[0].parameters);
 });
 
 test("an MCP call queued after the delivered batch is emitted after that batch completes", async t => {
   const h = harness(t);
   const { call: observe } = await h.toObserve();
   const token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const firstResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "first.txt" } });
   void firstResult.catch(() => {});
   const firstCall = (await h.answerBrowser(observe)).output[0];
@@ -2911,7 +3104,7 @@ test("mutating a consumed native coding result rejects the next advance before c
   const h = harness(t);
   const { call } = await h.toObserve();
   const token = h.token();
-  const read = h.broker.list(token).find(tool => tool.name === "read");
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
   const actualResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt" } });
   void actualResult.catch(() => {});
   const coding = (await h.answerBrowser(call)).output[0];

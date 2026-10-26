@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
+import { request as httpRequest, Server as HttpServer } from "node:http";
 import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { startWebMcp } from "../src/web-mcp.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
@@ -13,6 +16,8 @@ const fn = name => ({ type: "function", name, description: "Native tool", parame
 const register = (broker, turnId, tools = [fn("read")]) => broker.register({ threadId: "native-thread", turnId, tools });
 const finish = (broker, token) => broker.finish(token, broker.beginCompletion(token));
 const call = (client, turn, wireName, args = {}) => client.callTool({ name: "codex_tool_call", arguments: { turn_token: turn.token, wire_name: wireName, ...args } });
+const discoveryPage = result => JSON.parse(result.content[0].text);
+const postOnly = { fetch: (url, init) => init?.method === "GET" ? Promise.resolve(new Response(null, { status: 405 })) : fetch(url, init) };
 const withoutDiagnosticTime = receipts => receipts.map(({ at, ...receipt }) => {
   assert.equal(new Date(at).toISOString(), at);
   return receipt;
@@ -55,9 +60,9 @@ async function fixture(t, options = {}) {
     await Promise.all(clients.map(({ client }) => client.close()));
     await service.close();
   });
-  const connect = async () => {
+  const connect = async transportOptions => {
     const client = new Client({ name: "native-web-bridge-test", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(new URL(service.url));
+    const transport = new StreamableHTTPClientTransport(new URL(service.url), transportOptions);
     clients.push({ client, transport });
     await client.connect(transport);
     return { client, transport };
@@ -90,7 +95,7 @@ for (const trace of [false, true]) {
     const { client, transport } = await connect();
     assert.equal(broker.hasClientActivity(turn.token), false, "MCP session setup is not current-token input acceptance.");
     const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
-    assert.deepEqual(discovered.structuredContent.tools, broker.list(turn.token));
+    assert.deepEqual(discoveryPage(discovered), broker.list(turn.token));
     assert.equal(broker.hasClientActivity(turn.token), true, "Authenticated current-token discovery acknowledges input before a native invocation.");
     const result = call(client, turn, "read", { arguments: { marker: "private-arguments" } });
     const [native] = await nativeCalls(broker, turn.token);
@@ -155,8 +160,8 @@ test("SDK HTTP client initializes, discovers current native tools, and waits for
   assert.equal(listed.tools[1].annotations.readOnlyHint, false);
   assert.equal(listed.tools[1].annotations.destructiveHint, true);
   const declarations = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
-  assert.deepEqual(declarations.structuredContent.tools, broker.list(turn.token));
-  assert.deepEqual(JSON.parse(declarations.content[0].text), declarations.structuredContent);
+  assert.deepEqual(discoveryPage(declarations), broker.list(turn.token));
+  assert.equal(declarations.structuredContent, undefined);
   let resolved = false;
   const result = call(client, turn, "mcp__files__read", { arguments: { path: "native.txt" } });
   void result.then(() => { resolved = true; });
@@ -205,9 +210,9 @@ test("SDK focused discovery returns complete function schemas and custom grammar
   const { client } = await connect();
   const discover = query => client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, query } });
   const selected = await discover("MCP__FILES__READ");
-  assert.deepEqual(selected.structuredContent.tools, broker.list(turn.token).filter(tool => tool.name === "read"));
-  assert.deepEqual(JSON.parse(selected.content[0].text), selected.structuredContent);
-  const [read] = selected.structuredContent.tools;
+  assert.deepEqual(discoveryPage(selected).tools, broker.list(turn.token).tools.filter(tool => tool.name === "read"));
+  assert.deepEqual(selected.structuredContent, undefined);
+  const [read] = discoveryPage(selected).tools;
   assert.deepEqual(read.parameters, parameters);
   const pendingRead = call(client, turn, read.wireName, { arguments: { path: read.parameters.properties.path.enum[0] } });
   const [nativeRead] = await nativeCalls(broker, turn.token);
@@ -217,18 +222,52 @@ test("SDK focused discovery returns complete function schemas and custom grammar
   broker.complete(turn.token, [{ type: "function_call_output", call_id: nativeRead.call_id, output: "native file contents" }]);
   assert.equal((await pendingRead).content[0].text, "native file contents");
   const custom = await discover("ExEc");
-  assert.deepEqual(custom.structuredContent.tools[0].format, format);
-  assert.deepEqual(JSON.parse(custom.content[0].text), custom.structuredContent);
-  const pendingCustom = call(client, turn, custom.structuredContent.tools[0].wireName, { input: "native" });
+  assert.deepEqual(discoveryPage(custom).tools[0].format, format);
+  assert.deepEqual(custom.structuredContent, undefined);
+  const pendingCustom = call(client, turn, discoveryPage(custom).tools[0].wireName, { input: "native" });
   const [nativeCustom] = await nativeCalls(broker, turn.token);
   assert.equal(nativeCustom.type, "custom_tool_call");
   assert.equal(nativeCustom.namespace, "functions");
   assert.equal(nativeCustom.input, "native");
   broker.complete(turn.token, [{ type: "custom_tool_call_output", call_id: nativeCustom.call_id, output: "native code result" }]);
   assert.equal((await pendingCustom).content[0].text, "native code result");
-  assert.deepEqual((await discover("missing")).structuredContent.tools, []);
+  assert.deepEqual(discoveryPage(await discover("missing")).tools, []);
   assert.equal(finish(broker, turn.token), true);
   assert.equal((await discover("read")).isError, true);
+});
+
+test("SDK discovery pages complete schemas and rejects stale or conflicting selections without invoking tools", { timeout: 10_000 }, async t => {
+  const { broker, connect } = await fixture(t);
+  const turn = register(broker, "paged", Array.from({ length: 12 }, (_, index) => fn(`read_${index}`)));
+  const { client } = await connect();
+  const discover = selection => client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token, ...selection } });
+  const firstResult = await discover({});
+  const first = discoveryPage(firstResult);
+  assert.equal(firstResult.structuredContent, undefined, "Router JSON is sent only once.");
+  assert.equal(first.total, 12);
+  assert.equal(first.tools.length, 8);
+  const second = discoveryPage(await discover({ cursor: first.nextCursor }));
+  assert.equal(second.total, 12);
+  assert.equal(second.tools.length, 4);
+  assert.equal(second.nextCursor, undefined);
+  assert.deepEqual([...first.tools, ...second.tools].map(tool => tool.name), Array.from({ length: 12 }, (_, index) => `read_${index}`));
+  const exact = discoveryPage(await discover({ names: ["read_1", "read_11"] }));
+  assert.deepEqual(exact.tools.map(tool => tool.name), ["read_1", "read_11"]);
+  assert.deepEqual(exact.tools[0].parameters, fn("read_1").parameters);
+  assert.equal(discoveryPage(await discover({ query: "read_1" })).total, 1);
+  for (const selection of [{ names: [] }, { names: [" "] }, { names: Array(33).fill("read_1") },
+    { names: ["read_1"], query: "read" }, { limit: 0 }, { limit: 33 }, { limit: 1.5 }, { cursor: "malformed" }]) {
+    await assert.rejects(discover(selection), /invalid arguments/iu);
+  }
+  const staleSelection = await discover({ names: ["read_1"], cursor: first.nextCursor });
+  assert.equal(staleSelection.isError, true);
+  assert.deepEqual(staleSelection.structuredContent, { error: { code: "invalid_web_tool_cursor" } });
+  assert.match(staleSelection.content[0].text, /no cursor/u);
+  broker.update(turn.token, { tools: [fn("changed")] });
+  assert.equal((await discover({ cursor: first.nextCursor })).isError, true);
+  assert.deepEqual(discoveryPage(await discover({})).tools.map(tool => tool.name), ["changed"]);
+  assert.deepEqual(broker.takeCalls(turn.token), []);
+  assert.equal(finish(broker, turn.token), true);
 });
 
 test("concurrent ChatGPT sessions retain exact turn identity and raw custom input", { timeout: 10_000 }, async t => {
@@ -240,7 +279,7 @@ test("concurrent ChatGPT sessions retain exact turn identity and raw custom inpu
   const [{ client: one }, { client: two }] = await Promise.all([connect(), connect()]);
   const input = "text('native caller executes this');\n$not_a_shell_command";
   const resultOne = call(one, first, "read", { arguments: { marker: "one" } });
-  const resultTwo = call(two, second, broker.list(second.token)[0].wireName, { input });
+  const resultTwo = call(two, second, broker.list(second.token).tools[0].wireName, { input });
   const [[nativeOne], [nativeTwo]] = await Promise.all([nativeCalls(broker, first.token), nativeCalls(broker, second.token)]);
   assert.equal(nativeTwo.type, "custom_tool_call");
   assert.equal(nativeTwo.namespace, "functions");
@@ -271,7 +310,7 @@ test("SDK cancellation retires only its native turn and notifies the generation 
   assert.equal(await observed, first.token);
   assert.throws(() => broker.list(first.token), { code: "web_tool_turn_closed" });
   assert.throws(() => broker.complete(first.token, [{ type: "function_call_output", call_id: native.call_id, output: "late" }]));
-  assert.equal(broker.list(second.token).length, 1);
+  assert.equal(broker.list(second.token).tools.length, 1);
   await service.close();
   assert.equal(service.status().listening, false);
 });
@@ -287,12 +326,387 @@ test("session termination and server close cancel unresolved native calls", { ti
   await Promise.all([nativeCalls(broker, first.token), nativeCalls(broker, second.token)]);
   await transport.terminateSession();
   assert.throws(() => broker.list(first.token), { code: "web_tool_turn_closed" });
-  assert.equal(broker.list(second.token).length, 1);
+  assert.equal(broker.list(second.token).tools.length, 1);
   await service.close();
   await settled;
   assert.throws(() => broker.list(second.token), { code: "web_tool_turn_closed" });
   assert.deepEqual(new Set(seen), new Set([first.token, second.token]));
   assert.deepEqual(service.status(), { listening: false, sessions: 0, pending: 0 });
+});
+
+test("session capacity logs only a bounded error and releases an idle slot without disturbing native work", { timeout: 10_000 }, async t => {
+  const previousTrace = process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+  delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+  t.after(() => {
+    if (previousTrace === undefined) delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+    else process.env.CODEX_ROUTER_WEB_MCP_TRACE = previousTrace;
+  });
+  const logged = [];
+  t.mock.method(console, "warn", line => logged.push(line));
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: undefined });
+  const sessions = [];
+  for (let index = 0; index < 32; index += 1) sessions.push(await connect());
+  assert.deepEqual(service.status(), { listening: true, sessions: 32, pending: 0 });
+  assert.deepEqual(logged, []);
+
+  const turn = register(broker, "session-capacity");
+  const result = call(sessions[0].client, turn, "read", { arguments: { marker: "private-native-arguments" } });
+  const [native] = await nativeCalls(broker, turn.token);
+  const revision = broker.revision(turn.token);
+  const observation = await beginObservation(broker, service, turn.token);
+  const headers = { accept: "application/json, text/event-stream", "content-type": "application/json" };
+  const limited = await fetch(service.url, { method: "POST", headers, body: JSON.stringify({
+    jsonrpc: "2.0", id: "private-request-id", method: "tools/call",
+    params: { name: "private-tool-name", arguments: { turn_token: turn.token, input: "private-input" } },
+  }) });
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("cache-control"), "no-store");
+  assert.equal(limited.headers.get("retry-after"), null);
+  assert.deepEqual(await limited.json(), { error: "MCP request rejected." });
+  const prefix = "[codex-router] web-mcp ";
+  assert.equal(logged.every(line => line.startsWith(prefix)), true);
+  assert.deepEqual(withoutDiagnosticTime(logged.map(line => JSON.parse(line.slice(prefix.length)))), [
+    { operation: "http", stage: "admission-rejected", reason: "session-capacity", httpStatus: 429, isError: true,
+      sessions: 32, creating: 0, pending: 1, observations: 1 },
+  ]);
+  for (const privateValue of [turn.token, service.url, ...sessions.map(({ transport }) => transport.sessionId), "private-"]) {
+    assert.equal(logged.join("\n").includes(privateValue), false);
+  }
+  // Security checks still precede capacity admission and do not produce receipts.
+  assert.equal((await fetch(service.url, { method: "POST", headers: { ...headers, origin: "https://untrusted.example" }, body: "{}" })).status, 403);
+  assert.equal((await fetch(new URL("/wrong/mcp", service.url), { method: "POST", headers, body: "{}" })).status, 404);
+  assert.equal(logged.length, 1);
+  assert.deepEqual(service.status(), { listening: true, sessions: 32, pending: 1 });
+  assert.equal(broker.revision(turn.token), revision);
+  assert.deepEqual(broker.takeCalls(turn.token), [native]);
+
+  await sessions.at(-1).transport.terminateSession();
+  assert.deepEqual(service.status(), { listening: true, sessions: 31, pending: 1 });
+  const replacement = await connect();
+  assert.equal((await replacement.client.listTools()).tools.length, 2);
+  assert.deepEqual(service.status(), { listening: true, sessions: 32, pending: 1 });
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual paired native result" }]);
+  assert.equal((await result).content[0].text, "actual paired native result");
+  const observed = await observation.response;
+  assert.equal(observed.status, 200);
+  const changed = await observed.json();
+  assert.equal(changed.closed, false);
+  assert.ok(changed.revision > revision && changed.revision <= broker.revision(turn.token));
+  assert.equal(service.status().pending, 0);
+  assert.equal(finish(broker, turn.token), true);
+  assert.equal(logged.length, 1);
+});
+
+test("64 completed SDK connections reclaim quiescent sessions within the unchanged capacity", { timeout: 15_000 }, async t => {
+  const { broker, service, connect } = await fixture(t);
+  for (let index = 0; index < 64; index += 1) {
+    const turn = register(broker, `completed-client-${index}`);
+    const { client } = await connect();
+    assert.equal((await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } })).isError, undefined);
+    assert.equal(finish(broker, turn.token), true);
+    await client.close();
+    assert.ok(service.status().sessions <= 32);
+    assert.equal(service.status().pending, 0);
+  }
+});
+
+test("admission expires quiescent sessions immediately and cached clients reinitialize without replaying actions", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const { broker, service, connect } = await fixture(t);
+  const turn = register(broker, "expired-client");
+  const { client: cached, transport } = await connect(postOnly);
+  const originalSession = transport.sessionId;
+  let invocations = 0;
+  const invoke = broker.invoke;
+  broker.invoke = (...args) => { invocations += 1; return invoke(...args); };
+  const action = call(cached, turn, "read");
+  const [native] = await nativeCalls(broker, turn.token);
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "exactly once" }]);
+  assert.equal((await action).content[0].text, "exactly once");
+  assert.equal(finish(broker, turn.token), true);
+  t.mock.timers.tick(600_001);
+  assert.equal((await fetch(service.url, { method: "POST", headers: { origin: "https://untrusted.example" } })).status, 403);
+  assert.equal((await fetch(new URL("/wrong/mcp", service.url), { method: "POST" })).status, 404);
+  assert.equal(service.status().sessions, 1, "Security rejection must precede expiry reclamation.");
+  await connect(postOnly);
+  assert.equal(service.status().sessions, 1, "Admission reclaimed expiry without waiting for the periodic reaper.");
+  await assert.rejects(call(cached, turn, "read"), error => error.code === 404);
+  assert.equal(transport.sessionId, originalSession, "A 404 does not silently create a new session.");
+  assert.equal(invocations, 1);
+  await cached.close();
+  const replacement = new StreamableHTTPClientTransport(new URL(service.url), postOnly);
+  await cached.connect(replacement);
+  assert.notEqual(replacement.sessionId, originalSession);
+  assert.equal((await cached.listTools()).tools.length, 2);
+  assert.equal(invocations, 1, "Explicit initialization must not repeat the previous action.");
+});
+
+test("pressure preserves a live broker turn between MCP calls and evicts the oldest inactive session", { timeout: 10_000 }, async t => {
+  const { broker, service, connect } = await fixture(t);
+  const turn = register(broker, "live-between-calls");
+  const active = await connect(postOnly);
+  await active.client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+  const idle = [];
+  for (let index = 0; index < 31; index += 1) idle.push(await connect(postOnly));
+  await connect(postOnly);
+  assert.equal(service.status().sessions, 32);
+  assert.equal((await active.client.listTools()).tools.length, 2);
+  await assert.rejects(idle[0].client.listTools(), error => error.code === 404);
+  assert.equal((await idle[1].client.listTools()).tools.length, 2);
+  assert.equal(broker.isActive(turn.token), true);
+  assert.equal(finish(broker, turn.token), true);
+});
+
+test("idle expiry preserves active SSE connections and live broker associations", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: Date.now() });
+  const { broker, service, connect } = await fixture(t);
+  const streamed = await connect();
+  // The SDK starts its optional GET asynchronously after initialization.
+  await streamed.client.listTools();
+  const current = await connect(postOnly);
+  const turn = register(broker, "expiry-live-turn");
+  await current.client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+  t.mock.timers.tick(600_001);
+  await connect(postOnly);
+  assert.equal(service.status().sessions, 3);
+  assert.equal((await streamed.client.listTools()).tools.length, 2);
+  assert.equal((await current.client.listTools()).tools.length, 2);
+  assert.equal(finish(broker, turn.token), true);
+});
+
+test("an existing session body upload retains its lease through pressure and expiry", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: Date.now() });
+  const { service, connect } = await fixture(t);
+  const held = await connect(postOnly);
+  const idle = [];
+  for (let index = 0; index < 31; index += 1) idle.push(await connect(postOnly));
+  let entered;
+  const receiving = new Promise(resolve => { entered = resolve; });
+  const handle = StreamableHTTPServerTransport.prototype.handleRequest;
+  t.mock.method(StreamableHTTPServerTransport.prototype, "handleRequest", function (request, ...args) {
+    if (request.headers["x-held-upload"]) entered();
+    return handle.call(this, request, ...args);
+  });
+  const body = JSON.stringify({ jsonrpc: "2.0", id: "upload", method: "tools/list" });
+  const upload = httpRequest(service.url, { method: "POST", headers: {
+    accept: "application/json, text/event-stream", "content-type": "application/json", "content-length": Buffer.byteLength(body),
+    "mcp-session-id": held.transport.sessionId, "mcp-protocol-version": held.transport.protocolVersion, "x-held-upload": "1",
+  } });
+  t.after(() => upload.destroy());
+  const completed = new Promise((resolve, rejectUpload) => {
+    upload.on("error", rejectUpload);
+    upload.on("response", response => {
+      let value = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => { value += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode, body: JSON.parse(value) }));
+    });
+  });
+  upload.write(body.slice(0, 5));
+  await receiving;
+  await connect(postOnly);
+  await assert.rejects(idle[0].client.listTools(), error => error.code === 404);
+  t.mock.timers.tick(600_001);
+  await connect(postOnly);
+  upload.end(body.slice(5));
+  const response = await completed;
+  assert.equal(response.status, 200);
+  assert.equal(response.body.result.tools.length, 2);
+  assert.equal((await held.client.listTools()).tools.length, 2);
+});
+
+test("native result settlement and cancellation retain their SDK session through reclamation pressure", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: Date.now() });
+  const cancelled = [];
+  let cancellationObserved;
+  const cancellation = new Promise(resolve => { cancellationObserved = resolve; });
+  const { broker, service, connect } = await fixture(t, { onCancel: token => { cancelled.push(token); cancellationObserved(token); } });
+  const active = await connect(postOnly);
+  for (let index = 0; index < 31; index += 1) await connect(postOnly);
+  const turn = register(broker, "settling-under-pressure");
+  let entered, release;
+  const settling = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  t.after(release);
+  const invoke = broker.invoke;
+  broker.invoke = async (...args) => {
+    const result = await invoke(...args);
+    entered();
+    await gate;
+    return result;
+  };
+  const action = call(active.client, turn, "read");
+  const [native] = await nativeCalls(broker, turn.token);
+  await connect(postOnly);
+  assert.equal(service.status().pending, 1);
+  broker.complete(turn.token, [{ type: "function_call_output", call_id: native.call_id, output: "actual native result" }]);
+  await settling;
+  t.mock.timers.tick(600_001);
+  await connect(postOnly);
+  assert.equal(service.status().pending, 1);
+  assert.equal(broker.beginCompletion(turn.token), undefined);
+  assert.deepEqual(cancelled, []);
+  release();
+  assert.equal((await action).content[0].text, "actual native result");
+  assert.equal(finish(broker, turn.token), true);
+
+  broker.invoke = invoke;
+  const interrupted = register(broker, "cancel-under-pressure");
+  const controller = new AbortController();
+  const pending = active.client.callTool({ name: "codex_tool_call", arguments: { turn_token: interrupted.token, wire_name: "read" } }, undefined, { signal: controller.signal });
+  const rejected = assert.rejects(pending, /cancel|abort/iu);
+  await nativeCalls(broker, interrupted.token);
+  await connect(postOnly);
+  controller.abort();
+  await rejected;
+  assert.equal(await cancellation, interrupted.token);
+  await active.client.listTools();
+  assert.equal(broker.isActive(interrupted.token), false);
+  assert.deepEqual(cancelled, [interrupted.token]);
+});
+
+test("concurrent initialization reserves at most 32 slots while request bodies are processing", { timeout: 15_000 }, async t => {
+  const { service, connect } = await fixture(t);
+  let release, filled, rejected;
+  const gate = new Promise(resolve => { release = resolve; });
+  const capacity = new Promise(resolve => { filled = resolve; });
+  const overflow = new Promise(resolve => { rejected = resolve; });
+  t.after(release);
+  let handling = 0, rejections = 0;
+  const handle = StreamableHTTPServerTransport.prototype.handleRequest;
+  t.mock.method(StreamableHTTPServerTransport.prototype, "handleRequest", async function (request, ...args) {
+    if (request.method === "POST" && request.headers["mcp-session-id"] === undefined) {
+      handling += 1;
+      if (handling === 32) filled();
+      await gate;
+    }
+    return handle.call(this, request, ...args);
+  });
+  const results = Promise.allSettled(Array.from({ length: 64 }, () => connect(postOnly).catch(error => {
+    assert.equal(error.code, 429);
+    rejections += 1;
+    if (rejections === 32) rejected();
+    throw error;
+  })));
+  await Promise.all([capacity, overflow]);
+  assert.equal(handling, 32);
+  assert.deepEqual(service.status(), { listening: true, sessions: 0, pending: 0 });
+  release();
+  const settled = await results;
+  assert.equal(settled.filter(result => result.status === "fulfilled").length, 32);
+  assert.equal(settled.filter(result => result.status === "rejected").length, 32);
+  assert.equal(service.status().sessions, 32);
+});
+
+test("concurrent pressure serializes a delayed retirement and preserves capacity on close failure", { timeout: 15_000 }, async t => {
+  const { service, connect } = await fixture(t);
+  const cached = [];
+  for (let index = 0; index < 32; index += 1) cached.push(await connect(postOnly));
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const retiring = new Promise(resolve => { entered = resolve; });
+  t.after(release);
+  const close = Server.prototype.close;
+  let closings = 0;
+  const mocked = t.mock.method(Server.prototype, "close", async function () {
+    closings += 1;
+    if (closings === 1) { entered(); await gate; }
+    return close.call(this);
+  });
+  const admissions = Promise.all([connect(postOnly), connect(postOnly)]);
+  await retiring;
+  assert.equal(service.status().sessions, 32);
+  assert.equal(closings, 1);
+  await assert.rejects(cached[0].client.listTools(), error => error.code === 404);
+  release();
+  await admissions;
+  assert.equal(service.status().sessions, 32);
+  mocked.mock.restore();
+
+  const failed = t.mock.method(Server.prototype, "close", async () => { throw new Error("synthetic close failure"); });
+  await assert.rejects(connect(postOnly), error => error.code === 500);
+  assert.equal(service.status().sessions, 32);
+  assert.equal((await cached[2].client.listTools()).tools.length, 2);
+  failed.mock.restore();
+  await connect(postOnly);
+  assert.equal(service.status().sessions, 32);
+});
+
+test("an initializer disconnected during admission releases its reservation without creating a stranded session", { timeout: 10_000 }, async t => {
+  const { service, connect } = await fixture(t);
+  const cached = [];
+  for (let index = 0; index < 32; index += 1) cached.push(await connect(postOnly));
+  let release, entered, received, disconnected, reservationClosed;
+  const gate = new Promise(resolve => { release = resolve; });
+  const retiring = new Promise(resolve => { entered = resolve; });
+  const arrival = new Promise(resolve => { received = resolve; });
+  const connectionClosed = new Promise(resolve => { disconnected = resolve; });
+  const abandonedClosed = new Promise(resolve => { reservationClosed = resolve; });
+  t.after(release);
+
+  // Observe the real HTTP response close before releasing admission, without
+  // consuming the initialize body that the SDK would otherwise process later.
+  const emit = HttpServer.prototype.emit;
+  t.mock.method(HttpServer.prototype, "emit", function (event, ...args) {
+    const [request, response] = args;
+    if (event === "request" && request.headers["x-abandoned-initializer"] === "1") {
+      response.once("close", () => disconnected({ complete: request.complete, destroyed: response.destroyed }));
+      received();
+    }
+    return emit.call(this, event, ...args);
+  });
+  const close = Server.prototype.close;
+  let closing = 0;
+  t.mock.method(Server.prototype, "close", async function () {
+    if (++closing === 1) { entered(); await gate; }
+    return close.call(this);
+  });
+  const initialize = Server.prototype.connect;
+  let creating = 0;
+  t.mock.method(Server.prototype, "connect", async function (...args) {
+    if (++creating === 2) {
+      const onclose = this.onclose;
+      this.onclose = () => {
+        const initialized = typeof this.transport?.sessionId === "string";
+        onclose?.();
+        reservationClosed({ initialized });
+      };
+    }
+    return initialize.apply(this, args);
+  });
+
+  const replacement = connect(postOnly);
+  await retiring;
+  const body = JSON.stringify({ jsonrpc: "2.0", id: "abandoned-initialize", method: "initialize", params: {
+    protocolVersion: cached[0].transport.protocolVersion, capabilities: {}, clientInfo: { name: "abandoned-client", version: "1.0.0" },
+  } });
+  const upload = httpRequest(service.url, { method: "POST", headers: {
+    accept: "application/json, text/event-stream", "content-type": "application/json", "content-length": Buffer.byteLength(body),
+    "x-abandoned-initializer": "1",
+  } });
+  upload.on("error", () => {});
+  t.after(() => upload.destroy());
+  const uploaded = new Promise(resolve => upload.once("finish", resolve));
+  upload.end(body);
+  await Promise.all([arrival, uploaded]);
+  upload.destroy();
+  assert.deepEqual(await connectionClosed, { complete: true, destroyed: true });
+  release();
+  await replacement;
+  assert.deepEqual(await abandonedClosed, { initialized: false }, "A disconnected initializer must be retired before the SDK can accept its body.");
+  assert.deepEqual(service.status(), { listening: true, sessions: 31, pending: 0 });
+  assert.equal((await (await connect(postOnly)).client.listTools()).tools.length, 2);
+  assert.equal(service.status().sessions, 32, "The released slot remains available to a real client.");
+});
+
+test("failed SDK connection releases its initialization reservation", { timeout: 10_000 }, async t => {
+  const { service, connect } = await fixture(t);
+  const broken = t.mock.method(Server.prototype, "connect", async () => { throw new Error("synthetic connect failure"); });
+  await assert.rejects(connect(postOnly), error => error.code === 500);
+  assert.equal(service.status().sessions, 0);
+  broken.mock.restore();
+  assert.equal((await (await connect(postOnly)).client.listTools()).tools.length, 2);
+  assert.equal(service.status().sessions, 1);
 });
 
 test("capability, method, origin, schema, and stale token failures cannot enqueue tools", { timeout: 10_000 }, async t => {
@@ -399,7 +813,7 @@ test("retired-token discovery and calls fail before admission without affecting 
     assert.equal(publicFailure.includes(privateValue), false);
   }
   const listed = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: current.token } });
-  assert.deepEqual(listed.structuredContent.tools, broker.list(current.token));
+  assert.deepEqual(discoveryPage(listed), broker.list(current.token));
   const pending = call(client, current, "read");
   const [native] = await nativeCalls(broker, current.token);
   broker.complete(current.token, [{ type: "function_call_output", call_id: native.call_id, output: "current native result" }]);
@@ -449,7 +863,7 @@ test("SDK discovery holds activity and invalidates an earlier completion observa
   };
   const discovered = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
   assert.equal(observed, true);
-  assert.deepEqual(discovered.structuredContent.tools, list(turn.token));
+  assert.deepEqual(discoveryPage(discovered), list(turn.token));
   const after = broker.beginCompletion(turn.token);
   assert.equal(typeof after, "number");
   assert.notEqual(after, before);
@@ -512,7 +926,7 @@ test("private observation wakes for real MCP discovery and native calls without 
   const before = broker.revision(turn.token);
   const discovery = await beginObservation(broker, service, turn.token);
   const declarations = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
-  assert.equal(declarations.structuredContent.tools.length, 1);
+  assert.equal(discoveryPage(declarations).tools.length, 1);
   const discoveryResponse = await discovery.response;
   assert.equal(discoveryResponse.status, 200);
   const changed = await discoveryResponse.json();
@@ -549,13 +963,13 @@ test("observation disconnection and service shutdown unsubscribe without cancell
   controller.abort();
   await Promise.all([rejected, disconnected]);
   assert.equal(getEventListeners(first.signal, "abort").length, 0);
-  assert.equal(broker.list(turn.token).length, 1);
+  assert.equal(broker.list(turn.token).tools.length, 1);
   const second = await beginObservation(broker, service, turn.token);
   const stopped = assert.rejects(second.response, /fetch failed|socket|abort/iu);
   await service.close();
   await stopped;
   assert.equal(getEventListeners(second.signal, "abort").length, 0);
-  assert.equal(broker.list(turn.token).length, 1);
+  assert.equal(broker.list(turn.token).tools.length, 1);
   assert.equal(finish(broker, turn.token), true);
 });
 
@@ -569,11 +983,11 @@ test("an aborted observation can renew immediately before HTTP disconnect cleanu
   // Start the replacement without awaiting the previous HTTP request's close.
   const next = await beginObservation(broker, service, turn.token);
   await rejected;
-  broker.update(turn.token, { tools: [fn("read")] });
+  broker.update(turn.token, { tools: [fn("changed_read")] });
   const response = await next.response;
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { revision: 1, closed: false });
-  assert.equal(broker.list(turn.token).length, 1);
+  assert.equal(broker.list(turn.token).tools.length, 1);
   assert.equal(finish(broker, turn.token), true);
 });
 
@@ -606,7 +1020,12 @@ test("observation rejects foreign capabilities, origins, malformed revisions, an
 });
 
 test("observation capacity is bounded across turns and released when waits finish", { timeout: 10_000 }, async t => {
-  const { broker, service } = await fixture(t);
+  const receipts = [];
+  const { broker, service } = await fixture(t, { onDiagnostic: receipt => {
+    receipts.push(receipt);
+    if (receipts.length % 2) throw new Error("private synchronous logger failure");
+    return Promise.reject(new Error("private asynchronous logger failure"));
+  } });
   const turns = Array.from({ length: 33 }, (_, index) => register(broker, `observation-capacity-${index}`));
   const pending = [];
   for (const turn of turns.slice(0, 32)) {
@@ -614,11 +1033,25 @@ test("observation capacity is bounded across turns and released when waits finis
     pending.push(await beginObservation(broker, service, turn.token));
   }
   const extra = turns.at(-1);
-  const limited = await fetch(service.observationUrl(extra.token, broker.revision(extra.token)));
-  assert.equal(limited.status, 429);
+  const url = service.observationUrl(extra.token, broker.revision(extra.token));
+  for (let index = 0; index < 2; index += 1) {
+    const limited = await fetch(url, { headers: { authorization: "Bearer private-observation-header" } });
+    assert.equal(limited.status, 429);
+    assert.equal(limited.headers.get("cache-control"), "no-store");
+    assert.equal(limited.headers.get("retry-after"), null);
+    assert.deepEqual(await limited.json(), { error: "MCP request rejected." });
+  }
+  assert.deepEqual(withoutDiagnosticTime(receipts), Array.from({ length: 2 }, () => ({
+    operation: "http", stage: "admission-rejected", reason: "observation-capacity", httpStatus: 429, isError: true,
+    sessions: 0, creating: 0, pending: 0, observations: 64,
+  })));
+  for (const privateValue of [url, service.url, ...turns.map(({ token }) => token), "private-"]) {
+    assert.equal(JSON.stringify(receipts).includes(privateValue), false);
+  }
   broker.cancel(turns[0].token);
   for (const wait of pending.splice(0, 2)) assert.equal((await (await wait.response).json()).closed, true);
   const admitted = await beginObservation(broker, service, extra.token);
   for (const turn of turns.slice(1)) broker.cancel(turn.token);
   for (const wait of [...pending, admitted]) assert.equal((await (await wait.response).json()).closed, true);
+  assert.equal(receipts.length, 2);
 });

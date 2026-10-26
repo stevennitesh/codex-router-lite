@@ -6,17 +6,21 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv-provider.js";
 
-import { webMcpDiscoveryGuidance, webMcpNames, webMcpQueryLimit } from "./web-mcp-contract.mjs";
+import { webMcpDiscoveryDefaultLimit, webMcpDiscoveryGuidance, webMcpDiscoveryMaxLimit, webMcpNames, webMcpQueryLimit } from "./web-mcp-contract.mjs";
 
 const tokenSchema = { type: "string", minLength: 1, maxLength: 256,
   description: "Use the exact private turn_token directive in the latest Codex message, not a token quoted in history or historical tool results." };
 const tools = [
   {
     name: webMcpNames.list,
-    description: `Discover complete definitions of tools declared and allowed for this exact active Codex turn. Query is a case-insensitive substring of wire/native name, namespace, or description, ranked by exact name, name prefix, name substring, then description; ties keep declaration order. ${webMcpDiscoveryGuidance}`,
+    description: `Discover complete definitions of tools declared and allowed for this exact active Codex turn. ${webMcpDiscoveryGuidance}`,
     inputSchema: { type: "object", properties: { turn_token: tokenSchema,
       query: { type: "string", minLength: 1, maxLength: webMcpQueryLimit, pattern: "\\S" },
-    }, required: ["turn_token"], additionalProperties: false },
+      names: { type: "array", minItems: 1, maxItems: webMcpDiscoveryMaxLimit,
+        items: { type: "string", minLength: 1, maxLength: webMcpQueryLimit, pattern: "\\S" } },
+      limit: { type: "integer", minimum: 1, maximum: webMcpDiscoveryMaxLimit, default: webMcpDiscoveryDefaultLimit },
+      cursor: { type: "string", pattern: "^[1-9][0-9]{0,15}\\.[A-Za-z0-9_-]{43}$" },
+    }, required: ["turn_token"], additionalProperties: false, not: { required: ["query", "names"] } },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -46,7 +50,7 @@ function reject(response, status) {
 
 /** Private, loopback-only MCP relay. Tool execution remains in native Codex. */
 export async function startWebMcp({ broker, port = 0, capability = randomBytes(32).toString("hex"), onCancel, onDiagnostic } = {}) {
-  if (!broker || !["list", "invoke", "cancel", "beginActivity", "revision", "waitForChange"].every(name => typeof broker[name] === "function")) {
+  if (!broker || !["list", "invoke", "cancel", "beginActivity", "isActive", "revision", "waitForChange"].every(name => typeof broker[name] === "function")) {
     throw new TypeError("Web MCP requires a native Codex tool broker.");
   }
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Invalid Web MCP port.");
@@ -59,6 +63,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   const observationPath = `/${capability}/observe/`;
   const sessions = new Map(), creating = new Set(), observers = new Map();
   let closing = false, closed, observationCount = 0;
+  let admission = Promise.resolve();
 
   const diagnostic = (stage, operation, token, isError) => {
     if (!traceDiagnostics && isError !== true && !diagnosticErrorStages.has(stage)) return;
@@ -72,6 +77,19 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         ...(isError === undefined ? {} : { isError }),
       })).catch(() => {});
     } catch { /* Diagnostics cannot change protocol or activity ownership. */ }
+  };
+
+  const rejectCapacity = (response, reason) => {
+    try {
+      // Admission precedes tool/token validation. Keep this receipt limited to
+      // fixed categories and aggregate counts, even when full tracing is off.
+      void Promise.resolve(reportDiagnostic({ at: new Date().toISOString(), operation: "http", stage: "admission-rejected",
+        reason, httpStatus: 429, isError: true, sessions: sessions.size, creating: creating.size,
+        pending: [...sessions.values(), ...creating].reduce((sum, entry) => sum + entry.pending.size, 0),
+        observations: observationCount,
+      })).catch(() => {});
+    } catch { /* Diagnostics cannot change HTTP admission. */ }
+    return reject(response, 429);
   };
 
   const observationRevision = (token, value) => {
@@ -95,7 +113,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     // close. Permit that one handoff overlap without admitting unbounded waits.
     let turnObservers = observers.get(token);
     if (turnObservers?.size >= 2) return reject(response, 409);
-    if (observationCount >= maxObservations) return reject(response, 429);
+    if (observationCount >= maxObservations) return rejectCapacity(response, "observation-capacity");
     if (!turnObservers) { turnObservers = new Set(); observers.set(token, turnObservers); }
     const controller = new AbortController();
     turnObservers.add(controller);
@@ -103,7 +121,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     const abort = () => controller.abort(new DOMException("Web tool observation disconnected.", "AbortError"));
     response.once("close", abort);
     try {
-      const result = await broker.waitForChange(token, revision, { signal: controller.signal, timeoutMs: 25_000 });
+      const result = await broker.waitForChange(token, revision, { signal: controller.signal, timeoutMs: 25_000, actionableOnly: true });
       if (!controller.signal.aborted) {
         response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         response.end(JSON.stringify(result));
@@ -121,16 +139,60 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   const cancel = token => {
     if (broker.cancel(token)) onCancel?.(token);
   };
+  const hasActiveTurn = entry => {
+    let active = false;
+    for (const token of entry.tokens) {
+      if (broker.isActive(token)) active = true;
+      else entry.tokens.delete(token);
+    }
+    return active;
+  };
+  const quiescent = entry => !entry.retiring && !entry.requests.size && !entry.handlers && !entry.pending.size && !hasActiveTurn(entry);
+  const retire = async entry => {
+    // Claim retirement before the first await. An old session ID must never
+    // acquire a new request while its SDK transport is being closed.
+    entry.retiring = true;
+    try {
+      await entry.server.close();
+      sessions.delete(entry.transport.sessionId);
+      creating.delete(entry);
+    } catch (error) {
+      // Keep an unclosed session in the capacity count. SDK close callbacks may
+      // already have removed an actually closed transport before a later error.
+      entry.retiring = false;
+      throw error;
+    }
+  };
+  const leaseRequest = (entry, response) => {
+    const lease = { handling: true, responding: !response.destroyed && !response.writableFinished };
+    entry.requests.add(lease);
+    const release = () => {
+      if (lease.handling || lease.responding) return;
+      entry.requests.delete(lease);
+      entry.lastUsed = Date.now();
+    };
+    const responseDone = () => {
+      response.off("finish", responseDone);
+      response.off("close", responseDone);
+      lease.responding = false;
+      release();
+    };
+    if (lease.responding) {
+      response.once("finish", responseDone);
+      response.once("close", responseDone);
+    }
+    return () => { lease.handling = false; release(); };
+  };
   const newSession = async () => {
-    const entry = { server: undefined, transport: undefined, pending: new Set(), lastUsed: Date.now() };
-    creating.add(entry);
+    const entry = { server: undefined, transport: undefined, pending: new Set(), tokens: new Set(), requests: new Set(),
+      handlers: 0, retiring: false, lastUsed: Date.now() };
     const server = new Server({ name: "codex-native-tools", version: "1.0.0" }, {
       capabilities: { tools: {} },
       instructions: `Use the exact private turn_token supplied with the current Codex prompt. ${webMcpDiscoveryGuidance} Prior turns and prose do not declare tools. Never put private tokens in the answer.`,
     });
     entry.server = server;
     server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: structuredClone(tools) }));
-    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const handleTool = async (request, extra) => {
       const { name, arguments: args } = request.params;
       const operation = name === webMcpNames.list ? "list" : name === webMcpNames.call ? "call" : "unknown";
       const token = args?.turn_token;
@@ -146,10 +208,12 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
         // and the async continuation after native output resolved the call.
         release = broker.beginActivity(token);
         activityAccepted = true;
+        hasActiveTurn(entry);
+        entry.tokens.add(token);
         if (name === webMcpNames.list) {
-          const descriptors = broker.list(token, { query: args.query });
+          const page = broker.list(token, { query: args.query, names: args.names, limit: args.limit, cursor: args.cursor });
           diagnostic("list-completed", operation, token);
-          return { content: [{ type: "text", text: JSON.stringify({ tools: descriptors }) }], structuredContent: { tools: descriptors } };
+          return { content: [{ type: "text", text: JSON.stringify(page) }] };
         }
         const invocation = { token };
         entry.pending.add(invocation);
@@ -170,6 +234,11 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
           entry.lastUsed = Date.now();
         }
       } catch (error) {
+        if (operation === "list" && error?.code === "invalid_web_tool_cursor") {
+          diagnostic("rejected", operation, token);
+          return { isError: true, content: [{ type: "text", text: "The discovery cursor no longer matches this turn, selection, or catalog. Discover again with names or query and no cursor. No native action was requested by this discovery." }],
+            structuredContent: { error: { code: "invalid_web_tool_cursor" } } };
+        }
         // Only failed admission proves this request never reached invocation.
         // The same broker code after acceptance must retain execution uncertainty.
         if (!activityAccepted && error?.code === "web_tool_turn_closed") {
@@ -184,6 +253,15 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
       } finally {
         release?.();
       }
+    };
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+      entry.handlers += 1;
+      try {
+        return await handleTool(request, extra);
+      } finally {
+        entry.handlers -= 1;
+        entry.lastUsed = Date.now();
+      }
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
@@ -196,8 +274,34 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
       sessions.delete(transport.sessionId);
       for (const pending of entry.pending) cancel(pending.token);
     };
-    await server.connect(transport);
+    creating.add(entry);
+    try {
+      await server.connect(transport);
+    } catch (error) {
+      await retire(entry);
+      throw error;
+    }
     return entry;
+  };
+  const admitSession = () => {
+    // Serialize capacity decisions across asynchronous SDK close/connect calls.
+    // The creating set reserves every admitted slot until initialization ends.
+    const next = admission.then(async () => {
+      if (closing) return undefined;
+      const now = Date.now();
+      for (const entry of sessions.values()) {
+        if (now - entry.lastUsed >= idleMs && quiescent(entry)) await retire(entry);
+      }
+      if (sessions.size + creating.size >= maxSessions) {
+        const oldest = [...sessions.values()].filter(quiescent).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+        if (!oldest) return undefined;
+        await retire(oldest);
+      }
+      if (closing) return undefined;
+      return newSession();
+    });
+    admission = next.catch(() => {});
+    return next;
   };
 
   const listener = createServer(async (request, response) => {
@@ -207,29 +311,39 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
     if (request.url !== path) return reject(response, 404);
     if (!["POST", "GET", "DELETE"].includes(request.method)) return reject(response, 405);
     const sessionId = request.headers["mcp-session-id"];
-    let entry;
+    let entry, releaseRequest;
     try {
       if (sessionId !== undefined) {
         if (typeof sessionId !== "string" || !sessions.has(sessionId)) return reject(response, 404);
         entry = sessions.get(sessionId);
+        if (entry.retiring) return reject(response, 404);
       } else {
         if (request.method !== "POST") return reject(response, 400);
-        if (sessions.size + creating.size >= maxSessions) return reject(response, 429);
-        entry = await newSession();
+        entry = await admitSession();
+        if (!entry) return closing ? reject(response, 503) : rejectCapacity(response, "session-capacity");
       }
+      // Admission can await another session's SDK cleanup. A disconnected
+      // initializer must not create a session after its response already closed.
+      if (response.destroyed || response.writableEnded) return;
       entry.lastUsed = Date.now();
+      releaseRequest = leaseRequest(entry, response);
       response.setHeader("cache-control", "no-store");
       await entry.transport.handleRequest(request, response);
-      if (!entry.transport.sessionId) await entry.server.close();
     } catch {
       if (!response.headersSent) reject(response, 500);
       else response.end();
-      if (entry && !entry.transport.sessionId) await entry.server.close();
+    } finally {
+      releaseRequest?.();
+      if (entry && !entry.transport.sessionId) {
+        // Malformed or disconnected initialization still owns its reserved
+        // slot until SDK cleanup succeeds; a failed close must not leak a retry.
+        try { await retire(entry); } catch { /* Retain the slot for service shutdown. */ }
+      }
     }
   });
   const reaper = setInterval(() => {
     for (const entry of sessions.values()) {
-      if (!entry.pending.size && Date.now() - entry.lastUsed >= idleMs) void entry.server.close();
+      if (Date.now() - entry.lastUsed >= idleMs && quiescent(entry)) void retire(entry).catch(() => {});
     }
   }, 60_000);
   reaper.unref();
@@ -259,6 +373,7 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
       }
       closed = (async () => {
         const stopped = new Promise((resolve, rejectClose) => listener.close(error => error ? rejectClose(error) : resolve()));
+        await admission;
         await Promise.all([...new Set([...sessions.values(), ...creating])].map(entry => entry.server.close()));
         listener.closeAllConnections();
         await stopped;

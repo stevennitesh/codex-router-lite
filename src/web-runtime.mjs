@@ -10,7 +10,7 @@ import { privateFileIsProtected, writePrivateJsonAsync } from "./file-security.m
 import { STATE_DIR } from "./paths.mjs";
 import { startWebMcp } from "./web-mcp.mjs";
 import { webMcpDiscoveryGuidance } from "./web-mcp-contract.mjs";
-import { webResponse, webCompactOutput, webCompactResponse } from "./web-response.mjs";
+import { webResponseRecord, webCompactOutput, webCompactResponse } from "./web-response.mjs";
 import { createWebToolBroker } from "./web-tools.mjs";
 import { startWebTunnel } from "./web-tunnel.mjs";
 import { watchWebTurnCancellation } from "./web-turn-cancellation.mjs";
@@ -462,7 +462,7 @@ export function createInAppWebRuntime({
     if (value.tunnel.status().healthy === false) throw fail("The Router MCP tunnel is unavailable; restore it before a new Web turn.");
     return value;
   };
-  const emitBrowser = async (turn, operation, payload) => {
+  const emitBrowser = async (turn, operation, payload, { fullContinuation = false } = {}) => {
     const frameToken = randomBytes(24).toString("hex");
     const conversation = turn.conversation;
     const observed = conversation.observation;
@@ -484,6 +484,7 @@ export function createInAppWebRuntime({
     const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: turn.executor.namespace,
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,
+        ...(fullContinuation ? { fullContinuation: true } : {}),
         ...turn.settings.browser, ...turn.selection,
         sessionId: turn.threadId, turnId: turn.turnId, runtimeModule: turn.settings.browser.runtimeModule,
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),
@@ -506,10 +507,10 @@ export function createInAppWebRuntime({
     }
     if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; }
     conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
-    turn.pending = { kind: "browser", operation, frameToken, calls: [call] };
+    turn.pending = { kind: "browser", operation, frameToken, calls: [call], fullContinuation };
     await persist(conversation);
     if (operation === "observe") turn.pending.completionRevision = broker.beginCompletion(turn.token);
-    return webResponse(payload, [call]);
+    return webResponseRecord(payload, [call]);
   };
   const emitCoding = async (turn, calls, payload) => {
     turn.codingEmitted = true;
@@ -521,7 +522,7 @@ export function createInAppWebRuntime({
     for (const call of calls) turn.conversation.unresolvedCoding.set(call.call_id, outputTypeFor.get(call.type));
     turn.pending = { kind: "coding", calls };
     await persist(turn.conversation);
-    return webResponse(payload, calls);
+    return webResponseRecord(payload, calls);
   };
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
@@ -630,6 +631,16 @@ export function createInAppWebRuntime({
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
+    if (Object.hasOwn(value, "needsFullContinuation") || Object.hasOwn(value, "noActions")) {
+      // Only the exact nonce-framed pre-action cache miss can authorize one full
+      // Continue. Errors, ordinary lifecycle receipts and Send never retry.
+      if (operation !== "continue" || pending.operation !== "continue" || pending.fullContinuation || turn.fullContinuationIssued
+          || Object.keys(value).length !== 3 || value.needsFullContinuation !== true || value.noActions !== true) {
+        throw fail("The browser did not provide an exact unused no-action continuation receipt.", "web_browser_output_shape");
+      }
+      turn.fullContinuationIssued = true;
+      return emitBrowser(turn, "continue", payload, { fullContinuation: true });
+    }
     if (operation === "bootstrap") {
       return emitBrowser(turn, "open", payload);
     }
@@ -764,7 +775,7 @@ export function createInAppWebRuntime({
       if (turn.conversation.activeTurn === turn.turnId) turn.conversation.activeTurn = undefined;
       turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.promptInstructionsSha256 = undefined; turn.tools = []; turn.discovered = []; turn.processed.clear(); turn.deliveredCoding?.clear();
       turn.cache.clear();
-      return webResponse(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
+      return webResponseRecord(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
         content: [{ type: "output_text", text: value.assistantText.replaceAll(turn.token, "[private turn]"), annotations: [] }] }]);
     }
     throw fail("Unexpected native Web browser stage.");
@@ -868,7 +879,10 @@ export function createInAppWebRuntime({
         if (turn.cancelled) throw turn.error;
         const fingerprint = digest(payload);
         if (turn.replay?.fingerprint === fingerprint) return new Response(turn.replay.body, turn.replay.init);
-        if (turn.cache?.has(fingerprint)) return turn.cache.get(fingerprint).clone();
+        if (turn.cache?.has(fingerprint)) {
+          const replay = turn.cache.get(fingerprint);
+          return new Response(replay.body, replay.init);
+        }
         if (turn.done) throw fail("This Web turn is complete; use a new native turn for a follow-up.");
         const input = Array.isArray(payload.input) ? payload.input : [];
         const retained = compactTail(turn.conversation, readableInput(payload), undefined, false);
@@ -923,19 +937,18 @@ export function createInAppWebRuntime({
         } else if (!turn.executor) {
           const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query: "+mcp__node_repl js persistent JavaScript browser runtime" } };
           turn.pending = { kind: "discovery", calls: [call] };
-          response = webResponse(payload, [call]);
+          response = webResponseRecord(payload, [call]);
         } else response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
         if (turn.cancelled) throw turn.error;
-        if (turn.done) {
-          // Preserve the exact final wire response without retaining a Response
-          // stream clone or any of the terminal turn's browser/tool state.
-          turn.replay = { fingerprint, body: await response.clone().text(),
-            init: { status: response.status, statusText: response.statusText, headers: [...response.headers] } };
-        } else {
-          turn.cache.set(fingerprint, response.clone());
+        // The response owner serializes each complete reply once. Cache that
+        // wire record and give every caller an independent response body.
+        const replay = response;
+        if (turn.done) turn.replay = { fingerprint, ...replay };
+        else {
+          turn.cache.set(fingerprint, replay);
           if (turn.cache.size > 8) turn.cache.delete(turn.cache.keys().next().value);
         }
-        return response;
+        return new Response(replay.body, replay.init);
       } catch (error) { cancel(turn, error); throw error; }
       finally { signal?.removeEventListener("abort", abort); turn.busy = false; retire(turn); }
     },

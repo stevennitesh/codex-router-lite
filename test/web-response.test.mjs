@@ -9,7 +9,7 @@ import { NamespaceToolCallTransform } from "../src/namespace-relay.mjs";
 import { ResponseUsageTransform, responseTerminalOutcome } from "../src/response-usage.mjs";
 import { SseFrameBuffer, sseFrameFields } from "../src/sse-framing.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
-import { webCompactOutput, webCompactResponse, webResponse } from "../src/web-response.mjs";
+import { webCompactOutput, webCompactResponse, webResponse, webResponseRecord } from "../src/web-response.mjs";
 
 const model = "chatgpt-web/gpt-6-sol";
 const supplied = { responseId: "resp_native_fixture", createdAt: 123 };
@@ -78,7 +78,7 @@ test("actual broker-produced function/custom/search calls survive SSE and existi
     { type: "tool_search", execution: "client" },
   ];
   const { token } = broker.register({ threadId: "thread", turnId: "turn", tools: declarations });
-  const tools = broker.list(token);
+  const tools = broker.list(token).tools;
   const pending = tools.map(tool => broker.invoke(token, { wireName: tool.wireName,
     ...(tool.kind === "custom" ? { input: "text('quoted 🌙');\n" } : { arguments: { query: "actual fixture" } }) }));
   const calls = broker.takeCalls(token);
@@ -109,7 +109,7 @@ test("actual broker-produced function/custom/search calls survive SSE and existi
   assert.equal(broker.finish(token, broker.beginCompletion(token)), true);
 });
 
-test("SSE deltas reconstruct each completed native field and final text without changing namespaces", async () => {
+test("SSE publishes complete native tools once per authoritative item and retains visible text progress", async () => {
   const output = [
     { type: "function_call", id: "fc_one", call_id: "call_one", name: "read", namespace: "one", arguments: '{"path":"漢🙂"}' },
     { type: "custom_tool_call", id: "ctc_two", call_id: "call_two", name: "exec", namespace: "functions", input: "text('🌙');\n" },
@@ -129,21 +129,44 @@ test("SSE deltas reconstruct each completed native field and final text without 
       const type = custom ? "response.custom_tool_call_input" : "response.function_call_arguments";
       const field = custom ? "input" : "arguments";
       assert.equal(added[field], "");
-      assert.equal(matching.filter(event => event.type === `${type}.delta`).map(event => event.delta).join(""), item[field]);
-      assert.equal(matching.find(event => event.type === `${type}.done`)[field], item[field]);
-      assert.ok(matching.filter(event => event.type.startsWith(type)).every(event => event.item_id === item.id));
+      assert.equal(done[field], item[field], "native dispatch receives the exact whole field at item completion");
+      assert.equal(matching.some(event => event.type.startsWith(type)), false, "already complete tools need no synthetic field progress");
     } else {
       assert.equal(added.phase, "final_answer");
       assert.equal(done.phase, "final_answer");
       for (const [contentIndex, part] of item.content.entries()) {
         const content = matching.filter(event => event.content_index === contentIndex);
         assert.equal(content.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), part.text);
-        assert.deepEqual(content.find(event => event.type === "response.content_part.done").part, part);
+        assert.equal(content.find(event => event.type === "response.content_part.added").part.text, "");
+        assert.equal(content.some(event => event.type === "response.output_text.done" || event.type === "response.content_part.done"), false);
+        assert.deepEqual(done.content[contentIndex], part);
       }
     }
   }
   const json = await webResponse({ model }, output, supplied).json();
   assert.deepEqual(events.at(-1).response, json);
+});
+
+test("serialized replay records preserve JSON and fragmented SSE terminal authority and bytes", async () => {
+  const output = [{ type: "function_call", id: "fc_replay", call_id: "call_replay", name: "inspect", namespace: "fixture", arguments: '{ "text": "漢🙂\\n" }' }, final];
+  for (const stream of [false, true]) {
+    const record = webResponseRecord({ model, stream }, output, supplied);
+    const original = await webResponse({ model, stream }, output, supplied).text();
+    assert.equal(record.body, original);
+    for (let replay = 0; replay < 2; replay += 1) {
+      const response = new Response(record.body, record.init);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      const wire = await response.text();
+      assert.equal(wire, original);
+      const terminal = stream ? parseSse(wire).at(-1).response : JSON.parse(wire);
+      assert.equal(terminal.usage, null);
+      assert.equal(terminal.error, null);
+      assert.equal(terminal.output[0].arguments, output[0].arguments);
+      assert.equal(terminal.output[0].call_id, "call_replay");
+      assert.equal(terminal.output[0].namespace, "fixture");
+      assert.deepEqual(terminal.output[1], final);
+    }
+  }
 });
 
 test("missing item identities receive native prefixes and malformed or unfinished output fails before publication", async () => {

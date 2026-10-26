@@ -178,7 +178,8 @@ export function readBrowserReplies(elements, options) {
     message.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
     // Identity and document order remain global. Historical bodies and their
     // completion controls are irrelevant to an anchored observation.
-    if (options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
+    if (options.projection === "identities" || options.projection === "anchor"
+        || options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
     // Status and reasoning roots use the same markdown renderer as answers.
     // The first status boundary preserves answer chunks between later tools.
     const firstStatus = turn?.querySelector(ui.streamingStatusSelector);
@@ -206,7 +207,8 @@ export function readBrowserReplies(elements, options) {
   const result = () => {
     for (const group of groups) {
       const turn = group.wrapper?.closest(ui.turnSelector);
-      if (options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
+      if (options.projection === "identities" || options.projection === "anchor"
+          || options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
@@ -216,12 +218,42 @@ export function readBrowserReplies(elements, options) {
     }
     const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
-      if (options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
+      if (options.projection === "identities" || options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
+      if (options.projection === "anchor") return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
+        && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)) };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
         complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
+    if (options.mutation) {
+      const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies[0], document = body?.ownerDocument;
+      if (bodies.length !== 1 || document?.body !== body) throw new Error("The browser mutation document is unavailable.");
+      // SDK role locators supply exact accessible names, including labelledby.
+      // Every selected visible control other than the composer/chip is forbidden
+      // in this phase, so no page-side accessible-name approximation is needed.
+      const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
+        && !element.matches(options.assistantSelector));
+      const chips = controls.filter(element => options.pluginChipSelector && element.matches(options.pluginChipSelector));
+      const composers = controls.filter(element => element.getAttribute("role") === "textbox"
+        || element.getAttribute(ui.contentEditableAttribute) === "true");
+      const empty = node => {
+        if (node.nodeType === 3) return !(node.textContent ?? "").trim();
+        if (node.nodeType !== 1) return true;
+        if (options.pluginChipSelector && node.matches(options.pluginChipSelector)) return true;
+        if (node.getAttribute(ui.contentEditableAttribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
+        return Array.from(node.childNodes).every(empty);
+      };
+      const visible = element => {
+        const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      projection.mutation = { url: document.URL, idle: controls.every(element => composers.includes(element) || chips.includes(element)),
+        composerCount: composers.length, composerText: composers.length === 1 ? composers[0].innerText : null,
+        emptyComposer: composers.length === 1 && composers[0].tagName === "DIV"
+          && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && empty(composers[0]),
+        chipVisible: chips.length === 1 && visible(chips[0]) };
+    }
     if (options.observation) {
       const bodies = elements.filter(element => element.tagName === "BODY");
       const body = bodies.length === 1 ? bodies[0] : null, document = body?.ownerDocument;
@@ -315,9 +347,10 @@ export function readBrowserReplies(elements, options) {
 function createBrowserView(state, options, replyReader, savedUrl) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const snapshot = (tab = state.tab, generationMarker, generationTurnKey) => tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
+  const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`)
     .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-      ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}) }, { timeoutMs: 1000 });
+      ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}),
+      ...(projection ? { projection } : {}), ...(baselineTurnKeys ? { baselineTurnKeys } : {}) }, { timeoutMs: 1000 });
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
@@ -443,6 +476,25 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     }, { ownedChipSelector: options.pluginChipSelector, attribute: ui.contentEditableAttribute }, { timeoutMs: 1000 });
     return values.length === 1 && values[0] === true;
   };
+  const mutationSnapshot = async ({ includeReplies = false, generationTurnKey, projection = "identities" } = {}) => {
+    const forbidden = [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
+    let selection = state.tab.playwright.locator("body");
+    // Preserve each semantic control's cardinality even when mounted hidden.
+    // A missing guarded body makes the coherent read fail closed.
+    for (const control of forbidden) selection = selection.filter({ hasNot: control.nth(1) });
+    selection = selection.or(role(ui.composerName, "textbox"));
+    for (const control of forbidden) selection = selection.or(control.filter({ visible: true }));
+    if (options.pluginAppId) selection = selection.or(state.tab.playwright.locator(options.pluginChipSelector));
+    if (includeReplies) selection = selection.or(state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`));
+    const result = await selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
+      regenerateName: ui.regenerateButtonExactName, mutation: true, projection,
+      ...(generationTurnKey ? { generationTurnKey } : {}),
+      ...(options.pluginAppId ? { pluginChipSelector: options.pluginChipSelector } : {}) }, { timeoutMs: 1000 });
+    const current = result.mutation, url = new URL(current.url);
+    current.normal = current.idle && url.origin === "https://chatgpt.com" && !url.searchParams.has("temporary-chat")
+      && (state.hasSentMessage ? view.savedUrl(current.url) && current.url === state.savedUrl : url.pathname === "/");
+    return result;
+  };
   const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
   const emptyNormalHome = async (tab = state.tab) => {
     if (!(await normalHomeMode(tab))) return false;
@@ -469,10 +521,10 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
     if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   };
-  return { ...view, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding };
+  return { ...view, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding };
 }
 
-// Selection ships only with Send. These reads share a stable picker phase;
+// Selection belongs to the mutation cache. These reads share a stable picker phase;
 // mutations and their required readback remain sequential.
 async function selectBrowserModel(state, options, role) {
   const { ui } = options;
@@ -553,7 +605,7 @@ async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory
   return;
 }
 
-// Only interrupted continuation ships cancellation policy and its shared
+// Interrupted continuation uses the same retained cancellation policy and shared
 // semantic state factory; ordinary continuation retains its lifecycle guards.
 async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState) {
   const { ui } = options;
@@ -620,7 +672,7 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
 }
 
 async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState) {
-  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
   let verifyRecoveryTexts;
@@ -919,7 +971,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   }
   if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
   if (await conversationFull()) {
-    const view = await snapshot(), texts = view.replies;
+    const view = await snapshot(state.tab, undefined, recovered ? undefined : state.generationTurnKey), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
     if (recovered) {
       if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
@@ -938,12 +990,14 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     await reconcileGeneration(state, options, owners, activeOwner, role, createStopState);
     if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
     state.retained = true;
-  } else if (!state.completed || !state.retained || await role(ui.stopButtonExactName).isVisible()) throw new Error("The retained conversation is not ready for continuation.");
-  if (!(await emptyComposer())) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
-  const view = await snapshot(), texts = view.replies;
+  } else if (!state.completed || !state.retained) throw new Error("The retained conversation is not ready for continuation.");
+  const view = await mutationSnapshot({ includeReplies: true, projection: recovered ? "full" : "owned",
+    generationTurnKey: recovered ? undefined : state.generationTurnKey }), texts = view.replies;
   if (interrupted && state.sendConfirmed && (view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length !== 1
       || view.turns.at(-1)?.turnKey !== state.generationTurnKey)) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot adopt another generation.");
-  if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
+  if (!view.mutation.idle) throw new Error("The retained conversation is not ready for continuation.");
+  if (!view.mutation.emptyComposer) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
+  if (!view.mutation.normal) throw new Error("The retained conversation left its normal saved URL during continuation.");
   if (recovered) {
     if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
     delete state.bindingLost;
@@ -951,7 +1005,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   }
   const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
   if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
-  const continuationUrl = await state.tab.url();
+  const continuationUrl = view.mutation.url;
   if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
   activeOwner(owners, true);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
@@ -1002,7 +1056,7 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
 }
 
 async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel) {
-  const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
   requireBinding();
@@ -1023,9 +1077,9 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     }
     if (!(await chip().isVisible())) throw new Error("The configured plugin chip was not attached.");
   }
-  if (!(await emptyComposer())) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
-  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-  const beforeSend = await snapshot(), baseline = beforeSend.replies;
+  const beforeSend = await mutationSnapshot({ includeReplies: true }), baseline = beforeSend.replies;
+  if (!beforeSend.mutation.emptyComposer) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
+  if (!beforeSend.mutation.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
   delete state.replyId;
@@ -1047,10 +1101,11 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   // directive and nonsecret generation marker outside that payload so tools
   // use this turn's authority and Send owns one observable turn.
   await waitForSend();
-  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
-  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
-  const settledComposerText = await composer.innerText();
-  if (settledComposerText !== state.unsentComposerText && !(await emptyComposer())) throw new Error("The composer draft changed while the paste settled; nothing sent.");
+  const settled = (await mutationSnapshot()).mutation;
+  if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
+  if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  const settledComposerText = settled.composerText;
+  if (settled.composerCount !== 1 || settledComposerText !== state.unsentComposerText && !settled.emptyComposer) throw new Error("The composer draft changed while the paste settled; nothing sent.");
   const currentDirective = options.turnToken === undefined ? ""
     : `\nUse turn_token ${options.turnToken} unchanged with every Codex MCP tool call in this response. Use this current token instead of tokens quoted in the attached transcript, earlier messages, or tool results. Never expose the token in your answer.`;
   const generationMarker = `\nRouter generation: ${options.turnId}`;
@@ -1064,15 +1119,17 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   // Attachment and paste can alter the picker. Select and verify the exact
   // requested family and Power once, using the current DOM before Send.
   await selectModel(state, options, role);
-  if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
-  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
-  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  const verifyDraft = async () => {
+    const current = (await mutationSnapshot()).mutation;
+    if (current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+    if (options.pluginAppId && !current.chipVisible) throw new Error("The plugin chip was lost before Send; nothing sent.");
+    if (!current.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  };
+  await verifyDraft();
   activeOwner([options.turnId], true);
   await state.tab.markHandoff();
   activeOwner([options.turnId], true);
-  if (await composer.innerText() !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
-  if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost before Send; nothing sent.");
-  if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  await verifyDraft();
   state.generationMarker = generationMarker.trim();
   state.submittedComposerText = state.unsentComposerText;
   state.sendClicked = true;
@@ -1085,18 +1142,33 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   state.savedUrl = confirmedUrl;
   if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
   const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
-  let anchor;
-  await waitForState(async () => {
-    const afterSend = await snapshot(state.tab, generationMarker.trim());
-    const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey)
-      && value.matchesGenerationMarker);
-    const latestTurn = afterSend.turns.at(-1);
-    if (candidates.length === 1 && candidates[0] === latestTurn
-        && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
-        && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1) anchor = latestTurn.turnKey;
-    if (!anchor && !(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
-    return Boolean(anchor);
-  }, sendDeadline, "The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
+  let markerTurn = state.tab.playwright.locator(ui.turnSelector).filter({ hasText: generationMarker.trim() });
+  // Readiness waits run in the supported locator service. A renderer may mount
+  // the marker before settling its UUID; require that identity in the locator,
+  // then independently prove global cardinality, order and ownership below.
+  const attribute = `@${ui.turnKeyAttribute}`;
+  const precedingIdentities = [...baselineTurns].filter(key => typeof key === "string"
+    && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(key));
+  if (precedingIdentities.length) markerTurn = markerTurn.filter({ hasNot: state.tab.playwright.locator(
+    `xpath=self::*[${precedingIdentities.map(key => `${attribute}='${key}'`).join(" or ")}]`) });
+  const validIdentity = `string-length(${attribute})=36 and substring(${attribute},9,1)='-' and substring(${attribute},14,1)='-' and substring(${attribute},19,1)='-' and substring(${attribute},24,1)='-' and string-length(translate(${attribute},'-',''))=32 and translate(${attribute},'0123456789abcdefABCDEF-','')=''`;
+  const readyTurn = markerTurn.filter({ has: state.tab.playwright.locator(`xpath=self::*[${validIdentity}]`) });
+  activeOwner([options.turnId], true);
+  const remaining = sendDeadline - Date.now();
+  if (remaining <= 0) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
+  try { await readyTurn.waitFor({ state: "attached", timeoutMs: remaining }); }
+  catch { throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain."); }
+  activeOwner([options.turnId], true);
+  const afterSend = await snapshot(state.tab, generationMarker.trim(), undefined, "anchor", [...baselineTurns]);
+  const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey) && value.matchesGenerationMarker);
+  const latestTurn = afterSend.turns.at(-1);
+  const anchor = candidates.length === 1 && candidates[0] === latestTurn
+      && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
+      && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1 ? latestTurn.turnKey : null;
+  activeOwner([options.turnId], true);
+  if (!(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
+  activeOwner([options.turnId], true);
+  if (!anchor) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
   state.generationTurnKey = anchor;
   state.sendConfirmed = true;
   delete state.unsentDraft;
@@ -1106,7 +1178,8 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
 }
 
-async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory) {
+async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory, defaultUi) {
+  options = { ...options, ui: { ...defaultUi, ...options.ui } };
   const { operation } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const { ensureOwned, activeOwner, observeGeneration } = viewFactory(state, options, replyReader);
@@ -1135,14 +1208,31 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   } else throw new Error("Unsupported browser observation operation.");
 }
 
-// The digest binds the resident controller and DOM contract to their exact source
-// generation. Each mutation program ships only its own runner and shared context;
-// mutation code is not retained in the resident controller.
+// The observer generation excludes independently maintained mutation code and
+// picker controls. Changing Send cannot invalidate an active observation wait.
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
   .update([JSON.stringify(residentBrowserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
+
+// Use only the cache's public, source-checked dependencies: a closure could hide
+// different captured runners behind identical dispatcher source. The cache is
+// native REPL state and never injected into the browser page.
+async function runBrowserMutation(cache, options, nodeRepl) {
+  const state = cache.state, helper = cache.helper;
+  const config = { ...options, ui: { ...cache.ui, ...options.ui } };
+  const runner = options.operation === "continue" ? cache.continuation : cache.send;
+  return runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext,
+    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState);
+}
+
+const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
+  createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
+  createStopState: createStopBrowserState });
+export const browserMutationVersion = createHash("sha256")
+  .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
+    .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {
   if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
@@ -1151,6 +1241,7 @@ export function browserScript(options) {
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
   if (options.inputAcknowledgementPending !== undefined && (options.operation !== "observe" || typeof options.inputAcknowledgementPending !== "boolean")) throw failure("Input acknowledgement requires a boolean observation hint.");
   if (options.turnToken !== undefined && (options.operation !== "send" || typeof options.turnToken !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(options.turnToken))) throw failure("A current private turn token is supported only for Send and must match the broker token format.");
+  if (options.fullContinuation !== undefined && (options.operation !== "continue" || options.fullContinuation !== true)) throw failure("A full browser continuation requires its explicit Continue-only install flag.");
   const transfersOwnership = ["continue", "rollover"].includes(options.operation);
   if (transfersOwnership && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
@@ -1187,6 +1278,7 @@ export function browserScript(options) {
   const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
     modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
   if (options.operation === "continue" && (options.recovery || options.interruptedTurnId !== undefined)) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
+  else delete config.recoveryIdleButtonExactName;
   if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
@@ -1199,8 +1291,13 @@ export function browserScript(options) {
     config.pluginSelectionButtonName = options.pluginSelectionButtonName;
   }
   if (compact) {
-    config.ui = Object.fromEntries(Object.entries(config.ui).filter(([key]) => !operationDomKeys.has(key)));
+    config.ui = Object.fromEntries(Object.entries(config.ui).filter(([key, value]) => !operationDomKeys.has(key)
+      && (!Object.hasOwn(residentBrowserDom, key) || value !== residentBrowserDom[key])));
+    if (!Object.keys(config.ui).length) delete config.ui;
     for (const key of ["modelFamily", "power", "prompt", "pluginAppId", "pluginName", "pluginSelectionButtonName", "pluginChipSelector"]) delete config[key];
+  } else if (["continue", "send"].includes(options.operation)) {
+    config.ui = Object.fromEntries(Object.entries(config.ui).filter(([key, value]) => !Object.hasOwn(browserDom, key) || value !== browserDom[key]));
+    if (!Object.keys(config.ui).length) delete config.ui;
   }
   // The official REPL runs each call in a fresh module and omits carried
   // bindings that the new module redeclares. Store state on its shared global
@@ -1211,14 +1308,29 @@ export function browserScript(options) {
       : `if (typeof ${binding} === "undefined") throw new Error("Active native browser binding was lost.");`;
   const helper = `${binding}.residentBrowser`;
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
-  const resident = ["bootstrap", "continue"].includes(options.operation)
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()});`
+  const fullInstall = options.operation === "bootstrap" || options.operation === "continue" && options.fullContinuation === true;
+  const resident = fullInstall
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState, defaultUi) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}));`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
-  const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, continue: runBrowserContinuation, rollover: runBrowserRollover, send: runBrowserSend }[options.operation];
-  const dependencies = options.operation === "send" ? `, ${selectBrowserModel.toString()}`
-    : options.operation === "continue" && options.interruptedTurnId !== undefined ? `, ${reconcileInterruptedBrowserGeneration.toString()}, ${createStopBrowserState.toString()}` : "";
-  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()}${dependencies});`;
+  const sourceList = Object.keys(mutationFunctions).map(key => `cache.${key}`);
+  // Validate the actual frozen defaults and every function, including dispatch,
+  // before executing anything that can read or mutate the page. The version alone
+  // cannot establish custody of a replaced cache object.
+  const cacheFields = ["version", "state", "helper", "ui", ...Object.keys(mutationFunctions)];
+  const mutationIncompatible = `!cache || !Object.isFrozen(cache) || ${JSON.stringify(cacheFields)}.some(key => !Object.hasOwn(Object.getOwnPropertyDescriptor(cache, key) ?? {}, "value")) || cache.version !== ${JSON.stringify(browserMutationVersion)} || cache.state !== state || cache.helper !== helper || !cache.ui || !Object.isFrozen(cache.ui) || ![Object.prototype, null].includes(Object.getPrototypeOf(cache.ui)) || Object.values(Object.getOwnPropertyDescriptors(cache.ui)).some(field => !Object.hasOwn(field, "value") || typeof field.value !== "string") || [${sourceList.join(", ")}].some(fn => typeof fn !== "function") || (await import("node:crypto")).createHash("sha256").update([JSON.stringify(cache.ui), ...[${sourceList.join(", ")}].map(fn => Function.prototype.toString.call(fn))].join("\\n").replace(/\\r\\n?/gu, "\\n"), "utf8").digest("hex") !== ${JSON.stringify(browserMutationVersion)}`;
+  const installMutation = `if (${mutationIncompatible}) { cache = Object.freeze({ version: ${JSON.stringify(browserMutationVersion)}, state, helper, ui: Object.freeze(${JSON.stringify(browserDom)}), ${Object.entries(mutationFunctions).map(([key, fn]) => `${key}: ${fn.toString()}`).join(", ")} }); state.residentMutation = cache; }`;
+  if (["continue", "send"].includes(options.operation)) {
+    const invoke = `await cache.run(cache, options, nodeRepl);`;
+    if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\n${invoke}\n})(${binding}, ${JSON.stringify(config)});`;
+    const invalid = `!state || ${incompatible.replaceAll(helper, "helper").replaceAll(binding, "state")} || ${mutationIncompatible}`;
+    const noActions = `nodeRepl.write(${JSON.stringify(frameBegin)} + JSON.stringify({ routerBrowser: { operation: "continue", needsFullContinuation: true, noActions: true } }) + ${JSON.stringify(frameEnd)});`;
+    return `await (async (state, options) => {\nconst helper = state?.residentBrowser, cache = state?.residentMutation;\nif (${invalid}) { ${options.operation === "continue" ? noActions : 'throw new Error("Active native browser mutation cache was lost or changed; continuation is required.");'} } else {\n${invoke}\n}\n})(typeof ${binding} === "undefined" ? undefined : ${binding}, ${JSON.stringify(config)});`;
+  }
+  const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, rollover: runBrowserRollover }[options.operation];
+  // Bootstrap reuses the installed context instead of repeating its source.
+  if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext);\n})(${binding}, ${JSON.stringify(config)});`;
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()});`;
 }
 
 // This is a codec for our own producer, not a permissive JavaScript parser.
@@ -1227,12 +1339,15 @@ export function readBrowserProgram(value) {
   try {
     if (typeof value !== "string" || value.length > 1048576) return null;
     const code = value.replace(/\r\n?/gu, "\n");
-    let match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
+    let match = /\}\)\((?:typeof )?globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})(?: === "undefined" \? undefined : globalThis\.routerWeb_[A-Za-z][A-Za-z0-9_]{0,100})?, (\{[^\n]*\})\);$/u.exec(code);
+    if (!match) match = /await globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100})\.residentBrowser\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code);
     if (!match) {
       match = /\}\)\(globalThis\.routerWeb_([A-Za-z][A-Za-z0-9_]{0,100}), (\{[^\n]*\}), nodeRepl, globalThis\.routerWeb_[A-Za-z][A-Za-z0-9_]{0,100}\.residentBrowser\.replyReader,/u.exec(code);
     }
     if (!match) return null;
     const config = JSON.parse(match[2]);
-    return config.bindingId === match[1] && browserScript(config).replace(/\r\n?/gu, "\n") === code ? config : null;
+    if (config.bindingId !== match[1] || browserScript(config).replace(/\r\n?/gu, "\n") !== code) return null;
+    return ["observe", "retain", "continue", "send"].includes(config.operation)
+      ? { ...config, ui: { ...(["observe", "retain"].includes(config.operation) ? residentBrowserDom : browserDom), ...config.ui } } : config;
   } catch { return null; }
 }

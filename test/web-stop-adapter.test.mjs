@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { browserHelperVersion, browserScript, parseBrowserOutput, readBrowserProgram } from '../src/web-browser.mjs';
+import { browserHelperVersion, browserMutationVersion, browserScript, parseBrowserOutput, readBrowserProgram } from '../src/web-browser.mjs';
 import { createWebToolBroker } from '../src/web-tools.mjs';
 import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
@@ -66,6 +66,7 @@ function canonical(turn = TURN) {
 function ordinary(turn = TURN, operation = 'observe') {
   const config = { bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD, turnId: turn, operation,
     frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule,
+    ...(operation === 'continue' ? { expectedOwnerTurnIds: [TURN] } : {}),
     ...(operation === 'send' ? { prompt: 'synthetic send fixture' } : {}) };
   const sandbox = { futureOpaque: ['private opaque value', { retained: true }], permissionProfile: { opaque: true } };
   return { name: 'js', arguments: { code: browserScript(config), timeout_ms: 30000 }, _meta: {
@@ -121,6 +122,11 @@ test('resident observe and retain qualify only with the exact binding, helper ve
     const qualified = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule);
     assert.equal(qualified?.config.operation, operation);
     assert.equal(qualified?.observation, operation === 'observe');
+    assert.equal(qualified?.config.ui.stopButtonExactName, 'Stop', 'Sparse programs retain the complete effective Stop control.');
+    const literal = JSON.parse(/\.observe\((\{[^\n]*\}), nodeRepl\);$/u.exec(code)[1]);
+    assert.equal(Object.hasOwn(literal, 'ui'), false);
+    const customStop = { ...call, arguments: { ...call.arguments, code: browserScript({ ...qualified.config, ui: { stopButtonExactName: 'Stop generating' } }) } };
+    assert.equal(qualifyBrowserCall(customStop, STOP_CONFIG.runtimeModule), null);
     assert.ok(code.includes(browserHelperVersion));
     for (const tampered of [
       code.replaceAll('routerWeb_fixtureBinding', 'routerWeb_foreignBinding'),
@@ -131,6 +137,35 @@ test('resident observe and retain qualify only with the exact binding, helper ve
     ]) {
       assert.notEqual(tampered, code);
       assert.equal(qualifyBrowserCall({ ...call, arguments: { ...call.arguments, code: tampered } }, STOP_CONFIG.runtimeModule), null);
+    }
+  }
+});
+
+test('compact mutations and full Continue retain exact program qualification without observation grace', () => {
+  for (const operation of ['continue', 'send']) {
+    const call = ordinary(TURN, operation), qualified = qualifyBrowserCall(call, STOP_CONFIG.runtimeModule);
+    assert.equal(qualified?.observation, false);
+    assert.equal(qualified?.config.ui.stopButtonExactName, 'Stop');
+    const candidates = [call];
+    if (operation === 'continue') candidates.push({ ...call, arguments: { ...call.arguments,
+      code: browserScript({ ...qualified.config, fullContinuation: true }) } });
+    for (const candidate of candidates) {
+      const code = candidate.arguments.code;
+      assert.ok(qualifyBrowserCall(candidate, STOP_CONFIG.runtimeModule));
+      for (const tampered of [
+        code.replace(browserMutationVersion, '0'.repeat(64)),
+        code.replace('Function.prototype.toString.call', 'String'),
+        code.replace('Object.isFrozen(', 'Object.isExtensible('),
+        code.replaceAll('routerWeb_fixtureBinding', 'routerWeb_foreignBinding'),
+        code + '\nvoid 0;',
+      ]) {
+        assert.notEqual(tampered, code);
+        assert.equal(qualifyBrowserCall({ ...candidate, arguments: { ...candidate.arguments, code: tampered } }, STOP_CONFIG.runtimeModule), null);
+      }
+      const customStop = { ...candidate, arguments: { ...candidate.arguments,
+        code: browserScript({ ...readBrowserProgram(code), ui: { stopButtonExactName: 'Stop generating' } }) } };
+      assert.equal(qualifyBrowserCall(customStop, STOP_CONFIG.runtimeModule), null);
+      assert.deepEqual(candidate._meta, call._meta, 'The producer preserves native approval and sandbox authority.');
     }
   }
 });
