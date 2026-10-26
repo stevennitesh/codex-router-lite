@@ -996,6 +996,73 @@ test('Stop freezes repeated observation between reads and during a real active c
   });
 });
 
+test('interrupted active-read terminals classify native failures without retaining private error payloads', async t => {
+  for (const fixture of [
+    { name: 'RPC cancellation before execution', rpc: true, message: 'js execution cancelled before execution',
+      signatures: ['cancelled_before_execution'], kernelResetReported: false },
+    { name: 'tool cancellation and kernel reset', message: 'js execution cancelled; kernel reset',
+      signatures: ['execution_cancelled'], kernelResetReported: true },
+    { name: 'plain cancellation without a reported reset', message: 'JavaScript execution cancelled',
+      signatures: ['execution_cancelled'], kernelResetReported: false },
+    { name: 'structured native kernel closure', structured: true, message: 'node_repl kernel closed unexpectedly',
+      signatures: ['kernel_closed'], kernelResetReported: false },
+    { name: 'unrecognized native failure', message: 'Unknown synthetic native failure',
+      signatures: [], kernelResetReported: false },
+  ]) await t.test(fixture.name, async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    const privateText = 'synthetic-private-interrupted-read-credential';
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const message = fixture.structured
+      ? JSON.stringify({ error: fixture.message, error_kind: 'uncaught_exception', privatePayload: privateText }) : fixture.message;
+    const nativeResult = { isError: true, content: [{ type: 'text', text: message }, { type: 'text', text: privateText }] };
+    let running = false;
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) { assert.equal(running, false); return success(); }
+      running = true; entered(); await gate; running = false;
+      if (fixture.rpc) throw new McpError(-32602, message, { privatePayload: privateText });
+      return nativeResult;
+    }, { observationIntervalMs: 1000 });
+    subtest.after(release);
+    const control = new AbortController();
+    const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await started;
+    const sourceWire = f.forwardedInner.find(entry => entry.method === 'tools/call');
+    assert.match(sourceWire.id, /^router_observe_/u);
+    const outerId = f.bridge.observationChildren.get(sourceWire.id).wait.outerId;
+    control.abort(); assert.equal(await answer, 'cancelled');
+    const stop = f.client.callTool(hook());
+    await f.waitForReceipt('cleanup_authority_consumed');
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
+    subtest.mock.timers.tick(25); release();
+    assert.equal((await stop).isError, undefined);
+    assert.equal(f.calls.length, 2, 'Cleanup starts only after the actual failed read terminal.');
+    const terminals = f.receipts.filter(entry => entry.code === 'interrupted_observation_terminal');
+    const text = fixture.rpc ? `MCP error -32602: ${message}` : `${message}\n${privateText}`;
+    assert.deepEqual(terminals, [{
+      at: new Date(1025).toISOString(), code: 'interrupted_observation_terminal', generation: GENERATION,
+      elapsedMs: 25, callbackElapsedMs: 25, childTerminalObserved: true,
+      rpcError: fixture.rpc === true, toolError: fixture.rpc !== true, resultSucceeded: false, cleanupActive: true,
+      nativeFailure: {
+        source: fixture.rpc ? 'rpc_error' : 'tool_error', ...(fixture.rpc ? { rpcCode: -32602 } : {}),
+        textBytes: Buffer.byteLength(text), textSha256: createHash('sha256').update(text).digest('hex'),
+        signatures: fixture.signatures, kernelResetReported: fixture.kernelResetReported,
+        errorKinds: fixture.structured ? ['uncaught_exception'] : [], errorClasses: [],
+      },
+    }]);
+    const response = f.forwardedOuter.find(entry => !entry.method && entry.id === outerId);
+    assert.ok(response, 'The original terminal still reaches its owning outer request.');
+    if (fixture.rpc) assert.deepEqual(response.error, { code: -32602, message: `MCP error -32602: ${message}`, data: { privatePayload: privateText } });
+    else assert.deepEqual(response.result, nativeResult);
+    subtest.mock.timers.tick(1000); await f.client.ping(); assert.equal(f.calls.length, 2);
+    const diagnostics = JSON.stringify(f.receipts);
+    for (const secret of [privateText, fixture.message, 'private opaque value'])
+      assert.equal(diagnostics.includes(secret), false);
+    for (const identity of [APPROVED_THREAD, TURN]) assert.equal(JSON.stringify(terminals).includes(identity), false);
+  });
+});
+
 test('changed authority retires an idle wait and cannot authorize Stop or later repeated reads', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { promise: seen, resolve: first } = Promise.withResolvers();

@@ -224,19 +224,21 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       diagnostic.readbackState = diagnostic.generationInactive ? "inactive_readback" : "unconfirmed_readback";
       return { visible: view.stopVisible, idleAbsent: view.idleAbsent, inactive: diagnostic.generationInactive };
     };
-    const waitForReadiness = async locator => {
+    const waitForReadiness = async (locator, readyObservation) => {
       // Leave transport/check headroom beyond the minimum read allowance. A
       // timeout's actual terminal reply need not arrive on its nominal tick.
       const readReserveMs = readAllowanceMs + 100;
-      assertCurrent(readAllowanceMs);
-      const timeoutMs = Math.floor(deadline - Date.now() - readReserveMs);
-      // Waiting is optional when the remaining budget can admit only the
-      // decisive read. Do not reject an already settled page for lack of time
-      // reserved exclusively for scheduling it.
-      if (timeoutMs < 1) return;
-      try { await locator.waitFor({ state: "visible", timeoutMs }); }
-      catch { /* A rejected or timed-out wait is never inactivity proof. */ }
-      assertCurrent(readAllowanceMs);
+      return await browserState.waitForReadiness(locator, {
+        nextTimeout: () => {
+          assertCurrent();
+          // A settled page can still use the decisive read when no scheduling
+          // headroom remains. The state read enforces its actual deadline.
+          return Math.floor(deadline - Date.now() - readReserveMs);
+        },
+        afterWait: () => assertCurrent(readAllowanceMs),
+        inspect: inspectGeneration,
+        ready: readyObservation,
+      });
     };
     stage = "generation_proof";
     await inspectGeneration(200);
@@ -255,8 +257,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     let observation = await inspectGeneration(200);
     if (!observation.inactive && !observation.visible && !receipt) {
       stage = "stop_visibility";
-      await waitForReadiness(ready(false).or(stop));
-      observation = await inspectGeneration();
+      observation = await waitForReadiness(ready(false).or(stop), view => view.inactive || view.visible);
     }
     if (!observation.inactive) {
       if (observation.visible && !receipt) {
@@ -285,8 +286,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         assertCurrent(readAllowanceMs);
         stage = "stop_readback_visibility";
         allowComposerRestored = receipt.acknowledged && receipt.idleAbsent;
-        if (!diagnostic.clickError) await waitForReadiness(ready(allowComposerRestored));
-        observation = await inspectGeneration();
+        observation = diagnostic.clickError ? await inspectGeneration()
+          : await waitForReadiness(ready(allowComposerRestored), view => view.inactive);
         if (diagnostic.clickError && !observation.inactive) deny("browser_operation_failed");
       }
       if (!observation.inactive) deny("stop_confirmation_failed");

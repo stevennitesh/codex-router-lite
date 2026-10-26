@@ -102,12 +102,19 @@ unresolved native action. Bootstrap reuses the same binding identity. If a parti
 binding still owns a tab, ordinary open refuses it rather than creating another
 tab or changing its draft. This does not replace an established saved conversation.
 
-If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
-Codex conversation's browser and checks the previous reply's identity and text
-prefix before continuing. If Stop preceded a readable answer, a confirmed
-generation's unique latest turn can establish ownership in the recorded saved
-chat instead. Recovery requires the confirmed generation checkpoint and matching
-saved-chat proof.
+Native REPL handles are a cache: Interrupt or restart can remove them while the
+original tab survives. Continuation can restore the binding on that exact tab
+at its recorded saved URL without opening or navigating a tab. If the original
+tab is absent, recovery may reacquire one unique saved-URL match or reopen the
+recorded chat in that Codex conversation's browser. Every path requires the
+confirmed generation checkpoint and matching saved-chat proof, including the
+previous reply's identity and text prefix. If Stop preceded a readable answer,
+the confirmed generation's unique latest turn can establish ownership instead.
+Successful recovery retains `recovered:true` and reports `bindingRestored:true`.
+Only the original surviving tab without recovery navigation reports both
+`tabReopened:false` and `tabNavigated:false`. A new tab or changed tab identity
+reports `tabReopened:true`; recovery navigation or reload reports
+`tabNavigated:true`.
 An existing tab restored to the known immediate predecessor of a completed
 checkpoint may be stale. Recovery may reload that exact saved URL once, only
 after checking that all mounted replies belong to the saved baseline, its last
@@ -128,7 +135,12 @@ Each confirmed Send owns one rendered logical turn. That turn can contain
 commentary, tool activity and several assistant messages. Router reads the latest
 answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
-answer. Missing or ambiguous turn/message identities fail explicitly.
+answer. The first observation of an unacknowledged Send may wait once for its
+original unique latest turn to finish mounting. It never adopts a replacement
+identity or emits an unowned snapshot to the tool broker. A duplicate or a
+settled later turn fails immediately; expiry, later ownership loss and ambiguous
+message identities still fail explicitly. Exceptional initial reads report only
+turn counts and whether the latest identity matched.
 
 Bootstrap installs separately versioned observer and mutation helpers in the
 native Node REPL binding. Observation, retention, ordinary continuation and Send
@@ -382,8 +394,12 @@ or an observed composer transition after an acknowledged click: the exact
 visible afterward. The second path proves that ChatGPT returned its composer to
 idle; it does not assert a completed answer or remote transport closure. A click
 error or a no-click observation still requires the explicit complete state.
-Readiness uses a bounded locator wait followed by a coherent ownership and state
-read, without repeated sleep/read calls. The wait itself never grants success.
+Readiness uses a shared conditional locator wait followed by a coherent ownership
+and state read. If the public SDK caps that wait before the original deadline,
+or its condition changes before the read, Router can rearm the same condition
+within the remaining budget. Only recognized original SDK timeout reasons permit
+rearming after a rejected wait; other errors receive one decisive state read.
+Rearming adds no sleeps or Stop clicks. The wait itself never grants success.
 If the click rejects after settling, cleanup can still read the complete state;
 an observed inactive generation is reported with its action error preserved,
 rather than pretending the click acknowledged or repeating it. Retention acknowledgement
@@ -451,8 +467,9 @@ Keep the following checks separate so a failure identifies its own boundary:
    observed tab retention. Acknowledged click, confirmed inactivity and tab
    survival are distinct facts. Report an unavailable confirmation as unknown.
 5. **Continuation:** send a separate short recall request after Stop and require
-   completed delivery in the same saved URL, tab and binding. Do not resume the
-   interrupted work or supply the marker in the request.
+   completed delivery in the same saved URL, tab and native binding identity.
+   Missing REPL handles may use the [same-tab binding restoration](#ownership-and-recovery)
+   above. Do not resume the interrupted work or supply the marker in the request.
 
 Run native-tool verification separately when the tool path changes. A recovery
 check does not need a native command, and a browser-contract fixture does not
@@ -498,9 +515,11 @@ directly does not exercise native cancellation and cannot replace this step.
 
 Run `wait --phase stop` with that same native turn identity. Only after its
 interrupted-turn event and matching positive adapter receipt pass, send the
-`continuation` prompt and wait for its exact new turn. Require the saved chat,
-tab and binding to survive, the original marker to be recalled without supplying
-it, and no recovery/reopen, uncertain Send or unresolved native action. The
+`continuation` prompt and wait for its exact new turn. Require the original saved
+chat, tab and native binding identity, the marker recalled without supplying it,
+and no uncertain Send or unresolved native action. Verified same-tab binding
+restoration is allowed only with `bindingRestored:true`, `tabReopened:false` and
+`tabNavigated:false`; reopening or recovery navigation fails this check. The
 helper writes bounded allowlisted receipts and waits on file changes; elapsed
 timeouts only bound failures. It does not replay a failed action or change keys,
 hook trust, runtime selection, protected ledgers or rollback copies.

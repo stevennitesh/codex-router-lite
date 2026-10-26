@@ -413,22 +413,63 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     return current;
   };
   const observeGeneration = async (ownedUrl) => {
-    activeOwner([options.turnId], true);
-    const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === state.savedUrl;
+    const generationTurnKey = state.generationTurnKey, generationUrl = state.savedUrl;
+    const assertCurrent = () => {
+      activeOwner([options.turnId], true);
+      if (state.generationTurnKey !== generationTurnKey || state.savedUrl !== generationUrl) throw new Error("The observed browser generation changed during observation.");
+    };
+    assertCurrent();
+    const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === generationUrl;
     if (!normalUrl(ownedUrl)) throw new Error("The observed conversation left its normal saved URL.");
-    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${state.generationTurnKey}"]`);
-    const view = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-      .or(state.tab.playwright.locator("body"))
-      .or(role(ui.stopButtonExactName)).or(role(ui.temporaryToggleName)).or(role(ui.temporaryHeadingName, "heading"))
-      .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
-      .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
-      .or(role(ui.startNewChatButtonName).filter({ visible: true }))
-      .or(state.tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true }))
-      .or(role(ui.retryButtonExactName).filter({ visible: true })).or(role(ui.composerName, "textbox"))
-      .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-        generationTurnKey: state.generationTurnKey, generationMarker: state.generationMarker,
-        submittedComposerText: state.submittedComposerText, observation: true }, { timeoutMs: 1000 });
-    activeOwner([options.turnId], true);
+    const firstObservation = options.operation === "observe" && state.initialGenerationObservation?.generationTurnKey !== generationTurnKey;
+    if (firstObservation) state.initialGenerationObservation = { generationTurnKey };
+    const generationObservation = state.initialGenerationObservation?.generationTurnKey === generationTurnKey ? state.initialGenerationObservation : undefined;
+    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${generationTurnKey}"]`);
+    const readView = async () => {
+      const value = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
+        .or(state.tab.playwright.locator("body"))
+        .or(role(ui.stopButtonExactName)).or(role(ui.temporaryToggleName)).or(role(ui.temporaryHeadingName, "heading"))
+        .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
+        .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
+        .or(role(ui.startNewChatButtonName).filter({ visible: true }))
+        .or(state.tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true }))
+        .or(role(ui.retryButtonExactName).filter({ visible: true })).or(role(ui.composerName, "textbox"))
+        .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+          generationTurnKey, generationMarker: state.generationMarker,
+          submittedComposerText: state.submittedComposerText, observation: true }, { timeoutMs: 1000 });
+      assertCurrent();
+      if (!normalUrl(value.observation.url) || !value.observation.temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
+      return value;
+    };
+    let view = await readView();
+    const initialOwnership = { anchorCount: view.turns.filter(turn => turn.turnKey === generationTurnKey).length,
+      turnCount: view.turns.length, latestMatches: view.turns.at(-1)?.turnKey === generationTurnKey };
+    if (firstObservation) generationObservation.ownership = initialOwnership;
+    let initialOwnershipDiagnostic = generationObservation?.reconciled ? generationObservation.ownership : undefined;
+    if (options.operation === "observe" && options.inputAcknowledgementPending === true
+        && (initialOwnership.anchorCount !== 1 || !initialOwnership.latestMatches)) {
+      initialOwnershipDiagnostic = generationObservation?.ownership ?? initialOwnership;
+      const latestTurnKey = view.turns.at(-1)?.turnKey;
+      const superseded = initialOwnership.anchorCount === 1 && typeof latestTurnKey === "string"
+        && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurnKey);
+      // Only the first actual read has a fresh native-call budget. A settled
+      // later identity is supersession; a missing turn or placeholder may settle.
+      if (firstObservation && initialOwnership.anchorCount < 2 && !superseded) {
+        generationObservation.reconciled = true;
+        const owned = `//*[@${ui.turnKeyAttribute}='${generationTurnKey}']`;
+        const latest = `(//*[@${ui.turnKeyAttribute}])[last()][@${ui.turnKeyAttribute}='${generationTurnKey}']`;
+        try { await state.tab.playwright.locator(`xpath=//body[count(${owned})=1 and ${latest}]`).waitFor({ state: "visible", timeoutMs: 3000 }); }
+        catch (error) {
+          assertCurrent();
+          if (typeof error?.message !== "string" || !/^(?:Error: )?(?:Playwright selector deadline exceeded(?:\r?\n|$)|Timed out after \d+ms waiting for selector )/u.test(error.message)) throw error;
+        }
+        assertCurrent();
+        const currentUrl = await state.tab.url();
+        assertCurrent();
+        if (!normalUrl(currentUrl)) throw new Error("The observed conversation left its normal saved URL.");
+        view = await readView();
+      }
+    }
     const { url, stopVisible, temporaryInactive, conversationFull: full } = view.observation;
     if (!normalUrl(url) || !temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
     const texts = view.replies;
@@ -441,9 +482,10 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     const regenerateVisible = Boolean(reply?.completionActionAfter) && view.observation.regenerateVisible;
     const statusComplete = anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete;
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-    activeOwner([options.turnId], true);
+    assertCurrent();
     return { completed, assistantText, replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
+      ...(initialOwnershipDiagnostic ? { initialOwnershipDiagnostic } : {}),
       baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
@@ -636,26 +678,29 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
       || typeof generationTurnKey !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(generationTurnKey)) throw new Error("Interrupted continuation requires the exact confirmed browser generation.");
   const browserState = createStopState(tab, { ui, generationTurnKey, stopName: owner.stopButtonName,
     idleName: options.recoveryIdleButtonExactName });
+  const confirmationDeadline = Date.now() + 10000;
   let receipt = state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
   const composerRestored = () => receipt?.acknowledged === true && receipt.idleAbsent === true;
   const inspect = async () => {
     const view = await browserState.inspect({ allowComposerRestored: composerRestored(), preferInactive: Boolean(receipt),
-      beforeRead: () => { assertCurrent(); return 1000; }, afterRead: assertCurrent });
+      beforeRead: () => {
+        assertCurrent();
+        const remaining = confirmationDeadline - Date.now();
+        if (remaining < 200) throw new Error("The interrupted generation confirmation deadline expired.");
+        return Math.min(1000, remaining);
+      }, afterRead: assertCurrent });
     if (view?.url !== savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
     if (view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot stop another generation.");
     if (!view.controlsRecognized || typeof view.stopVisible !== "boolean") throw new Error("The interrupted generation controls are unrecognized or ambiguous.");
     return view;
   };
-  const waitForReadiness = async locator => {
-    assertCurrent();
-    try { await locator.waitFor({ state: "visible", timeoutMs: 10000 }); }
-    catch { /* Readiness alone never proves generation inactivity. */ }
-    assertCurrent();
-  };
+  const waitForReadiness = (locator, ready) => browserState.waitForReadiness(locator, {
+    nextTimeout: () => { assertCurrent(); return Math.floor(confirmationDeadline - Date.now() - 300); },
+    afterWait: assertCurrent, inspect, ready,
+  });
   let view = await inspect();
   if (!view.inactive && !view.stopVisible && !receipt) {
-    await waitForReadiness(browserState.ready(false).or(browserState.stop));
-    view = await inspect();
+    view = await waitForReadiness(browserState.ready(false).or(browserState.stop), value => value.inactive || value.stopVisible);
   }
   if (!view.inactive && view.stopVisible && !receipt) {
     // Record dispatch before awaiting it. Reconciliation retries may read
@@ -665,8 +710,9 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
     try { await browserState.stop.click({ timeoutMs: 10000 }); receipt.acknowledged = true; }
     catch { /* Only explicit completion may reconcile a rejected click. */ }
     assertCurrent();
-    if (receipt.acknowledged) await waitForReadiness(browserState.ready(composerRestored()));
-    view = await inspect();
+    view = receipt.acknowledged
+      ? await waitForReadiness(browserState.ready(composerRestored()), value => value.inactive)
+      : await inspect();
   }
   if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
 }
@@ -675,6 +721,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
+  let recoveryEffects, recoveryTabId;
   let verifyRecoveryTexts;
   let recoverMissingTab = false;
   if (operation === "continue" && options.recovery && !state.bindingLost && !state.needsHistory && !options.needsHistory && state.browser && state.tabId) {
@@ -718,6 +765,11 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
     requireRecoveryOwnership();
     if (!tab?.id || matches.length && tab.id !== matches[0].id) throw new Error("The current tab identity changed during recovery.");
+    recoveryTabId = tab.id;
+    // A dispatched refresh remains part of recovery even if its checkpoint
+    // becomes readable only on a later continuation attempt.
+    recoveryEffects = { bindingRestored: true, tabReopened: !matches.length || tab.id !== proof.tabId,
+      tabNavigated: state.recoveryReloadCheckpoint !== undefined };
     const recoveryTabUrl = await tab.url();
     const navigate = recoveryTabUrl !== proof.url;
     requireRecoveryOwnership();
@@ -742,6 +794,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const recoveryRejected = reason => { recoveryDiagnostic.reason = reason; return false; };
     const boundedCount = values => Math.min(values.length, 10000);
     verifyRecoveryTexts = view => {
+      if (tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
       const texts = view.replies;
       const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId) && value.turnKey === proof.generationTurnKey);
       const latest = fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1), text = latest?.text;
@@ -906,6 +959,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
           // Refresh only this proven stale predecessor. A failed attempt cannot
           // repeat the action for the same checkpoint or acquire cleanup ownership.
           state.recoveryReloadCheckpoint = checkpoint;
+          recoveryEffects.tabNavigated = true;
           try { await tab.reload(); }
           catch { throw recoveryFailure("The saved chat reload failed; recovery remains unverified."); }
           requireRecoveryOwnership();
@@ -921,6 +975,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       if (!verified || !(await emptyRecoveryComposer())) throw recoveryFailure("The saved chat reply or composer changed; recovery cannot reuse it.");
     }
     requireRecoveryOwnership();
+    if (tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url,
       baselineReplyIds: [...proof.baselineReplyIds], replyId: proof.replyId,
@@ -932,6 +987,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     if (navigate) {
       if (matches.length && !(await emptyNormalHome(tab)) || await tab.url() !== recoveryTabUrl) throw new Error("The recovery tab changed before saved chat navigation; recovery cannot overwrite it.");
       activeOwner([options.turnId], true);
+      recoveryEffects.tabNavigated = true;
       await tab.goto(proof.url);
       await waitForState(verifiedReply, Date.now() + 10000,
         "The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
@@ -980,9 +1036,11 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
     await state.tab.markHandoff();
+    const continuationUrl = await state.tab.url();
     activeOwner(owners, true);
-    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, assistantText, conversationFull: true,
-      ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+    if (recovered && state.tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
+    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: true,
+      ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
     return;
   }
   await state.tab.markHandoff();
@@ -1023,7 +1081,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   state.retained = false;
   registerActive();
   emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
-    ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+    ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
 }
 
 async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
@@ -1331,6 +1389,12 @@ export function browserScript(options) {
   // Bootstrap reuses the installed context instead of repeating its source.
   if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext);\n})(${binding}, ${JSON.stringify(config)});`;
   return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()});`;
+}
+
+export function isBrowserContinuationCacheMiss(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === 3 && value.operation === "continue"
+    && value.needsFullContinuation === true && value.noActions === true;
 }
 
 // This is a codec for our own producer, not a permissive JavaScript parser.

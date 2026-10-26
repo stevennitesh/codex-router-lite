@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { codexExecutableIdentity, assertCodexExecutableIdentity } from '../src/codex-binary.mjs';
 import { writePrivateFile, writePrivateJson } from '../src/file-security.mjs';
 import { CODEX_HOME, INSTALL_MANIFEST_PATH, SOURCE_ROOT, STATE_DIR } from '../src/paths.mjs';
-import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram } from '../src/web-browser.mjs';
+import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram, isBrowserContinuationCacheMiss } from '../src/web-browser.mjs';
 import { WEB_MODEL_REGISTRY, webModelSelection } from '../src/web-models.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
@@ -201,7 +201,8 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
   const receipt = { version: 1, phase, threadId: run.threadId, turnId, status: 'pending', code: 'awaiting_evidence',
     nativeCommandCount: 0, nativeCompleted: false, nativeInterrupted: false, sameBinding: null,
     acceptedSend: null, currentGenerationObserved: null, stopVisible: null, completedRetain: null,
-    exactMarker: null, recoveryBranchExecuted: null, adapterStopConfirmed: null, childTerminalObserved: null,
+    exactMarker: null, recoveryBranchExecuted: null, bindingRestored: null, tabReopened: null, tabNavigated: null,
+    continuationCacheMiss: false, adapterStopConfirmed: null, childTerminalObserved: null,
     expectedModel: null, expectedEffort: null, expectedFamily: null, expectedPower: null,
     observedModel: null, observedEffort: null, observedFamily: null, observedPower: null,
     nativeModelVerified: null, browserSelectionVerified: null };
@@ -292,7 +293,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       }
     }
     for (const id of outputs.keys()) requireValue(calls.has(id), 'unpaired_output');
-    const browser = [], native = [], discovery = []; let pending = false;
+    const browser = [], native = [], discovery = []; let pending = false, fullContinuationPending = false;
     for (const [id, call] of calls) {
       const paired = outputs.has(id), result = outputs.get(id);
       if (!paired) pending = true;
@@ -301,6 +302,8 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         const config = readBrowserProgram(args?.code);
         requireValue(config && config.sessionId === run.threadId && config.turnId === turnId && config.bindingId === run.baseline.bindingId, 'browser_identity_mismatch');
         requireValue(['continue', 'send', 'observe', 'retain'].includes(config.operation), 'unexpected_browser_operation');
+        if (fullContinuationPending) requireValue(config.operation === 'continue' && config.fullContinuation === true, 'full_continuation_required');
+        else requireValue(config.fullContinuation !== true, 'unexpected_full_continuation');
         if (expected && ['continue', 'send'].includes(config.operation)) {
           if (config.operation === 'send') {
             receipt.observedFamily = knownFamily(config.modelFamily);
@@ -321,10 +324,24 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
             && typeof result === 'string' && /^aborted by user after \d+(?:\.\d+)?s$/u.test(result)) continue;
           fail('unsupported_browser_output');
         }
+        if (Object.hasOwn(frame, 'needsFullContinuation') || Object.hasOwn(frame, 'noActions')) {
+          requireValue(isBrowserContinuationCacheMiss(frame) && config.operation === 'continue'
+            && config.fullContinuation !== true && !receipt.continuationCacheMiss, 'invalid_continuation_cache_miss');
+          receipt.continuationCacheMiss = true; fullContinuationPending = true;
+          continue;
+        }
         requireValue(frame.operation === config.operation && frame.normal === true, 'browser_operation_failed');
+        if (fullContinuationPending) fullContinuationPending = false;
         requireValue(frame.url === run.baseline.chatUrl && String(frame.tabId) === run.baseline.tabId, 'browser_binding_changed');
-        requireValue(frame.recovered !== true && frame.conversationFull !== true && frame.needsHistory !== true, 'browser_recovery_or_rollover');
-        if (config.operation === 'continue') receipt.recoveryBranchExecuted = false;
+        const sameTabRestoration = config.operation === 'continue' && frame.recovered === true
+          && frame.bindingRestored === true && frame.tabReopened === false && frame.tabNavigated === false;
+        requireValue((frame.recovered !== true || sameTabRestoration) && frame.conversationFull !== true
+          && frame.needsHistory !== true, 'browser_recovery_or_rollover');
+        if (config.operation === 'continue') {
+          receipt.recoveryBranchExecuted = frame.recovered === true;
+          receipt.bindingRestored = sameTabRestoration;
+          receipt.tabReopened = frame.tabReopened ?? null; receipt.tabNavigated = frame.tabNavigated ?? null;
+        }
         requireValue(frame.requestError == null, 'browser_request_error');
         if (expected && config.operation === 'send' && frame.sent === true) receipt.browserSelectionVerified = true;
         browser.push({ config, frame });
@@ -336,6 +353,10 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       }
     }
     receipt.nativeCommandCount = native.length;
+    if (fullContinuationPending) {
+      requireValue(!receipt.nativeCompleted && !receipt.nativeInterrupted, 'full_continuation_required');
+      return { receipt };
+    }
     requireValue(phase === 'native' ? native.length <= 1 : native.length === 0, 'unexpected_native_execution');
     requireValue(['ready', 'stop'].includes(phase) || discovery.length === 0, 'unexpected_discovery');
     const accepted = ledger.lastTurn.turnId === turnId && ledger.lastTurn.sendState === 'sent' && ledger.uncertainSend === false;
@@ -403,7 +424,9 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         && !Object.hasOwn(args, 'justification') && !Object.hasOwn(args, 'prefix_rule'), 'native_command_mismatch');
       requireValue(native[0].paired && nativeOutput(native[0].result, run.marker) && normalize(fixtureText) === run.marker, 'native_command_output_failed');
     }
-    if (phase === 'continuation') requireValue(run.phases.stop?.status === 'passed' && receipt.recoveryBranchExecuted === false, 'continuation_without_retained_native_stop');
+    if (phase === 'continuation') requireValue(run.phases.stop?.status === 'passed'
+      && (receipt.recoveryBranchExecuted === false || receipt.bindingRestored === true
+        && receipt.tabReopened === false && receipt.tabNavigated === false), 'continuation_without_retained_native_stop');
     receipt.status = 'passed'; receipt.code = 'verified';
     return { receipt };
   } catch (error) {

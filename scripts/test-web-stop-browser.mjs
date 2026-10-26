@@ -21,6 +21,7 @@ const scenarios = Object.freeze({
   "click-idle-transition": "Click restores idle",
   "absent-unconfirmed": "Absent unconfirmed",
   "explicit-complete": "Explicit complete",
+  "sdk-capped-readiness": "Click restores idle",
 });
 
 function requireContract(value, code) {
@@ -95,7 +96,8 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
       // These exact names come from this fixture's public scenario controls.
       await tab.playwright.getByRole("button", { name: scenarios[name], exact: true }).click({ timeoutMs });
       const selected = await status();
-      requireContract(selected.scenario === name && selected.stopClicks === 0, "scenario_not_selected");
+      requireContract(selected.scenario === (name === "sdk-capped-readiness" ? "click-idle-transition" : name)
+        && selected.stopClicks === 0, "scenario_not_selected");
       const state = createStopBrowserState(tab, { ui, generationTurnKey, stopName: "Stop", idleName: "Start Voice" });
       const before = await state.inspect({ timeoutMs });
       requireContract(before.url === fixtureUrl && before.matchingCount === 1
@@ -113,6 +115,32 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         requireContract(after.inactive === true && after.stopVisible === false
           && retained.mounted === 1 && retained.hidden === 1, "hidden_stop_blocked_idle_readiness");
         results.push({ case: name, passed: true, hiddenStopMounted: true, readinessResolved: true });
+      } else if (name === "sdk-capped-readiness") {
+        requireContract(before.stopVisible === true && before.inactive === false, "initial_state_not_active");
+        const deadline = Date.now() + 10000;
+        let waits = 0, activeRead = false;
+        // The real SDK's first bounded wait must expire while the fixture is
+        // active. Only a rearmed wait dispatches the fixture's one real click.
+        const after = await state.waitForReadiness({ waitFor: async options => {
+          waits += 1;
+          if (waits === 2) {
+            requireContract(activeRead, "rearm_without_active_read");
+            await state.stop.click({ timeoutMs });
+          }
+          await state.ready(true).waitFor({ ...options, timeoutMs: Math.min(3000, options.timeoutMs) });
+        } }, {
+          nextTimeout: () => deadline - Date.now() - 1500,
+          inspect: async () => {
+            const view = await state.inspect({ allowComposerRestored: true, timeoutMs });
+            if (waits === 1 && view.stopVisible === true && view.inactive === false) activeRead = true;
+            return view;
+          },
+          ready: view => view.inactive,
+        });
+        const clicked = await status();
+        requireContract(waits === 2 && after.inactive === true && after.stopVisible === false
+          && clicked.stopClicks === 1, "capped_wait_did_not_rearm");
+        results.push({ case: name, passed: true, conditionWaits: waits, activeRead, stopClicks: clicked.stopClicks });
       } else if (["labelledby-transition", "normalized-transition", "click-idle-transition"].includes(name)) {
         requireContract(before.stopVisible === true && before.inactive === false && before.idleAbsent === true,
           "preclick_state_not_active_without_idle");

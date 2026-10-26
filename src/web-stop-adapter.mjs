@@ -196,11 +196,11 @@ export function readStopResult(result) {
 const NATIVE_STOP_FAILURES = [
   ['model_unavailable', 'node_repl is unavailable for this model'],
   ['cancelled_before_execution', 'js execution cancelled before execution'],
-  ['sandbox_changed', 'js sandbox changed; kernel reset, rerun your request'],
-  ['execution_timeout', 'js execution timed out; kernel reset, rerun your request'],
-  ['execution_cancelled', 'js execution cancelled; kernel reset'],
+  ['sandbox_changed', 'js sandbox changed; kernel reset, rerun your request', true],
+  ['execution_timeout', 'js execution timed out; kernel reset, rerun your request', true],
+  ['execution_cancelled', 'js execution cancelled; kernel reset', true],
   ['kernel_closed', 'node_repl kernel closed unexpectedly'],
-  ['process_exited', 'trusted Node process exited unexpectedly; kernel reset, rerun your request'],
+  ['process_exited', 'trusted Node process exited unexpectedly; kernel reset, rerun your request', true],
   ['approval_required', 'JavaScript execution requires an approval'],
   ['approval_required', 'JavaScript execution requires an approval elicitation'],
   ['approval_denied', 'JavaScript execution was denied'],
@@ -230,9 +230,11 @@ function nativeStopFailure(response) {
     } catch { /* Native tool errors need not be JSON. */ }
   }
   const normalized = new Set(messages.map(message => message.replace(/^(?:MCP error -?[0-9]+: |Error: )/u, '')));
+  const failures = NATIVE_STOP_FAILURES.filter(([, literal]) => normalized.has(literal));
   return { source, ...(Number.isSafeInteger(response?.error?.code) ? { rpcCode: response.error.code } : {}),
     textBytes: Buffer.byteLength(text), textSha256: createHash('sha256').update(text).digest('hex'),
-    signatures: [...new Set(NATIVE_STOP_FAILURES.filter(([, literal]) => normalized.has(literal)).map(([name]) => name))],
+    signatures: [...new Set(failures.map(([name]) => name))],
+    kernelResetReported: failures.some(([, , kernelReset]) => kernelReset === true),
     errorKinds: [...errorKinds].sort(),
     errorClasses: [...new Set([...normalized].map(message => /^(SyntaxError|ReferenceError|TypeError|RangeError|EvalError|URIError|AggregateError):/u.exec(message)?.[1]).filter(Boolean))].sort(),
   };
@@ -509,6 +511,7 @@ export class AdapterBridge {
         childTerminalObserved: true, rpcError: own(message, 'error'), toolError: message.result?.isError === true,
         resultSucceeded: own(message, 'result') && message.result?.isError !== true,
         cleanupActive: group?.pending === pending && !group.retired && !group.aborted,
+        ...(own(message, 'error') || message.result?.isError === true ? { nativeFailure: nativeStopFailure(message) } : {}),
       });
       const ownedObservation = pending.qualified && group?.pending === pending && group.authority === pending.cache
         && !group.aborted && group.epoch === this.epoch

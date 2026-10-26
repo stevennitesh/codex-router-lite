@@ -72,6 +72,22 @@ function replaceFrame(record) {
   record.output.output.content[0].text = text.replace(/\n\{[^\n]+\}\n/u, `\n${JSON.stringify({ routerBrowser: record.frame })}\n`);
 }
 
+function continuationCacheMiss(input, fields = {}) {
+  const full = structuredClone(input.continuation);
+  full.options.fullContinuation = true;
+  full.options.frameToken = 'frame_full_0000000000000001';
+  full.call.call_id = `call_router_web_${'f'.repeat(32)}`;
+  full.call.arguments = JSON.stringify({ code: browserScript(full.options) });
+  full.output.call_id = full.call.call_id;
+  Object.assign(full.frame, fields);
+  full.output.output.content[0].text = `ROUTER_WEB_BROWSER_${full.options.frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: full.frame })}\nROUTER_WEB_BROWSER_${full.options.frameToken}_END`;
+  input.continuation.frame = { operation: 'continue', needsFullContinuation: true, noActions: true };
+  replaceFrame(input.continuation);
+  const index = input.sessionRows.findIndex(entry => entry.payload === input.continuation.output);
+  input.sessionRows.splice(index + 1, 0, row('response_item', full.call), row('response_item', full.output));
+  return full;
+}
+
 function withModelIdentity(input, { model = 'chatgpt-web/gpt-6-sol', effort = 'medium', family = 'GPT-6', power = 1 } = {}) {
   Object.assign(input.run, { model, effort, selection: { family, power } });
   const context = row('turn_context', { turn_id: turnId, model, effort });
@@ -277,7 +293,7 @@ test('Stop rejects receipt mismatch, already-idle cleanup, and a result without 
   assert.equal(evaluateWebPhase(replaced).receipt.code, 'stop_authority_replaced');
 });
 
-test('continuation needs completed retention in the same binding and cannot reopen or recover the tab', () => {
+test('continuation needs completed retention and cannot claim unproved recovery or a changed tab', () => {
   const input = evidence('continuation');
   assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
   input.continuation.frame.recovered = true; replaceFrame(input.continuation);
@@ -285,6 +301,46 @@ test('continuation needs completed retention in the same binding and cannot reop
   delete input.continuation.frame.recovered; replaceFrame(input.continuation);
   input.ledger.tabId = 'reopened-tab';
   assert.equal(evaluateWebPhase(input).receipt.code, 'saved_binding_changed');
+});
+
+test('a framed cache miss permits one full continuation with verified same-tab restoration', () => {
+  for (const fields of [{}, { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: false }]) {
+    const input = evidence('continuation');
+    continuationCacheMiss(input, fields);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.status, 'passed', receipt.code);
+    assert.equal(receipt.continuationCacheMiss, true);
+    assert.equal(receipt.recoveryBranchExecuted, fields.recovered === true);
+    assert.equal(receipt.bindingRestored, fields.recovered === true);
+  }
+  for (const fields of [
+    { recovered: true },
+    { recovered: true, bindingRestored: true, tabReopened: true, tabNavigated: false },
+    { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: true },
+    { recovered: true, bindingRestored: true, tabReopened: false },
+    { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: false, tabId: 'another-tab' },
+  ]) {
+    const input = evidence('continuation'); continuationCacheMiss(input, fields);
+    assert.notEqual(evaluateWebPhase(input).receipt.status, 'passed');
+  }
+});
+
+test('cache fallback rejects malformed, repeated and missing full continuation evidence', () => {
+  for (const fields of [{ noActions: false }, { extra: true }, { operation: 'send' }]) {
+    const input = evidence('continuation'); continuationCacheMiss(input);
+    Object.assign(input.continuation.frame, fields); replaceFrame(input.continuation);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'invalid_continuation_cache_miss');
+  }
+  const repeated = evidence('continuation'), full = continuationCacheMiss(repeated);
+  full.frame = { operation: 'continue', needsFullContinuation: true, noActions: true }; replaceFrame(full);
+  assert.equal(evaluateWebPhase(repeated).receipt.code, 'invalid_continuation_cache_miss');
+  const missing = evidence('continuation'); const omitted = continuationCacheMiss(missing);
+  missing.sessionRows = missing.sessionRows.filter(entry => entry.payload.call_id !== omitted.call.call_id);
+  assert.equal(evaluateWebPhase(missing).receipt.code, 'full_continuation_required');
+  const unsolicited = evidence('continuation');
+  unsolicited.continuation.options.fullContinuation = true;
+  unsolicited.continuation.call.arguments = JSON.stringify({ code: browserScript(unsolicited.continuation.options) });
+  assert.equal(evaluateWebPhase(unsolicited).receipt.code, 'unexpected_full_continuation');
 });
 
 test('native verification requires one exact paired command and its real exit/output framing', () => {

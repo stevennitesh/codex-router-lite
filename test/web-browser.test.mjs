@@ -724,8 +724,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
 }
 
-async function recoverableFixture({ completed = true, text = "  Observed 🔧 reply\n" } = {}) {
-  const f = fixture({ fastTimers: true });
+async function recoverableFixture({ completed = true, text = "  Observed 🔧 reply\n", nativeContext = {} } = {}) {
+  const f = fixture({ fastTimers: true, nativeContext });
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push(text);
@@ -2023,6 +2023,127 @@ test("a duplicate generation key or a later foreign turn cannot supply the final
   }
 });
 
+test("initial observation reconciles a missing turn or later blank placeholder only to the original unique latest generation", async () => {
+  for (const initial of ["missing", "later blank"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
+    f.ui.messageRoot = initial === "missing" ? domElement("main", {})
+      : domElement("main", {}, owned(), observedTurn("rendering-placeholder", "", [], { complete: false }));
+    const composer = f.ui.composerText = "Keep this private draft";
+    const typed = [...f.ui.typed], reads = f.ui.observationReads;
+    const locate = f.tab.playwright.locator;
+    f.tab.playwright.locator = selector => {
+      const locator = locate(selector);
+      if (selector.startsWith("xpath=//body[count(")) {
+        const wait = locator.waitFor.bind(locator);
+        locator.waitFor = async options => { assert.deepEqual(options, { state: "visible", timeoutMs: 3000 }); return wait(options); };
+      }
+      return locator;
+    };
+    f.ui.onStopWait = () => {
+      assert.equal(f.ui.sendClicks, 1);
+      assert.deepEqual(f.getState().generationReplyIds, [], "No answer is adopted from the unowned first view.");
+      f.ui.messageRoot = domElement("main", {}, owned());
+    };
+    const observed = await f.run("observe", { inputAcknowledgementPending: true });
+    assert.deepEqual([observed.assistantText, observed.completed, observed.generationTurnKey], ["Owned answer", true, sent.generationTurnKey]);
+    assert.deepEqual(observed.initialOwnershipDiagnostic, { anchorCount: Number(initial === "later blank"),
+      turnCount: initial === "missing" ? 0 : 2, latestMatches: false });
+    assert.equal(f.ui.observationReads - reads, 2, "Readiness is followed by one fresh coherent reply read.");
+    assert.equal(f.ui.stopWaits, 1);
+    assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+    assert.doesNotMatch(JSON.stringify(observed.initialOwnershipDiagnostic), /private|answer|[a-f0-9]{8}-/iu);
+  }
+});
+
+test("initial ownership reconciliation cannot accept duplicates, permanent replacement, a later request or a readiness race", async () => {
+  for (const loss of ["duplicate", "replacement", "later request", "later blank UUID", "readiness race"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
+    const foreign = () => observedTurn(messageId(701), "Manual user request", [assistantMessage(21, "Foreign answer")]);
+    f.ui.messageRoot = loss === "duplicate" ? domElement("main", {}, owned(), owned())
+      : loss === "replacement" ? domElement("main", {}, foreign())
+        : loss === "later request" ? domElement("main", {}, owned(), foreign())
+          : loss === "later blank UUID" ? domElement("main", {}, owned(), observedTurn(messageId(701), "", [], { complete: false })) : domElement("main", {});
+    const typed = [...f.ui.typed], composer = f.ui.composerText;
+    f.ui.onStopWait = () => {
+      if (loss !== "replacement") f.ui.messageRoot = domElement("main", {}, owned());
+      else throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+    };
+    f.ui.onReplyRead = () => {
+      if (loss === "readiness race" && f.ui.stopWaits) f.ui.messageRoot = domElement("main", {}, foreign());
+    };
+    const observed = await f.run("observe", { inputAcknowledgementPending: true });
+    assert.equal(observed.replyUnavailableReason, loss === "duplicate" ? "duplicate-generation-turn" : "generation-turn-not-latest");
+    assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.generationReplyIds], [null, "", false, []]);
+    assert.equal(f.ui.stopWaits, Number(["replacement", "readiness race"].includes(loss)), "Duplicate ownership and a settled later identity are rejected without waiting.");
+    assert.equal(typeof observed.initialOwnershipDiagnostic, "object");
+    assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/u);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("pending-acceptance renewal never starts a late ownership wait and retains the first snapshot diagnostic", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [], { complete: false }));
+  f.ui.onReplyRead = () => {
+    assert.equal(f.getState().initialGenerationObservation.generationTurnKey, sent.generationTurnKey,
+      "The generation is marked observed before the first native page read.");
+  };
+  const first = await f.run("observe", { inputAcknowledgementPending: true });
+  assert.equal(first.replyUnavailableReason, "no-new-message");
+  assert.equal(first.initialOwnershipDiagnostic, undefined);
+  f.ui.messageRoot = domElement("main", {});
+  f.ui.onStopWait = () => { assert.fail("A later adapter read or renewal has no fresh ownership-wait budget."); };
+  const later = await f.run("observe", { inputAcknowledgementPending: true });
+  assert.equal(later.replyUnavailableReason, "generation-turn-not-latest");
+  assert.deepEqual(later.initialOwnershipDiagnostic, { anchorCount: 1, turnCount: 1, latestMatches: true });
+  assert.deepEqual([later.replyId, later.assistantText, later.completed], [null, "", false]);
+  assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("ordinary post-acknowledgement observation never reconciles a missing generation", async () => {
+  for (const inputAcknowledgementPending of [undefined, false]) {
+    const f = fixture(); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.messageRoot = domElement("main", {});
+    f.ui.onStopWait = () => { assert.fail("A post-acknowledgement observation cannot wait for another ownership view."); };
+    const observed = await f.run("observe", inputAcknowledgementPending === undefined ? {} : { inputAcknowledgementPending });
+    assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest");
+    assert.equal(observed.initialOwnershipDiagnostic, undefined);
+    assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("initial ownership readiness preserves native errors, cancellation, URL and exact-owner guards without another Send", async () => {
+  for (const change of ["native error", "native cancellation", "native owner", "URL", "generation key"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.messageRoot = domElement("main", {});
+    const typed = [...f.ui.typed], composer = f.ui.composerText;
+    f.ui.onStopWait = () => {
+      if (change === "native error") throw new Error("Native selector execution failed.");
+      if (change === "native cancellation") throw Object.assign(new Error("Native operation aborted."), { name: "AbortError" });
+      f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]));
+      if (change === "native owner") f.activeTurn().turnId = "foreign-turn";
+      if (change === "URL") f.ui.url = "https://chatgpt.com/c/another-conversation";
+      if (change === "generation key") f.getState().generationTurnKey = messageId(999);
+    };
+    await assert.rejects(f.run("observe", { inputAcknowledgementPending: true }), /Native selector execution failed|Native operation aborted|different native turn|normal saved URL|generation changed/u);
+    assert.equal(f.ui.stopWaits, 1);
+    assert.deepEqual(f.getState().generationReplyIds, []);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
 test("Send cannot confirm an old remounted turn without this turn's short marker or replay its uncertain effect", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.onSend = () => { f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Use turn_token previous_token unchanged. Request', [assistantMessage(99, 'Old answer')])); };
@@ -2267,22 +2388,58 @@ test("continuation reports one sanitized bounded identity diagnostic before anot
   }
 });
 
-test("lost kernel recovery uses the current same-session browser and verifies a raw UTF8 reply prefix with UTF16 length", async () => {
-  const f = await recoverableFixture();
-  f.loseBinding();
+test("lost kernel globals restore the exact existing tab without reopening or navigation and verify a raw UTF8 reply prefix with UTF16 length", async () => {
+  const nativeContext = {}, f = await recoverableFixture({ nativeContext });
+  const originalState = f.getState(), originalTab = f.tab;
+  for (const key of Object.keys(nativeContext)) delete nativeContext[key];
+  assert.equal(f.getState(), undefined);
+  assert.equal(f.activeTurn(), undefined);
   f.browser.browserId = "browser-after-restart";
   f.ui.texts[0] += "Later visible suffix";
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.normal, true);
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, false);
+  assert.equal(continued.tabId, f.recovery.tabId);
   assert.equal(continued.url, f.recovery.url);
   assert.equal(continued.assistantText, f.text + "Later visible suffix");
   assert.equal(f.getState().browser.browserId, "browser-after-restart");
+  assert.notEqual(f.getState(), originalState);
+  assert.equal(f.getState().tab, originalTab);
   assert.equal(f.activeTurn().turnId, "next-turn");
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.reloads, 0);
+});
+
+test("full-chat binding recovery reports browser effects only while the recovered tab identity survives retention", async () => {
+  for (const changeDuringRetention of [false, true]) {
+    const f = await recoverableFixture();
+    f.loseBinding();
+    showFullConversation(f.ui);
+    const handoff = f.tab.markHandoff;
+    let recoveryHandoffs = 0;
+    f.tab.markHandoff = async () => {
+      await handoff();
+      if (++recoveryHandoffs === 2 && changeDuringRetention) f.ui.tabId = "changed-tab";
+    };
+    const continuation = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    if (changeDuringRetention) await assert.rejects(continuation, /tab identity changed during recovery/u);
+    else {
+      const continued = await continuation;
+      assert.equal(continued.conversationFull, true);
+      assert.equal(continued.bindingRestored, true);
+      assert.equal(continued.tabReopened, false);
+      assert.equal(continued.tabNavigated, false);
+      assert.equal(continued.assistantText, f.text);
+    }
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.sendClicks, 1);
+  }
 });
 
 test("a stale completed predecessor reloads once, waits for its exact checkpoint and acquires ownership only after full verification", async () => {
@@ -2309,6 +2466,9 @@ test("a stale completed predecessor reloads once, waits for its exact checkpoint
   f.tab.markHandoff = async () => { order.push("handoff"); assert.equal(f.activeTurn()?.turnId, "next-turn"); await handoff(); };
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, true, "Refreshing the same tab must disclose the recovery navigation.");
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.tabId, f.recovery.tabId);
   assert.equal(continued.url, f.recovery.url);
@@ -2379,6 +2539,9 @@ test("failed refresh never accepts changed checkpoint proof or repeats reload, a
     f.ui.messageRoot = f.restored();
     const continued = await f.run("continue", { turnId: "late-turn", recovery: f.recovery });
     assert.equal(continued.assistantText, f.text);
+    assert.equal(continued.bindingRestored, true);
+    assert.equal(continued.tabReopened, false);
+    assert.equal(continued.tabNavigated, true, "A late successful checkpoint cannot erase the earlier recovery reload.");
     assert.equal(f.ui.reloads, 1);
     assert.equal(f.getState().recoveryReloadCheckpoint, undefined);
   }
@@ -2391,6 +2554,9 @@ test("saved URL reacquires one existing tab when its retained old ID is absent",
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.tabId, "current-saved-tab");
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true, "A different existing tab cannot claim restoration of the original tab.");
+  assert.equal(continued.tabNavigated, false);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
 });
@@ -2408,9 +2574,41 @@ test("a missing original tab reopens only its exact saved URL and registers rete
   };
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.tabId, "reopened-tab");
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(continued.assistantText, f.text);
   assert.equal(f.ui.newTabs, 2);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("allocating a new recovery tab reports reopening even if the runtime reuses the original tab ID", async () => {
+  const f = await recoverableFixture();
+  f.loseBinding();
+  f.ui.present = false;
+  const newTab = f.browser.tabs.new;
+  f.browser.tabs.new = async () => { const tab = await newTab(); f.ui.tabId = f.recovery.tabId; return tab; };
+  f.ui.onGoto = () => { f.ui.texts = [f.text]; };
+  const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.equal(continued.tabId, f.recovery.tabId);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
+  assert.equal(f.ui.newTabs, 2);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("binding recovery rejects a tab identity change during rendered proof before acquiring ownership", async () => {
+  const f = await recoverableFixture();
+  f.loseBinding();
+  f.ui.onReplyRead = () => { f.ui.tabId = "changed-tab"; };
+  const handoffs = f.ui.handoffs;
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /tab identity changed during recovery/u);
+  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.ui.handoffs, handoffs);
+  assert.equal(f.ui.newTabs, 1);
+  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 1);
 });
 
@@ -2425,6 +2623,9 @@ test("a manually closed saved tab recovers the same retained JavaScript binding 
   };
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(continued.tabId, "reopened-tab");
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.url, f.recovery.url);
@@ -2543,6 +2744,9 @@ test("the known tab may navigate from verified empty normal home to its exact sa
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
   assert.equal(continued.tabId, "owned-tab");
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
 });
@@ -2774,8 +2978,8 @@ test("recovery refuses a surviving active owner or ambiguous saved URL before cr
 });
 
 test("interrupted recovery retains the exact saved chat before reconciliation Stop and never repeats Send", async () => {
-  const f = await recoverableFixture({ completed: false });
-  f.loseBinding();
+  const nativeContext = {}, f = await recoverableFixture({ completed: false, nativeContext });
+  for (const key of Object.keys(nativeContext)) delete nativeContext[key];
   f.ui.onStopRequest = () => {
     assert.equal(f.activeTurn()?.turnId, "next-turn");
     assert.equal(f.ui.handoffs, 4, "Recovery and continuation renew retention before reconciliation Stop.");
@@ -2784,6 +2988,9 @@ test("interrupted recovery retains the exact saved chat before reconciliation St
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.interrupted, true);
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, false);
   assert.equal(f.ui.stopClicks, 1);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
@@ -2938,6 +3145,42 @@ test("interrupted continuation stops the preceding native owner and starts a new
   await f.run("send", { ...plugin, prompt: "Follow-up request", turnId: "next-turn" });
   assert.equal(f.ui.sendClicks, 2);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("interrupted continuation rearms an SDK-capped readiness wait without replaying the saved chat", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.texts.push("Earlier answer");
+  const sent = await f.run("send", { ...plugin, prompt: "Interrupted request" });
+  f.ui.texts.push("Partial answer");
+  f.ui.stop = true; f.ui.keepStopVisible = true; f.ui.hiddenMountedStop = true;
+  const state = f.getState(), tab = state.tab;
+  const messagesBefore = structuredClone(f.ui.userMessages), typedBefore = [...f.ui.typed];
+  const events = [];
+  f.ui.onStopWait = () => {
+    if (f.ui.stopWaits === 1) {
+      assert.equal(f.ui.stop, true); assert.equal(f.ui.complete, false);
+      events.push("sdk-timeout");
+      throw new Error("Playwright selector deadline exceeded\n\nlocator.waitFor(...) timed out");
+    }
+    assert(events.includes("active-read"), "A coherent active read must separate the capped wait from its rearm.");
+    events.push("owned-composer-idle");
+    f.ui.stop = false;
+  };
+  f.ui.onStopRead = () => {
+    if (f.ui.stopWaits === 1) {
+      assert.equal(f.ui.stop, true); assert.equal(f.ui.complete, false);
+      events.push("active-read");
+    }
+  };
+  const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(result.interrupted, true); assert.equal(result.normal, true);
+  assert.equal(result.assistantText, "Partial answer"); assert.equal(result.tabId, sent.tabId); assert.equal(result.url, sent.url);
+  assert.equal(f.getState(), state); assert.equal(state.tab, tab); assert.equal(f.activeTurn()?.turnId, "next-turn");
+  assert.equal(f.ui.complete, false, "Continuation requires the witnessed composer transition, not invented completion.");
+  assert.equal(events[0], "sdk-timeout"); assert.equal(events.at(-1), "owned-composer-idle");
+  assert.equal(f.ui.stopWaits, 2); assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1);
+  assert.equal(f.ui.sendClicks, 1); assert.deepEqual(f.ui.userMessages, messagesBefore); assert.deepEqual(f.ui.typed, typedBefore);
+  assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0); assert.equal(f.ui.waitedMs, 0);
 });
 
 test("interrupted continuation refuses a newer manual generation through final ownership transfer", async () => {
@@ -3556,6 +3799,9 @@ test("a lost native kernel requests full continuation before importing recovery 
   assert.deepEqual([f.ui.tabReads, f.ui.replyReads, f.ui.controlReads, f.ui.handoffs, f.ui.actions.length], before);
   const result = await f.runFast("continue", { turnId: "next-turn", recovery: f.recovery, fullContinuation: true });
   assert.equal(result.recovered, true);
+  assert.equal(result.bindingRestored, true);
+  assert.equal(result.tabReopened, false);
+  assert.equal(result.tabNavigated, false);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
 });

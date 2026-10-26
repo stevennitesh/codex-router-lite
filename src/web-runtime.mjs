@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { discoverBrowserExecutor, browserScript, isSavedChatUrl, parseBrowserOutput } from "./web-browser.mjs";
+import { discoverBrowserExecutor, browserScript, isSavedChatUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
 import { webModelSelection } from "./web-models.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
 import { decodeCompaction, renderCompactionValue } from "./compaction-checkpoint.mjs";
@@ -634,8 +634,7 @@ export function createInAppWebRuntime({
     if (Object.hasOwn(value, "needsFullContinuation") || Object.hasOwn(value, "noActions")) {
       // Only the exact nonce-framed pre-action cache miss can authorize one full
       // Continue. Errors, ordinary lifecycle receipts and Send never retry.
-      if (operation !== "continue" || pending.operation !== "continue" || pending.fullContinuation || turn.fullContinuationIssued
-          || Object.keys(value).length !== 3 || value.needsFullContinuation !== true || value.noActions !== true) {
+      if (!isBrowserContinuationCacheMiss(value) || pending.operation !== "continue" || pending.fullContinuation || turn.fullContinuationIssued) {
         throw fail("The browser did not provide an exact unused no-action continuation receipt.", "web_browser_output_shape");
       }
       turn.fullContinuationIssued = true;
