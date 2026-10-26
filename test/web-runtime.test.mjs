@@ -1063,6 +1063,10 @@ test("instruction revisions persist only after accepted input and unchanged turn
   const h = harness(t, { instructions });
   const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
   const send = (await h.answerBrowser(open)).output[0];
+  const preparedSend = readBrowserProgram(JSON.parse(send.arguments).code);
+  assert.match(preparedSend.turnToken, /^web_turn_[a-f0-9]{32}$/u);
+  assert.equal(preparedSend.prompt.includes(preparedSend.turnToken), false,
+    "The current authority belongs in the visible suffix, outside the potentially converted transcript.");
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, undefined);
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsGenerationTurnKey, undefined);
   const sent = await h.executeBrowser(send);
@@ -1082,11 +1086,15 @@ test("instruction revisions persist only after accepted input and unchanged turn
   ({ call: observe } = await h.toObserve());
   assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Exact continuation Δ" }]);
   const followupPrompt = h.browser.ui.sends.at(-1);
-  assert.equal(followupPrompt.trimStart().match(/^Use turn_token (web_turn_[a-f0-9]{32}) /u)?.[1], h.token(),
-    "An unchanged continuation begins with its fresh tool authority, without repeated guidance.");
+  assert.ok(followupPrompt.trimStart().startsWith("Conversation transcript:\n"),
+    "An unchanged continuation carries its delta without repeated guidance.");
+  assert.equal(followupPrompt.split(h.token()).length - 1, 1,
+    "Its current authority is delivered once in the visible suffix.");
   assert.equal(followupPrompt.includes(instructions), false);
   assert.equal(followupPrompt.includes("Current Codex instructions:"), false);
   assert.notEqual(h.token(), firstToken);
+  assert.ok(followupPrompt.slice(followupPrompt.lastIndexOf("\nRouter generation: ")).includes(h.token()),
+    "Follow-ups retain their fresh authority outside the potentially converted transcript payload.");
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).deliveredInstructionsSha256, revision);
   await h.completeAnswer(observe, "Continuation completed");
   const revised = `${instructions}\n`;

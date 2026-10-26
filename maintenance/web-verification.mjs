@@ -9,6 +9,7 @@ import { codexExecutableIdentity, assertCodexExecutableIdentity } from '../src/c
 import { writePrivateFile, writePrivateJson } from '../src/file-security.mjs';
 import { CODEX_HOME, INSTALL_MANIFEST_PATH, SOURCE_ROOT, STATE_DIR } from '../src/paths.mjs';
 import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram } from '../src/web-browser.mjs';
+import { WEB_MODEL_REGISTRY, webModelSelection } from '../src/web-models.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -27,6 +28,20 @@ const requireValue = (condition, code) => { if (!condition) fail(code); };
 const normalize = value => value.replace(/\r\n?/gu, '\n').replace(/\n+$/u, '');
 const identity = ledger => ({ chatUrl: ledger.chatUrl, tabId: String(ledger.tabId), bindingId: ledger.bindingId });
 const sameIdentity = (a, b) => a.chatUrl === b.chatUrl && a.tabId === b.tabId && a.bindingId === b.bindingId;
+
+function expectedModel(options) {
+  const hasModel = options.model !== undefined, hasEffort = options.effort !== undefined;
+  requireValue(hasModel === hasEffort, 'model_and_effort_required_together');
+  if (!hasModel) return null;
+  requireValue(typeof options.model === 'string' && typeof options.effort === 'string', 'unsupported_model_or_effort');
+  let selection;
+  try { selection = webModelSelection(options.model, options.effort); }
+  catch { fail('unsupported_model_or_effort'); }
+  return { model: options.model, effort: options.effort, selection };
+}
+
+const knownFamily = family => WEB_MODEL_REGISTRY.some(row => row.family === family) ? family : null;
+const knownPower = power => Number.isInteger(power) && power >= 0 && power <= 4 ? power : null;
 
 function bytes(file) {
   const metadata = lstatSync(file);
@@ -85,6 +100,7 @@ function validLedger(ledger, threadId, { requireIdle = false } = {}) {
 export function prepareWebVerification(options, dependencies = {}) {
   const { threadId, output, rollout, protectLedger } = options;
   requireValue(UUID.test(threadId ?? ''), 'exact_thread_required');
+  const expected = expectedModel(options);
   const sourceRoot = dependencies.sourceRoot ?? SOURCE_ROOT;
   const directory = path.resolve(output ?? '');
   const generated = path.join(sourceRoot, 'generated');
@@ -120,7 +136,7 @@ export function prepareWebVerification(options, dependencies = {}) {
   writeFile(fixturePath, `${marker}\n`);
   writeFile(path.join(directory, 'baseline-ledger.json'), ledgerBytes);
   for (let index = 0; index < snapshots.length; index++) writeFile(path.join(directory, `runtime-snapshot-${index}.json`), bytes(snapshots[index].path));
-  const run = { version: 1, createdAt: new Date(dependencies.now ?? Date.now()).toISOString(), threadId,
+  const run = { version: 1, createdAt: new Date(dependencies.now ?? Date.now()).toISOString(), threadId, ...expected,
     fixturePath, marker, fixtureSha256: hash(bytes(fixturePath)), baseline: identity(ledger),
     ledgerPath, rolloutPath, eventPath, eventOffset: eventBytes.length, rolloutOffset: statSync(rolloutPath).size,
     officialIdentity: selected, snapshots, protectedLedger, phases: {}, ready: null };
@@ -185,9 +201,18 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
   const receipt = { version: 1, phase, threadId: run.threadId, turnId, status: 'pending', code: 'awaiting_evidence',
     nativeCommandCount: 0, nativeCompleted: false, nativeInterrupted: false, sameBinding: null,
     acceptedSend: null, currentGenerationObserved: null, stopVisible: null, completedRetain: null,
-    exactMarker: null, recoveryBranchExecuted: null, adapterStopConfirmed: null, childTerminalObserved: null };
+    exactMarker: null, recoveryBranchExecuted: null, adapterStopConfirmed: null, childTerminalObserved: null,
+    expectedModel: null, expectedEffort: null, expectedFamily: null, expectedPower: null,
+    observedModel: null, observedEffort: null, observedFamily: null, observedPower: null,
+    nativeModelVerified: null, browserSelectionVerified: null };
   try {
     requireValue(PHASES.includes(phase) && UUID.test(turnId ?? ''), 'invalid_phase_or_turn');
+    const expected = expectedModel(run);
+    if (expected) {
+      requireValue(run.selection?.family === expected.selection.family && run.selection?.power === expected.selection.power, 'expected_selection_mismatch');
+      Object.assign(receipt, { expectedModel: expected.model, expectedEffort: expected.effort,
+        expectedFamily: expected.selection.family, expectedPower: expected.selection.power });
+    }
     validLedger(ledger, run.threadId);
     receipt.sameBinding = sameIdentity(identity(ledger), run.baseline);
     requireValue(receipt.sameBinding, 'saved_binding_changed');
@@ -200,17 +225,52 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
     requireValue(!events.some(event => event.type === 'turn_aborted' && event.reason !== 'interrupted'), 'unsupported_native_abort');
     if (['ready', 'stop'].includes(phase)) requireValue(!receipt.nativeCompleted, 'completed_before_native_stop');
     else requireValue(!receipt.nativeInterrupted, 'unexpected_native_interruption');
+    if (expected) {
+      const contexts = rows.filter(row => row.type === 'turn_context');
+      requireValue(contexts.length <= 1, 'ambiguous_native_model_context');
+      if (!contexts.length) {
+        requireValue(!receipt.nativeCompleted && !receipt.nativeInterrupted, 'native_model_context_missing');
+        return { receipt };
+      }
+      const context = contexts[0].payload;
+      const observed = WEB_MODEL_REGISTRY.find(row => row.slug === context?.model);
+      receipt.observedModel = observed?.slug ?? null;
+      receipt.observedEffort = observed && Object.hasOwn(observed.efforts, context?.effort) ? context.effort : null;
+      receipt.nativeModelVerified = context?.turn_id === turnId && context.model === expected.model && context.effort === expected.effort;
+      requireValue(receipt.nativeModelVerified, 'native_model_or_effort_mismatch');
+    }
     const calls = new Map(), outputs = new Map(), finals = [];
     let firstResponseItem = true;
+    const switchPrefix = [
+      [['model_switch.instructions']],
+      [['collaboration_mode.instructions'], ['host_skills.instructions', 'collaboration_mode.instructions']],
+    ];
+    let prefixLength = 0;
     for (const row of rows) {
       if (row.type !== 'response_item') continue;
       const p = row.payload;
+      if (firstResponseItem && p?.type === 'message' && p.role === 'developer') {
+        // A model override prepends exactly these two app-owned instruction
+        // envelopes before the ordinary incoming prompt. Their text is private
+        // and is neither interpreted nor copied to a receipt.
+        const metadata = p.internal_chat_message_metadata_passthrough;
+        const kinds = metadata?.content_item_kinds;
+        requireValue(prefixLength < switchPrefix.length && typeof p.id === 'string' && p.id.length > 0
+          && Array.isArray(kinds) && switchPrefix[prefixLength].some(expectedKinds => expectedKinds.length === kinds.length && expectedKinds.every((kind, index) => kinds[index] === kind))
+          && Array.isArray(p.content) && p.content.length === kinds.length && p.content.every(block => block.type === 'input_text' && typeof block.text === 'string')
+          && object(metadata) && metadata.turn_id === turnId && Number.isFinite(metadata.create_time)
+          && Array.isArray(metadata.content_item_metadata) && metadata.content_item_metadata.length === kinds.length, 'unsupported_app_model_switch_prefix');
+        prefixLength++;
+        continue;
+      }
       if (p?.type === 'function_call_output' && !Object.hasOwn(p, 'call_id')) {
         // The desktop app records an incoming send_message_to_thread prompt as
-        // its first response item. It is not a result of a target-thread call.
+        // its first response item after any exact model-switch prefix. It is
+        // not a result of a target-thread call.
         // Recognize only that observed ingress envelope, never arbitrary orphan
         // outputs or a second ingress mixed into the selected native turn.
-        requireValue(firstResponseItem && p.name === 'send_message_to_thread' && p.namespace === 'codex_app'
+        requireValue(firstResponseItem && (prefixLength === 0 || prefixLength === switchPrefix.length)
+          && p.name === 'send_message_to_thread' && p.namespace === 'codex_app'
           && typeof p.id === 'string' && p.id.length > 0 && typeof p.output === 'string'
           && object(p.internal_chat_message_metadata_passthrough)
           && p.internal_chat_message_metadata_passthrough.turn_id === turnId
@@ -218,6 +278,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         firstResponseItem = false;
         continue;
       }
+      requireValue(prefixLength === 0 || prefixLength === switchPrefix.length, 'unsupported_app_model_switch_prefix');
       firstResponseItem = false;
       if (['function_call', 'custom_tool_call', 'tool_search_call'].includes(p?.type)) {
         requireValue(typeof p.call_id === 'string' && !calls.has(p.call_id), 'duplicate_or_invalid_call'); calls.set(p.call_id, p);
@@ -240,6 +301,13 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         const config = readBrowserProgram(args?.code);
         requireValue(config && config.sessionId === run.threadId && config.turnId === turnId && config.bindingId === run.baseline.bindingId, 'browser_identity_mismatch');
         requireValue(['continue', 'send', 'observe', 'retain'].includes(config.operation), 'unexpected_browser_operation');
+        if (expected && ['continue', 'send'].includes(config.operation)) {
+          if (config.operation === 'send') {
+            receipt.observedFamily = knownFamily(config.modelFamily);
+            receipt.observedPower = knownPower(config.power);
+          }
+          requireValue(config.modelFamily === expected.selection.family && config.power === expected.selection.power, 'browser_model_or_power_mismatch');
+        }
         if (['recall', 'ready', 'continuation'].includes(phase) && config.operation === 'send') requireValue(typeof config.prompt === 'string' && !config.prompt.includes(run.marker), 'marker_supplied_to_recall');
         if (!paired) continue;
         let frame;
@@ -258,6 +326,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         requireValue(frame.recovered !== true && frame.conversationFull !== true && frame.needsHistory !== true, 'browser_recovery_or_rollover');
         if (config.operation === 'continue') receipt.recoveryBranchExecuted = false;
         requireValue(frame.requestError == null, 'browser_request_error');
+        if (expected && config.operation === 'send' && frame.sent === true) receipt.browserSelectionVerified = true;
         browser.push({ config, frame });
       } else if (call.type === 'tool_search_call') discovery.push(call);
       else {
@@ -419,7 +488,7 @@ export async function waitWebVerification({ runPath, phase, turnId, timeoutMs = 
 function argumentsFor(argv) {
   const [command, ...args] = argv, values = {};
   requireValue(['prepare', 'prompt', 'wait'].includes(command), 'usage_prepare_prompt_wait');
-  const allowed = command === 'prepare' ? ['thread', 'output', 'rollout', 'protect-ledger'] : command === 'prompt' ? ['run', 'phase'] : ['run', 'phase', 'turn', 'timeout-ms'];
+  const allowed = command === 'prepare' ? ['thread', 'output', 'rollout', 'protect-ledger', 'model', 'effort'] : command === 'prompt' ? ['run', 'phase'] : ['run', 'phase', 'turn', 'timeout-ms'];
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index].slice(2), value = args[index + 1];
     requireValue(args[index].startsWith('--') && allowed.includes(key) && !Object.hasOwn(values, key) && value && !value.startsWith('--'), 'invalid_arguments');
@@ -432,7 +501,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const { command, values } = argumentsFor(process.argv.slice(2));
     let result;
-    if (command === 'prepare') result = prepareWebVerification({ threadId: values.thread, output: values.output, rollout: values.rollout, protectLedger: values['protect-ledger'] });
+    if (command === 'prepare') result = prepareWebVerification({ threadId: values.thread, output: values.output, rollout: values.rollout,
+      protectLedger: values['protect-ledger'], model: values.model, effort: values.effort });
     else {
       requireValue(values.run && values.phase, 'run_and_phase_required');
       if (command === 'prompt') { console.log(webVerificationPrompt(json(bytes(values.run).toString('utf8')), values.phase)); process.exitCode = 0; }

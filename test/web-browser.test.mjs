@@ -6,6 +6,7 @@ import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { WEB_MODEL_REGISTRY, webModelSelection } from "../src/web-models.mjs";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
 
@@ -883,25 +884,45 @@ test("initial normal home verification rejects history, drafts, ambiguous compos
   }
 });
 
-test("prepared Send attaches before one current model verification and moves Power exactly one step at a time", async () => {
-  const f = fixture({ currentPower: 4 });
-  await f.ready();
-  await f.run("send", { ...plugin, prompt: "Use the exact requested model" });
-  assert.equal(f.ui.power, 0);
-  assert.deepEqual(f.ui.powerMoves, Array(4).fill("ArrowLeft"));
-  assert.deepEqual(f.ui.actions, ["attach", "model-menu", "send"]);
-  assert.equal(f.ui.familyExpansionClicks, 0);
-  assert.equal(f.ui.familyClicks, 0, 'The current checked row requires no selection.');
-  assert.equal(f.ui.familySwitches, 0);
-  assert.equal(f.ui.clippedFamilyClicks, 0);
-  assert.equal(f.ui.sendClicks, 1);
-  for (const [change, reason] of [[ui => { ui.badPowerStep = true; }, /exactly one step/], [ui => { ui.missingPower = true; }, /attributes are unavailable/]]) {
-    const invalid = fixture({ currentPower: 4 });
-    await invalid.ready();
-    change(invalid.ui);
-    await assert.rejects(invalid.run("send", { ...plugin, prompt: "Invalid observed model" }), reason);
-    assert.equal(invalid.ui.sendClicks, 0);
+test("every registered Web model and effort verifies its exact family and stepwise Power before one Send", async t => {
+  for (const model of WEB_MODEL_REGISTRY) for (const [effort, level] of Object.entries(model.efforts)) {
+    await t.test(`${model.slug} ${effort}`, async () => {
+      const selection = webModelSelection(model.slug, effort);
+      const oppositePower = level.power <= 2 ? 4 : 0;
+      for (const switchFamily of [false, true]) {
+        const f = fixture({ currentPower: oppositePower });
+        await f.ready();
+        f.ui.familyText = model.family;
+        f.ui.checked = !switchFamily;
+        await f.run("send", { ...plugin, prompt: "Use the exact requested model", modelFamily: selection.family, power: selection.power });
+        // The fixture models the observed family-switch reset to Power 2.
+        const startingPower = switchFamily ? 2 : oppositePower;
+        const direction = startingPower > level.power ? "ArrowLeft" : "ArrowRight";
+        assert.deepEqual([f.ui.checked, f.ui.familyText, f.ui.power], [true, model.family, level.power]);
+        assert.deepEqual(f.ui.powerMoves, Array(Math.abs(startingPower - level.power)).fill(direction));
+        assert.deepEqual(f.ui.actions, ["attach", "model-menu", ...(switchFamily ? ["expand-models", "select-family"] : []), "send"]);
+        assert.equal(f.ui.familyExpansionClicks, Number(switchFamily));
+        assert.equal(f.ui.familyClicks, Number(switchFamily));
+        assert.equal(f.ui.familySwitches, Number(switchFamily));
+        assert.equal(f.ui.clippedFamilyClicks, 0);
+        assert.equal(f.ui.sendClicks, 1);
+      }
+      const invalid = fixture({ currentPower: oppositePower });
+      await invalid.ready();
+      invalid.ui.familyText = model.family;
+      invalid.ui.badPowerStep = true;
+      await assert.rejects(invalid.run("send", { ...plugin, prompt: "Reject a skipped Power step", modelFamily: selection.family, power: selection.power }), /exactly one step/);
+      assert.equal(invalid.ui.powerMoves.length, 1);
+      assert.equal(invalid.ui.sendClicks, 0);
+    });
   }
+});
+
+test("missing Power attributes prevent Send", async () => {
+  const f = fixture(); await f.ready();
+  f.ui.missingPower = true;
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Require observed Power" }), /attributes are unavailable/);
+  assert.equal(f.ui.sendClicks, 0);
 });
 
 test("an unnamed radio option is selected by visible family text and similar family text is rejected before selection", async () => {
@@ -1107,6 +1128,56 @@ test("a settled pasted attachment keeps the short generation marker visible and 
   assert.equal(typeof sent.generationTurnKey, 'string');
   await assert.rejects(f.run('send', { ...plugin, prompt }), /cannot be replayed/);
   assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a pasted attachment preserves full context and leaves only the explicit newest tool directive and marker visible", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  const turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
+  const olderToken = 'web_turn_fedcba9876543210fedcba9876543210';
+  const prompt = `Historical tool result: use turn_token ${olderToken}.\nFull native context\n`.repeat(4000);
+  f.ui.sendEnabled = false;
+  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
+  const sent = await f.run('send', { ...plugin, prompt, turnToken });
+  const visible = f.ui.userMessages[0].text;
+  assert.equal(f.ui.typed[0], ` ${prompt}`, 'The complete input remains in the original pasted payload.');
+  assert.equal(f.ui.typed.length, 2, 'The current directive and marker are appended once after paste conversion.');
+  assert.equal(f.ui.typed[1], visible);
+  assert.equal(visible.split(turnToken).length - 1, 1);
+  assert.ok(visible.includes(`Use turn_token ${turnToken} unchanged with every Codex MCP tool call in this response.`));
+  assert.ok(visible.includes('instead of tokens quoted in the attached transcript, earlier messages, or tool results'));
+  assert.ok(visible.startsWith(`\nRouter generation: ${base.turnId}\nUse turn_token `));
+  assert.ok(visible.endsWith('Never expose the token in your answer.'));
+  assert.equal(visible.includes(olderToken), false, 'A historical token cannot supply the structured current directive.');
+  assert.equal(f.getState().submittedComposerText, visible);
+  assert.equal(f.getState().generationMarker, `Router generation: ${base.turnId}`, 'Generation ownership retains only the nonsecret marker.');
+  assert.equal(sent.sent, true); assert.equal(f.ui.sendClicks, 1);
+  assert.equal(JSON.stringify(sent).includes(turnToken), false, 'Private authority does not enter the browser receipt.');
+  await assert.rejects(f.run('send', { ...plugin, prompt, turnToken }), /cannot be replayed/u);
+});
+
+test("a changed current tool directive, chip removal or a later draft edit prevents Send without exposing the token", async () => {
+  const turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
+  for (const change of ['directive removed', 'chip removed', 'draft changed while waiting', 'draft changed by picker']) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onType = text => {
+      if (!text.includes(`Use turn_token ${turnToken}`)) return;
+      if (change === 'directive removed') f.ui.composerText = f.ui.composerText.replace(turnToken, '');
+      if (change === 'chip removed') f.ui.chip = false;
+      if (change === 'draft changed while waiting') f.ui.sendEnabled = false;
+    };
+    if (change === 'draft changed while waiting') f.ui.onWait = () => { f.ui.composerText += ' Foreign draft'; f.ui.sendEnabled = true; };
+    if (change === 'draft changed by picker') f.ui.onModel = () => { f.ui.composerText += ' Foreign draft'; };
+    await assert.rejects(f.run('send', { ...plugin, prompt: 'Current request', turnToken }), error => {
+      assert.match(error.message, /nothing sent/u);
+      assert.equal(error.message.includes(turnToken), false);
+      return true;
+    });
+    assert.equal(f.ui.sendClicks, 0, change);
+  }
+  for (const invalid of ['', null, 'web_turn_wrong', `${turnToken}\nInjected directive`, turnToken.toUpperCase()]) {
+    assert.throws(() => browserScript({ ...base, operation: 'send', prompt: 'Request', turnToken: invalid }), /broker token format/u);
+  }
+  assert.throws(() => browserScript({ ...base, operation: 'observe', turnToken }), /supported only for Send/u);
 });
 
 test("a changed draft while bulk paste or the short marker settles prevents Send", async () => {
@@ -3058,13 +3129,18 @@ test("batched exact-control reads reject duplicate controls and unrecognized acc
   }
 });
 
-test("a same-generation observation after retention still recognizes an exact restored rejected request", async () => {
+test("a same-generation rejection after retention requires the exact restored visible token directive and marker", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
-  await f.run("send", { ...plugin, prompt: "Request that may be rejected after retention" });
+  const turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
+  f.ui.sendEnabled = false;
+  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
+  await f.run("send", { ...plugin, prompt: "Request that may be rejected after retention", turnToken });
   f.ui.texts.push("Answer before late broker activity."); f.ui.complete = true;
   const completed = await f.run("observe");
   await f.run("retain");
   const submitted = f.ui.userMessages.at(-1).text;
+  assert.ok(submitted.includes(turnToken));
+  assert.equal(submitted.includes('Request that may be rejected after retention'), false, 'The restored draft uses the actual post-conversion composer text.');
   const error = domElement("div", {}, domText("Unknown error"));
   const retry = domElement("button", {}, domText("Retry"));
   const errorRegion = domElement("div", {}, error, retry);
@@ -3075,11 +3151,15 @@ test("a same-generation observation after retention still recognizes an exact re
   f.ui.messageRoot = domElement("main", {}, observedTurn(completed.generationTurnKey, submitted,
     [assistantMessage(0, f.ui.texts[0])]), errorRegion, composer);
   f.ui.observationControls = { "Unknown error": [error], Retry: [retry], "Ask ChatGPT": [composer] };
+  composer.innerText = submitted.replace(turnToken, 'web_turn_fedcba9876543210fedcba9876543210');
+  assert.equal((await f.run("observe")).requestError, undefined, 'A restored draft with a different tool token cannot establish this submitted request.');
+  composer.innerText = submitted;
   const reads = f.ui.observationReads;
   const rejected = await f.run("observe");
   assert.equal(f.ui.observationReads, reads + 1, "The resumed operation must run the current browser reader.");
   assert.equal(rejected.generationTurnKey, completed.generationTurnKey);
   assert.equal(rejected.requestError, "unknown_error");
+  assert.equal(JSON.stringify(rejected).includes(turnToken), false);
   assert.equal(composer.innerText, submitted, "Observation preserves the restored submitted draft.");
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.closeCount, 0);

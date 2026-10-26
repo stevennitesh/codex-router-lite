@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { installWebStopAdapter, rollbackWebStopAdapter, webStopAdapterStatus } from "../src/web-stop-adapter-install.mjs";
+import { installWebStopAdapter, rollbackWebStopAdapter, webStopAdapterStatus, withWebStopAdapterRuntimeRefresh } from "../src/web-stop-adapter-install.mjs";
+import { createAdapterHook } from "../src/web-stop-contract.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const encode = value => `${JSON.stringify(value, null, 2)}\n`;
@@ -81,6 +82,16 @@ function retainLegacyCliPin(f) {
   f.environment.values.CODEX_CLI_PATH = receipt.environment.CODEX_CLI_PATH;
 }
 
+function retainLegacyHook(f) {
+  const receipt = f.receipt(), document = f.hooks(), hook = { ...createAdapterHook(), timeout: 3 };
+  receipt.hook = hook;
+  for (const entry of document.hooks.Interrupt) for (let index = 0; index < entry.hooks.length; index++) {
+    if (entry.hooks[index].statusMessage === marker) entry.hooks[index] = clone(hook);
+  }
+  writeFileSync(f.receiptPath, encode(receipt)); writeFileSync(f.hooksPath, encode(document));
+  return hook;
+}
+
 test("adapter install publishes private baseline before global changes and preserves unrelated user hook/trust", t => {
   const original = { custom: true, hooks: { Interrupt: [{ matcher: "user", hooks: [userHook] }], Stop: [{ hooks: [{ type: "command", command: "user stop" }] }] } };
   const text = JSON.stringify(original), f = fixture(t, { hooks: text });
@@ -101,7 +112,7 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(f.hooks().hooks.Interrupt[0], original.hooks.Interrupt[0]);
   assert.deepEqual(f.hooks().hooks.Stop, original.hooks.Stop);
   assert.deepEqual(f.hooks().hooks.Interrupt[1].hooks[0], { type: "mcp_tool", server: "node_repl", tool: "router_web_interrupt",
-    input: { hook_event_name: "${hook_event_name}", session_id: "${session_id}", turn_id: "${turn_id}" }, timeout: 3, statusMessage: marker });
+    input: { hook_event_name: "${hook_event_name}", session_id: "${session_id}", turn_id: "${turn_id}" }, timeout: 10, statusMessage: marker });
   assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: result.entryPath });
   const managed = JSON.parse(readFileSync(path.join(result.managedDirectory, "manifest.json"), "utf8"));
   assert.deepEqual(managed.plan.officialCli, f.manifest.officialCli);
@@ -118,6 +129,92 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
   assert.equal(readFileSync(f.hooksPath, "utf8"), text); assert.equal(existsSync(result.entryPath), true);
   assert.equal(rollbackWebStopAdapter(f.options).changed, false);
+});
+
+test("the exact legacy hook remains readable and removable before migration", t => {
+  const f = fixture(t); installWebStopAdapter(f.options); retainLegacyHook(f);
+  const hooks = readFileSync(f.hooksPath, "utf8"), receipt = readFileSync(f.receiptPath, "utf8"), effects = f.effects.length;
+  const status = webStopAdapterStatus(f.options);
+  assert.equal(status.installed, true); assert.equal(status.hookDefinitionOwned, true); assert.deepEqual(status.conflicts, []);
+  assert.equal(readFileSync(f.hooksPath, "utf8"), hooks); assert.equal(readFileSync(f.receiptPath, "utf8"), receipt);
+  assert.equal(f.effects.length, effects);
+  assert.equal(rollbackWebStopAdapter(f.options).state, "removed"); assert.equal(existsSync(f.hooksPath), false);
+});
+
+test("legacy hook migration replaces only the owned definition and preserves neighbors and rollback baseline", t => {
+  const original = { hooks: { Interrupt: [{ matcher: "user", hooks: [userHook] }] } }, f = fixture(t, { hooks: original });
+  installWebStopAdapter(f.options); const legacy = retainLegacyHook(f), before = f.receipt(), document = f.hooks();
+  document.hooks.Interrupt[1] = { matcher: "retained wrapper", hooks: [userHook, legacy, { type: "command", command: "neighbor" }] };
+  writeFileSync(f.hooksPath, encode(document));
+  const result = installWebStopAdapter(f.options);
+  assert.equal(result.hookDefinitionChanged, true); assert.equal(result.trustRequired, true); assert.equal(result.restartRequired, true);
+  const expected = clone(document); expected.hooks.Interrupt[1].hooks[1] = createAdapterHook();
+  assert.deepEqual(f.hooks(), expected); assert.equal(Object.hasOwn(f.hooks().hooks.Interrupt[1].hooks[1], "trusted"), false);
+  assert.deepEqual(f.receipt().hook, createAdapterHook()); assert.equal(Object.hasOwn(f.receipt(), "priorHook"), false);
+  assert.equal(f.receipt().previousHooksText, before.previousHooksText);
+  assert.deepEqual(f.receipt().previousEnvironment, before.previousEnvironment);
+  const effects = f.effects.length;
+  assert.equal(installWebStopAdapter(f.options).hookDefinitionChanged, false); assert.equal(f.effects.length, effects);
+  assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
+  expected.hooks.Interrupt[1].hooks.splice(1, 1); assert.deepEqual(f.hooks(), expected);
+});
+
+test("hook migration accepts neither arbitrary legacy timeouts nor extra owned-hook fields", async t => {
+  for (const [name, mutate] of [["unshipped timeout", hook => { hook.timeout = 4; }], ["string timeout", hook => { hook.timeout = "3"; }],
+    ["trust field", hook => { hook.trusted = true; }], ["changed input", hook => { hook.input.foreign = true; }]]) await t.test(name, subtest => {
+    const f = fixture(subtest); installWebStopAdapter(f.options); retainLegacyHook(f);
+    const receipt = f.receipt(); mutate(receipt.hook); writeFileSync(f.receiptPath, encode(receipt));
+    const before = { hooks: readFileSync(f.hooksPath, "utf8"), receipt: readFileSync(f.receiptPath, "utf8"), environment: clone(f.environment.values) };
+    assert.throws(() => webStopAdapterStatus(f.options), /foreign adapter ownership receipt/u);
+    assert.throws(() => installWebStopAdapter(f.options), /foreign adapter ownership receipt/u);
+    assert.throws(() => rollbackWebStopAdapter(f.options), /foreign adapter ownership receipt/u);
+    assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks); assert.equal(readFileSync(f.receiptPath, "utf8"), before.receipt);
+    assert.deepEqual(f.environment.values, before.environment);
+  });
+});
+
+test("failed hook migration preserves both exact prepared endpoints for retry and rollback", async t => {
+  for (const endpoint of ["legacy-restored", "current-published"]) await t.test(endpoint, subtest => {
+    const f = fixture(subtest); installWebStopAdapter(f.options); const legacy = retainLegacyHook(f);
+    const write = f.dependencies.writePrivate; let failed = false;
+    f.dependencies.writePrivate = (file, contents) => {
+      if (!failed && file === f.receiptPath && JSON.parse(contents).state === "installed") { failed = true; throw new Error("fixture migration publication failure"); }
+      write(file, contents);
+    };
+    assert.throws(() => installWebStopAdapter(f.options), /migration publication failure/u);
+    assert.equal(f.receipt().state, "prepared"); assert.deepEqual(f.receipt().priorHook, legacy);
+    assert.deepEqual(f.hooks().hooks.Interrupt[0].hooks[0], legacy);
+    if (endpoint === "current-published") {
+      const document = f.hooks(); document.hooks.Interrupt[0].hooks[0] = createAdapterHook(); writeFileSync(f.hooksPath, encode(document));
+    }
+    assert.equal(webStopAdapterStatus(f.options).hookDefinitionOwned, true);
+    f.dependencies.writePrivate = write;
+    if (endpoint === "legacy-restored") assert.equal(installWebStopAdapter(f.options).installed, true);
+    assert.equal(rollbackWebStopAdapter(f.options).state, "removed"); assert.equal(existsSync(f.hooksPath), false);
+    assert.equal(Object.hasOwn(f.receipt(), "priorHook"), false);
+  });
+});
+
+test("failed coordinated hook migration restores the exact prior hook and receipt bytes", async t => {
+  const f = fixture(t, { hooks: '{"custom":true}' }); installWebStopAdapter(f.options); retainLegacyHook(f);
+  const before = { hooks: readFileSync(f.hooksPath, "utf8"), receipt: readFileSync(f.receiptPath, "utf8"), environment: clone(f.environment.values) };
+  await assert.rejects(withWebStopAdapterRuntimeRefresh(f.options, async result => {
+    assert.equal(result.hookDefinitionChanged, true); assert.deepEqual(f.hooks().hooks.Interrupt[0].hooks[0], createAdapterHook());
+    throw new Error("fixture reload failed");
+  }), /fixture reload failed/u);
+  assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks); assert.equal(readFileSync(f.receiptPath, "utf8"), before.receipt);
+  assert.deepEqual(f.environment.values, before.environment); assert.equal(webStopAdapterStatus(f.options).hookDefinitionOwned, true);
+});
+
+test("coordinated hook migration compensation preserves concurrent foreign hook edits", async t => {
+  const f = fixture(t); installWebStopAdapter(f.options); retainLegacyHook(f);
+  let foreignText;
+  await assert.rejects(withWebStopAdapterRuntimeRefresh(f.options, async () => {
+    const document = f.hooks(); document.foreign = "concurrent edit"; foreignText = encode(document); writeFileSync(f.hooksPath, foreignText);
+    throw new Error("fixture reload failed");
+  }), /rollback incomplete: Foreign hooks changes preserved/u);
+  assert.equal(readFileSync(f.hooksPath, "utf8"), foreignText);
+  assert.equal(webStopAdapterStatus(f.options).hookDefinitionOwned, false);
 });
 
 test("install and update preserve the original User CLI selection and rollback baseline", async t => {

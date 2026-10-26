@@ -67,6 +67,11 @@ delivery record requires full instructions;
 changed instructions explicitly supersede the earlier instructions. A successor
 chat receives full instructions. Existing rollback readers can still read these
 records and resume with their ordinary full instruction delivery.
+After paste settlement, Send appends the current tool-token directive beside the
+generation marker in the visible composer. This keeps the current authority out
+of an automatically created text attachment without discarding its context. The
+structured token comes from the current broker registration, never from parsing
+historical transcript text; exact draft checks cover both visible additions.
 Checkpoint matching and construction reuse the same request-local item digests;
 the complete request fingerprint and changed-result checks remain independent.
 
@@ -238,6 +243,10 @@ result. Receipts contain fixed categories, timestamps and a turn-token digest,
 without tool arguments, outputs or credentials. Arrival occurs after
 HTTP/session/protocol validation; its absence alone does not identify a ChatGPT
 safety decision. Invocation start does not prove native execution was accepted.
+The fixed `turn-not-active` diagnostic means the supplied token was rejected
+before admission; no invocation from that request was accepted. It does not
+disclose another turn's token or authorize replay. Failures after admission keep
+their generic uncertainty response, even if they carry the same internal code.
 
 ## Immediate Stop
 
@@ -252,7 +261,11 @@ The optional Router MCP adapter retains the actual originating browser operation
 metadata for fixed cleanup in the same official Node REPL child. It preserves
 opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
-Interrupt hook calls the adapter's own callback with a three-second timeout.
+Interrupt hook calls the adapter's own callback with a ten-second timeout.
+The shared contract reserves transport headroom within that deadline and waits
+on the same inactivity predicate after one Stop click. Fast transitions return
+immediately; the longer failure bound allows Pro's controls to settle after
+cancellation. Elapsed time never supplies confirmation.
 Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
 keep their original messages and cancellation scope; their arrival or forwarding
 does not expire the originating authority before the trusted callback arrives.
@@ -389,6 +402,14 @@ npm run verify:web -- prepare --thread <approved-chat-id> --output generated/NEW
 npm run verify:web -- prompt --run generated/NEW/run.json --phase native
 npm run verify:web -- wait --run generated/NEW/run.json --phase native --turn <native-turn-id>
 ```
+
+For model qualification, prepare with `--model <exact-web-slug> --effort <level>`.
+Supply both together. Each phase then requires the native turn's exact model and
+effort and the matching browser family and Power in its successful Send. Use that
+same model and effort when sending every phase; a passing Instant run does not
+qualify a Thinking or Pro route. Receipts retain only registry-known identities
+and bounded selection values. The helper accepts the app's leading model-switch
+instruction envelopes without treating them as tool results.
 
 Preparation creates a fresh synthetic file and marker. Send the generated prompt
 to the approved chat with the native app tool, then pass its exact turn identity
@@ -585,7 +606,9 @@ Changes to the adapter's waiting behavior also require its matching rebuild and
 restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
-restart. The managed hook definition remains unchanged. Preserve a compatible
+restart. An unchanged managed hook retains its trust. The exact owned older
+three-second hook is updated to the current ten-second definition; review and
+trust that changed definition in Codex before verifying Stop. Preserve a compatible
 Router source, adapter generation and private configuration for rollback;
 rolling back launch selections alone restores the original installation baseline.
 
@@ -613,7 +636,9 @@ standalone first-install validation mode; use the collection and installation
 stages above for initial setup.
 `--apply` coordinates adapter replacement, saved browser configuration and the
 existing guarded service restart. It preserves connector/tunnel identities,
-capabilities, runtime-key storage and the hook definition. The current generation
+capabilities and runtime-key storage. It preserves an unchanged hook definition;
+`hookDefinitionChanged` identifies the owned hook update requiring renewed trust.
+The current generation
 remains fixed during admitted calls, and failed refreshes preserve or restore
 still-owned prior state. A reported Codex restart is needed to load the new adapter.
 Online refresh requires explicit known-idle Web counters from the serving Router,

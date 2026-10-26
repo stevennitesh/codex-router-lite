@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { readBrowserProgram, parseBrowserOutput, isSavedChatUrl } from './web-browser.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
-import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
+import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_BUDGET, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 
 export { INTERRUPT_TOOL } from './web-stop-contract.mjs';
 export const ADAPTER_INFO = Object.freeze({ name: 'codex_router_web_stop_adapter', version: '1.0.0' });
@@ -132,7 +132,7 @@ export function cleanupDecision(hook, cached, generation) {
   return { reason: 'retained_originating_authority', meta: retainedMetadata(cached.nativeMeta) };
 }
 
-export function stopCode(stopConfig, identity, budgetMs = 2400, delivery) {
+export function stopCode(stopConfig, identity, budgetMs = STOP_BUDGET.scriptMs, delivery) {
   if (!threadAllowed(identity?.threadId, stopConfig.threadIds ?? null)
       || !uuid(identity.turnId) || !uuid(identity.sessionId)) throw new Error('identity_refused');
   return createWebStopCode(stopConfig, identity, { budgetMs, ...(delivery ? { delivery } : {}) });
@@ -174,7 +174,7 @@ export function readStopResult(result) {
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
       || !STOP_STAGES.includes(proof.stage) || flags.some(key => typeof proof[key] !== 'boolean')
       || !['none', 'turn_complete', 'composer_restored'].includes(proof.inactivityEvidence)
-      || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > 3000
+      || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > STOP_BUDGET.proofElapsedMs
       || proof.code !== undefined && !STOP_CODES.includes(proof.code)
       || own(proof, 'readbackState') && ![null, 'invalid_controls', 'unconfirmed_readback', 'inactive_readback'].includes(proof.readbackState)
       || STOP_READBACK_COUNTS.some(key => own(proof, key) && proof[key] !== null
@@ -255,10 +255,10 @@ function stopReceipt(proof, response) {
 // adapter registration and host-owned canonical metadata, not the tool name.
 export class AdapterBridge {
   constructor({ outer, child, stopConfig, generation = randomUUID(), receipt = () => {}, now = Date.now,
-    graceMs = 2850, cleanupMs = 2500, builtinWaitMs = 150,
+    graceMs = STOP_BUDGET.graceMs, cleanupMs = STOP_BUDGET.cleanupMs, builtinWaitMs = 150,
     observationIntervalMs = OBSERVATION_INTERVAL_MS, observationWaitMs = OBSERVATION_WAIT_MS }) {
-    if (!uuid(generation) || graceMs < 1 || graceMs > 2850
-        || cleanupMs < 1 || cleanupMs > 2500 || builtinWaitMs < 1 || builtinWaitMs > 300
+    if (!uuid(generation) || !Number.isSafeInteger(graceMs) || graceMs < 1 || graceMs > STOP_BUDGET.graceMs
+        || !Number.isSafeInteger(cleanupMs) || cleanupMs < 1 || cleanupMs > STOP_BUDGET.cleanupMs || builtinWaitMs < 1 || builtinWaitMs > 300
         || !Number.isSafeInteger(observationIntervalMs) || observationIntervalMs < 1 || observationIntervalMs > 1000
         || !Number.isSafeInteger(observationWaitMs) || observationWaitMs < 1 || observationWaitMs > OBSERVATION_WAIT_MS
         || !validThreadIds(stopConfig.threadIds ?? null)) throw new Error('bounds_refused');
@@ -645,7 +645,7 @@ export class AdapterBridge {
       return owned ? this.replyOwned(message, { ok: false, code: !decision.meta ? decision.reason : 'observation_scope_mismatch' }) : this.child.send(message);
     }
     // Stock callbacks retain their own one-second budget. They may wait briefly
-    // for the separately configured three-second callback, but never start Stop.
+    // for the separately configured trusted callback, but never start Stop.
     if (!owned) {
       let waiting = this.builtinWait;
       if (!waiting) {
@@ -744,9 +744,9 @@ export class AdapterBridge {
         this.invalidate('builtin_not_settled'); return;
       }
       const timeoutMs = Math.floor(Math.min(this.cleanupMs, deadline - this.now()));
-      // Preserve the existing 100 ms transport margin. Child observation and
+      // Preserve the contract's native-return margin. Child observation and
       // cleanup consume one callback deadline; neither acquires a fresh budget.
-      const budgetMs = timeoutMs - 100;
+      const budgetMs = timeoutMs - STOP_BUDGET.scriptReturnMarginMs;
       if (!current() || budgetMs < 1) {
         proof = { ok: false, code: 'stop_budget_refused' }; this.event('stop_budget_refused'); return;
       }

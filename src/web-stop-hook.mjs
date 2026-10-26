@@ -2,7 +2,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isSavedChatUrl } from "./web-browser.mjs";
 import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
-import { STOP_CODES } from "./web-stop-contract.mjs";
+import { STOP_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
@@ -305,8 +305,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
 }
 
 /** Pure generator. The adapter owns validation of the originating native identity. */
-export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = 2400, delivery } = {}) {
-  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > 2400) throw new Error("Web Stop budget must be within 1..2400 ms.");
+export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = STOP_BUDGET.scriptMs, delivery } = {}) {
+  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > STOP_BUDGET.scriptMs) throw new Error(`Web Stop budget must be within 1..${STOP_BUDGET.scriptMs} ms.`);
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
     if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
       throw new Error(`Web Stop ${name} must be a validated absolute path.`);

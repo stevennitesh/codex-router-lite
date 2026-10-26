@@ -17,6 +17,7 @@ import { browserHelperVersion, browserScript, parseBrowserOutput, readBrowserPro
 import { createWebToolBroker } from '../src/web-tools.mjs';
 import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
+import { createAdapterHook, STOP_BUDGET } from '../src/web-stop-contract.mjs';
 
 const APPROVED_THREAD = '01a14b65-a7a8-7b41-bd33-7c19d3c6df82';
 const TURN = '01a14b65-a7a8-7b41-bd33-7c19d3c6df83';
@@ -223,6 +224,20 @@ test('Stop generation rejects invalid and injected identities at the adapter bou
   assert.throws(() => stopCode({ ...STOP_CONFIG, threadIds: [SESSION] }, identity), /identity_refused/u);
 });
 
+test('the trusted hook, adapter, script and proof share one bounded cancellation allowance', () => {
+  const bridge = new AdapterBridge({ outer: {}, child: {}, stopConfig: STOP_CONFIG });
+  assert.equal(createAdapterHook().timeout * 1000, STOP_BUDGET.hookTimeoutMs);
+  assert.equal(bridge.graceMs, STOP_BUDGET.graceMs);
+  assert.equal(bridge.cleanupMs, STOP_BUDGET.cleanupMs);
+  assert.ok(STOP_BUDGET.scriptMs < bridge.cleanupMs && bridge.cleanupMs < bridge.graceMs
+    && bridge.graceMs < STOP_BUDGET.hookTimeoutMs);
+  for (const options of [{ graceMs: STOP_BUDGET.graceMs + 1 }, { cleanupMs: STOP_BUDGET.cleanupMs + 1 },
+    { graceMs: NaN }, { cleanupMs: 1.5 }]) {
+    assert.throws(() => new AdapterBridge({ outer: {}, child: {}, stopConfig: STOP_CONFIG, ...options }), /bounds_refused/u);
+  }
+  assert.equal(readStopResult(success({ elapsedMs: STOP_BUDGET.proofElapsedMs })).ok, true);
+});
+
 test('bounded actual native output envelope distinguishes explicit success, no-scope, malformed and nested errors', () => {
   assert.equal(readStopResult(success()).ok, true);
   assert.equal(readStopResult(success({ outcome: 'already_idle', clickAttempted: false, stopClicked: false })).ok, true);
@@ -242,7 +257,7 @@ test('bounded actual native output envelope distinguishes explicit success, no-s
   envelope.systemMessage = 'ROUTER_WEB_STOP ' + JSON.stringify(proof);
   missingInactive.content[0].text = JSON.stringify(envelope);
   assert.equal(readStopResult(missingInactive).ok, false);
-  assert.equal(readStopResult(success({ elapsedMs: 3001 })).ok, false);
+  assert.equal(readStopResult(success({ elapsedMs: STOP_BUDGET.proofElapsedMs + 1 })).ok, false);
   assert.equal(readStopResult(success({ rawPayload: 'must refuse' })).ok, false);
 });
 
@@ -254,7 +269,7 @@ test('validated blocked proof retains bounded stage and progress without acquiri
     assert.deepEqual(readStopResult(success({ ...proof, stage })), { ok: false, ...proof, stage });
   }
   assert.deepEqual(readStopResult(success({ ...proof, stage: 'private unknown stage' })), { ok: false, code: 'malformed_proof' });
-  assert.deepEqual(readStopResult(success({ ...proof, elapsedMs: 3001 })), { ok: false, code: 'malformed_proof' });
+  assert.deepEqual(readStopResult(success({ ...proof, elapsedMs: STOP_BUDGET.proofElapsedMs + 1 })), { ok: false, code: 'malformed_proof' });
 });
 
 test('readback diagnostics accept only fixed states, bounded counts and nullable booleans', () => {
@@ -861,7 +876,7 @@ test('Stop during the last read headroom still waits for its actual terminal wit
     if (reads === 1) { clock = 1995; return observationResult(params); }
     clock = 2015; entered(); await terminal;
     return observationResult(params);
-  }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1 });
+  }, { now: () => clock, observationWaitMs: 1000, observationIntervalMs: 1, graceMs: 2850, cleanupMs: 2500 });
   const control = new AbortController();
   const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
   await f.waitForChildTerminal(message => message.result?.content);
@@ -1627,7 +1642,7 @@ test('a real child return after 500 ms releases one Stop within the original sha
     if (params.arguments?.code === source.arguments.code) { entered(); await gate; running = false; return ordinaryResult; }
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) { assert.equal(running, false); return success(); }
     return ordinaryResult;
-  });
+  }, { graceMs: 2850, cleanupMs: 2500 });
   t.after(release);
   const receipt = f.bridge.receipt;
   f.bridge.receipt = entry => { receipt(entry); if (entry.code === 'cleanup_authority_consumed') cleanupEntered(); };
@@ -1873,16 +1888,44 @@ test('Stop accepts an actual terminal after its execution allowance within the o
   t.after(release);
   await f.client.callTool(ordinary());
   const owned = f.client.callTool(hook()); await started;
-  t.mock.timers.tick(2600); release();
+  t.mock.timers.tick(STOP_BUDGET.cleanupMs + 100); release();
   assert.equal((await owned).isError, undefined);
   const dispatched = f.receipts.find(entry => entry.code === 'stop_native_dispatched');
-  assert.equal(dispatched.executionTimeoutMs, 2500); assert.equal(dispatched.scriptBudgetMs, 2400);
-  assert.ok(dispatched.receiptTimeoutMs <= 2850 && dispatched.receiptTimeoutMs > 2500);
+  assert.equal(dispatched.executionTimeoutMs, STOP_BUDGET.cleanupMs); assert.equal(dispatched.scriptBudgetMs, STOP_BUDGET.scriptMs);
+  assert.ok(dispatched.receiptTimeoutMs <= STOP_BUDGET.graceMs && dispatched.receiptTimeoutMs > STOP_BUDGET.cleanupMs);
   const confirmed = f.receipts.find(entry => entry.code === 'stop_confirmed');
   assert.equal(confirmed.childTerminalObserved, true);
-  assert.ok(confirmed.nativeElapsedMs > 2500 && confirmed.callbackElapsedMs <= 2850);
+  assert.ok(confirmed.nativeElapsedMs > STOP_BUDGET.cleanupMs && confirmed.callbackElapsedMs <= STOP_BUDGET.graceMs);
   assert.equal(f.cancellations.length, 0);
   assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement'), false);
+});
+
+test('the extended Stop window waits for its actual child terminal and coalesces duplicate callbacks without another action', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const terminal = Promise.withResolvers();
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
+      await terminal.promise;
+      return success({ elapsedMs: 3200, inactivityEvidence: 'composer_restored' });
+    }
+    return ordinaryResult;
+  });
+  t.after(terminal.resolve);
+  await f.client.callTool(ordinary());
+  const owned = f.client.callTool(hook());
+  await f.waitForCall(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
+  t.mock.timers.tick(3200); await f.client.ping();
+  assert.equal(f.receipts.some(entry => ['stop_confirmed', 'stop_unconfirmed'].includes(entry.code)), false,
+    'Passing the old callback deadline does not invent a native terminal.');
+  const duplicate = f.client.callTool(hook()); await f.waitForReceipt('cleanup_duplicate_queued');
+  assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
+  terminal.resolve();
+  for (const result of await Promise.all([owned, duplicate])) assert.equal(result.isError, undefined);
+  const confirmed = f.receipts.find(entry => entry.code === 'stop_confirmed');
+  assert.equal(confirmed.childTerminalObserved, true); assert.equal(confirmed.inactivityEvidence, 'composer_restored');
+  assert.equal(confirmed.elapsedMs, 3200);
+  assert.equal((await f.client.callTool(hook())).isError, true, 'A retired native turn cannot regain cancellation authority.');
+  assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
 });
 
 test('callback deadline reports missing acknowledgement and passively consumes a late terminal without new authority', async t => {

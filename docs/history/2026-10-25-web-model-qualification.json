@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "status": "candidate-awaiting-activation-and-route-recheck",
+  "deployedSourceCommit": "29e00a79bb8cac203a9fb00f5519e0f583e95753",
+  "executionSurface": "ordinary Windows Codex Web conversation, official unmodified runtime",
+  "externalLauncherUsed": false,
+  "nativeRuntimePatched": false,
+  "candidateValidation": {
+    "sourceChecks": "passed",
+    "webTestsPassed": 905,
+    "webTestsSkipped": 2,
+    "skips": "Windows file symlink privilege unavailable for two configuration-path cases",
+    "independentReview": "No actionable production findings; stale hook-preservation wording corrected.",
+    "installedRefreshPreview": "ready, matching owned legacy hook recognized, hookDefinitionChanged true",
+    "nativeAndGatewayRegressionScope": "Unchanged pre-repair gateway verification reused; this run checked the complete Web test group."
+  },
+  "liveObservationsBeforeRepair": [
+    { "model": "chatgpt-web/gpt-6-sol-instant", "effort": "low", "nativeRead": "passed", "stop": "confirmed", "sameChatContinuation": "passed" },
+    { "model": "chatgpt-web/gpt-6-sol", "effort": "medium", "nativeRead": "passed-on-initial-probe", "additionalRead": "host-safety-refusal-with-zero-native-commands", "stop": "not-tested" },
+    { "model": "chatgpt-web/gpt-5.6-sol-instant", "effort": "low", "nativeRead": "passed", "recall": "passed", "stop": "confirmed", "sameChatContinuation": "passed" },
+    { "model": "chatgpt-web/gpt-5.6-sol", "effort": "medium", "nativeRead": "passed", "recall": "passed", "stop": "confirmed", "sameChatContinuation": "passed" },
+    { "model": "chatgpt-web/gpt-5.6-pro", "effort": "max", "nativeRead": "passed", "recall": "passed", "stop": "click-acknowledged-but-confirmation-window-expired", "laterOwnedPage": "stopped-thinking-and-idle-without-another-request", "recoveryRecall": "passed" },
+    { "model": "chatgpt-web/gpt-6-pro", "effort": "max", "nativeRead": "passed-on-initial-probe", "additionalRead": "relay-unavailable-reported-with-zero-native-commands", "recall": "passed", "stop": "click-acknowledged-but-confirmation-window-expired", "isolatedStopRepeat": "same-result-with-owned-tab-visible", "laterOwnedPage": "stopped-thinking-and-idle-before-continuation" }
+  ],
+  "findings": {
+    "verification": "The helper rejected app-owned instruction envelopes prepended when changing models, and its earlier receipts did not bind an exact model and effort. The repair accepts only observed bounded envelopes and verifies native model/effort plus successful pre-Send browser family/Power.",
+    "visibleAuthority": "Large model-switch instruction payloads became pasted-text attachments. The visible message retained only the generation marker. A completed Pro turn's token was subsequently reused in rejected discovery requests after newer tokens had been supplied. Keep the current broker token in a separate visible directive appended after paste settlement; retain the full transcript and exact draft checks.",
+    "staleTokenErrors": "The MCP handler used one generic failure envelope for known inactive-token rejection before admission and errors after possible invocation. Distinguish only the proven pre-admission category. Do not expose another token, remap requests, retry native actions or weaken tool annotations.",
+    "proStop": "Both Pro routes acknowledged one Stop click but still showed active controls at the 2400ms script bound. An isolated GPT-6 Pro repeat with its owned tab visible reproduced the failure. The same generation later showed Stopped thinking and the idle composer without a second Stop or continuation. The new shared contract allows condition-driven confirmation within a ten-second hook deadline; time alone never proves success."
+  },
+  "preserved": ["exact native approvals and sandbox", "one-click Stop authority", "same saved chat and tab", "context and uncertain-action protections", "working installed adapter and rollback"],
+  "pendingAfterCandidateActivation": [
+    "Exact-route native tools, Stop and same-chat continuation on the repaired candidate, including both Pro routes.",
+    "Current live High and Extra High checks for both Thinking families. All ten registry model/effort selections have generated-browser coverage; those fixtures do not replace live account checks.",
+    "Review and trust the changed ten-second Interrupt hook, then normally restart Codex to load the matching adapter."
+  ],
+  "limits": [
+    "Host safety refusals and a reported unavailable execution relay do not establish one common cause; no native action was replayed after an uncertain execution.",
+    "The earliest helper failures remain preserved. Their later reanalysis does not change those original receipts.",
+    "Existing live observations apply to the deployed pre-repair source, not to the unactivated working-tree candidate.",
+    "No claim of Web-subagent immediate cancellation or media upload is added."
+  ]
+}

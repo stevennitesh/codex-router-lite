@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Web model qualification, visible tool authority and Pro cancellation confirmation, 2026-10-25](2026-10-25-web-model-qualification.json)
+
 - [Deployment acceptance, coordinated runtime refresh and admission-closure diagnosis, 2026-10-24](2026-10-24-deployment-runtime-refresh.json)
 
 - [Switchyard snapshot-conflict repair native certification, 2026-10-24](2026-10-24-switchyard-snapshot-certification.json)

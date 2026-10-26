@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { readStopResult, stopCode } from "../src/web-stop-adapter.mjs";
+import { STOP_BUDGET } from "../src/web-stop-contract.mjs";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stateDir = path.resolve("generated/web-stop-rollout-20261018/hook/test-state");
@@ -76,7 +77,7 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
         return new PolicyLocator(() => this.resolve().length ? controls().filter(element => element.name === options.name) : []);
       }
       async click(options) {
-        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= STOP_BUDGET.scriptMs);
         touch('click_request', thread);
         const selected = this.resolve();
         if (selected.length !== 1 || selected[0].kind !== 'stop' || !selected[0].visible) throw new Error('No unique guarded Stop matched');
@@ -93,11 +94,13 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
       }
       async waitFor(options) {
         assert.equal(options.state, 'visible');
-        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= 2400);
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= STOP_BUDGET.scriptMs);
         touch('readiness_wait', thread);
+        if (surface.pauseReadiness) await surface.pauseReadiness;
         const delayMs = surface.readinessDelayMs ?? 0;
         model.now += Math.min(delayMs, options.timeoutMs);
         model.now += surface.readinessTerminalMs ?? 0;
+        surface.onReadinessSettled?.();
         const ready = this.resolve().some(element => element === body || element.visible);
         if (!ready || delayMs > options.timeoutMs) {
           model.now += Math.max(0, options.timeoutMs - delayMs);
@@ -175,7 +178,9 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  const run = async ({ thread = model.owner, turn = model.turn, budgetMs, delivery } = {}) => {
+  // Existing boundary cases keep a short modeled allowance. Cases covering the
+  // production window pass the shared contract budget explicitly.
+  const run = async ({ thread = model.owner, turn = model.turn, budgetMs = 2400, delivery } = {}) => {
     const identity = { threadId: thread, turnId: turn, sessionId: id(99) };
     const source = stopCode(stopConfig, identity, budgetMs, delivery)
       .replaceAll("import(", "__publicImport(");
@@ -224,7 +229,7 @@ async function blocked(change, expectedCode) {
 
 test("Stop code generator bounds its budget and requires absolute configuration paths", () => {
   const identity = { threadId: id(1), turnId: id(11), sessionId: id(99) };
-  for (const budgetMs of [0, -1, 2401, 2250.5, "2250", NaN])
+  for (const budgetMs of [0, -1, STOP_BUDGET.scriptMs + 1, 2250.5, "2250", NaN])
     assert.throws(() => createWebStopCode({ stateDir, runtimeModule }, identity, { budgetMs }), /budget/u);
   for (const changes of [{ stateDir: "relative" }, { runtimeModule: "relative" }, { stateDir: stateDir + "\0" }])
     assert.throws(() => createWebStopCode({ stateDir, runtimeModule, ...changes }, identity), /validated absolute path/u);
@@ -572,6 +577,38 @@ test("one readiness wait confirms delayed Stop completion in the same tab within
   assert.deepEqual(mutations(f).map(call => call.name), ["handoff", "click"]);
   assert.equal(f.calls.filter(call => call.name === "visible").length, 3);
   assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
+});
+
+test("delayed site cancellation stays unknown in the old window and confirms only after the owned state barrier in the new window", { timeout: 10_000 }, async () => {
+  for (const budgetMs of [2400, STOP_BUDGET.scriptMs]) {
+    const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
+    const entered = Promise.withResolvers(), transition = Promise.withResolvers();
+    f.first.pauseReadiness = transition.promise;
+    f.first.readinessDelayMs = 3200;
+    f.first.onReadinessSettled = () => {
+      if (f.model.now >= 3200) { f.first.visible = false; f.first.idleVisible = true; }
+    };
+    f.model.onCall = name => { if (name === "readiness_wait") entered.resolve(); };
+    const pending = f.run({ budgetMs });
+    assert.equal(await Promise.race([entered.promise.then(() => "waiting"), pending.then(() => "completed")]), "waiting");
+    assert.equal(f.outputs.length, 0, "An acknowledged click without the state transition is not success.");
+    assert.equal(clicked(f).length, 1);
+    transition.resolve();
+    const result = await pending;
+    if (budgetMs === 2400) {
+      assert.equal(result.code, "stop_confirmation_failed");
+      assert.equal(result.readbackStopVisible, true); assert.equal(result.generationInactive, false);
+    } else {
+      stopped(result);
+      assert.equal(result.inactivityEvidence, "composer_restored");
+      assert.equal(result.readbackComplete, false, "The restored composer is the observed post-click proof.");
+    }
+    const receipt = f.first.state.reconciliationStop;
+    const repeated = await f.run({ budgetMs });
+    assert.equal(repeated.clickAttempted, false);
+    assert.equal(f.first.state.reconciliationStop, receipt);
+    assert.equal(clicked(f).length, 1, "A larger allowance never authorizes a second click.");
+  }
 });
 
 test("persistently visible Stop exhausts confirmation without claiming cancellation or repeating its click", async () => {

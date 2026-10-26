@@ -133,6 +133,13 @@ for (const trace of [false, true]) {
     }
     assert.equal(finish(broker, turn.token), true);
     assert.equal(service.status().pending, 0);
+    logged.length = 0;
+    const stale = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } });
+    assert.deepEqual(stale.structuredContent, { error: { code: "web_tool_turn_closed" } });
+    assert.deepEqual(receipts(), [
+      ...(trace ? [{ operation: "list", stage: "received", turnHash }] : []),
+      { operation: "list", stage: "turn-not-active", turnHash },
+    ]);
   });
 }
 
@@ -328,6 +335,7 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   receipts.length = 0;
   const unknownDiscovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: "web_turn_00000000000000000000000000000000", query: "read" } });
   assert.equal(unknownDiscovery.isError, true);
+  assert.deepEqual(unknownDiscovery.structuredContent, { error: { code: "web_tool_turn_closed" } });
   const unknown = await call(client, { token: "web_turn_00000000000000000000000000000000" }, "read");
   assert.equal(unknown.isError, true);
   const undeclared = await call(client, turn, "never_declared");
@@ -354,6 +362,76 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   assert.equal(service.status().pending, 0);
   assert.equal(finish(broker, turn.token), true);
   assert.equal((await client.callTool({ name: "codex_tools_list", arguments: { turn_token: turn.token } })).isError, true);
+});
+
+test("retired-token discovery and calls fail before admission without affecting the current turn", { timeout: 10_000 }, async t => {
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
+  const retired = register(broker, "retired"), retiredHash = createHash("sha256").update(retired.token).digest("hex");
+  assert.equal(finish(broker, retired.token), true);
+  const current = register(broker, "current");
+  const { client, transport } = await connect();
+  const invoke = broker.invoke;
+  let invocations = 0;
+  broker.invoke = (...args) => { invocations += 1; return invoke(...args); };
+  const discovery = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: retired.token } });
+  const rejected = await call(client, retired, "read");
+  assert.deepEqual(rejected, discovery);
+  assert.equal(rejected.isError, true);
+  assert.deepEqual(rejected.structuredContent, { error: { code: "web_tool_turn_closed" } });
+  assert.match(rejected.content[0].text, /supplied turn_token is not active/u);
+  assert.match(rejected.content[0].text, /request was not accepted/u);
+  assert.match(rejected.content[0].text, /latest Codex message/u);
+  assert.match(rejected.content[0].text, /Do not repeat uncertain, cancelled, or timed-out actions/u);
+  assert.equal(invocations, 0);
+  assert.equal(broker.hasClientActivity(current.token), false);
+  assert.equal(broker.revision(current.token), 0);
+  assert.deepEqual(broker.takeCalls(current.token), []);
+  assert.equal(service.status().pending, 0);
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    { operation: "list", stage: "received", turnHash: retiredHash },
+    { operation: "list", stage: "turn-not-active", turnHash: retiredHash },
+    { operation: "call", stage: "received", turnHash: retiredHash },
+    { operation: "call", stage: "turn-not-active", turnHash: retiredHash },
+  ]);
+  const publicFailure = JSON.stringify({ rejected, receipts });
+  for (const privateValue of [retired.token, current.token, service.url, transport.sessionId, createHash("sha256").update(current.token).digest("hex")]) {
+    assert.equal(publicFailure.includes(privateValue), false);
+  }
+  const listed = await client.callTool({ name: "codex_tools_list", arguments: { turn_token: current.token } });
+  assert.deepEqual(listed.structuredContent.tools, broker.list(current.token));
+  const pending = call(client, current, "read");
+  const [native] = await nativeCalls(broker, current.token);
+  broker.complete(current.token, [{ type: "function_call_output", call_id: native.call_id, output: "current native result" }]);
+  assert.equal((await pending).content[0].text, "current native result");
+  assert.equal(invocations, 1);
+  assert.equal(finish(broker, current.token), true);
+});
+
+test("a failure after admission retains execution uncertainty even with a closed-turn error code", { timeout: 10_000 }, async t => {
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
+  const turn = register(broker, "admitted-failure"), turnHash = createHash("sha256").update(turn.token).digest("hex");
+  const { client } = await connect();
+  const invoke = broker.invoke;
+  let invocations = 0;
+  broker.invoke = (...args) => { invocations += 1; return invoke(...args); };
+  const pending = call(client, turn, "read");
+  const [native] = await nativeCalls(broker, turn.token);
+  assert.equal(native.type, "function_call");
+  assert.equal(broker.cancel(turn.token, Object.assign(new Error("private outcome is unknown"), { code: "web_tool_turn_closed" })), true);
+  const rejected = await pending;
+  assert.deepEqual(rejected, { isError: true, content: [{ type: "text", text: "Codex tool request failed or the turn is closed. Do not retry a cancelled or timed-out turn." }] });
+  assert.equal(invocations, 1);
+  assert.equal(service.status().pending, 0);
+  assert.deepEqual(withoutDiagnosticTime(receipts), [
+    { operation: "call", stage: "received", turnHash },
+    { operation: "call", stage: "invoke-started", turnHash },
+    { operation: "call", stage: "rejected", turnHash },
+  ]);
+  for (const privateValue of [turn.token, "private outcome is unknown"]) {
+    assert.equal(JSON.stringify({ rejected, receipts }).includes(privateValue), false);
+  }
 });
 
 test("SDK discovery holds activity and invalidates an earlier completion observation", { timeout: 10_000 }, async t => {

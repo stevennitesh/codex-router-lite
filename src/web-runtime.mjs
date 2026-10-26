@@ -492,7 +492,7 @@ export function createInAppWebRuntime({
         ...(operation === "rollover" ? { previousChatUrl: conversation.capacityChatUrl ?? conversation.chatUrl } : {}),
         ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
-        ...(operation === "send" ? { prompt: turn.prompt } : {}),
+        ...(operation === "send" ? { prompt: turn.prompt, turnToken: turn.token } : {}),
         ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) },
           ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
@@ -556,7 +556,7 @@ export function createInAppWebRuntime({
     const guidance = fullInstructions
       ? `${instructionProtocol}\nCurrent Codex instructions:\n${instructions ?? "No Codex instructions were supplied for this request."}\n`
       : "";
-    const promptFor = value => `${guidance}Use turn_token ${turn.token} unchanged with every Codex MCP tool call in this response. Never expose the token in your answer.\nConversation transcript:\n${JSON.stringify(value)}`;
+    const promptFor = value => `${guidance}Conversation transcript:\n${JSON.stringify(value)}`;
     turn.prompt = promptFor(history);
     if (conversation.needsHistory && Buffer.byteLength(turn.prompt, "utf8") > 512 * 1024) {
       const output = webCompactOutput({ ...payload, input: readableInput(payload) });

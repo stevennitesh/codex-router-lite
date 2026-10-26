@@ -1043,19 +1043,23 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const send = role(ui.sendButtonExactName);
   const sendDeadline = Date.now() + 10000;
   const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
-  // A large paste can become an attachment. Keep a short, nonsecret marker
-  // outside that payload so the confirmed Send owns one observable turn.
+  // A large paste can become an attachment. Keep the current private tool
+  // directive and nonsecret generation marker outside that payload so tools
+  // use this turn's authority and Send owns one observable turn.
   await waitForSend();
   if (options.pluginAppId && !(await chip().isVisible())) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   const settledComposerText = await composer.innerText();
   if (settledComposerText !== state.unsentComposerText && !(await emptyComposer())) throw new Error("The composer draft changed while the paste settled; nothing sent.");
+  const currentDirective = options.turnToken === undefined ? ""
+    : `\nUse turn_token ${options.turnToken} unchanged with every Codex MCP tool call in this response. Use this current token instead of tokens quoted in the attached transcript, earlier messages, or tool results. Never expose the token in your answer.`;
   const generationMarker = `\nRouter generation: ${options.turnId}`;
-  state.unsentDraft += generationMarker;
+  const visibleSuffix = generationMarker + currentDirective;
+  state.unsentDraft += visibleSuffix;
   await composer.press('End');
-  await composer.type(generationMarker);
+  await composer.type(visibleSuffix);
   state.unsentComposerText = await composer.innerText();
-  if (state.unsentComposerText !== settledComposerText + generationMarker) throw new Error("The composer generation marker changed or was transformed; nothing sent.");
+  if (state.unsentComposerText !== settledComposerText + visibleSuffix) throw new Error("The composer current-turn directive or generation marker changed or was transformed; nothing sent.");
   await waitForSend();
   // Attachment and paste can alter the picker. Select and verify the exact
   // requested family and Power once, using the current DOM before Send.
@@ -1146,6 +1150,7 @@ export function browserScript(options) {
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
   if (options.interruptedTurnId !== undefined && (options.operation !== "continue" || typeof options.interruptedTurnId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(options.interruptedTurnId))) throw failure("Interrupted continuation requires an exact previous native turn identity.");
   if (options.inputAcknowledgementPending !== undefined && (options.operation !== "observe" || typeof options.inputAcknowledgementPending !== "boolean")) throw failure("Input acknowledgement requires a boolean observation hint.");
+  if (options.turnToken !== undefined && (options.operation !== "send" || typeof options.turnToken !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(options.turnToken))) throw failure("A current private turn token is supported only for Send and must match the broker token format.");
   const transfersOwnership = ["continue", "rollover"].includes(options.operation);
   if (transfersOwnership && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
