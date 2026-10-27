@@ -16,6 +16,8 @@ const readReplies = (elements, options = {}) => readBrowserReplies(elements, { .
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
 const base = { bindingId, frameToken: token, sessionId: "current-session", turnId: "first-turn", modelFamily: "GPT-6", power: 0 };
+const pendingAcceptance = { inputAcknowledgementPending: true,
+  observationWait: { url: "http://127.0.0.1:5123/" + token + "/observe/web_turn_" + token + "?revision=0" } };
 const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", pluginSelectionButtonName: "Current tools The current tool collection" };
 const fullConversationText = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
@@ -2199,65 +2201,61 @@ test("a duplicate generation key or a later foreign turn cannot supply the final
   }
 });
 
-test("initial observation reconciles a missing turn or later blank placeholder only to the original unique latest generation", async () => {
-  for (const initial of ["missing", "later blank"]) {
+test("pending acceptance defers only content-free short reads until the original unique latest generation returns", async () => {
+  for (const initial of ["missing", "later blank", "historical only", "later historical"]) {
     const f = fixture(); await f.ready();
+    f.ui.texts = ["Historical private answer"];
     const sent = await f.run("send", { ...plugin, prompt: "Current request" });
     const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
+    const historical = () => observedTurn(messageId(900), "Historical private request", [assistantMessage(0, "Historical private answer")]);
+    assert.deepEqual(f.getState().baselineTurnKeys, [messageId(900)]);
     f.ui.messageRoot = initial === "missing" ? domElement("main", {})
-      : domElement("main", {}, owned(), observedTurn("rendering-placeholder", "", [], { complete: false }));
+      : initial === "later blank" ? domElement("main", {}, owned(), observedTurn("rendering-placeholder", "", [], { complete: false }))
+        : initial === "historical only" ? domElement("main", {}, historical()) : domElement("main", {}, owned(), historical());
     const composer = f.ui.composerText = "Keep this private draft";
-    const typed = [...f.ui.typed], reads = f.ui.observationReads;
-    const locate = f.tab.playwright.locator;
-    f.tab.playwright.locator = selector => {
-      const locator = locate(selector);
-      if (selector.startsWith("xpath=//body[count(")) {
-        const wait = locator.waitFor.bind(locator);
-        locator.waitFor = async options => { assert.deepEqual(options, { state: "visible", timeoutMs: 3000 }); return wait(options); };
-      }
-      return locator;
-    };
-    f.ui.onStopWait = () => {
-      assert.equal(f.ui.sendClicks, 1);
-      assert.deepEqual(f.getState().generationReplyIds, [], "No answer is adopted from the unowned first view.");
-      f.ui.messageRoot = domElement("main", {}, owned());
-    };
-    const observed = await f.run("observe", { inputAcknowledgementPending: true });
+    const typed = [...f.ui.typed], reads = f.ui.observationReads, completed = f.getState().completed;
+    f.ui.onStopWait = () => { assert.fail("Observation must yield after its short coherent read."); };
+    const pending = await f.run("observe", pendingAcceptance);
+    assert.deepEqual(pending, { operation: "observe", ownershipPending: true });
+    assert.equal(f.ui.observationReads - reads, 1);
+    assert.deepEqual(f.getState().generationReplyIds, [], "Unowned text never becomes generation evidence.");
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.getState().completed, completed);
+    f.ui.messageRoot = domElement("main", {}, historical(), owned());
+    const observed = await f.run("observe", pendingAcceptance);
     assert.deepEqual([observed.assistantText, observed.completed, observed.generationTurnKey], ["Owned answer", true, sent.generationTurnKey]);
-    assert.deepEqual(observed.initialOwnershipDiagnostic, { anchorCount: Number(initial === "later blank"),
-      turnCount: initial === "missing" ? 0 : 2, latestMatches: false });
-    assert.equal(f.ui.observationReads - reads, 2, "Readiness is followed by one fresh coherent reply read.");
-    assert.equal(f.ui.stopWaits, 1);
+    assert.equal(f.ui.observationReads - reads, 2, "Each call uses one fresh coherent reply read.");
+    assert.equal(f.ui.stopWaits, 0);
     assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
     assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
     assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
-    assert.doesNotMatch(JSON.stringify(observed.initialOwnershipDiagnostic), /private|answer|[a-f0-9]{8}-/iu);
   }
 });
 
-test("initial ownership reconciliation cannot accept duplicates, permanent replacement, a later request or a readiness race", async () => {
-  for (const loss of ["duplicate", "replacement", "later request", "later blank UUID", "readiness race"]) {
+test("pending acceptance rejects duplicate original keys and unowned new foreign UUIDs without waiting", async () => {
+  for (const loss of ["duplicate", "replacement", "later request", "later blank UUID", "nested request"]) {
     const f = fixture(); await f.ready();
     const sent = await f.run("send", { ...plugin, prompt: "Current request" });
     const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
     const foreign = () => observedTurn(messageId(701), "Manual user request", [assistantMessage(21, "Foreign answer")]);
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [], { complete: false }));
+    assert.equal((await f.run("observe", pendingAcceptance)).replyUnavailableReason, "no-new-message");
     f.ui.messageRoot = loss === "duplicate" ? domElement("main", {}, owned(), owned())
       : loss === "replacement" ? domElement("main", {}, foreign())
         : loss === "later request" ? domElement("main", {}, owned(), foreign())
-          : loss === "later blank UUID" ? domElement("main", {}, owned(), observedTurn(messageId(701), "", [], { complete: false })) : domElement("main", {});
+          : loss === "later blank UUID" ? domElement("main", {}, owned(), observedTurn(messageId(701), "", [], { complete: false }))
+            : domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [foreign()]));
     const typed = [...f.ui.typed], composer = f.ui.composerText;
-    f.ui.onStopWait = () => {
-      if (loss !== "replacement") f.ui.messageRoot = domElement("main", {}, owned());
-      else throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
-    };
-    f.ui.onReplyRead = () => {
-      if (loss === "readiness race" && f.ui.stopWaits) f.ui.messageRoot = domElement("main", {}, foreign());
-    };
-    const observed = await f.run("observe", { inputAcknowledgementPending: true });
+    f.ui.onStopWait = () => { assert.fail("A foreign or duplicate UUID cannot wait for another ownership view."); };
+    const observed = await f.run("observe", pendingAcceptance);
     assert.equal(observed.replyUnavailableReason, loss === "duplicate" ? "duplicate-generation-turn" : "generation-turn-not-latest");
     assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.generationReplyIds], [null, "", false, []]);
-    assert.equal(f.ui.stopWaits, Number(["replacement", "readiness race"].includes(loss)), "Duplicate ownership and a settled later identity are rejected without waiting.");
-    assert.equal(typeof observed.initialOwnershipDiagnostic, "object");
+    assert.equal(observed.ownershipPending, undefined);
+    assert.deepEqual(observed.ownershipDiagnostic, { anchorCount: loss === "duplicate" ? 2 : Number(loss !== "replacement"),
+      turnCount: 2 - Number(loss === "replacement"), latestMatches: loss === "duplicate",
+      foreignTurnCount: Number(loss !== "duplicate") });
+    assert.doesNotMatch(JSON.stringify(observed.ownershipDiagnostic), /private|answer|[a-f0-9]{8}-/iu);
+    assert.equal(f.ui.stopWaits, 0);
     assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
     assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
     await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/u);
@@ -2265,46 +2263,82 @@ test("initial ownership reconciliation cannot accept duplicates, permanent repla
   }
 });
 
-test("pending-acceptance renewal never starts a late ownership wait and retains the first snapshot diagnostic", async () => {
+test("held pending acceptance retains unmounted verified history and accepts older newly mounted UUIDs before its unique latest anchor", async () => {
+  const f = fixture(); await f.ready();
+  const first = await f.run("send", { ...plugin, prompt: "First request" });
+  const historical = () => observedTurn(first.generationTurnKey, "First request", [assistantMessage(10, "First completed answer")]);
+  f.ui.messageRoot = domElement("main", {}, historical());
+  assert.equal((await f.run("observe", pendingAcceptance)).completed, true);
+  await f.run("retain");
+  f.ui.messageRoot = domElement("main", {});
+  const turnId = "following-turn";
+  await f.run("continue", { turnId });
+  assert.deepEqual(f.getState().baselineTurnKeys, [first.generationTurnKey]);
+  f.ui.onSend = () => {
+    const user = f.ui.userMessages.at(-1);
+    f.ui.messageRoot = domElement("main", {}, observedTurn(user.messageId, user.text, [], { complete: false }));
+  };
+  const current = await f.run("send", { ...plugin, prompt: "Following request", turnId });
+  assert.deepEqual(f.getState().baselineTurnKeys, [first.generationTurnKey], "The prior confirmed turn remains known despite being absent from Continue and pre-Send.");
+  f.ui.onStopWait = () => { assert.fail("Remounted history cannot start an observation selector wait."); };
+  const options = { ...pendingAcceptance, turnId };
+  f.ui.messageRoot = domElement("main", {}, historical());
+  assert.deepEqual(await f.run("observe", options), { operation: "observe", ownershipPending: true });
+  assert.deepEqual(f.getState().generationReplyIds, []);
+  const newlyMountedKey = messageId(702);
+  assert.equal(f.getState().baselineTurnKeys.includes(newlyMountedKey), false);
+  f.ui.messageRoot = domElement("main", {}, observedTurn(newlyMountedKey, "Earlier mounted request", [assistantMessage(30, "Earlier mounted answer")]),
+    historical(), observedTurn(current.generationTurnKey, "Following request", [assistantMessage(20, "Current answer")]));
+  const observed = await f.run("observe", options);
+  assert.deepEqual([observed.generationTurnKey, observed.replyId, observed.assistantText, observed.completed],
+    [current.generationTurnKey, messageId(20), "Current answer", true]);
+  assert.deepEqual(observed.generationReplyIds, [messageId(20)]);
+  assert.equal(observed.ownershipPending, undefined);
+  assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.sendClicks, 2);
+});
+
+test("pending-acceptance renewal tolerates remounts after an owned empty read without selector waits or cached ownership", async () => {
   const f = fixture(); await f.ready();
   const sent = await f.run("send", { ...plugin, prompt: "Current request" });
   f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [], { complete: false }));
-  f.ui.onReplyRead = () => {
-    assert.equal(f.getState().initialGenerationObservation.generationTurnKey, sent.generationTurnKey,
-      "The generation is marked observed before the first native page read.");
-  };
-  const first = await f.run("observe", { inputAcknowledgementPending: true });
+  const first = await f.run("observe", pendingAcceptance);
   assert.equal(first.replyUnavailableReason, "no-new-message");
-  assert.equal(first.initialOwnershipDiagnostic, undefined);
+  f.ui.onStopWait = () => { assert.fail("A later adapter read or renewal cannot start a selector wait."); };
+  const reads = f.ui.observationReads;
   f.ui.messageRoot = domElement("main", {});
-  f.ui.onStopWait = () => { assert.fail("A later adapter read or renewal has no fresh ownership-wait budget."); };
-  const later = await f.run("observe", { inputAcknowledgementPending: true });
-  assert.equal(later.replyUnavailableReason, "generation-turn-not-latest");
-  assert.deepEqual(later.initialOwnershipDiagnostic, { anchorCount: 1, turnCount: 1, latestMatches: true });
-  assert.deepEqual([later.replyId, later.assistantText, later.completed], [null, "", false]);
+  assert.deepEqual(await f.run("observe", pendingAcceptance), { operation: "observe", ownershipPending: true });
+  f.ui.messageRoot = domElement("main", {}, observedTurn("rendering-placeholder", "Private placeholder", [assistantMessage(21, "Unowned private text")], { complete: false }));
+  assert.deepEqual(await f.run("observe", pendingAcceptance), { operation: "observe", ownershipPending: true });
+  assert.deepEqual(f.getState().generationReplyIds, []);
+  f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]));
+  const later = await f.run("observe", pendingAcceptance);
+  assert.deepEqual([later.replyId, later.assistantText, later.completed], [messageId(20), "Owned answer", true]);
+  assert.equal(later.ownershipDiagnostic, undefined);
+  assert.equal(f.ui.observationReads - reads, 3);
   assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
 });
 
-test("ordinary post-acknowledgement observation never reconciles a missing generation", async () => {
-  for (const inputAcknowledgementPending of [undefined, false]) {
+test("post-acknowledgement or unheld observations fail missing ownership without a pending frame", async () => {
+  for (const options of [{}, { ...pendingAcceptance, inputAcknowledgementPending: false }, { inputAcknowledgementPending: true }]) {
     const f = fixture(); await f.ready();
     await f.run("send", { ...plugin, prompt: "Current request" });
     f.ui.messageRoot = domElement("main", {});
     f.ui.onStopWait = () => { assert.fail("A post-acknowledgement observation cannot wait for another ownership view."); };
-    const observed = await f.run("observe", inputAcknowledgementPending === undefined ? {} : { inputAcknowledgementPending });
+    const observed = await f.run("observe", options);
     assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest");
-    assert.equal(observed.initialOwnershipDiagnostic, undefined);
+    assert.equal(observed.ownershipPending, undefined);
+    assert.deepEqual(observed.ownershipDiagnostic, { anchorCount: 0, turnCount: 0, latestMatches: false, foreignTurnCount: 0 });
     assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("initial ownership readiness preserves native errors, cancellation, URL and exact-owner guards without another Send", async () => {
+test("pending ownership reads preserve native errors, cancellation, URL and exact-owner guards without another Send", async () => {
   for (const change of ["native error", "native cancellation", "native owner", "URL", "generation key"]) {
     const f = fixture(); await f.ready();
     const sent = await f.run("send", { ...plugin, prompt: "Current request" });
     f.ui.messageRoot = domElement("main", {});
     const typed = [...f.ui.typed], composer = f.ui.composerText;
-    f.ui.onStopWait = () => {
+    f.ui.onReplyRead = () => {
       if (change === "native error") throw new Error("Native selector execution failed.");
       if (change === "native cancellation") throw Object.assign(new Error("Native operation aborted."), { name: "AbortError" });
       f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]));
@@ -2312,8 +2346,8 @@ test("initial ownership readiness preserves native errors, cancellation, URL and
       if (change === "URL") f.ui.url = "https://chatgpt.com/c/another-conversation";
       if (change === "generation key") f.getState().generationTurnKey = messageId(999);
     };
-    await assert.rejects(f.run("observe", { inputAcknowledgementPending: true }), /Native selector execution failed|Native operation aborted|different native turn|normal saved URL|generation changed/u);
-    assert.equal(f.ui.stopWaits, 1);
+    await assert.rejects(f.run("observe", pendingAcceptance), /Native selector execution failed|Native operation aborted|different native turn|normal saved URL|generation changed/u);
+    assert.equal(f.ui.stopWaits, 0);
     assert.deepEqual(f.getState().generationReplyIds, []);
     assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
     assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);

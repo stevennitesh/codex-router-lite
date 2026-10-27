@@ -438,6 +438,12 @@ function observationResult(params, fields = {}) {
     operation: 'observe', normal: true, completed: false, stopVisible: true, statusComplete: false, ...fields,
   } }) + config.frameEnd }] };
 }
+function ownershipPendingResult(params, fields = {}) {
+  const config = readBrowserProgram(params.arguments.code);
+  return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
+    operation: 'observe', ownershipPending: true, ...fields,
+  } }) + config.frameEnd }] };
+}
 function sendResult(params, fields = {}) {
   const config = readBrowserProgram(params.arguments.code);
   return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
@@ -581,6 +587,183 @@ test('pending input returns its first incomplete text once, then later partial t
   assert.equal(final.completed, true); assert.equal(reads, 5);
   assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 2);
   assert.deepEqual(f.receipts.filter(entry => entry.code === 'observation_wait_finished').map(entry => entry.readCount), [2, 3]);
+});
+
+test('pending ownership stays inside one held observation until a fresh owned answer arrives', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const f = await waitingFixture(t, params => ++reads < 3 ? ownershipPendingResult(params)
+    : observationResult(params, { assistantText: 'Fresh owned partial answer' }));
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  const first = await f.waitForChildTerminal(message => message.result?.content);
+  const state = [...f.bridge.pending.values()][0].wait;
+  const deadlines = [state.deadlineAt, state.executionDeadlineAt];
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== first.id);
+  assert.deepEqual([state.deadlineAt, state.executionDeadlineAt], deadlines);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, state.config.frameToken).assistantText, 'Fresh owned partial answer');
+  assert.equal(reads, 3);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_ready');
+});
+
+test('broker wake during pending ownership waits for a fresh owned result and never returns an earlier snapshot', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const f = await waitingFixture(t, params => ++reads === 1 ? observationResult(params, { assistantText: ' ' })
+    : reads < 4 ? ownershipPendingResult(params) : observationResult(params, { replyId: 'fresh-owned' }));
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  let prior = await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(5);
+  prior = await f.waitForChildTerminal(message => message.result?.content && message.id !== prior.id);
+  const pending = [...f.bridge.pending.values()][0], state = pending.wait;
+  const deadlines = [state.deadlineAt, state.executionDeadlineAt];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity();
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== prior.id
+    && message.result.content.some(item => item.text?.includes('ownershipPending')));
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  assert.deepEqual([state.deadlineAt, state.executionDeadlineAt], deadlines);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, state.config.frameToken).replyId, 'fresh-owned');
+  assert.equal(reads, 4);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+});
+
+test('a broker wake during an active read remains pending when that read loses its mounted ownership', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const { promise: entered, resolve: enter } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
+  const f = await waitingFixture(t, async params => {
+    if (++reads === 1) return observationResult(params);
+    if (reads === 2) { enter(); await terminal; return ownershipPendingResult(params); }
+    return observationResult(params, { replyId: 'fresh-after-wake' });
+  });
+  t.after(release);
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  const first = await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(5); await entered;
+  const pending = [...f.bridge.pending.values()][0];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity(); release();
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== first.id);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, pending.wait.config.frameToken).replyId, 'fresh-after-wake');
+  assert.equal(reads, 3);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+});
+
+test('pending ownership expires on the original deadline even after a sticky broker wake', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const f = await waitingFixture(t, params => ownershipPendingResult(params), { observationWaitMs: 30, observationIntervalMs: 1000 });
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = assert.rejects(f.client.callTool(f.source), error => error.code === -32603
+    && /Router browser observation ownership is unavailable/u.test(error.message));
+  await f.waitForChildTerminal(message => message.result?.content);
+  const pending = [...f.bridge.pending.values()][0];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity();
+  t.mock.timers.tick(30); await answer;
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'deadline');
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+});
+
+test('pending ownership preserves actual child failures and fails closed on broker loss', async t => {
+  for (const branch of ['tool error', 'RPC error', 'broker error', 'broker closed']) await t.test(branch, async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    let reads = 0;
+    const nativeError = { isError: true, content: [{ type: 'text', text: 'Actual native observation failure' }] };
+    const f = await waitingFixture(subtest, params => {
+      if (++reads === 1) return ownershipPendingResult(params);
+      if (branch === 'RPC error') throw new McpError(-32602, 'Actual native RPC failure');
+      return nativeError;
+    });
+    f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+    const answer = f.client.callTool(f.source).then(result => ({ result }), error => ({ error }));
+    await f.waitForChildTerminal(message => message.result?.content);
+    const pending = [...f.bridge.pending.values()][0];
+    if (branch === 'broker error') f.bridge.wakeObservation(pending, 'broker_error');
+    else if (branch === 'broker closed') f.broker.cancel(f.turn.token);
+    else subtest.mock.timers.tick(5);
+    const outcome = await answer;
+    if (branch === 'tool error') assert.deepEqual(outcome.result, nativeError);
+    else if (branch === 'RPC error') {
+      assert.equal(outcome.error.code, -32602); assert.match(outcome.error.message, /Actual native RPC failure/u);
+    } else {
+      assert.equal(outcome.error.code, -32603); assert.match(outcome.error.message, /observation channel is unavailable/u);
+      assert.equal(reads, 1);
+    }
+    assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+  });
+});
+
+test('Stop during pending ownership freezes reads and waits for an active child terminal', async t => {
+  for (const active of [false, true]) await t.test(active ? 'active pending read' : 'idle pending interval', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    let reads = 0;
+    const { promise: entered, resolve: enter } = Promise.withResolvers();
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+      if (++reads === 2) { enter(); await terminal; }
+      return ownershipPendingResult(params);
+    });
+    subtest.after(release);
+    f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+    const control = new AbortController();
+    const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await f.waitForChildTerminal(message => message.result?.content);
+    if (active) { subtest.mock.timers.tick(5); await entered; }
+    control.abort(); assert.equal(await answer, 'cancelled');
+    const stopped = f.client.callTool(hook());
+    await f.waitForReceipt('cleanup_authority_consumed');
+    if (active) assert.equal(f.calls.length, 2, 'Cleanup must await the actual active pending read terminal.');
+    release(); assert.equal((await stopped).isError, undefined);
+    assert.equal(reads, active ? 2 : 1);
+    assert.equal(f.calls.length, reads + 1);
+    assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+    subtest.mock.timers.tick(1000); await f.client.ping();
+    assert.equal(f.calls.length, reads + 1);
+  });
+});
+
+test('malformed and unqualified pending frames fail without escaping the adapter', async t => {
+  for (const branch of ['normal fields', 'private text', 'false flag', 'wrong operation', 'acknowledged input', 'direct observation', 'unqualified metadata',
+    'ambiguous envelope', 'foreign nonce', 'malformed JSON', 'ambiguous direct envelope']) {
+    await t.test(branch, async subtest => {
+      subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+      const fields = branch === 'normal fields' ? { normal: true } : branch === 'private text' ? { assistantText: 'private pending text' }
+        : branch === 'false flag' ? { ownershipPending: false } : branch === 'wrong operation' ? { operation: 'retain' } : {};
+      const f = await waitingFixture(subtest, params => {
+        const result = ownershipPendingResult(params, fields);
+        if (branch.startsWith('ambiguous')) result.content.push(clone(result.content[0]));
+        if (branch === 'foreign nonce') result.content[0].text = result.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
+        if (branch === 'malformed JSON') result.content[0].text = result.content[0].text.replace('"ownershipPending":true', '"ownershipPending":');
+        return result;
+      });
+      const { observationWait, ...config } = readBrowserProgram(f.source.arguments.code);
+      f.source.arguments.code = browserScript({ ...config, ...(['direct observation', 'ambiguous direct envelope'].includes(branch) ? {} : { observationWait }),
+        inputAcknowledgementPending: branch !== 'acknowledged input' });
+      if (branch === 'unqualified metadata') f.source._meta.callId = 'ordinary-unqualified';
+      await assert.rejects(f.client.callTool(f.source), error => error.code === -32603 && /observation ownership is unavailable/u.test(error.message));
+      assert.equal(f.calls.length, 1);
+      assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+      assert.equal(JSON.stringify(f.forwardedOuter).includes('private pending text'), false);
+    });
+  }
 });
 
 test('canonical subagents hold exact read-only observations without acquiring primary Stop authority', async t => {

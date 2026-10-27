@@ -367,6 +367,7 @@ export class AdapterBridge {
     }
     const guard = qualifyBrowserCall(params, this.stopConfig.runtimeModule, this.stopConfig.threadIds ?? null);
     const observation = guard ? null : qualifyObservationCall(params, this.stopConfig.runtimeModule, this.stopConfig.threadIds ?? null);
+    const browserConfig = guard?.config ?? observation?.config ?? (params.name === 'js' ? readBrowserProgram(params.arguments?.code) : null);
     const overlapping = this.pending.size > 0 || [...this.hooks.values()].some(entry => !entry.group.retired)
       || this.injected.size > 0 || !this.observationChildrenOwnedBy();
     if (overlapping || !guard?.observation) this.invalidate('scope_invalidated');
@@ -393,6 +394,7 @@ export class AdapterBridge {
     }
     let settle;
     const pending = { qualified: Boolean(guard?.observation && this.cache && this.pending.size === 0), cache: observation ? null : this.cache,
+      ...(browserConfig?.operation === 'observe' ? { observationConfig: browserConfig } : {}),
       settled: new Promise(resolvePromise => { settle = resolvePromise; }), settle };
     if (guard?.config.operation === 'send' && !overlapping && !this.authorityDisabled
         && !this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) {
@@ -456,13 +458,23 @@ export class AdapterBridge {
   wakeObservation(pending, reason) {
     const state = pending.wait;
     if (!state || state.finished) return;
-    state.reason ??= reason;
+    // Broker activity remains a wake request while ownership is still mounting.
+    // Keep the original read timer and deadline: only a fresh owned result may
+    // satisfy that request, and another terminal wake must still end the wait.
+    if (reason === 'broker_activity') {
+      state.reason ??= reason; state.abort.abort();
+      if (!state.active && state.last && !state.ownershipPending) void this.finishObservation(pending).catch(() => this.fail());
+      return;
+    }
+    if (state.reason === 'broker_activity') state.reason = reason;
+    else state.reason ??= reason;
     clearTimeout(state.timer); clearTimeout(state.deadline); state.abort.abort();
     if (!state.active && state.last) void this.finishObservation(pending).catch(() => this.fail());
   }
   async readObservation(pending) {
     const state = pending.wait;
-    if (state.finished || state.active || state.reason && state.last) return;
+    if (state.finished || state.active || state.reason && state.last
+        && !(state.reason === 'broker_activity' && state.ownershipPending)) return;
     if (state.last && this.now() >= state.deadlineAt) return this.wakeObservation(pending, 'deadline');
     let settle;
     pending.settled = new Promise(resolvePromise => { settle = resolvePromise; }); pending.settle = settle;
@@ -482,8 +494,11 @@ export class AdapterBridge {
     this.event('observation_wait_finished', { readCount: state.readCount, wakeReason: state.reason,
       elapsedMs: Math.max(0, this.now() - state.startedAt) });
     const childFailed = own(state.last, 'error') || state.last.result?.isError === true;
-    return this.outer.send(!childFailed && ['broker_error', 'broker_closed'].includes(state.reason)
-      ? { jsonrpc: '2.0', id: state.outerId, error: { code: -32603, message: 'Router browser observation channel is unavailable.' } }
+    const unavailable = ['broker_error', 'broker_closed'].includes(state.reason)
+      ? 'Router browser observation channel is unavailable.' : state.ownershipPending
+        ? 'Router browser observation ownership is unavailable.' : null;
+    return this.outer.send(!childFailed && unavailable
+      ? { jsonrpc: '2.0', id: state.outerId, error: { code: -32603, message: unavailable } }
       : { ...state.last, id: state.outerId });
   }
   async fromChild(message) {
@@ -535,18 +550,46 @@ export class AdapterBridge {
       // timeout retirement never proves execution ended. Forward the error intact.
       if (pending.wait) {
         pending.settle(true);
+        const state = pending.wait;
         let value;
-        try { value = parseBrowserOutput(message.result, pending.wait.config.frameToken); } catch { pending.wait.reason ??= 'browser_error'; }
-        if (message.error || message.result?.isError === true) pending.wait.reason ??= 'browser_error';
-        if (value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true || value.requestError !== undefined
+        try { value = parseBrowserOutput(message.result, state.config.frameToken); }
+        catch {
+          state.reason ??= 'browser_error';
+          if (state.config.inputAcknowledgementPending === true && !own(message, 'error') && message.result?.isError !== true) {
+            state.last = { jsonrpc: '2.0', id: state.outerId,
+              error: { code: -32603, message: 'Router browser observation ownership is unavailable.' } };
+          }
+        }
+        const hasPending = value && own(value, 'ownershipPending');
+        state.ownershipPending = hasPending && state.config.inputAcknowledgementPending === true
+          && Object.keys(value).sort().join() === 'operation,ownershipPending'
+          && value.operation === 'observe' && value.ownershipPending === true;
+        if (hasPending && !state.ownershipPending) {
+          state.last = { jsonrpc: '2.0', id: state.outerId,
+            error: { code: -32603, message: 'Router browser observation ownership is unavailable.' } };
+          state.reason = 'browser_error';
+        }
+        if (message.error || message.result?.isError === true) state.reason ??= 'browser_error';
+        if (!hasPending && value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true || value.requestError !== undefined
             || value.statusComplete === true && value.stopVisible === false || value.normal !== true
-            || pending.wait.config.inputAcknowledgementPending === true && typeof value.assistantText === 'string' && value.assistantText.trim()
-            || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) pending.wait.reason ??= 'browser_ready';
-        if (this.now() >= pending.wait.deadlineAt) pending.wait.reason ??= 'deadline';
-        if (group?.pending === pending || pending.deferred) pending.wait.reason ??= 'cancelled';
-        if (pending.wait.reason) await this.finishObservation(pending);
-        else pending.wait.timer = setTimeout(() => { void this.readObservation(pending).catch(() => this.fail()); }, this.observationIntervalMs);
-      } else this.retirePending(message.id, true);
+            || state.config.inputAcknowledgementPending === true && typeof value.assistantText === 'string' && value.assistantText.trim()
+            || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) state.reason ??= 'browser_ready';
+        if (this.now() >= state.deadlineAt && (!state.reason || state.reason === 'broker_activity')) state.reason = 'deadline';
+        if (group?.pending === pending || pending.deferred) state.reason = 'cancelled';
+        if (state.reason && !(state.reason === 'broker_activity' && state.ownershipPending)) await this.finishObservation(pending);
+        else state.timer = setTimeout(() => { void this.readObservation(pending).catch(() => this.fail()); }, this.observationIntervalMs);
+      } else {
+        // A pending-only frame is private to the qualified held scheduler. A
+        // direct or unqualified browser observation has no authority to emit it.
+        if (pending.observationConfig) {
+          let value, malformed = false;
+          try { value = parseBrowserOutput(message.result, pending.observationConfig.frameToken); } catch { malformed = true; }
+          if (value && own(value, 'ownershipPending') || malformed && pending.observationConfig.inputAcknowledgementPending === true
+              && !own(message, 'error') && message.result?.isError !== true) message = { jsonrpc: '2.0', id: message.id,
+            error: { code: -32603, message: 'Router browser observation ownership is unavailable.' } };
+        }
+        this.retirePending(message.id, true);
+      }
       if ((message.error || message.result?.isError === true) && !ownedObservation) this.invalidate('ordinary_js_failed');
       if (pending.wait) return;
     }

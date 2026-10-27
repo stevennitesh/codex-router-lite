@@ -140,12 +140,19 @@ Each confirmed Send owns one rendered logical turn. That turn can contain
 commentary, tool activity and several assistant messages. Router reads the latest
 answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
-answer. The first observation of an unacknowledged Send may wait once for its
-original unique latest turn to finish mounting. It never adopts a replacement
-identity or emits an unowned snapshot to the tool broker. A duplicate or a
-settled later turn fails immediately; expiry, later ownership loss and ambiguous
-message identities still fail explicitly. Exceptional initial reads report only
-turn counts and whether the latest identity matched.
+answer. Before input acceptance, a held observation may see the original turn
+temporarily unmount or return behind an unsettled placeholder or pre-Send turn.
+Each short read then returns only a private content-free ownership-pending frame
+to the adapter, which continues within its original deadline. This applies after
+an earlier owned empty read too. The frame never reaches the tool broker and
+cannot acknowledge input or adopt a reply. Only the original unique latest key
+can resume observation; older turns remounting before it cannot displace that
+proof. The binding retains already verified historical turn keys across ordinary
+continuation, so a known history-only remount may also remain pending. A duplicate
+original key or an unowned new foreign UUID fails immediately. Post-acceptance
+ownership loss and ambiguous message identities still fail explicitly.
+Terminal ownership diagnostics report current turn counts and whether the latest
+identity matched, without text or identities.
 
 Bootstrap installs separately versioned observer and mutation helpers in the
 native Node REPL binding. Observation, retention, ordinary continuation and Send

@@ -422,9 +422,6 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     assertCurrent();
     const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === generationUrl;
     if (!normalUrl(ownedUrl)) throw new Error("The observed conversation left its normal saved URL.");
-    const firstObservation = options.operation === "observe" && state.initialGenerationObservation?.generationTurnKey !== generationTurnKey;
-    if (firstObservation) state.initialGenerationObservation = { generationTurnKey };
-    const generationObservation = state.initialGenerationObservation?.generationTurnKey === generationTurnKey ? state.initialGenerationObservation : undefined;
     const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${generationTurnKey}"]`);
     const readView = async () => {
       const value = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
@@ -442,40 +439,26 @@ function createBrowserView(state, options, replyReader, savedUrl) {
       if (!normalUrl(value.observation.url) || !value.observation.temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
       return value;
     };
-    let view = await readView();
-    const initialOwnership = { anchorCount: view.turns.filter(turn => turn.turnKey === generationTurnKey).length,
+    const view = await readView();
+    const ownership = { anchorCount: view.turns.filter(turn => turn.turnKey === generationTurnKey).length,
       turnCount: view.turns.length, latestMatches: view.turns.at(-1)?.turnKey === generationTurnKey };
-    if (firstObservation) generationObservation.ownership = initialOwnership;
-    let initialOwnershipDiagnostic = generationObservation?.reconciled ? generationObservation.ownership : undefined;
-    if (options.operation === "observe" && options.inputAcknowledgementPending === true
-        && (initialOwnership.anchorCount !== 1 || !initialOwnership.latestMatches)) {
-      initialOwnershipDiagnostic = generationObservation?.ownership ?? initialOwnership;
-      const latestTurnKey = view.turns.at(-1)?.turnKey;
-      const superseded = initialOwnership.anchorCount === 1 && typeof latestTurnKey === "string"
-        && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurnKey);
-      // Only the first actual read has a fresh native-call budget. A settled
-      // later identity is supersession; a missing turn or placeholder may settle.
-      if (firstObservation && initialOwnership.anchorCount < 2 && !superseded) {
-        generationObservation.reconciled = true;
-        const owned = `//*[@${ui.turnKeyAttribute}='${generationTurnKey}']`;
-        const latest = `(//*[@${ui.turnKeyAttribute}])[last()][@${ui.turnKeyAttribute}='${generationTurnKey}']`;
-        try { await state.tab.playwright.locator(`xpath=//body[count(${owned})=1 and ${latest}]`).waitFor({ state: "visible", timeoutMs: 3000 }); }
-        catch (error) {
-          assertCurrent();
-          if (typeof error?.message !== "string" || !/^(?:Error: )?(?:Playwright selector deadline exceeded(?:\r?\n|$)|Timed out after \d+ms waiting for selector )/u.test(error.message)) throw error;
-        }
-        assertCurrent();
-        const currentUrl = await state.tab.url();
-        assertCurrent();
-        if (!normalUrl(currentUrl)) throw new Error("The observed conversation left its normal saved URL.");
-        view = await readView();
-      }
-    }
+    const pendingAcceptance = options.operation === "observe" && options.inputAcknowledgementPending === true;
+    const baselineTurns = new Set(state.baselineTurnKeys ?? []);
+    const foreignTurnCount = pendingAcceptance ? view.turns.filter(turn => turn.turnKey !== generationTurnKey
+      && !baselineTurns.has(turn.turnKey) && typeof turn.turnKey === "string"
+      && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.turnKey)).length : 0;
+    const owned = ownership.anchorCount === 1 && ownership.latestMatches;
+    // A renderer may briefly unmount the anchor after any short read. Only the
+    // original identity can settle this; an unowned new UUID or duplicate is
+    // terminal. Older mounted turns cannot displace a unique latest anchor.
+    // The adapter consumes this content-free frame inside its existing deadline.
+    if (!owned && pendingAcceptance && options.observationWait !== undefined
+        && ownership.anchorCount < 2 && !foreignTurnCount) return { ownershipPending: true };
     const { url, stopVisible, temporaryInactive, conversationFull: full } = view.observation;
     if (!normalUrl(url) || !temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
     const texts = view.replies;
-    const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
-    const current = anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey
+    const anchorCount = ownership.anchorCount;
+    const current = !owned
       ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
     const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
     if (reply) state.replyId = reply.messageId;
@@ -486,7 +469,7 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     assertCurrent();
     return { completed, assistantText, replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
-      ...(initialOwnershipDiagnostic ? { initialOwnershipDiagnostic } : {}),
+      ...(!owned ? { ownershipDiagnostic: { ...ownership, foreignTurnCount } } : {}),
       baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
@@ -557,7 +540,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
   const resetChat = () => {
     Object.assign(state, { hasSentMessage: false, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds", "reconciliationStop"]) delete state[key];
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds", "baselineTurnKeys", "reconciliationStop"]) delete state[key];
   };
 
   const requireBinding = () => {
@@ -1068,6 +1051,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
   activeOwner(owners, true);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
+  state.baselineTurnKeys = [...new Set([...(state.baselineTurnKeys ?? []),
+    ...(state.sendConfirmed && state.generationTurnKey ? [state.generationTurnKey] : []), ...view.turns.map(value => value.turnKey)])];
   delete state.replyId;
   delete state.generationTurnKey;
   delete state.generationReplyIds;
@@ -1141,6 +1126,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (!beforeSend.mutation.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
+  state.baselineTurnKeys = [...new Set([...(state.baselineTurnKeys ?? []), ...beforeSend.turns.map(value => value.turnKey)])];
   delete state.replyId;
   delete state.generationTurnKey;
   state.generationReplyIds = [];
@@ -1284,7 +1270,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
     // Return after one page read so native Interrupt and queued tools can run.
     const observation = await observeGeneration(ownedUrl);
-    state.completed = observation.completed;
+    if (observation.ownershipPending !== true) state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed) throw new Error("Only a successfully completed conversation can be retained.");
